@@ -1316,6 +1316,11 @@ changed once with the full-config keys (#332).
   NoEndCallback` whenever the task that started the call finished first,
   which a streamed call's always does; only a cancelled task now ends a span
   that is still open (#393).
+- LightRAG's linked-chunk check under a selective filter makes two requests
+  instead of one per round of a few ids: each hit's first
+  `related_chunk_number` chunks, then the whole rest of the lineage of the
+  hits still short. Under a one-document filter on 1,000 documents, mix
+  made 211 search requests, now 13 (p50 478 to 38 ms on OpenSearch) (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

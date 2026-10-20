@@ -130,11 +130,9 @@ async def test_mix_fills_the_linked_chunk_stream_with_chunks_that_pass(
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
     assert chunks == (["u1", "u3", "u5"] if filtered else _UNITS[:3])
     assert store.fetches == [chunks]
-    # The hit's lineage is checked until its three slots pass: the rest of a
-    # long lineage is never asked.
-    assert store.checks == (
-        [["u0", "u1", "u2"], ["u3", "u4"], ["u5"]] if filtered else []
-    )
+    # The hit's first three chunks, then (short of three passing) the rest of
+    # its lineage: two requests, not one per round of a few ids.
+    assert store.checks == ([_UNITS[:3], _UNITS[3:]] if filtered else [])
 
 
 async def test_mix_checks_every_hits_lineage_not_only_the_first(
@@ -162,3 +160,27 @@ async def test_mix_checks_every_hits_lineage_not_only_the_first(
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
     assert {"u41", "u45"} & set(chunks), chunks
     assert len(chunks) == 4
+
+
+async def test_a_selective_filter_on_a_hub_lineage_costs_two_checks(
+    config: Config,
+) -> None:
+    # Regression: each round asked a few more ids per short hit, so a filter
+    # one hub chunk in 500 passes made a request per round: mix went from 1
+    # request to 539 on 6,000 documents.
+    config.search.lightrag_search.chunk_stream_top_k = 4
+    config.search.lightrag_search.related_chunk_number = 5
+    units_prefix = config.indexing.opensearch.text_units_index_prefix
+    store = _Store(units_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    # Only u499 is odd-numbered and so passes; the rest are even.
+    hub = _entity("hub", [f"u{i}" for i in range(0, 498, 2)] + ["u499"])
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}),
+        [hub, _entity("x", ["u2000", "u2001"])],
+        [],
+    )
+    assert {r.source for r in linked["lightrag_linked_chunks"]} == {"u499", "u2001"}
+    assert len(store.checks) == 2

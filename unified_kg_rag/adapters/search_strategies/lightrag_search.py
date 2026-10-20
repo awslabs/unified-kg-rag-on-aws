@@ -618,37 +618,46 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     ) -> set[str]:
         """The lineage chunks of ``hits`` that fail a filter on text units.
 
-        Each hit gets at most ``related_chunk_number`` chunks, so each hit's
-        lineage is checked (ids only) until that many of its chunks pass or
-        it runs out, all hits in one request a round: the slots go to chunks
-        that pass, and a hub hit's long lineage neither costs a whole check
-        nor, stopping it, leaves the other hits unchecked. Chunks not checked
-        are past every hit's slots.
+        Each hit gets at most ``related_chunk_number`` chunks. The first
+        round checks (ids only) each hit's first ``related_chunk_number``
+        chunks, all hits in one request; the hits still short of their slots
+        then have their whole remaining lineage checked, again in one
+        request. The slots go to chunks that pass, a hub hit's long lineage
+        does not stop the check before the other hits' are asked, and a
+        selective filter costs two requests, not one per round of a few ids.
+        Chunks not checked are past every hit's slots.
         """
         cap = self._lightrag_config.related_chunk_number
         lineages = [
             [unit for unit in lineage if unit not in exclude]
             for lineage in self._lineages(hits)
         ]
-        positions = [0] * len(lineages)
+        prefix = self._os_config.text_units_index_prefix
         passed: set[str] = set()
         checked: set[str] = set()
-        prefix = self._os_config.text_units_index_prefix
-        while True:
-            ask: list[str] = []
-            for k, lineage in enumerate(lineages):
-                have = sum(1 for u in lineage[: positions[k]] if u in passed)
-                take = lineage[positions[k] : positions[k] + max(0, cap - have)]
-                positions[k] += len(take)
-                ask.extend(u for u in take if u not in checked)
+        for second in (False, True):
+            if second:  # the rest of each hit's lineage that is still short
+                parts = [
+                    lineage[cap:]
+                    for lineage in lineages
+                    if sum(1 for u in lineage[:cap] if u in passed) < cap
+                ]
+            else:
+                parts = [lineage[:cap] for lineage in lineages]
+            ask = [
+                u
+                for u in dict.fromkeys(u for part in parts for u in part)
+                if u not in checked
+            ]
             if not ask:
-                return checked - passed
+                continue
             known = len(checked)
             passed |= await self._ids_passing(
                 query, prefix, ask, filters, checked=checked
             )
             if len(checked) == known:  # the check failed: fail-closed
                 return checked - passed | set(ask)
+        return checked - passed
 
     @staticmethod
     def _relationship_endpoint_ids(
