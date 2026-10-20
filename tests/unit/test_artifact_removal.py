@@ -442,7 +442,7 @@ def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
 
     manager._clear_pending_strip("default")
 
-    assert "Deleting the strip notes" in caplog.text
+    assert "Deleting the note" in caplog.text
 
 
 def test_a_removed_vector_only_entity_takes_its_vector_edges() -> None:
