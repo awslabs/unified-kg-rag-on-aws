@@ -1295,6 +1295,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal that re-keys, renames or splits an
+  entity derives the stored claims about the other stored spellings of its
+  name again (one may resolve to it now; they kept a stale subject or
+  object), and its strip note names the claims about a split's entities, so
+  a resumed removal that split one no longer leaves a stale self-claim
+  (#PR).
 - Incremental indexing: a commit killed after its vector writes and before
   its graph writes no longer leaves vector copies nothing finds again. The
   next commit retires the copies of the noted entities the graph does not

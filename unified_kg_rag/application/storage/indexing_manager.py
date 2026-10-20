@@ -1721,16 +1721,26 @@ class IndexingManager:
         return results
 
     def _note_pending_strip(
-        self, suffix: str, entity_ids: list[str], relationship_ids: list[str]
+        self,
+        suffix: str,
+        entity_ids: list[str],
+        relationship_ids: list[str],
+        claim_ids: list[str] | None = None,
     ) -> None:
         """Note the stored items a strip merges or re-keys, in one record of
         ``suffix``'s extraction store (kept until :meth:`_clear_pending_strip`),
-        so a retry of the removal strips them again (:meth:`remove_text_units`).
+        so a retry of the removal strips them again (:meth:`remove_text_units`),
+        with the ``claim_ids`` about the entities it splits (a split keeps the
+        stored id, so a retry would not find them).
         Raises when the write fails, before the strip writes anything."""
         self._write_note(
             _PENDING_STRIP,
             suffix,
-            {"entity_ids": entity_ids, "relationship_ids": relationship_ids},
+            {
+                "entity_ids": entity_ids,
+                "relationship_ids": relationship_ids,
+                "claim_ids": claim_ids or [],
+            },
         )
 
     def _clear_pending_strip(self, suffix: str) -> None:
@@ -1838,13 +1848,25 @@ class IndexingManager:
             retired_edges = {
                 old for old, new in derived.id_remap.items() if new in edge_ids_now
             } | {i for i in derived.dropped if i not in claim_ids_now}
-            if merged or retired_edges:
+            # The stored claims about a split's part and origin: a retry
+            # cannot tell them (the split kept the stored id).
+            split_claims = (
+                set(
+                    self._claims_about(
+                        suffix, [*derived.split_from, *derived.split_from.values()]
+                    )
+                )
+                if derived.split_from
+                else set()
+            )
+            if merged or retired_edges or split_claims:
                 # Their old ids need not cite the removed text units (another
                 # spelling merged in, or an edge re-pointed at it): once the
                 # items are written, a retry finds them through this note
                 # only, and strips them again. Noted: the entities on both
-                # sides of a merge and the edges re-keyed or dropped. Not a
-                # split's part and origin: a split keeps the stored id, and
+                # sides of a merge, the edges re-keyed or dropped and the
+                # claims about a split's entities. Not a split's part and
+                # origin themselves: a split keeps the stored id, and
                 # stripping them again on a retry gave a claim the wrong
                 # subject.
                 doing = "Noting the pending strip"
@@ -1852,15 +1874,28 @@ class IndexingManager:
                     suffix,
                     sorted(merged | _note_ids(earlier_note, "entity_ids")),
                     sorted(retired_edges | _note_ids(earlier_note, "relationship_ids")),
+                    sorted(split_claims | _note_ids(earlier_note, "claim_ids")),
                 )
                 noted = True
             doing = "Reading the claims of re-keyed entities"
             # The stored claims about a re-keyed, split or renamed entity
             # follow it.
             renamed = self._note_renamed(suffix, derived.entities, entities)
+            # And those about the other stored spellings of their names: a
+            # claim naming one may resolve to the changed entity now.
+            changed = {*derived.id_remap.values(), *renamed, *derived.split_from}
+            family_keys = sorted(
+                {compact_name_key(e.name) for e in derived.entities if e.id in changed}
+            )
+            family = (
+                self.neptune_indexer.find_entity_ids_by_name_key(family_keys, suffix)
+                if family_keys
+                else None
+            ) or []
             claim_ids = sorted(
                 {
                     *claim_ids,
+                    *split_claims,
                     *self._claims_about(
                         suffix,
                         [
@@ -1871,6 +1906,7 @@ class IndexingManager:
                                 {e.id: e for e in derived.entities},
                             ),
                             *renamed,
+                            *family,
                         ],
                     ),
                 }
@@ -2211,7 +2247,12 @@ class IndexingManager:
             )
             # A claim the earlier strip re-keyed onto a noted entity cites no
             # removed unit: it is found through its subject or object.
-            noted_claims = self._claims_about(suffix, _note_ids(note, "entity_ids"))
+            noted_claims = sorted(
+                {
+                    *self._claims_about(suffix, _note_ids(note, "entity_ids")),
+                    *_note_ids(note, "claim_ids"),
+                }
+            )
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))

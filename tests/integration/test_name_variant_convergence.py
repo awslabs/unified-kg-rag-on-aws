@@ -1070,7 +1070,7 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
     ]
     assert [list(records) for records in notes] == [["pending-strip"]]
     (note,) = notes[0].values()
-    assert set(note) == {"entity_ids", "relationship_ids"}
+    assert set(note) == {"entity_ids", "relationship_ids", "claim_ids"}
     assert len(note["entity_ids"]) == 2
     assert len(note["relationship_ids"]) == 1
     assert incremental == full
@@ -1539,5 +1539,30 @@ def test_a_killed_commits_vector_only_copies_go_with_its_note(
         gleaning=True,
         resume=False,
     )
+
+    assert incremental == full
+
+
+RUNS_SIBLING_CLAIM = [
+    {
+        "d2.txt": "Acme Inc and Acme Ltd and Acme trade cash 3. Acme Ltd and Acme Corp and Acme trade goods 3.",
+        "d5.txt": "Acme Ltd and Acme LLC and Buyer trade cash 1. Acme Inc and Acme Ltd and Depot trade goods 3.",
+    },
+    {
+        "d2.txt": "Acme Inc and Acme Ltd and Acme trade cash 3. Acme Ltd and Acme Corp and Acme trade goods 3."
+    },
+]
+
+
+def test_a_removal_derives_the_claims_on_a_changed_entitys_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The removal re-keys or renames an entity: a stored claim on another
+    # stored spelling of its name may resolve to it now, so the claims about
+    # every spelling of its name key are derived again (no crash needed).
+    runs = RUNS_SIBLING_CLAIM
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
 
     assert incremental == full
