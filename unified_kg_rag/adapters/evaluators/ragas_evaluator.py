@@ -9,7 +9,7 @@ from datasets import Dataset
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
 from ragas import evaluate
-from ragas.dataset_schema import EvaluationResult as RagasEvaluationResult
+from ragas.executor import Executor
 from ragas.llms.base import LangchainLLMWrapper
 from ragas.metrics import (
     answer_correctness,
@@ -86,9 +86,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     # Metrics scored on at most ``evaluation.ragas_max_contexts`` contexts.
     COUNT_CAPPED_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
         {EvaluationMetricType.CONTEXT_PRECISION}
-    )
-    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(
-        m.name for m in RAGAS_METRICS.values()
     )
 
     def __init__(
@@ -446,22 +443,50 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 "ground_truth": ground_truths,
             }
         )
-        ragas_result = await asyncio.to_thread(
-            evaluate,
-            dataset=eval_dataset,
-            metrics=metrics,
-            llm=self.ragas_llm or self.llm,
-            embeddings=self.embeddings,
-            raise_exceptions=False,
-            run_config=self._build_run_config(),
-            show_progress=self.show_progress,
+        # evaluate() binds the judge to the (module-level) metrics it is given
+        # and, with return_executor, never unbinds it: restore them after.
+        unbound = [
+            (metric, attr)
+            for metric in metrics
+            for attr in ("llm", "embeddings", "answer_similarity")
+            if hasattr(metric, attr) and getattr(metric, attr) is None
+        ]
+        try:
+            # The executor, not the result: a thread running the judge calls
+            # cannot be cancelled, but the executor can, so a cancelled or
+            # timed-out evaluation stops judging instead of finishing the run.
+            executor = cast(
+                Executor,
+                await asyncio.to_thread(
+                    evaluate,
+                    dataset=eval_dataset,
+                    metrics=metrics,
+                    llm=self.ragas_llm or self.llm,
+                    embeddings=self.embeddings,
+                    raise_exceptions=False,
+                    run_config=self._build_run_config(),
+                    show_progress=self.show_progress,
+                    return_executor=True,
+                ),
+            )
+            try:
+                scores = await asyncio.to_thread(executor.results)
+            except BaseException:
+                executor.cancel()
+                raise
+        finally:
+            for metric, attr in unbound:
+                setattr(metric, attr, None)
+        if not scores:
+            raise EvaluationException("RAGAS returned no scores")
+        # One row per query, one score column per metric, in submission
+        # order (as ragas' own evaluate builds its result).
+        return pd.DataFrame(
+            [
+                {m.name: scores[len(metrics) * i + j] for j, m in enumerate(metrics)}
+                for i in range(len(queries))
+            ]
         )
-        # ragas types `evaluate` as returning `RagasEvaluationResult |
-        # Executor`; the Executor branch is only taken when the caller passes
-        # return_executor=True, which this call never does.
-        frame = cast(RagasEvaluationResult, ragas_result).to_pandas()
-        # Keep only score columns so two runs concatenate without duplicates.
-        return frame[[c for c in frame.columns if c in self._SCORE_COLUMNS]]
 
     def _skip_reason(
         self,

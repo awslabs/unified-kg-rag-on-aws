@@ -1295,6 +1295,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A cancelled or timed-out evaluation stops RAGAS judging: it ran in a
+  thread nothing could stop, so the RAGAS partition was judged to the end
+  (168 judge calls after a timeout in a 12-question run). RAGAS now runs
+  through its cancellable executor, and the judge it binds to ragas'
+  shared metric objects is unbound after each run (#PR).
 - Tracing: a streamed answer's `chat <model>` span exports normally again,
   with its tokens and output. #386 ended a model span as `ERROR
   NoEndCallback` whenever the task that started the call finished first,
@@ -1346,10 +1351,11 @@ changed once with the full-config keys (#332).
   MuSiQue-Ans results (#386).
 - Cancelling a batch cancels its items: an interrupted, timed-out or
   host-cancelled `run-eval` / `EvaluationManager` call no longer keeps
-  answering (and judging) the rest of the dataset in the background, and a
-  cancelled item is no longer retried. The batch processor and the evaluators
-  awaited their items through `as_completed`, which leaves them running when
-  the caller is cancelled (#386).
+  answering the rest of the dataset, or judging it with the LangChain and
+  LLM-free evaluators, in the background, and a cancelled item is no longer
+  retried. The batch processor and the evaluators awaited their items
+  through `as_completed`, which leaves them running when the caller is
+  cancelled (#386). RAGAS judging stops too (#PR).
 - Filtered graph expansion fills its slots as an index of the passing
   documents does: the walk goes four times wider and is cut after the
   document-filter checks, not before (on a 1,500-degree hub, 6 of 10

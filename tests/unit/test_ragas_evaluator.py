@@ -88,6 +88,36 @@ def _result(contexts=None, qid="q1") -> EvaluationResult:
     )
 
 
+class _Executor:
+    """What ``evaluate(..., return_executor=True)`` returns: the scores of a
+    fake result frame, flattened row by row in metric order."""
+
+    def __init__(self, frame: pd.DataFrame, metrics: list) -> None:
+        self.scores = [
+            frame[m.name].iloc[i] if m.name in frame else float("nan")
+            for i in range(len(frame))
+            for m in metrics
+        ]
+        self.cancelled = False
+
+    def results(self) -> list:
+        return self.scores
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+def _patch_evaluate(mocker, fake):
+    """Patch ``evaluate`` with ``fake`` (keyword arguments -> an object with
+    ``to_pandas``), returned as the executor the evaluator asks for."""
+
+    def evaluate(**kwargs):
+        assert kwargs.pop("return_executor") is True
+        return _Executor(fake(**kwargs).to_pandas(), kwargs["metrics"])
+
+    return mocker.patch.object(rg_module, "evaluate", side_effect=evaluate)
+
+
 def _contexts(ev, results, capped: bool = False) -> list[list[str]]:
     cap = ev.config.evaluation.ragas_max_contexts if capped else None
     return [contexts for contexts, _ in ev._select(ev._budgeted_contexts(results), cap)]
@@ -335,7 +365,7 @@ class TestAevaluateBatch:
             captured["dataset_dict"] = d
             return d
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=fake_from_dict)
 
         reports = await ev.aevaluate_batch(
@@ -376,7 +406,7 @@ class TestAevaluateBatch:
             name = metrics[0].name
             return _FakeRagasResult({name: [0.5 if name == "faithfulness" else 0.25]})
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         contexts = ["c1", "c2", "c3", "c4"]
         reports = await ev.aevaluate_batch(
@@ -414,10 +444,8 @@ class TestAevaluateBatch:
             def to_pandas(self):
                 return pd.DataFrame({self.name: [1.0]})
 
-        mocker.patch.object(
-            rg_module,
-            "evaluate",
-            side_effect=lambda *, metrics, **_: _FakeRagasResult(metrics[0].name),
+        _patch_evaluate(
+            mocker, lambda *, metrics, **_: _FakeRagasResult(metrics[0].name)
         )
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         await ev.aevaluate_batch(
@@ -439,9 +467,7 @@ class TestAevaluateBatch:
             def to_pandas(self):
                 return pd.DataFrame({"context_precision": [1.0], "faithfulness": [1.0]})
 
-        evaluate = mocker.patch.object(
-            rg_module, "evaluate", return_value=_FakeRagasResult()
-        )
+        evaluate = _patch_evaluate(mocker, lambda **_: _FakeRagasResult())
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         await ev.aevaluate_batch([_query()], [_result(contexts=["c1"])], ["truth"])
         assert evaluate.call_count == 1
@@ -481,7 +507,7 @@ class TestAevaluateBatch:
             captured["metrics"] = metrics
             return _FakeRagasResult()
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         reports = await ev.aevaluate_batch([_query()], [_result()], [""])
         assert captured["metrics"] == [
@@ -518,7 +544,7 @@ class TestAevaluateBatch:
             runs.append((dataset["question"], metrics))
             return _FakeRagasResult(dataset, metrics)
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         queries = [
             EvaluationQuery(query_id="no-ref", question="A?"),
@@ -568,12 +594,9 @@ class TestAevaluateBatch:
             def to_pandas(self):
                 return self.frame
 
-        mocker.patch.object(
-            rg_module,
-            "evaluate",
-            side_effect=lambda *, dataset, metrics, **_: _FakeRagasResult(
-                dataset, metrics
-            ),
+        _patch_evaluate(
+            mocker,
+            lambda *, dataset, metrics, **_: _FakeRagasResult(dataset, metrics),
         )
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         blocked = _result([], qid="blocked")
@@ -622,7 +645,7 @@ class TestAevaluateBatch:
             runs.append((dataset["question"], sorted(m.name for m in metrics)))
             return _FakeRagasResult(dataset, metrics)
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         blocked = _result(qid="blocked")
         blocked.guardrail_blocked = "output"
@@ -674,7 +697,7 @@ class TestAevaluateBatch:
                 raise RuntimeError("judge throttled")
             return _FakeRagasResult(dataset, metrics)
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         queries = [
             EvaluationQuery(query_id="no-ref", question="A?"),
@@ -721,7 +744,7 @@ class TestAevaluateBatch:
                 raise RuntimeError("judge timed out")
             return _FakeRagasResult(name)
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
         (report,) = await ev.aevaluate_batch(
             [_query()], [_result(contexts=["c1", "c2"])], ["truth"]
@@ -851,7 +874,7 @@ class TestRunConfigAndJudgeEffort:
             captured.update(kwargs)
             return _FakeRagasResult()
 
-        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        _patch_evaluate(mocker, fake_evaluate)
         mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
 
         await ev.aevaluate_batch([_query()], [_result(contexts=["c"])], ["t"])
@@ -907,3 +930,70 @@ def test_ragas_telemetry_is_off_unless_the_user_opts_in(
         timeout=110,
     ).stdout.split()[-1]
     assert out == str(not tracked)
+
+
+class TestCancellation:
+    async def test_a_cancelled_evaluation_cancels_the_ragas_executor(
+        self, mocker
+    ) -> None:
+        # Before, RAGAS ran evaluate() in a thread nothing could stop: a
+        # cancelled or timed-out evaluation went on judging the partition.
+        import asyncio
+        import threading
+
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        release = threading.Event()
+
+        class _Blocking:
+            cancelled = False
+
+            def results(self) -> list:
+                release.wait(5)
+                return [1.0]
+
+            def cancel(self) -> None:
+                self.cancelled = True
+                release.set()
+
+        executor = _Blocking()
+        mocker.patch.object(rg_module, "evaluate", return_value=executor)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        task = asyncio.create_task(
+            ev.aevaluate_batch([_query()], [_result()], ["truth"])
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert executor.cancelled
+
+    async def test_the_judge_is_unbound_from_the_metrics_after_a_run(
+        self, mocker
+    ) -> None:
+        # evaluate(return_executor=True) leaves the judge bound to ragas'
+        # module-level metric objects; the next evaluator in the process
+        # would have judged with it.
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        metric = rg_module.RagasEvaluator.RAGAS_METRICS[
+            EvaluationMetricType.FAITHFULNESS
+        ]
+        mocker.patch.object(metric, "llm", None)
+
+        class _Result:
+            def to_pandas(self):
+                return pd.DataFrame({"faithfulness": [1.0]})
+
+        def fake_evaluate(*, metrics, **_):
+            for m in metrics:
+                m.llm = "judge"
+            return _Result()
+
+        _patch_evaluate(mocker, fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        reports = await ev.aevaluate_batch([_query()], [_result()], ["truth"])
+        assert [m.value for m in reports[0].metrics] == [1.0]
+        assert metric.llm is None
