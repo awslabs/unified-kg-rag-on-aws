@@ -1523,6 +1523,12 @@ changed once with the full-config keys (#332).
   `{Seller}` raised whatever the log level, on every run of its document.
   The names are now log arguments, and no other log call takes a message
   built from data as its format (#PR).
+- An empty element in a model's answer (`<description></description>`,
+  `<object/>`) is an empty field, not the text `{}`: the XML parser makes
+  it `{}`, which extraction stored as a description, type or claim object
+  `{}` (a junk `{}` entity then linked unrelated documents) and reports
+  as a title or summary `{}`. An empty `<issue_type>` in a gleaning
+  answer no longer drops the unit's other issues (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

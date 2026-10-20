@@ -186,7 +186,8 @@ def coerce_llm_text(value: Any, *, join: bool = False) -> str:
     ``join=True`` to keep every distinct non-empty element, newline-joined.
     ``None`` and other non-string scalars become ``""`` / ``str(value)``.
     """
-    if value is None:
+    if value is None or value == {}:
+        # An empty element (<description></description>) parses to {}.
         return ""
     if not isinstance(value, list):
         return str(value).strip()

@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
+from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
 )
 from unified_kg_rag.domain.models import Config, TextUnit
+from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 
@@ -23,6 +26,8 @@ def _text_unit() -> TextUnit:
     ("value", "join", "expected"),
     [
         (None, False, ""),
+        ({}, False, ""),  # an empty element (<type></type>)
+        ([{}, "Vendor"], False, "Vendor"),
         ("  Vendor ", False, "Vendor"),
         (["", " Vendor ", "Supplier"], False, "Vendor"),
         (["", "  "], False, ""),
@@ -95,3 +100,28 @@ def test_parse_weight_is_finite_and_in_range(strength, expected: float) -> None:
     # weight and rejects infinite ones, so a bad strength from the model must
     # not reach the graph.
     assert BaseProcessor._parse_weight({"strength": strength}) == expected
+
+
+def test_empty_elements_parse_to_empty_text() -> None:
+    # The XML parser turns an empty element into {}, which str() made the
+    # literal "{}": an entity described "{}", a claim about an object "{}",
+    # a report titled "{}".
+    entity = RobustXMLOutputParser(tags=["entities"]).parse(
+        "<entities><entity><name>Acme</name><type></type>"
+        "<description></description></entity></entities>"
+    )["entities"]["entity"]
+    parsed = BaseProcessor(config=Config()).parse_entity_data(entity, _text_unit())
+    assert parsed is not None
+    assert (parsed.type, parsed.description) == ("", "")
+
+    claim = RobustXMLOutputParser(tags=["claims"]).parse(
+        "<claims><claim><subject>Acme</subject><object></object>"
+        "<description/></claim></claims>"
+    )["claims"]["claim"]
+    assert ClaimExtractor._get_string_value(claim["object"]) == ""
+    assert ClaimExtractor._get_string_value(claim["description"], join=True) == ""
+
+    report = RobustXMLOutputParser(tags=["community_name", "summary"]).parse(
+        "<community_name></community_name><summary>S</summary>"
+    )
+    assert CommunityDetector._extract_text_from_result(report["community_name"]) == ""

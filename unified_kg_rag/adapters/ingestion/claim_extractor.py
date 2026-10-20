@@ -265,6 +265,8 @@ class ClaimExtractor(BaseProcessor):
         instead of stringifying the list (``"['A', 'B']"``).
         """
         if isinstance(data, dict):
+            if not data:  # an empty element (<object></object>)
+                return ""
             if "#text" in data:
                 return str(data["#text"]).strip()
             if len(data.values()) == 1:
