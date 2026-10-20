@@ -1302,6 +1302,25 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion --output-format json`: the status of a stopped run says
+  from when the next run on its namespace may write
+  (`next_run_writes_from`) when it must wait for this run's writes still in
+  flight; only the console message said so (#399).
+- `run-eval` with several strategies or repeats names the benchmark the
+  dataset was prepared from under the comparison table, as a single run's
+  summary does; it printed no label (#399).
+- Evaluation: each RAGAS run judges with its own metric objects instead of
+  binding the judge to ragas' module-level ones and unbinding it after the
+  run. Two evaluations running at once in one process (through the library)
+  could judge with each other's model, or lose the judge mid-run when the
+  other finished. Scores are unchanged (#399).
+- Tracing: a model call cut off by `asyncio.wait_for` or `asyncio.timeout`
+  (how RAGAS applies `ragas_timeout`) ends its span as `ERROR
+  CancelledError` again. The timeout cancels the call but not its task, and
+  #393 ended an open span only for a cancelled task, so every timed-out
+  judge call's span was never exported and stayed in the handler. A call's
+  span is now ended when its task ends unless it streamed a token, since a
+  streamed call ends in the task that consumes the stream (#399).
 - Incremental indexing: a commit that re-keys or renames an entity also
   derives again the stored claims on the other spellings of its name (one
   resolved there while the entity had another name), as a removal does

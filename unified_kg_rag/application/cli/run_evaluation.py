@@ -140,6 +140,12 @@ def _over(failed: int, total: int, max_failure_rate: float) -> bool:
     return total == 0 or failed >= total or failed / total > max_failure_rate
 
 
+def _benchmark_names(labels: dict[str, int]) -> str:
+    """Which benchmark was scored (musique-full-answerable is not comparable
+    to MuSiQue-Ans), with its query count."""
+    return ", ".join(f"{name} ({count})" for name, count in labels.items())
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -268,10 +274,7 @@ class EvaluationRunner:
             f"Failed: [red]{summary.failed_evaluations}[/red]\n"
         )
         if labels := summary.benchmarks:
-            # Which benchmark was scored: musique-full-answerable is not
-            # comparable to MuSiQue-Ans.
-            named = ", ".join(f"{name} ({count})" for name, count in labels.items())
-            summary_text += f"Benchmark: [bold]{named}[/bold]\n"
+            summary_text += f"Benchmark: [bold]{_benchmark_names(labels)}[/bold]\n"
         if blocked := summary.guardrail_blocked_counts:
             # Scored on the blocked message: a low score may be the guardrail.
             per_text = ", ".join(f"{text} {count}" for text, count in blocked.items())
@@ -383,6 +386,9 @@ class EvaluationRunner:
                 )
             table.add_row(*row)
         console.print(table)
+        dataset = (comparison.get("run_manifest") or {}).get("dataset") or {}
+        if labels := dataset.get("benchmarks"):
+            console.print(f"Benchmark: [bold]{_benchmark_names(labels)}[/bold]")
         for strategy, stats in strategies.items():
             routed = stats["routed_strategies"]
             if routed and list(routed) != [strategy]:

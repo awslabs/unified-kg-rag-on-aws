@@ -1248,8 +1248,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 읽지만 그 답변 가능한 절반은 MuSiQue-Ans가 아니므로(단락과 답변 별칭이 다름) 행에
 `musique` 대신 `metadata.benchmark: musique-full-answerable`을 붙이고, 점수를 MuSiQue-Ans
 결과와 비교할 수 없다는 WARNING을 남깁니다. 이 레이블은 출력(콘솔과
-`--output-format json`)에 나오며, `run-eval`은 요약(`benchmarks`)과 실행 매니페스트
-(`dataset.benchmarks`)에 레이블별 질문 수를 남깁니다. `corpus/`(서로 다른 단락마다 텍스트
+`--output-format json`)에 나오며, `run-eval`은 요약(`benchmarks`, 여러 전략이나 반복의 비교 표
+아래에도 출력)과 실행 매니페스트(`dataset.benchmarks`)에 레이블별 질문 수를 남깁니다. `corpus/`(서로 다른 단락마다 텍스트
 파일 하나. 질문마다 근거 단락 2-4개와 방해 단락 최대 18개)와 `eval_data.json`(`answer`,
 `answer_aliases`, 근거 단락인 `reference_sources`, 홉 수인 `category`)을 씁니다.
 `corpus/`가 비어 있지 않으면 아무것도 내려받기 전에 사용 오류(종료 코드 2)로 끝납니다.
@@ -1450,7 +1450,9 @@ custom_prompts:
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)을 출력하므로 표준 출력은 항상
-JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙입니다.
+JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙이고, 같은 네임스페이스의
+다음 실행이 아직 진행 중일 수 있는 이 실행의 쓰기를 기다려야 하면 `next_run_writes_from`(UTC,
+ISO 8601)도 덧붙입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

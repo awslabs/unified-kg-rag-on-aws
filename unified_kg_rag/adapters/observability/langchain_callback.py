@@ -17,8 +17,11 @@ session.
 
 A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
 (``astream`` reports it through ``on_llm_error``): its span is ended as an
-error when the task that started the call is cancelled with the span still
-open.
+error (``CancelledError``) when the task that started the call is cancelled
+with the span still open, or ends with it open and no token streamed: a call
+cut off by ``asyncio.wait_for`` / ``asyncio.timeout``, whose task carries on
+(the span then ends with that task). A streamed call ends later, in whichever
+task consumes the stream.
 
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
@@ -146,8 +149,11 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         self.temperature = temperature
         self._spans: dict[UUID, SpanHandle] = {}
         # The task an async call runs in and the done-callback that ends its
-        # span if no end callback came (a cancelled call gets none).
+        # span if no end callback came (a cancelled or timed-out call gets
+        # none), and the calls that streamed a token (they end in the task
+        # that consumes the stream).
         self._watches: dict[UUID, tuple[asyncio.Task[Any], Any]] = {}
+        self._streamed: set[UUID] = set()
         self._lock = threading.Lock()
 
     def on_chat_model_start(
@@ -198,18 +204,29 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         with self._lock:
             span = self._spans.pop(run_id, None)
             watch = self._watches.pop(run_id, None)
+            self._streamed.discard(run_id)
         if watch is not None:
             task, callback = watch
             task.remove_done_callback(callback)
         return span
 
+    def on_llm_new_token(self, token: Any, *, run_id: UUID, **kwargs: Any) -> None:
+        if run_id in self._watches and run_id not in self._streamed:
+            with self._lock:
+                self._streamed.add(run_id)
+
     def _end_abandoned(self, run_id: UUID, task: asyncio.Task[Any]) -> None:
-        """End the span of a call whose task was cancelled before its end
-        callback. A task that finished normally leaves the span open: a
-        streamed call ends later, in the task that consumes the stream."""
+        """End the span of a call whose task ended before its end callback:
+        cancelled, or (no token streamed) cut off by a timeout inside a task
+        that then finished normally. A streamed call's task finishing leaves
+        the span open: it ends later, in the task that consumes the stream."""
         with self._lock:
             self._watches.pop(run_id, None)
-            span = self._spans.pop(run_id, None) if task.cancelled() else None
+            streamed = run_id in self._streamed
+            ends = task.cancelled() or not streamed
+            span = self._spans.pop(run_id, None) if ends else None
+            if ends:
+                self._streamed.discard(run_id)
         if span is None:
             return
         span.set_attribute(ERROR_TYPE, "CancelledError")

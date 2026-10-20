@@ -425,14 +425,19 @@ def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
         }, argv[0]
 
 
+@pytest.mark.parametrize("waits", [False, True], ids=["no_wait", "next_run_waits"])
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
 def test_interrupted_ingestion_json_names_the_pipeline_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     signum: int,
+    waits: bool,
 ) -> None:
-    # Before, the status gave no id to rerun with --pipeline-id.
+    # Before, the status gave no id to rerun with --pipeline-id, nor (only
+    # the console message did) when the next run may write.
+    import time
+    from datetime import datetime, timezone
     from types import SimpleNamespace
 
     from unified_kg_rag.shared import PipelineInterrupted
@@ -442,9 +447,11 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
         run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
     )
 
+    until = float(int(time.time()) + 185) if waits else 0.0
+
     def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
         self.pipeline = SimpleNamespace(  # type: ignore[assignment]
-            pipeline_id="run-7", next_run_writes_from=0.0
+            pipeline_id="run-7", next_run_writes_from=until
         )
         if signum == signal.SIGINT:
             raise KeyboardInterrupt
@@ -469,11 +476,16 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.main()
     assert exc.value.code == 128 + signum
-    assert json.loads(capsys.readouterr().out) == {
+    expected = {
         "status": "interrupted",
         "exit_code": 128 + signum,
         "pipeline_id": "run-7",
     }
+    if waits:
+        expected["next_run_writes_from"] = datetime.fromtimestamp(
+            until, tz=timezone.utc
+        ).isoformat()
+    assert json.loads(capsys.readouterr().out) == expected
 
 
 @pytest.mark.parametrize("value", ["0", "-3"])

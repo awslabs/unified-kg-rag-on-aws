@@ -558,8 +558,9 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 - 스트리밍 답변(`stream` / `astream`)은 별도 트레이스입니다. 그 모델 스팬은 답변 단계
   실행 메타데이터에서 `session.id` / `user.id`를 가져오므로 같은 세션으로 묶입니다.
 - 비동기 배치 경로는 청크가 아니라 배치마다 스팬을 하나 기록합니다.
-- `ainvoke` 도중 취소된 모델 호출(예: `asyncio.wait_for` 시간 초과)은 LangChain이
-  콜백을 호출하지 않으며, 그 모델 스팬은 태스크가 취소될 때 `ERROR`(`error.type:
+- `ainvoke` 도중 취소된 모델 호출(태스크 취소, 또는 RAGAS `ragas_timeout`처럼
+  `asyncio.wait_for` / `asyncio.timeout`으로 끊긴 호출)은 LangChain이 콜백을 호출하지
+  않으며, 그 모델 스팬은 호출을 시작한 태스크가 끝날 때 `ERROR`(`error.type:
   CancelledError`)로 종료됩니다. 호출자가 스트림을 중간에 그만 읽으면 그 스팬은 정상
   종료됩니다.
 - `otlp`, `langfuse`, `phoenix`에서는 프로세스가 처음 설치한 백엔드가 OpenTelemetry
