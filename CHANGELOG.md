@@ -823,6 +823,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Claims: a merged claim's type and object name (a literal's spellings,
+  `USD 100` and `usd 100`) are the most frequent of its statements', the
+  smallest on a tie, and its description and source-text lines come in
+  that order; claim resolution kept the first claim's, and both merges put
+  the first claim's description first. The order of the claims differs
+  between namespaces of the same text. A rebuild can change the shown type,
+  object name or description order of such a claim (#PR).
 - Full builds: an entity's type, or a claim's type or status, that its
   statements state equally often is the smallest of those values, not the
   one in the earliest text unit. The order of the text units differs
