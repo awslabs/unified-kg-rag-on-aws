@@ -78,14 +78,10 @@ _PENDING_STRIP = "pending-strip"
 _PENDING_COMMIT = "pending-commit"
 
 
-def _noted(notes: Mapping[str, Mapping[str, Any]], field: str) -> set[str]:
-    """The ids the strip notes ``notes`` list under ``field``."""
-    return {
-        i
-        for note in notes.values()
-        for i in note.get(field) or []
-        if isinstance(i, str)
-    }
+def _note_ids(note: Mapping[str, Any] | None, field: str) -> set[str]:
+    """The ids a strip or commit note (``None``: none stored) lists under
+    ``field``."""
+    return {i for i in (note or {}).get(field) or [] if isinstance(i, str)}
 
 
 def _other_spellings_of_parts(
@@ -267,9 +263,10 @@ class IndexingManager:
         # (old and new ids) or rewired, for its write-ahead note.
         self._commit_entities: dict[str, set[str]] = {}
         # Per suffix: the entities an earlier commit's note names (see
-        # note_pending_commit), and the suffixes this run noted.
-        self._commit_noted: dict[str, set[str]] = {}
-        self._commit_notes: set[str] = set()
+        # note_pending_commit); and the suffixes whose commit note this run
+        # wrote or read (clear_pending_commit deletes those).
+        self._noted_commit_entities: dict[str, set[str]] = {}
+        self._commit_note_suffixes: set[str] = set()
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -667,7 +664,7 @@ class IndexingManager:
             or self._rekeyed
             or self._split_from
             or self._renamed
-            or self._commit_noted
+            or self._noted_commit_entities
         ):
             return claims
         groups = self._group_by_suffix(claims or [])
@@ -677,7 +674,7 @@ class IndexingManager:
             | self._rekeyed.keys()
             | self._split_from.keys()
             | self._renamed.keys()
-            | self._commit_noted.keys()
+            | self._noted_commit_entities.keys()
         ):
             group = groups.get(suffix, [])
             stored = self.opensearch_indexer.read_claims(
@@ -1450,7 +1447,7 @@ class IndexingManager:
                     split_from, self._derived_entities.get(suffix, {})
                 ),
                 *self._renamed.get(suffix, set()),
-                *self._commit_noted.get(suffix, set()),
+                *self._noted_commit_entities.get(suffix, set()),
             }
         )
 
@@ -1481,16 +1478,7 @@ class IndexingManager:
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
         vector_only = dict(self._vector_only)
-        self._rekeyed.clear()
-        self._dropped.clear()
-        self._vector_only.clear()
-        self._commit_entities.clear()
-        self._commit_noted.clear()
-        self._split_from.clear()
-        self._renamed.clear()
-        self._fresh.clear()
-        self._rank_only.clear()
-        self._derived_entities.clear()
+        self._reset_run_state()
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
@@ -1505,11 +1493,11 @@ class IndexingManager:
         note = self.opensearch_indexer.read_extraction_records(
             [_PENDING_COMMIT], suffix=suffix
         ).get(_PENDING_COMMIT)
-        ids = {i for i in (note or {}).get("entity_ids") or [] if isinstance(i, str)}
+        ids = _note_ids(note, "entity_ids")
         if note is not None:
-            self._commit_notes.add(suffix)
+            self._commit_note_suffixes.add(suffix)
         if ids:
-            self._commit_noted.setdefault(suffix, set()).update(ids)
+            self._noted_commit_entities.setdefault(suffix, set()).update(ids)
         return ids
 
     def note_pending_commit(self) -> None:
@@ -1522,52 +1510,79 @@ class IndexingManager:
         they were. The next commit of the suffix derives them again
         (:meth:`_merge_suffix`). Raises when a write fails, before anything
         is written."""
-        for suffix in sorted(self._commit_entities.keys() | self._commit_noted.keys()):
+        for suffix in sorted(
+            self._commit_entities.keys() | self._noted_commit_entities.keys()
+        ):
             ids = {
                 *self._commit_entities.get(suffix, set()),
-                *self._commit_noted.get(suffix, set()),
+                *self._noted_commit_entities.get(suffix, set()),
             }
             if not ids:
                 continue
-            stats = self.opensearch_indexer.write_extraction_records(
-                {_PENDING_COMMIT: {"entity_ids": sorted(ids)}}, suffix=suffix
-            )
-            if stats.failed_items:
-                raise DataProcessingError(
-                    f"Noting the pending commit of '{suffix}' failed: "
-                    f"{stats.errors[:1]}"
-                )
-            self._commit_notes.add(suffix)
+            self._write_note(_PENDING_COMMIT, suffix, {"entity_ids": sorted(ids)})
+            self._commit_note_suffixes.add(suffix)
 
     def clear_pending_commit(self) -> None:
         """Delete the commit notes of the suffixes this run noted or read
         (best-effort: one left only makes the next commit derive the
         entities again)."""
-        for suffix in sorted(self._commit_notes):
-            try:
-                self.opensearch_indexer.delete_extraction_records(
-                    [_PENDING_COMMIT], suffix=suffix
-                )
-            except NamespaceLeaseError:
-                raise
-            except Exception as e:  # noqa: BLE001 - a leftover note is harmless
-                logger.warning("Deleting the commit note of '%s' failed: %s", suffix, e)
-        self._commit_notes.clear()
+        for suffix in sorted(self._commit_note_suffixes):
+            self._delete_note(_PENDING_COMMIT, suffix)
+        self._commit_note_suffixes.clear()
 
     def discard_retired_ids(self) -> None:
-        """Keep the re-keyed items' old ids (their writes failed: deleting
-        them would lose the items)."""
-        self._rekeyed.clear()
-        self._dropped.clear()
-        self._vector_only.clear()
-        self._commit_entities.clear()
-        self._commit_noted.clear()
-        self._commit_notes.clear()
-        self._split_from.clear()
-        self._renamed.clear()
-        self._fresh.clear()
-        self._rank_only.clear()
-        self._derived_entities.clear()
+        """Keep the re-keyed items' old ids (their writes failed, or the
+        commit did not get to them: deleting them would lose the items), and
+        the stored notes (a retry finishes from them)."""
+        self._reset_run_state()
+        self._commit_note_suffixes.clear()
+
+    def _reset_run_state(self) -> None:
+        """Forget what this run's derivations decided: the re-keyed, split,
+        renamed, dropped and vector-only ids, the derived entities, the
+        commit's noted entities. Held in memory between a merge and its
+        writes only; a failed commit's, kept, would make the next run of a
+        reused pipeline delete old ids whose replacements were never
+        written."""
+        for state in (
+            self._rekeyed,
+            self._dropped,
+            self._vector_only,
+            self._commit_entities,
+            self._noted_commit_entities,
+            self._split_from,
+            self._renamed,
+            self._fresh,
+            self._rank_only,
+            self._derived_entities,
+        ):
+            state.clear()
+
+    def reset_run_state(self) -> None:
+        """Start a run with no state left from an earlier one (see
+        :meth:`discard_retired_ids`)."""
+        self.discard_retired_ids()
+
+    def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
+        """Write the note ``key`` (one extraction-store record of ``suffix``).
+        Raises when the write fails: the caller writes nothing before it."""
+        stats = self.opensearch_indexer.write_extraction_records(
+            {key: note}, suffix=suffix
+        )
+        if stats.failed_items:
+            raise DataProcessingError(
+                f"Writing the note '{key}' of '{suffix}' failed: {stats.errors[:1]}"
+            )
+
+    def _delete_note(self, key: str, suffix: str) -> None:
+        """Delete the note ``key`` of ``suffix`` (best-effort: one left only
+        makes a later run derive its items again)."""
+        try:
+            self.opensearch_indexer.delete_extraction_records([key], suffix=suffix)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a leftover note is harmless
+            logger.warning("Deleting the note '%s' of '%s' failed: %s", key, suffix, e)
 
     def _match_stored_names(
         self, suffix: str, entities: list[Entity]
@@ -1628,7 +1643,7 @@ class IndexingManager:
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
         community_ids: Collection[str] = (),
-        earlier_notes: Mapping[str, Mapping[str, Any]] | None = None,
+        earlier_note: Mapping[str, Any] | None = None,
     ) -> dict[str, IndexingStats]:
         """Strip removed text units from kept entities/relationships/claims of a
         suffix, and derive their content again from the text units left.
@@ -1655,11 +1670,9 @@ class IndexingManager:
         documents' registry rows and retries the removal.
 
         A strip that merges or re-keys notes its items first
-        (:meth:`_note_pending_strip`), with those of the ``earlier_notes``
-        (``{key: note}``) of a strip a retry finishes; the notes are deleted
-        once the old ids are.
+        (:meth:`_note_pending_strip`), with those of the ``earlier_note`` of
+        a strip a retry finishes; the note is deleted once the old ids are.
         """
-        earlier_notes = earlier_notes or {}
         results, noted = self._strip_shared(
             suffix,
             entity_ids=entity_ids,
@@ -1667,17 +1680,17 @@ class IndexingManager:
             text_unit_ids=text_unit_ids,
             claim_ids=claim_ids,
             community_ids=community_ids,
-            earlier_notes=earlier_notes,
+            earlier_note=earlier_note,
         )
         # A note is kept until the old ids are deleted (a retry needs it).
         if any(stats.failed_items for stats in results.values() if stats):
             self.discard_retired_ids()
             return results
         results = {**results, **self.delete_retired_ids()}
-        if (noted or earlier_notes) and not any(
+        if (noted or earlier_note is not None) and not any(
             s.failed_items for s in results.values() if s
         ):
-            self._clear_pending_strip(suffix, earlier_notes)
+            self._clear_pending_strip(suffix)
         return results
 
     def _note_pending_strip(
@@ -1687,29 +1700,16 @@ class IndexingManager:
         ``suffix``'s extraction store (kept until :meth:`_clear_pending_strip`),
         so a retry of the removal strips them again (:meth:`remove_text_units`).
         Raises when the write fails, before the strip writes anything."""
-        note = {"entity_ids": entity_ids, "relationship_ids": relationship_ids}
-        stats = self.opensearch_indexer.write_extraction_records(
-            {_PENDING_STRIP: note}, suffix=suffix
+        self._write_note(
+            _PENDING_STRIP,
+            suffix,
+            {"entity_ids": entity_ids, "relationship_ids": relationship_ids},
         )
-        if stats.failed_items:
-            raise DataProcessingError(
-                f"Noting the pending strip of '{suffix}' failed: {stats.errors[:1]}"
-            )
 
-    def _clear_pending_strip(
-        self, suffix: str, earlier_notes: Collection[str] = ()
-    ) -> None:
-        """Delete the note of :meth:`_note_pending_strip` and the
-        ``earlier_notes`` keys (best-effort: one left only makes a retry strip
-        the items again)."""
-        try:
-            self.opensearch_indexer.delete_extraction_records(
-                sorted({_PENDING_STRIP, *earlier_notes}), suffix=suffix
-            )
-        except NamespaceLeaseError:
-            raise
-        except Exception as e:  # noqa: BLE001 - a leftover note is harmless
-            logger.warning("Deleting the strip notes of '%s' failed: %s", suffix, e)
+    def _clear_pending_strip(self, suffix: str) -> None:
+        """Delete the note of :meth:`_note_pending_strip` (best-effort: one
+        left only makes a retry strip the items again)."""
+        self._delete_note(_PENDING_STRIP, suffix)
 
     def _strip_shared(
         self,
@@ -1720,11 +1720,11 @@ class IndexingManager:
         text_unit_ids: list[str],
         claim_ids: Sequence[str] = (),
         community_ids: Collection[str] = (),
-        earlier_notes: Mapping[str, Mapping[str, Any]] | None = None,
+        earlier_note: Mapping[str, Any] | None = None,
     ) -> tuple[dict[str, IndexingStats], bool]:
         """:meth:`remove_text_units_from_shared` before the old ids of the
         re-keyed items are deleted, and whether it noted them
-        (:meth:`_note_pending_strip`; with the ``earlier_notes`` items, so
+        (:meth:`_note_pending_strip`; with the ``earlier_note`` items, so
         the note it replaces is not lost)."""
         results: dict[str, IndexingStats] = {}
         noted = False
@@ -1821,11 +1821,10 @@ class IndexingManager:
                 # stripping them again on a retry gave a claim the wrong
                 # subject.
                 doing = "Noting the pending strip"
-                earlier = earlier_notes or {}
                 self._note_pending_strip(
                     suffix,
-                    sorted(merged | _noted(earlier, "entity_ids")),
-                    sorted(retired_edges | _noted(earlier, "relationship_ids")),
+                    sorted(merged | _note_ids(earlier_note, "entity_ids")),
+                    sorted(retired_edges | _note_ids(earlier_note, "relationship_ids")),
                 )
                 noted = True
             doing = "Reading the claims of re-keyed entities"
@@ -2180,10 +2179,12 @@ class IndexingManager:
             # finished (see _note_pending_strip): the items need not cite the
             # removed units any more. Read on every removal (one record): a
             # retry need not remove the same units.
-            notes = vector.read_extraction_records([_PENDING_STRIP], suffix=suffix)
+            note = vector.read_extraction_records([_PENDING_STRIP], suffix=suffix).get(
+                _PENDING_STRIP
+            )
             # A claim the earlier strip re-keyed onto a noted entity cites no
             # removed unit: it is found through its subject or object.
-            noted_claims = self._claims_about(suffix, _noted(notes, "entity_ids"))
+            noted_claims = self._claims_about(suffix, _note_ids(note, "entity_ids"))
         except Exception as e:  # noqa: BLE001 - reported as failed items
             logger.error("Finding the removed text units' items failed: %s", e)
             stats = IndexingStats(total_items=len(text_unit_ids))
@@ -2224,12 +2225,12 @@ class IndexingManager:
                 *(i for i, units in reports.items() if gone(units)),
             }
         )
-        if notes:
+        if note is not None:
             shared_entities = sorted(
-                (set(shared_entities) | _noted(notes, "entity_ids")) - set(doomed)
+                (set(shared_entities) | _note_ids(note, "entity_ids")) - set(doomed)
             )
             shared_relationships = sorted(
-                (set(shared_relationships) | _noted(notes, "relationship_ids"))
+                (set(shared_relationships) | _note_ids(note, "relationship_ids"))
                 - set(doomed)
             )
             shared_claims = sorted(
@@ -2273,12 +2274,14 @@ class IndexingManager:
                     text_unit_ids=text_unit_ids,
                     claim_ids=shared_claims,
                     community_ids=deleted_communities,
-                    earlier_notes=notes,
+                    earlier_note=note,
                 )
             )
-        elif notes and not any(s.failed_items for s in results.values() if s):
+        elif note is not None and not any(
+            s.failed_items for s in results.values() if s
+        ):
             # The noted items are gone: the earlier strip is finished.
-            self._clear_pending_strip(suffix, notes)
+            self._clear_pending_strip(suffix)
         return results
 
     def _vector_incident_relationship_ids(

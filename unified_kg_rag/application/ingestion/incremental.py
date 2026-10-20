@@ -530,48 +530,55 @@ class IncrementalIndexer:
         named are deleted (``IndexingManager.collect_extraction_records``).
         """
         check_write_fence()
-        merged = self.indexing_manager.merge_with_existing_graph(
-            entities, relationships, text_units or ()
-        )
-        entities, relationships = merged.entities, merged.relationships
-        communities, claims = _remap_references(
-            communities, claims, merged.id_remap_by_suffix
-        )
-        self.community_drift = self._measure_drift(
-            entities, communities, unclustered_entities
-        )
-        claims = self.indexing_manager.merge_with_stored_claims(
-            claims, text_units or ()
-        )
-        # The merge's split and re-key decisions are in memory only: noted
-        # before the first write, so a killed commit's successor finishes them.
-        self.indexing_manager.note_pending_commit()
-        results = self.indexing_manager.index_delta(
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            community_reports=community_reports,
-            claims=claims,
-        )
-        # The items the merge re-keyed to follow their current name are now
-        # written under the new ids: delete the old ones, unless a write
-        # failed (deleting them would lose the item; the next run re-keys it).
-        if any(stats.failed_items for stats in results.values() if stats):
+        # The merge's re-key, split and drop decisions are held in memory
+        # until the old ids are deleted: whatever stops the commit (a failed
+        # read or note, a stop, a lost lease) leaves them out of the next run.
+        try:
+            merged = self.indexing_manager.merge_with_existing_graph(
+                entities, relationships, text_units or ()
+            )
+            entities, relationships = merged.entities, merged.relationships
+            communities, claims = _remap_references(
+                communities, claims, merged.id_remap_by_suffix
+            )
+            self.community_drift = self._measure_drift(
+                entities, communities, unclustered_entities
+            )
+            claims = self.indexing_manager.merge_with_stored_claims(
+                claims, text_units or ()
+            )
+            # The merge's split and re-key decisions are in memory only: noted
+            # before the first write, so a killed commit's successor finishes them.
+            self.indexing_manager.note_pending_commit()
+            results = self.indexing_manager.index_delta(
+                text_units=text_units,
+                entities=entities,
+                relationships=relationships,
+                communities=communities,
+                community_reports=community_reports,
+                claims=claims,
+            )
+            # The items the merge re-keyed to follow their current name are now
+            # written under the new ids: delete the old ones, unless a write
+            # failed (deleting them would lose the item; the next run re-keys it).
+            if any(stats.failed_items for stats in results.values() if stats):
+                self.indexing_manager.discard_retired_ids()
+            else:
+                # Cleanup, not the delta: a failure leaves an old copy beside the
+                # new one (the next run that touches it re-keys it again).
+                retired = self.indexing_manager.delete_retired_ids()
+                failed = sum(stats.failed_items for stats in retired.values())
+                if not failed:
+                    self.indexing_manager.clear_pending_commit()
+                if failed:
+                    logger.warning(
+                        "Deleting %d re-keyed items' old ids failed; their old "
+                        "copies stay until a run touches them again",
+                        failed,
+                    )
+        except BaseException:
             self.indexing_manager.discard_retired_ids()
-        else:
-            # Cleanup, not the delta: a failure leaves an old copy beside the
-            # new one (the next run that touches it re-keys it again).
-            retired = self.indexing_manager.delete_retired_ids()
-            failed = sum(stats.failed_items for stats in retired.values())
-            if not failed:
-                self.indexing_manager.clear_pending_commit()
-            if failed:
-                logger.warning(
-                    "Deleting %d re-keyed items' old ids failed; their old "
-                    "copies stay until a run touches them again",
-                    failed,
-                )
+            raise
         owners = artifact_owners(
             lineages,
             [

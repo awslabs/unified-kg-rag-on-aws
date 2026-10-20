@@ -1727,6 +1727,10 @@ class IndexingStage(_RegistryStage):
 
         self.indexing_manager.initialize()
         self.indexing_manager.underived_items = 0
+        # A pipeline can be run again (library use): nothing an earlier run's
+        # derivation decided carries over (a failed commit's re-keys would
+        # delete old ids whose replacements were never written).
+        self.indexing_manager.reset_run_state()
 
         text_units = _with_record_keys(
             self.config, context, context.translated_units or context.text_units
