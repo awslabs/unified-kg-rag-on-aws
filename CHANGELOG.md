@@ -1301,7 +1301,7 @@ changed once with the full-config keys (#332).
   commit's re-key, split and drop decisions until the next run, which
   deleted a valid claim. The commit forgets them whatever stops it, and
   every indexing run starts without them; a stored commit note still
-  finishes a killed commit's split on the next run (#PR).
+  finishes a killed commit's split on the next run (#394).
 - Tracing: the `kg_rag.ingestion.run` span of a stopped or crashed run
   carries `kg_rag.pipeline_id` too (the id to resume with); it was set only
   from a returned context. The operations runbook now says a model call
