@@ -1185,6 +1185,25 @@ def test_a_strip_note_carries_over_the_items_of_an_earlier_note(
 
 
 # Sequences the cycle-45 fuzz found (each diverged from a full build).
+RUNS_GAINING = [
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d3.txt": "Acme LLC and Acme Inc trade parts 1. Acme and Acme Corp and ACME trade goods 3.",
+        "d5.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d5.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+        "d2.txt": "Acme and ACME trade cash 1. Acme Inc trade cash 2.",
+        "d7.txt": "Depot and Acme LLC trade parts 3.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d2.txt": "Acme and ACME trade cash 1. Acme Inc trade cash 2.",
+        "r6.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+        "r0.txt": "Depot and Acme LLC trade parts 3.",
+    },
+]
 RUNS_DUPKEY = [
     {
         "d0.txt": "Buyer and Acme Inc trade goods 1. Acme LLC and Acme Corp trade goods 2. Depot and Acme Inc trade cash 2.",
@@ -1226,6 +1245,31 @@ RUNS_VECTOR_ONLY = [
         "d2.txt": "Buyer and Initech Corp trade parts 2. Acme Inc trade parts 1.",
     },
 ]
+
+
+def test_a_strip_killed_between_phases_keeps_an_entity_that_gains_units(
+    tmp_path: Path,
+) -> None:
+    # Removing d3.txt (d2.txt and d7.txt come in) strips a spelling that now
+    # cites a unit of another one (its statement merged in). The strip wrote
+    # that entity last, after the edges re-pointed at it; killed in between,
+    # and run next on an edited corpus, the edge citing the kept unit hung
+    # on a vertex citing only removed units and went with it.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    runs = RUNS_GAINING
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("_run_indexing_phase", 2, True, IndexingManager),
+        gleaning=True,
+        resume=False,
+    )
+
+    assert incremental == full
 
 
 def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(

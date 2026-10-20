@@ -1735,11 +1735,24 @@ class IndexingManager:
 
         # Written so an interruption never hides an edge still citing a
         # removed text unit: a retry finds the edges through the entities
-        # that cite it, so those are rewritten last. A re-keyed entity's new
-        # vertex comes first (its edges are re-pointed at it); its old
-        # vertex still cites the text units until it is deleted.
-        rekeyed = [e for e in new_entities if e.id not in graph_copy]
-        kept = [e for e in new_entities if e.id in graph_copy]
+        # that cite it, so those are rewritten last (or, on a resumed
+        # removal, by text unit). A re-keyed entity's new vertex comes first
+        # (its edges are re-pointed at it); its old vertex still cites the
+        # text units until it is deleted.
+        # A kept entity that now cites a text unit its graph copy does not
+        # (another spelling's statement merged in) comes first too, before
+        # the edges re-pointed at it: written last, a run killed in between
+        # left an edge citing a kept unit on a vertex citing only removed
+        # ones, which the next removal deleted with the edge.
+        stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
+        first = {
+            e.id
+            for e in new_entities
+            if e.id not in graph_copy
+            or set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+        }
+        rekeyed = [e for e in new_entities if e.id in first]
+        kept = [e for e in new_entities if e.id not in first]
         relationship_tasks = [
             IndexingTask(
                 self.neptune_indexer.upsert_relationships,
