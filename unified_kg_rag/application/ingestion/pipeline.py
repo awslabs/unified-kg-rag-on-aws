@@ -58,7 +58,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
-from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -303,6 +302,8 @@ class DataIngestionPipeline:
                 both given.
         """
         self.config = config
+        # The write lease of the latest run (see _namespace_lease).
+        self._lease: NamespaceLease | None = None
         # Before any stage builds a model, so the factories attach the tracing
         # callback (no-op unless observability.enabled).
         configure_observability(config.observability)
@@ -784,31 +785,45 @@ class DataIngestionPipeline:
                 seconds,
                 longest,
             )
-        providers = self.config.providers
         self._lease = NamespaceLease(
             self._doc_status,
             namespace,
             seconds,
             interrupt=self._raise_if_stopping,
             in_process_write_seconds=self.config.search.store_timeout_seconds,
-            in_process_stores=all(
-                kind == SQLITE
-                for kind in (
-                    providers.graph.kind,
-                    providers.vector.kind,
-                    providers.doc_status.kind,
-                )
-            ),
+            in_process_stores=self._stores_in_process(),
         )
         return self._lease
+
+    def _stores_in_process(self) -> bool:
+        """Whether every store the run writes (the registry, the graph and
+        the vector store) is embedded in this process, told by the adapters
+        the run builds (their ``in_process``), not by the configured kinds:
+        an injected remote store is not embedded whatever the config says."""
+        if getattr(self._doc_status, "in_process", False) is not True:
+            return False
+        for build in (
+            self.providers.build_graph_indexer,
+            self.providers.build_vector_indexer,
+        ):
+            indexer = build()
+            if getattr(indexer, "in_process", False) is not True:
+                # An embedded one opens nothing until it writes; a remote
+                # one may hold a client.
+                try:
+                    indexer.close()
+                except Exception as e:  # noqa: BLE001 - only a probe
+                    logger.debug("Error closing %s: %s", type(indexer).__name__, e)
+                return False
+        return True
 
     @property
     def next_run_writes_from(self) -> float:
         """After a run: when the next run on its namespace may write first
         (epoch seconds; 0 when at once). A stopped run with writes possibly
-        in flight makes the next run wait (see ``namespace_lease``)."""
-        lease = getattr(self, "_lease", None)
-        return lease.next_writes_from if lease is not None else 0.0
+        in flight, its own or those of the run whose expired lease it took
+        over, makes the next run wait (see ``namespace_lease``)."""
+        return self._lease.next_writes_from if self._lease is not None else 0.0
 
     def _raise_if_stopping(self) -> None:
         """Raise ``PipelineInterrupted`` once a stop was requested (a takeover

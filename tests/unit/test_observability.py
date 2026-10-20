@@ -424,6 +424,33 @@ def test_a_stopped_or_crashed_ingestion_run_span_names_its_pipeline(
     assert run.status.status_code == StatusCode.ERROR
 
 
+def test_a_reused_pipeline_does_not_name_its_last_run(tracing: Tracing) -> None:
+    # A run that fails before it resolves its id must not report the id of
+    # the pipeline's previous run (the CLI resumes a stopped run by it).
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    exporter = tracing()
+    pipeline = object.__new__(DataIngestionPipeline)
+    ids = iter(["p-1", None])
+
+    def _run(*_: Any) -> PipelineContext:
+        if (resolved := next(ids)) is not None:
+            pipeline.pipeline_id = resolved
+        raise RuntimeError("boom")
+
+    pipeline._run = _run  # type: ignore[method-assign]
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            pipeline.run(".")
+    assert pipeline.pipeline_id is None
+    first, second = sorted(
+        (s for s in exporter.get_finished_spans() if s.name == "kg_rag.ingestion.run"),
+        key=lambda s: s.start_time or 0,
+    )
+    assert _attrs(first)["kg_rag.pipeline_id"] == "p-1"
+    assert "kg_rag.pipeline_id" not in _attrs(second)
+
+
 def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 

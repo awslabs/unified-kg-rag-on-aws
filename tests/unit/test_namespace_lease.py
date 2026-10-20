@@ -304,8 +304,30 @@ def test_a_run_stopped_during_its_takeover_wait_hands_the_wait_on(
     holder = store.lease_holder("ns")
     assert holder is not None and holder[0] == b.owner
     assert holder[1] == pytest.approx(a_expiry, abs=0.5)
+    # What B's stop message and JSON status give as C's first write time.
+    assert b.next_writes_from == b.writes_from
     with NamespaceLease(store, "ns", 60) as c:
         assert c.writes_from == pytest.approx(b.writes_from, abs=0.5)
+
+
+@pytest.mark.parametrize("handed_on", [True, False])
+def test_the_stop_warning_names_whose_writes_may_be_in_flight(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, handed_on: bool
+) -> None:
+    # A run stopped during its takeover wait wrote nothing: the writes the
+    # next run waits for are those of the run it took the lease over from.
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    if handed_on:
+        store.leases["ns"] = ("frozen-run", time.time() - 1)
+    with pytest.raises(PipelineInterrupted):
+        with NamespaceLease(store, "ns", 60):
+            raise PipelineInterrupted(15)
+    (warning,) = [r.getMessage() for r in caplog.records if "Gave up" in r.getMessage()]
+    whose = "of the run whose expired lease" if handed_on else "of this run"
+    assert whose in warning
 
 
 def test_a_stage_start_does_not_wait_for_the_takeover(

@@ -193,9 +193,9 @@ def test_a_lost_lease_stops_the_next_neptune_batch(mocker) -> None:
 def test_the_embedded_engine_swaps_no_alias_after_a_lost_lease(
     tmp_path: Path, phase: str
 ) -> None:
-    # The embedded search engine's requests do not check the fence (only
-    # OpenSearch's connection does): the indexer's own check before the swap
-    # is what keeps a run that lost its lease from swapping in its index.
+    # The indexer's own check before the swap, and the embedded engine's
+    # check of every write transaction, keep a run that lost its lease from
+    # swapping in its index.
     from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
     from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
@@ -1082,3 +1082,104 @@ def test_a_stage_start_does_not_wait_for_the_takeover(
         pipe._execute_pipeline_stages(context, None)  # type: ignore[arg-type]
         assert time.time() - started < 2
     assert executed == ["loading", "parsing"]
+
+
+def _stopped_in_process_run() -> contextvars.Context:
+    """The context of a worker thread a stopped run left behind, the run's
+    stores all in-process (so the stop released the lease)."""
+    store = FakeDocStatusStore()
+    with pytest.raises(KeyboardInterrupt):
+        with NamespaceLease(store, "ns", 60, in_process_stores=True):
+            worker_context = contextvars.copy_context()
+            raise KeyboardInterrupt
+    assert store.lease_holder("ns") is None
+    return worker_context
+
+
+def test_an_orphaned_worker_writes_nothing_to_the_embedded_graph(
+    tmp_path: Path,
+) -> None:
+    # Old behaviour: the SQLite graph store checked no fence, so the pool
+    # workers a stop left running kept writing for the seconds the process
+    # took to exit, after the stop released the lease to the next run.
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+
+    indexer = SQLiteGraphIndexer(Config(), tmp_path / "graph.sqlite3")
+    worker_context = _stopped_in_process_run()
+    with pytest.raises(NamespaceLeaseError, match="released"):
+        worker_context.run(indexer.upsert_entities, [Entity(id="e1", name="E1")])
+    assert indexer.read_entities(["e1"]) == []
+
+
+@pytest.mark.parametrize("write", ["bulk_index", "bulk_update", "bulk_delete"])
+def test_an_orphaned_worker_writes_nothing_to_the_embedded_engine(
+    tmp_path: Path, write: str
+) -> None:
+    # Old behaviour: the embedded search engine's writes checked no fence.
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+
+    engine = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    engine.create_index("docs-1", {"mappings": {"properties": {}}})
+    engine.bulk_index("docs-1", [{"id": "d1", "text": "old"}])
+    actions: dict[str, list[Any]] = {
+        "bulk_index": [{"id": "d2", "text": "new"}],
+        "bulk_update": [{"id": "d1", "text": "new"}],
+        "bulk_delete": ["d1"],
+    }
+    worker_context = _stopped_in_process_run()
+    with pytest.raises(NamespaceLeaseError, match="released"):
+        worker_context.run(getattr(engine, write), "docs-1", actions[write])
+    hits = engine.search(index="docs-1", body={"query": {"match_all": {}}})
+    assert [h["_source"]["text"] for h in hits["hits"]["hits"]] == ["old"]
+
+
+class _ReportingLock:
+    """A lock that says when a thread starts waiting for it."""
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.waiting = threading.Event()
+
+    def __enter__(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            self.waiting.set()
+        self.lock.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self.lock.release()
+
+
+def test_an_embedded_write_waiting_for_the_lock_rechecks_the_fence(
+    tmp_path: Path,
+) -> None:
+    # A write that passed the fence and then waited for the database lock
+    # while the run gave its lease up must not write once it gets the lock:
+    # the fence is checked again once the lock is held.
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+
+    indexer = SQLiteGraphIndexer(Config(), tmp_path / "graph.sqlite3")
+    lock = _ReportingLock()
+    indexer.store._lock = lock  # type: ignore[assignment]
+    store = FakeDocStatusStore()
+    errors: list[BaseException] = []
+
+    def write() -> None:
+        try:
+            indexer.upsert_entities([Entity(id="e1", name="E1")])
+        except BaseException as e:  # noqa: BLE001 - asserted below
+            errors.append(e)
+
+    with lock:
+        with NamespaceLease(store, "ns", 60, in_process_stores=True):
+            worker = threading.Thread(
+                target=contextvars.copy_context().run, args=(write,)
+            )
+            worker.start()
+            assert lock.waiting.wait(5)
+    worker.join(5)
+    assert [type(e) for e in errors] == [NamespaceLeaseError]
+    assert indexer.read_entities(["e1"]) == []

@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from opensearchpy.exceptions import NotFoundError
@@ -75,6 +75,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
     StoreTimeoutError,
 )
+from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
 
@@ -259,6 +260,9 @@ def _validate_mappings(body: dict[str, Any]) -> None:
 class SQLiteSearchEngine:
     """The ``SearchEngineClient`` of an embedded SQLite file (see the module doc)."""
 
+    # Written in this process (see DataIngestionPipeline._stores_in_process).
+    in_process: ClassVar[bool] = True
+
     def __init__(self, path: str | Path, *, timeout_seconds: float = 30.0) -> None:
         """Args:
         path: Database file (created on first use with its directory), or
@@ -322,11 +326,14 @@ class SQLiteSearchEngine:
 
     @contextmanager
     def _transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
+        """A write transaction, fenced as ``SQLiteGraphStore.transaction``."""
+        check_write_fence()
         with (
             self._lock,
             self._errors(operation),
             write_transaction(self.connection) as connection,
         ):
+            check_fences_held()
             yield connection
 
     @contextmanager

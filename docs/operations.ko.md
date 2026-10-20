@@ -283,9 +283,10 @@ NamespaceLeaseError: Index namespace '<namespace>' is being written by
   (`Took over the expired write lease ... the first write waits until ...`)을 남깁니다.
   이전 임대가 만료된 뒤 최대 약 3분(180초에 5초 여유)입니다. 중지된 실행의 메시지가 언제까지인지
   알려 줍니다(`the next run on its namespace waits until ...`). SIGTERM을 받으면 기다리기를
-  멈춥니다. 모든 저장소가 내장(`backend: local`, SQLite)이면 중지된 실행의 쓰기는 프로세스와 함께
-  끝나므로 임대를 놓고, 넘겨받기는 저장소 쓰기 한 번(`search.store_timeout_seconds`)까지만
-  기다립니다. 요청을 이미 만든 채 그보다 오래 멈춘 프로세스는 여전히 새 보유자 뒤에 쓸 수
+  멈춥니다. 모든 저장소가 내장(`backend: local`, SQLite)이면 중지된 실행은 임대를 놓습니다. 내장
+  저장소의 쓰기는 모두 데이터베이스 잠금을 쥔 뒤 임대를 확인하므로, 중지 뒤에 남은 쓰기는 다음
+  실행의 쓰기 뒤에 도착하지 않고 실패합니다. 넘겨받기는 저장소 쓰기 한
+  번(`search.store_timeout_seconds`)까지만 기다립니다. 요청을 이미 만든 채 그보다 오래 멈춘 프로세스는 여전히 새 보유자 뒤에 쓸 수
   있으며, 이를 막으려면 저장소 자체가 쓰기를 차단해야 합니다. DynamoDB에서 TTL이 이미 지운
   만료된 임대 항목은 놓은 것으로 읽힙니다(TTL 삭제는 보통 3분보다 훨씬 오래 걸림).
 - **라이브러리로 쓸 때의 오류.** 실패한 인덱싱 단계는 스레드가 이미 보낸 저장소 요청이 끝날

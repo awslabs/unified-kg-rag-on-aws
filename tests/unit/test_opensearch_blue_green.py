@@ -12,8 +12,10 @@ swap/cleanup/rollback behavior is verified without AWS.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 from fnmatch import fnmatchcase
+from types import SimpleNamespace
 
 import pytest
 
@@ -315,7 +317,11 @@ def test_clear_does_not_sleep(config, monkeypatch) -> None:
     def _no_sleep(_seconds: float) -> None:
         raise AssertionError("clear slept")
 
-    monkeypatch.setattr(opensearch_indexer.time, "sleep", _no_sleep)
+    # The indexer module's own time, not the time module every thread sleeps
+    # with.
+    monkeypatch.setattr(
+        opensearch_indexer, "time", SimpleNamespace(time=time.time, sleep=_no_sleep)
+    )
     live = f"{_ALIAS}-20260101000000"
     indexer = _indexer(config, _FakeCluster({live: {_ALIAS}}))
     indexer.clear(["default"])

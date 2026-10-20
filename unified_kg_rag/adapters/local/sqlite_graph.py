@@ -41,6 +41,7 @@ from unified_kg_rag.adapters.local.sqlite_util import (
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import StoreConfigurationError, StoreTimeoutError
+from unified_kg_rag.shared.write_fence import check_fences_held, check_write_fence
 
 logger = get_logger(__name__)
 
@@ -183,12 +184,18 @@ class SQLiteGraphStore:
 
     @contextmanager
     def transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
-        """A write transaction, rolled back when the block raises."""
+        """A write transaction, rolled back when the block raises. Fenced
+        like a store request (``shared.write_fence``): the takeover wait
+        before the lock, the fence once the database's write lock is held,
+        so a write of a run that gave its lease up stops, and one past the
+        check commits before the next holder's first write can begin."""
+        check_write_fence()
         with (
             self._lock,
             self.errors(operation),
             write_transaction(self.connection) as connection,
         ):
+            check_fences_held()
             yield connection
 
     # --- reads (the caller holds ``read`` or ``transaction``) ----------------

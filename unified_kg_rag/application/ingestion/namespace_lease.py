@@ -42,8 +42,9 @@ froze rather than released it) therefore holds its first write until
 then (``check``), so a late write of the previous holder lands before
 this run's writes, which overwrite it, rather than after them. A run that
 is stopped gives its lease up the same way, as expired (its pools do not
-wait for the requests in flight on a stop); a run that ended or failed
-releases it, and a released lease needs no wait. The registry writes
+wait for the requests in flight on a stop; with every store embedded,
+whose writes check the fence under the database's lock, it releases it);
+a run that ended or failed releases it, and a released lease needs no wait. The registry writes
 (DynamoDB) are fenced per attempt too, and one attempt counts in the
 longest request.
 """
@@ -118,9 +119,10 @@ class NamespaceLease:
     ) -> None:
         """``interrupt`` raises when the run is to stop; a takeover wait
         calls it (see ``check``). ``in_process_stores``: every store the run
-        writes is embedded in its process (the local SQLite stores), so a
-        stopped process leaves no write in flight and a stop releases the
-        lease (see ``__exit__``), and a late write of a frozen holder is
+        writes is embedded in its process (the local SQLite stores), whose
+        writes check this fence once they hold the database's lock, so a
+        stop leaves no write to wait for and releases the lease (see
+        ``__exit__``), and a late write of a frozen holder is
         one in-process write, bounded by ``in_process_write_seconds`` (the
         embedded stores' busy timeout) rather than by a store request."""
         self.store = store
@@ -202,14 +204,17 @@ class NamespaceLease:
         # A stop (is_stop: SIGTERM's PipelineInterrupted, Ctrl-C, SystemExit)
         # may leave writes past the fence in flight: give the lease up as
         # expired (owner kept), so the next run waits for them as after a
-        # crash (see __enter__). Not with in-process stores: the stopped
-        # process takes its writes with it. A run that ended or failed has
-        # none left (its pools waited) and releases it.
+        # crash (see __enter__). Not with in-process stores: a write of theirs
+        # checks the fence once it holds the database's lock, so the workers
+        # a stop left running fail at their next write, and one already past
+        # the check commits before the next run can write. A run that ended
+        # or failed has none left (its pools waited) and releases it.
         # A run that ends during its takeover wait (stopped, or failed before
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
         now = time.time()
-        if self.writes_from > now:
+        handed_on = self.writes_from > now
+        if handed_on:
             self._give_up = functools.partial(self._expire, self._previous_expiry)
             self.next_writes_from = self.writes_from
         elif is_stop(exc_type) and not self.in_process_stores:
@@ -219,10 +224,15 @@ class NamespaceLease:
             self._give_up = self._release
         if self.next_writes_from > now:
             logger.warning(
-                "Gave up the write lease of namespace '%s' with writes possibly "
-                "still in flight: the next run on it waits until %s before its "
-                "first write",
+                "Gave up the write lease of namespace '%s' with writes %s "
+                "possibly still in flight: the next run on it waits until %s "
+                "before its first write",
                 self.namespace,
+                (
+                    "of the run whose expired lease this one took over"
+                    if handed_on
+                    else "of this run"
+                ),
                 _when(self.next_writes_from),
             )
         self._stop.set()

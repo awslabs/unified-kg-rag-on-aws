@@ -310,8 +310,10 @@ other run ended.
   expired. The stopped run's own message says until when (`the next run on
   its namespace waits until ...`). A SIGTERM ends the wait. With every
   store embedded (`backend: local`, SQLite) a stopped run releases its
-  lease, as its writes end with its process, and a takeover waits at most
-  one store write (`search.store_timeout_seconds`). A process frozen for longer than that,
+  lease: every embedded write checks the lease once it holds the database's
+  lock, so a write the stop left running fails instead of landing after
+  the next run's, and a takeover waits at most one store write
+  (`search.store_timeout_seconds`). A process frozen for longer than that,
   with a request already built, can still write after the new holder; only
   a write fenced by the store itself would rule that out. With DynamoDB, an
   expired lease item its TTL already deleted reads as released (TTL

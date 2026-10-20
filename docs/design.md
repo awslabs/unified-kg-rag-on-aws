@@ -697,8 +697,9 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
   writes cannot be conditioned on the registry, so the margin is the fence.
   The DynamoDB registry checks it before every attempt of a write request
   (a botocore before-send hook), not once per call, so its re-sends and
-  retries stop with the lease too; SQLite writes are one local transaction
-  right after the check.
+  retries stop with the lease too; an embedded (SQLite) write transaction
+  checks it before it waits for the database's write lock and again once it
+  holds it.
 - **Takeover wait.** A write past the fence lands by the holder's expiry plus
   the longest request (its attempts are bounded by the request timeout), so
   a run that takes over an expired, unreleased lease holds its first write
@@ -708,9 +709,12 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
   waited for their writes), and the next run writes at once. A stopped run
   (SIGTERM or Ctrl-C) leaves it expired, owner kept, since its pools do not
   wait for the requests in flight: the next run waits as after a crash, and
-  the stop message says until when. With every store embedded (SQLite) the
-  stopped process takes its writes with it, so the lease is released, and a
-  takeover waits at most one store write (`search.store_timeout_seconds`). A
+  the stop message says until when. With every store embedded (SQLite; told
+  by the adapters the run builds, so an injected remote store counts as
+  remote) the lease is released: a worker the stop left running fails at its next write
+  transaction, and one already holding the database's lock commits before
+  the next run can write that store; a takeover waits at most one store
+  write (`search.store_timeout_seconds`). A
   run that ends during its own takeover wait hands the wait on: the lease
   goes back expired at the previous holder's expiry.
 - **Checkpoint.** The lease is taken before the S3 checkpoint is downloaded
