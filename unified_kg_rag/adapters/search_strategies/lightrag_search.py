@@ -405,11 +405,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         """Opt-in Neptune neighbourhood of the entity hits + relationship endpoints.
 
         Every seed (entity hits, then endpoints in first-seen order, deduped)
-        is expanded and kept. The graph retriever splits its fetch budget
-        (``top_k * retrieval_multiplier * traversal_fetch_multiplier``) across
-        the seeds, so with many seeds each fetches as few as one neighbour,
-        but together they still fetch at least that budget for the
-        ``top_k * retrieval_multiplier`` neighbour slots it keeps.
+        is expanded and kept. The expansion (the graph walk, or under a
+        document filter the walk over the relationships index) splits its
+        fetch budget (``top_k * retrieval_multiplier *
+        traversal_fetch_multiplier``) across the seeds, so with many seeds
+        each reaches as few as one neighbour, but together they still reach
+        up to that budget for the ``top_k * retrieval_multiplier`` neighbour
+        slots it keeps.
         """
         entity_ids = [
             str((hit.metadata or {}).get("id") or hit.source or "")
@@ -583,15 +585,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         limit = self._chunk_stream_top_k(query.top_k)
         exclude = set(exclude or ())
         if filters := self._text_unit_filters(query.filters):
-            exclude |= await self._failing_lineage_units(
-                query, [*entity_results, *relationship_results], filters, exclude
+            chunk_ids = await self._passing_linked_chunk_ids(
+                query, entity_results, relationship_results, filters, limit, exclude
             )
-        chunk_ids = self._collect_linked_chunk_ids(
-            entity_results,
-            relationship_results,
-            limit=limit,
-            exclude=exclude,
-        )
+        else:
+            chunk_ids = self._collect_linked_chunk_ids(
+                entity_results, relationship_results, limit=limit, exclude=exclude
+            )
         if not chunk_ids:
             return {}
         search_query = SearchQuery(
@@ -609,32 +609,58 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             return {}
         return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
 
-    async def _failing_lineage_units(
+    async def _passing_linked_chunk_ids(
         self,
         query: SearchQuery,
-        hits: list[RetrievalResult],
+        entity_results: list[RetrievalResult],
+        relationship_results: list[RetrievalResult],
         filters: dict[str, Any],
+        limit: int,
         exclude: set[str],
-    ) -> set[str]:
-        """The lineage chunks of ``hits`` that fail a filter on text units.
+    ) -> list[str]:
+        """``_collect_linked_chunk_ids`` under a filter on text units: the
+        slots go to chunks that pass.
 
         Each hit gets at most ``related_chunk_number`` chunks. The first
         round checks (ids only) each hit's first ``related_chunk_number``
         chunks, all hits in one request; the hits still short of their slots
         then have their whole remaining lineage checked, again in one
-        request. The slots go to chunks that pass, a hub hit's long lineage
-        does not stop the check before the other hits' are asked, and a
-        selective filter costs two requests, not one per round of a few ids.
-        Chunks not checked are past every hit's slots.
+        request. So a hub hit's long lineage does not stop the check before
+        the other hits' are asked, and a selective filter costs two requests,
+        not one per round of a few ids. The selection then keeps a chunk on
+        its first citing hit only and polling hands a short hit's slots to
+        the others, so a slot can still land on a chunk neither round asked:
+        those are checked and the chunks selected again, until every selected
+        chunk is known. A failed check counts what it asked as failing
+        (fail-closed) and ends the checks; the slots then go to the next
+        chunks, fetched under the filter (which the fetch applies too).
         """
         cap = self._lightrag_config.related_chunk_number
         lineages = [
             [unit for unit in lineage if unit not in exclude]
-            for lineage in self._lineages(hits)
+            for lineage in self._lineages([*entity_results, *relationship_results])
         ]
         prefix = self._os_config.text_units_index_prefix
         passed: set[str] = set()
         checked: set[str] = set()
+        failing = set(exclude)
+
+        def select() -> list[str]:
+            return self._collect_linked_chunk_ids(
+                entity_results, relationship_results, limit=limit, exclude=failing
+            )
+
+        async def check(ids: list[str]) -> bool:
+            known = len(checked)
+            passed.update(
+                await self._ids_passing(query, prefix, ids, filters, checked=checked)
+            )
+            if len(checked) == known:  # the check failed: fail-closed
+                failing.update(ids)
+                return False
+            failing.update(checked - passed)
+            return True
+
         for second in (False, True):
             if second:  # the rest of each hit's lineage that is still short
                 parts = [
@@ -649,15 +675,15 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 for u in dict.fromkeys(u for part in parts for u in part)
                 if u not in checked
             ]
-            if not ask:
-                continue
-            known = len(checked)
-            passed |= await self._ids_passing(
-                query, prefix, ask, filters, checked=checked
-            )
-            if len(checked) == known:  # the check failed: fail-closed
-                return checked - passed | set(ask)
-        return checked - passed
+            if ask and not await check(ask):
+                return select()
+        selected = select()
+        while ask := [u for u in selected if u not in checked]:
+            ok = await check(ask)
+            selected = select()
+            if not ok:
+                break
+        return selected
 
     @staticmethod
     def _relationship_endpoint_ids(
