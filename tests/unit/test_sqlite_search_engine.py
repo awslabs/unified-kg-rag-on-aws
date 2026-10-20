@@ -624,6 +624,27 @@ def test_source_excludes_and_vectors(engine) -> None:
         assert set(hit["_source"]) == {"attributes", "vec"}
 
 
+def test_a_source_filter_matches_each_field_name_once(engine, monkeypatch) -> None:
+    # Every field of every hit was matched against every pattern: a page of
+    # hits repeats the same few names, so each is answered once a search,
+    # and a plain name by set membership.
+    calls: list[tuple[str, str]] = []
+    real = engine_module.fnmatchcase
+
+    def counted(name: str, pattern: str) -> bool:
+        calls.append((name, pattern))
+        return real(name, pattern)
+
+    monkeypatch.setattr(engine_module, "fnmatchcase", counted)
+    hits = _search(
+        engine, {"match_all": {}}, body={"_source": {"excludes": ["*_l2", "vec_ip"]}}
+    )["hits"]["hits"]
+    assert len(hits) > 1
+    assert all("vec_l2" not in h["_source"] and "vec" in h["_source"] for h in hits)
+    assert calls and len(calls) == len(set(calls))
+    assert {pattern for _, pattern in calls} == {"*_l2"}
+
+
 def test_id_lookups_read_sql_without_loading_the_index(engine, monkeypatch) -> None:
     monkeypatch.setattr(
         engine, "_load", lambda index: pytest.fail("loaded the index for an id lookup")

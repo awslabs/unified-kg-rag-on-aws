@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import numpy as np
 from opensearchpy.exceptions import NotFoundError
@@ -151,19 +151,42 @@ def _is_pattern(name: str) -> bool:
     return any(ch in name for ch in "*?[")
 
 
-class _SourceFilter(NamedTuple):
-    """The top-level ``_source`` fields a search returns: those matching an
-    ``includes`` pattern (all without one) and no ``excludes`` pattern."""
+class _Patterns:
+    """Field names and ``*?[`` patterns: plain names match by set membership."""
 
-    includes: list[str] | None
-    excludes: list[str]
+    __slots__ = ("names", "patterns")
+
+    def __init__(self, values: list[str]) -> None:
+        self.names = {value for value in values if not _is_pattern(value)}
+        self.patterns = [value for value in values if _is_pattern(value)]
+
+    def match(self, field: str) -> bool:
+        return field in self.names or any(
+            fnmatchcase(field, pattern) for pattern in self.patterns
+        )
+
+
+class _SourceFilter:
+    """The top-level ``_source`` fields a search returns: those matching an
+    ``includes`` pattern (all without one) and no ``excludes`` pattern.
+
+    Asked per field of every hit, so each field name's answer is kept for
+    the search (a page of hits repeats the same few names)."""
+
+    __slots__ = ("_excludes", "_includes", "_kept")
+
+    def __init__(self, includes: list[str] | None, excludes: list[str]) -> None:
+        self._includes = None if includes is None else _Patterns(includes)
+        self._excludes = _Patterns(excludes)
+        self._kept: dict[str, bool] = {}
 
     def keeps(self, field: str) -> bool:
-        if self.includes is not None and not any(
-            fnmatchcase(field, pattern) for pattern in self.includes
-        ):
-            return False
-        return not any(fnmatchcase(field, pattern) for pattern in self.excludes)
+        kept = self._kept.get(field)
+        if kept is None:
+            kept = self._kept[field] = (
+                self._includes is None or self._includes.match(field)
+            ) and not self._excludes.match(field)
+        return kept
 
 
 def _merge(target: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:

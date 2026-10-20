@@ -243,3 +243,43 @@ async def test_a_failed_lineage_check_excludes_what_it_asked(
     else:
         assert store.fetches == [["u1"]]
         assert [r.source for r in sections["lightrag_linked_chunks"]] == ["u1"]
+
+
+@pytest.mark.parametrize("case", ["dedup", "redistribute"])
+async def test_mix_fills_the_slots_a_subset_index_fills(case: str) -> None:
+    # Regression: the check asked each hit's first slots, but the selection
+    # keeps a chunk on its first citing hit only and polling hands a short
+    # hit's slots to the others, so slots landed on unchecked chunks the
+    # filtered fetch then dropped. Selected and checked again until every
+    # selected chunk is known, the filter fills what an index of the passing
+    # (odd) chunks alone fills.
+    odd = [f"u{i}" for i in (1, 3, 5, 7, 9)]
+    even = [f"u{i}" for i in (0, 2, 4, 6, 8)]
+    late = [f"u{i}" for i in (11, 13, 15)]
+    if case == "dedup":  # e1's first five chunks are e0's
+        hits = [_entity("e0", odd), _entity("e1", odd + even + late)]
+    else:  # e1 and e2 cite one chunk each: their slots go to e0
+        hits = [_entity("e0", odd + even + late), _entity("e1", ["u17"])]
+        hits.append(_entity("e2", ["u19"]))
+
+    async def linked(hits: list[RetrievalResult], filters: Any) -> list[str]:
+        config = Config()
+        config.search.lightrag_search.chunk_stream_top_k = 20
+        config.search.lightrag_search.related_chunk_number = 5
+        store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+        strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+            config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+        )
+        out = await strategy._retrieve_linked_chunks(
+            SearchQuery(query="q", top_k=10, filters=filters), hits, []
+        )
+        return sorted(r.source for r in out.get("lightrag_linked_chunks", []))
+
+    subset = [
+        _entity(
+            str(h.source),
+            [u for u in h.metadata["text_unit_ids"] if int(u[1:]) % 2 == 1],
+        )
+        for h in hits
+    ]
+    assert await linked(hits, {"attr_grp": "a"}) == await linked(subset, None)

@@ -12,6 +12,8 @@ per-query memo and rank order.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 import pytest
@@ -94,7 +96,11 @@ class _Index:
             side = "source_id" if "source_id" in filters else "target_id"
             ends = set(filters[side])
             out = []
-            for eid, a, b, rank in self.edges:
+            # Best first, as the retriever's importance sort: a page holds
+            # the top_k best edges only.
+            for eid, a, b, rank in sorted(self.edges, key=lambda e: (-e[3], e[0])):
+                if len(out) >= query.top_k:
+                    break
                 if eid in self.passing and (a if side == "source_id" else b) in ends:
                     out.append(
                         RetrievalResult(
@@ -167,9 +173,10 @@ async def test_only_entities_a_walk_over_passing_edges_reaches_are_kept(
     assert graph.walks == 0
     assert all(r.content.count("Path: ") == 1 for r in kept)
     # An edge's description and the like are not read: the walk needs its
-    # endpoints, names, order and text units.
+    # endpoints, names and order (its text units only under two keys).
     assert index.edge_fields and all(
-        f and "description" not in f and "text_unit_ids" in f for f in index.edge_fields
+        f and "description" not in f and "text_unit_ids" not in f
+        for f in index.edge_fields
     )
     # Nearer first: the score bands follow the walk's distance.
     by_id = {r.source: r for r in kept}
@@ -219,6 +226,7 @@ async def test_two_keys_need_one_document_passing_an_edge(config: Config) -> Non
     index = _Index(config, units_passing={"u-r-sb", "u-S", "u-B", "u-D"})
     kept = await _expand(config, index, {"attr_grp": "a", "attr_category": "x"})
     assert sorted(_paths(kept)) == ["B", "S"]
+    assert all(f and "text_unit_ids" in f for f in index.edge_fields)
 
 
 async def test_without_a_document_filter_the_graph_is_walked(config: Config) -> None:
@@ -345,6 +353,142 @@ async def test_two_keys_need_one_document_passing_a_reached_entity(
     index = _Index(config, units_passing={"u-r-sb", "u-r-bd", "u-S", "u-B"})
     kept = await _expand(config, index, {"attr_grp": "a", "attr_category": "x"})
     assert sorted(_paths(kept)) == ["B", "S"]
+
+
+def _relationship_calls(config: Config, index: _Index) -> list[dict]:
+    prefix = config.indexing.opensearch.relationships_index_prefix
+    return [f for p, f in index.calls if p == prefix]
+
+
+@pytest.mark.parametrize("bound", ["share", "per-hop"])
+async def test_a_hub_seed_does_not_crowd_out_another_seeds_neighbours(
+    config: Config, bound: str
+) -> None:
+    # Regression: one budget for all seeds and a page of the frontier's best
+    # edges: the hub's 150 high-ranked edges filled the 100-hit page and
+    # the budget, and S2's only neighbour was never reached. Each seed now
+    # reaches at most its share of the budget (the graph walk splits it per
+    # seed), and a full page is asked again for the vertices still open:
+    # the hub closes on its share, or on max_results_per_hop.
+    edges = [(f"h{i:03d}", "HUB", f"N{i:03d}", 100.0) for i in range(150)]
+    edges.append(("s2", "S2", "X", 1.0))
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    top_k = 10 if bound == "share" else 100  # share 15 or 150 > 50 per hop
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", top_k=top_k, filters={"attr_grp": "a"}), ["HUB", "S2"]
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert "X" in reached
+    assert len([v for v in reached if v.startswith("N")]) == (
+        15 if bound == "share" else 50
+    )
+    if bound == "per-hop":  # no cut: every reached entity is kept
+        assert _paths(kept)["X"] == "S2 -> X"
+
+
+async def test_the_budget_is_split_across_the_seeds(config: Config) -> None:
+    # A's edges rank above B's: one budget went to A's neighbours alone.
+    config.indexing.neptune.traversal_fetch_multiplier = 1
+    edges = [(f"a{i}", "A", f"va{i}", 9.0 - i) for i in range(3)]
+    edges += [(f"b{i}", "B", f"vb{i}", 3.0 - i) for i in range(3)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", top_k=2, filters={"attr_grp": "a"}), ["A", "B"]
+    )
+    assert sorted(_paths(kept)) == ["A", "B", "va0", "vb0"]
+
+
+async def test_a_query_asks_for_a_frontiers_edges_once(config: Config) -> None:
+    # DRIFT's follow-ups expand the same seeds again, concurrently too: the
+    # same frontier's edges are fetched once a query, the request in flight
+    # shared.
+    index = _Index(config)
+    strategy = _strategy(config, _Graph(), index)
+    query = SearchQuery(query="q", filters={"attr_grp": "a"})
+    with query_scope():
+        first, second = await asyncio.gather(
+            strategy._expand_via_graph(query, ["S"]),
+            strategy._expand_via_graph(query, ["S"]),
+        )
+        third = await strategy._expand_via_graph(query, ["S"])
+    assert _paths(first) == _paths(second) == _paths(third)
+    one = _Index(config)
+    await _strategy(config, _Graph(), one)._expand_via_graph(query, ["S"])
+    assert len(_relationship_calls(config, index)) == len(
+        _relationship_calls(config, one)
+    )
+
+
+async def test_a_failed_edge_fetch_is_asked_again(config: Config) -> None:
+    class _FailsOnce(_Index):
+        failed = False
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.index_prefixes == [self.o.relationships_index_prefix] and not (
+                self.failed
+            ):
+                self.failed = True
+                raise RuntimeError("store hiccup")
+            return await super().aretrieve(query)
+
+    strategy = _strategy(config, _Graph(), _FailsOnce(config))
+    query = SearchQuery(query="q", filters={"attr_grp": "a"})
+    with query_scope():
+        degraded = await strategy._expand_via_graph(query, ["S"])
+        again = await strategy._expand_via_graph(query, ["S"])
+    assert sorted(_paths(degraded)) == ["S"]
+    assert sorted(_paths(again)) == ["B", "D", "S"]
+
+
+async def test_two_keys_read_the_reached_entities_once(config: Config) -> None:
+    # The entities were read under the caller's filters: checking their ids
+    # against the entities index again asked the same thing twice.
+    index = _Index(config, units_passing={"u-r-sb", "u-r-bd", "u-B", "u-D"})
+    await _expand(config, index, {"attr_grp": "a", "attr_category": "x"})
+    o = config.indexing.opensearch
+    assert len([p for p, _ in index.calls if p == o.entities_index_prefix]) == 1
+
+
+async def test_equal_edges_and_entities_are_ordered_by_id(config: Config) -> None:
+    # Ties followed the store's order (the order of the two endpoint
+    # requests, the index order of the entities read): a subset index of
+    # the passing documents and the filtered index kept different ones.
+    config.indexing.neptune.max_results_per_hop = 1
+    edges = [("r-b", "S", "B", 1.0), ("r-a", "A", "S", 1.0)]
+    kept = await _expand(
+        config, _Index(config, edges=edges, passing={"r-a", "r-b"}), {"attr_grp": "a"}
+    )
+    assert sorted(_paths(kept)) == ["A", "S"]  # r-a before r-b
+
+    class _Reversed(_Index):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            return list(reversed(await super().aretrieve(query)))
+
+    config.indexing.neptune.max_results_per_hop = 50
+    edges = [(f"r{i}", "S", f"v{i}", 1.0) for i in range(9)]
+    index = _Reversed(config, edges=edges, passing={e[0] for e in edges})
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=3, filters={"attr_grp": "a"}), ["S"]
+    )
+    assert sorted(_paths(kept)) == ["S", "v0", "v1", "v2"]
+
+
+async def test_a_full_page_is_logged_once_a_query(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    edges = [(f"h{i:03d}", "HUB", f"N{i:03d}", 1.0) for i in range(120)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    with caplog.at_level(logging.WARNING), query_scope():
+        for top_k in (5, 6, 7):  # three walks, three different budgets
+            await strategy._expand_via_graph(
+                SearchQuery(query="q", top_k=top_k, filters={"attr_grp": "a"}),
+                ["HUB"],
+            )
+    assert caplog.text.count("page cap") == 1
 
 
 # --------------------------------------------------------------------------- #
