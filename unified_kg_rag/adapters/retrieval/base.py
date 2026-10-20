@@ -382,13 +382,23 @@ class BaseSearchStrategy(ABC):
             label="Attribute filter check",
             index=prefix,
         ) as span:
-            position = 0
+            # ``scan`` gathers the next unknown ids; ``position`` counts the
+            # outcomes in rank order up to the last id asked (each id is
+            # visited once by each: no rescan of the rest per batch).
+            position = scan = 0
             while position < len(ordered):
-                unknown = [i for i in ordered[position:] if i not in known][:batch]
+                unknown: list[str] = []
+                last = len(ordered) - 1
+                while scan < len(ordered) and len(unknown) < batch:
+                    if ordered[scan] not in known:
+                        unknown.append(ordered[scan])
+                        last = scan
+                    scan += 1
                 if unknown and not await check(unknown):
                     break
+                if not unknown:
+                    last = len(ordered) - 1
                 # Count in rank order up to the last id known now.
-                last = ordered.index(unknown[-1]) if unknown else len(ordered) - 1
                 while position <= last:
                     vertex = ordered[position]
                     position += 1

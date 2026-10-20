@@ -1316,6 +1316,8 @@ changed once with the full-config keys (#332).
   NoEndCallback` whenever the task that started the call finished first,
   which a streamed call's always does; only a cancelled task now ends a span
   that is still open (#393).
+- The filter check keeps a cursor over the ids instead of rescanning the
+  rest of them per batch, which was quadratic in their number (#PR).
 - LightRAG's linked-chunk check under a selective filter makes two requests
   instead of one per round of a few ids: each hit's first
   `related_chunk_number` chunks, then the whole rest of the lineage of the

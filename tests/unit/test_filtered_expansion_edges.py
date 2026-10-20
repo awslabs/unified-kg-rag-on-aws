@@ -430,3 +430,29 @@ async def test_the_redrawn_path_does_not_name_the_excluded_walk(
     d = {r.source: r for r in kept}["D"]
     assert d.content.count("Path: ") == 1
     assert "A" not in d.content.split("Path: ")[1]
+
+
+async def test_the_check_walks_a_long_list_once(config: Config) -> None:
+    # The remaining ids were rescanned per batch: quadratic in the list.
+    lookups = 0
+
+    class _Id(str):
+        __slots__ = ()
+
+        def __hash__(self) -> int:
+            nonlocal lookups
+            lookups += 1
+            return str.__hash__(self)
+
+    config.indexing.opensearch.index_settings = {"index.max_result_window": 10}
+    document = _Document(config)
+    strategy = _strategy(config, _Graph(), document)
+    ids = [_Id(f"e{i}") for i in range(2_000)]
+    passed = await strategy._ids_passing(
+        SearchQuery(query="q"),
+        config.indexing.opensearch.entities_index_prefix,
+        ids,
+        {"attr_grp": "a"},
+    )
+    assert len(passed) == 2_000
+    assert lookups < 10 * len(ids)  # the rescan: about 100 per id
