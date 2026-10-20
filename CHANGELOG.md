@@ -1304,7 +1304,7 @@ changed once with the full-config keys (#332).
   (`pending-commit`) before its first write; the next commit of the suffix
   derives them, their stored edges and the claims about them again, and
   the note goes once the old ids are deleted. In a split crash sweep, 14 of
-  1,284 crash points diverged from a full build; none do now (#PR).
+  1,284 crash points diverged from a full build; none do now (#392).
 - Incremental indexing: a removal that renames an entity and is killed
   after the graph took its edges' new names, before their vector copies
   did, renames the vector copies on retry. The strip writes the vector
