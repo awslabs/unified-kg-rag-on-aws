@@ -1382,7 +1382,7 @@ changed once with the full-config keys (#332).
   missed the rest of a hub's matches. It now reads in id order until a
   window comes back short and asks for no total. The embedded engine
   honours `track_total_hits` (counted up to 10,000 by default), as
-  OpenSearch does (#PR).
+  OpenSearch does (#403).
 - A pipeline run again after a failed incremental commit (library use of
   `DataIngestionPipeline`) no longer deletes the failed commit's old ids,
   whose replacements were never written: the indexing manager kept the
