@@ -372,3 +372,24 @@ def test_an_entity_an_unchanged_document_states_survives_its_removal() -> None:
     incremental.remove_changed_and_deleted(delta)
 
     assert "e-s" in graph.ids("entities")
+
+
+@pytest.mark.parametrize("error", [RuntimeError("store down"), KeyboardInterrupt()])
+def test_a_failed_commit_leaves_no_re_key_for_the_next_run(mocker, error) -> None:
+    # A commit stopped between its merge and the deletion of the old ids
+    # forgets the ids it would have retired: the next run of a reused
+    # pipeline would delete them although their replacements were never
+    # written.
+    incremental, _, _ = _harness()
+    manager = incremental.indexing_manager
+    manager._rekeyed["default"] = {"e-old": "e-new"}
+    manager._dropped["default"] = {"r-old"}
+    mocker.patch.object(manager, "index_delta", side_effect=error)
+
+    with pytest.raises(type(error)):
+        _commit_entity(
+            incremental, "doc-a", Entity(id="e-a", name="Acme", text_unit_ids=["t1"])
+        )
+
+    assert manager._rekeyed == {}
+    assert manager._dropped == {}

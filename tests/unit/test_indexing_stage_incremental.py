@@ -92,6 +92,9 @@ class _RecordingManager:
     def discard_retired_ids(self) -> None:
         return None
 
+    def reset_run_state(self) -> None:
+        return None
+
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         return {}
 
@@ -561,3 +564,26 @@ def test_delete_only_run_records_its_configured_suffix(mocker) -> None:
     stage.config.processing.document_parsing.index_value = "tenant1"
     stage._record_build(_context(DocumentDelta(deleted=["x"]), []), [])
     assert recorded == ["tenant1"]
+
+
+def test_a_run_starts_with_no_state_left_from_an_earlier_one(mocker) -> None:
+    # A reused pipeline runs the same stage again: what an earlier run's
+    # derivation decided (a failed commit's re-keys) must not carry over.
+    store = FakeDocStatusStore()
+    _seed_registry(store)
+    manager = _RecordingManager()
+    stage = _stage(mocker, store, manager)
+    order: list[str] = []
+    manager.initialize = lambda: None  # type: ignore[attr-defined]
+    mocker.patch.object(
+        manager, "reset_run_state", side_effect=lambda: order.append("reset")
+    )
+    mocker.patch.object(
+        stage,
+        "_index_incremental",
+        side_effect=lambda *a, **k: order.append("index") or ({}, None),
+    )
+
+    stage._execute_core(_context(_full_delta(), [_document("run-changed", _CHANGED)]))
+
+    assert order[:2] == ["reset", "index"]

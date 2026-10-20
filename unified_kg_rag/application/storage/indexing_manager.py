@@ -1481,16 +1481,7 @@ class IndexingManager:
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
         vector_only = dict(self._vector_only)
-        self._rekeyed.clear()
-        self._dropped.clear()
-        self._vector_only.clear()
-        self._commit_entities.clear()
-        self._commit_noted.clear()
-        self._split_from.clear()
-        self._renamed.clear()
-        self._fresh.clear()
-        self._rank_only.clear()
-        self._derived_entities.clear()
+        self._reset_run_state()
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
@@ -1555,19 +1546,37 @@ class IndexingManager:
         self._commit_notes.clear()
 
     def discard_retired_ids(self) -> None:
-        """Keep the re-keyed items' old ids (their writes failed: deleting
-        them would lose the items)."""
-        self._rekeyed.clear()
-        self._dropped.clear()
-        self._vector_only.clear()
-        self._commit_entities.clear()
-        self._commit_noted.clear()
+        """Keep the re-keyed items' old ids (their writes failed, or the
+        commit did not get to them: deleting them would lose the items), and
+        the stored notes (a retry finishes from them)."""
+        self._reset_run_state()
         self._commit_notes.clear()
-        self._split_from.clear()
-        self._renamed.clear()
-        self._fresh.clear()
-        self._rank_only.clear()
-        self._derived_entities.clear()
+
+    def _reset_run_state(self) -> None:
+        """Forget what this run's derivations decided: the re-keyed, split,
+        renamed, dropped and vector-only ids, the derived entities, the
+        commit's noted entities. Held in memory between a merge and its
+        writes only; a failed commit's, kept, would make the next run of a
+        reused pipeline delete old ids whose replacements were never
+        written."""
+        for state in (
+            self._rekeyed,
+            self._dropped,
+            self._vector_only,
+            self._commit_entities,
+            self._commit_noted,
+            self._split_from,
+            self._renamed,
+            self._fresh,
+            self._rank_only,
+            self._derived_entities,
+        ):
+            state.clear()
+
+    def reset_run_state(self) -> None:
+        """Start a run with no state left from an earlier one (see
+        :meth:`discard_retired_ids`)."""
+        self.discard_retired_ids()
 
     def _match_stored_names(
         self, suffix: str, entities: list[Entity]
