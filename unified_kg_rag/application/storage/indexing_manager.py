@@ -1079,11 +1079,12 @@ class IndexingManager:
                 if derived.entities and not claims
                 else None
             )
+            sibling_ids = set(siblings or ()) - given - blocked
             targets = sorted(
                 (
                     set(derived.id_remap.values())
                     | set(derived.split_from)
-                    | set(siblings or ())
+                    | sibling_ids
                     | {c.id for c in derived.claims}
                 )
                 - given
@@ -1144,7 +1145,18 @@ class IndexingManager:
                     [*items[2], *held[2]],
                 )
             else:
-                blocked |= {item.id for group in held for item in group}
+                # Another spelling of a name that joined since (an endpoint
+                # of a rewired edge, say) is derived with it, as on the first
+                # attempt: derived without its other statements, a spelling
+                # the full build keeps apart (another type) merges in. Only
+                # the other held items keep their holders.
+                items[0].extend(e for e in held[0] if e.id in sibling_ids)
+                blocked |= {
+                    item.id
+                    for group in held
+                    for item in group
+                    if item.id not in sibling_ids
+                }
             items[1].extend(parted)
             # Their other endpoints too: a re-pointed edge changes their rank.
             ends = {i for r in parted for i in (r.source_id, r.target_id)}

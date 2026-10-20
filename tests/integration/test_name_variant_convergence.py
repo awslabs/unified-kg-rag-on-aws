@@ -1745,3 +1745,25 @@ def test_a_commit_derives_the_claims_on_a_split_parts_spellings_again(
     incremental = _state(tmp_path / "inc", runs, gleaning=True)
 
     assert incremental == full
+
+
+def test_an_endpoint_joining_later_is_derived_with_its_other_spellings(
+    tmp_path: Path,
+) -> None:
+    # The new document flips "Initech"'s type tie, so its edge to "Acme" is
+    # rewired and "Acme" joins the derivation as an endpoint on a later
+    # attempt. Its other spelling "Acme Inc" (another type in the corpus,
+    # the same in the first document's first unit only) is derived with it,
+    # as on the first attempt: held apart, the subset merged that unit's
+    # "Acme Inc" statement into "Acme".
+    first = {
+        "d1.txt": "Initech Corp and Acme trade goods 3. "
+        "Initech and Acme Inc and Acme Inc trade parts 3.",
+        "r7.txt": "Acme Inc trade parts 1.",
+    }
+    runs = [first, {**first, "d4.txt": "Initech trade cash 3."}]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full

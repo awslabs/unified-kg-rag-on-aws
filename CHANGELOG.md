@@ -1529,6 +1529,12 @@ changed once with the full-config keys (#332).
   `{}` (a junk `{}` entity then linked unrelated documents) and reports
   as a title or summary `{}`. An empty `<issue_type>` in a gleaning
   answer no longer drops the unit's other issues (#PR).
+- Incremental indexing: an entity that joins a derivation after its first
+  pass (the endpoint of an edge a new document rewires) is derived with
+  the stored spellings of its name, as one there from the start is. Since
+  #398 they were held apart from it, so a spelling a full build keeps
+  separate (another type) took the derived one's statements, and an
+  uninterrupted incremental run diverged from a full build (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
