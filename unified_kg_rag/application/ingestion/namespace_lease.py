@@ -213,7 +213,8 @@ class NamespaceLease:
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
         now = time.time()
-        if self.writes_from > now:
+        handed_on = self.writes_from > now
+        if handed_on:
             self._give_up = functools.partial(self._expire, self._previous_expiry)
             self.next_writes_from = self.writes_from
         elif is_stop(exc_type) and not self.in_process_stores:
@@ -223,10 +224,15 @@ class NamespaceLease:
             self._give_up = self._release
         if self.next_writes_from > now:
             logger.warning(
-                "Gave up the write lease of namespace '%s' with writes possibly "
-                "still in flight: the next run on it waits until %s before its "
-                "first write",
+                "Gave up the write lease of namespace '%s' with writes %s "
+                "possibly still in flight: the next run on it waits until %s "
+                "before its first write",
                 self.namespace,
+                (
+                    "of the run whose expired lease this one took over"
+                    if handed_on
+                    else "of this run"
+                ),
                 _when(self.next_writes_from),
             )
         self._stop.set()

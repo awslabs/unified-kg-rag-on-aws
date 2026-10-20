@@ -302,6 +302,8 @@ class DataIngestionPipeline:
                 both given.
         """
         self.config = config
+        # The write lease of the latest run (see _namespace_lease).
+        self._lease: NamespaceLease | None = None
         # Before any stage builds a model, so the factories attach the tracing
         # callback (no-op unless observability.enabled).
         configure_observability(config.observability)
@@ -819,9 +821,9 @@ class DataIngestionPipeline:
     def next_run_writes_from(self) -> float:
         """After a run: when the next run on its namespace may write first
         (epoch seconds; 0 when at once). A stopped run with writes possibly
-        in flight makes the next run wait (see ``namespace_lease``)."""
-        lease = getattr(self, "_lease", None)
-        return lease.next_writes_from if lease is not None else 0.0
+        in flight, its own or those of the run whose expired lease it took
+        over, makes the next run wait (see ``namespace_lease``)."""
+        return self._lease.next_writes_from if self._lease is not None else 0.0
 
     def _raise_if_stopping(self) -> None:
         """Raise ``PipelineInterrupted`` once a stop was requested (a takeover

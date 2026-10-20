@@ -613,8 +613,8 @@ class IngestionPipelineRunner:
 
 def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:
     """When the next run on the namespace may write first (UTC, ISO 8601),
-    waiting for this run's writes possibly still in flight; ``None`` when it
-    need not wait."""
+    waiting for writes possibly still in flight (this run's, or those of the
+    run whose expired lease it took over); ``None`` when it need not wait."""
     pipeline = runner.pipeline if runner else None
     until = pipeline.next_run_writes_from if pipeline is not None else 0.0
     if until <= time.time():
@@ -628,8 +628,8 @@ def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
     if when is None:
         return ""
     return (
-        f" Writes of this run may still be in flight: the next run on its "
-        f"namespace waits until {when} before its first write."
+        f" Writes may still be in flight: the next run on its namespace "
+        f"waits until {when} before its first write."
     )
 
 
