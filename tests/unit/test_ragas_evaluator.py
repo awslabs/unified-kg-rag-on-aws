@@ -383,6 +383,44 @@ class TestAevaluateBatch:
         ]
         assert reports[0].metrics[0].value == 0.9
 
+    async def test_each_score_goes_to_its_query_and_metric(self, mocker) -> None:
+        # ragas' executor returns one flat list, row by row and metric by
+        # metric within a row (the order evaluate submits the jobs in): the
+        # i-th query's j-th metric is at len(metrics) * i + j.
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.FAITHFULNESS,
+                EvaluationMetricType.ANSWER_RELEVANCY,
+            ],
+        )
+        executor = mocker.Mock()
+        executor.results.return_value = [0.11, 0.12, 0.21, 0.22]
+        evaluate = mocker.patch.object(rg_module, "evaluate", return_value=executor)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+
+        reports = await ev.aevaluate_batch(
+            [_query("q1"), _query("q2")],
+            [_result(qid="q1"), _result(qid="q2")],
+            ["", ""],
+        )
+        assert [m.name for m in evaluate.call_args.kwargs["metrics"]] == [
+            "faithfulness",
+            "answer_relevancy",
+        ]
+        assert {
+            r.query_id: {m.metric_type: m.value for m in r.metrics} for r in reports
+        } == {
+            "q1": {
+                EvaluationMetricType.FAITHFULNESS: 0.11,
+                EvaluationMetricType.ANSWER_RELEVANCY: 0.12,
+            },
+            "q2": {
+                EvaluationMetricType.FAITHFULNESS: 0.21,
+                EvaluationMetricType.ANSWER_RELEVANCY: 0.22,
+            },
+        }
+
     async def test_count_cap_applies_only_to_context_precision(self, mocker) -> None:
         ev, _ = _make_evaluator(
             mocker,
