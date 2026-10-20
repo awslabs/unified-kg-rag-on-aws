@@ -1026,3 +1026,35 @@ def test_a_stopped_runs_checkpoint_upload_does_not_wait_for_the_takeover(
         pipe._checkpoint_on_stop()
     assert time.time() - started < 2
     pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
+
+
+def test_a_stage_start_does_not_wait_for_the_takeover(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A stage start checks that the lease is held, not the takeover wait:
+    # the stages before the first write (parsing) run during the wait.
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 30.0)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("dead-run", time.time() - 1)
+    pipe = _stopping_pipeline()
+    pipe.stages = [SimpleNamespace(name="loading"), SimpleNamespace(name="parsing")]
+    pipe.s3_cache_manager = None
+    pipe.cache_manager = mocker.MagicMock()
+    pipe.llm_response_cache = None
+    executed: list[str] = []
+    mocker.patch.object(
+        pipe,
+        "_execute_stage",
+        side_effect=lambda stage, context: executed.append(stage.name)
+        or SimpleNamespace(status=None),
+    )
+    mocker.patch.object(pipe, "_emit_stage_metrics")
+    mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
+    mocker.patch.object(pipe, "_start_index", return_value=0)
+    context = SimpleNamespace(stage_results=[], pipeline_id="pid")
+    with NamespaceLease(store, "ns", 60) as lease:
+        assert lease.writes_from > time.time() + 20
+        started = time.time()
+        pipe._execute_pipeline_stages(context, None)  # type: ignore[arg-type]
+        assert time.time() - started < 2
+    assert executed == ["loading", "parsing"]

@@ -324,6 +324,24 @@ def test_a_table_of_the_earlier_key_schema_is_rejected(
             store.get("d")
 
 
+def test_registry_attempts_are_bounded_as_the_takeover_wait_counts(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    # The takeover wait counts one registry attempt (connect + read timeout)
+    # in the longest write request: an attempt without these bounds could
+    # land after the next run's first write.
+    from unified_kg_rag.shared import write_fence
+
+    config = ddb_store.client.meta.config
+    bounds = (config.connect_timeout, config.read_timeout)
+    assert bounds == (
+        write_fence.REGISTRY_CONNECT_TIMEOUT_SECONDS,
+        write_fence.REGISTRY_READ_TIMEOUT_SECONDS,
+    )
+    assert bounds == (10.0, 60.0)
+    assert config.retries == {"mode": "standard", "total_max_attempts": 10}
+
+
 def test_lease_requests_use_short_timeouts_and_few_attempts(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
