@@ -17,7 +17,8 @@ session.
 
 A cancelled ``ainvoke`` / ``agenerate`` gets no callback from LangChain
 (``astream`` reports it through ``on_llm_error``): its span is ended as an
-error when the task that started the call finishes with the span still open.
+error when the task that started the call is cancelled with the span still
+open.
 
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
@@ -203,16 +204,16 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         return span
 
     def _end_abandoned(self, run_id: UUID, task: asyncio.Task[Any]) -> None:
-        """End a span its call left open: the task finished without an end
-        callback (cancelled, or the call's error was swallowed)."""
+        """End the span of a call whose task was cancelled before its end
+        callback. A task that finished normally leaves the span open: a
+        streamed call ends later, in the task that consumes the stream."""
         with self._lock:
-            span = self._spans.pop(run_id, None)
             self._watches.pop(run_id, None)
+            span = self._spans.pop(run_id, None) if task.cancelled() else None
         if span is None:
             return
-        reason = "CancelledError" if task.cancelled() else "NoEndCallback"
-        span.set_attribute(ERROR_TYPE, reason)
-        span.set_error(reason)
+        span.set_attribute(ERROR_TYPE, "CancelledError")
+        span.set_error("CancelledError")
         span.end()
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:

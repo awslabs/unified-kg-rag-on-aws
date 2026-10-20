@@ -1295,6 +1295,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a streamed answer's `chat <model>` span exports normally again,
+  with its tokens and output. #386 ended a model span as `ERROR
+  NoEndCallback` whenever the task that started the call finished first,
+  which a streamed call's always does; only a cancelled task now ends a span
+  that is still open (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
