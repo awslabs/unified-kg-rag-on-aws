@@ -344,6 +344,63 @@ async def test_the_walk_stops_at_its_vertex_budget(config: Config) -> None:
     assert len(hops) == 2  # one hop: its two requests (source and target side)
 
 
+async def test_the_vertex_budget_counts_the_traversal_fetch_multiplier(
+    config: Config,
+) -> None:
+    # top_k * retrieval_multiplier * traversal_fetch_multiplier: with 2 the
+    # walk reaches twice the expansion limit (the cut comes after it).
+    config.indexing.neptune.traversal_fetch_multiplier = 2
+    config.indexing.neptune.max_results_per_hop = 10
+    edges = [(f"r{i}", "S", f"v{i}", float(10 - i)) for i in range(6)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    await strategy._expand_via_graph(
+        SearchQuery(query="q", top_k=2, filters={"attr_grp": "a"}), ["S"]
+    )
+    o = config.indexing.opensearch
+    (entity_ids,) = [
+        f["id"] for prefix, f in index.calls if prefix == o.entities_index_prefix
+    ]
+    assert sorted(entity_ids) == ["S", "v0", "v1", "v2", "v3"]
+
+
+class _Named(_Index):
+    """Relationships whose endpoints carry names that are not their ids."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        results = await super().aretrieve(query)
+        if (query.index_prefixes or [""])[0] == self.o.relationships_index_prefix:
+            for r in results:
+                for end in ("source", "target"):
+                    r.metadata[f"{end}_name"] = f"{r.metadata[f'{end}_id']} Corp"
+        return results
+
+
+async def test_a_path_names_the_vertices_before_the_entity_by_their_edges(
+    config: Config,
+) -> None:
+    # The vertices a path goes through are named by the relationships the
+    # walk crossed (the entities index is read for the reached entity only).
+    kept = await _expand(config, _Named(config), {"attr_grp": "a"})
+    assert _paths(kept)["D"] == "S Corp -> B Corp -> D"
+
+
+async def test_an_unknown_relationships_index_keeps_the_walk(config: Config) -> None:
+    # A backend that cannot tell whether the index exists (ahas_index None)
+    # and returns no passing edge: the walk keeps the seeds rather than
+    # falling back to the unchecked graph walk; only a missing index does.
+    class _Unknown(_Index):
+        async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
+            return None
+
+    graph = _Graph()
+    kept = await _expand(
+        config, _Unknown(config, passing=set()), {"attr_grp": "a"}, graph
+    )
+    assert graph.walks == 0
+    assert [r.source for r in kept] == ["S"]
+
+
 async def test_two_keys_need_one_document_passing_a_reached_entity(
     config: Config,
 ) -> None:
