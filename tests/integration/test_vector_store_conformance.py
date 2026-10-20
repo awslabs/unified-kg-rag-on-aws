@@ -551,11 +551,21 @@ def test_find_documents_reads_more_matches_than_one_search_returns(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A hub's edges outnumber one search's window: they are read in pages
-    # (the lookup used to raise, failing the run for good).
+    # (the lookup used to raise, failing the run for good). The stores count
+    # the matches only up to the window, as OpenSearch counts only 10,000
+    # by default (``relation: gte``): paging must not wait for a total past
+    # the window, which never comes.
     from unified_kg_rag.adapters.storage import opensearch_indexer
 
     monkeypatch.setattr(opensearch_indexer, "_FIND_WINDOW", 2)
     indexer = harness.vector_indexer
+    if harness.kind != "fake":
+        search = indexer.opensearch_client.search
+
+        def counting_to_the_window(index: str, body: dict[str, Any]) -> Any:
+            return search(index=index, body={**body, "track_total_hits": 2})
+
+        monkeypatch.setattr(indexer.opensearch_client, "search", counting_to_the_window)
     prefixes = harness.config.indexing.opensearch
     claims = [
         claim.model_copy(update={"id": f"cl-hub-{n}"})
@@ -572,6 +582,26 @@ def test_find_documents_reads_more_matches_than_one_search_returns(
     assert {i: sorted(units) for i, units in found.items()} == {
         c.id: sorted(c.text_unit_ids or []) for c in claims
     }
+
+
+def test_find_documents_reads_past_ten_thousand_matches(harness: StoreHarness) -> None:
+    # OpenSearch counts a search's matches up to 10,000 unless asked for
+    # more: a lookup that paged only on a larger total stopped there.
+    if harness.kind == "fake":
+        pytest.skip("the fake counts no hits")
+    indexer = harness.vector_indexer
+    (claim,) = _claims(None)
+    claims = [claim.model_copy(update={"id": f"cl-hub-{n:05d}"}) for n in range(10_001)]
+    _write(harness, "claims", "upsert", claims)
+
+    found = indexer.find_documents(
+        harness.config.indexing.opensearch.claims_index_prefix,
+        "subject_id",
+        ["e-vendor"],
+        "default",
+    )
+
+    assert len(found) == 10_001
 
 
 def test_text_unit_attributes_round_trip_in_a_suffix(harness: StoreHarness) -> None:

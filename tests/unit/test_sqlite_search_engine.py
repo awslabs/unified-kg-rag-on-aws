@@ -601,6 +601,27 @@ def test_ties_break_by_id_and_size_truncates(engine) -> None:
     assert _search(engine, {"match_all": {}}, size=0)["hits"]["hits"] == []
 
 
+@pytest.mark.parametrize(
+    ("track", "total"),
+    [
+        (2, {"value": 2, "relation": "gte"}),
+        (3, {"value": 3, "relation": "eq"}),
+        (True, {"value": 3, "relation": "eq"}),
+        (False, None),
+    ],
+)
+def test_track_total_hits_counts_as_opensearch_does(
+    engine, track: bool | int, total: dict[str, Any] | None
+) -> None:
+    # Counted up to the number (10,000 when unset), a lower bound past it;
+    # no total when off. An id lookup counts the same way.
+    for query in ({"match_all": {}}, {"ids": {"values": ["a", "b", "c"]}}):
+        hits = _search(engine, query, size=1, body={"track_total_hits": track})["hits"]
+        assert hits.get("total") == total
+    with pytest.raises(StoreRequestRejectedError):
+        _search(engine, {"match_all": {}}, body={"track_total_hits": -1})
+
+
 def test_source_excludes_and_vectors(engine) -> None:
     (hit,) = _search(
         engine,

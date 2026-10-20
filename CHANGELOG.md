@@ -834,7 +834,7 @@ changed once with the full-config keys (#332).
   differ in case only, e.g. `Acme` and `ACME`) is the most frequent of
   them, the smallest on a tie, and claim resolution's status tie is the
   smallest status too; both kept the first statement's. The text units'
-  order differs between namespaces of the same text, so 49 of 120 sampled
+  order differs between namespaces of the same text, so 55 of 120 sampled
   corpora built a different name or claim status under another
   `additional_suffix`. A rebuild can change the shown name of such an
   entity (and of its edges and claims) and the status of a tied claim
@@ -1374,6 +1374,15 @@ changed once with the full-config keys (#332).
   before their vector copies, the other stored edges of a renamed or
   re-keyed entity are checked against their vector copies too, and a
   commit's note names the entities it renames (#402).
+- Incremental indexing on OpenSearch: `find_documents` (the lookup of a
+  hub's edges, claims or text units by a keyword field) no longer stops at
+  10,000 matches. It paged only when a search's total exceeded the hits
+  returned, and OpenSearch counts 10,000 at most unless asked for more
+  (`relation: gte`), so #398's paging never ran there: a removal or commit
+  missed the rest of a hub's matches. It now reads in id order until a
+  window comes back short and asks for no total. The embedded engine
+  honours `track_total_hits` (counted up to 10,000 by default), as
+  OpenSearch does (#403).
 - A pipeline run again after a failed incremental commit (library use of
   `DataIngestionPipeline`) no longer deletes the failed commit's old ids,
   whose replacements were never written: the indexing manager kept the
