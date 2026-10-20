@@ -1753,13 +1753,18 @@ class IndexingManager:
         }
         rekeyed = [e for e in new_entities if e.id in first]
         kept = [e for e in new_entities if e.id not in first]
-        relationship_tasks = [
+        # The vector copies of the edges come before their graph copies: the
+        # graph copy is what a retry compares the derived names with
+        # (``unchanged``), so it must not get ahead of them (a rename killed
+        # in between left the vector copies under the old name for good).
+        graph_edge_tasks = [
             IndexingTask(
                 self.neptune_indexer.upsert_relationships,
                 [new_relationships],
                 "neptune_relationships",
             )
         ]
+        relationship_tasks: list[IndexingTask] = []
         if self.config.indexing.opensearch.build_relationship_vector_index:
             relationship_tasks += [
                 IndexingTask(
@@ -1782,6 +1787,7 @@ class IndexingManager:
                 )
             ],
             relationship_tasks,
+            graph_edge_tasks,
             [
                 IndexingTask(
                     self.neptune_indexer.upsert_entities, [kept], "neptune_entities"

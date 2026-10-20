@@ -1295,6 +1295,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal that renames an entity and is killed
+  after the graph took its edges' new names, before their vector copies
+  did, renames the vector copies on retry. The strip writes the vector
+  edges before the graph edges now: the retry compares the derived names
+  with the graph copy, so the vector copies kept the old name for good
+  (#PR).
 - Incremental indexing: a removal's strip writes a kept entity that now
   cites a text unit it did not (another spelling's statement merged in)
   before the edges re-pointed at it. Written last, a run killed in between

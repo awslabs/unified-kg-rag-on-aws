@@ -1224,6 +1224,13 @@ RUNS_SPLITPART = [
         "d1.txt": "Acme Ltd and ACME Inc and Acme trade cash 3.",
     },
 ]
+RUNS_RENAME = [
+    {
+        "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2.",
+        "d1.txt": "Buyer and Acme Inc trade cash 3.",
+    },
+    {"r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2."},
+]
 RUNS_VECTOR_ONLY = [
     {"d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2."},
     {
@@ -1294,6 +1301,27 @@ def test_a_claim_about_a_split_off_part_is_derived_again(tmp_path: Path) -> None
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
     incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+def test_a_rename_killed_before_the_vector_edges_renames_them_on_retry(
+    tmp_path: Path,
+) -> None:
+    # Removing d1.txt renames an entity under its id ("Acme Inc" to "ACME
+    # Inc"). Killed after the graph edges took the new name and before
+    # their vector copies did, the retry compared the derived names with the
+    # graph copy only and left the vector copies under the old name.
+    runs = RUNS_RENAME
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("upsert_relationships", 1, False),
+        gleaning=True,
+    )
 
     assert incremental == full
 
