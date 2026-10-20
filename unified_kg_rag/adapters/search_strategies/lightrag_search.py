@@ -630,8 +630,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         not one per round of a few ids. The selection then keeps a chunk on
         its first citing hit only and polling hands a short hit's slots to
         the others, so a slot can still land on a chunk neither round asked:
-        those are checked and the chunks selected again, until every selected
-        chunk is known. A failed check counts what it asked as failing
+        the whole unchecked rest of the lineage of each hit holding such a
+        chunk is checked (one request per round, not per chunk) and the chunks
+        selected again, until every selected chunk is known. A failed check counts what it asked as failing
         (fail-closed) and ends the checks; the slots then go to the next
         chunks, fetched under the filter (which the fetch applies too).
         """
@@ -678,8 +679,20 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             if ask and not await check(ask):
                 return select()
         selected = select()
-        while ask := [u for u in selected if u not in checked]:
-            ok = await check(ask)
+        while unknown := {u for u in selected if u not in checked}:
+            # The whole unchecked rest of each hit a slot moved onto: asking
+            # only the selected chunks cost a request per failing chunk.
+            ok = await check(
+                list(
+                    dict.fromkeys(
+                        u
+                        for lineage in lineages
+                        if unknown.intersection(lineage)
+                        for u in lineage
+                        if u not in checked
+                    )
+                )
+            )
             selected = select()
             if not ok:
                 break
