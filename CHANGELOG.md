@@ -1302,6 +1302,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion --output-format json`: the status of a stopped run says
+  from when the next run on its namespace may write
+  (`next_run_writes_from`) when it must wait for this run's writes still in
+  flight; only the console message said so (#PR).
 - `run-eval` with several strategies or repeats names the benchmark the
   dataset was prepared from under the comparison table, as a single run's
   summary does; it printed no label (#PR).

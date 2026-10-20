@@ -611,14 +611,22 @@ class IngestionPipelineRunner:
         )
 
 
-def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
-    """The stop message's note on the next run's wait for this run's writes
-    possibly still in flight (empty when it need not wait)."""
+def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:
+    """When the next run on the namespace may write first (UTC, ISO 8601),
+    waiting for this run's writes possibly still in flight; ``None`` when it
+    need not wait."""
     pipeline = runner.pipeline if runner else None
     until = pipeline.next_run_writes_from if pipeline is not None else 0.0
     if until <= time.time():
+        return None
+    return datetime.fromtimestamp(until, tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
+    """The stop message's note on the next run's wait (empty when none)."""
+    when = _next_run_writes_from(runner)
+    if when is None:
         return ""
-    when = datetime.fromtimestamp(until, tz=timezone.utc).isoformat(timespec="seconds")
     return (
         f" Writes of this run may still be in flight: the next run on its "
         f"namespace waits until {when} before its first write."
@@ -626,16 +634,18 @@ def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
 
 
 def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
-    """The JSON status of a stopped run, with the pipeline id to resume with."""
+    """The JSON status of a stopped run, with the pipeline id to resume with
+    and, when the next run must wait, from when it may write."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
     if runner and runner.json_output and pipeline_id:
-        print_json(
-            {
-                "status": "interrupted",
-                "exit_code": exit_code,
-                "pipeline_id": pipeline_id,
-            }
-        )
+        status: dict[str, Any] = {
+            "status": "interrupted",
+            "exit_code": exit_code,
+            "pipeline_id": pipeline_id,
+        }
+        if when := _next_run_writes_from(runner):
+            status["next_run_writes_from"] = when
+        print_json(status)
 
 
 @exits_on_sigterm
