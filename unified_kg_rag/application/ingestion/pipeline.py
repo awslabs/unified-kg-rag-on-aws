@@ -88,7 +88,6 @@ from unified_kg_rag.shared.utils.cache_keys import (
 from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
-    check_write_fence,
     install_write_fence,
     remove_write_fence,
 )
@@ -124,6 +123,9 @@ class _StopFence:
         signum = self._pipeline._stop_signal
         if signum is not None and threading.current_thread() is not self._run_thread:
             raise PipelineInterrupted(signum)
+
+    # Nothing to hold back: the same check where nothing is written.
+    check_held = check
 
 
 class DataIngestionPipeline:
@@ -874,7 +876,9 @@ class DataIngestionPipeline:
         if self._checkpoint_id is None:
             return
         try:
-            check_write_fence()
+            # Held, not waited for: a stop during the takeover wait must not
+            # lose the finished stages (a checkpoint is no store write).
+            check_fences_held()
         except NamespaceLeaseError as e:
             # Another run may write this pipeline's checkpoint now.
             logger.warning(
@@ -1076,8 +1080,9 @@ class DataIngestionPipeline:
 
         if direction == "upload":
             # A run that lost its lease must not replace the checkpoint the
-            # run holding it now may write.
-            check_write_fence()
+            # run holding it now may write. Held, not waited for (no store
+            # write): the takeover wait would hold every stage's checkpoint.
+            check_fences_held()
         try:
             if direction == "upload":
                 if self.llm_response_cache is not None:

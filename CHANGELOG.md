@@ -1423,6 +1423,9 @@ changed once with the full-config keys (#332).
   stopped process takes its in-process writes with it. On the AWS stores
   the stop message (console and log) now says until when the next run on
   the namespace waits before its first write (#PR).
+- A run stopped during its takeover wait uploads its S3 checkpoint: the
+  upload checked the takeover wait too, so it failed and the stopped run
+  lost its checkpoint. It checks only that the lease is held now (#PR).
 - Worker pools and the write lease share one stop rule (`is_stop`:
   `KeyboardInterrupt`, `SystemExit`, which SIGTERM's `PipelineInterrupted`
   is): a pool skips waiting for its workers exactly when the lease is given

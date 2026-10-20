@@ -1004,3 +1004,25 @@ def test_a_failed_pool_block_waits_for_its_running_tasks() -> None:
     returned = time.time()
     assert len(landed) == 1 and landed[0] <= returned
     assert queued.cancelled()
+
+
+def test_a_stopped_runs_checkpoint_upload_does_not_wait_for_the_takeover(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A stop during the takeover wait still uploads the finished stages'
+    # checkpoint: a checkpoint is no store write, and the wait would end in
+    # the stop's own interrupt, losing it.
+    monkeypatch.setattr(lease_mod, "longest_write_request_seconds", lambda: 30.0)
+    store = FakeDocStatusStore()
+    store.leases["ns"] = ("dead-run", time.time() - 1)
+    pipe = _stopping_pipeline()
+    pipe._checkpoint_id = "pid"
+    pipe.s3_cache_manager = mocker.MagicMock()
+    pipe.cache_manager = mocker.MagicMock()
+    pipe.llm_response_cache = None
+    with NamespaceLease(store, "ns", 60) as lease:
+        assert lease.writes_from > time.time() + 20
+        started = time.time()
+        pipe._checkpoint_on_stop()
+    assert time.time() - started < 2
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once()
