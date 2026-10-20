@@ -1416,6 +1416,17 @@ changed once with the full-config keys (#332).
   meanwhile (#388).
 - The write-ahead `PENDING` record of a deleted document has
   `failure_count` 0, as every `PENDING` record (#388).
+- With every store embedded (`backend: local`, SQLite) a stopped run
+  releases its write lease, and a takeover waits at most one store write
+  (`search.store_timeout_seconds`) rather than ~185 s: a Ctrl-C made the
+  next local run stall about 3 minutes in `document_loading`, though the
+  stopped process takes its in-process writes with it. On the AWS stores
+  the stop message (console and log) now says until when the next run on
+  the namespace waits before its first write (#PR).
+- Worker pools and the write lease share one stop rule (`is_stop`:
+  `KeyboardInterrupt`, `SystemExit`, which SIGTERM's `PipelineInterrupted`
+  is): a pool skips waiting for its workers exactly when the lease is given
+  up expired for their writes in flight (#PR).
 - Incremental indexing: a removal that both merges and splits spellings
   ("Acme Ltd" into "ACME Inc", "Acme" split off) and is killed between its
   writes and the deletion of the old ids is resumed to a full build's

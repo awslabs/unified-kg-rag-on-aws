@@ -443,7 +443,9 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     )
 
     def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
-        self.pipeline = SimpleNamespace(pipeline_id="run-7")  # type: ignore[assignment]
+        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
+            pipeline_id="run-7", next_run_writes_from=0.0
+        )
         if signum == signal.SIGINT:
             raise KeyboardInterrupt
         raise PipelineInterrupted(signum)
@@ -808,3 +810,18 @@ def test_a_failed_cli_exits_normally() -> None:
         """)
     assert result.returncode == 1
     assert "exit handlers ran" in result.stdout
+
+
+def test_a_stopped_ingestion_says_when_the_next_run_may_write() -> None:
+    import time
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli.run_ingestion_pipeline import _next_run_wait
+
+    waiting = SimpleNamespace(
+        pipeline=SimpleNamespace(next_run_writes_from=time.time() + 185)
+    )
+    assert "waits until" in _next_run_wait(waiting)  # type: ignore[arg-type]
+    done = SimpleNamespace(pipeline=SimpleNamespace(next_run_writes_from=0.0))
+    assert _next_run_wait(done) == ""  # type: ignore[arg-type]
+    assert _next_run_wait(None) == ""

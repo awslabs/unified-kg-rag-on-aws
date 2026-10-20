@@ -19,6 +19,18 @@ _T = TypeVar("_T")
 _E = TypeVar("_E", bound=Executor)
 
 
+def is_stop(exc_type: type[BaseException] | None) -> bool:
+    """Whether a block that raised ``exc_type`` ended on a stop of the
+    process (SIGTERM's ``PipelineInterrupted``, Ctrl-C, ``SystemExit``), the
+    one ending that must not wait for work in flight. Any other
+    ``BaseException`` (a closed generator, a test's simulated death) is
+    treated as an error: in production a run dies by being killed, without
+    an exception."""
+    return exc_type is not None and issubclass(
+        exc_type, (KeyboardInterrupt, SystemExit)
+    )
+
+
 @asynccontextmanager
 async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[None]:
     """Cancel ``tasks`` and wait for them when the block raises.
@@ -107,8 +119,7 @@ class ContextThreadPoolExecutor(ThreadPoolExecutor):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> Literal[False]:
-        stopping = exc_type is not None and not issubclass(exc_type, Exception)
-        self.shutdown(wait=not stopping, cancel_futures=exc_type is not None)
+        self.shutdown(wait=not is_stop(exc_type), cancel_futures=exc_type is not None)
         return False
 
     def submit(

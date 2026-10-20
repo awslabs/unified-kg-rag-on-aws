@@ -5,7 +5,8 @@ import os
 import signal
 import sys
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -610,6 +611,20 @@ class IngestionPipelineRunner:
         )
 
 
+def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:
+    """The stop message's note on the next run's wait for this run's writes
+    possibly still in flight (empty when it need not wait)."""
+    pipeline = runner.pipeline if runner else None
+    until = pipeline.next_run_writes_from if pipeline is not None else 0.0
+    if until <= time.time():
+        return ""
+    when = datetime.fromtimestamp(until, tz=timezone.utc).isoformat(timespec="seconds")
+    return (
+        f" Writes of this run may still be in flight: the next run on its "
+        f"namespace waits until {when} before its first write."
+    )
+
+
 def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -> None:
     """The JSON status of a stopped run, with the pipeline id to resume with."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
@@ -636,12 +651,14 @@ def main() -> None:
         console.print(
             f"\n[yellow]Pipeline stopped by signal {e.signum}; its finished "
             "stages are checkpointed, rerun with the same --pipeline-id to "
-            "resume.[/yellow]"
+            f"resume.{_next_run_wait(runner)}[/yellow]"
         )
         _print_interrupted(runner, 128 + e.signum)
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:
-        console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
+        console.print(
+            f"\n[yellow]Pipeline interrupted by user.{_next_run_wait(runner)}[/yellow]"
+        )
         _print_interrupted(runner, EXIT_INTERRUPTED)
         sys.exit(EXIT_INTERRUPTED)
     except ConfigurationError as e:

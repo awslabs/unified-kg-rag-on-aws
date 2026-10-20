@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -781,9 +782,31 @@ class DataIngestionPipeline:
                 seconds,
                 longest,
             )
-        return NamespaceLease(
-            self._doc_status, namespace, seconds, interrupt=self._raise_if_stopping
+        providers = self.config.providers
+        self._lease = NamespaceLease(
+            self._doc_status,
+            namespace,
+            seconds,
+            interrupt=self._raise_if_stopping,
+            in_process_write_seconds=self.config.search.store_timeout_seconds,
+            in_process_stores=all(
+                kind == SQLITE
+                for kind in (
+                    providers.graph.kind,
+                    providers.vector.kind,
+                    providers.doc_status.kind,
+                )
+            ),
         )
+        return self._lease
+
+    @property
+    def next_run_writes_from(self) -> float:
+        """After a run: when the next run on its namespace may write first
+        (epoch seconds; 0 when at once). A stopped run with writes possibly
+        in flight makes the next run wait (see ``namespace_lease``)."""
+        lease = getattr(self, "_lease", None)
+        return lease.next_writes_from if lease is not None else 0.0
 
     def _raise_if_stopping(self) -> None:
         """Raise ``PipelineInterrupted`` once a stop was requested (a takeover

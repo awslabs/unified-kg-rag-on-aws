@@ -63,6 +63,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger, write_fence
+from unified_kg_rag.shared.utils.concurrency import is_stop
 from unified_kg_rag.shared.write_fence import (
     WriteFence,
     install_write_fence,
@@ -112,13 +113,24 @@ class NamespaceLease:
         namespace: str,
         seconds: float,
         interrupt: Callable[[], None] | None = None,
+        in_process_stores: bool = False,
+        in_process_write_seconds: float = 0.0,
     ) -> None:
         """``interrupt`` raises when the run is to stop; a takeover wait
-        calls it (see ``check``)."""
+        calls it (see ``check``). ``in_process_stores``: every store the run
+        writes is embedded in its process (the local SQLite stores), so a
+        stopped process leaves no write in flight and a stop releases the
+        lease (see ``__exit__``), and a late write of a frozen holder is
+        one in-process write, bounded by ``in_process_write_seconds`` (the
+        embedded stores' busy timeout) rather than by a store request."""
         self.store = store
         self.namespace = namespace
         self.seconds = seconds
         self.interrupt = interrupt
+        self.in_process_stores = in_process_stores
+        self.in_process_write_seconds = in_process_write_seconds
+        # After the run: when the next run's first write may go (0: at once).
+        self.next_writes_from = 0.0
         # Before this time (epoch seconds) no write: a takeover of an
         # expired lease waits for the previous holder's late writes.
         self.writes_from = 0.0
@@ -155,9 +167,7 @@ class NamespaceLease:
         # run ended cleanly): no late writes to wait for.
         if previous is not None and previous[0] != self.owner and previous[1] <= sent:
             self._previous_expiry = previous[1]
-            self.writes_from = (
-                previous[1] + longest_write_request_seconds() + _TAKEOVER_MARGIN_SECONDS
-            )
+            self.writes_from = previous[1] + self._late_write_seconds()
             if self.writes_from > sent:
                 logger.warning(
                     "Took over the expired write lease of namespace '%s' from %s: "
@@ -189,23 +199,32 @@ class NamespaceLease:
         # run's context: they must fail once it is given up, before another
         # run can take it.
         held, self._lost = self._lost is None, "the run ended and released it"
-        # A stop (SIGTERM's PipelineInterrupted, Ctrl-C, SystemExit) may leave
-        # writes past the fence in flight: give the lease up as expired
-        # (owner kept), so the next run waits for them as after a crash (see
-        # __enter__). A run that ended or failed has none left (its pools
-        # waited) and releases it.
+        # A stop (is_stop: SIGTERM's PipelineInterrupted, Ctrl-C, SystemExit)
+        # may leave writes past the fence in flight: give the lease up as
+        # expired (owner kept), so the next run waits for them as after a
+        # crash (see __enter__). Not with in-process stores: the stopped
+        # process takes its writes with it. A run that ended or failed has
+        # none left (its pools waited) and releases it.
         # A run that ends during its takeover wait (stopped, or failed before
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
-        stopped = exc_type is not None and issubclass(
-            exc_type, (KeyboardInterrupt, SystemExit)
-        )
-        if self.writes_from > time.time():
+        now = time.time()
+        if self.writes_from > now:
             self._give_up = functools.partial(self._expire, self._previous_expiry)
-        elif stopped:
-            self._give_up = functools.partial(self._expire, time.time())
+            self.next_writes_from = self.writes_from
+        elif is_stop(exc_type) and not self.in_process_stores:
+            self._give_up = functools.partial(self._expire, now)
+            self.next_writes_from = now + self._late_write_seconds()
         else:
             self._give_up = self._release
+        if self.next_writes_from > now:
+            logger.warning(
+                "Gave up the write lease of namespace '%s' with writes possibly "
+                "still in flight: the next run on it waits until %s before its "
+                "first write",
+                self.namespace,
+                _when(self.next_writes_from),
+            )
         self._stop.set()
         if self._thread is not None:
             # A renewal in flight may hang on an unreachable registry: the
@@ -214,6 +233,15 @@ class NamespaceLease:
             self._thread.join(_HEARTBEAT_JOIN_SECONDS)
         if held:
             self._give_up()
+
+    def _late_write_seconds(self) -> float:
+        """How long after the lease expired a write of its holder may land,
+        with the margin: the longest store request, or with in-process
+        stores one in-process write (never more than a store request)."""
+        bound = longest_write_request_seconds()
+        if self.in_process_stores:
+            bound = min(bound, self.in_process_write_seconds)
+        return bound + _TAKEOVER_MARGIN_SECONDS
 
     def _expire(self, at: float) -> None:
         """Give the lease up as expired at ``at`` (epoch seconds, not after

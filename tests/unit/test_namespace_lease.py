@@ -368,3 +368,46 @@ def test_the_pipeline_lease_ends_a_takeover_wait_on_a_stop() -> None:
     pipe._stop_signal = signal.SIGTERM
     with pytest.raises(PipelineInterrupted):
         lease.interrupt()
+
+
+def test_a_stopped_run_on_in_process_stores_releases_its_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On the embedded stores the stopped process takes its writes with it:
+    # the next run need not wait (it waited ~3 minutes after each Ctrl-C).
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    with pytest.raises(KeyboardInterrupt):
+        with NamespaceLease(store, "ns", 60, in_process_stores=True) as lease:
+            raise KeyboardInterrupt
+    assert store.lease_holder("ns") is None
+    assert lease.next_writes_from == 0.0
+
+
+def test_a_stopped_run_tells_when_the_next_run_may_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    started = time.time()
+    with pytest.raises(KeyboardInterrupt):
+        with NamespaceLease(store, "ns", 60) as lease:
+            raise KeyboardInterrupt
+    assert lease.next_writes_from >= started + 30
+    with NamespaceLease(store, "ns", 60) as nxt:
+        assert nxt.writes_from == pytest.approx(lease.next_writes_from, abs=1)
+
+
+def test_an_in_process_takeover_waits_one_in_process_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A frozen local holder's late write is one SQLite write, bounded by the
+    # stores' busy timeout, not by a store request.
+    _short_requests(monkeypatch, 30)
+    store = FakeDocStatusStore()
+    expiry = time.time() - 1
+    store.leases["ns"] = ("frozen-local-run", expiry)
+    with NamespaceLease(
+        store, "ns", 60, in_process_stores=True, in_process_write_seconds=2
+    ) as lease:
+        assert lease.writes_from == pytest.approx(expiry + 2 + 0.1, abs=0.01)
