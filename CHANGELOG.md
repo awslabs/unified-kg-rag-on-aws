@@ -1318,6 +1318,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a stored edge with no description that a run
+  rewrites for its rank only is updated in place too; it was taken for a
+  missing vector copy and embedded again (#PR).
 - Ingestion: the check whether every store is embedded no longer closes a
   remote `vector_indexer` / `graph_indexer` passed to
   `DataIngestionPipeline`: it is the instance every stage then writes with

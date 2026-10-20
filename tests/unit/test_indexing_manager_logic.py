@@ -470,11 +470,14 @@ def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(
     stored = Relationship(
         id="r-old", source_id="a", target_id="b", rank=1, description="A to B"
     )
-    vector.upsert_relationships([stored])
+    # Stored with no description: its copy is there all the same.
+    blank = Relationship(id="r-blank", source_id="a", target_id="d", rank=1)
+    vector.upsert_relationships([stored, blank])
     upsert = mocker.spy(vector, "upsert_relationships")
-    mgr._rank_only = {"r-old", "r-gone"}
+    mgr._rank_only = {"r-old", "r-blank", "r-gone"}
     rels = [
         stored.model_copy(update={"rank": 5}),
+        blank.model_copy(update={"rank": 4}),
         # Rewritten for its rank, but its vector copy is missing: upserted.
         Relationship(id="r-gone", source_id="a", target_id="c", rank=2),
         Relationship(id="r-new", source_id="b", target_id="c"),
@@ -485,11 +488,12 @@ def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(
     (written,) = upsert.call_args.args
     assert sorted(r.id for r in written) == ["r-gone", "r-new"]
     assert (stats.total_items, stats.successful_items, stats.failed_items) == (
-        3,
-        3,
+        4,
+        4,
         0,
     )
     assert vector.data["relationships"]["r-old"].rank == 5
+    assert vector.data["relationships"]["r-blank"].rank == 4
     assert mgr._rank_only == set()
 
 
