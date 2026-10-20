@@ -1233,6 +1233,87 @@ def test_a_cancelled_model_call_ends_its_span(tracing: Tracing) -> None:
     assert handler._spans == {} and handler._watches == {}
 
 
+class _SlowChatModel(GenericFakeChatModel):
+    async def _agenerate(self, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(10)
+        return await super()._agenerate(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "deadline",
+    [
+        "wait_for",
+        pytest.param(
+            "timeout",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 11), reason="asyncio.timeout is 3.11+"
+            ),
+        ),
+    ],
+)
+async def test_a_timed_out_model_call_ends_its_span(
+    tracing: Tracing, deadline: str
+) -> None:
+    # A timeout cancels the call but not its task, which finishes normally
+    # (how RAGAS applies ragas_timeout). Before, only a cancelled task ended
+    # the span: a timed-out call's span was never exported and stayed in
+    # _spans.
+    exporter = tracing()
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    model = _SlowChatModel(
+        messages=itertools.repeat(AIMessage(content="a")), callbacks=[handler]
+    )
+
+    async def judge() -> str:
+        try:
+            if deadline == "wait_for":
+                await asyncio.wait_for(model.ainvoke(_PROMPT), 0.05)
+            else:
+                async with asyncio.timeout(0.05):  # type: ignore[attr-defined]
+                    await model.ainvoke(_PROMPT)
+        except TimeoutError:
+            return "timed out"
+        return "answered"
+
+    assert await asyncio.create_task(judge()) == "timed out"
+    await asyncio.sleep(0)  # let the task's done-callbacks run
+    span = _one(exporter, "chat vendor.model-v1")
+    assert span.status.status_code == StatusCode.ERROR
+    assert _attrs(span)["error.type"] == "CancelledError"
+    assert handler._spans == {} and handler._watches == {} and not handler._streamed
+
+
+async def test_a_stream_started_in_one_task_ends_ok_in_another(
+    tracing: Tracing,
+) -> None:
+    # The task that pulled the first token ends normally before the stream
+    # does: the span must stay open for the consumer, not end as an error.
+    exporter = tracing(capture_content=True)
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="Vendor ships parts in two lots.")]),
+        callbacks=[handler],
+    )
+    stream = model.astream(_PROMPT).__aiter__()
+    first = await asyncio.create_task(stream.__anext__())  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+    assert exporter.get_finished_spans() == () and len(handler._spans) == 1
+
+    async def consume() -> str:
+        return "".join([str(chunk.content) async for chunk in stream])
+
+    assert str(first.content) + await asyncio.create_task(consume()) == (
+        "Vendor ships parts in two lots."
+    )
+    span = _one(exporter, "chat vendor.model-v1")
+    assert span.status.status_code != StatusCode.ERROR
+    assert "error.type" not in _attrs(span)
+    assert json.loads(_attrs(span)["gen_ai.output.messages"])[0]["parts"][0][
+        "content"
+    ] == ("Vendor ships parts in two lots.")
+    assert handler._spans == {} and handler._watches == {} and not handler._streamed
+
+
 def test_invoke_model_usage_fallback(tracing: Tracing) -> None:
     exporter = tracing()
     handler = GenAITracingCallbackHandler("vendor.model-v1")

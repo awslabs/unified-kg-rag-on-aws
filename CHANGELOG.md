@@ -1302,6 +1302,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a model call cut off by `asyncio.wait_for` or `asyncio.timeout`
+  (how RAGAS applies `ragas_timeout`) ends its span as `ERROR
+  CancelledError` again. The timeout cancels the call but not its task, and
+  #393 ended an open span only for a cancelled task, so every timed-out
+  judge call's span was never exported and stayed in the handler. A call's
+  span is now ended when its task ends unless it streamed a token, since a
+  streamed call ends in the task that consumes the stream (#PR).
 - Incremental indexing: a commit that re-keys or renames an entity also
   derives again the stored claims on the other spellings of its name (one
   resolved there while the entity had another name), as a removal does
