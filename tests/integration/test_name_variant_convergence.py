@@ -1596,3 +1596,76 @@ def test_a_commit_killed_twice_carries_the_first_notes_ids(
     assert len(notes) >= 2
     assert all(notes[0] <= later for later in notes[1:])
     assert incremental == full
+
+
+RUNS_SIBLING_CLAIM_COMMIT = [
+    {
+        "d1.txt": "Depot and Acme Corp trade goods 3. Acme Corp trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+    },
+    {
+        "d1.txt": "Depot and Acme Corp trade goods 3. Acme Corp trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+        "d0.txt": "Acme Ltd and Acme Inc and Acme LLC trade goods 1.",
+    },
+    {
+        "d1.txt": "Depot and Acme Ltd trade goods 3. Acme Ltd trade cash 3.",
+        "d4.txt": "Acme Corp and Acme Inc and Depot trade cash 3.",
+        "d0.txt": "Acme Ltd and Acme Inc and Acme LLC trade goods 1.",
+    },
+]
+
+
+def test_a_commit_derives_the_claims_on_a_re_keyed_entitys_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The last commit re-keys "Acme LLC" to "Acme Ltd" (d1.txt now names it).
+    # d0.txt's claim "Acme Ltd owes Acme Inc" had resolved to "Acme Inc", the
+    # smallest of the tied spellings, and merged with its self-claim; now
+    # "Acme Ltd" is an entity of its own, so the claims on the other stored
+    # spellings of the re-keyed entity's name are derived again.
+    runs = RUNS_SIBLING_CLAIM_COMMIT
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+RUNS_SIBLING_CLAIM_SPLIT = [
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade goods 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2. Acme Inc and Acme LLC trade cash 2.",
+        "d6.txt": "Acme Corp trade parts 3.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Depot and Acme Corp and Acme Ltd trade cash 2. Acme Inc and Acme LLC trade cash 2.",
+        "d6.txt": "Acme LLC and Acme Ltd trade parts 2.",
+        "d7.txt": "Acme Ltd and Acme trade parts 3.",
+    },
+]
+
+
+def test_a_commit_derives_the_claims_on_a_split_parts_spellings_again(
+    tmp_path: Path,
+) -> None:
+    # The last commit splits "Acme LLC" off and re-keys the entity it split
+    # from into "Acme Ltd": the stored claim "Depot owes Acme Corp" on "Acme
+    # Ltd" resolves to "Acme LLC" in a full build, so the claims on every
+    # spelling of the part's name, the re-keyed one included, are derived
+    # again.
+    runs = RUNS_SIBLING_CLAIM_SPLIT
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full

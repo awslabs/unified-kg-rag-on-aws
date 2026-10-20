@@ -1302,6 +1302,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a commit that re-keys or renames an entity also
+  derives again the stored claims on the other spellings of its name (one
+  resolved there while the entity had another name), as a removal does
+  (#PR).
 - Incremental indexing: a removal that re-keys, renames or splits an
   entity derives the stored claims about the other stored spellings of its
   name again (one may resolve to it now; they kept a stale subject or
