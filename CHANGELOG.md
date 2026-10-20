@@ -1295,6 +1295,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a commit killed after its vector writes and before
+  its graph writes no longer leaves vector copies nothing finds again. The
+  next commit retires the copies of the noted entities the graph does not
+  hold, with the vector edges at them, and a run that only removes in the
+  suffix reads the commit note too: 240 notes stayed behind after such runs
+  in one sweep, and 18-22 crash points per sweep diverged from a full
+  build. `find_documents` pages through the matches of a hub instead of
+  raising when they outnumber one search (#PR).
 - A pipeline run again after a failed incremental commit (library use of
   `DataIngestionPipeline`) no longer deletes the failed commit's old ids,
   whose replacements were never written: the indexing manager kept the

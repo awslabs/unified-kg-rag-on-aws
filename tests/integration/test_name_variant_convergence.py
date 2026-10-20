@@ -237,6 +237,9 @@ def _state(
     finally:
         graph.close()
     claims = _stored(config, providers, config.indexing.opensearch.claims_index_prefix)
+    vector_entities = _stored(
+        config, providers, config.indexing.opensearch.entities_index_prefix
+    )
     try:
         vector_edges = _stored(
             config, providers, config.indexing.opensearch.relationships_index_prefix
@@ -261,7 +264,16 @@ def _state(
             )
             for hit in claims
         ),
-        # The vector copies of the edges: their own names and lineage.
+        # The vector copies of the entities and edges: their own names and
+        # lineage.
+        "vector_entities": sorted(
+            (
+                hit["_id"],
+                hit["_source"].get("name"),
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
+            )
+            for hit in vector_entities
+        ),
         "vector_edges": sorted(
             (
                 hit["_source"].get("source_name"),
@@ -1438,6 +1450,94 @@ def test_a_resumed_commit_that_fails_again_keeps_its_note(tmp_path: Path) -> Non
         die_in=len(runs) - 1,
         die_at=("upsert_claims", 1, False),
         fail_resumed_at=("upsert_claims", OpenSearchIndexer),
+    )
+
+    assert incremental == full
+
+
+NOTE_COMMIT = "pending-commit"
+
+
+def test_a_killed_commit_is_finished_by_a_run_that_only_deletes(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # The run after the killed commit only removes a document: there is no
+    # delta for the suffix, and the note is read, finished and deleted all
+    # the same.
+    runs = RUNS_COMMIT_SPLIT_CLAIM
+    last = {k: v for k, v in runs[-1].items() if k != "d6.txt"}
+    deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
+
+    full = _state(tmp_path / "full", [last])
+    deleted.reset_mock()
+    incremental = _state(
+        tmp_path / "inc",
+        [*runs, last],
+        die_in=len(runs) - 1,
+        die_at=("upsert_claims", 1, False),
+        resume=False,
+    )
+
+    assert incremental == full
+    assert any(NOTE_COMMIT in call.args[1] for call in deleted.call_args_list)
+
+
+RUNS_VECTOR_ORPHAN_EDGE = [
+    {"a.txt": "Acme Corp and Acme trade goods 2."},
+    {"a.txt": "Acme Corp and Acme trade goods 2.", "b.txt": "Acme trade cash 2."},
+    {"a.txt": "Acme Corp and Acme trade goods 2."},
+]
+RUNS_VECTOR_ORPHAN_ENTITY = [
+    {"d0.txt": "Depot and Acme Ltd and Acme trade goods 1."},
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "d5.txt": "Acme Inc Inc and Acme Inc trade cash 3.",
+    },
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "d5.txt": "Acme Corp Inc and Acme Corp trade cash 3.",
+        "d6.txt": "Acme Inc and Acme LLC trade cash 2. Acme Corp and ACME trade cash 1.",
+    },
+    {
+        "d0.txt": "Depot and Acme Ltd and Acme trade goods 1.",
+        "r7.txt": "Acme Inc and Acme LLC trade cash 2. Acme Corp and ACME trade cash 1.",
+    },
+]
+
+
+@pytest.mark.parametrize(
+    ("runs", "die_in", "die_at"),
+    [
+        pytest.param(
+            RUNS_VECTOR_ORPHAN_EDGE,
+            1,
+            ("upsert_relationships", 1, False, SQLiteGraphIndexer),
+            id="an-edge",
+        ),
+        pytest.param(
+            RUNS_VECTOR_ORPHAN_ENTITY,
+            2,
+            ("upsert_entities", 1, False, SQLiteGraphIndexer),
+            id="an-entity",
+        ),
+    ],
+)
+def test_a_killed_commits_vector_only_copies_go_with_its_note(
+    tmp_path: Path, runs: list[dict[str, str]], die_in: int, die_at: tuple[Any, ...]
+) -> None:
+    # Killed between its vector and its graph writes, the commit left a
+    # vector copy the graph never held; the next run, on another corpus, no
+    # longer derives the item. The commit note names its entities: the next
+    # commit retires the noted copies the graph does not hold (with the
+    # vector edges at them), as nothing else finds them.
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=die_in,
+        die_at=die_at,
+        gleaning=True,
+        resume=False,
     )
 
     assert incremental == full
