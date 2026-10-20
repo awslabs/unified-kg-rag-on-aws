@@ -790,57 +790,40 @@ class OpenSearchIndexer(VectorIndexer):
         suffix: str | None = None,
     ) -> dict[str, list[str]] | None:
         """Documents whose keyword ``field`` holds any of ``values``, with
-        their ``text_unit_ids`` (see the port). A batch matching more
-        documents than one search returns is read in pages, in id order."""
+        their ``text_unit_ids`` (see the port). Read in id order, a window
+        at a time, until a window comes back short: the total a search
+        reports stops at 10,000 by default (``relation: gte``), so it cannot
+        tell a full window from the last one."""
         alias_name = self._get_name(alias_prefix, suffix)
         if not values or not self.opensearch_client.get_index_name_by_alias(alias_name):
             return {}
         found: dict[str, list[str]] = {}
-
-        def search(filters: list[dict[str, Any]], **extra: Any) -> list[Any]:
-            response = self.opensearch_client.search(
-                index=alias_name,
-                body={
-                    "size": _FIND_WINDOW,
-                    "query": {"bool": {"filter": filters}},
-                    "_source": {"includes": ["id", "text_unit_ids"]},
-                    **extra,
-                },
-            )
-            hits = response.get("hits", {})
-            documents = list(hits.get("hits", []))
-            total = hits.get("total", {})
-            count = (
-                total.get("value", len(documents)) if isinstance(total, dict) else total
-            )
-            # More documents than one search returns: sort, and the caller
-            # pages through them by id.
-            return documents if count <= len(documents) else [None, *documents]
-
         for start in range(0, len(values), _FIND_BATCH_SIZE):
             terms = {"terms": {field: values[start : start + _FIND_BATCH_SIZE]}}
-            documents = search([terms])
-            if documents and documents[0] is None:
-                # A hub: read every match a window at a time, in id order.
-                documents, after = [], None
-                while True:
-                    filters: list[dict[str, Any]] = [terms]
-                    if after is not None:
-                        filters.append({"range": {"id": {"gt": after}}})
-                    page = [
-                        d
-                        for d in search(filters, sort=[{"id": {"order": "asc"}}])
-                        if d is not None
-                    ]
-                    documents.extend(page)
-                    if len(page) < _FIND_WINDOW:
-                        break
-                    after = str(
-                        (page[-1].get("_source") or {}).get("id") or page[-1]["_id"]
-                    )
-            for hit in documents:
-                source = hit.get("_source") or {}
-                found[hit["_id"]] = list(source.get("text_unit_ids") or [])
+            after: str | None = None
+            while True:
+                filters: list[dict[str, Any]] = [terms]
+                if after is not None:
+                    filters.append({"range": {"id": {"gt": after}}})
+                response = self.opensearch_client.search(
+                    index=alias_name,
+                    body={
+                        "size": _FIND_WINDOW,
+                        "query": {"bool": {"filter": filters}},
+                        "sort": [{"id": {"order": "asc"}}],
+                        "_source": {"includes": ["id", "text_unit_ids"]},
+                        "track_total_hits": False,
+                    },
+                )
+                page = list(response.get("hits", {}).get("hits", []))
+                for hit in page:
+                    source = hit.get("_source") or {}
+                    found[hit["_id"]] = list(source.get("text_unit_ids") or [])
+                if len(page) < _FIND_WINDOW:
+                    break
+                after = str(
+                    (page[-1].get("_source") or {}).get("id") or page[-1]["_id"]
+                )
         return found
 
     def delete_extraction_records(

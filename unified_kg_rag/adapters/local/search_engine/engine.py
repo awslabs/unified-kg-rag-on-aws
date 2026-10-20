@@ -82,6 +82,9 @@ logger = get_logger(__name__)
 LARGE_INDEX_DOCS = 100_000
 _DEFAULT_SIZE = 10
 _DEFAULT_MAX_RESULT_WINDOW = 10_000
+# Hits counted exactly when a search does not set track_total_hits (as
+# OpenSearch: past it the total is a lower bound).
+_DEFAULT_TRACK_TOTAL_HITS = 10_000
 # Bound parameters per statement stay under SQLite's older 999 limit.
 _BATCH = 500
 
@@ -876,9 +879,24 @@ class SQLiteSearchEngine:
         body = kwargs.get("body") or {}
         if not isinstance(body, dict):
             raise rejected("the search body must be an object")
-        unknown = set(body) - {"size", "query", "_source", "sort", "track_scores"}
+        unknown = set(body) - {
+            "size",
+            "query",
+            "_source",
+            "sort",
+            "track_scores",
+            "track_total_hits",
+        }
         if unknown:
             raise rejected(f"the search body does not support {sorted(unknown)}")
+        track = body.get("track_total_hits", _DEFAULT_TRACK_TOTAL_HITS)
+        if not isinstance(track, (bool, int)) or (
+            not isinstance(track, bool) and track < 0
+        ):
+            raise rejected(
+                f"[track_total_hits] must be a boolean or a non-negative integer, "
+                f"got {track!r}"
+            )
         size = body.get("size", _DEFAULT_SIZE)
         if not isinstance(size, int) or size < 0:
             raise rejected(f"[size] must be a non-negative integer, got {size!r}")
@@ -892,7 +910,7 @@ class SQLiteSearchEngine:
                 self._check_window(connection, name, size)
             sort = body.get("sort")
             if sort is None and (lookup := _id_lookup(query)) is not None:
-                return self._fetch_by_ids(names, *lookup, size, excludes)
+                return self._fetch_by_ids(names, *lookup, size, excludes, track)
             loaded = [self._load(name) for name in names]
         hits = [
             (index, doc_id, score)
@@ -906,6 +924,7 @@ class SQLiteSearchEngine:
                 for index, doc_id, score in top
             ],
             total=len(hits),
+            track=track,
         )
 
     @staticmethod
@@ -933,6 +952,7 @@ class SQLiteSearchEngine:
         score: float,
         size: int,
         excludes: _SourceFilter | None,
+        track: bool | int = True,
     ) -> dict[str, Any]:
         """Answer an id lookup from SQL, without loading the index."""
         wanted = sorted(set(ids))
@@ -979,7 +999,7 @@ class SQLiteSearchEngine:
                         if doc_id in sources
                     )
         hits.sort(key=lambda hit: (hit[0], hit[1]))
-        return self._response(hits[:size], total=len(hits))
+        return self._response(hits[:size], total=len(hits), track=track)
 
     @staticmethod
     def _source(
@@ -1016,19 +1036,31 @@ class SQLiteSearchEngine:
 
     @staticmethod
     def _response(
-        hits: list[tuple[str, str, float, dict[str, Any] | None]], total: int
+        hits: list[tuple[str, str, float, dict[str, Any] | None]],
+        total: int,
+        track: bool | int = True,
     ) -> dict[str, Any]:
+        """The response body; ``hits.total`` as OpenSearch counts it under
+        ``track_total_hits`` (``True``: exact; a number: counted up to it,
+        ``relation: gte`` past it; ``False``: absent)."""
         rendered = []
         for index, doc_id, score, source in hits:
             hit: dict[str, Any] = {"_index": index, "_id": doc_id, "_score": score}
             if source is not None:
                 hit["_source"] = source
             rendered.append(hit)
+        counted: dict[str, Any] = {}
+        if track is not False:
+            cap = total if track is True else track
+            counted["total"] = {
+                "value": min(total, cap),
+                "relation": "gte" if total > cap else "eq",
+            }
         return {
             "took": 0,
             "timed_out": False,
             "hits": {
-                "total": {"value": total, "relation": "eq"},
+                **counted,
                 "max_score": max((h["_score"] for h in rendered), default=None),
                 "hits": rendered,
             },
