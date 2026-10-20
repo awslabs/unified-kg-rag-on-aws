@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -57,6 +58,10 @@ _WALK_EDGE_FIELDS = (
     "weight",
     "text_unit_ids",
 )
+
+# The relationships index's endpoint fields: source OR target takes a request
+# each (``_build_filter_clauses`` ANDs every filter).
+_ENDPOINTS = ("source_id", "target_id")
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -679,11 +684,15 @@ class BaseSearchStrategy(ABC):
         passing document, by its text units. The walk keeps the graph walk's
         bounds: ``max_hops``, ``max_results_per_hop`` new neighbours per
         vertex a hop and ``top_k * retrieval_multiplier *
-        traversal_fetch_multiplier`` vertices in all, split evenly across the
-        seeds (each seed reaches at most its share), so a hub seed cannot use
-        up the others' budget. A page of edges that comes back full holds the
-        busiest vertices' best edges only: the vertices still short of their
-        share are asked again on their own. The reached entities are read
+        traversal_fetch_multiplier`` vertices split across the seeds: each
+        seed reaches at most its share (rounded up, so the shares and no
+        global cap bound the total), so a hub seed cannot use up the others'.
+        A hop asks only the vertices whose seed is still short of its share.
+        A page of edges that comes back full holds the busiest vertices' best
+        edges only: each vertex still open is then asked once more on its own,
+        concurrently, at the full end, for what it still needs (two requests
+        a hop, plus one per open vertex when a page is full). The reached
+        entities are read
         from the entities index under the caller's filters (a vertex filter
         such as ``type`` keeps only its entities, the walk goes through the
         others), scored by distance and importance as the graph walk does
@@ -713,61 +722,96 @@ class BaseSearchStrategy(ABC):
         frontier = list(seeds)
         per_vertex: dict[str, int] = {}  # new neighbours per vertex this hop
 
-        def open_(vertex: str) -> bool:
-            return (
-                per_vertex.get(vertex, 0) < neptune.max_results_per_hop
-                and taken[root[vertex]] < share
+        def needed(vertex: str) -> int:
+            """How many more neighbours ``vertex`` may take this hop."""
+            return min(
+                neptune.max_results_per_hop - per_vertex.get(vertex, 0),
+                share - taken[root[vertex]],
             )
 
+        def open_(vertex: str) -> bool:
+            return needed(vertex) > 0
+
+        page = self._incident_fetch_limit()
+
+        def take(edges: list[RetrievalResult], asked: set[str]) -> None:
+            """Walk ``edges`` from the ``asked`` vertices."""
+            for edge in edges:
+                metadata = edge.metadata or {}
+                ends = (
+                    (str(metadata.get("source_id")), metadata.get("source_name")),
+                    (str(metadata.get("target_id")), metadata.get("target_name")),
+                )
+                for (vertex, _), (other, _) in (ends, ends[::-1]):
+                    if vertex not in asked or other in parent or not open_(vertex):
+                        continue
+                    parent[other], root[other] = vertex, root[vertex]
+                    taken[root[vertex]] += 1
+                    per_vertex[vertex] = per_vertex.get(vertex, 0) + 1
+                    reached.append(other)
+                for vertex, name in ends:
+                    if name:
+                        names.setdefault(vertex, str(name))
+
+        async def passing(
+            vertices: list[str],
+            size: int | None = None,
+            ends: tuple[str, ...] = _ENDPOINTS,
+        ) -> tuple[list[RetrievalResult], tuple[str, ...], Counter[tuple[str, str]]]:
+            """The passing edges incident to ``vertices`` at the ``ends``
+            named, the ends whose page came back full and how many edges each
+            (end, vertex) had on its page (before the check under two or more
+            keys)."""
+            edges, full = await self._incident_relationships(
+                query, vertices, fields, size, ends
+            )
+            on_page = Counter(
+                (end, str((e.metadata or {}).get(end))) for e in edges for end in ends
+            )
+            if len(filters) > 1 and edges:
+                edges = await self._edges_one_document_passes(query, edges, filters)
+            return edges, full, on_page
+
         for hop in range(neptune.max_hops):
-            if not frontier or len(parent) - len(seeds) >= budget:
-                break
             per_vertex.clear()
+            # Only the vertices whose seed is still short of its share.
+            frontier = [vertex for vertex in frontier if open_(vertex)]
+            if not frontier:
+                break
             reached: list[str] = []
-            pending = frontier
-            while pending:
-                edges, full = await self._incident_relationships(query, pending, fields)
-                if hop == 0 and pending is frontier and not edges:
-                    exists = await retriever.ahas_index(
-                        o.relationships_index_prefix, query.suffix
+            edges, full, on_page = await passing(frontier)
+            if hop == 0 and not edges:
+                exists = await retriever.ahas_index(
+                    o.relationships_index_prefix, query.suffix
+                )
+                if exists is False:
+                    logger.warning(
+                        "%s: no relationships index for suffix '%s'; graph "
+                        "expansion under document filters walks the graph",
+                        type(self).__name__,
+                        query.suffix,
                     )
-                    if exists is False:
-                        logger.warning(
-                            "%s: no relationships index for suffix '%s'; graph "
-                            "expansion under document filters walks the graph",
-                            type(self).__name__,
-                            query.suffix,
+                    return None
+            take(edges, set(frontier))
+            if full:
+                # A full page held the busiest vertices' best edges only. Each
+                # vertex still open is asked once more on its own at the full
+                # ends, all at once, for its edges seen there plus what it
+                # still needs: one more round, however many vertices (asked
+                # together, the next busiest filled the page again).
+                still_open = [vertex for vertex in frontier if open_(vertex)]
+                pages = await asyncio.gather(
+                    *(
+                        passing(
+                            [v],
+                            min(page, max(on_page[e, v] for e in full) + needed(v)),
+                            full,
                         )
-                        return None
-                if len(filters) > 1 and edges:
-                    edges = await self._edges_one_document_passes(query, edges, filters)
-                asked = set(pending)
-                for edge in edges:
-                    metadata = edge.metadata or {}
-                    ends = (
-                        (str(metadata.get("source_id")), metadata.get("source_name")),
-                        (str(metadata.get("target_id")), metadata.get("target_name")),
+                        for v in still_open
                     )
-                    for (vertex, _), (other, _) in (ends, ends[::-1]):
-                        if vertex not in asked or other in parent or not open_(vertex):
-                            continue
-                        if len(parent) - len(seeds) >= budget:
-                            break
-                        parent[other], root[other] = vertex, root[vertex]
-                        taken[root[vertex]] += 1
-                        per_vertex[vertex] = per_vertex.get(vertex, 0) + 1
-                        reached.append(other)
-                    for vertex, name in ends:
-                        if name:
-                            names.setdefault(vertex, str(name))
-                still_open = [vertex for vertex in pending if open_(vertex)]
-                if (
-                    not full
-                    or len(still_open) == len(pending)  # the same page again
-                    or len(parent) - len(seeds) >= budget
-                ):
-                    break
-                pending = still_open
+                )
+                for vertex, (edges, _, _) in zip(still_open, pages, strict=True):
+                    take(edges, {vertex})
             frontier = reached
         entities = await self._safe_aretrieve(
             retriever,
@@ -910,10 +954,13 @@ class BaseSearchStrategy(ABC):
         query: SearchQuery,
         entity_ids: list[str],
         source_fields: list[str] | None = None,
-    ) -> tuple[list[RetrievalResult], bool]:
+        size: int | None = None,
+        ends: tuple[str, ...] = _ENDPOINTS,
+    ) -> tuple[list[RetrievalResult], tuple[str, ...]]:
         """The relationships incident to ``entity_ids`` (only
-        ``source_fields`` of each when given), and whether a page came back
-        full (the edges past it were dropped).
+        ``source_fields`` of each when given) at the ``ends`` named, at most
+        ``size`` per end (``_incident_fetch_limit`` by default), and the ends
+        whose page came back full (the edges past it were dropped).
 
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
@@ -927,10 +974,17 @@ class BaseSearchStrategy(ABC):
         """
         retriever = self.document_retriever
         if not retriever or not entity_ids:
-            return [], False
+            return [], ()
         memo = current_query_scope()
         key = "incident\n" + json.dumps(
-            [query.suffix, query.filters, sorted(set(entity_ids)), source_fields],
+            [
+                query.suffix,
+                query.filters,
+                sorted(set(entity_ids)),
+                source_fields,
+                size,
+                ends,
+            ],
             sort_keys=True,
             default=str,
         )
@@ -946,7 +1000,7 @@ class BaseSearchStrategy(ABC):
                 memo[key] = outcome
                 try:
                     edges, full, failed = await self._ask_incident(
-                        query, entity_ids, source_fields
+                        query, entity_ids, source_fields, size, ends
                     )
                 except BaseException:
                     del memo[key]
@@ -958,7 +1012,9 @@ class BaseSearchStrategy(ABC):
                 else:
                     outcome.set_result((edges, full))
                 return list(edges), full
-        edges, full, _ = await self._ask_incident(query, entity_ids, source_fields)
+        edges, full, _ = await self._ask_incident(
+            query, entity_ids, source_fields, size, ends
+        )
         return edges, full
 
     async def _ask_incident(
@@ -966,12 +1022,14 @@ class BaseSearchStrategy(ABC):
         query: SearchQuery,
         entity_ids: list[str],
         source_fields: list[str] | None,
-    ) -> tuple[list[RetrievalResult], bool, bool]:
-        """``_incident_relationships``' two requests: the edges, whether a
-        page came back full and whether a request failed."""
+        size: int | None = None,
+        ends: tuple[str, ...] = _ENDPOINTS,
+    ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
+        """``_incident_relationships``' requests (one per end): the edges,
+        the ends whose page came back full and whether a request failed."""
         retriever = self.document_retriever
         assert retriever is not None
-        page = self._incident_fetch_limit()
+        page = size or self._incident_fetch_limit()
         failures: list[Exception] = []
 
         async def by_endpoint(field: str) -> list[RetrievalResult]:
@@ -992,14 +1050,16 @@ class BaseSearchStrategy(ABC):
                 failures,
             )
 
-        sides = await asyncio.gather(by_endpoint("source_id"), by_endpoint("target_id"))
+        sides = await asyncio.gather(*(by_endpoint(end) for end in ends))
         # A text-less search is ordered by (rank, weight) server-side (the
         # retriever's importance sort), so a full page holds the best edges.
         # Still, the count cap bound and edges were dropped — upstream drops
         # none. Say so (once a query: DRIFT asks again and again) rather than
         # let a silent truncation read as "all edges".
-        full = any(len(side) >= page for side in sides)
-        if full:
+        full = tuple(
+            end for end, side in zip(ends, sides, strict=True) if len(side) >= page
+        )
+        if full and page >= self._incident_fetch_limit():  # not a sized page
             memo = current_query_scope()
             warned = memo is not None and "incident page cap" in memo
             (logger.debug if warned else logger.warning)(

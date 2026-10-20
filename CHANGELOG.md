@@ -1494,6 +1494,21 @@ changed once with the full-config keys (#332).
   others, so slots landed on chunks the check had not asked and the
   filtered fetch then dropped. The chunks selected are now checked until
   every one is known (#400).
+- LightRAG's linked-chunk check under a filter on text units asks the whole
+  unchecked rest of a hit's lineage when a slot lands on a chunk it has not
+  checked: it asked the selected chunks only, one round each, so a hit
+  whose slots moved onto 400 failing chunks cost 402 requests, now 2 (#PR).
+- Filtered graph expansion's refetch of a full page asks each vertex still
+  open once more on its own, concurrently, at the full side, sized to what
+  it still needs, instead of asking them together round after round (each
+  round closed about one busy vertex). A hop asks only the vertices whose
+  seed is short of its share, and the per-seed shares bound the total: one
+  global budget capped it below their sum, so with 21 seeds (share 2 of 30)
+  the last 6 by edge rank reached nothing. Under two or more keys a hub
+  whose edges no single document passes no longer starves the other seeds
+  (the refetch stopped as "the same page again" before they were asked).
+  On OpenSearch, 30 hub seeds took 53 requests in 891 ms, now 32 in 103 ms
+  (20 seeds 342 to 85 ms, 50 seeds 254 to 118 ms) (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
