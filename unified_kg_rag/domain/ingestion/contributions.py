@@ -60,7 +60,8 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
 
     Descriptions are unioned line by line, text units and document filters
     unioned, the confidence is the max (monotonic in evidence) and the type
-    the most frequent of the statements (the first on a tie).
+    the most frequent of the statements (the smallest on a tie, whatever
+    the order of the statements).
     """
     field_mergers: dict[str, Callable[[list[Any]], Any]] = {
         "description": merge_descriptions,

@@ -823,6 +823,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Full builds: an entity's type, or a claim's type or status, that its
+  statements state equally often is the smallest of those values, not the
+  one in the earliest text unit. The order of the text units differs
+  between namespaces and corpora of the same text, so a tie made the same
+  documents build different graphs (and an incremental run diverge from a
+  full build). A rebuild can change the type of an entity whose statements
+  tie (#PR).
 - `GraphIndexer.count_neighbors` takes `at_most` and stops counting there
   (Neptune `limit` before `count`): the community walk only asks whether an
   entity has more neighbours than its step. A Neptune edge write no longer

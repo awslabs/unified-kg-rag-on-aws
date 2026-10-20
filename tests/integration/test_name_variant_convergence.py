@@ -508,16 +508,16 @@ def test_incremental_runs_over_two_spellings_match_a_full_build(
 def test_running_a_finished_pipeline_id_again_changes_nothing(
     tmp_path: Path,
 ) -> None:
-    statement = "Initech Corp and Buyer and Acme trade cash 1."
-    first = "Depot and Initech trade parts 1. Initech Corp trade cash 3."
-    second = f"{first} Initech and Buyer trade cash 2."
+    statement = "Initech Corp and Buyer and Acme trade parts 1."
+    first = "Depot and Initech trade goods 1. Initech Corp trade parts 3."
+    second = f"{first} Initech and Buyer trade parts 2."
     runs = [
         {"d5.txt": statement, "d6.txt": first},
         {"d6.txt": second, "r5.txt": statement},
         {
             "d6.txt": second,
             "r5.txt": statement,
-            "d5.txt": "Buyer and Initech and " "Depot trade goods 2.",
+            "d5.txt": "Buyer and Initech and " "Depot trade cash 2.",
         },
     ]
     full = _state(tmp_path / "full", [runs[-1]])
@@ -629,13 +629,13 @@ def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
     # the resumed run left the edge gleaning adds for "Initech Corp" (d1.txt)
     # on "Initech": the stored "Initech" no longer held the other spelling's
     # key, so the edge had no derived entity to follow.
-    d1 = "Initech Corp and Initech trade cash 1. Depot and Buyer trade parts 1."
+    d1 = "Initech Corp and Initech trade parts 1. Depot and Buyer trade cash 1."
     d7 = "Depot and Initech Corp and Buyer trade goods 1."
     runs = [
-        {"d1.txt": "Initech trade parts 2."},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2."},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "d7.txt": d7},
-        {"d1.txt": d1, "d5.txt": "Buyer trade cash 2.", "r0.txt": d7},
+        {"d1.txt": "Initech trade cash 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2."},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2.", "d7.txt": d7},
+        {"d1.txt": d1, "d5.txt": "Buyer trade parts 2.", "r0.txt": d7},
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
@@ -868,9 +868,9 @@ def test_a_resumed_removal_finishes_the_merge_it_started(
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
 
     full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
@@ -906,9 +906,9 @@ def test_a_finished_removal_deletes_its_strip_note(
     runs = [
         {
             "d1.txt": "Initech trade goods 3.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
     written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
     deleted = mocker.spy(OpenSearchIndexer, "delete_extraction_records")
@@ -1053,9 +1053,9 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
         {
             "d1.txt": "Initech trade goods 3.",
             "d2.txt": "Initech trade goods 4.",
-            "d5.txt": "Initech Corp and Initech trade cash 2.",
+            "d5.txt": "Initech Corp and Initech trade parts 2.",
         },
-        {"d5.txt": "Initech Corp and Initech trade cash 2."},
+        {"d5.txt": "Initech Corp and Initech trade parts 2."},
     ]
     written = mocker.spy(OpenSearchIndexer, "write_extraction_records")
 
@@ -1093,18 +1093,18 @@ def test_a_resumed_removal_that_merged_and_split_matches_a_full_build(
     tmp_path: Path, die_at: tuple[Any, ...]
 ) -> None:
     # Removing d2.txt merges "Acme Ltd" into "ACME Inc" and splits "Acme" off
-    # it. The resumed removal strips the merged entities again; stripping the
-    # split-off part and its origin again too (as #379 noted them) left
-    # "Acme owes Acme Inc" with the wrong subject.
+    # it. Killed partway, the resumed removal strips the merged entities
+    # again from its note, and derives the claims about the split's
+    # entities again (also noted).
     runs = [
         {
-            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
-            "parts 1. Acme and Acme Inc trade cash 2.",
-            "d2.txt": "Acme Ltd trade parts 2. Initech Corp trade parts 2.",
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade parts 3. Buyer trade "
+            "goods 1. Acme and Acme Inc trade parts 2.",
+            "d2.txt": "Acme Ltd trade goods 2. Initech Corp trade goods 2.",
         },
         {
-            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade cash 3. Buyer trade "
-            "parts 1. Acme and Acme Inc trade cash 2."
+            "d3.txt": "Buyer and Acme Ltd and ACME Inc trade parts 3. Buyer trade "
+            "goods 1. Acme and Acme Inc trade parts 2."
         },
     ]
 
