@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
@@ -236,6 +237,12 @@ def _state(
     finally:
         graph.close()
     claims = _stored(config, providers, config.indexing.opensearch.claims_index_prefix)
+    try:
+        vector_edges = _stored(
+            config, providers, config.indexing.opensearch.relationships_index_prefix
+        )
+    except NotFoundError:  # no edge was ever written
+        vector_edges = []
     return {
         "entities": sorted(
             (e.id, e.name, e.type, len(e.text_unit_ids or []), e.description)
@@ -253,6 +260,16 @@ def _state(
                 tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
             )
             for hit in claims
+        ),
+        # The vector copies of the edges: their own names and lineage.
+        "vector_edges": sorted(
+            (
+                hit["_source"].get("source_name"),
+                hit["_source"].get("target_name"),
+                hit["_source"].get("description"),
+                tuple(sorted(hit["_source"].get("text_unit_ids") or [])),
+            )
+            for hit in vector_edges
         ),
     }
 
@@ -1165,3 +1182,166 @@ def test_a_strip_note_carries_over_the_items_of_an_earlier_note(
     assert notes, "the merging removal wrote no note"
     assert "e-earlier" in notes[0]["entity_ids"]
     assert "r-earlier" in notes[0]["relationship_ids"]
+
+
+# Sequences the cycle-45 fuzz found (each diverged from a full build).
+RUNS_GAINING = [
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d3.txt": "Acme LLC and Acme Inc trade parts 1. Acme and Acme Corp and ACME trade goods 3.",
+        "d5.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d5.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+        "d2.txt": "Acme and ACME trade cash 1. Acme Inc trade cash 2.",
+        "d7.txt": "Depot and Acme LLC trade parts 3.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Ltd trade cash 2.",
+        "d2.txt": "Acme and ACME trade cash 1. Acme Inc trade cash 2.",
+        "r6.txt": "Acme Ltd and Acme Inc and Acme Corp trade goods 3. Acme LLC and ACME Inc trade parts 1.",
+        "r0.txt": "Depot and Acme LLC trade parts 3.",
+    },
+]
+RUNS_DUPKEY = [
+    {
+        "d0.txt": "Buyer and Acme Inc trade goods 1. Acme LLC and Acme Corp trade goods 2. Depot and Acme Inc trade cash 2.",
+        "d6.txt": "Acme and Acme Corp and Acme Inc trade goods 1. Acme LLC and Depot and Acme trade cash 2. Acme Inc trade goods 2.",
+        "d1.txt": "Acme LLC and Depot trade goods 1.",
+    },
+    {
+        "d0.txt": "Buyer and Acme Inc trade goods 1. Acme LLC and Acme Corp trade goods 2. Depot and Acme Inc trade cash 2.",
+        "d6.txt": "Acme and Acme Corp and Acme Inc trade goods 1. Acme LLC and Depot and Acme trade cash 2. Acme Inc trade goods 2.",
+        "d1.txt": "Acme LLC and Depot trade goods 1.",
+        "d4.txt": "Acme Corp trade cash 1. Depot and Acme and Acme Ltd trade cash 3.",
+    },
+]
+RUNS_SPLITPART = [
+    {"d0.txt": "Acme Ltd and Acme and Acme Corp trade parts 1."},
+    {
+        "d0.txt": "Acme Ltd and Acme and Acme Corp trade parts 1.",
+        "d1.txt": "Acme Ltd and ACME Inc and Acme trade cash 3.",
+    },
+]
+RUNS_RENAME = [
+    {
+        "r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2.",
+        "d1.txt": "Buyer and Acme Inc trade cash 3.",
+    },
+    {"r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2."},
+]
+RUNS_VECTOR_ONLY = [
+    {"d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2."},
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+    },
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+        "d0.txt": "Buyer and Initech Corp and Acme trade parts 2. Acme and Buyer and Acme trade parts 3.",
+    },
+    {
+        "d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2.",
+        "d1.txt": "Initech Corp trade parts 1. Acme Inc and Acme Corp and Initech Corp Corp trade parts 3.",
+        "d7.txt": "Acme trade cash 3.",
+        "d0.txt": "Buyer and Initech Corp and Acme trade parts 2. Acme and Buyer and Acme trade parts 3.",
+        "d2.txt": "Buyer and Initech Corp trade parts 2. Acme Inc trade parts 1.",
+    },
+]
+
+
+def test_a_strip_killed_between_phases_keeps_an_entity_that_gains_units(
+    tmp_path: Path,
+) -> None:
+    # Removing d3.txt (d2.txt and d7.txt come in) strips a spelling that now
+    # cites a unit of another one (its statement merged in). The strip wrote
+    # that entity last, after the edges re-pointed at it; killed in between,
+    # and run next on an edited corpus, the edge citing the kept unit hung
+    # on a vertex citing only removed units and went with it.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+
+    runs = RUNS_GAINING
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("_run_indexing_phase", 2, True, IndexingManager),
+        gleaning=True,
+        resume=False,
+    )
+
+    assert incremental == full
+
+
+def test_an_added_document_leaves_no_duplicate_of_a_re_pointed_edge(
+    tmp_path: Path,
+) -> None:
+    # Adding d4.txt re-points an edge onto endpoints a stored edge of the
+    # same type already joins under another id. A full build has one edge
+    # there; the stored one, citing nothing the written one does not, stayed.
+    runs = RUNS_DUPKEY
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full
+
+
+def test_a_claim_about_a_split_off_part_is_derived_again(tmp_path: Path) -> None:
+    # Adding d1.txt splits spellings apart. A stored claim already naming
+    # the part's id (the spelling it states) was not derived again and kept
+    # a stale self-claim.
+    runs = RUNS_SPLITPART
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True)
+
+    assert incremental == full
+
+
+def test_a_rename_killed_before_the_vector_edges_renames_them_on_retry(
+    tmp_path: Path,
+) -> None:
+    # Removing d1.txt renames an entity under its id ("Acme Inc" to "ACME
+    # Inc"). Killed after the graph edges took the new name and before
+    # their vector copies did, the retry compared the derived names with the
+    # graph copy only and left the vector copies under the old name.
+    runs = RUNS_RENAME
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("upsert_relationships", 1, False),
+        gleaning=True,
+    )
+
+    assert incremental == full
+
+
+def test_vector_copies_a_killed_run_left_without_graph_copies_go(
+    tmp_path: Path,
+) -> None:
+    # Run 2 is killed at its first vector entity write; the next run, on
+    # an edited corpus, kept the vector copy of an edge the graph store did
+    # not hold (nothing strips a copy the graph cannot read back).
+    runs = RUNS_VECTOR_ONLY
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("upsert_entities", 1, False),
+        gleaning=True,
+        resume=False,
+    )
+
+    assert incremental == full

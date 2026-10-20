@@ -208,9 +208,10 @@ def _remapped_endpoints(
     )
 
 
-def _relationship_key(
+def relationship_key(
     source_id: str, target_id: str, rel: Relationship
 ) -> tuple[str, str, str]:
+    """The key two relationships merge by: endpoints and type."""
     # An untyped relationship is stored (and read back) as the default type,
     # so both forms must share a key.
     rel_type = rel.type or Constants.DEFAULT_RELATIONSHIP_TYPE.value
@@ -253,7 +254,7 @@ def merge_relationships(
             continue
         by_id[rel.id] = rel.model_copy(deep=True)
         id_by_key.setdefault(
-            _relationship_key(rel.source_id, rel.target_id, rel), rel.id
+            relationship_key(rel.source_id, rel.target_id, rel), rel.id
         )
 
     for rel in delta:
@@ -263,7 +264,7 @@ def merge_relationships(
             # both endpoints onto one entity; the full-build resolver drops these,
             # so the incremental path must too.
             continue
-        key = _relationship_key(source_id, target_id, rel)
+        key = relationship_key(source_id, target_id, rel)
         # By id (the same statement), else by key: an edge re-pointed at a
         # merged entity keeps the id its extracted names derive.
         match = by_id.get(rel.id) or by_id.get(id_by_key.get(key, ""))
@@ -310,14 +311,14 @@ def relationship_id_remap(
     kept_ids = {r.id for r in merged}
     kept: dict[tuple[str, str, str], str] = {}
     for r in merged:
-        kept.setdefault(_relationship_key(r.source_id, r.target_id, r), r.id)
+        kept.setdefault(relationship_key(r.source_id, r.target_id, r), r.id)
     result: dict[str, str] = {}
     for rel in delta:
         if rel.id in kept_ids:
             # Matched by id (or kept as new): it survives under its own id.
             continue
         source_id, target_id = _remapped_endpoints(rel, remap)
-        kept_id = kept.get(_relationship_key(source_id, target_id, rel))
+        kept_id = kept.get(relationship_key(source_id, target_id, rel))
         if kept_id is not None and kept_id != rel.id:
             result[rel.id] = kept_id
     return result

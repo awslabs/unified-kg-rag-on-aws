@@ -1295,6 +1295,31 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal that renames an entity and is killed
+  after the graph took its edges' new names, before their vector copies
+  did, renames the vector copies on retry. The strip writes the vector
+  edges before the graph edges now: the retry compares the derived names
+  with the graph copy, so the vector copies kept the old name for good
+  (#391).
+- Incremental indexing: a removal's strip writes a kept entity that now
+  cites a text unit it did not (another spelling's statement merged in)
+  before the edges re-pointed at it. Written last, a run killed in between
+  and run next on an edited corpus left an edge citing a kept unit on a
+  vertex citing only removed ones, and the next removal deleted both (#391).
+- Incremental indexing: a copy that only the vector store holds (a killed
+  run wrote it and never got to the graph write) is deleted when a later
+  removal reaches it, with the vector copies of the edges at such an
+  entity, instead of staying with its stale lineage and filters. Only a
+  graph store that reads items back tells such copies apart (#391).
+- Incremental indexing: when spellings split apart, the stored claims
+  about a split-off part are derived again too, not only those about the
+  entity it split from; a stored claim already naming the part kept a
+  stale self-claim (#391).
+- Incremental indexing: adding a document that re-points an edge onto two
+  entities a stored edge of the same type already joins under another id
+  no longer leaves both. The stored one, citing nothing the written edge
+  does not, is the same edge under an earlier id and is deleted, as a full
+  build has one edge there (#391).
 - Tracing: a cancelled model call (`ainvoke` / `agenerate`, which gets no
   end callback from LangChain) ends its `chat <model>` span as `ERROR`
   (`error.type: CancelledError`) when its task finishes, instead of leaving

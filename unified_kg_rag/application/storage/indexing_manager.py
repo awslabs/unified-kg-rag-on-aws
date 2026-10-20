@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
     relationship_id_remap,
+    relationship_key,
     remove_claim_text_units,
     remove_text_units,
 )
@@ -95,6 +96,12 @@ def _other_spellings_of_parts(
         for i, e in derived.items()
         if i not in split_from and compact_name_key(e.name) in keys
     )
+
+
+def _reads_back(graph: GraphIndexer) -> bool:
+    """Whether ``graph`` reads stored entities back (the port's default
+    reads nothing, so every id would look absent)."""
+    return getattr(type(graph), "read_entities", None) is not GraphIndexer.read_entities
 
 
 def _vector_content(item: Entity | Relationship) -> tuple[Any, ...]:
@@ -249,6 +256,9 @@ class IndexingManager:
         # ``Derived.dropped``, copies under a folded delta id): deleted with
         # the retired ids.
         self._dropped: dict[str, set[str]] = {}
+        # Per suffix: the retired entities only the vector store held (see
+        # _strip_shared), whose edges delete_documents finds there.
+        self._vector_only: dict[str, set[str]] = {}
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -1188,9 +1198,25 @@ class IndexingManager:
             )
             for r in stored_extra
         ]
+        # A stored edge of a written edge's key (endpoints and type, as the
+        # merge matches them) under another id, citing no unit the written
+        # one does not, is that edge under an earlier id (the derivation
+        # re-pointed the written one onto these endpoints): a full build has
+        # one edge, so it goes with the retired ids.
+        written_by_key = {
+            relationship_key(r.source_id, r.target_id, r): r for r in relationships
+        }
+        duplicates = {
+            r.id
+            for r in extra
+            if (w := written_by_key.get(relationship_key(r.source_id, r.target_id, r)))
+            is not None
+            and w.id != r.id
+            and set(r.text_unit_ids or []) <= set(w.text_unit_ids or [])
+        }
         # An edge between two entities the re-key merged is a self-loop a
         # full build does not draw: it goes with the retired ids.
-        loops = {r.id for r in extra if r.source_id == r.target_id}
+        loops = {r.id for r in extra if r.source_id == r.target_id} | duplicates
         if loops:
             self._dropped.setdefault(suffix, set()).update(loops)
             extra = [r for r in extra if r.id not in loops]
@@ -1315,7 +1341,8 @@ class IndexingManager:
 
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
-        re-keyed ones, those an entity was split off, the other spellings
+        re-keyed ones, those an entity was split off and the parts split off
+        them (a stored claim may name a part already), the other spellings
         of a split-off entity's name this run derived (a claim naming the
         part may resolve to one of them) and those renamed."""
         split_from = self._split_from.get(suffix, {})
@@ -1323,6 +1350,7 @@ class IndexingManager:
             {
                 *self._rekeyed.get(suffix, {}),
                 *split_from.values(),
+                *split_from,
                 *_other_spellings_of_parts(
                     split_from, self._derived_entities.get(suffix, {})
                 ),
@@ -1356,8 +1384,10 @@ class IndexingManager:
             )
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
+        vector_only = dict(self._vector_only)
         self._rekeyed.clear()
         self._dropped.clear()
+        self._vector_only.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
@@ -1368,13 +1398,14 @@ class IndexingManager:
                 "Deleting %d items re-keyed to follow their current name",
                 sum(len(ids) for ids in retired.values()),
             )
-        return self.delete_documents(retired)
+        return self.delete_documents(retired, vector_only)
 
     def discard_retired_ids(self) -> None:
         """Keep the re-keyed items' old ids (their writes failed: deleting
         them would lose the items)."""
         self._rekeyed.clear()
         self._dropped.clear()
+        self._vector_only.clear()
         self._split_from.clear()
         self._renamed.clear()
         self._fresh.clear()
@@ -1552,6 +1583,17 @@ class IndexingManager:
                 if relationship_ids
                 else []
             )
+            # A shared id a graph store with read-back does not hold is a
+            # vector copy whose graph write an interrupted run never made:
+            # nothing strips it, so it goes with the retired ids (with the
+            # vector edges at it, see delete_documents).
+            if _reads_back(self.neptune_indexer):
+                vector_only = set(entity_ids) - {e.id for e in entities}
+                if vector_only:
+                    self._vector_only.setdefault(suffix, set()).update(vector_only)
+                vector_only |= set(relationship_ids) - {r.id for r in relationships}
+                if vector_only:
+                    self._dropped.setdefault(suffix, set()).update(vector_only)
             # An edge is derived with its endpoints (the resolved entities map
             # to them). They cite the removed units too, unless a killed run
             # stripped them and left the edge (re-keyed, not yet deleted).
@@ -1693,18 +1735,36 @@ class IndexingManager:
 
         # Written so an interruption never hides an edge still citing a
         # removed text unit: a retry finds the edges through the entities
-        # that cite it, so those are rewritten last. A re-keyed entity's new
-        # vertex comes first (its edges are re-pointed at it); its old
-        # vertex still cites the text units until it is deleted.
-        rekeyed = [e for e in new_entities if e.id not in graph_copy]
-        kept = [e for e in new_entities if e.id in graph_copy]
-        relationship_tasks = [
+        # that cite it, so those are rewritten last (or, on a resumed
+        # removal, by text unit). A re-keyed entity's new vertex comes first
+        # (its edges are re-pointed at it); its old vertex still cites the
+        # text units until it is deleted.
+        # A kept entity that now cites a text unit its graph copy does not
+        # (another spelling's statement merged in) comes first too, before
+        # the edges re-pointed at it: written last, a run killed in between
+        # left an edge citing a kept unit on a vertex citing only removed
+        # ones, which the next removal deleted with the edge.
+        stored_units = {e.id: set(e.text_unit_ids or []) for e in entities}
+        first = {
+            e.id
+            for e in new_entities
+            if e.id not in graph_copy
+            or set(e.text_unit_ids or []) - stored_units.get(e.id, set())
+        }
+        rekeyed = [e for e in new_entities if e.id in first]
+        kept = [e for e in new_entities if e.id not in first]
+        # The vector copies of the edges come before their graph copies: the
+        # graph copy is what a retry compares the derived names with
+        # (``unchanged``), so it must not get ahead of them (a rename killed
+        # in between left the vector copies under the old name for good).
+        graph_edge_tasks = [
             IndexingTask(
                 self.neptune_indexer.upsert_relationships,
                 [new_relationships],
                 "neptune_relationships",
             )
         ]
+        relationship_tasks: list[IndexingTask] = []
         if self.config.indexing.opensearch.build_relationship_vector_index:
             relationship_tasks += [
                 IndexingTask(
@@ -1727,6 +1787,7 @@ class IndexingManager:
                 )
             ],
             relationship_tasks,
+            graph_edge_tasks,
             [
                 IndexingTask(
                     self.neptune_indexer.upsert_entities, [kept], "neptune_entities"
@@ -2027,7 +2088,14 @@ class IndexingManager:
             len(shared_relationships),
             len(shared_claims),
         )
-        results = self.delete_documents({suffix: doomed})
+        # An entity only the vector store holds (an interrupted run never
+        # wrote its graph copy) has its edges there only.
+        vector_only = (
+            {i for i, units in cited.items() if exclusive(units) and i not in found}
+            if found is not None and _reads_back(graph)
+            else set()
+        )
+        results = self.delete_documents({suffix: doomed}, {suffix: vector_only})
         if any(stats.failed_items for stats in results.values() if stats):
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.
@@ -2055,6 +2123,24 @@ class IndexingManager:
             # The noted items are gone: the earlier strip is finished.
             self._clear_pending_strip(suffix, notes)
         return results
+
+    def _vector_incident_relationship_ids(
+        self, entity_ids: list[str], suffix: str
+    ) -> list[str]:
+        """Ids of the relationship documents of ``suffix`` with an endpoint
+        among ``entity_ids`` (``[]`` for a backend that cannot tell)."""
+        if not entity_ids:
+            return []
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        found: set[str] = set()
+        for field in ("source_id", "target_id"):
+            found.update(
+                self.opensearch_indexer.find_documents(
+                    prefix, field, entity_ids, suffix
+                )
+                or {}
+            )
+        return sorted(found)
 
     def _vector_citing(
         self, alias_prefix: str, text_unit_ids: list[str], suffix: str
@@ -2122,12 +2208,16 @@ class IndexingManager:
         return results
 
     def delete_documents(
-        self, ids_by_suffix: dict[str, list[str]]
+        self,
+        ids_by_suffix: dict[str, list[str]],
+        vector_only: Mapping[str, Collection[str]] | None = None,
     ) -> dict[str, IndexingStats]:
         """Delete artifacts for removed documents from both stores by id.
 
         ``ids_by_suffix`` maps a tenant/version suffix to the entity/relationship/
-        text-unit/community ids that belonged only to deleted documents.
+        text-unit/community ids that belonged only to deleted documents;
+        ``vector_only`` (by suffix) the entities among them that only the
+        vector store holds, whose edges are found in its relationship index.
         """
         results: dict[str, IndexingStats] = {}
         for suffix, ids in ids_by_suffix.items():
@@ -2143,6 +2233,17 @@ class IndexingManager:
             try:
                 incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
                     ids, suffix=suffix
+                )
+                # And the edges at a vector-only entity (see _strip_shared):
+                # their graph copies never were either.
+                incident_rel_ids = sorted(
+                    {
+                        *incident_rel_ids,
+                        *self._vector_incident_relationship_ids(
+                            sorted(set((vector_only or {}).get(suffix, ())) & set(ids)),
+                            suffix,
+                        ),
+                    }
                 )
             except Exception as e:  # noqa: BLE001 - reported as failed items
                 # Deleting without them would orphan their vector documents

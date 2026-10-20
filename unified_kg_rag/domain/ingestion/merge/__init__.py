@@ -29,6 +29,7 @@ from .merger import (
     merge_entities,
     merge_relationships,
     relationship_id_remap,
+    relationship_key,
     remove_claim_text_units,
     remove_text_units,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "merge_entities",
     "merge_relationships",
     "relationship_id_remap",
+    "relationship_key",
     "remove_claim_text_units",
     "remove_text_units",
 ]
