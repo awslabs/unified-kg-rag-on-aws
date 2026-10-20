@@ -1327,17 +1327,17 @@ changed once with the full-config keys (#332).
   from the graph store and 14 MB from the search store, now 24 MB from the
   search store alone, in 92 more requests. Without a relationships index
   (`build_relationship_vector_index: false`) the graph walk and its entity
-  check still apply (#PR).
+  check still apply (#396).
 - The filter check keeps a cursor over the ids instead of rescanning the
-  rest of them per batch, which was quadratic in their number (#PR).
+  rest of them per batch, which was quadratic in their number (#396).
 - A document filter's range takes only `gt`, `gte`, `lt` and `lte`: another
   key (`{"from": 1}`) is rejected before any model call instead of reaching
-  the stores (#PR).
+  the stores (#396).
 - LightRAG's linked-chunk check under a selective filter makes two requests
   instead of one per round of a few ids: each hit's first
   `related_chunk_number` chunks, then the whole rest of the lineage of the
   hits still short. Under a one-document filter on 1,000 documents, mix
-  made 211 search requests, now 13 (p50 478 to 38 ms on OpenSearch) (#PR).
+  made 211 search requests, now 13 (p50 478 to 38 ms on OpenSearch) (#396).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
