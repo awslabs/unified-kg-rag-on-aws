@@ -91,13 +91,18 @@ class DocStatusPort(Protocol):
         Succeeds when no lease is held, the held one expired, or ``owner``
         holds it; the lease then expires ``seconds`` from now. Atomic (a
         conditional write), so two runs never both hold it. Returns whether
-        ``owner`` holds the lease.
+        ``owner`` holds the lease. ``seconds <= 0`` gives the lease up as
+        expired (at now plus ``seconds``) with ``owner`` kept: a stopped run
+        does so, and the next run's takeover then waits for its late writes
+        (``application.ingestion.namespace_lease``).
         """
         ...
 
     def lease_holder(self, namespace: str) -> tuple[str, float] | None:
-        """``(owner, expires_at)`` of ``namespace``'s lease (epoch seconds;
-        possibly expired), or ``None`` when none was taken."""
+        """``(owner, expires_at)`` of ``namespace``'s lease (epoch seconds),
+        or ``None`` when none was taken or it was released. An expired lease
+        is returned, not ``None``: a takeover tells an expired lease (whose
+        holder's writes may be late) from a released one by it."""
         ...
 
     def release_lease(self, namespace: str, owner: str) -> None:
