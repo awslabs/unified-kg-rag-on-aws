@@ -1516,7 +1516,7 @@ changed once with the full-config keys (#332).
   `max_query_size` edges back to the seeds at its own end never reached
   its other neighbour (150 edges between two seeds hid B's edge to X), and
   on e136253c a page of back edges left 20 of 30 leaves unreached with
-  budget left (#PR).
+  budget left (#406).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
