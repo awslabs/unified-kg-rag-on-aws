@@ -1311,6 +1311,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Tracing: a timed-out call to a model that streams inside `ainvoke`
+  (ChatOllama) ends its span as `ERROR CancelledError` too. Its first token
+  marked the call as streamed, so a RAGAS judge call timed out after it kept
+  its span open in the handler and never exported it. Only a token in the
+  task that started the call counts as streaming now; `ainvoke` generates
+  in a child task (#PR).
 - Embedded stores: the SQLite graph store's and search engine's write
   transactions check the run's write fence, before they wait for the
   database's lock and again once they hold it. A stopped run with every

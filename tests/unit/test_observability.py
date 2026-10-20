@@ -1310,6 +1310,44 @@ async def test_a_timed_out_model_call_ends_its_span(
     assert handler._spans == {} and handler._watches == {} and not handler._streamed
 
 
+class _StreamingInsideChatModel(GenericFakeChatModel):
+    """A model whose ``_agenerate`` streams (as ChatOllama's does): an
+    ``ainvoke`` reports tokens, then stalls."""
+
+    async def _agenerate(
+        self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> Any:
+        assert run_manager is not None
+        await run_manager.on_llm_new_token("a")
+        await asyncio.sleep(10)
+        return await super()._agenerate(messages, stop, run_manager, **kwargs)
+
+
+async def test_a_timed_out_call_that_streams_internally_ends_its_span(
+    tracing: Tracing,
+) -> None:
+    # ChatOllama streams inside ainvoke: before, its first token marked the
+    # call as streamed, so a judge call timed out after it kept its span open.
+    exporter = tracing()
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    model = _StreamingInsideChatModel(
+        messages=itertools.repeat(AIMessage(content="a")), callbacks=[handler]
+    )
+
+    async def judge() -> str:
+        try:
+            await asyncio.wait_for(model.ainvoke(_PROMPT), 0.05)
+        except asyncio.TimeoutError:
+            return "timed out"
+        return "answered"
+
+    assert await asyncio.create_task(judge()) == "timed out"
+    await asyncio.sleep(0)  # let the task's done-callbacks run
+    span = _one(exporter, "chat vendor.model-v1")
+    assert _attrs(span)["error.type"] == "CancelledError"
+    assert handler._spans == {} and handler._watches == {} and not handler._streamed
+
+
 async def test_a_stream_started_in_one_task_ends_ok_in_another(
     tracing: Tracing,
 ) -> None:
