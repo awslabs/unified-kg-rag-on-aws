@@ -11,7 +11,7 @@ with Gremlin::
     {
         "node": {"id": [...], "name": [...], "description": [...],
                  "rank": [...], "text_unit_ids": [...]},  # value_map
-        "path": [{"id": [...], "name": [...]}, ...],  # seed first, node last
+        "path": [{"name": [...]}, ...],  # seed first, the node last
         "node_type": "<vertex label>",
         "degree": <int>,  # only when entity_importance_source == "degree"
     }
@@ -25,8 +25,8 @@ from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
-    distance_band,
     entity_content,
+    graph_relevance,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -279,13 +279,6 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             metadata={
                 **node_data,
                 "_node_type": item.get("node_type", "unknown"),
-                # The walk's vertices (seed first): filtered expansion checks
-                # the edges along it, intermediate vertices included.
-                "_path": [
-                    [str(p.get("id", [""])[0]), str(p.get("name", [""])[0])]
-                    for p in path_data
-                    if isinstance(p, dict) and p.get("id")
-                ],
             },
         )
 
@@ -326,11 +319,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             if importance_key is not None
             else None
         )
-        importance = (
-            raw / max_importance if raw is not None and max_importance > 0 else 0.5
+        return graph_relevance(
+            len(path) or 1,
+            raw / max_importance if raw is not None and max_importance > 0 else 0.5,
         )
-        importance = min(max(importance, 0.0), 1.0)
-        far, near = distance_band(len(path))
-        # (1 + importance) / 2 keeps the band's lower edge open, so the most
-        # important node one hop farther out never ties the least important one.
-        return far + (near - far) * (1.0 + importance) / 2.0

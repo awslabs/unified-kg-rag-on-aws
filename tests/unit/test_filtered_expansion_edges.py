@@ -1,13 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Graph expansion under a document filter follows passing edges only.
+"""Graph expansion under a document filter walks the relationships it passes.
 
-The walk crosses every edge, so an edge only excluded documents state
-brought in entities (and their chunks) that an index of the passing
-documents never reaches. Under a document filter an expanded entity is kept
-only when a walk over edges the relationships index passes reaches it from
-a seed. Also: the per-query memo of filter checks and probes, and the
-filter values the retriever refuses.
+The graph walk crossed every edge, and its per-vertex cap and cut ran before
+any check, so entities only excluded documents connect took the slots (a
+1,522-degree hub kept 0-4 entities where an index of the passing documents
+alone keeps 10). Under a document filter the walk runs over the
+relationships index instead, one hop at a time. Also: the filter check's
+per-query memo and rank order.
 """
 
 from __future__ import annotations
@@ -29,70 +29,107 @@ from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.unit
 
-
-def _vertex(vid: str, *walk: str) -> RetrievalResult:
-    path = " -> ".join([*walk, vid]) if walk else vid
-    return RetrievalResult(
-        content=f"Entity: {vid}\nDescription: d\nPath: {path}",
-        score=1.0,
-        source=vid,
-        retriever_type="entity",
-        metadata={"id": vid, "name": vid, "text_unit_ids": [f"u-{vid}"]},
-    )
-
-
-# The walk: S - A (excluded edge), S - B, A - D (the walk reached D through
-# A), B - D, A - C. Only S-B, B-D and A-C pass.
+# S - A (excluded), S - B, A - D, B - D, A - C. Passing: S-B, B-D, A-C.
 _EDGES = [
-    ("r-sa", "S", "A"),
-    ("r-sb", "S", "B"),
-    ("r-ad", "A", "D"),
-    ("r-bd", "B", "D"),
-    ("r-ac", "A", "C"),
+    ("r-sa", "S", "A", 5.0),
+    ("r-sb", "S", "B", 4.0),
+    ("r-ad", "A", "D", 3.0),
+    ("r-bd", "B", "D", 2.0),
+    ("r-ac", "A", "C", 1.0),
 ]
 _PASSING = {"r-sb", "r-bd", "r-ac"}
+_PEOPLE = {"S", "B", "D"}
 
 
 class _Graph:
-    def __init__(self, edges: list | None = _EDGES) -> None:
-        self.edges = edges
-        self.asked: list[list[str]] = []
+    """The graph walk: every vertex, unchecked (what the fallback returns)."""
 
-    async def aedges_among(self, ids: list[str], suffix: str | None) -> Any:
-        self.asked.append(ids)
-        return self.edges
+    def __init__(self) -> None:
+        self.walks = 0
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        return [
-            _vertex("S"),
-            _vertex("A", "S"),
-            _vertex("B", "S"),
-            _vertex("D", "S", "A"),
-            _vertex("C", "S", "A"),
-        ]
+        self.walks += 1
+        return [_entity(v) for v in ("S", "A", "B", "D", "C")]
 
 
-class _Document:
-    """Every entity passes the entities-index check; relationships pass when
-    in ``_PASSING``; ``calls`` counts the checks by index."""
+def _entity(vid: str, rank: float = 1.0) -> RetrievalResult:
+    return RetrievalResult(
+        content=f"Entity: {vid}",
+        score=1.0,
+        source=vid,
+        retriever_type="entity",
+        metadata={"id": vid, "name": vid, "rank": rank, "text_unit_ids": [f"u-{vid}"]},
+    )
 
-    def __init__(self, config: Config) -> None:
+
+class _Index:
+    """The relationships, entities and text-units indexes."""
+
+    def __init__(
+        self,
+        config: Config,
+        edges: list[tuple[str, str, str, float]] = _EDGES,
+        passing: set[str] = _PASSING,
+        has_relationships: bool = True,
+        units_passing: set[str] | None = None,
+    ) -> None:
         self.o = config.indexing.opensearch
-        self.calls: list[tuple[str, list[str]]] = []
+        self.edges, self.passing = edges, passing
+        self.has_relationships = has_relationships
+        self.units_passing = units_passing
+        self.calls: list[tuple[str, dict]] = []
+        self.edge_fields: list[list[str] | None] = []
 
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
-        return True
+        return prefix != self.o.relationships_index_prefix or self.has_relationships
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        ids = list((query.filters or {}).get("id") or [])
         prefix = (query.index_prefixes or [""])[0]
-        self.calls.append((prefix, ids))
+        filters = dict(query.filters or {})
+        self.calls.append((prefix, filters))
         if prefix == self.o.relationships_index_prefix:
-            ids = [i for i in ids if i in _PASSING]
-        return [
-            RetrievalResult(content="", score=0.0, source=i, retriever_type="entity")
-            for i in ids
-        ]
+            self.edge_fields.append(query.source_fields)
+            if not self.has_relationships:
+                return []
+            side = "source_id" if "source_id" in filters else "target_id"
+            ends = set(filters[side])
+            out = []
+            for eid, a, b, rank in self.edges:
+                if eid in self.passing and (a if side == "source_id" else b) in ends:
+                    out.append(
+                        RetrievalResult(
+                            content=eid,
+                            score=0.0,
+                            source=eid,
+                            retriever_type="relationship",
+                            metadata={
+                                "id": eid,
+                                "source_id": a,
+                                "target_id": b,
+                                "source_name": a,
+                                "target_name": b,
+                                "rank": rank,
+                                "text_unit_ids": [f"u-{eid}"],
+                            },
+                        )
+                    )
+            return out
+        if prefix == self.o.entities_index_prefix:
+            ids = filters.get("id") or []
+            return [
+                _entity(v)
+                for v in ids
+                if filters.get("type") != "person" or v in _PEOPLE
+            ]
+        if prefix == self.o.text_units_index_prefix:
+            ids = filters.get("id") or []
+            keep = self.units_passing
+            return [
+                RetrievalResult(content="", score=0.0, source=i, retriever_type="text")
+                for i in ids
+                if keep is None or i in keep
+            ]
+        return []
 
 
 def _strategy(config: Config, graph: Any, document: Any) -> Any:
@@ -105,53 +142,152 @@ def _strategy(config: Config, graph: Any, document: Any) -> Any:
     )
 
 
-async def test_only_entities_a_passing_walk_reaches_are_kept(config: Config) -> None:
-    graph, document = _Graph(), _Document(config)
-    strategy = _strategy(config, graph, document)
-
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
+async def _expand(config: Config, index: Any, filters: dict, graph: Any = None) -> Any:
+    strategy = _strategy(config, graph or _Graph(), index)
+    return await strategy._expand_via_graph(
+        SearchQuery(query="q", filters=filters), ["S"]
     )
 
-    # A only over an excluded edge, C only through A: dropped. D was walked
-    # through A but a passing walk reaches it through B: kept, path redrawn.
+
+def _paths(kept: list[RetrievalResult]) -> dict[str, str]:
+    return {
+        str(r.source): r.content.split("Path: ")[1] if "Path: " in r.content else ""
+        for r in kept
+    }
+
+
+async def test_only_entities_a_walk_over_passing_edges_reaches_are_kept(
+    config: Config,
+) -> None:
+    graph, index = _Graph(), _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a"}, graph)
+    # A only over an excluded edge, C only through A: never reached. D is
+    # reached through B; the path names no excluded vertex.
+    assert _paths(kept) == {"S": "S", "B": "S -> B", "D": "S -> B -> D"}
+    assert graph.walks == 0
+    assert all(r.content.count("Path: ") == 1 for r in kept)
+    # An edge's description and the like are not read: the walk needs its
+    # endpoints, names, order and text units.
+    assert index.edge_fields and all(
+        f and "description" not in f and "text_unit_ids" in f for f in index.edge_fields
+    )
+    # Nearer first: the score bands follow the walk's distance.
     by_id = {r.source: r for r in kept}
-    assert list(by_id) == ["S", "B", "D"]
-    assert by_id["D"].content.endswith("Path: S -> B -> D")
-    assert by_id["B"].content.endswith("Path: S -> B")
-    rel_checks = [
-        ids
-        for prefix, ids in document.calls
-        if prefix == config.indexing.opensearch.relationships_index_prefix
-    ]
-    assert rel_checks == [["r-sa", "r-sb", "r-ad", "r-bd", "r-ac"]]
+    assert by_id["S"].score > by_id["B"].score > by_id["D"].score
 
 
-async def test_hops_bound_the_passing_walk(config: Config) -> None:
+async def test_an_edge_stored_towards_the_seed_is_walked(config: Config) -> None:
+    edges = [("r-sb", "B", "S", 4.0), ("r-bd", "D", "B", 2.0)]
+    kept = await _expand(config, _Index(config, edges=edges), {"attr_grp": "a"})
+    assert _paths(kept) == {"S": "S", "B": "S -> B", "D": "S -> B -> D"}
+
+
+async def test_hops_and_per_vertex_neighbours_bound_the_walk(config: Config) -> None:
     config.indexing.neptune.max_hops = 1
-    strategy = _strategy(config, _Graph(), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
+    kept = await _expand(config, _Index(config), {"attr_grp": "a"})
+    assert sorted(_paths(kept)) == ["B", "S"]
+
+    config.indexing.neptune.max_hops = 3
+    config.indexing.neptune.max_results_per_hop = 1
+    edges = [("r1", "S", "X", 9.0), ("r2", "S", "Y", 1.0)]
+    kept = await _expand(
+        config, _Index(config, edges=edges, passing={"r1", "r2"}), {"attr_grp": "a"}
     )
-    assert [r.source for r in kept] == ["S", "B"]
+    # One new neighbour of S per hop: the best-ranked edge's.
+    assert sorted(_paths(kept)) == ["S", "X"]
 
 
-async def test_without_a_document_filter_nothing_is_asked(config: Config) -> None:
-    graph, document = _Graph(), _Document(config)
-    strategy = _strategy(config, graph, document)
+async def test_a_vertex_filter_keeps_its_entities_the_walk_goes_through_others(
+    config: Config,
+) -> None:
+    # {grp: a, type: person}: A is no person and excluded anyway; with B an
+    # organization the walk still reaches D through it.
+    global _PEOPLE
+    people, _PEOPLE = _PEOPLE, {"S", "D"}
+    try:
+        kept = await _expand(
+            config, _Index(config), {"attr_grp": "a", "type": "person"}
+        )
+    finally:
+        _PEOPLE = people
+    assert _paths(kept) == {"S": "S", "D": "S -> B -> D"}
+
+
+async def test_two_keys_need_one_document_passing_an_edge(config: Config) -> None:
+    # The relationships index unions an edge's documents' values per key:
+    # under two keys an edge needs a text unit (one document) passing both.
+    index = _Index(config, units_passing={"u-r-sb", "u-S", "u-B", "u-D"})
+    kept = await _expand(config, index, {"attr_grp": "a", "attr_category": "x"})
+    assert sorted(_paths(kept)) == ["B", "S"]
+
+
+async def test_without_a_document_filter_the_graph_is_walked(config: Config) -> None:
+    graph, index = _Graph(), _Index(config)
+    kept = await _expand(config, index, {"type": "org"}, graph)
+    assert len(kept) == 5 and graph.walks == 1
+    assert index.calls == []
+
+
+@pytest.mark.parametrize("why", ["flag-off", "index-missing"])
+async def test_without_a_relationships_index_the_graph_walk_is_checked(
+    config: Config, why: str
+) -> None:
+    if why == "flag-off":
+        config.indexing.opensearch.build_relationship_vector_index = False
+        index = _Index(config)
+    else:
+        index = _Index(config, has_relationships=False)
+    graph = _Graph()
+    kept = await _expand(config, index, {"attr_grp": "a"}, graph)
+    assert graph.walks == 1
+    assert len(kept) == 5  # the entities index passes every walked entity
+
+
+async def test_a_failed_relationships_read_keeps_the_seeds_only(
+    config: Config,
+) -> None:
+    class _Failing(_Index):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.index_prefixes == [self.o.relationships_index_prefix]:
+                raise RuntimeError("store hiccup")
+            return await super().aretrieve(query)
+
+    kept = await _expand(config, _Failing(config), {"attr_grp": "a"})
+    assert [r.source for r in kept] == ["S"]
+
+
+async def test_the_walk_is_cut_to_the_expansion_limit(config: Config) -> None:
+    edges = [(f"r{i}", "S", f"v{i:02d}", float(30 - i)) for i in range(30)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
     kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"type": "org"}), ["S"]
+        SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}), ["S"]
     )
-    assert len(kept) == 5
-    assert graph.asked == [] and document.calls == []
+    assert len(kept) == 5  # the seed and top_k others
 
 
-async def test_a_graph_that_cannot_tell_keeps_the_entity_check(config: Config) -> None:
-    strategy = _strategy(config, _Graph(edges=None), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert len(kept) == 5
+# --------------------------------------------------------------------------- #
+# The filter check
+# --------------------------------------------------------------------------- #
+
+
+class _Document:
+    """Every id passes but those of relationships not in ``_PASSING``."""
+
+    def __init__(self, config: Config) -> None:
+        self.o = config.indexing.opensearch
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        ids = list((query.filters or {}).get("id") or [])
+        prefix = (query.index_prefixes or [""])[0]
+        self.calls.append((prefix, ids))
+        if prefix == self.o.relationships_index_prefix:
+            ids = [i for i in ids if i in _PASSING]
+        return [
+            RetrievalResult(content="", score=0.0, source=i, retriever_type="entity")
+            for i in ids
+        ]
 
 
 async def test_a_query_asks_each_ids_outcome_once(config: Config) -> None:
@@ -188,71 +324,9 @@ async def test_the_check_stops_once_enough_passed(config: Config) -> None:
     assert [ids for _, ids in document.calls] == [["e0", "e1"], ["e2", "e3"]]
 
 
-async def test_without_a_relationship_index_the_entity_check_decides(
-    config: Config,
-) -> None:
-    # Regression: with build_relationship_vector_index off there is no index
-    # to check the walked edges in; none passed and only the seeds were kept.
-    config.indexing.opensearch.build_relationship_vector_index = False
-    graph, document = _Graph(), _Document(config)
-    strategy = _strategy(config, graph, document)
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert len(kept) == 5
-    assert graph.asked == []
-    assert all(
-        prefix != config.indexing.opensearch.relationships_index_prefix
-        for prefix, _ in document.calls
-    )
-
-
-class _MissingRelationshipIndex(_Document):
-    """The relationships index is gone at query time: it reads as no hits."""
-
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        prefix = (query.index_prefixes or [""])[0]
-        if prefix == self.o.relationships_index_prefix:
-            self.calls.append((prefix, list((query.filters or {}).get("id") or [])))
-            return []
-        return await super().aretrieve(query)
-
-    async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
-        return prefix != self.o.relationships_index_prefix
-
-
-async def test_a_relationship_index_missing_at_query_time_is_noticed(
-    config: Config, caplog: pytest.LogCaptureFixture
-) -> None:
-    strategy = _strategy(config, _Graph(), _MissingRelationshipIndex(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert len(kept) == 5
-    assert "no relationships index" in caplog.text
-
-
-async def test_an_index_that_exists_but_passes_no_edge_still_drops(
-    config: Config,
-) -> None:
-    class _NothingPasses(_MissingRelationshipIndex):
-        async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
-            return True
-
-    strategy = _strategy(config, _Graph(), _NothingPasses(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert [r.source for r in kept] == ["S"]
-
-
 async def test_a_memoized_outcome_does_not_displace_a_higher_ranked_id(
     config: Config,
 ) -> None:
-    # Regression: under ``enough`` the ids a query already knew passing were
-    # counted wherever they ranked, so with u9 and u8 known the check
-    # returned at once and u0, u1 were never asked: two lower-ranked chunks
-    # took their slots.
     document = _Document(config)
     strategy = _strategy(config, _Graph(), document)
     prefix = config.indexing.opensearch.entities_index_prefix
@@ -268,168 +342,6 @@ async def test_a_memoized_outcome_does_not_displace_a_higher_ranked_id(
         )
     assert passed == {"u0", "u1"}
     assert [ids for _, ids in document.calls] == [["u9", "u8"], ["u0", "u1", "u2"]]
-
-
-async def test_an_intermediate_vertex_a_vertex_filter_left_out_still_connects(
-    config: Config,
-) -> None:
-    # Regression: under {grp: a, type: person} the walk S -> X -> D returned
-    # S and D only (X is an organization): the edges among the results had
-    # no S-D edge, so D was dropped (4 entities against 6 in the subset).
-    class _Typed(_Graph):
-        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-            seed, far = _vertex("S"), _vertex("D", "S", "X")
-            far.metadata["_path"] = [["S", "S"], ["X", "Xavier"], ["D", "D"]]
-            return [seed, far]
-
-    edges = [("r-sx", "S", "X"), ("r-xd", "X", "D")]
-    graph = _Typed(edges=edges)
-    document = _Document(config)
-    strategy = _strategy(config, graph, document)
-    _PASSING.update({"r-sx", "r-xd"})
-    try:
-        kept = await strategy._expand_via_graph(
-            SearchQuery(query="q", filters={"attr_grp": "a", "type": "person"}), ["S"]
-        )
-    finally:
-        _PASSING.difference_update({"r-sx", "r-xd"})
-    assert [r.source for r in kept] == ["S", "D"]
-    assert kept[1].content.endswith("Path: S -> Xavier -> D")
-    assert sorted(graph.asked[0]) == ["D", "S", "X"]
-
-
-async def test_filtered_expansion_walks_wider_and_cuts_after_the_checks(
-    config: Config,
-) -> None:
-    # Regression: the walk's per-seed budget and its cut ran before the
-    # checks, so excluded entities used up the slots (2-4 kept against 12).
-    asked: list[int] = []
-
-    class _Wide(_Graph):
-        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-            asked.append(query.retrieval_multiplier)
-            out = [_vertex("S")]
-            for i in range(30):
-                v = _vertex(f"v{i}", "S")
-                v.score = 0.5 - i / 1000
-                out.append(v)
-            return out
-
-    edges = [(f"r{i}", "S", f"v{i}") for i in range(30)]
-    _PASSING.update(f"r{i}" for i in range(1, 30, 2))
-    try:
-        strategy = _strategy(config, _Wide(edges=edges), _Document(config))
-        kept = await strategy._expand_via_graph(
-            SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}), ["S"]
-        )
-    finally:
-        _PASSING.difference_update(f"r{i}" for i in range(1, 30, 2))
-    assert asked == [4]  # the walk ran four times wider
-    # The seed plus the four best that passed, not the four best walked.
-    assert [r.source for r in kept] == ["S", "v1", "v3", "v5", "v7"]
-
-
-async def test_two_keys_need_one_document_passing_an_edge(config: Config) -> None:
-    # The relationships index unions an edge's documents' values per key:
-    # under two keys an edge passes there that no one document passes.
-    o = config.indexing.opensearch
-
-    class _Joint(_Document):
-        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-            prefix = (query.index_prefixes or [""])[0]
-            ids = list((query.filters or {}).get("id") or [])
-            if prefix == o.relationships_index_prefix and query.source_fields:
-                self.calls.append((prefix, ids))
-                return [
-                    RetrievalResult(
-                        content="",
-                        score=0.0,
-                        source=i,
-                        retriever_type="relationship",
-                        metadata={"text_unit_ids": [f"u-{i}"]},
-                    )
-                    for i in ids
-                ]
-            if prefix == o.text_units_index_prefix:
-                self.calls.append((prefix, ids))
-                return [
-                    RetrievalResult(
-                        content="", score=0.0, source=i, retriever_type="text"
-                    )
-                    for i in ids
-                    # Every entity's own unit; of the edges' units, S-B's only.
-                    if i == "u-r-sb" or not i.startswith("u-r-")
-                ]
-            return await super().aretrieve(query)
-
-    strategy = _strategy(config, _Graph(), _Joint(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a", "attr_category": "x"}), ["S"]
-    )
-    # r-bd and r-ac pass the index but no one document: only S-B is walked.
-    assert [r.source for r in kept] == ["S", "B"]
-
-
-async def test_a_redrawn_path_moves_the_score_to_its_distance_band(
-    config: Config,
-) -> None:
-    class _Scored(_Graph):
-        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-            out = await super().aretrieve(query)
-            for r in out:
-                # D was walked S -> A -> D: a two-hop band (1/4, 1/3].
-                hops = len(r.content.rsplit("Path: ", 1)[1].split(" -> "))
-                r.metadata["_path"] = [[v, v] for v in range(hops)]
-                r.score = 1 / (hops + 1) + 0.75 * (1 / hops - 1 / (hops + 1))
-            return out
-
-    strategy = _strategy(config, _Scored(), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    d = next(r for r in kept if r.source == "D")
-    # Redrawn S -> B -> D: still two hops, same band and place in it.
-    assert d.score == pytest.approx(1 / 4 + 0.75 * (1 / 3 - 1 / 4))
-
-
-async def test_a_failed_edge_read_keeps_the_seeds_only(config: Config) -> None:
-    class _Failing(_Graph):
-        async def aedges_among(self, ids: list[str], suffix: str | None) -> Any:
-            raise RuntimeError("graph read failed")
-
-    strategy = _strategy(config, _Failing(), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert [r.source for r in kept] == ["S"]
-
-
-async def test_an_edge_stored_towards_the_seed_is_walked(config: Config) -> None:
-    # Edge direction is the extractor's: S-B stored as B -> S still connects.
-    edges = [
-        ("r-sa", "S", "A"),
-        ("r-sb", "B", "S"),
-        ("r-ad", "A", "D"),
-        ("r-bd", "D", "B"),
-        ("r-ac", "A", "C"),
-    ]
-    strategy = _strategy(config, _Graph(edges), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    assert [r.source for r in kept] == ["S", "B", "D"]
-
-
-async def test_the_redrawn_path_does_not_name_the_excluded_walk(
-    config: Config,
-) -> None:
-    strategy = _strategy(config, _Graph(), _Document(config))
-    kept = await strategy._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a"}), ["S"]
-    )
-    d = {r.source: r for r in kept}["D"]
-    assert d.content.count("Path: ") == 1
-    assert "A" not in d.content.split("Path: ")[1]
 
 
 async def test_the_check_walks_a_long_list_once(config: Config) -> None:
