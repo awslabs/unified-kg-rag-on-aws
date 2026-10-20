@@ -838,7 +838,7 @@ changed once with the full-config keys (#332).
   corpora built a different name or claim status under another
   `additional_suffix`. A rebuild can change the shown name of such an
   entity (and of its edges and claims) and the status of a tied claim
-  (#PR).
+  (#402).
 - `GraphIndexer.count_neighbors` takes `at_most` and stops counting there
   (Neptune `limit` before `count`): the community walk only asks whether an
   entity has more neighbours than its step. A Neptune edge write no longer
@@ -1373,7 +1373,7 @@ changed once with the full-config keys (#332).
   copies (`VectorIndexer.read_vector_copies`) and writes the graph edges
   before their vector copies, the other stored edges of a renamed or
   re-keyed entity are checked against their vector copies too, and a
-  commit's note names the entities it renames (#PR).
+  commit's note names the entities it renames (#402).
 - A pipeline run again after a failed incremental commit (library use of
   `DataIngestionPipeline`) no longer deletes the failed commit's old ids,
   whose replacements were never written: the indexing manager kept the
@@ -1386,7 +1386,7 @@ changed once with the full-config keys (#332).
   `community_drift.outdated_reports` (which can recommend a rebuild) or
   collects its extraction-record keys: every indexing run starts without
   them too. A commit note's vector-only entity with an empty description is
-  found and retired like any other (#PR).
+  found and retired like any other (#402).
 - Tracing: the `kg_rag.ingestion.run` span of a stopped or crashed run
   carries `kg_rag.pipeline_id` too (the id to resume with); it was set only
   from a returned context. The operations runbook now says a model call
