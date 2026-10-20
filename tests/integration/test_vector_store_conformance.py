@@ -567,12 +567,15 @@ def test_find_documents_reads_more_matches_than_one_search_returns(
 
         monkeypatch.setattr(indexer.opensearch_client, "search", counting_to_the_window)
     prefixes = harness.config.indexing.opensearch
+    # Written in reverse id order: the pages follow the id order only if the
+    # search sorts by id (they continue past the last id of a page).
     claims = [
         claim.model_copy(update={"id": f"cl-hub-{n}"})
-        for n in range(5)
+        for n in reversed(range(5))
         for claim in _claims(None)[:1]
     ]
-    _write(harness, "claims", "upsert", claims)
+    for claim in claims:
+        _write(harness, "claims", "upsert", [claim])
     wanted = sorted({u for c in claims for u in c.text_unit_ids or []})
 
     found = indexer.find_documents(

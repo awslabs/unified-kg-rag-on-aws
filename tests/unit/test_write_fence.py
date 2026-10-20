@@ -1203,3 +1203,48 @@ def test_an_embedded_write_waiting_for_the_lock_rechecks_the_fence(
     worker.join(5)
     assert [type(e) for e in errors] == [NamespaceLeaseError]
     assert not written()
+
+
+@pytest.mark.parametrize("store_kind", ["graph", "engine"])
+def test_a_fenced_embedded_write_fails_without_waiting_for_the_lock(
+    tmp_path: Path, store_kind: str
+) -> None:
+    # The fence is checked before the database lock too: an orphaned worker
+    # fails at once instead of queueing behind the next run's writes.
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+
+    lock = _ReportingLock()
+    graph = SQLiteGraphIndexer(Config(), tmp_path / "graph.sqlite3")
+    engine = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    engine.create_index("docs-1", {"mappings": {"properties": {}}})
+    if store_kind == "graph":
+        graph.store._lock = lock  # type: ignore[assignment]
+    else:
+        engine._lock = lock  # type: ignore[assignment]
+
+    def write_one() -> None:
+        if store_kind == "graph":
+            graph.upsert_entities([Entity(id="e1", name="E1")])
+        else:
+            engine.bulk_index("docs-1", [{"id": "d1", "text": "t"}])
+
+    worker_context = _stopped_in_process_run()
+    errors: list[BaseException] = []
+
+    def write() -> None:
+        try:
+            worker_context.run(write_one)
+        except BaseException as e:  # noqa: BLE001 - asserted below
+            errors.append(e)
+
+    with lock:
+        worker = threading.Thread(target=write)
+        worker.start()
+        worker.join(5)
+        waited = lock.waiting.is_set()
+    worker.join(5)
+    assert not waited
+    assert [type(e) for e in errors] == [NamespaceLeaseError]
