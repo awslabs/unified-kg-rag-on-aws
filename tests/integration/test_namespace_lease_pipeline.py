@@ -172,6 +172,25 @@ def test_one_injected_remote_store_makes_the_lease_remote(
     assert store.closed is (remote != "registry")
 
 
+def test_the_probe_leaves_a_store_injected_into_the_pipeline_open(
+    tmp_path: Path,
+) -> None:
+    # The pipeline's vector_indexer= is the instance every stage writes
+    # with: the in-process probe closed it before the run used it.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig
+
+    store = _RemoteStore()
+    pipeline = DataIngestionPipeline(
+        _config(tmp_path / "stores", tmp_path / "viz"),
+        PipelineConfig(local_directory=tmp_path / "cache"),
+        source_directory=tmp_path,
+        vector_indexer=store,  # type: ignore[arg-type]
+    )
+    assert pipeline._namespace_lease().in_process_stores is False
+    assert store.closed is False
+
+
 def test_a_stopped_run_with_a_remote_store_leaves_its_lease_expired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

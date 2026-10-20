@@ -1318,6 +1318,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: the check whether every store is embedded no longer closes a
+  remote `vector_indexer` / `graph_indexer` passed to
+  `DataIngestionPipeline`: it is the instance every stage then writes with
+  (#PR).
 - OpenSearch: every `indexing.opensearch.index_settings` key reaches the
   indices the package creates; only `number_of_shards`,
   `number_of_replicas` and `refresh_interval` did. Retrieval sizes its

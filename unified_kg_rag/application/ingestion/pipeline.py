@@ -314,6 +314,10 @@ class DataIngestionPipeline:
             overrides["vector_indexer_factory"] = lambda: vector_indexer
         if graph_indexer is not None:
             overrides["graph_indexer_factory"] = lambda: graph_indexer
+        # Shared by every stage: the in-process probe must not close them.
+        self._injected_indexers = [
+            indexer for indexer in (vector_indexer, graph_indexer) if indexer
+        ]
         if providers is not None and overrides:
             raise ValueError(
                 "Pass doc_status, vector_indexer and graph_indexer either to "
@@ -809,7 +813,10 @@ class DataIngestionPipeline:
             indexer = build()
             if getattr(indexer, "in_process", False) is not True:
                 # An embedded one opens nothing until it writes; a remote
-                # one may hold a client.
+                # one may hold a client. One injected into the pipeline is
+                # the instance every stage writes with.
+                if any(indexer is shared for shared in self._injected_indexers):
+                    return False
                 try:
                     indexer.close()
                 except Exception as e:  # noqa: BLE001 - only a probe
