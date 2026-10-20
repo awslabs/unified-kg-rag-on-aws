@@ -1271,7 +1271,7 @@ async def test_a_timed_out_model_call_ends_its_span(
             else:
                 async with asyncio.timeout(0.05):  # type: ignore[attr-defined]
                     await model.ainvoke(_PROMPT)
-        except TimeoutError:
+        except asyncio.TimeoutError:  # an alias of TimeoutError from 3.11
             return "timed out"
         return "answered"
 
