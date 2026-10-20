@@ -1355,6 +1355,16 @@ changed once with the full-config keys (#332).
   in one sweep, and 18-22 crash points per sweep diverged from a full
   build. `find_documents` pages through the matches of a hub instead of
   raising when they outnumber one search (#398).
+- Incremental indexing: a vector copy a killed run left ahead of its graph
+  copy is rewritten. Writes compared the derived names and endpoints with
+  the graph copy only, so a commit stopped between the stores (a SIGTERM is
+  enough) whose rename the next corpus undid, or a strip killed between its
+  vector and graph edge writes, left a vector relationship or claim under
+  the old name or endpoint for good. A strip now compares with the vector
+  copies (`VectorIndexer.read_vector_copies`) and writes the graph edges
+  before their vector copies, the other stored edges of a renamed or
+  re-keyed entity are checked against their vector copies too, and a
+  commit's note names the entities it renames (#PR).
 - A pipeline run again after a failed incremental commit (library use of
   `DataIngestionPipeline`) no longer deletes the failed commit's old ids,
   whose replacements were never written: the indexing manager kept the

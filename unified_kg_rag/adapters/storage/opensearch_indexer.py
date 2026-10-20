@@ -3,7 +3,7 @@
 import re
 import time
 from collections.abc import Callable, Collection
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.storage.embedding_settings import (
@@ -61,6 +61,17 @@ _READ_BATCH_SIZE = 1000
 # Values per terms search of find_documents, and the hits one returns.
 _FIND_BATCH_SIZE = 100
 _FIND_WINDOW = 10000
+# The index prefix (config field) and stored fields of read_vector_copies.
+_VECTOR_COPY_FIELDS = {
+    "entities": (
+        "entities_index_prefix",
+        ["name", "type", "confidence", "description"],
+    ),
+    "relationships": (
+        "relationships_index_prefix",
+        ["source_id", "target_id", "source_name", "target_name", "description"],
+    ),
+}
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
@@ -705,6 +716,22 @@ class OpenSearchIndexer(VectorIndexer):
         return self._descriptions(
             self.opensearch_config.relationships_index_prefix, ids, suffix
         )
+
+    def read_vector_copies(
+        self,
+        kind: Literal["entities", "relationships"],
+        ids: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """The stored fields of ``ids`` incremental writes compare (see the
+        port)."""
+        prefix, fields = _VECTOR_COPY_FIELDS[kind]
+        return {
+            source["id"]: source
+            for source in self._read_sources(
+                getattr(self.opensearch_config, prefix), ids, suffix, fields=fields
+            )
+        }
 
     def prune_text_unit_communities(
         self, community_ids: list[str], suffix: str | None = None

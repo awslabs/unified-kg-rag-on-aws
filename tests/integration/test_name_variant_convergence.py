@@ -1243,6 +1243,17 @@ RUNS_RENAME = [
     },
     {"r6.txt": "ACME Inc trade cash 2. Initech and Buyer and ACME Inc trade cash 2."},
 ]
+# A commit renames "Acme" to "ACME" under its id (two more statements of
+# that spelling); the next corpus drops the documents that renamed it.
+RUNS_RENAME_BACK = [
+    {"d1.txt": "Depot and Acme trade goods 1."},
+    {
+        "d1.txt": "Depot and Acme trade goods 1.",
+        "d2.txt": "ACME trade goods 2.",
+        "d3.txt": "ACME trade goods 3.",
+    },
+    {"d1.txt": "Depot and Acme trade goods 1."},
+]
 RUNS_VECTOR_ONLY = [
     {"d5.txt": "Acme Inc and Initech Corp and ACME Inc trade goods 2."},
     {
@@ -1386,6 +1397,69 @@ RUNS_COMMIT_SPLIT_EDGE = [
         "r1.txt": "Acme Inc and Acme Corp trade goods 2.",
     },
 ]
+
+
+@pytest.mark.parametrize(
+    "die_at",
+    [
+        # After the vector edges, before the graph edges.
+        ("upsert_relationships", 1, False, SQLiteGraphIndexer),
+        # After the vector copies, before the graph entities.
+        ("upsert_entities", 1, False, SQLiteGraphIndexer),
+    ],
+    ids=["vector-edges-ahead", "vector-claims-ahead"],
+)
+def test_a_rename_killed_between_the_stores_then_undone_renames_the_vector_copies(
+    tmp_path: Path, die_at: tuple[Any, ...]
+) -> None:
+    # Run 1's commit renames "Acme" to "ACME" and is killed between the
+    # stores; run 2 drops the documents that renamed it. The rename was not
+    # in the commit note and the stored edges were compared with their
+    # graph copies only: the vector edge (or the claim) kept "ACME".
+    runs = RUNS_RENAME_BACK
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs, die_in=1, die_at=die_at, resume=False)
+
+    assert incremental == full
+
+
+def test_a_strip_killed_at_its_graph_edges_leaves_no_vector_edge_ahead(
+    tmp_path: Path,
+) -> None:
+    # Run 1 edits d5.txt; its strip renames the entity the edge of d1.txt
+    # ends at and is killed at its graph edge write; run 2 edits the corpus
+    # again. The strip wrote the vector edges first, and run 2, deriving the
+    # graph copy's name back, found the graph copy unchanged: the vector
+    # edge kept the strip's name.
+    d0, d1 = (
+        "Acme LLC and ACME Inc trade goods 3.",
+        "Depot trade goods 3. Acme trade cash 3.",
+    )
+    runs = [
+        {
+            "d0.txt": d0,
+            "d1.txt": d1,
+            "d5.txt": "Depot and ACME Ltd and ACME trade goods 3.",
+        },
+        {
+            "d0.txt": d0,
+            "d1.txt": d1,
+            "d5.txt": "Depot and Acme Ltd and ACME trade goods 3.",
+        },
+        {"d0.txt": "Acme Ltd trade parts 2.", "d1.txt": d1},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("upsert_relationships", 1, False, SQLiteGraphIndexer),
+        resume=False,
+    )
+
+    assert incremental == full
 
 
 @pytest.mark.parametrize(

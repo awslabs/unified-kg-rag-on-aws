@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Collection
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -543,6 +543,23 @@ class VectorIndexer(BaseIndexer):
     ) -> dict[str, str]:
         """Stored descriptions of relationships by id, in full (see
         :meth:`read_entity_descriptions`)."""
+        return {}
+
+    def read_vector_copies(
+        self,
+        kind: Literal["entities", "relationships"],
+        ids: list[str],
+        suffix: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """What the stored vector copies of ``kind`` hold besides lineage and
+        rank, by id (scoped to ``suffix``; an id not stored is absent):
+        ``name``, ``type``, ``confidence`` and ``description`` of an entity,
+        ``source_id``, ``target_id``, ``source_name``, ``target_name`` and
+        ``description`` of a relationship. Incremental writes compare them
+        with the derived items, so a copy an interrupted run left behind or
+        ahead of the graph copy is rewritten. Default ``{}`` (every item is
+        written in full); adapters that override it raise when a read fails.
+        """
         return {}
 
     def read_text_unit_attributes(

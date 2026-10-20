@@ -306,6 +306,21 @@ def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
     neptune_indexer.read_relationships.return_value = [
         Relationship(id="r1", source_id="e1", target_id="e2", text_unit_ids=["t2"])
     ]
+    # The vector copies hold what the derived items embed.
+    os_indexer.read_vector_copies.side_effect = lambda kind, ids, suffix=None: {
+        "entities": {
+            "e1": {"name": "Vendor", "type": "", "confidence": 1.0, "description": ""}
+        },
+        "relationships": {
+            "r1": {
+                "source_id": "e1",
+                "target_id": "e2",
+                "source_name": "",
+                "target_name": "",
+                "description": "",
+            }
+        },
+    }[kind]
     os_indexer.update_entity_lineage.return_value = IndexingStats()
     os_indexer.update_relationship_lineage.return_value = IndexingStats()
 
