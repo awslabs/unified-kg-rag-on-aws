@@ -687,11 +687,29 @@ def test_id_lookups_read_sql_without_loading_the_index(engine, monkeypatch) -> N
 # --------------------------------------------------------------------------- #
 
 
+def test_must_not_leaves_out_what_it_matches(engine) -> None:
+    # The filtered walk's exclude: alone (every other document, unscored)
+    # and next to a filter.
+    every = set(_hits(engine, {"match_all": {}}))
+    ids = ["a"]
+    alone = _hits(engine, {"bool": {"must_not": [{"terms": {"id": ids}}]}})
+    assert set(alone) == every - {"a"} and set(alone.values()) == {0.0}
+    both = _hits(
+        engine,
+        {
+            "bool": {
+                "filter": [{"terms": {"id": ["a", "b"]}}],
+                "must_not": {"term": {"id": "b"}},
+            }
+        },
+    )
+    assert set(both) == {"a"}
+
+
 @pytest.mark.parametrize(
     "query",
     [
         {"match": {"name": "vendor"}},
-        {"bool": {"must_not": [{"term": {"type": "ORG"}}]}},
         {"bool": {"must": [], "minimum_should_match": 1}},
         {"multi_match": {"query": "x", "fields": ["name"], "type": "phrase"}},
         {"multi_match": {"query": "x", "fields": ["name^2"]}},

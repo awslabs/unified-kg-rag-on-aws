@@ -62,6 +62,7 @@ _WALK_EDGE_FIELDS = (
 # The relationships index's endpoint fields: source OR target takes a request
 # each (``_build_filter_clauses`` ANDs every filter).
 _ENDPOINTS = ("source_id", "target_id")
+_OTHER_END = {"source_id": "target_id", "target_id": "source_id"}
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -691,7 +692,9 @@ class BaseSearchStrategy(ABC):
         A page of edges that comes back full holds the busiest vertices' best
         edges only: each vertex still open is then asked once more on its own,
         concurrently, at the full end, for what it still needs (two requests
-        a hop, plus one per open vertex when a page is full). The reached
+        a hop, plus one per open vertex when a page is full). Edges back to
+        a vertex already reached are left out by the store (``exclude`` on
+        the other endpoint), so they cannot fill a page. The reached
         entities are read
         from the entities index under the caller's filters (a vertex filter
         such as ``type`` keeps only its entities, the walk goes through the
@@ -762,8 +765,10 @@ class BaseSearchStrategy(ABC):
             named, the ends whose page came back full and how many edges each
             (end, vertex) had on its page (before the check under two or more
             keys)."""
+            # An edge back to a vertex already reached adds nothing: left out
+            # by the store, so such edges cannot fill a page.
             edges, full = await self._incident_relationships(
-                query, vertices, fields, size, ends
+                query, vertices, fields, size, ends, away_from=list(parent)
             )
             on_page = Counter(
                 (end, str((e.metadata or {}).get(end))) for e in edges for end in ends
@@ -956,11 +961,13 @@ class BaseSearchStrategy(ABC):
         source_fields: list[str] | None = None,
         size: int | None = None,
         ends: tuple[str, ...] = _ENDPOINTS,
+        away_from: list[str] | None = None,
     ) -> tuple[list[RetrievalResult], tuple[str, ...]]:
         """The relationships incident to ``entity_ids`` (only
         ``source_fields`` of each when given) at the ``ends`` named, at most
-        ``size`` per end (``_incident_fetch_limit`` by default), and the ends
-        whose page came back full (the edges past it were dropped).
+        ``size`` per end (``_incident_fetch_limit`` by default), without those
+        whose other endpoint is in ``away_from``, and the ends whose page came
+        back full (the edges past it were dropped).
 
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
@@ -984,6 +991,7 @@ class BaseSearchStrategy(ABC):
                 source_fields,
                 size,
                 ends,
+                sorted(set(away_from or ())),
             ],
             sort_keys=True,
             default=str,
@@ -1000,7 +1008,7 @@ class BaseSearchStrategy(ABC):
                 memo[key] = outcome
                 try:
                     edges, full, failed = await self._ask_incident(
-                        query, entity_ids, source_fields, size, ends
+                        query, entity_ids, source_fields, size, ends, away_from
                     )
                 except BaseException:
                     del memo[key]
@@ -1013,7 +1021,7 @@ class BaseSearchStrategy(ABC):
                     outcome.set_result((edges, full))
                 return list(edges), full
         edges, full, _ = await self._ask_incident(
-            query, entity_ids, source_fields, size, ends
+            query, entity_ids, source_fields, size, ends, away_from
         )
         return edges, full
 
@@ -1024,6 +1032,7 @@ class BaseSearchStrategy(ABC):
         source_fields: list[str] | None,
         size: int | None = None,
         ends: tuple[str, ...] = _ENDPOINTS,
+        away_from: list[str] | None = None,
     ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
         """``_incident_relationships``' requests (one per end): the edges,
         the ends whose page came back full and whether a request failed."""
@@ -1044,6 +1053,7 @@ class BaseSearchStrategy(ABC):
                     ],
                     suffix=query.suffix,
                     filters=self._scoped_filters(query, **{field: entity_ids}),
+                    exclude=({_OTHER_END[field]: away_from} if away_from else None),
                     source_fields=source_fields,
                 ),
                 f"Incident relationship retrieval ({field})",

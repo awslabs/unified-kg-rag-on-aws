@@ -272,6 +272,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 await self._check_embedding_settings(index_prefixes, query.suffix)
 
             self._check_filter_values(query.filters)
+            self._check_filter_values(query.exclude)
             search_tasks = self._create_search_tasks(
                 query, search_type, index_prefixes, query_vector
             )
@@ -677,6 +678,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         range does not depend on ``size``; ``_fuse`` cuts to ``size``.
         """
         filters = self._build_filter_clauses(query.filters)
+        if query.exclude:
+            filters.append(
+                {"bool": {"must_not": self._build_filter_clauses(query.exclude)}}
+            )
         lexical = self._build_lexical_query(query, lexical_fields)
         if filters:
             lexical = {"bool": {"must": [lexical], "filter": filters}}

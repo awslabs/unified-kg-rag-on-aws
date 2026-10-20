@@ -761,7 +761,10 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   (the index holds no degree). A side returns at most `max_query_size`
   edges, best first; when a page is full, each vertex still open is asked
   once more on its own, concurrently, at the full side: a hop costs two
-  requests, plus one per open vertex when a page is full, in two rounds. An index built before
+  requests, plus one per open vertex when a page is full, in two rounds.
+  Edges back to a vertex already reached are left out by the store (a
+  `must_not` on the other endpoint), so they cannot fill a page. An index
+  built before
   relationships carried document filters passes no edge, so expansion keeps
   the seeds only until it is rebuilt; without the relationships index the
   graph walk runs, checked against the entities index.
