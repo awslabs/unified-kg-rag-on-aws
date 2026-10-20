@@ -1509,6 +1509,14 @@ changed once with the full-config keys (#332).
   (the refetch stopped as "the same page again" before they were asked).
   On OpenSearch, 30 hub seeds took 53 requests in 891 ms, now 32 in 103 ms
   (20 seeds 342 to 85 ms, 50 seeds 254 to 118 ms) (#405).
+- Filtered graph expansion leaves out the edges back to vertices it has
+  already reached (a `must_not` on the other endpoint, new
+  `SearchQuery.exclude`, which both search engines apply): such edges
+  filled a page and reached nothing new. A vertex with more than
+  `max_query_size` edges back to the seeds at its own end never reached
+  its other neighbour (150 edges between two seeds hid B's edge to X), and
+  on e136253c a page of back edges left 20 of 30 leaves unreached with
+  budget left (#406).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

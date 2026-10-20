@@ -117,6 +117,11 @@ class SearchQuery(BaseModel):
         default=None,
         description="Attribute filters with attr_ prefix for result filtering",
     )
+    exclude: dict[str, Any] | None = Field(
+        default=None,
+        description="Filters of the same form whose matching hits are left out "
+        "(a must_not clause)",
+    )
     source_fields: list[str] | None = Field(
         default=None,
         description="The stored fields each hit returns ([] returns the ids "

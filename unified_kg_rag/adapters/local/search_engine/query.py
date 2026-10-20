@@ -5,8 +5,8 @@
 Exactly the clauses ``OpenSearchRetriever`` and ``OpenSearchIndexer`` build:
 ``match_all``, ``match_none``, ``ids``, ``term``, ``terms``, ``range``,
 ``multi_match`` (``best_fields``; ``fuzziness``/``max_expansions`` are
-accepted and ignored), ``bool`` (``must``/``should``/``filter``) and ``knn``
-(``vector``/``k``/``filter``). A body's ``sort`` takes ``{field: {"order":
+accepted and ignored), ``bool`` (``must``/``should``/``filter``/``must_not``)
+and ``knn`` (``vector``/``k``/``filter``). A body's ``sort`` takes ``{field: {"order":
 ...}}`` entries (``sort_hits``). Any other clause or parameter raises
 ``StoreRequestRejectedError``, as OpenSearch answers a query it cannot parse
 with a 400, so a new query shape fails a test instead of silently matching
@@ -15,8 +15,8 @@ something else.
 Scoring follows OpenSearch: ``multi_match`` takes the best field's BM25
 (``bm25``); ``bool`` sums its ``must`` and ``should`` scores (``filter`` adds
 nothing; ``should`` is optional next to ``must`` or ``filter``, else one must
-match); ``match_all``, ``ids`` and a ``term``/``terms``/``range`` clause
-outside a filter score 1; ``knn`` is an exact search (filter first, then the
+match; ``must_not`` leaves out what it matches); ``match_all``, ``ids`` and a
+``term``/``terms``/``range`` clause outside a filter score 1; ``knn`` is an exact search (filter first, then the
 top ``k``) scored by the field's ``space_type``.
 
 Field values: a ``keyword`` field or an array matches when any element does;
@@ -359,10 +359,15 @@ def _clauses(clause: str, body: Any) -> list[Any]:
 
 @_clause("bool")
 def _bool(index: LoadedIndex, body: Any) -> Scores:
-    body = _require_keys("bool", body, {"must", "should", "filter"})
+    body = _require_keys("bool", body, {"must", "should", "filter", "must_not"})
     must = [evaluate(index, q) for q in _clauses("must", body.get("must"))]
     should = [evaluate(index, q) for q in _clauses("should", body.get("should"))]
     filters = [evaluate(index, q) for q in _clauses("filter", body.get("filter"))]
+    excluded = {
+        doc_id
+        for q in _clauses("must_not", body.get("must_not"))
+        for doc_id in evaluate(index, q)
+    }
     required = [*must, *filters]
     candidates: set[str]
     if required:
@@ -372,9 +377,13 @@ def _bool(index: LoadedIndex, body: Any) -> Scores:
             candidates.intersection_update(matched)
     elif should:
         candidates = {doc_id for scores in should for doc_id in scores}
+    elif excluded or "must_not" in body:
+        # Only must_not: every other document, unscored (as OpenSearch).
+        return dict.fromkeys(set(index.sources) - excluded, 0.0)
     else:
         # An empty bool matches every document.
         return dict.fromkeys(index.sources, 1.0)
+    candidates -= excluded
     if not must and not should:
         return dict.fromkeys(candidates, 0.0)
     return {
