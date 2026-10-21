@@ -547,17 +547,26 @@ def test_find_documents_matches_a_keyword_field_in_a_suffix(
     )
 
 
+def _windowed(harness: StoreHarness, window: int) -> StoreHarness:
+    def set_window(config: Config) -> None:
+        config.indexing.opensearch.index_settings = {
+            **config.indexing.opensearch.index_settings,
+            "max_result_window": window,
+        }
+
+    return harness.derive(set_window)
+
+
 def test_find_documents_reads_more_matches_than_one_search_returns(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A hub's edges outnumber one search's window: they are read in pages
-    # (the lookup used to raise, failing the run for good). The stores count
-    # the matches only up to the window, as OpenSearch counts only 10,000
-    # by default (``relation: gte``): paging must not wait for a total past
-    # the window, which never comes.
-    from unified_kg_rag.adapters.storage import opensearch_indexer
-
-    monkeypatch.setattr(opensearch_indexer, "_FIND_WINDOW", 2)
+    # A hub's edges outnumber one search's window (an index created with
+    # max_result_window 2): they are read in pages (the lookup used to raise,
+    # failing the run for good). The stores count the matches only up to
+    # the window, as OpenSearch counts only 10,000 by default (``relation:
+    # gte``): paging must not wait for a total past the window, which never
+    # comes.
+    harness = _windowed(harness, 2)
     indexer = harness.vector_indexer
     if harness.kind != "fake":
         search = indexer.opensearch_client.search
@@ -605,6 +614,71 @@ def test_find_documents_reads_past_ten_thousand_matches(harness: StoreHarness) -
     )
 
     assert len(found) == 10_001
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+@pytest.mark.parametrize("later_window", [3, 10_000, 20_000])
+def test_reads_follow_the_window_of_the_live_index(
+    harness: StoreHarness, later_window: int
+) -> None:
+    # Indices created with max_result_window 3, then read under the same
+    # window, the default one (the setting reverted) and a raised one (not
+    # reindexed): the reads by id and by field sized their searches by the
+    # config, or by a fixed 1,000 ids, so every one asked for more hits than
+    # the live index returns (a 400), and an incremental run failed for good.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    built = _windowed(harness, 3)
+    tenant = built.suffix("window")
+    ids = [f"t{n}" for n in range(7)]
+    units = _tagged(
+        [TextUnit(id=i, text=f"Vendor ships widget lot {i}.") for i in ids], tenant
+    )
+    claims = [
+        claim.model_copy(update={"id": f"cl-{n}"})
+        for n in range(7)
+        for claim in _claims(tenant)
+    ]
+    _write(built, "text_units", "index", units, suffixes=[tenant])
+    _write(built, "claims", "index", claims, suffixes=[tenant])
+    later = _windowed(harness, later_window)
+    prefixes = later.config.indexing.opensearch
+
+    assert set(later.vector_indexer.read_text_unit_attributes(ids, tenant)) == set(ids)
+    found = later.vector_indexer.find_documents(
+        prefixes.claims_index_prefix, "subject_id", ["e-vendor"], tenant
+    )
+    assert len(found or {}) == 7
+
+    assert later.vector_retriever is not None
+
+    async def fetch_by_id() -> tuple[int, int]:
+        retriever = later.vector_retriever()
+        try:
+            batch = await retriever.aid_batch_size(
+                prefixes.text_units_index_prefix, tenant
+            )
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=len(ids),
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefixes.text_units_index_prefix],
+                    suffix=tenant,
+                    filters={"id": ids},
+                    source_fields=[],
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return batch, len(hits)
+
+    # One fetch by id names at most a window of ids (the strategies batch by
+    # aid_batch_size) and returns that many, rather than failing the query.
+    assert asyncio.run(fetch_by_id()) == (3, 3)
 
 
 def test_index_settings_reach_the_index(harness: StoreHarness) -> None:

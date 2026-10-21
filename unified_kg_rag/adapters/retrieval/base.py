@@ -229,6 +229,12 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         """
         return None
 
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        """Ids one fetch by id on ``prefix``'s index for ``suffix`` can name
+        (``IndexLimits.id_batch_size``); by default under the configured
+        ``index_settings``."""
+        return id_batch_size(self._config.indexing.opensearch.index_settings)
+
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
         """Whether ``prefix``'s index exists for ``suffix``; ``None`` (the
         default) when the backend cannot tell."""
@@ -352,7 +358,7 @@ class BaseSearchStrategy(ABC):
         """The ``ids`` of ``prefix``'s index that pass ``filters``.
 
         Ids only come back, in batches one request can hold
-        (``id_batch_size``) of the ids not known yet. With ``enough`` the ids
+        (``aid_batch_size``) of the ids not known yet. With ``enough`` the ids
         are counted in the order given and the check stops once ``enough`` of
         them passed: every id ranked above the ``enough``-th passing one is
         known, so a caller cutting the ranked ids to the passing ones keeps
@@ -373,7 +379,7 @@ class BaseSearchStrategy(ABC):
             [prefix, query.suffix, filters], sort_keys=True, default=str
         )
         known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
-        batch = id_batch_size(self.config.indexing.opensearch.index_settings)
+        batch = await retriever.aid_batch_size(prefix, query.suffix)
 
         def note(outcomes: dict[str, bool]) -> None:
             if checked is not None:

@@ -1318,6 +1318,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- OpenSearch and the embedded engine: the indexer's reads and the
+  retriever's searches are sized by the limits in force on each live
+  index: the smaller of `index_settings` and the `max_result_window` /
+  `max_terms_count` the index was created with, read once per index. With
+  `max_result_window` below 1,000 every incremental run failed in its
+  indexing stage (reads by id went 1,000 ids a search) and its documents
+  stayed pending; reverting or raising the setting without a reindex
+  failed too, as the live index keeps its window. A fetch by id now names
+  at most a window of ids (#PR).
 - Incremental indexing: a stored edge with no description that a run
   rewrites for its rank only is updated in place too; it was taken for a
   missing vector copy and embedded again (#404).

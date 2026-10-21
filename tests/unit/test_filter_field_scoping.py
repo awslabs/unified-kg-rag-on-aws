@@ -23,6 +23,7 @@ from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetrieve
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_FILTER_FIELDS,
+    IndexLimits,
     opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
@@ -64,6 +65,12 @@ def _retriever(config: Config, client: _FakeOpenSearchClient) -> OpenSearchRetri
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(
+        inst,
+        "_configured_limits",
+        IndexLimits.of(config.indexing.opensearch.index_settings),
+    )
+    object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()

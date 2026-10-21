@@ -39,6 +39,7 @@ def indexer(config: Config) -> OpenSearchIndexer:
     inst.analyzer = "standard"
     inst.target_language = config.processing.translation.target_language.value
     inst._embedding_dimension = 1024
+    inst._index_limits = {}
     return inst
 
 

@@ -49,6 +49,9 @@ class _Store:
         self.fetches: list[list[str]] = []  # content fetches
         self.checks: list[list[str]] = []  # ids-only checks
 
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        return 65536
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         filters = query.filters or {}
         if query.index_prefixes == [self.units_prefix] and "id" in filters:

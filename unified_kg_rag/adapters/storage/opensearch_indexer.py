@@ -15,8 +15,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
-    DEFAULT_MAX_RESULT_WINDOW,
-    index_setting,
+    IndexLimits,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
@@ -60,11 +59,11 @@ _EMBED_WORKERS = 16
 # embedding requests. Holding a whole item type's vectors as float lists
 # before one bulk call took gigabytes on a large corpus.
 _WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
-# Ids per read-back search (well under index.max_result_window).
+# Ids per read-back search at most (fewer when the index's limits are lower:
+# _limits).
 _READ_BATCH_SIZE = 1000
-# Values per terms search of find_documents, and the hits one returns.
+# Values per terms search of find_documents at most.
 _FIND_BATCH_SIZE = 100
-_FIND_WINDOW = DEFAULT_MAX_RESULT_WINDOW
 # Index settings an index gets when index_settings leaves them out.
 # refresh_interval trades search-visibility latency for indexing throughput;
 # raising it (e.g. "30s" or "-1") speeds bulk loads.
@@ -125,6 +124,8 @@ class OpenSearchIndexer(VectorIndexer):
             if opensearch_client is not None
             else OpenSearchClient(config, boto_session)
         )
+        # The limits in force on each live index read (see _limits).
+        self._index_limits: dict[str, IndexLimits] = {}
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -626,6 +627,22 @@ class OpenSearchIndexer(VectorIndexer):
         """Upsert claim vectors by id into the live index (delta)."""
         return self._upsert_item_type(claims, self._spec("claims"))
 
+    def _limits(self, index_name: str) -> IndexLimits:
+        """The limits in force on ``index_name``: the smaller of the
+        configured ``index_settings`` and the settings the index was created
+        with, read once per index. An index keeps its settings when the
+        config changes (until a reindex), so a window configured below or
+        above the live one would otherwise ask for more hits than it returns
+        (a 400). Raises when the read fails."""
+        limits = self._index_limits.get(index_name)
+        if limits is None:
+            live = self.opensearch_client.get_index_settings(index_name)
+            limits = IndexLimits.of(
+                self.opensearch_config.index_settings, *live.values()
+            )
+            self._index_limits[index_name] = limits
+        return limits
+
     def _read_sources(
         self,
         alias_prefix: str,
@@ -637,11 +654,15 @@ class OpenSearchIndexer(VectorIndexer):
         given) of ``ids`` in ``suffix``'s live index of ``alias_prefix``; none
         without a live index. Raises when the read fails."""
         alias_name = self._get_name(alias_prefix, suffix)
-        if not ids or not self.opensearch_client.get_index_name_by_alias(alias_name):
+        index_name = (
+            self.opensearch_client.get_index_name_by_alias(alias_name) if ids else None
+        )
+        if not index_name:
             return []
+        step = min(_READ_BATCH_SIZE, self._limits(index_name).id_batch_size)
         sources: list[dict[str, Any]] = []
-        for start in range(0, len(ids), _READ_BATCH_SIZE):
-            batch = ids[start : start + _READ_BATCH_SIZE]
+        for start in range(0, len(ids), step):
+            batch = ids[start : start + step]
             response = self.opensearch_client.search(
                 index=alias_name,
                 body={
@@ -805,21 +826,22 @@ class OpenSearchIndexer(VectorIndexer):
         their ``text_unit_ids`` (see the port). Read in id order, a window
         at a time, until a window comes back short: the total a search
         reports stops at 10,000 by default (``relation: gte``), so it cannot
-        tell a full window from the last one."""
+        tell a full window from the last one. The window and the values per
+        search follow the index's limits (``_limits``)."""
         alias_name = self._get_name(alias_prefix, suffix)
-        if not values or not self.opensearch_client.get_index_name_by_alias(alias_name):
-            return {}
-        window = min(
-            _FIND_WINDOW,
-            index_setting(
-                self.opensearch_config.index_settings,
-                "max_result_window",
-                DEFAULT_MAX_RESULT_WINDOW,
-            ),
+        index_name = (
+            self.opensearch_client.get_index_name_by_alias(alias_name)
+            if values
+            else None
         )
+        if not index_name:
+            return {}
+        limits = self._limits(index_name)
+        window = limits.max_result_window
+        step = min(_FIND_BATCH_SIZE, limits.max_terms_count)
         found: dict[str, list[str]] = {}
-        for start in range(0, len(values), _FIND_BATCH_SIZE):
-            terms = {"terms": {field: values[start : start + _FIND_BATCH_SIZE]}}
+        for start in range(0, len(values), step):
+            terms = {"terms": {field: values[start : start + step]}}
             after: str | None = None
             while True:
                 filters: list[dict[str, Any]] = [terms]

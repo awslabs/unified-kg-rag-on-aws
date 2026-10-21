@@ -701,6 +701,23 @@ class SQLiteSearchEngine:
                 raise index_not_found(index_name)
             return self._mappings_of(connection, index_name)
 
+    def get_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        """The settings each index ``index`` (a name or alias) names was
+        created with."""
+        with self._reading("read index settings") as connection:
+            return {
+                name: self._settings_of(connection, name)
+                for name in self._resolve(connection, index)
+            }
+
+    @staticmethod
+    def _settings_of(connection: sqlite3.Connection, index: str) -> dict[str, Any]:
+        (settings_text,) = connection.execute(
+            "SELECT settings FROM indices WHERE name = ?", (index,)
+        ).fetchone()
+        settings: dict[str, Any] = json.loads(settings_text)
+        return settings
+
     def put_index_meta(self, index_name: str, meta: dict[str, Any]) -> None:
         """Replace the mapping ``_meta`` of ``index_name`` (fields unchanged)."""
         with self._transaction("write index _meta") as connection:
@@ -927,12 +944,11 @@ class SQLiteSearchEngine:
             track=track,
         )
 
-    @staticmethod
-    def _check_window(connection: sqlite3.Connection, index: str, size: int) -> None:
-        (settings_text,) = connection.execute(
-            "SELECT settings FROM indices WHERE name = ?", (index,)
-        ).fetchone()
-        settings = json.loads(settings_text)
+    @classmethod
+    def _check_window(
+        cls, connection: sqlite3.Connection, index: str, size: int
+    ) -> None:
+        settings = cls._settings_of(connection, index)
         window = int(
             settings.get(
                 "max_result_window",
@@ -1079,6 +1095,10 @@ class SQLiteSearchEngine:
     async def aget_mappings(self, index: str) -> dict[str, dict[str, Any]]:
         """The ``mappings`` of each index ``index`` (a name or alias) names."""
         return await asyncio.to_thread(self._mappings_by_index, index)
+
+    async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        """Async :meth:`get_index_settings`."""
+        return await asyncio.to_thread(self.get_index_settings, index)
 
     def _exists(self, index: str) -> bool:
         with self._reading("check an index") as connection:
