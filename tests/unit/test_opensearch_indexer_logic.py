@@ -722,3 +722,17 @@ def test_read_entity_descriptions_maps_ids_to_full_descriptions(
     assert indexer.read_entity_descriptions(["e1", "e2"]) == {"e1": "x" * 5000}
     alias = indexer._get_name(indexer.opensearch_config.entities_index_prefix, None)
     assert client.search.call_args.kwargs["index"] == alias
+
+
+def test_an_indexer_is_in_process_only_over_an_embedded_engine(
+    indexer, tmp_path, mocker
+) -> None:
+    # A network client (a mock with no ``in_process`` attribute, as
+    # OpenSearchClient has none) is not in-process: a stop then keeps the
+    # lease until its writes in flight could have landed.
+    from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
+
+    indexer.opensearch_client = mocker.Mock(spec=["close", "bulk", "search"])
+    assert indexer.in_process is False
+    indexer.opensearch_client = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
+    assert indexer.in_process is True

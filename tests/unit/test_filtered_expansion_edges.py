@@ -567,6 +567,68 @@ async def test_a_query_asks_for_a_frontiers_edges_once(config: Config) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ({"filters": {"attr_grp": "a"}}, {"filters": {"attr_grp": "b"}}),
+        ({"source_fields": ["id"]}, {"source_fields": ["id", "rank"]}),
+    ],
+    ids=["filters", "source_fields"],
+)
+async def test_incident_edges_asked_otherwise_are_asked_again(
+    config: Config, first: dict, second: dict
+) -> None:
+    # The per-query cache keys on the filters and the fields read too: an
+    # edge page read under another filter, or without a field, answered for
+    # the other.
+    index = _Index(config)
+    strategy = _strategy(config, _Graph(), index)
+
+    async def ask(how: dict) -> None:
+        query = SearchQuery(query="q", filters=how.get("filters", {"attr_grp": "a"}))
+        await strategy._incident_relationships(
+            query, ["S"], source_fields=how.get("source_fields")
+        )
+
+    with query_scope():
+        await ask(first)
+        await ask(first)
+        asked = len(_relationship_calls(config, index))
+        await ask(second)
+    assert len(_relationship_calls(config, index)) == 2 * asked
+
+
+async def test_a_waiter_asks_again_after_the_request_in_flight_failed(
+    config: Config,
+) -> None:
+    # The owner's request failed: the concurrent caller waiting for it asks
+    # for itself instead of taking "no edges".
+    release = asyncio.Event()
+
+    class _FailsFirst(_Index):
+        failed = False
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.index_prefixes == [self.o.relationships_index_prefix]:
+                await release.wait()
+                if not self.failed:
+                    self.failed = True
+                    raise RuntimeError("store hiccup")
+            return await super().aretrieve(query)
+
+    strategy = _strategy(config, _Graph(), _FailsFirst(config))
+    query = SearchQuery(query="q", filters={"attr_grp": "a"})
+    with query_scope():
+        owner = asyncio.ensure_future(strategy._incident_relationships(query, ["S"]))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(strategy._incident_relationships(query, ["S"]))
+        await asyncio.sleep(0)
+        release.set()
+        await owner
+        edges, _ = await waiter
+    assert sorted(str(e.source) for e in edges) == ["r-sb"]
+
+
 async def test_a_failed_edge_fetch_is_asked_again(config: Config) -> None:
     class _FailsOnce(_Index):
         failed = False
@@ -624,16 +686,28 @@ async def test_equal_edges_and_entities_are_ordered_by_id(config: Config) -> Non
 async def test_a_full_page_is_logged_once_a_query(
     config: Config, caplog: pytest.LogCaptureFixture
 ) -> None:
-    edges = [(f"h{i:03d}", "HUB", f"N{i:03d}", 1.0) for i in range(120)]
+    # Three hubs, one walk each: every walk asks a full page of its own (one
+    # hub walked three times reads its edges once, so it could not tell).
+    hubs = ("HUB1", "HUB2", "HUB3")
+    edges = [
+        (f"{hub}-{i:03d}", hub, f"{hub}-N{i:03d}", 1.0)
+        for hub in hubs
+        for i in range(120)
+    ]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     strategy = _strategy(config, _Graph(), index)
     with caplog.at_level(logging.WARNING), query_scope():
-        for top_k in (5, 6, 7):  # three walks, three different budgets
+        for hub in hubs:
             await strategy._expand_via_graph(
-                SearchQuery(query="q", top_k=top_k, filters={"attr_grp": "a"}),
-                ["HUB"],
+                SearchQuery(query="q", top_k=5, filters={"attr_grp": "a"}), [hub]
             )
     assert caplog.text.count("page cap") == 1
+    caplog.clear()
+    with caplog.at_level(logging.WARNING), query_scope():
+        await strategy._expand_via_graph(
+            SearchQuery(query="q", top_k=5, filters={"attr_grp": "a"}), ["HUB1"]
+        )
+    assert caplog.text.count("page cap") == 1  # once a query, not once ever
 
 
 # --------------------------------------------------------------------------- #

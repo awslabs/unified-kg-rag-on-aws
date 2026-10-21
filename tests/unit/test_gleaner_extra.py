@@ -255,6 +255,24 @@ class TestParseRefinementOutput:
         names = {e.name.lower() for e in ents}
         assert "alice" in names and "bob" in names
 
+    def test_an_empty_issue_type_drops_only_its_issue(self, gleaner) -> None:
+        # <issue_type></issue_type> parses to {}: its .upper() raised and
+        # the whole answer of the unit was dropped.
+        unit = TextUnit(id="t1", text="x")
+        plan = {
+            "identified_issues": {
+                "issue": [
+                    {"issue_type": {}, "details": {"name": "Bob"}},
+                    {
+                        "issue_type": "MISSING_ENTITY",
+                        "details": {"name": "Alice", "type": "PERSON"},
+                    },
+                ]
+            }
+        }
+        ents, _ = _added(gleaner, plan, unit, [], [])
+        assert [e.name for e in ents] == ["Alice"]
+
     def test_unknown_issue_type_ignored(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
         plan = {

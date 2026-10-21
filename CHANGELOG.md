@@ -1517,6 +1517,32 @@ changed once with the full-config keys (#332).
   its other neighbour (150 edges between two seeds hid B's edge to X), and
   on e136253c a page of back edges left 20 of 30 leaves unreached with
   budget left (#406).
+- Ingestion no longer fails for good on a name with braces: the merge of
+  an item's statements built its debug message with `str.format` over the
+  item's names and types, so an entity, edge or claim named like
+  `{Seller}` raised whatever the log level, on every run of its document.
+  The names are now log arguments, and no other log call takes a message
+  built from data as its format (#407).
+- An empty element in a model's answer (`<description></description>`,
+  `<object/>`) is an empty field, not the text `{}`: the XML parser makes
+  it `{}`, which extraction stored as a description, type or claim object
+  `{}` (a junk `{}` entity then linked unrelated documents) and reports
+  as a title or summary `{}`. An empty `<issue_type>` in a gleaning
+  answer no longer drops the unit's other issues (#407).
+- Incremental indexing: an entity that joins a derivation after its first
+  pass (the endpoint of an edge a new document rewires) is derived with
+  the stored spellings of its name, as one there from the start is. Since
+  #398 they were held apart from it, so a spelling a full build keeps
+  separate (another type) took the derived one's statements, and an
+  uninterrupted incremental run diverged from a full build (#407).
+- Incremental indexing: a removal killed right after it rewrote the
+  claims of a split, re-keyed or renamed entity leaves no claim behind.
+  The strip derives those claims under new ids and writes them before the
+  entities, but noted only the entities, edges and stored claims, so a
+  next run whose corpus no longer called for the split never found the new
+  claims again. The pending-strip note is now written once the claims are
+  derived, before the first write, with their new ids, also when the
+  strip re-keys nothing else (#407).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

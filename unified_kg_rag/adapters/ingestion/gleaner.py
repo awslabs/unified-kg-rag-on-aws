@@ -481,7 +481,8 @@ class GraphGleaner(BaseProcessor):
         it, and its key is held for the unit like a filtered entity's.
         """
         details = issue.get("details", {})
-        issue_type = issue.get("issue_type", "").upper()
+        # coerce: an empty <issue_type/> parses to {} (no .upper()).
+        issue_type = coerce_llm_text(issue.get("issue_type")).upper()
         grounding = self.extraction_config.entity_grounding
         penalize = False
 

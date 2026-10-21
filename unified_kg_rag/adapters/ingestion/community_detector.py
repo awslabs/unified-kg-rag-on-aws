@@ -1497,6 +1497,8 @@ class CommunityDetector:
         if isinstance(value, str):
             return value
         if isinstance(value, dict):
+            if not value:  # an empty element (<summary></summary>)
+                return ""
             if "#text" in value:
                 return str(value["#text"])
             return str(value)

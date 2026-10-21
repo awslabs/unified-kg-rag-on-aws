@@ -785,3 +785,38 @@ def test_indexing_stage_reports_the_store_error(mocker, reset: bool) -> None:
     )
     with pytest.raises(StoreAccessDeniedError):
         ps.IndexingStage(config=config)._execute_core(context)
+
+
+# --- _vector_stale --------------------------------------------------------
+
+_ENTITY = Entity(id="e1", name="Vendor", type="ORGANIZATION", confidence=0.8)
+_EDGE = Relationship(
+    id="r1", source_id="e1", target_id="e2", source_name="Vendor", target_name="Buyer"
+)
+
+
+@pytest.mark.parametrize(
+    ("item", "field", "other"),
+    [
+        (_ENTITY, "name", "Vendor Inc"),
+        (_ENTITY, "type", "PERSON"),
+        (_ENTITY, "confidence", 1.0),
+        (_EDGE, "source_id", "e3"),
+        (_EDGE, "target_id", "e3"),
+        (_EDGE, "source_name", "Seller"),
+        (_EDGE, "target_name", "Seller"),
+    ],
+)
+def test_a_vector_copy_differing_in_one_field_is_stale(
+    item: Entity | Relationship, field: str, other: object
+) -> None:
+    # Each field the vector store holds besides the description: a copy a
+    # strip or commit left behind in any one of them is rewritten.
+    from unified_kg_rag.application.storage.indexing_manager import (
+        _vector_content,
+        _vector_stale,
+    )
+
+    stored = _vector_content(item)
+    assert not _vector_stale(item, stored)
+    assert _vector_stale(item, {**stored, field: other})

@@ -541,7 +541,7 @@ class PipelineResumeManager:
                     f"{missing_keys}). Resume from '{stage_name}' to recompute it, "
                     f"or force a rebuild."
                 )
-                logger.error(message)
+                logger.error("%s", message)
                 raise PipelineResumeError(message)
 
             verified = [
@@ -731,7 +731,7 @@ class PipelineResumeManager:
                     f"key: '{cache_key}'"
                 )
                 errors.append(error_msg)
-                logger.warning(error_msg)
+                logger.warning("%s", error_msg)
 
         is_valid = not errors
         logger.info(

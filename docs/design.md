@@ -501,9 +501,10 @@ unless noted.
    an orphaned vector copy); one citing others too is stripped of them, its
    weight recomputed and its content derived again from the text units left.
    A strip that merges or re-keys items (another spelling of a stripped
-   entity's name, which need not cite the removed text units) first notes
-   the entities on both sides of the merge and the edges it re-keyed or
-   dropped, and the claims about a split's entities, in one record of the
+   entity's name, which need not cite the removed text units), or derives
+   claims under new ids, notes before its first write the entities on both
+   sides of the merge, the edges it re-keyed or dropped, the claims about a
+   split's entities and the new claim ids, in one record of the
    suffix's extraction store (`pending-strip`, with those of a note a retry
    finishes) and deletes it once their old ids are gone; every removal reads
    it, so a resumed one strips them again. The claims about the other stored
