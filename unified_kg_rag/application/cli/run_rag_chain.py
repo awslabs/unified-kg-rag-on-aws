@@ -74,6 +74,16 @@ def _rerank_line(rerank: dict[str, Any]) -> str:
     return line
 
 
+def _filter_pair(item: str) -> str:
+    """A ``--filters`` pair: ``key:value`` with a key. Anything else is a
+    usage error rather than a filter left out (which widened the search)."""
+    if ":" not in item or not item.split(":", 1)[0]:
+        raise argparse.ArgumentTypeError(
+            f"invalid filter '{item}': expected 'key:value'"
+        )
+    return item
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -132,6 +142,7 @@ class CommandLineInterface:
         parser.add_argument(
             "--filters",
             nargs="*",
+            type=_filter_pair,
             help="Attribute filters as space-separated 'key:value' pairs",
         )
         add_output_format_argument(parser)
@@ -414,18 +425,8 @@ class RAGChainRunner:
 
     @staticmethod
     def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        filters: dict[str, Any] = {}
-        if not filter_args:
-            return filters
-        for item in filter_args:
-            if ":" in item:
-                key, value = item.split(":", 1)
-                filters[key] = value
-            else:
-                logger.warning(
-                    "Invalid filter format skipped: '%s'. Expected 'key:value'.", item
-                )
-        return filters
+        """``--filters`` as a mapping (each pair checked by ``_filter_pair``)."""
+        return dict(item.split(":", 1) for item in filter_args or [])
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:

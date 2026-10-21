@@ -817,7 +817,8 @@ and `hybrid`) and `reason`.
 
 ### Filters
 
-`--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks.
+`--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
+a pair without a key and a `:` is a usage error (exit 2).
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
 steps on Neptune. Each store accepts the fields its indexer writes:
 

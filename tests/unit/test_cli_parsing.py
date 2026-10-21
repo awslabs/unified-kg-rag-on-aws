@@ -303,10 +303,23 @@ def test_rag_parse_filters_key_value() -> None:
     assert out == {"entity_type": "person", "x": "y"}
 
 
-def test_rag_parse_filters_skips_malformed_and_handles_none() -> None:
+def test_rag_parse_filters_handles_none() -> None:
     assert run_rag_chain.RAGChainRunner._parse_filters(None) == {}
-    # "noColon" has no ':' -> skipped with a warning, not raised.
-    assert run_rag_chain.RAGChainRunner._parse_filters(["noColon", "k:v"]) == {"k": "v"}
+
+
+@pytest.mark.parametrize("pair", ["noColon", "key=value", ":value"])
+def test_rag_a_malformed_filter_is_a_usage_error(
+    pair: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A pair without a key and ':' was skipped with a warning: the query ran
+    # without the filter, over everything it was meant to exclude.
+    monkeypatch.setattr(
+        sys, "argv", ["run-rag", "--query", "q", "--filters", "k:v", pair]
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert f"invalid filter '{pair}'" in capsys.readouterr().err
 
 
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:
