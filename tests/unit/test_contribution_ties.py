@@ -122,6 +122,20 @@ def test_resolved_claims_do_not_depend_on_their_order(order: tuple[int, ...]) ->
     assert merged.source_text == "A fee.\nAcme pays 100."
 
 
+@pytest.mark.parametrize("order", [(0, 1, 1), (1, 0, 1), (1, 1, 0)])
+def test_the_most_frequent_claim_object_name_wins(order: tuple[int, ...]) -> None:
+    # "usd 100" is stated twice, "USD 100" (the smaller) once: frequency
+    # comes before the tie-break, in the merge and in claim resolution.
+    from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+
+    statements = _claim_statements(order)
+
+    (merged,) = merge_claim_contributions(_claim_statements(order))
+    resolved = object.__new__(ClaimResolver)._merge_claims(statements)
+
+    assert merged.object_name == resolved.object_name == "usd 100"
+
+
 @pytest.mark.parametrize("name", ["{Seller}", "{0}", "{}", "Map{K,V}", "100%"])
 def test_statements_of_a_name_with_braces_merge(name: str) -> None:
     # The merge's debug message named the item inside a str.format template,

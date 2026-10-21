@@ -191,6 +191,35 @@ def test_the_probe_leaves_a_store_injected_into_the_pipeline_open(
     assert store.closed is False
 
 
+def test_the_stages_leave_the_stores_injected_into_the_pipeline_open(
+    tmp_path: Path,
+) -> None:
+    # Each stage closes the indexer it builds; one built from the pipeline's
+    # vector_indexer= / graph_indexer= is the caller's instance, which the
+    # community stage's whole-graph read closed before the indexing stage
+    # wrote with it.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig
+
+    vector, graph = _RemoteStore(), _RemoteStore()
+    pipeline = DataIngestionPipeline(
+        _config(tmp_path / "stores", tmp_path / "viz"),
+        PipelineConfig(local_directory=tmp_path / "cache"),
+        source_directory=tmp_path,
+        vector_indexer=vector,  # type: ignore[arg-type]
+        graph_indexer=graph,  # type: ignore[arg-type]
+    )
+    built = pipeline.providers.build_graph_indexer()
+    built.close()
+    pipeline.providers.build_vector_indexer().close()
+    pipeline.close()
+
+    assert (vector.closed, graph.closed) == (False, False)
+    # Everything but close is the injected instance's.
+    graph.closed = True
+    assert built.closed is True
+
+
 def test_a_stopped_run_with_a_remote_store_leaves_its_lease_expired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

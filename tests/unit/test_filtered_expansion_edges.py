@@ -20,6 +20,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.base import query_scope
+from unified_kg_rag.adapters.storage.filter_schema import id_batch_size
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -84,6 +85,9 @@ class _Index:
 
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
         return prefix != self.o.relationships_index_prefix or self.has_relationships
+
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        return id_batch_size(self.o.index_settings)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = (query.index_prefixes or [""])[0]
@@ -721,6 +725,9 @@ class _Document:
     def __init__(self, config: Config) -> None:
         self.o = config.indexing.opensearch
         self.calls: list[tuple[str, list[str]]] = []
+
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        return id_batch_size(self.o.index_settings)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         ids = list((query.filters or {}).get("id") or [])

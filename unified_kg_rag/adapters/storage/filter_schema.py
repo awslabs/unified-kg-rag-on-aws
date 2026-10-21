@@ -74,16 +74,47 @@ def index_setting(settings: dict[str, Any], name: str, default: int) -> int:
     return int(settings.get(name, settings.get(f"index.{name}", default)))
 
 
+@dataclass(frozen=True)
+class IndexLimits:
+    """The hits one search returns (``max_result_window``) and the values one
+    ``terms`` clause takes (``max_terms_count``) on an index."""
+
+    max_result_window: int = DEFAULT_MAX_RESULT_WINDOW
+    max_terms_count: int = DEFAULT_MAX_TERMS_COUNT
+
+    @classmethod
+    def of(cls, *settings: dict[str, Any]) -> "IndexLimits":
+        """The limits in force under every one of ``settings`` (the smallest):
+        ``indexing.opensearch.index_settings`` and the settings each live
+        index was created with. An index keeps the settings it was created
+        with, so a changed config does not change them until a reindex."""
+        return cls(
+            max_result_window=min(
+                (
+                    index_setting(s, "max_result_window", DEFAULT_MAX_RESULT_WINDOW)
+                    for s in settings
+                ),
+                default=DEFAULT_MAX_RESULT_WINDOW,
+            ),
+            max_terms_count=min(
+                (
+                    index_setting(s, "max_terms_count", DEFAULT_MAX_TERMS_COUNT)
+                    for s in settings
+                ),
+                default=DEFAULT_MAX_TERMS_COUNT,
+            ),
+        )
+
+    @property
+    def id_batch_size(self) -> int:
+        """Ids one fetch by id can name: ``max_terms_count`` per ``terms``
+        clause and ``max_result_window`` hits."""
+        return max(1, min(self.max_terms_count, self.max_result_window))
+
+
 def id_batch_size(settings: dict[str, Any]) -> int:
-    """Ids one fetch by id can name: OpenSearch's ``max_terms_count`` per
-    ``terms`` clause and ``max_result_window`` hits."""
-    return max(
-        1,
-        min(
-            index_setting(settings, "max_terms_count", DEFAULT_MAX_TERMS_COUNT),
-            index_setting(settings, "max_result_window", DEFAULT_MAX_RESULT_WINDOW),
-        ),
-    )
+    """``IndexLimits.id_batch_size`` under ``settings`` alone."""
+    return IndexLimits.of(settings).id_batch_size
 
 
 _SCALARS = (str, int, float, bool)

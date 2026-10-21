@@ -279,6 +279,34 @@ class TestExtractionStore:
         assert store.save([(_unit("t1"), {"p": 1})], "fp") == {"t1"}
         assert "store down" in caplog.text
 
+    @pytest.mark.parametrize("reuse", [True, False])
+    def test_a_refused_store_fails_before_extraction(self, reuse: bool) -> None:
+        # A store the backend refuses to create (index settings it does not
+        # know) failed every record write after the extraction; ``load``,
+        # which runs before it, now raises. Another failure leaves the store
+        # to its reads and writes, as before.
+        from unified_kg_rag.shared import ConfigurationError
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        vectors = FakeVectorStore()
+        prepared: list[str | None] = []
+
+        def refuse(suffix=None):
+            prepared.append(suffix)
+            raise StoreRequestRejectedError("unknown setting [index.max_result_windw]")
+
+        vectors.prepare_extraction_records = refuse  # type: ignore[method-assign]
+        store = ExtractionStore(Config(), lambda: vectors, reuse=reuse)
+        with pytest.raises(ConfigurationError, match="max_result_windw"):
+            store.load([_unit("t1", "a")], "fp", _raw)
+        assert prepared == ["a"]
+
+        def unreachable(suffix=None):
+            raise RuntimeError("store down")
+
+        vectors.prepare_extraction_records = unreachable  # type: ignore[method-assign]
+        assert store.load([_unit("t1", "a")], "fp", _raw) == {}
+
     def test_save_returns_the_units_of_the_rejected_keys(self) -> None:
         vectors = FakeVectorStore()
         other = TextUnit(id="t2", text="Buyer pays Vendor.")
@@ -377,6 +405,30 @@ def _indexer(path) -> OpenSearchIndexer:
 
 
 class TestOpenSearchExtractionRecords:
+    def test_preparing_creates_the_index_once_and_reports_a_refusal(
+        self, tmp_path
+    ) -> None:
+        from unified_kg_rag.shared import ConfigurationError
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        indexer = _indexer(tmp_path / "vector.sqlite3")
+        indexer.prepare_extraction_records("x")
+        indexer.prepare_extraction_records("x")
+        alias = indexer._get_name(
+            indexer.opensearch_config.extraction_records_index_prefix, "x"
+        )
+        assert len(indexer.opensearch_client.get_indices_by_alias(alias)) == 1
+
+        def refuse(index, body, *, exist_ok=True):
+            raise StoreRequestRejectedError(
+                "unknown setting [index.max_result_windw]",
+                reason="illegal_argument_exception",
+            )
+
+        indexer.opensearch_client.create_index = refuse  # type: ignore[method-assign]
+        with pytest.raises(ConfigurationError, match="index_settings"):
+            indexer.prepare_extraction_records("y")
+
     def test_records_are_upserted_and_read_per_suffix(self, tmp_path) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")
         stats = indexer.write_extraction_records({"k1": {"a": [1]}}, suffix="x")

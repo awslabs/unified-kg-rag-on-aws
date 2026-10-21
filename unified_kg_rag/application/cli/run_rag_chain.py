@@ -2,14 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import asyncio
-import re
 import sys
 import uuid
 from collections.abc import Callable
 from typing import Any
 
 import nest_asyncio
-from rich.markup import escape
 from rich.panel import Panel
 
 from unified_kg_rag import __version__
@@ -47,28 +45,15 @@ from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.display import console, display_ascii_art
+from unified_kg_rag.shared.utils.display import (
+    console,
+    display_ascii_art,
+    markup_safe,
+    terminal_safe,
+)
 
 nest_asyncio.apply()
 logger = get_logger(__name__)
-
-
-# C0 controls except tab/newline, DEL and C1 controls (incl. the 8-bit CSI).
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-
-
-def terminal_safe(text: object) -> str:
-    """Drop terminal control characters from model output or an error string.
-
-    Keeps newline and tab. Without this an answer could carry escape
-    sequences (title changes, screen clears, hyperlinks) to the terminal.
-    """
-    return _CONTROL_CHARS.sub("", str(text))
-
-
-def _markup_safe(text: object) -> str:
-    """``terminal_safe`` text for interpolation into a rich markup string."""
-    return escape(terminal_safe(text))
 
 
 def _rerank_line(rerank: dict[str, Any]) -> str:
@@ -87,6 +72,16 @@ def _rerank_line(rerank: dict[str, Any]) -> str:
             + "]"
         )
     return line
+
+
+def _filter_pair(item: str) -> str:
+    """A ``--filters`` pair: ``key:value`` with a key. Anything else is a
+    usage error rather than a filter left out (which widened the search)."""
+    if ":" not in item or not item.split(":", 1)[0]:
+        raise argparse.ArgumentTypeError(
+            f"invalid filter '{item}': expected 'key:value'"
+        )
+    return item
 
 
 class CommandLineInterface:
@@ -147,6 +142,7 @@ class CommandLineInterface:
         parser.add_argument(
             "--filters",
             nargs="*",
+            type=_filter_pair,
             help="Attribute filters as space-separated 'key:value' pairs",
         )
         add_output_format_argument(parser)
@@ -200,9 +196,7 @@ class RAGChainRunner:
 
     def _get_suffix_display(self) -> str:
         if self.args.suffix:
-            return (
-                f"[dim]Index/Label Suffix:[/dim] [orange3]{self.args.suffix}[/orange3]"
-            )
+            return f"[dim]Index/Label Suffix:[/dim] [orange3]{markup_safe(self.args.suffix)}[/orange3]"
 
         try:
             default_suffix = Constants.DEFAULT_SUFFIX.value
@@ -270,7 +264,7 @@ class RAGChainRunner:
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
-            console.print(f"[red]Error during initialization: {_markup_safe(e)}[/red]")
+            console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
             sys.exit(EXIT_FAILURE)
 
     async def _interactive_mode(self) -> None:
@@ -327,7 +321,7 @@ class RAGChainRunner:
                 console.print("\n[yellow]Conversation interrupted.[/yellow]")
                 break
             except Exception as e:
-                console.print(f"[red]Unexpected error: {_markup_safe(e)}[/red]")
+                console.print(f"[red]Unexpected error: {markup_safe(e)}[/red]")
                 logger.error(
                     "Unexpected error in interactive mode: %s", e, exc_info=True
                 )
@@ -375,7 +369,7 @@ class RAGChainRunner:
                 detail = (output.get("search_results") or {}).get("metadata", {})
                 error = str(detail.get("error") or "RAG chain returned an error")
                 console.print(
-                    f"\n[bold red]Error executing query: {_markup_safe(error)}"
+                    f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
                 )
                 return {"success": False, "error": error, **output}
@@ -385,7 +379,7 @@ class RAGChainRunner:
         except Exception as e:
             logger.exception("Error during query execution: %s", e)
             console.print(
-                f"\n[bold red]Error executing query: {_markup_safe(e)}[/bold red]"
+                f"\n[bold red]Error executing query: {markup_safe(e)}[/bold red]"
             )
             return {
                 "success": False,
@@ -415,37 +409,29 @@ class RAGChainRunner:
         ]
 
         if self.args.filters:
-            config_lines.append(f"[dim]Filters:[/dim] {', '.join(self.args.filters)}")
+            config_lines.append(
+                f"[dim]Filters:[/dim] {markup_safe(', '.join(self.args.filters))}"
+            )
 
         if self.args.conversation_id:
             config_lines.append(
-                f"[dim]Conversation ID:[/dim] {self.args.conversation_id}"
+                f"[dim]Conversation ID:[/dim] {markup_safe(self.args.conversation_id)}"
             )
 
         if self.args.query:
-            config_lines.append(f"[dim]Query:[/dim] {self.args.query}")
+            config_lines.append(f"[dim]Query:[/dim] {markup_safe(self.args.query)}")
 
         console.print(Panel.fit("\n".join(config_lines), border_style="blue"))
 
     @staticmethod
     def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        filters: dict[str, Any] = {}
-        if not filter_args:
-            return filters
-        for item in filter_args:
-            if ":" in item:
-                key, value = item.split(":", 1)
-                filters[key] = value
-            else:
-                logger.warning(
-                    "Invalid filter format skipped: '%s'. Expected 'key:value'.", item
-                )
-        return filters
+        """``--filters`` as a mapping (each pair checked by ``_filter_pair``)."""
+        return dict(item.split(":", 1) for item in filter_args or [])
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:
         if not result.get("success", False):
-            error = _markup_safe(result.get("error", "Unknown error"))
+            error = markup_safe(result.get("error", "Unknown error"))
             console.print(f"\n[red]Error: {error}[/red]")
             return
 
@@ -468,12 +454,12 @@ class RAGChainRunner:
 
                 if original_query := pq.get("original_query"):
                     pq_panel_content += (
-                        f"  - Original Query: {_markup_safe(original_query)}\n"
+                        f"  - Original Query: {markup_safe(original_query)}\n"
                     )
 
                 if translated_query := pq.get("translated_query"):
                     pq_panel_content += (
-                        f"  - Translated Query: {_markup_safe(translated_query)}\n"
+                        f"  - Translated Query: {markup_safe(translated_query)}\n"
                     )
 
                 if entities := pq.get("entities"):
@@ -481,7 +467,7 @@ class RAGChainRunner:
                         f"  - Extracted Entities: {len(entities)} found\n"
                     )
                     if entities and len(entities) <= 5:
-                        joined = _markup_safe(", ".join(map(str, entities)))
+                        joined = markup_safe(", ".join(map(str, entities)))
                         pq_panel_content += f"    {joined}\n"
 
                 if pq_panel_content:
@@ -501,7 +487,7 @@ class RAGChainRunner:
                 sources_content = ""
                 for i, source in enumerate(sources[:5], 1):
                     score = source.get("score", 0)
-                    source_id = _markup_safe(source.get("source", "N/A"))
+                    source_id = markup_safe(source.get("source", "N/A"))
                     sources_content += f"  {i}. {source_id} (score: {score:.3f})\n"
 
                 if len(sources) > 5:
@@ -526,7 +512,7 @@ class RAGChainRunner:
                     continue
                 if key == "rerank" and isinstance(value, dict):
                     metrics_content += (
-                        f"  - Rerank: {_markup_safe(_rerank_line(value))}\n"
+                        f"  - Rerank: {markup_safe(_rerank_line(value))}\n"
                     )
                 elif key == "search_strategy":
                     metrics_content += f"  - Search Strategy: {value}\n"
@@ -536,7 +522,7 @@ class RAGChainRunner:
                     isinstance(value, list | dict) and len(str(value)) < 100
                 ):
                     label = key.replace("_", " ").title()
-                    metrics_content += f"  - {label}: {_markup_safe(value)}\n"
+                    metrics_content += f"  - {label}: {markup_safe(value)}\n"
 
             if metrics_content:
                 console.print(
@@ -574,7 +560,10 @@ class RAGChainRunner:
             return
         key, value = args[0].split(":", 1)
         state["filters"][key] = value
-        console.print(f"[green]Filter added: '{key}' = '{value}'[/green]")
+        console.print(
+            f"[green]Filter added: '{markup_safe(key)}' = '{markup_safe(value)}'"
+            "[/green]"
+        )
 
     @staticmethod
     def _handle_clear_filters(state: dict[str, Any], **kwargs: Any) -> None:
@@ -590,7 +579,7 @@ class RAGChainRunner:
 
         if state["filters"]:
             filters_str = ", ".join([f"{k}:{v}" for k, v in state["filters"].items()])
-            config_lines.append(f"[dim]Filters:[/dim] {filters_str}")
+            config_lines.append(f"[dim]Filters:[/dim] {markup_safe(filters_str)}")
         else:
             config_lines.append("[dim]Filters:[/dim] None")
 
@@ -614,11 +603,11 @@ async def async_main(args: argparse.Namespace) -> int:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
         return EXIT_INTERRUPTED
     except ConfigurationError as e:
-        console.print(f"\n[red]Error: {_markup_safe(e)}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Configuration error: %s", e)
         return EXIT_USAGE
     except Exception as e:
-        console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
+        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
         return EXIT_FAILURE
 

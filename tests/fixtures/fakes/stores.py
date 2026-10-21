@@ -644,6 +644,10 @@ class FakeVectorStore(_Recorder):
         retained = sum(1 for stored, _ in self.extraction_records if stored == wanted)
         return IndexingStats(total_items=retained, successful_items=retained)
 
+    def prepare_extraction_records(self, suffix: str | None = None) -> None:
+        # The records live in a dict: nothing to create or refuse.
+        return None
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:

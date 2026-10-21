@@ -892,6 +892,16 @@ class OpenSearchClient:
         return dict((response.get(index_name) or {}).get("mappings") or {})
 
     @_handle_opensearch_errors
+    def get_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        """The settings (flat names, ``index.<name>``) of each index ``index``
+        (a name or alias) names; a setting left at its default is absent."""
+        response = self.client.indices.get_settings(index=index, flat_settings=True)
+        return {
+            name: dict((body or {}).get("settings") or {})
+            for name, body in dict(response).items()
+        }
+
+    @_handle_opensearch_errors
     def put_index_meta(self, index_name: str, meta: dict[str, Any]) -> None:
         """Replace the mapping ``_meta`` of ``index_name`` (fields unchanged)."""
         self.client.indices.put_mapping(index=index_name, body={"_meta": meta})
@@ -982,6 +992,19 @@ class OpenSearchClient:
         )
         return {
             name: dict((body or {}).get("mappings") or {})
+            for name, body in dict(response).items()
+        }
+
+    @_handle_async_opensearch_errors
+    async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        """Async :meth:`get_index_settings`."""
+        response = await self._aquery(
+            lambda: self.async_client.indices.get_settings(
+                index=index, flat_settings=True
+            )
+        )
+        return {
+            name: dict((body or {}).get("settings") or {})
             for name, body in dict(response).items()
         }
 

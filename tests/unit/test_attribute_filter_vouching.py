@@ -59,7 +59,9 @@ class _Store:
         fail: bool = False,
         entities_suffix: str | None = None,
         passing_units: frozenset[str] = frozenset(),
+        id_batch: int = 65536,
     ) -> None:
+        self.id_batch = id_batch
         self.passing_units = passing_units
         self.entities_prefix = entities_prefix
         self.hits = hits
@@ -67,6 +69,9 @@ class _Store:
         self.fail = fail
         self.entities_suffix = entities_suffix
         self.queries: list[SearchQuery] = []
+
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        return self.id_batch
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
@@ -153,10 +158,10 @@ async def test_an_entity_attribute_filter_is_not_vouched(config: Config) -> None
 
 async def test_the_check_batches_under_one_requests_limits(config: Config) -> None:
     # One fetch must name no more ids than a terms clause and a result
-    # window hold, or the store rejects it and the query fails.
-    config.indexing.opensearch.index_settings = {"index.max_result_window": 2}
+    # window hold, or the store rejects it and the query fails: the
+    # retriever reports how many (the limits in force on its index).
     prefix = config.indexing.opensearch.entities_index_prefix
-    document = _Store(prefix, [], passing=frozenset({"v3"}))
+    document = _Store(prefix, [], passing=frozenset({"v3"}), id_batch=2)
     graph = _Store(prefix, [_hit(f"v{i}") for i in range(5)])
     strategy = _strategy(config, document, graph)
 

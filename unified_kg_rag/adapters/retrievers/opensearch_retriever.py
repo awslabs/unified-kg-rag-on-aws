@@ -21,11 +21,9 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
-    DEFAULT_MAX_RESULT_WINDOW,
-    DEFAULT_MAX_TERMS_COUNT,
     FilterFields,
+    IndexLimits,
     check_filter_values,
-    index_setting,
     opensearch_filter_fields,
     union_filter_fields,
 )
@@ -141,14 +139,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Private attributes: this is a pydantic model, which rejects
         # undeclared public attributes.
         self._max_size = self._opensearch_config.max_query_size
-        # Hard ceiling on hits per query: the index's max_result_window, which
-        # the indexer creates it with. Fetch-by-id size may be floored up to the
-        # terms-filter size but never beyond this.
-        self._max_result_window = index_setting(
-            self._opensearch_config.index_settings,
-            "max_result_window",
-            DEFAULT_MAX_RESULT_WINDOW,
-        )
+        # The configured limits; each index's own may be lower (_limits).
+        # Fetch-by-id size may be floored up to the terms-filter size but
+        # never beyond the index's max_result_window.
+        self._configured_limits = IndexLimits.of(self._opensearch_config.index_settings)
+        self._max_result_window = self._configured_limits.max_result_window
+        # The limits in force on each alias read (see _limits).
+        self._index_limits: dict[str, IndexLimits] = {}
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
         # (OpenSearchIndexer), so their vectors are comparable.
@@ -271,10 +268,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if query_vector is not None:
                 await self._check_embedding_settings(index_prefixes, query.suffix)
 
-            self._check_filter_values(query.filters)
-            self._check_filter_values(query.exclude)
+            limits = await self._limits_by_prefix(index_prefixes, query.suffix)
+            terms_limit = min(
+                (lim.max_terms_count for lim in limits.values()),
+                default=self._configured_limits.max_terms_count,
+            )
+            self._check_filter_values(query.filters, terms_limit)
+            self._check_filter_values(query.exclude, terms_limit)
             search_tasks = self._create_search_tasks(
-                query, search_type, index_prefixes, query_vector
+                query, search_type, index_prefixes, query_vector, limits
             )
 
             if not search_tasks:
@@ -320,8 +322,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
+        limits: dict[str, IndexLimits] | None = None,
     ) -> list[Coroutine[Any, Any, list[RetrievalResult]]]:
-        """One search per index, each with the filters that index declares."""
+        """One search per index, each with the filters that index declares,
+        sized by the index's ``limits``."""
         search_tasks = []
         for prefix in index_prefixes:
             mapping = self._field_mappings.get(prefix)
@@ -342,7 +346,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     update={"filters": self._filters_for_index(prefix, query.filters)}
                 )
 
-            size = self._hit_count(index_query)
+            window = (limits or {}).get(prefix, self._configured_limits)
+            size = self._hit_count(index_query, window.max_result_window)
             bodies = self._build_search_bodies(
                 index_query,
                 search_type,
@@ -351,6 +356,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 query_vector,
                 size=size,
                 sort=self._importance_sort(prefix, index_query, search_type),
+                window=window.max_result_window,
             )
             if query.source_fields is not None:
                 # A check that needs the ids only ships no document back.
@@ -562,6 +568,45 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 return record
         return None
 
+    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
+        """Ids one fetch by id on ``prefix``'s index can name, under the
+        limits in force on it (``_limits``)."""
+        return (await self._limits(self._get_name(prefix, suffix))).id_batch_size
+
+    async def _limits_by_prefix(
+        self, index_prefixes: list[str], suffix: str | None
+    ) -> dict[str, IndexLimits]:
+        """The limits in force on the index of each of ``index_prefixes``."""
+        prefixes = [p for p in index_prefixes if p in self._field_mappings]
+        found = await asyncio.gather(
+            *(self._limits(self._get_name(p, suffix)) for p in prefixes)
+        )
+        return dict(zip(prefixes, found, strict=True))
+
+    async def _limits(self, alias: str) -> IndexLimits:
+        """The limits in force on ``alias``'s indices: the smallest of the
+        configured ``index_settings`` and the settings the indices were
+        created with, read once per alias. An index keeps its settings when
+        the config changes (until a reindex), so a configured window above
+        the live one would ask for more hits than a search returns (a 400).
+        Unreadable settings leave the configured limits (the search reports
+        a missing index or a store that fails)."""
+        limits = self._index_limits.get(alias)
+        if limits is not None:
+            return limits
+        try:
+            live = await self._opensearch_client.aget_index_settings(alias)
+        except Exception as e:  # noqa: BLE001 - the search reports real failures
+            if isinstance(e, StoreTimeoutError):
+                raise self._unanswered_error(alias) from e
+            logger.debug("Could not read the settings of %s: %s", alias, e)
+            if isinstance(e, StoreAccessDeniedError):
+                self._index_limits[alias] = self._configured_limits
+            return self._configured_limits
+        limits = IndexLimits.of(self._opensearch_config.index_settings, *live.values())
+        self._index_limits[alias] = limits
+        return limits
+
     async def _index_mappings(self, alias: str) -> dict[str, dict[str, Any]] | None:
         try:
             mappings: dict[str, dict[str, Any]] = (
@@ -631,8 +676,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return bool(vector_fields)
         return bool(lexical_fields or vector_fields)
 
-    def _hit_count(self, query: SearchQuery) -> int:
-        """How many hits of one index a search returns."""
+    def _hit_count(self, query: SearchQuery, window: int | None = None) -> int:
+        """How many hits of one index a search returns: at most ``window``
+        (the index's ``max_result_window``; the configured one by default)."""
+        window = self._max_result_window if window is None else window
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         # Fetch-by-id callers (local/mix expansion, source resolution) set
         # top_k=len(ids) and pass those ids as an ``id`` filter to retrieve
@@ -643,16 +690,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # rather than naming them, and must not raise size (and kNN k).
         ids = (query.filters or {}).get("id")
         wanted = len(ids) if isinstance(ids, list) else 0
-        if wanted > size:
-            size = min(wanted, self._max_result_window)
-            if wanted > size:
-                logger.warning(
-                    "A filter lists %s ids, more than the %s hits one search "
-                    "returns (max_result_window); the rest are not fetched",
-                    wanted,
-                    size,
-                )
-        return size
+        if wanted > window:
+            logger.warning(
+                "A filter lists %s ids, more than the %s hits one search "
+                "returns (max_result_window); the rest are not fetched",
+                wanted,
+                window,
+            )
+        return min(max(size, wanted), window)
 
     def _build_search_bodies(
         self,
@@ -664,6 +709,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         *,
         size: int,
         sort: list[dict[str, Any]] | None = None,
+        window: int | None = None,
     ) -> list[dict[str, Any]]:
         """The searches of one index: one, or for a hybrid search two.
 
@@ -689,7 +735,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if search_type != SearchType.VECTOR:
                 size = min(
                     max(size, self.HYBRID_NORMALIZATION_WINDOW),
-                    self._max_result_window,
+                    self._max_result_window if window is None else window,
                 )
             knn = self._search_body(
                 self._build_vector_query(
@@ -810,7 +856,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return clauses
 
-    def _check_filter_values(self, filters: dict[str, Any] | None) -> None:
+    def _check_filter_values(
+        self, filters: dict[str, Any] | None, limit: int | None = None
+    ) -> None:
         """Reject a filter value OpenSearch would answer with a 400.
 
         A ``terms`` query is one clause however many values it holds, so a
@@ -825,11 +873,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             InvalidFilterError: A list filter has more values than that, or a
                 value is malformed.
         """
-        limit = index_setting(
-            self._opensearch_config.index_settings,
-            "max_terms_count",
-            DEFAULT_MAX_TERMS_COUNT,
-        )
+        if limit is None:
+            limit = self._configured_limits.max_terms_count
         check_filter_values(filters)
         for key, value in (filters or {}).items():
             if isinstance(value, list) and len(value) > limit:

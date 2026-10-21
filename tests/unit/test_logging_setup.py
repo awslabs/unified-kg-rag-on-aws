@@ -84,6 +84,16 @@ def test_library_levels_quiet_chatty_dependencies(stream: io.StringIO) -> None:
     assert [r["event"] for r in _records(stream)] == ["kept"]
 
 
+def test_debug_leaves_numba_and_httpcore_quiet(stream: io.StringIO) -> None:
+    # At DEBUG numba logged every JIT compile (run-visualization) and
+    # httpcore every connection step.
+    setup_logging(_config(level="DEBUG"), stream=stream)
+    logging.getLogger("numba.core.ssa").debug("on_assign %s", "x")
+    logging.getLogger("httpcore.connection").debug("connect_tcp.started")
+    logging.getLogger("unified_kg_rag.test_debug").debug("kept")
+    assert [r["event"] for r in _records(stream)] == ["kept"]
+
+
 def test_verbose_lowers_package_logger_past_handler(stream: io.StringIO) -> None:
     setup_logging(_config(level="INFO"), stream=stream)
     logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)

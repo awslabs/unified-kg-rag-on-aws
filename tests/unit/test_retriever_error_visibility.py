@@ -61,6 +61,7 @@ from unified_kg_rag.adapters.storage import neptune_indexer
 from unified_kg_rag.adapters.storage.embedding_settings import (
     configured_embedding_model,
 )
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config, Constants, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import EmbeddingModelId
@@ -770,6 +771,8 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(inst, "_configured_limits", IndexLimits())
+    object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst,

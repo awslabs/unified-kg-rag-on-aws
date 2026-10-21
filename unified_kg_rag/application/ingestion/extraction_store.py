@@ -31,6 +31,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
 if TYPE_CHECKING:
@@ -156,12 +157,30 @@ class ExtractionStore:
     ) -> dict[str, T]:
         """The stored records of ``units`` by text unit id, each payload
         ``parse``d for its unit. A unit without one, or whose payload does not
-        parse (another release wrote it), is absent: it is extracted."""
-        store = self._store() if self._reuse else None
+        parse (another release wrote it), is absent: it is extracted.
+
+        Each suffix's store is created first (``prepare_extraction_records``),
+        reused or not: one the backend refuses to create raises
+        ``StoreRequestRejectedError`` here, before extraction, rather than
+        failing every record write after it. Any other failure leaves the
+        store to its reads and writes (it is a cache)."""
+        store = self._store()
         if store is None:
             return {}
+        grouped = self._keys(units, fingerprint)
+        for suffix in grouped:
+            try:
+                store.prepare_extraction_records(suffix)
+            except StoreRequestRejectedError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the store is a cache
+                logger.warning(
+                    "Preparing the extraction store of '%s' failed: %s", suffix, e
+                )
+        if not self._reuse:
+            return {}
         found: dict[str, T] = {}
-        for suffix, by_key in self._keys(units, fingerprint).items():
+        for suffix, by_key in grouped.items():
             try:
                 payloads = store.read_extraction_records(sorted(by_key), suffix=suffix)
             except Exception as e:  # noqa: BLE001 - the store is a cache

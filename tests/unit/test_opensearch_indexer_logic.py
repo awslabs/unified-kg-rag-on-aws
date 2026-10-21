@@ -39,6 +39,7 @@ def indexer(config: Config) -> OpenSearchIndexer:
     inst.analyzer = "standard"
     inst.target_language = config.processing.translation.target_language.value
     inst._embedding_dimension = 1024
+    inst._index_limits = {}
     return inst
 
 
@@ -307,7 +308,7 @@ def _props(mapping: dict) -> dict:
 def test_base_mapping_settings(indexer) -> None:
     mapping = indexer._get_base_mapping({"id": {"type": "keyword"}})
     settings = mapping["settings"]
-    assert settings["index.knn"] is True
+    assert settings["knn"] is True
     assert "number_of_shards" in settings
     # dynamic_templates map strings to keyword.
     templates = mapping["mappings"]["dynamic_templates"]
@@ -736,3 +737,55 @@ def test_an_indexer_is_in_process_only_over_an_embedded_engine(
     assert indexer.in_process is False
     indexer.opensearch_client = SQLiteSearchEngine(tmp_path / "vectors.sqlite3")
     assert indexer.in_process is True
+
+
+def test_base_mapping_fills_left_out_defaults_and_keeps_given_ones(indexer) -> None:
+    # A setting given with or without its "index." prefix is written once,
+    # without it, and keeps its value; one left out gets the default.
+    indexer.opensearch_config.index_settings = {
+        "index.refresh_interval": "30s",
+        "max_result_window": 200,
+    }
+
+    settings = indexer._get_base_mapping({})["settings"]
+
+    assert {k: v for k, v in settings.items() if not k.startswith("knn")} == {
+        "refresh_interval": "30s",
+        "max_result_window": 200,
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+    }
+    assert settings["knn"] is True
+    assert settings["knn.algo_param.ef_search"] == 100
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"knn": False},
+        {"index.knn": False},
+        {"knn.algo_param.ef_search": 10},
+        {"index.knn.algo_param.ef_search": 10},
+    ],
+)
+def test_index_settings_refuse_the_knn_keys(settings: dict) -> None:
+    # A bare knn key overrode the forced index.knn / ef_search (both
+    # spellings reached the index, the later one winning): knn: false made
+    # every vector index unsearchable.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.domain.models.config import OpenSearchIndexingConfig
+
+    with pytest.raises(ValidationError, match="vector_search"):
+        OpenSearchIndexingConfig(index_settings=settings)
+
+
+def test_index_settings_refuse_one_setting_spelled_twice() -> None:
+    from pydantic import ValidationError
+
+    from unified_kg_rag.domain.models.config import OpenSearchIndexingConfig
+
+    with pytest.raises(ValidationError, match="twice"):
+        OpenSearchIndexingConfig(
+            index_settings={"max_result_window": 200, "index.max_result_window": 300}
+        )

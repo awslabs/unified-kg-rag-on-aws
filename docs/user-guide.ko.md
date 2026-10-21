@@ -762,7 +762,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 ### 필터
 
 `--filters key:value ...`(또는 `RAGInput.filters`)는 검색이 순위를 매길 대상을
-좁힙니다. 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
+좁힙니다. 키와 `:`가 없는 쌍은 사용법 오류(종료 코드 2)입니다. 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
 변환됩니다. 저장소마다 해당 인덱서가 쓰는 필드를 받습니다.
 
 | 저장소 | 필터 가능한 필드 |
@@ -1540,6 +1540,8 @@ finally:
 모두 백엔드를 `providers=Providers(config, ...)` 번들이나 개별 인자(`doc_status=`,
 `vector_indexer=`, `model_factory=` 등) 중 하나로 주입받으며, 둘을 함께 쓸 수는
 없습니다. [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
+`vector_indexer=` / `graph_indexer=`로 넘긴 인덱서는 호출한 쪽이 닫습니다. 파이프라인은
+닫지 않습니다.
 
 ---
 
