@@ -49,7 +49,7 @@ naming the key that replaces it.
   `knn.algo_param.ef_search` reached the index next to the forced
   `index.knn` / `vector_search.ef_search` and won, so the vector indices
   could not be searched; set ef_search through `vector_search.ef_search`
-  (#PR).
+  (#408).
 - One switch turns incremental indexing on: `providers.doc_status.enabled`
   (default `false`; `kind` picks DynamoDB or SQLite). `aws.dynamodb.enabled`
   is a moved key: a config that sets it fails naming the replacement, so move
@@ -833,10 +833,10 @@ changed once with the full-config keys (#332).
 - `run-rag --filters`: a pair without a key and a `:` (`key=value`,
   `noColon`) is a usage error (exit 2); it was skipped with a warning and
   the query ran without the filter, over the documents it was meant to
-  exclude (#PR).
+  exclude (#408).
 - Logging: `logging.library_levels` also sets `numba` and `httpcore` to
   `WARNING` by default; at `DEBUG` they logged every JIT compile
-  (`run-visualization`) and every connection step (#PR).
+  (`run-visualization`) and every connection step (#408).
 - Claims: a merged claim's type and object name (a literal's spellings,
   `USD 100` and `usd 100`) are the most frequent of its statements', the
   smallest on a tie, and its description and source-text lines come in
@@ -1340,20 +1340,20 @@ changed once with the full-config keys (#332).
   indexing stage (reads by id went 1,000 ids a search) and its documents
   stayed pending; reverting or raising the setting without a reindex
   failed too, as the live index keeps its window. A fetch by id now names
-  at most a window of ids (#PR).
+  at most a window of ids (#408).
 - CLIs: data printed by `run-ingestion`, `run-rag`, `run-eval` and
   `prepare-benchmark` (sample entities, relationships, claims, community
   titles, the query and filters, paths, metric and benchmark names, error
   messages) is escaped: rich read it as markup, and text such as `[/red]`
-  crashed the CLI with `MarkupError` (#PR).
+  crashed the CLI with `MarkupError` (#408).
 - Ingestion: the extraction-records index is created before graph
   extraction, so an `index_settings` key OpenSearch refuses fails the run
   at once (a `ConfigurationError`) rather than every unit's record write
-  after the extraction was paid for (#PR).
+  after the extraction was paid for (#408).
 - Ingestion: a `vector_indexer` / `graph_indexer` passed to
   `DataIngestionPipeline` is never closed by the pipeline; the caller owns
   it. The community stage's whole-graph read closed it before the indexing
-  stage wrote with it (#PR).
+  stage wrote with it (#408).
 - Incremental indexing: a stored edge with no description that a run
   rewrites for its rank only is updated in place too; it was taken for a
   missing vector copy and embedded again (#404).
