@@ -1327,6 +1327,11 @@ changed once with the full-config keys (#332).
   stayed pending; reverting or raising the setting without a reindex
   failed too, as the live index keeps its window. A fetch by id now names
   at most a window of ids (#PR).
+- CLIs: data printed by `run-ingestion`, `run-rag`, `run-eval` and
+  `prepare-benchmark` (sample entities, relationships, claims, community
+  titles, the query and filters, paths, metric and benchmark names, error
+  messages) is escaped: rich read it as markup, and text such as `[/red]`
+  crashed the CLI with `MarkupError` (#PR).
 - Incremental indexing: a stored edge with no description that a run
   rewrites for its rank only is updated in place too; it was taken for a
   missing vector copy and embedded again (#404).

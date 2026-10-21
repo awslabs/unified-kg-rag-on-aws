@@ -1,8 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 from collections.abc import Collection
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -19,6 +21,27 @@ from unified_kg_rag.domain.models import (
 )
 
 console = Console()
+
+# C0/C1 control characters except tab (\x09) and newline (\x0a).
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def terminal_safe(text: object) -> str:
+    """Drop terminal control characters from model output or an error string.
+
+    Keeps newline and tab. Without this an answer could carry escape
+    sequences (title changes, screen clears, hyperlinks) to the terminal.
+    """
+    return _CONTROL_CHARS.sub("", str(text))
+
+
+def markup_safe(text: object) -> str:
+    """``terminal_safe`` text for interpolation into a rich markup string (a
+    ``console.print`` string or a table cell): data such as an entity name
+    or an error holding ``[/red]`` would otherwise be read as markup, and a
+    closing tag no open tag matches raises ``MarkupError``."""
+    return escape(terminal_safe(text))
+
 
 _SUMMARY_METRICS_CONFIG = {
     "Documents Processed": ("documents", "Source documents loaded into the system"),
@@ -186,9 +209,9 @@ def display_sample_entities(entities: list[Entity] | None, limit: int = 10) -> N
 
     for entity in entities[:limit]:
         table.add_row(
-            str(getattr(entity, "name", "Unknown")),
-            str(getattr(entity, "type", "Unknown")),
-            _truncate_text(getattr(entity, "description", ""), 150),
+            markup_safe(getattr(entity, "name", "Unknown")),
+            markup_safe(getattr(entity, "type", "Unknown")),
+            markup_safe(_truncate_text(getattr(entity, "description", ""), 150)),
         )
     console.print(table)
 
@@ -224,10 +247,10 @@ def display_sample_relationships(
         target_name = getattr(rel, "target_name", "Unknown")
 
         table.add_row(
-            _truncate_text(source_name, 30),
-            str(getattr(rel, "type", "Unknown")),
-            _truncate_text(target_name, 30),
-            _truncate_text(getattr(rel, "description", ""), 120),
+            markup_safe(_truncate_text(source_name, 30)),
+            markup_safe(getattr(rel, "type", "Unknown")),
+            markup_safe(_truncate_text(target_name, 30)),
+            markup_safe(_truncate_text(getattr(rel, "description", ""), 120)),
         )
     console.print(table)
 
@@ -256,10 +279,10 @@ def display_sample_claims(claims: list[Claim] | None, limit: int = 10) -> None:
         claim_type = getattr(claim, "type", "Unknown")
         description = getattr(claim, "description", "")
         table.add_row(
-            _truncate_text(subject_name, 30),
-            _truncate_text(obj_name, 30),
-            str(claim_type),
-            _truncate_text(description, 150),
+            markup_safe(_truncate_text(subject_name, 30)),
+            markup_safe(_truncate_text(obj_name, 30)),
+            markup_safe(claim_type),
+            markup_safe(_truncate_text(description, 150)),
         )
     console.print(table)
 
@@ -291,8 +314,8 @@ def display_communities(
         entity_ids = getattr(community, "entity_ids", [])
         size = getattr(community, "size", len(entity_ids))
 
-        console.print(f"\n[bold]Community {i}:[/bold] {title}")
-        console.print(f"[dim]ID:[/dim] {community_id}")
+        console.print(f"\n[bold]Community {i}:[/bold] {markup_safe(title)}")
+        console.print(f"[dim]ID:[/dim] {markup_safe(community_id)}")
         console.print(f"[dim]Size:[/dim] {size} entities")
 
         if entity_ids:
@@ -301,14 +324,17 @@ def display_communities(
             ]
             if len(entity_ids) > 5:
                 entity_names.append(f"... and {len(entity_ids) - 5} more")
-            console.print(f"[dim]Entities:[/dim] {', '.join(entity_names)}")
+            console.print(
+                f"[dim]Entities:[/dim] {markup_safe(', '.join(entity_names))}"
+            )
 
         if community_id in reports_lookup:
             report = reports_lookup[community_id]
             summary = getattr(report, "summary", "")
             if summary:
                 console.print(
-                    f"[dim]Summary (Rank {getattr(report, 'rank', 1)}):[/dim] {_truncate_text(summary, 200)}"
+                    f"[dim]Summary (Rank {getattr(report, 'rank', 1)}):[/dim] "
+                    f"{markup_safe(_truncate_text(summary, 200))}"
                 )
 
 

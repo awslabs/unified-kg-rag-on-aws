@@ -14,7 +14,6 @@ from typing import Any
 
 import nest_asyncio
 from langchain_core.runnables import Runnable
-from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -74,7 +73,11 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.display import console, display_ascii_art
+from unified_kg_rag.shared.utils.display import (
+    console,
+    display_ascii_art,
+    markup_safe,
+)
 
 nest_asyncio.apply()
 logger = get_logger(__name__)
@@ -274,10 +277,14 @@ class EvaluationRunner:
             f"Failed: [red]{summary.failed_evaluations}[/red]\n"
         )
         if labels := summary.benchmarks:
-            summary_text += f"Benchmark: [bold]{_benchmark_names(labels)}[/bold]\n"
+            summary_text += (
+                f"Benchmark: [bold]{markup_safe(_benchmark_names(labels))}[/bold]\n"
+            )
         if blocked := summary.guardrail_blocked_counts:
             # Scored on the blocked message: a low score may be the guardrail.
-            per_text = ", ".join(f"{text} {count}" for text, count in blocked.items())
+            per_text = markup_safe(
+                ", ".join(f"{text} {count}" for text, count in blocked.items())
+            )
             summary_text += (
                 f"Guardrail blocked: [yellow]{sum(blocked.values())}[/yellow]"
                 f" ({per_text})\n"
@@ -318,7 +325,7 @@ class EvaluationRunner:
 
             for metric, stats in summary.metric_statistics.items():
                 table.add_row(
-                    metric,
+                    markup_safe(metric),
                     f"{stats['mean']:.3f}",
                     f"{stats['median']:.3f}",
                     f"{stats['stdev']:.3f}",
@@ -334,7 +341,8 @@ class EvaluationRunner:
             for metric_name, counts in metrics.items():
                 if counts.get("failed") or counts.get("skipped"):
                     console.print(
-                        f"[yellow]{evaluator_name}/{metric_name}: "
+                        f"[yellow]{markup_safe(evaluator_name)}/"
+                        f"{markup_safe(metric_name)}: "
                         f"{counts.get('scored', 0)} scored, "
                         f"{counts.get('failed', 0)} failed, "
                         f"{counts.get('skipped', 0)} skipped "
@@ -372,7 +380,7 @@ class EvaluationRunner:
         for strategy in list(strategies)[1:]:
             table.add_column(f"{strategy} - {baseline} [CI]", style="cyan")
         for key in strategies[baseline]["metrics"]:
-            row = [key]
+            row = [markup_safe(key)]
             for strategy in strategies:
                 stats = strategies[strategy]["metrics"].get(key)
                 row.append(f"{stats['mean']:.3f}" if stats else "-")
@@ -388,13 +396,15 @@ class EvaluationRunner:
         console.print(table)
         dataset = (comparison.get("run_manifest") or {}).get("dataset") or {}
         if labels := dataset.get("benchmarks"):
-            console.print(f"Benchmark: [bold]{_benchmark_names(labels)}[/bold]")
+            console.print(
+                f"Benchmark: [bold]{markup_safe(_benchmark_names(labels))}[/bold]"
+            )
         for strategy, stats in strategies.items():
             routed = stats["routed_strategies"]
             if routed and list(routed) != [strategy]:
                 console.print(f"[dim]{strategy} routed to: {routed}[/dim]")
         for warning in comparison.get("warnings") or []:
-            console.print(f"[yellow]Warning: {escape(warning)}[/yellow]")
+            console.print(f"[yellow]Warning: {markup_safe(warning)}[/yellow]")
         for strategy, judged in (comparison.get("pairwise_vs_baseline") or {}).items():
             rates = ", ".join(
                 f"{criterion} {stats['candidate_win_rate']:.2f}"
@@ -637,21 +647,22 @@ class EvaluationRunner:
         console.rule("[bold]Evaluation Complete[/bold]", style="blue")
         console.print(
             "\n[bold green]Results saved to "
-            f"'{local_outputs if upload_error else outputs_target}'[/bold green]"
+            f"'{markup_safe(local_outputs if upload_error else outputs_target)}'"
+            "[/bold green]"
         )
 
         exit_code = 0
         if upload_error:
             # Keep the local copy so a failed upload loses no results.
             console.print(
-                f"[red]Error: {upload_error}. Local results kept in "
-                f"'{local_outputs}'.[/red]"
+                f"[red]Error: {markup_safe(upload_error)}. Local results kept in "
+                f"'{markup_safe(local_outputs)}'.[/red]"
             )
             exit_code = EXIT_FAILURE
 
         if breaches:
             console.print(
-                f"[red]Failure budget exceeded ({'; '.join(breaches)}; allowed "
+                f"[red]Failure budget exceeded ({markup_safe('; '.join(breaches))}; allowed "
                 f"failure rate: {self.args.max_failure_rate}).[/red]"
             )
             exit_code = EXIT_FAILURE
@@ -721,24 +732,24 @@ def main() -> None:
     except InvalidDatasetError as e:
         # An input error, like a usage error: no traceback.
         console.print(
-            f"\n[red]Error: invalid evaluation dataset: {escape(str(e))}[/red]"
+            f"\n[red]Error: invalid evaluation dataset: {markup_safe(e)}[/red]"
         )
         logger.error("Invalid evaluation dataset: %s", e)
         sys.exit(EXIT_USAGE)
 
     except ConfigurationError as e:
-        console.print(f"\n[red]Error: {e}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Evaluation configuration error: %s", e)
         sys.exit(EXIT_USAGE)
 
     except AWSServiceError as e:
         # e.g. an s3:// dataset that cannot be downloaded.
-        console.print(f"\n[red]Error: {e}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Evaluation failed: %s", e)
         sys.exit(EXIT_FAILURE)
 
     except Exception as e:
-        console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
+        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during evaluation")
         sys.exit(EXIT_FAILURE)
 

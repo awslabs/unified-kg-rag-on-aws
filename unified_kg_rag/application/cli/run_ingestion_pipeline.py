@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -60,6 +59,7 @@ from unified_kg_rag.shared.utils.display import (
     console,
     display_ascii_art,
     display_pipeline_results,
+    markup_safe,
 )
 
 logger = get_logger(__name__)
@@ -311,13 +311,15 @@ class IngestionPipelineRunner:
         info_lines = [
             "[bold blue]Graph RAG Document Processing Pipeline[/bold blue]",
             f"[dim]Timestamp:[/dim] '{timestamp}'",
-            f"[dim]Cache Directory:[/dim] '{self.args.cache_directory.absolute()}'",
+            f"[dim]Cache Directory:[/dim] "
+            f"'{markup_safe(self.args.cache_directory.absolute())}'",
         ]
 
         if self.args.source_directory:
             info_lines.insert(
                 1,
-                f"[dim]Source Directory:[/dim] '{self.args.source_directory.absolute()}'",
+                f"[dim]Source Directory:[/dim] "
+                f"'{markup_safe(self.args.source_directory.absolute())}'",
             )
 
         info_lines.extend(
@@ -329,10 +331,13 @@ class IngestionPipelineRunner:
         )
 
         if self.args.pipeline_id:
-            info_lines.append(f"[dim]Pipeline ID:[/dim] '{self.args.pipeline_id}'")
+            info_lines.append(
+                f"[dim]Pipeline ID:[/dim] '{markup_safe(self.args.pipeline_id)}'"
+            )
             if self.args.resume_from_stage:
                 info_lines.append(
-                    f"[dim]Resume From Stage:[/dim] '{self.args.resume_from_stage}'"
+                    f"[dim]Resume From Stage:[/dim] "
+                    f"'{markup_safe(self.args.resume_from_stage)}'"
                 )
             else:
                 info_lines.append(
@@ -415,13 +420,14 @@ class IngestionPipelineRunner:
             return False
 
         console.print(
-            f"\n[yellow]Verifying metadata for pipeline: '{self.args.pipeline_id}'[/yellow]"
+            f"\n[yellow]Verifying metadata for pipeline: "
+            f"'{markup_safe(self.args.pipeline_id)}'[/yellow]"
         )
         if not self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id):
             console.print(
                 f"[red]✗ No metadata found for pipeline "
-                f"'{self.args.pipeline_id}' under "
-                f"'{self.args.cache_directory}'[/red]"
+                f"'{markup_safe(self.args.pipeline_id)}' under "
+                f"'{markup_safe(self.args.cache_directory)}'[/red]"
             )
             raise PipelineExecutionError(
                 f"Pipeline '{self.args.pipeline_id}' not found"
@@ -479,10 +485,11 @@ class IngestionPipelineRunner:
             )
             if not is_valid:
                 console.print(
-                    f"\n[red]Pipeline integrity check failed for '{self.args.pipeline_id}':[/red]"
+                    f"\n[red]Pipeline integrity check failed for "
+                    f"'{markup_safe(self.args.pipeline_id)}':[/red]"
                 )
                 for error in errors:
-                    console.print(f"  • {error}")
+                    console.print(f"  • {markup_safe(error)}")
                 console.print(
                     "[yellow]The inputs changed since these stages ran, or the "
                     "cache is incomplete; a resume without --resume-from-stage recomputes them.[/yellow]"
@@ -672,16 +679,16 @@ def main() -> None:
         _print_interrupted(runner, EXIT_INTERRUPTED)
         sys.exit(EXIT_INTERRUPTED)
     except ConfigurationError as e:
-        console.print(f"\n[red]Error: {escape(str(e))}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Ingestion configuration error: %s", e)
         sys.exit(EXIT_USAGE)
     except PipelineExecutionError as e:
         # A failed stage, a failed metadata check or a refused prompt: say
         # which before exiting non-zero.
-        console.print(f"\n[red]Error: {escape(str(e))}[/red]")
+        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         sys.exit(EXIT_FAILURE)
     except Exception as e:
-        console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
+        console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during pipeline execution")
         sys.exit(EXIT_FAILURE)
 

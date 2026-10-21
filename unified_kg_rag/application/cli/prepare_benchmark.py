@@ -27,7 +27,7 @@ from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared import EvaluationException
-from unified_kg_rag.shared.utils.display import console
+from unified_kg_rag.shared.utils.display import console, markup_safe
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -92,13 +92,13 @@ def main(argv: list[str] | None = None) -> None:
     except musique.InvalidBenchmarkDataError as e:
         usage_error(str(e))
     except (EvaluationException, OSError) as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[red]Error: {markup_safe(e)}[/red]")
         sys.exit(EXIT_FAILURE)
     console.print(
         f"[green]MuSiQue ({musique.LICENSE}), labelled '{counts['benchmark']}': "
         f"{counts['questions']} questions, "
         f"{counts['paragraphs']} paragraphs written to "
-        f"'{args.output_directory}'.[/green]\n"
+        f"'{markup_safe(args.output_directory)}'.[/green]\n"
         f"Cite: {musique.CITATION}"
     )
     if as_json:
