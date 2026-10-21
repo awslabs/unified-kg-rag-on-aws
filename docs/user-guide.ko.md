@@ -1540,6 +1540,8 @@ finally:
 모두 백엔드를 `providers=Providers(config, ...)` 번들이나 개별 인자(`doc_status=`,
 `vector_indexer=`, `model_factory=` 등) 중 하나로 주입받으며, 둘을 함께 쓸 수는
 없습니다. [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
+`vector_indexer=` / `graph_indexer=`로 넘긴 인덱서는 호출한 쪽이 닫습니다. 파이프라인은
+닫지 않습니다.
 
 ---
 

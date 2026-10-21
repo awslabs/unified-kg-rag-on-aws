@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
@@ -125,6 +125,20 @@ class _StopFence:
 
     # Nothing to hold back: the same check where nothing is written.
     check_held = check
+
+
+class _Borrowed:
+    """An indexer the pipeline uses but does not own: every attribute is the
+    indexer's, and ``close`` does nothing (its owner closes it)."""
+
+    def __init__(self, indexer: Any) -> None:
+        self._indexer = indexer
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._indexer, name)
+
+    def close(self) -> None:
+        return None
 
 
 class DataIngestionPipeline:
@@ -295,7 +309,8 @@ class DataIngestionPipeline:
                 built with ``doc_status=``, ``vector_indexer_factory=`` and
                 ``graph_indexer_factory=`` (an injected registry turns
                 incremental indexing on, as on ``Providers``). Set them on
-                ``providers`` instead when passing one.
+                ``providers`` instead when passing one. The caller owns the
+                indexers given here: the pipeline never closes them.
 
         Raises:
             ValueError: ``providers`` and one of the shorthand components are
@@ -310,14 +325,15 @@ class DataIngestionPipeline:
         overrides: dict[str, Any] = {}
         if doc_status is not None:
             overrides["doc_status"] = doc_status
+        # The caller's instances, shared by every stage: each stage closes
+        # what it builds, so they get a borrowed view whose close does
+        # nothing (the caller closes them).
         if vector_indexer is not None:
-            overrides["vector_indexer_factory"] = lambda: vector_indexer
+            borrowed_vector = cast(VectorIndexer, _Borrowed(vector_indexer))
+            overrides["vector_indexer_factory"] = lambda: borrowed_vector
         if graph_indexer is not None:
-            overrides["graph_indexer_factory"] = lambda: graph_indexer
-        # Shared by every stage: the in-process probe must not close them.
-        self._injected_indexers = [
-            indexer for indexer in (vector_indexer, graph_indexer) if indexer
-        ]
+            borrowed_graph = cast(GraphIndexer, _Borrowed(graph_indexer))
+            overrides["graph_indexer_factory"] = lambda: borrowed_graph
         if providers is not None and overrides:
             raise ValueError(
                 "Pass doc_status, vector_indexer and graph_indexer either to "
@@ -813,10 +829,7 @@ class DataIngestionPipeline:
             indexer = build()
             if getattr(indexer, "in_process", False) is not True:
                 # An embedded one opens nothing until it writes; a remote
-                # one may hold a client. One injected into the pipeline is
-                # the instance every stage writes with.
-                if any(indexer is shared for shared in self._injected_indexers):
-                    return False
+                # one may hold a client.
                 try:
                     indexer.close()
                 except Exception as e:  # noqa: BLE001 - only a probe

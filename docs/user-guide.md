@@ -1702,7 +1702,9 @@ Extensions import from the package root too: the ports (`LLMFactoryPort`,
 `register_renderer`. Both constructors take injected backends, either as a
 `providers=Providers(config, ...)` bundle or as individual arguments
 (`doc_status=`, `vector_indexer=`, `model_factory=`, ...), not both; see
-[Design Doc §15](./design.md#15-extension-guide).
+[Design Doc §15](./design.md#15-extension-guide). An indexer passed as
+`vector_indexer=` / `graph_indexer=` stays yours to close: the pipeline never
+closes it.
 
 ---
 

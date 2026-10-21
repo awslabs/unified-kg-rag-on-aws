@@ -1343,6 +1343,10 @@ changed once with the full-config keys (#332).
   extraction, so an `index_settings` key OpenSearch refuses fails the run
   at once (a `ConfigurationError`) rather than every unit's record write
   after the extraction was paid for (#PR).
+- Ingestion: a `vector_indexer` / `graph_indexer` passed to
+  `DataIngestionPipeline` is never closed by the pipeline; the caller owns
+  it. The community stage's whole-graph read closed it before the indexing
+  stage wrote with it (#PR).
 - Incremental indexing: a stored edge with no description that a run
   rewrites for its rank only is updated in place too; it was taken for a
   missing vector copy and embedded again (#404).
