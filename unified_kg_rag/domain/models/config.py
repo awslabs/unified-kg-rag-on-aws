@@ -2073,12 +2073,14 @@ class OpenSearchIndexingConfig(BaseModel):
         description=(
             "OpenSearch index settings of the indices this package creates "
             "(number_of_shards, number_of_replicas, refresh_interval, "
-            "max_result_window, max_terms_count, ...); every key is passed to "
-            "index creation (OpenSearch rejects one it does not know; the "
-            "embedded engine applies only max_result_window) and applies to "
-            "indices created afterwards, so reindex after changing it. "
-            "Retrieval sizes its fetches by max_result_window and "
-            "max_terms_count. Raise refresh_interval "
+            "max_result_window, max_terms_count, ...; with or without the "
+            "index. prefix, but not the knn keys, which follow vector_search); "
+            "every key is passed to index creation (OpenSearch rejects one it "
+            "does not know, before extraction; the embedded engine applies "
+            "only max_result_window) and applies to indices created "
+            "afterwards, so reindex after changing it. Reads and searches are "
+            "sized by the smaller of max_result_window / max_terms_count here "
+            "and on the live index. Raise refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
             "querying. Setting the key replaces the whole map; a left-out "
             "shard, replica or refresh setting is 1, 0 or 1s."
@@ -2127,6 +2129,28 @@ class OpenSearchIndexingConfig(BaseModel):
         validate_safe_name(value, str(info.field_name))
         if value[0] in "-_":
             raise ValueError(f"{info.field_name} must not start with '-' or '_'")
+        return value
+
+    @field_validator("index_settings")
+    @classmethod
+    def _check_index_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
+        # A setting may be written with or without its "index." prefix; the
+        # indexer writes it without. The knn settings follow vector_search.
+        names: dict[str, str] = {}
+        for key in value:
+            name = key.removeprefix("index.")
+            if name == "knn" or name.startswith("knn."):
+                raise ValueError(
+                    f"index_settings must not set '{key}': the indexer enables "
+                    "knn and sets its ef_search from vector_search "
+                    "(vector_search.ef_search)"
+                )
+            if name in names:
+                raise ValueError(
+                    f"index_settings sets '{name}' twice ('{names[name]}' and "
+                    f"'{key}')"
+                )
+            names[name] = key
         return value
 
 

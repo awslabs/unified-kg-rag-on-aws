@@ -681,6 +681,33 @@ def test_reads_follow_the_window_of_the_live_index(
     assert asyncio.run(fetch_by_id()) == (3, 3)
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_index_settings_the_engine_refuses_fail_before_extraction(
+    harness: StoreHarness,
+) -> None:
+    # A misspelled setting failed the first index creation, the extraction
+    # records' write after every unit was extracted (so none was saved);
+    # the records index is now created before extraction.
+    from unified_kg_rag.application.ingestion.extraction_store import (
+        ExtractionStore,
+    )
+
+    def misspell(config: Config) -> None:
+        config.indexing.opensearch.index_settings = {"max_result_windw": 20_000}
+
+    typo = harness.derive(misspell)
+    tenant = typo.suffix("typo")
+    store = ExtractionStore(typo.config, lambda: typo.vector_indexer)
+    units = _tagged([TextUnit(id="t1", text="Vendor ships widgets.")], tenant)
+
+    if harness.kind == "sqlite":
+        # The embedded engine applies max_result_window only: nothing to refuse.
+        assert store.load(units, "fp", lambda payload, unit: payload) == {}
+        return
+    with pytest.raises(ConfigurationError, match="index_settings"):
+        store.load(units, "fp", lambda payload, unit: payload)
+
+
 def test_index_settings_reach_the_index(harness: StoreHarness) -> None:
     # Retrieval sizes a fetch by id by index_settings.max_result_window: the
     # index must be created with it. Only three keys reached the index, so a

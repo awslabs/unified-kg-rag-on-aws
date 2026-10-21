@@ -39,6 +39,7 @@ from unified_kg_rag.shared import (
     NamespaceLeaseError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
@@ -966,17 +967,7 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_config.extraction_records_index_prefix, suffix
         )
         try:
-            index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
-            if not index_name:
-                index_name = self._new_index_name(
-                    alias_name,
-                    self.opensearch_config.extraction_records_index_prefix,
-                    suffix or Constants.DEFAULT_SUFFIX.value,
-                )
-                self.opensearch_client.create_index(
-                    index_name, self._get_extraction_records_mapping()
-                )
-                self.opensearch_client.update_alias(alias_name, index_name)
+            index_name = self._extraction_records_index(suffix)
             documents = [
                 {"id": key, "record": record} for key, record in records.items()
             ]
@@ -1000,12 +991,42 @@ class OpenSearchIndexer(VectorIndexer):
         stats.successful_items = len(records) - len(failed)
         return stats
 
+    def _extraction_records_index(self, suffix: str | None) -> str:
+        """The live extraction-records index of ``suffix``, created (and
+        aliased) when there is none."""
+        prefix = self.opensearch_config.extraction_records_index_prefix
+        alias_name = self._get_name(prefix, suffix)
+        index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+        if not index_name:
+            index_name = self._new_index_name(
+                alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
+            )
+            self.opensearch_client.create_index(
+                index_name, self._get_extraction_records_mapping()
+            )
+            self.opensearch_client.update_alias(alias_name, index_name)
+        return index_name
+
+    def prepare_extraction_records(self, suffix: str | None = None) -> None:
+        """Create ``suffix``'s extraction-records index unless it exists (see
+        the port): the first index a run creates, so index settings the
+        engine refuses fail the run before extraction, not after it."""
+        try:
+            self._extraction_records_index(suffix)
+        except StoreRequestRejectedError as e:
+            raise StoreRequestRejectedError(
+                "The search engine refused to create the extraction-records "
+                f"index: {e}. Check indexing.opensearch.index_settings: every "
+                "key is passed to index creation.",
+                reason=e.reason,
+            ) from e
+
     def _get_extraction_records_mapping(self) -> dict[str, Any]:
         return {
             "settings": {
                 key: value
                 for key, value in self._get_base_mapping({})["settings"].items()
-                if not key.startswith("index.knn")
+                if not key.startswith("knn")
             },
             "mappings": {
                 "dynamic": False,
@@ -1699,19 +1720,23 @@ class OpenSearchIndexer(VectorIndexer):
         return stats
 
     def _get_base_mapping(self, properties: dict[str, Any]) -> dict[str, Any]:
-        # Every index_settings key reaches the index: retrieval sizes its
-        # fetches by max_result_window / max_terms_count from the same map.
-        # OpenSearch rejects a setting it does not know when the index is
-        # created. The knn keys follow vector_search.
-        settings = dict(self.opensearch_config.index_settings)
+        # Every index_settings key reaches the index (written without the
+        # optional ``index.`` prefix, so each setting has one spelling):
+        # retrieval sizes its fetches by max_result_window / max_terms_count
+        # from the same map. OpenSearch rejects a setting it does not know
+        # when the index is created. The knn keys follow vector_search (the
+        # config refuses them in index_settings).
+        settings = {
+            key.removeprefix("index."): value
+            for key, value in self.opensearch_config.index_settings.items()
+        }
         for name, default in _INDEX_SETTING_DEFAULTS.items():
-            if name not in settings and f"index.{name}" not in settings:
-                settings[name] = default
+            settings.setdefault(name, default)
         return {
             "settings": {
                 **settings,
-                "index.knn": True,
-                "index.knn.algo_param.ef_search": self.opensearch_config.vector_search.get(
+                "knn": True,
+                "knn.algo_param.ef_search": self.opensearch_config.vector_search.get(
                     "ef_search", 100
                 ),
             },

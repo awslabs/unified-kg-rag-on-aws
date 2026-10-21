@@ -43,6 +43,13 @@ details.
 ### Breaking changes
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.
+- `indexing.opensearch.index_settings` refuses the `knn` keys (`knn`,
+  `knn.*`, with or without `index.`) and a setting spelled both with and
+  without its `index.` prefix. A bare `knn: false` or
+  `knn.algo_param.ef_search` reached the index next to the forced
+  `index.knn` / `vector_search.ef_search` and won, so the vector indices
+  could not be searched; set ef_search through `vector_search.ef_search`
+  (#PR).
 - One switch turns incremental indexing on: `providers.doc_status.enabled`
   (default `false`; `kind` picks DynamoDB or SQLite). `aws.dynamodb.enabled`
   is a moved key: a config that sets it fails naming the replacement, so move
@@ -1332,6 +1339,10 @@ changed once with the full-config keys (#332).
   titles, the query and filters, paths, metric and benchmark names, error
   messages) is escaped: rich read it as markup, and text such as `[/red]`
   crashed the CLI with `MarkupError` (#PR).
+- Ingestion: the extraction-records index is created before graph
+  extraction, so an `index_settings` key OpenSearch refuses fails the run
+  at once (a `ConfigurationError`) rather than every unit's record write
+  after the extraction was paid for (#PR).
 - Incremental indexing: a stored edge with no description that a run
   rewrites for its rank only is updated in place too; it was taken for a
   missing vector copy and embedded again (#404).

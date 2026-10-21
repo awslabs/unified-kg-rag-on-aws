@@ -620,6 +620,15 @@ class VectorIndexer(BaseIndexer):
         they were. Default keeps everything."""
         return IndexingStats()
 
+    def prepare_extraction_records(self, suffix: str | None = None) -> None:
+        """Create ``suffix``'s extraction-record store unless it exists, before
+        extraction: a store the backend refuses to create (index settings it
+        does not know) then fails the run before any model call rather than
+        every unit's record write after them. Raises
+        :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
+        (a ``ConfigurationError``) when refused. Default does nothing."""
+        return None
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:
