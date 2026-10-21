@@ -1522,19 +1522,19 @@ changed once with the full-config keys (#332).
   item's names and types, so an entity, edge or claim named like
   `{Seller}` raised whatever the log level, on every run of its document.
   The names are now log arguments, and no other log call takes a message
-  built from data as its format (#PR).
+  built from data as its format (#407).
 - An empty element in a model's answer (`<description></description>`,
   `<object/>`) is an empty field, not the text `{}`: the XML parser makes
   it `{}`, which extraction stored as a description, type or claim object
   `{}` (a junk `{}` entity then linked unrelated documents) and reports
   as a title or summary `{}`. An empty `<issue_type>` in a gleaning
-  answer no longer drops the unit's other issues (#PR).
+  answer no longer drops the unit's other issues (#407).
 - Incremental indexing: an entity that joins a derivation after its first
   pass (the endpoint of an edge a new document rewires) is derived with
   the stored spellings of its name, as one there from the start is. Since
   #398 they were held apart from it, so a spelling a full build keeps
   separate (another type) took the derived one's statements, and an
-  uninterrupted incremental run diverged from a full build (#PR).
+  uninterrupted incremental run diverged from a full build (#407).
 - Incremental indexing: a removal killed right after it rewrote the
   claims of a split, re-keyed or renamed entity leaves no claim behind.
   The strip derives those claims under new ids and writes them before the
@@ -1542,7 +1542,7 @@ changed once with the full-config keys (#332).
   next run whose corpus no longer called for the split never found the new
   claims again. The pending-strip note is now written once the claims are
   derived, before the first write, with their new ids, also when the
-  strip re-keys nothing else (#PR).
+  strip re-keys nothing else (#407).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
