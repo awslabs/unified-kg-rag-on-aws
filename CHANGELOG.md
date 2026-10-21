@@ -834,6 +834,9 @@ changed once with the full-config keys (#332).
   `noColon`) is a usage error (exit 2); it was skipped with a warning and
   the query ran without the filter, over the documents it was meant to
   exclude (#PR).
+- Logging: `logging.library_levels` also sets `numba` and `httpcore` to
+  `WARNING` by default; at `DEBUG` they logged every JIT compile
+  (`run-visualization`) and every connection step (#PR).
 - Claims: a merged claim's type and object name (a literal's spellings,
   `USD 100` and `usd 100`) are the most frequent of its statements', the
   smallest on a tie, and its description and source-text lines come in

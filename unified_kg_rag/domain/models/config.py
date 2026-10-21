@@ -3000,6 +3000,10 @@ class LoggingConfig(BaseModel):
             "langchain_aws": "WARNING",
             "botocore": "WARNING",
             "urllib3": "WARNING",
+            # At DEBUG: numba logs every JIT compile (UMAP, from
+            # run-visualization) and httpcore every connection step (httpx).
+            "numba": "WARNING",
+            "httpcore": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",
         },

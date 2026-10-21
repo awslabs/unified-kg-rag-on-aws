@@ -935,6 +935,8 @@ logging:
     langchain_aws: "WARNING"
     botocore: "WARNING"
     urllib3: "WARNING"
+    numba: "WARNING" # at DEBUG, a line per JIT compile (run-visualization)
+    httpcore: "WARNING" # at DEBUG, a line per connection step (httpx)
     opentelemetry: "ERROR" # the OTLP exporter warns on every retry
 
 # Observability (OpenTelemetry tracing). Off by default; needs the `otel` extra
