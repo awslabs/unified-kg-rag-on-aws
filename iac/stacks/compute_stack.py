@@ -237,7 +237,8 @@ class ComputeStack(Stack):
         """The read-only role of ``run-rag`` / ``run-eval``.
 
         A query reads the graph (Gremlin reads), searches the vector indices
-        (``HEAD`` index exists, ``GET`` mappings, ``POST <index>/_search``) and
+        (``HEAD`` index exists, ``GET`` mappings and ``_settings``, the live
+        limits searches are sized by, ``POST <index>/_search``) and
         calls Bedrock; it never touches the doc-status table. OpenSearch
         authorizes by HTTP method and URL path, so ``POST`` is granted only on
         ``<index>/_search``: ``_bulk``, ``_doc``, ``_delete_by_query`` and

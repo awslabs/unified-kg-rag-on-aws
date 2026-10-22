@@ -1368,6 +1368,9 @@ changed once with the full-config keys (#332).
   is reported with the variable to set instead (#PR).
 - `run-rag` interactive mode: `set-filter key:value` keeps a value with
   spaces; it was cut at the first one (#PR).
+- Docs: the retriever contract in the design guide names `aindex_limits`,
+  the vector indexer's `check_index_creation`; Operations names the changed
+  `document_loading` inputs as a reason a resume reloads its delta (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
