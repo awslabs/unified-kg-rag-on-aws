@@ -1355,6 +1355,13 @@ changed once with the full-config keys (#332).
 - Ingestion: a lost write lease while the extraction store is prepared
   fails the run; it was logged as a failing cache and extraction went on
   (#PR).
+- Config: a free-form mapping set from the environment replaces the
+  file's, as `index_settings` already did: a whole-map variable such as
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS='{"ko": "cjk"}'` merged
+  into the file's map and kept the keys it left out (#PR).
+- Config: an index-setting variable with a nested `INDEX__` segment
+  (`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__INDEX__NUMBER_OF_SHARDS`)
+  is reported with the variable to set instead (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,

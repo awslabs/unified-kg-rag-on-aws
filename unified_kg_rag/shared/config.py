@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import types
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
 
@@ -150,6 +151,20 @@ def _env_path(name: str) -> tuple[str, ...] | None:
     return None
 
 
+def _unknown_variable(name: str) -> str:
+    """How an unknown variable ``name`` is reported: a nested ``index``
+    segment of an index setting names the variable to set instead."""
+    settings = env_var("indexing.opensearch.index_settings")
+    nested = f"{settings}__INDEX__"
+    if name.upper().startswith(nested):
+        bare = f"{settings}__{name[len(nested):].upper()}"
+        return (
+            f"environment variable {name} (a variable names an index setting "
+            f"without the index segment: set {bare})"
+        )
+    return f"environment variable {name}"
+
+
 def _warn_removed(where: str, path: str) -> None:
     _logger.warning(
         "Config key %s is removed and ignored: %s", where, REMOVED_KEYS[path]
@@ -206,7 +221,9 @@ class ConfigLoader:
         )
         try:
             config = (
-                Config(**_merged(config_data, env_data)) if env_data else file_config
+                Config(**_merged(config_data, env_data, env_paths.values()))
+                if env_data
+                else file_config
             )
         except ValidationError as e:
             # The file alone is valid: the environment layer made it invalid.
@@ -216,7 +233,7 @@ class ConfigLoader:
             ) from e
         self._check_unknown(
             [f"'{path}'{where}" for path in unknown]
-            + [f"environment variable {name}" for name in unknown_env]
+            + [_unknown_variable(name) for name in unknown_env]
         )
         for path in config.inactive_provider_settings():
             _logger.warning(
@@ -345,18 +362,39 @@ class ConfigLoader:
         return self._config if self._config is not None else self.load_config()
 
 
-def _merged(file_data: dict[str, Any], env_data: dict[str, Any]) -> dict[str, Any]:
-    """``env_data`` over ``file_data``. The layer writes ``index_settings``
-    whole, with the variable's spelling of a setting in place of the
-    other: it replaces the file's map rather than merging into it, which
-    would bring the other spelling back."""
+def _merged(
+    file_data: dict[str, Any],
+    env_data: dict[str, Any],
+    paths: Iterable[tuple[str, ...]],
+) -> dict[str, Any]:
+    """``env_data`` over ``file_data``. A free-form mapping a variable of
+    ``paths`` sets replaces the file's: the layer holds it whole (the
+    file's or the default one with the variable's key set, or a whole-map
+    variable's JSON), and merging would bring back what the variable left
+    out (the other spelling of an index setting, the keys a whole map
+    omits)."""
     merged = merge_over(file_data, env_data)
-    opensearch = env_data.get("indexing", {}).get("opensearch", {})
-    if "index_settings" in opensearch:
-        merged["indexing"]["opensearch"]["index_settings"] = opensearch[
-            "index_settings"
-        ]
+    mappings = {mapping for path in paths if (mapping := _mapping_path(path))}
+    for path in mappings:
+        source, target = env_data, merged
+        for key in path[:-1]:
+            source, target = source[key], target[key]
+        target[path[-1]] = source[path[-1]]
     return merged
+
+
+def _mapping_path(path: tuple[str, ...]) -> tuple[str, ...] | None:
+    """The path of the free-form mapping ``path`` is or lies in, if any."""
+    model: type[BaseModel] = Config
+    for position, segment in enumerate(path):
+        field = model.model_fields[segment]
+        if _is_mapping(field.annotation):
+            return path[: position + 1]
+        nested = _nested_model(field.annotation)
+        if nested is None:
+            return None
+        model = nested
+    return None
 
 
 def _variables_at(error: ValidationError, paths: dict[str, tuple[str, ...]]) -> str:
