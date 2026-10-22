@@ -73,6 +73,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import (
@@ -536,6 +537,9 @@ class DataIngestionPipeline:
         Raises:
             PipelineExecutionError: The run could not be set up or crashed
                 outside a stage (for example a missing source directory).
+            StoreRequestRejectedError: The vector store refused to create
+                an index with the run's settings, checked before any model
+                call (a ``ConfigurationError``).
         """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
@@ -625,6 +629,10 @@ class DataIngestionPipeline:
             raise
         except NamespaceLeaseError:
             # Another run writes the namespace: nothing was read or written.
+            raise
+        except StoreRequestRejectedError:
+            # The store refused the run's index settings before any model
+            # call (_check_index_creation): a usage error, not a crash.
             raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
@@ -1427,6 +1435,7 @@ class DataIngestionPipeline:
             ", ".join([s.name for s in stages_to_execute]),
         )
 
+        index_creation_checked = False
         for stage in stages_to_execute:
             if stage.name in completed_stage_names:
                 logger.info("Skipping previously completed stage: '%s'", stage.name)
@@ -1436,6 +1445,11 @@ class DataIngestionPipeline:
                 # does not write) stops here, not at its next write. Not the
                 # takeover wait: a stage that writes nothing need not wait.
                 check_fences_held()
+                if not index_creation_checked and (
+                    stage.name not in self._MODEL_FREE_STAGES
+                ):
+                    self._check_index_creation(context)
+                    index_creation_checked = True
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
                 with self._checkpoint_write():
@@ -1452,6 +1466,42 @@ class DataIngestionPipeline:
                         stage.name,
                     )
                     break
+
+    # The stages before the first one that may call a model (chunking may
+    # embed, translation translates).
+    _MODEL_FREE_STAGES = frozenset(
+        {
+            PipelineStageType.DOCUMENT_PARSING.value,
+            PipelineStageType.DOCUMENT_LOADING.value,
+        }
+    )
+
+    def _check_index_creation(self, context: PipelineContext) -> None:
+        """Have the vector store refuse the run's index settings now, before
+        any model call (``VectorIndexer.check_index_creation``), rather than at
+        the first index creation after extraction. An incremental run with no
+        document to (re)extract is not checked: it creates no index, its
+        deletions go to the live ones. A check that fails otherwise is
+        logged: the stages then meet the store's error themselves.
+
+        Raises:
+            StoreRequestRejectedError: The store refused the settings.
+            NamespaceLeaseError: The run lost its write lease.
+        """
+        if context.incremental_delta is not None and not context.documents:
+            return
+        try:
+            indexer = self.providers.build_vector_indexer()
+            try:
+                indexer.check_index_creation(
+                    self.config.processing.document_parsing.index_value
+                )
+            finally:
+                indexer.close()
+        except (StoreRequestRejectedError, NamespaceLeaseError):
+            raise
+        except Exception as e:  # noqa: BLE001 - the stages report the store
+            logger.warning("Checking the vector store's index creation failed: %s", e)
 
     def _start_index(self, start_stage_name: str | None) -> int:
         """Index in ``self.stages`` of the first stage to run.

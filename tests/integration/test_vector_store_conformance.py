@@ -914,34 +914,53 @@ def test_a_configured_limit_below_the_live_one_wins(
     assert asyncio.run(limits()) == (4, 3)
 
 
+def _misspelled_setting(config: Config) -> None:
+    config.indexing.opensearch.index_settings = {"max_result_windw": 20_000}
+
+
+def _faiss_cosine(config: Config) -> None:
+    # faiss HNSW takes cosinesimil only from OpenSearch 2.19.
+    config.indexing.opensearch.vector_search = {
+        **config.indexing.opensearch.vector_search,
+        "engine": "faiss",
+        "space_type": "cosinesimil",
+    }
+
+
+def _missing_analyzer(config: Config) -> None:
+    config.indexing.opensearch.language_analyzers = {"en": "no_such_analyzer"}
+
+
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+@pytest.mark.parametrize(
+    ("change", "named"),
+    [
+        (_misspelled_setting, "max_result_windw"),
+        # The probe index had no fields: these passed it and failed the
+        # first index creation after extraction.
+        (_faiss_cosine, "cosinesimil"),
+        (_missing_analyzer, "no_such_analyzer"),
+    ],
+    ids=["setting", "vector-method", "analyzer"],
+)
 def test_index_settings_the_engine_refuses_fail_before_extraction(
-    harness: StoreHarness,
+    harness: StoreHarness, change, named: str
 ) -> None:
     # A misspelled setting failed the first index creation, the extraction
     # records' write after every unit was extracted (so none was saved);
-    # the records index is now created before extraction.
-    from unified_kg_rag.application.ingestion.extraction_store import (
-        ExtractionStore,
-    )
-
-    def misspell(config: Config) -> None:
-        config.indexing.opensearch.index_settings = {"max_result_windw": 20_000}
-
-    typo = harness.derive(misspell)
+    # the run now checks index creation before its first model call.
+    typo = harness.derive(change)
     tenant = typo.suffix("typo")
     # The namespace exists (a reset or an incremental run): its records
     # index is not created again, and the settings are checked all the same.
     harness.vector_indexer.prepare_extraction_records(tenant)
-    store = ExtractionStore(typo.config, lambda: typo.vector_indexer)
-    units = _tagged([TextUnit(id="t1", text="Vendor ships widgets.")], tenant)
 
     if harness.kind == "sqlite":
         # The embedded engine applies max_result_window only: nothing to refuse.
-        assert store.load(units, "fp", lambda payload, unit: payload) == {}
+        typo.vector_indexer.check_index_creation(tenant)
         return
-    with pytest.raises(ConfigurationError, match="index_settings"):
-        store.load(units, "fp", lambda payload, unit: payload)
+    with pytest.raises(ConfigurationError, match=named):
+        typo.vector_indexer.check_index_creation(tenant)
 
 
 def test_index_settings_reach_the_index(harness: StoreHarness) -> None:

@@ -1332,6 +1332,29 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: the store check runs once per run before the first stage
+  that may call a model, and its probe index holds the vector indices'
+  fields, not only their settings. It ran when `graph_extraction` prepared
+  its records store, after translation had translated every text unit
+  (paid again by a rerun without `--pipeline-id`), once per extraction
+  stage; and a `vector_search` method or language analyzer the engine
+  refuses (faiss with `cosinesimil` before OpenSearch 2.19, `m: 0`, a
+  missing `nori` plugin) passed it and failed the first index creation
+  after extraction. A refused setting now ends the run as a configuration
+  error (exit 2, `StoreRequestRejectedError` from
+  `DataIngestionPipeline.run`) instead of a failed `graph_extraction`
+  stage. An incremental run with nothing to extract is not checked, as
+  before (#PR).
+- Ingestion: a probe index is deleted also when its creation fails after
+  the index was made, and the probes a stopped or killed run left are
+  deleted by the next run before it creates its own; a probe that could not
+  be deleted no longer fails the run. Nothing deleted them before (#PR).
+- Ingestion: a refused index creation names `index_settings` only among
+  the causes; a shard limit (`maximum shards open`) says the cluster has no
+  room for another index instead (#PR).
+- Ingestion: a lost write lease while the extraction store is prepared
+  fails the run; it was logged as a failing cache and extraction went on
+  (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,

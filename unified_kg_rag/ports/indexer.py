@@ -621,11 +621,23 @@ class VectorIndexer(BaseIndexer):
         return IndexingStats()
 
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
-        """Create ``suffix``'s extraction-record store unless it exists, and
-        check that the backend accepts the configured index settings, before
-        extraction: settings it refuses then fail the run before any model
-        call, whether or not the stores exist already, rather than every
-        write after them. Raises
+        """Create ``suffix``'s extraction-record store unless it exists,
+        before extraction, rather than failing every record write after it.
+        Raises
+        :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
+        (a ``ConfigurationError``) when refused. Default does nothing."""
+        return None
+
+    def check_index_creation(self, suffix: str | None = None) -> None:
+        """Raise when the backend refuses to create the indices of
+        ``suffix`` with this config (index settings, vector method,
+        analyzers), whether or not they exist already.
+
+        The ingestion pipeline calls it once per run, under the namespace's
+        write lease, before the first stage that may call a model: a refused
+        setting then costs no model call, rather than failing the first
+        index creation after extraction (a reset's, or a full build's).
+        Raises
         :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
         (a ``ConfigurationError``) when refused. Default does nothing."""
         return None

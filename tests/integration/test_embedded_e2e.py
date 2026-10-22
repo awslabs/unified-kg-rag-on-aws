@@ -58,7 +58,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import ChunkingStrategy
+from unified_kg_rag.domain.models.config import ChunkingStrategy, LanguageCode
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
@@ -442,8 +442,70 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
         assert _render(tmp_path, monkeypatch, data, method)
 
 
-def test_a_reset_with_a_refused_index_setting_fails_before_any_model_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+def _refusing(monkeypatch: pytest.MonkeyPatch, refused: Any) -> None:
+    """Have the embedded engine refuse an index whose body ``refused``
+    matches, as OpenSearch refuses a setting, vector method or analyzer it
+    does not know (the embedded engine ignores all but max_result_window)."""
+    create = SQLiteSearchEngine.create_index
+
+    def strict(self, index, body, *, exist_ok=True):
+        if reason := refused(body):
+            raise StoreRequestRejectedError(reason, reason="illegal_argument_exception")
+        return create(self, index, body, exist_ok=exist_ok)
+
+    monkeypatch.setattr(SQLiteSearchEngine, "create_index", strict)
+
+
+def _fields(body: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(body.get("mappings", {}).get("properties", {}).values())
+
+
+def _settings_typo(config: Config) -> None:
+    config.indexing.opensearch.index_settings = {"refresh_intervl": "1s"}
+
+
+def _refused_settings(body: dict[str, Any]) -> str | None:
+    if "refresh_intervl" in body["settings"]:
+        return "unknown setting [index.refresh_intervl]"
+    return None
+
+
+def _vector_method(config: Config) -> None:
+    config.indexing.opensearch.vector_search = {
+        **config.indexing.opensearch.vector_search,
+        "m": 0,
+    }
+
+
+def _refused_method(body: dict[str, Any]) -> str | None:
+    for field in _fields(body):
+        if field.get("type") == "knn_vector" and not field["method"]["parameters"]["m"]:
+            return 'Parameter validation failed for Integer parameter "m"'
+    return None
+
+
+def _missing_analyzer(config: Config) -> None:
+    config.indexing.opensearch.language_analyzers = {"en": "no_such_analyzer"}
+
+
+def _refused_analyzer(body: dict[str, Any]) -> str | None:
+    if any(field.get("analyzer") == "no_such_analyzer" for field in _fields(body)):
+        return "analyzer [no_such_analyzer] has not been configured in mappings"
+    return None
+
+
+@pytest.mark.parametrize(
+    ("change", "refused", "named"),
+    [
+        (_settings_typo, _refused_settings, "refresh_intervl"),
+        # The probe index had no fields, so these passed it.
+        (_vector_method, _refused_method, '"m"'),
+        (_missing_analyzer, _refused_analyzer, "no_such_analyzer"),
+    ],
+    ids=["index-setting", "vector-method", "analyzer"],
+)
+def test_a_reset_with_a_refused_index_fails_before_any_model_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws, change, refused, named
 ) -> None:
     # Only a missing extraction-records index was created before extraction,
     # so a reset (or an incremental run) over a built namespace extracted and
@@ -460,29 +522,67 @@ def test_a_reset_with_a_refused_index_setting_fails_before_any_model_call(
     )
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
 
-    create = SQLiteSearchEngine.create_index
-
-    def strict(self, index, body, *, exist_ok=True):
-        # OpenSearch refuses a setting it does not know; the embedded engine
-        # ignores every setting but max_result_window.
-        if "refresh_intervl" in body["settings"]:
-            raise StoreRequestRejectedError(
-                "unknown setting [index.refresh_intervl]",
-                reason="illegal_argument_exception",
-            )
-        return create(self, index, body, exist_ok=exist_ok)
-
-    monkeypatch.setattr(SQLiteSearchEngine, "create_index", strict)
+    _refusing(monkeypatch, refused)
     # A new document: extracting it would be a model call.
     (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
     typo = config.model_copy(deep=True)
     typo.indexing.reset = True
-    typo.indexing.opensearch.index_settings = {"refresh_intervl": "1s"}
-    calls = len(server.chat_models)
+    change(typo)
+    calls = len(server.chat_models), len(server.embed_models)
+    with pytest.raises(StoreRequestRejectedError, match=named):
+        _ingest(typo, _providers(typo, server, encoder), source, tmp_path / "run-2")
+
+    assert (len(server.chat_models), len(server.embed_models)) == calls
+
+
+def test_an_incremental_run_with_nothing_to_extract_is_not_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+) -> None:
+    # A deletion-only or unchanged delta creates no index: its deletions go
+    # to the live ones, so a setting the engine would refuse does not stop it.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    context = _ingest(
+        config, _providers(config, server, encoder), source, tmp_path / "run-1"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    _refusing(monkeypatch, _refused_settings)
+    (source / "logistics.txt").unlink()
+    typo = config.model_copy(deep=True)
+    _settings_typo(typo)
     context = _ingest(
         typo, _providers(typo, server, encoder), source, tmp_path / "run-2"
     )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
 
-    assert context.status is PipelineStageStatus.FAILED
-    assert "refresh_intervl" in _errors(context)
-    assert len(server.chat_models) == calls
+
+def test_a_refused_index_setting_fails_before_translation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+) -> None:
+    # The settings were checked when graph_extraction prepared its records
+    # store, after translation had translated every text unit (a run the
+    # user then reran without --pipeline-id paid for them again). The run
+    # now checks them before its first stage that may call a model.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    config.processing.translation.enabled = True
+    config.processing.translation.source_language = LanguageCode.KO
+    config.processing.translation.target_language = LanguageCode.EN
+    _settings_typo(config)
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    _refusing(monkeypatch, _refused_settings)
+
+    with pytest.raises(StoreRequestRejectedError, match="refresh_intervl"):
+        _ingest(config, _providers(config, server, encoder), source, tmp_path / "run")
+
+    assert server.chat_models == []
+    assert server.embed_models == []

@@ -564,6 +564,7 @@ def test_a_lost_lease_stops_the_run_at_the_next_stage(mocker, s3: bool) -> None:
         or SimpleNamespace(status=None),
     )
     mocker.patch.object(pipe, "_emit_stage_metrics")
+    mocker.patch.object(pipe, "_check_index_creation")
     mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
     mocker.patch.object(pipe, "_start_index", return_value=0)
     upload = mocker.patch.object(
@@ -1073,6 +1074,7 @@ def test_a_stage_start_does_not_wait_for_the_takeover(
         or SimpleNamespace(status=None),
     )
     mocker.patch.object(pipe, "_emit_stage_metrics")
+    mocker.patch.object(pipe, "_check_index_creation")
     mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
     mocker.patch.object(pipe, "_start_index", return_value=0)
     context = SimpleNamespace(stage_results=[], pipeline_id="pid")

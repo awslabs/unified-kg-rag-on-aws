@@ -648,6 +648,10 @@ class FakeVectorStore(_Recorder):
         # The records live in a dict: nothing to create or refuse.
         return None
 
+    def check_index_creation(self, suffix: str | None = None) -> None:
+        # No index settings: nothing to refuse.
+        return None
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:
