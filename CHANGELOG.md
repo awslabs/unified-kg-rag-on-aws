@@ -1606,6 +1606,12 @@ changed once with the full-config keys (#332).
   strip split a part off again under that id, so the part and its
   unchanged edges were deleted. Only the absent ids the strip does not
   write are retired now (#PR).
+- Incremental indexing: a removal killed between its graph edge writes and
+  their vector copies leaves no stale vector edge. The retry found the
+  re-pointed edges' graph copies current and kept their vector copies
+  naming (and pointing at) the old endpoint, or none at all. The stored
+  edges at rewired entities and at a split's parts and origins are now
+  compared with their vector copies, and a missing copy is written (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

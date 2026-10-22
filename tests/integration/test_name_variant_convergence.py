@@ -1859,3 +1859,42 @@ def test_a_leftover_strip_note_keeps_an_entity_the_strip_writes(
     )
 
     assert incremental == full
+
+
+def test_a_resumed_strip_rewrites_the_vector_copies_of_its_re_pointed_edges(
+    tmp_path: Path,
+) -> None:
+    # Removing d7.txt re-points edges onto other spellings. Killed between
+    # the strip's graph edge phase and its vector edge phase, the retry
+    # found the graph copies current and left the vector copies naming (and
+    # pointing at) the old endpoint, or missing.
+    d0 = (
+        "Acme and Depot trade parts 2. Acme Corp and Acme Inc and Acme Ltd "
+        "trade cash 3. Acme Inc and Acme trade cash 1."
+    )
+    d4 = "Depot and Buyer trade parts 3. Acme Corp and Acme Inc trade parts 3."
+    runs = [
+        {
+            "d7.txt": "Acme Ltd and Depot and Acme LLC trade cash 1. "
+            "Acme trade cash 2.",
+            "d0.txt": d0,
+        },
+        {
+            "d7.txt": "Acme Ltd and Depot and Acme LLC trade parts 1. "
+            "Acme trade parts 2.",
+            "d0.txt": d0,
+            "d4.txt": d4,
+        },
+        {"d0.txt": d0, "d4.txt": d4},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_run_indexing_phase", 3, False, IndexingManager),
+        gleaning=True,
+    )
+
+    assert incremental == full

@@ -976,6 +976,7 @@ class IndexingManager:
             # (read with them): their stored links do not count either.
             rewired=set(derived.rewired) | noted,
             dropped=derived.dropped,
+            split_from=derived.split_from,
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -1293,6 +1294,7 @@ class IndexingManager:
         rekey: Mapping[str, str] | None = None,
         rewired: Collection[str] = (),
         dropped: Collection[str] = (),
+        split_from: Mapping[str, str] | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1305,7 +1307,9 @@ class IndexingManager:
         -> derived id, see ``Derived.id_remap``) re-points the stored edges
         of a re-keyed entity at its new id. The stored edges of the
         ``rewired`` entities (``Derived.rewired``) are all among
-        ``relationships``: their stored links do not count.
+        ``relationships``: their stored links do not count. The stored edges
+        at them and at a split's parts and origins (``split_from``, see
+        ``Derived.split_from``) are compared with their vector copies too.
         """
         rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
@@ -1393,19 +1397,31 @@ class IndexingManager:
         for e in stored_entities:  # the stored copy, before a delta's of its id
             stored_names.setdefault(e.id, e.name)
         moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
+        # And where the derivation re-pointed edges (rewired, split): a strip
+        # writes the graph edges before their vector copies, so a retry after
+        # a kill in between finds the graph copies current and the vector
+        # copies behind or missing (a missing one is written).
+        split_from = split_from or {}
+        repointed = {*rewired, *split_from, *split_from.values()}
+        moved |= repointed
+        vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
                 "relationships",
                 [r.id for r in extra if {r.source_id, r.target_id} & moved],
                 suffix=suffix,
             )
-            if moved and self.config.indexing.opensearch.build_relationship_vector_index
+            if moved and vectors
             else {}
         )
         stale = {
             r.id
             for r in extra
-            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
+            if (
+                _vector_stale(r, vector_copy[r.id])
+                if r.id in vector_copy
+                else vectors and bool({r.source_id, r.target_id} & repointed)
+            )
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:
@@ -1898,6 +1914,7 @@ class IndexingManager:
                 rekey=derived.id_remap,
                 rewired=set(derived.rewired),
                 dropped=derived.dropped,
+                split_from=derived.split_from,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
             # Not an absent id this strip writes (a part split off again
