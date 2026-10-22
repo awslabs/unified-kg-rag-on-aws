@@ -20,6 +20,7 @@ from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     attach_report_hierarchy,
     max_cut_depth,
@@ -100,9 +101,13 @@ class _ReportStore:
     by the query word appearing in the report's community id (similarity).
     """
 
-    def __init__(self, documents: list[dict[str, Any]]) -> None:
+    def __init__(self, documents: list[dict[str, Any]], window: int = 10000) -> None:
         self.documents = documents
+        self.window = window  # the hits one search returns (max_result_window)
         self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(max_result_window=self.window)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -130,7 +135,7 @@ class _ReportStore:
                 retriever_type="community",
                 metadata=dict(d),
             )
-            for d in hits[: query.top_k * query.retrieval_multiplier]
+            for d in hits[: min(query.top_k * query.retrieval_multiplier, self.window)]
         ]
 
 
@@ -278,6 +283,20 @@ async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:
     assert similar.filters == store.calls[0].filters
 
 
+async def test_a_live_window_below_the_cap_bounds_it() -> None:
+    # Regression: the cap followed max_query_size only. Under a reports
+    # index created with max_result_window 4, the probe for 100 got 4 of the
+    # depth-2 cut's 5 reports, read as the whole cut: one report was left
+    # out with no global_level_capped and no fallback.
+    store = _ReportStore(_documents(), window=4)
+    strat = _strategy(store)
+    result = await strat.asearch(SearchQuery(query="themes"))
+
+    assert store.calls[0].top_k == 4
+    assert result.metadata["global_cut_depth"] == 1
+    assert _mapped(strat) == {"A", "B", "C"}
+
+
 async def test_a_cut_of_exactly_the_cap_is_complete() -> None:
     # Regression: a cut of exactly max_reports_per_level reports was taken
     # for a truncated one and re-fetched by similarity.
@@ -301,10 +320,10 @@ def test_the_fan_out_uses_the_search_concurrency() -> None:
     assert strat.batch_processor.max_concurrency == 3
 
 
-def test_the_cap_leaves_the_probe_room_in_the_store_page() -> None:
+async def test_the_cap_leaves_the_probe_room_in_the_store_page() -> None:
     strat = _strategy(max_reports_per_level=500)
     strat.config.indexing.opensearch.max_query_size = 100
-    assert strat._report_cap() == 99
+    assert await strat._report_cap(None) == 99
 
 
 async def test_a_cut_of_exactly_the_cap_is_complete_at_the_defaults() -> None:
@@ -313,7 +332,12 @@ async def test_a_cut_of_exactly_the_cap_is_complete_at_the_defaults() -> None:
     # the cap counted as truncated.
     strat = _strategy()
 
+    cap = await strat._report_cap(None)
+
     class _Page:
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits()
+
         async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
             # Exactly the cap exists; a store page holds max_query_size hits.
             size = min(query.top_k, strat.config.indexing.opensearch.max_query_size)
@@ -321,12 +345,12 @@ async def test_a_cut_of_exactly_the_cap_is_complete_at_the_defaults() -> None:
                 RetrievalResult(
                     content=str(i), score=1.0, source=str(i), retriever_type="community"
                 )
-                for i in range(min(size, strat._report_cap()))
+                for i in range(min(size, cap))
             ]
 
     strat.retrievers = {"document": _Page()}  # type: ignore[dict-item]
     reports, complete = await strat._browse_reports(SearchQuery(query="q"), {}, "cut")
-    assert complete and len(reports) == strat._report_cap()
+    assert complete and len(reports) == cap
 
 
 async def test_reports_indexed_without_the_hierarchy_fail_loudly() -> None:

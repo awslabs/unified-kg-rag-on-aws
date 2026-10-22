@@ -1374,6 +1374,11 @@ changed once with the full-config keys (#332).
 - Retrieval: a settings read whose cache entry a rejected search dropped
   meanwhile raised `KeyError` and left the searches waiting for it hanging;
   the read now always answers its waiters (#PR).
+- Global search: the report cap also follows the reports index's live
+  `max_result_window` (`min(max_reports_per_level, min(max_query_size,
+  window) - 1)`). Under a smaller window the probe for the cut came back
+  short and read as the whole cut, dropping reports with no
+  `global_level_capped` and no fallback to a shallower cut (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
