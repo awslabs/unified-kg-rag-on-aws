@@ -84,6 +84,16 @@ def test_library_levels_quiet_chatty_dependencies(stream: io.StringIO) -> None:
     assert [r["event"] for r in _records(stream)] == ["kept"]
 
 
+def test_info_leaves_the_request_loggers_quiet(stream: io.StringIO) -> None:
+    # At INFO opensearch-py logged every request and httpx every model
+    # server call: a line per search, embedding and LLM call.
+    setup_logging(_config(), stream=stream)
+    logging.getLogger("opensearch").info("POST http://localhost:9200/_bulk")
+    logging.getLogger("httpx").info("HTTP Request: POST http://localhost/api")
+    logging.getLogger("unified_kg_rag.test_info").info("kept")
+    assert [r["event"] for r in _records(stream)] == ["kept"]
+
+
 def test_debug_leaves_numba_and_httpcore_quiet(stream: io.StringIO) -> None:
     # At DEBUG numba logged every JIT compile (run-visualization) and
     # httpcore every connection step.

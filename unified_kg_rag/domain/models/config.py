@@ -2884,8 +2884,12 @@ class SearchConfig(BaseModel):
         ge=1,
         description=(
             "LLM calls and sub-searches one query keeps in flight: the global "
-            "map calls, the dynamic-selection ratings, and the DRIFT primer "
-            "calls and follow-up local searches. Per query, so concurrent "
+            "map calls, the dynamic-selection ratings, the DRIFT primer calls "
+            "and follow-up local searches, and a filtered graph walk's "
+            "per-vertex edge requests (each asks both endpoint sides, so up "
+            "to twice that many store requests). The walk's bound is its "
+            "own: in DRIFT, each follow-up search's walk has one, so up to "
+            "its square of walk requests. Per query, so concurrent "
             "queries (run-eval keeps processing.max_concurrency of them in "
             "flight) multiply it; lower it if a query's calls are throttled."
         ),
@@ -3037,6 +3041,10 @@ class LoggingConfig(BaseModel):
             # run-visualization) and httpcore every connection step (httpx).
             "numba": "WARNING",
             "httpcore": "WARNING",
+            # At INFO: every OpenSearch request (opensearch) and every model
+            # server request (httpx: Ollama and OpenAI-compatible servers).
+            "opensearch": "WARNING",
+            "httpx": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",
         },

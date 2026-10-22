@@ -1332,6 +1332,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Logging: `opensearch` and `httpx` are at WARNING in the default
+  `logging.library_levels`; at INFO they logged every OpenSearch request
+  and every Ollama / OpenAI-compatible call. `search.max_concurrency`
+  states that it also bounds a filtered walk's per-vertex requests (both
+  endpoint sides each) and that a walk inside each DRIFT follow-up has its
+  own bound (#PR).
 - `run-rag`: a `--filters` pair with a blank key or an empty value, a key
   given twice, and a key no index the strategy reads declares are usage
   errors (exit 2); the later of two pairs replaced the earlier one, and an
