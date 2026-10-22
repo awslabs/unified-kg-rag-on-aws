@@ -307,7 +307,7 @@ def test_rag_parse_filters_handles_none() -> None:
     assert run_rag_chain.RAGChainRunner._parse_filters(None) == {}
 
 
-@pytest.mark.parametrize("pair", ["noColon", "key=value", ":value"])
+@pytest.mark.parametrize("pair", ["noColon", "key=value", ":value", " :value", "key:"])
 def test_rag_a_malformed_filter_is_a_usage_error(
     pair: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -320,6 +320,40 @@ def test_rag_a_malformed_filter_is_a_usage_error(
         run_rag_chain.CommandLineInterface().parse_args()
     assert exit_info.value.code == 2
     assert f"invalid filter '{pair}'" in capsys.readouterr().err
+
+
+def test_rag_a_filter_key_given_twice_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The later pair silently replaced the earlier one.
+    monkeypatch.setattr(
+        sys, "argv", ["run-rag", "--query", "q", "--filters", "k:a", "j:b", "k:c"]
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert "--filters gives k more than once" in capsys.readouterr().err
+
+
+async def test_rag_an_unknown_filter_key_is_a_usage_error(config, mocker) -> None:
+    # A key no index declares failed the query with exit 1, as a store
+    # failure would; the command line is wrong (exit 2). In interactive
+    # mode the session goes on.
+    from unified_kg_rag.shared import InvalidFilterError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", "--filters", "colour:red"])
+    )
+    runner.rag_chain = mocker.AsyncMock()
+    runner.rag_chain.ainvoke.side_effect = InvalidFilterError("Unknown filter key")
+    with pytest.raises(SystemExit) as exit_info:
+        await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert exit_info.value.code == 2
+
+    runner.args.interactive = True
+    result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert result["success"] is False
 
 
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:

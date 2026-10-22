@@ -1332,6 +1332,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`: a `--filters` pair with a blank key or an empty value, a key
+  given twice, and a key no index the strategy reads declares are usage
+  errors (exit 2); the later of two pairs replaced the earlier one, and an
+  unknown key failed the query with exit 1. Interactive `set-filter`
+  refuses the same pairs (#PR).
 - Config: an `index_settings` key set by an environment variable replaces
   the file's other spelling of it, so a file with `index.number_of_replicas`
   no longer fails every CDK-deployed run (the compute stack sets
