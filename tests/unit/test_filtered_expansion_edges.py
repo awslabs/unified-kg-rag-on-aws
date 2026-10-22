@@ -96,12 +96,17 @@ class _Index:
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = (query.index_prefixes or [""])[0]
         limits = await self.aindex_limits(prefix, query.suffix)
-        # As the retriever: a list over one search's limits goes in batches,
-        # an exclusion keeps its last max_terms_count values, a terms clause
+        # As the retriever: a fetch by id over one search's limits goes in
+        # batches, an exclusion keeps its last max_terms_count values, a terms clause
         # over max_terms_count is refused, and a search returns at most
         # max_result_window hits.
-        if batches := OpenSearchRetriever._batches(
-            query, {prefix: limits}, limits.max_terms_count
+        # The walk sizes its endpoint lists itself (the retriever splits
+        # those only on its retry), so only a fetch by id is split here.
+        split = "id" in (query.filters or {})
+        if split and (
+            batches := OpenSearchRetriever._batches(
+                query, {prefix: limits}, limits.max_terms_count
+            )
         ):
             parts = await asyncio.gather(*(self.aretrieve(b) for b in batches))
             return [hit for part in parts for hit in part]
@@ -582,10 +587,13 @@ async def test_the_requests_on_their_own_run_max_concurrency_at_a_time(
     assert peak == 3
 
 
-async def test_a_live_window_below_the_page_is_judged_full(config: Config) -> None:
+async def test_a_live_window_below_the_page_is_judged_full(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
     # Regression: a page asked for max_query_size edges and the store
     # returned the live max_result_window's worth, so it never read as full:
     # the walk stopped after 2 of S's 6 neighbours, with no warning.
+    caplog.set_level("WARNING")
     edges = [(f"s{i}", "S", f"N{i}", 10.0 - i) for i in range(6)]
     index = _Index(config, edges=edges, passing={e[0] for e in edges})
     o = config.indexing.opensearch
@@ -602,6 +610,7 @@ async def test_a_live_window_below_the_page_is_judged_full(config: Config) -> No
     )
     (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
     assert set(reached) == {"S"} | {f"N{i}" for i in range(6)}
+    assert "hit the 2-hit page cap" in caplog.text
 
 
 async def test_a_window_shrunk_under_the_walk_is_judged_full(config: Config) -> None:
@@ -658,6 +667,27 @@ async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
         [["B", "C"]],
         [["B", "C"]],
     ]
+
+
+async def test_a_fanned_out_frontier_is_asked_in_batches_of_max_terms_count(
+    config: Config,
+) -> None:
+    # Regression: the second hop's frontier (S's 3 neighbours) was cut to
+    # max_terms_count (2): the third neighbour's own neighbour was never
+    # reached. The store refuses a list over the limit, so it must batch.
+    edges = [(f"s{i}", "S", f"A{i}", 2.0) for i in range(3)]
+    edges += [(f"a{i}", f"A{i}", f"B{i}", 1.0) for i in range(3)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.opensearch.index_settings = {"max_terms_count": 2}
+    config.indexing.neptune.max_hops = 2
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
+    )
+    assert {r.source for r in kept} == {"S"} | {
+        f"{x}{i}" for x in "AB" for i in range(3)
+    }
+    hop2 = [f["source_id"] for f in _relationship_calls(config, index)[2:4]]
+    assert sorted(map(len, hop2)) == [1, 2]
 
 
 async def test_a_frontier_over_max_terms_count_is_asked_in_batches(
@@ -1138,7 +1168,9 @@ def _relationship(source: str, target: str) -> RetrievalResult:
     )
 
 
-@pytest.mark.parametrize("fetch", ["local text units", "lightrag endpoints"])
+@pytest.mark.parametrize(
+    "fetch", ["local text units", "lightrag endpoints", "lightrag chunks"]
+)
 async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -> None:
     # Regression: a fetch by id was cut to the ids one search returns (the
     # live window), so a window of 100 kept 100 of 500 ranked text units.
@@ -1150,7 +1182,7 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
         strategy = _strategy(config, _Graph(), store)
         found = await strategy._retrieve_documents(ranked, None)
         got = [r.source for r in found["text_units"]]
-    else:
+    elif fetch == "lightrag endpoints":
         strategy = get_strategy_spec(SearchStrategy.MIX).strategy_class(
             config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
         )
@@ -1159,5 +1191,16 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
             [_relationship("e1", "e2"), _relationship("e3", "e4")],
         )
         got = [r.source for r in found["lightrag_endpoint_entities"]]
+    else:
+        strategy = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+            config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+        )
+        cited = _entity("X").model_copy(
+            update={"metadata": {"id": "X", "text_unit_ids": ranked}}
+        )
+        found = await strategy._retrieve_linked_chunks(
+            SearchQuery(query="q"), [cited], []
+        )
+        got = [r.source for r in found["lightrag_linked_chunks"]]
     assert store.asked == [ranked]
     assert got == ranked

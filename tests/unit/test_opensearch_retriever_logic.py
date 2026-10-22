@@ -1356,6 +1356,8 @@ class _IdIndex:
         self.ids, self.window, self.terms = ids, window, terms
         self.named: list[int] = []
         self.accepted: list[dict[str, list[str]]] = []  # terms lists asked
+        self.searches = 0
+        self.error: Exception | None = None  # raised by every search
 
     async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
         return {
@@ -1384,9 +1386,20 @@ class _IdIndex:
             raise StoreRequestRejectedError(
                 "rejected", reason="Result window is too large"
             )
-        if any(len(values) > self.terms for values in lists.values()):
+        self.searches += 1
+        if self.error is not None:
+            raise self.error
+        sizes = [len(values) for values in lists.values()] or [0]
+        if max(sizes) > self.terms:
+            # OpenSearch 2.13's words.
             raise StoreRequestRejectedError(
-                "rejected", reason="exceeds the index.max_terms_count setting"
+                "rejected",
+                reason=(
+                    f"query_shard_exception: The number of terms [{max(sizes)}] "
+                    "used in the Terms Query request has exceeded the allowed "
+                    f"maximum of [{self.terms}]. This maximum can be set by "
+                    "changing the [index.max_terms_count] index level setting."
+                ),
             )
         self.named.append(len(named))
         self.accepted.append(lists)
@@ -1445,6 +1458,23 @@ async def test_a_rejected_fetch_by_id_is_batched_by_the_limits_read_again(
     hits = await retriever.aretrieve(_fetch_by_id(config, ids))
     assert sorted(str(h.source) for h in hits) == ids
     assert sorted(index.named) == [1, 3, 3, 3]
+
+
+@pytest.mark.parametrize("limit_error", [True, False])
+async def test_only_a_limits_rejection_is_asked_again_and_once(
+    retriever, config, limit_error: bool
+) -> None:
+    # A rejection for the index's limits drops them and searches once more;
+    # any other rejection, or a second one, fails the query.
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    index = _IdIndex(["t0"], window=10000, terms=65536)
+    reason = "Result window is too large" if limit_error else "failed to parse"
+    index.error = StoreRequestRejectedError("rejected", reason=reason)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    with pytest.raises(ConfigurationError, match=reason):
+        await retriever.aretrieve(_fetch_by_id(config, ["t0"]))
+    assert index.searches == (2 if limit_error else 1)
 
 
 async def test_internal_lists_are_sized_by_the_limits_read_again(

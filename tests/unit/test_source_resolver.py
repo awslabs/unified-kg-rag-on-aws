@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -108,6 +110,23 @@ async def test_a_batch_without_any_hit_is_not_cached(config: Config) -> None:
     resolver = TextUnitFileResolver(config, lambda: store)
     assert await resolver.aresolve(["t1"], None) == {}
     assert await resolver.aresolve(["t1"], None) == {"t1": "vendor.pdf"}
+
+
+async def test_batches_follow_max_terms_count_too(config: Config) -> None:
+    # A batch names at most id_batch_size ids: the smaller of the window
+    # and max_terms_count, not the window alone.
+    store = _Store({f"t{i}": "f.txt" for i in range(5)}, batch=10)
+    store.aindex_limits = _limits(IndexLimits(max_terms_count=2))  # type: ignore[method-assign]
+    resolver = TextUnitFileResolver(config, lambda: store)
+    assert len(await resolver.aresolve(list(store.files), None)) == 5
+    assert [len(q.filters["id"]) for q in store.queries] == [2, 2, 1]
+
+
+def _limits(limits: IndexLimits) -> Any:
+    async def read(prefix: str, suffix: str | None) -> IndexLimits:
+        return limits
+
+    return read
 
 
 def test_file_name_of() -> None:
