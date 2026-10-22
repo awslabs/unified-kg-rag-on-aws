@@ -1810,3 +1810,52 @@ def test_a_strip_killed_after_its_claim_writes_leaves_no_claim_behind(
     )
 
     assert incremental == full
+
+
+def test_a_leftover_strip_note_keeps_an_entity_the_strip_writes(
+    tmp_path: Path,
+) -> None:
+    # Run 2's strip re-keys "ACME" onto "Acme LLC" (both noted) and dies
+    # before it deletes its note (a failed best-effort delete leaves it
+    # too). Run 3's strip reads the note: "ACME" is no longer in the graph,
+    # so it was retired as a vector-only copy, yet the strip splits "ACME"
+    # off again under that id; deleting it dropped d7.txt's unchanged edges.
+    d7 = (
+        "Depot and Acme Ltd and Acme Inc trade cash 2. "
+        "Buyer and ACME Inc and Acme LLC trade goods 1."
+    )
+    d4 = "Acme Corp and Acme Corp trade cash 2. Acme LLC and Acme Corp trade cash 3."
+    runs = [
+        {
+            "d7.txt": d7,
+            "d4.txt": "Acme Corp and ACME Inc trade cash 2. "
+            "Acme LLC and Acme Corp trade cash 3.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": d4,
+            "r2.txt": "Acme and ACME and Acme Corp trade cash 1.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": d4,
+            "r2.txt": "Acme and Acme and Acme Corp trade cash 1.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": "Acme and Acme Corp and Acme LLC trade parts 1. ACME trade cash 2.",
+            "r7.txt": "Acme and Acme and Acme Corp trade cash 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_clear_pending_strip", 1, False, IndexingManager),
+        resume=False,
+        gleaning=True,
+    )
+
+    assert incremental == full

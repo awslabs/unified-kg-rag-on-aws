@@ -1599,6 +1599,13 @@ changed once with the full-config keys (#332).
   claims again. The pending-strip note is now written once the claims are
   derived, before the first write, with their new ids, also when the
   strip re-keys nothing else (#407).
+- Incremental indexing: a pending-strip note left by an interrupted
+  removal (or by a failed best-effort delete of the note) no longer
+  deletes an entity the next strip writes. An id the note named that the
+  graph no longer held was retired as a vector-only copy even when the
+  strip split a part off again under that id, so the part and its
+  unchanged edges were deleted. Only the absent ids the strip does not
+  write are retired now (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

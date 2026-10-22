@@ -1849,13 +1849,14 @@ class IndexingManager:
             # vector copy whose graph write an interrupted run never made:
             # nothing strips it, so it goes with the retired ids (with the
             # vector edges at it, see delete_documents).
+            # Retired once the derivation is known: a noted id an earlier
+            # strip retired may be derived again (see below).
+            absent: tuple[set[str], set[str]] = (set(), set())
             if _reads_back(self.neptune_indexer):
-                vector_only = set(entity_ids) - {e.id for e in entities}
-                if vector_only:
-                    self._vector_only.setdefault(suffix, set()).update(vector_only)
-                vector_only |= set(relationship_ids) - {r.id for r in relationships}
-                if vector_only:
-                    self._dropped.setdefault(suffix, set()).update(vector_only)
+                absent = (
+                    set(entity_ids) - {e.id for e in entities},
+                    set(relationship_ids) - {r.id for r in relationships},
+                )
             # An edge is derived with its endpoints (the resolved entities map
             # to them). They cite the removed units too, unless a killed run
             # stripped them and left the edge (re-keyed, not yet deleted).
@@ -1899,6 +1900,15 @@ class IndexingManager:
                 dropped=derived.dropped,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
+            # Not an absent id this strip writes (a part split off again
+            # under the id an earlier, interrupted strip re-keyed away).
+            written = {e.id for e in new_entities} | {r.id for r in new_relationships}
+            vector_only = absent[0] - written
+            if vector_only:
+                self._vector_only.setdefault(suffix, set()).update(vector_only)
+            vector_only |= absent[1] - written
+            if vector_only:
+                self._dropped.setdefault(suffix, set()).update(vector_only)
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
