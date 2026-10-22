@@ -11,15 +11,25 @@ the run or while printing its error.
 from __future__ import annotations
 
 import argparse
+import asyncio
 
 import pytest
 
 from unified_kg_rag.application.cli import (
+    prepare_benchmark,
     run_evaluation,
     run_ingestion_pipeline,
     run_rag_chain,
 )
-from unified_kg_rag.domain.models import Claim, Community, Entity, Relationship
+from unified_kg_rag.domain.models import (
+    Claim,
+    Community,
+    Config,
+    Entity,
+    Relationship,
+)
+from unified_kg_rag.domain.models.evaluation import EvaluationSummary
+from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared.utils import display
 
 pytestmark = pytest.mark.unit
@@ -137,3 +147,108 @@ def test_run_eval_prints_an_unexpected_error_literally(
 
     assert exit_info.value.code == 1
     assert f"boom on {_QUERY}" in capsys.readouterr().out
+
+
+def test_run_rag_prints_metrics_filters_and_init_errors_literally(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_rag_chain.RAGChainRunner._print_result(
+        {
+            "success": True,
+            "answer": "ok",
+            "search_results": {"note": "[/red] note"},
+            "metadata": {},
+        },
+        verbose=True,
+    )
+    state: dict = {"filters": {}}
+    run_rag_chain.RAGChainRunner._handle_set_filter(state, ["k:[/red]v"])
+    # As --filters: a pair without a key or a value is refused.
+    for pair in (":v", " :v", "k:"):
+        run_rag_chain.RAGChainRunner._handle_set_filter(state, [pair])
+    assert state["filters"] == {"k": "[/red]v"}
+
+    async def fail(**kwargs: object) -> None:
+        raise RuntimeError(f"boom on {_NAME}")
+
+    monkeypatch.setattr(run_rag_chain, "create_rag_chain", fail)
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.config = Config()
+    with pytest.raises(SystemExit):
+        asyncio.run(runner._initialize_chain())
+
+    out = capsys.readouterr().out
+    assert "Note: [/red] note" in out
+    assert "'k' = '[/red]v'" in out
+    assert f"boom on {_NAME}" in out
+
+
+def test_run_eval_prints_metric_names_and_warnings_literally(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stats = dict.fromkeys(("mean", "median", "stdev", "min", "max"), 0.5)
+    summary = EvaluationSummary.model_construct(
+        total_queries=1,
+        successful_evaluations=1,
+        failed_evaluations=0,
+        benchmarks=None,
+        guardrail_blocked_counts={},
+        average_response_time=None,
+        metric_statistics={"[/red]metric": {**stats, "count": 1}},
+        metric_outcomes={},
+    )
+    run_evaluation.EvaluationRunner._print_summary(summary, 1.0)
+    run_evaluation.EvaluationRunner._print_comparison(
+        {
+            "baseline": "local",
+            "strategies": {"local": {"metrics": {}, "routed_strategies": {}}},
+            "deltas_vs_baseline": {},
+            "warnings": ["[/red] fewer paired queries"],
+        },
+        1.0,
+    )
+    out = capsys.readouterr().out
+    assert "[/red]metric" in out
+    assert "Warning: [/red] fewer paired queries" in out
+
+
+def test_run_ingestion_prints_integrity_errors_literally(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = object.__new__(run_ingestion_pipeline.IngestionPipelineRunner)
+    runner.args = argparse.Namespace(
+        pipeline_id="p1", force_rebuild=False, source_directory="."
+    )
+
+    class _Pipeline:
+        class state_manager:
+            @staticmethod
+            def pipeline_exists(pipeline_id: str) -> bool:
+                return True
+
+        @staticmethod
+        def validate_resume_integrity(*args: object) -> tuple[bool, list[str]]:
+            return False, ["[/red] stage inputs changed"]
+
+    runner.pipeline = _Pipeline()  # type: ignore[assignment]
+    runner._confirm = lambda prompt: False  # type: ignore[method-assign]
+    assert runner._validate_pipeline_integrity() is False
+    assert "[/red] stage inputs changed" in capsys.readouterr().out
+
+
+def test_prepare_benchmark_prints_the_output_directory_literally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data = tmp_path / "dev.jsonl"
+    data.write_text("")
+    target = tmp_path / "[/red]out"
+    monkeypatch.setattr(musique, "check_output_directory", lambda path: None)
+    monkeypatch.setattr(
+        musique,
+        "prepare",
+        lambda *args, **kwargs: {"benchmark": "m", "questions": 1, "paragraphs": 2},
+    )
+    prepare_benchmark.main(
+        ["musique", "--data-path", str(data), "--output-directory", str(target)]
+    )
+    assert "[/red]out" in capsys.readouterr().out

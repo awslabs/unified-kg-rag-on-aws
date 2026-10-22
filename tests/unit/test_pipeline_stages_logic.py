@@ -290,6 +290,16 @@ def test_validate_backend_success_raises_on_index_type_total_failure(mocker) -> 
         stage._validate_backend_success(results)
 
 
+def test_validate_backend_success_names_the_first_error(mocker) -> None:
+    # The stage error said only "check the logs above"; the engine's reason
+    # (an index setting it refuses, say) is the one thing the user needs.
+    stage, _mgr = _indexing_stage(mocker, {})
+    failed = IndexingStats(total_items=5)
+    failed.add_error("unknown setting [index.refresh_intervl]", 5)
+    with pytest.raises(PipelineStageError, match=r"refresh_intervl"):
+        stage._validate_backend_success({"opensearch_entities": failed})
+
+
 def test_validate_backend_success_passes_with_partial_success(mocker) -> None:
     # Default gate is 20%; 3/5 (40% failed) trips it, so raise the tolerance to
     # confirm a below-threshold partial failure still passes.

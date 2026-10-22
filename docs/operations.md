@@ -431,7 +431,12 @@ task definition and role (`QueryTaskDefinitionArn`, `QueryTaskRoleArn`; see
 Bedrock model, rerank and guardrail calls; and the cache bucket's `eval/`
 prefix. It has no DynamoDB access and cannot write or delete in either store.
 Do not query with the ingestion task definition (its role can delete); a
-serving layer of your own should assume a role with the same grants.
+serving layer of your own should assume a role with the same grants. Under
+fine-grained access control, give it `indices:data/read/search`,
+`indices:admin/mappings/get` (the embedding-model check) and
+`indices:monitor/settings/get` (searches sized by the live index's
+`max_result_window` / `max_terms_count`) on the package's indices; without
+the last two a query still runs and logs one warning for each.
 
 **The index suffix is a naming separation, not an access-control boundary.**
 `RAGInput.suffix` / `--suffix` selects the indices and labels a query reads
@@ -679,7 +684,7 @@ model or credential error fails a query rather than answering from no context.
 |---|---|---|
 | `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `search.store_max_attempts` attempts | Check endpoint, port, that the store runs, security groups and VPC endpoints |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | No answer within `search.store_timeout_seconds` (ingestion: Neptune fixed 180 s, item retried) | Check the store's health and load, or raise the timeout |
-| `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | Fine-grained access control: the role lacks `indices:data/read/search`; or bad credentials | Grant it (and `indices:admin/mappings/get`), or fix the credentials |
+| `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | Fine-grained access control: the role lacks `indices:data/read/search`; or bad credentials | Grant it (and `indices:admin/mappings/get`, `indices:monitor/settings/get`), or fix the credentials |
 | `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
@@ -697,7 +702,7 @@ model or credential error fails a query rather than answering from no context.
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #PR that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #410 that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
 
 ### Queries
 

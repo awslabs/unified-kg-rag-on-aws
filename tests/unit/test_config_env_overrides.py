@@ -80,6 +80,39 @@ def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings["number_of_shards"] == 1
 
 
+def test_an_env_index_setting_replaces_its_other_spelling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # Regression: a file writing index.number_of_replicas under the compute
+    # stack's UKR__...__NUMBER_OF_REPLICAS was refused on every deployed run
+    # as one setting spelled twice.
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "indexing:\n  opensearch:\n    index_settings:\n"
+        "      index.number_of_replicas: 0\n      number_of_shards: 1\n"
+    )
+    monkeypatch.setenv(
+        "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS", "1"
+    )
+    settings = ConfigLoader(path).load_config().indexing.opensearch.index_settings
+    assert settings == {"number_of_replicas": 1, "number_of_shards": 1}
+
+
+def test_an_error_the_environment_causes_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # Regression: it was reported as in the config file, which is valid.
+    path = tmp_path / "config.yaml"
+    path.write_text("indexing:\n  opensearch:\n    max_query_size: 10\n")
+    name = "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__KNN"
+    monkeypatch.setenv(name, "false")
+    with pytest.raises(ConfigurationError) as raised:
+        ConfigLoader(path).load_config()
+    message = str(raised.value)
+    assert f"environment variable {name}" in message
+    assert str(path) not in message
+
+
 def test_korean_analyzer_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # The compute stack maps Korean to an analyzer Amazon OpenSearch Service
     # has without the optional Nori plugin; the other languages are kept.

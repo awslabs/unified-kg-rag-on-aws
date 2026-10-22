@@ -457,12 +457,14 @@ class LocalSearchStrategy(BaseSearchStrategy):
     ) -> dict[str, list[RetrievalResult]]:
         if not self.document_retriever or not text_unit_ids:
             return {}
+        prefix = self.config.indexing.opensearch.text_units_index_prefix
+        text_unit_ids = await self._fetchable_ids(prefix, suffix, text_unit_ids)
 
         search_query = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
             top_k=len(text_unit_ids),
-            index_prefixes=[self.config.indexing.opensearch.text_units_index_prefix],
+            index_prefixes=[prefix],
             suffix=suffix,
             filters={**(filters or {}), "id": text_unit_ids},
         )

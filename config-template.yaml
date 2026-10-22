@@ -633,14 +633,16 @@ indexing:
     language_analyzers:
       en: "english"
       ko: "nori"
-    # Most hits one query returns (a fetch by id returns every listed id, up
-    # to index_settings.max_result_window).
+    # Most hits one query returns (a fetch by id returns its best-ranked ids,
+    # as many as the smaller max_result_window / max_terms_count of
+    # index_settings and the live index allow).
     max_query_size: 100
 
     # Index settings, all passed to index creation (indices created
-    # afterwards; reindex after a change). Retrieval sizes fetches by
-    # max_result_window (default 10000) and max_terms_count (default 65536),
-    # so raise those here, not on a live index alone.
+    # afterwards; reindex after a change). Reads and searches are sized by
+    # the smaller of these and the live index's max_result_window (default
+    # 10000) and max_terms_count (default 65536), so raise those here and
+    # reindex: raising them on a live index alone changes nothing.
     index_settings:
       number_of_shards: 1
       # Env UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS overrides; the CDK stack sets 1 on a
@@ -937,6 +939,8 @@ logging:
     urllib3: "WARNING"
     numba: "WARNING" # at DEBUG, a line per JIT compile (run-visualization)
     httpcore: "WARNING" # at DEBUG, a line per connection step (httpx)
+    opensearch: "WARNING" # at INFO, a line per OpenSearch request
+    httpx: "WARNING" # at INFO, a line per Ollama / OpenAI-compatible request
     opentelemetry: "ERROR" # the OTLP exporter warns on every retry
 
 # Observability (OpenTelemetry tracing). Off by default; needs the `otel` extra

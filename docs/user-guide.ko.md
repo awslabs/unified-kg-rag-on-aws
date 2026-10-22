@@ -762,7 +762,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 ### 필터
 
 `--filters key:value ...`(또는 `RAGInput.filters`)는 검색이 순위를 매길 대상을
-좁힙니다. 키와 `:`가 없는 쌍은 사용법 오류(종료 코드 2)입니다. 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
+좁힙니다. 키·`:`·값 중 하나가 없는 쌍, 두 번 준 키, 전략이 읽는 어떤 인덱스도 선언하지
+않은 키는 사용법 오류(종료 코드 2)입니다. 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
 변환됩니다. 저장소마다 해당 인덱서가 쓰는 필드를 받습니다.
 
 | 저장소 | 필터 가능한 필드 |

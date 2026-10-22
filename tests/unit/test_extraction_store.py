@@ -429,6 +429,57 @@ class TestOpenSearchExtractionRecords:
         with pytest.raises(ConfigurationError, match="index_settings"):
             indexer.prepare_extraction_records("y")
 
+    @pytest.mark.parametrize("typo", ["refresh_intervl", "knnx"])
+    def test_a_refused_setting_fails_also_when_the_index_exists(
+        self, tmp_path, typo: str
+    ) -> None:
+        # Only a missing records index was created, so a reset or an
+        # incremental run over an existing namespace extracted every unit
+        # before the indexing stage's first index creation was refused. Each
+        # indexer now creates and deletes a probe index with the vector
+        # indices' settings (a "knn"-prefixed typo included) first.
+        from unified_kg_rag.shared import ConfigurationError
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        path = tmp_path / "vector.sqlite3"
+        _indexer(path).prepare_extraction_records("x")  # the namespace exists
+        config = Config()
+        config.indexing.opensearch.index_settings = {
+            **config.indexing.opensearch.index_settings,
+            typo: "1s",
+        }
+        engine = SQLiteSearchEngine(path)
+        create = engine.create_index
+        created: list[str] = []
+
+        def strict(index, body, *, exist_ok=True):
+            # OpenSearch refuses a setting it does not know.
+            created.append(index)
+            if typo in body["settings"]:
+                raise StoreRequestRejectedError(
+                    f"unknown setting [index.{typo}]",
+                    reason="illegal_argument_exception",
+                )
+            return create(index, body, exist_ok=exist_ok)
+
+        engine.create_index = strict  # type: ignore[method-assign]
+        indexer = OpenSearchIndexer(
+            config,
+            embedding_factory=HashingEmbeddingFactory(dimensions=8),
+            opensearch_client=engine,
+        )
+        with pytest.raises(ConfigurationError, match=typo):
+            indexer.prepare_extraction_records("x")
+
+        # Accepted settings: the probe is created once per indexer and
+        # deleted, the records index is left as it was.
+        config.indexing.opensearch.index_settings.pop(typo)
+        created.clear()
+        indexer.prepare_extraction_records("x")
+        indexer.prepare_extraction_records("y")
+        assert len([name for name in created if "settings-probe" in name]) == 1
+        assert not engine.get_aliases_by_index("*settings-probe*")
+
     def test_records_are_upserted_and_read_per_suffix(self, tmp_path) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")
         stats = indexer.write_extraction_records({"k1": {"a": [1]}}, suffix="x")

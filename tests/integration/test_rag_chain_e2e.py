@@ -17,6 +17,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
     GraphRAGChain,
@@ -48,6 +49,9 @@ class _FakeRetriever:
         self.tag = tag
         self.empty = empty
         self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -188,6 +192,9 @@ async def test_a_conversation_id_reaches_only_its_tenants_and_users_history(
 
 class _LineageStore:
     """Document store whose search hit is an entity with chunk lineage only."""
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         ids = (query.filters or {}).get("id")

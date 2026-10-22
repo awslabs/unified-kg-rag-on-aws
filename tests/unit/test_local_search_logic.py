@@ -18,6 +18,7 @@ import pytest
 
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery, SearchType
 
 pytestmark = pytest.mark.unit
@@ -67,6 +68,9 @@ class _StubRetriever:
         self._results = results or []
         self._raises = raises
         self.last_query: SearchQuery | None = None
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery):
         self.last_query = query

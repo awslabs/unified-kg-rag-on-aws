@@ -35,7 +35,7 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
-    object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(inst, "_settings_denied_logged", False)
     object.__setattr__(inst, "_configured_limits", IndexLimits())
     object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
@@ -383,6 +383,7 @@ def _bodies(retriever, query: SearchQuery, vector=None, *, size=5, sort=None):
         vector,
         size=size,
         sort=sort,
+        window=retriever._configured_limits.max_result_window,
     )
 
 
@@ -504,7 +505,10 @@ def test_exclusions_alone_scope_a_search(retriever) -> None:
 def test_hit_count_clamps_size_to_max(retriever) -> None:
     retriever_max = retriever._max_size
     q = SearchQuery(query="x", top_k=retriever_max * 10, retrieval_multiplier=1)
-    assert retriever._hit_count(q) == retriever_max
+    assert (
+        retriever._hit_count(q, retriever._configured_limits.max_result_window)
+        == retriever_max
+    )
 
 
 def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
@@ -514,7 +518,9 @@ def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
     n = retriever._max_size + 50  # 150 > 100
     ids = [f"id-{i}" for i in range(n)]
     q = SearchQuery(query="", top_k=n, retrieval_multiplier=1, filters={"id": ids})
-    assert retriever._hit_count(q) == n  # not clamped to _max_size
+    assert (
+        retriever._hit_count(q, retriever._configured_limits.max_result_window) == n
+    )  # not clamped to _max_size
 
 
 def test_hit_count_other_list_filters_do_not_raise_size(retriever) -> None:
@@ -522,15 +528,18 @@ def test_hit_count_other_list_filters_do_not_raise_size(retriever) -> None:
     # raised size (and the kNN k of every vector field) to 3,000.
     types = [f"t{i}" for i in range(3000)]
     q = SearchQuery(query="x", top_k=10, filters={"type": types})
-    assert retriever._hit_count(q) == 10
+    assert retriever._hit_count(q, retriever._configured_limits.max_result_window) == 10
 
 
 def test_hit_count_terms_floor_bounded_by_result_window(retriever) -> None:
     # The floor never exceeds max_result_window (the cluster hits ceiling).
-    huge = retriever._max_result_window + 5000
+    huge = retriever._configured_limits.max_result_window + 5000
     ids = [f"id-{i}" for i in range(huge)]
     q = SearchQuery(query="", top_k=huge, retrieval_multiplier=1, filters={"id": ids})
-    assert retriever._hit_count(q) == retriever._max_result_window
+    assert (
+        retriever._hit_count(q, retriever._configured_limits.max_result_window)
+        == retriever._configured_limits.max_result_window
+    )
 
 
 class _Client:
@@ -1255,3 +1264,67 @@ async def test_has_index_says_yes_no_or_cannot_tell(retriever, config) -> None:
     with pytest.raises(StoreConnectionError):
         await retriever.ahas_index(prefix, "s1")
     assert len(set(asked)) == 1 and prefix in asked[0] and "s1" in asked[0]
+
+
+# --------------------------------------------------------------------------- #
+# live index limits
+# --------------------------------------------------------------------------- #
+
+
+class _SettingsClient:
+    """Answers settings reads after a pause, counting them."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.reads = 0
+        self.error = error
+
+    async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        self.reads += 1
+        await asyncio.sleep(0.01)
+        if self.error is not None:
+            raise self.error
+        return {"idx-1": {"index.max_result_window": "500"}}
+
+
+async def test_concurrent_first_searches_read_the_settings_once(retriever) -> None:
+    # Regression: each concurrent first search read _settings (a DRIFT
+    # query's first fan-out: 21-29 reads of one alias).
+    client = _SettingsClient()
+    object.__setattr__(retriever, "_opensearch_client", client)
+    found = await asyncio.gather(*(retriever._limits("alias") for _ in range(50)))
+    assert client.reads == 1
+    assert {limits.max_result_window for limits in found} == {500}
+    assert retriever._index_limits == {"alias": found[0]}
+
+
+async def test_a_missing_index_is_read_once(retriever) -> None:
+    # Regression: a 404 was not kept, so every search of an index never
+    # built read its settings again.
+    from opensearchpy.exceptions import NotFoundError
+
+    client = _SettingsClient(NotFoundError(404, "index_not_found_exception", {}))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    for _ in range(5):
+        assert await retriever._limits("alias") == retriever._configured_limits
+    assert client.reads == 1
+
+    # Any other failure is read again next time.
+    client = _SettingsClient(RuntimeError("store hiccup"))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    await retriever._limits("other")
+    await retriever._limits("other")
+    assert client.reads == 2
+
+
+async def test_a_denied_settings_read_is_logged_once(retriever, caplog) -> None:
+    # Regression: logged at DEBUG only, so a query role without
+    # settings/get sized every search by the config with no trace.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    client = _SettingsClient(StoreAccessDeniedError("status=403"))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    caplog.set_level("WARNING")
+    for alias in ("a", "b", "a"):
+        assert await retriever._limits(alias) == retriever._configured_limits
+    warnings = [r for r in caplog.records if "settings/get" in r.getMessage()]
+    assert len(warnings) == 1 and client.reads == 2

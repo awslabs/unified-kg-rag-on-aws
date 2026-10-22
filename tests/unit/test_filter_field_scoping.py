@@ -64,7 +64,7 @@ def _retriever(config: Config, client: _FakeOpenSearchClient) -> OpenSearchRetri
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
-    object.__setattr__(inst, "_max_result_window", 10000)
+    object.__setattr__(inst, "_settings_denied_logged", False)
     object.__setattr__(
         inst,
         "_configured_limits",

@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -44,6 +45,8 @@ class SourceFileResolver(Protocol):
 class _DocumentRetriever(Protocol):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
 
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits: ...
+
 
 def file_name_of(payload: dict[str, Any]) -> str | None:
     """File name from a source/hit payload (top-level or under ``attributes``)."""
@@ -59,9 +62,8 @@ def file_name_of(payload: dict[str, Any]) -> str | None:
 
 
 class TextUnitFileResolver:
-    """Resolve text-unit ids to file names via a document retriever."""
-
-    BATCH_SIZE = 500
+    """Resolve text-unit ids to file names via a document retriever, in
+    batches one fetch by id can name (``IndexLimits.id_batch_size``)."""
 
     def __init__(
         self, config: Config, retriever_provider: Callable[[], _DocumentRetriever]
@@ -78,16 +80,27 @@ class TextUnitFileResolver:
         missing = [i for i in wanted if (suffix, i) not in self._cache]
         if missing:
             retriever = self._retriever_provider()
-            for start in range(0, len(missing), self.BATCH_SIZE):
-                batch = missing[start : start + self.BATCH_SIZE]
+            size = await self._batch_size(retriever, suffix)
+            for start in range(0, len(missing), size):
+                batch = missing[start : start + size]
                 found = await self._fetch(retriever, batch, suffix)
+                # Past the limits read after the fetch (a reindex lowered
+                # them), the hits were cut short: a miss is not cached.
+                fits = len(batch) <= await self._batch_size(retriever, suffix)
                 for unit_id in batch:
-                    self._cache[(suffix, unit_id)] = found.get(unit_id)
+                    if fits or unit_id in found:
+                        self._cache[(suffix, unit_id)] = found.get(unit_id)
         return {
             unit_id: name
             for unit_id in wanted
             if (name := self._cache.get((suffix, unit_id)))
         }
+
+    async def _batch_size(
+        self, retriever: _DocumentRetriever, suffix: str | None
+    ) -> int:
+        limits = await retriever.aindex_limits(self._index_prefix, suffix)
+        return limits.id_batch_size
 
     async def _fetch(
         self, retriever: _DocumentRetriever, batch: list[str], suffix: str | None

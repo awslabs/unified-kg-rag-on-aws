@@ -818,7 +818,8 @@ and `hybrid`) and `reason`.
 ### Filters
 
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
-a pair without a key and a `:` is a usage error (exit 2).
+a pair without a key, a `:` or a value, a key given twice and a key no index the
+strategy reads declares are usage errors (exit 2).
 Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
 steps on Neptune. Each store accepts the fields its indexer writes:
 

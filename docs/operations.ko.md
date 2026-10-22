@@ -396,7 +396,11 @@ Neptune `connect`와 `ReadDataViaQuery`, OpenSearch `GET`/`HEAD`와
 거부로 막음. `POST <index>/_doc/_search`는 문서를 만듦), Bedrock 모델·재순위화·가드레일
 호출, 캐시 버킷의 `eval/` 접두사만 가집니다. DynamoDB에는 접근할 수 없고 두 저장소
 어디에도 쓰거나 지울 수 없습니다. 수집 태스크 정의(역할이 삭제할 수 있음)로 질의하지
-말고, 직접 만든 서빙 계층도 같은 권한의 역할을 쓰세요.
+말고, 직접 만든 서빙 계층도 같은 권한의 역할을 쓰세요. 세분화된 액세스 제어에서는
+이 패키지의 인덱스에 `indices:data/read/search`, `indices:admin/mappings/get`(임베딩
+모델 확인), `indices:monitor/settings/get`(살아 있는 인덱스의 `max_result_window`·
+`max_terms_count`에 맞춘 검색 크기)을 부여하세요. 뒤의 둘이 없어도 질의는 실행되며
+각각 경고를 한 번 남깁니다.
 
 **인덱스 접미사는 이름 분리일 뿐 접근 제어 경계가 아닙니다.** `RAGInput.suffix` /
 `--suffix`는 질의가 읽을 인덱스와 레이블을 고르며(대상을 넓히지 못하도록 검증함), 질의
@@ -630,7 +634,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 |---|---|---|
 | `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 연결 거부나 이름 확인 실패, Neptune이 연결을 닫음(재시작, 장애 조치. 다음에 다시 엶), 또는 OpenSearch가 `search.store_max_attempts`번 모두 429/502/503/504로 답함 | 엔드포인트, 포트, 저장소 실행 여부, 보안 그룹과 VPC 엔드포인트 확인 |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | `search.store_timeout_seconds` 안에 답이 없음(수집 중 Neptune은 고정 180초, 항목 재시도) | 저장소 상태와 부하를 확인하거나 제한 시간을 늘림 |
-| `OpenSearch denied the search on <index>: ... status=403 ...`(또는 `401`) | 세분화된 액세스 제어에서 역할에 `indices:data/read/search`가 없거나 자격 증명이 잘못됨 | 권한(과 `indices:admin/mappings/get`)을 부여하거나 자격 증명을 고침 |
+| `OpenSearch denied the search on <index>: ... status=403 ...`(또는 `401`) | 세분화된 액세스 제어에서 역할에 `indices:data/read/search`가 없거나 자격 증명이 잘못됨 | 권한(과 `indices:admin/mappings/get`, `indices:monitor/settings/get`)을 부여하거나 자격 증명을 고침 |
 | `Neptune refused the connection (HTTP 403)` | 클러스터에 대한 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | 권한(과 필요한 `neptune-db:*` 데이터 작업)을 부여하고 `aws.region_name`을 클러스터 리전으로 설정 |
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
@@ -648,7 +652,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림, 또는 #PR 이전 빌드에서 문서를 빼는 reset이 인덱스를 교체한 뒤 중단됨 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림, 또는 #410 이전 빌드에서 문서를 빼는 reset이 인덱스를 교체한 뒤 중단됨 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 
 ### 질의
 

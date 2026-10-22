@@ -19,8 +19,8 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from unified_kg_rag.adapters.retrieval.base import query_scope
-from unified_kg_rag.adapters.storage.filter_schema import id_batch_size
+from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = pytest.mark.unit
 
@@ -88,13 +89,22 @@ class _Index:
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
         return prefix != self.o.relationships_index_prefix or self.has_relationships
 
-    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
-        return id_batch_size(self.o.index_settings)
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits.of(self.o.index_settings)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = (query.index_prefixes or [""])[0]
         filters = dict(query.filters or {})
         self.calls.append((prefix, filters))
+        # As the retriever: a terms clause over max_terms_count is refused,
+        # and a search returns at most max_result_window hits.
+        limits = await self.aindex_limits(prefix, query.suffix)
+        for values in [*filters.values(), *(query.exclude or {}).values()]:
+            if isinstance(values, list) and len(values) > limits.max_terms_count:
+                raise InvalidFilterError(f"{len(values)} values")
+        query = query.model_copy(
+            update={"top_k": min(query.top_k, limits.max_result_window)}
+        )
         if prefix == self.o.relationships_index_prefix:
             self.edge_fields.append(query.source_fields)
             if not self.has_relationships:
@@ -563,6 +573,88 @@ async def test_the_requests_on_their_own_run_max_concurrency_at_a_time(
     assert peak == 3
 
 
+async def test_a_live_window_below_the_page_is_judged_full(config: Config) -> None:
+    # Regression: a page asked for max_query_size edges and the store
+    # returned the live max_result_window's worth, so it never read as full:
+    # the walk stopped after 2 of S's 6 neighbours, with no warning.
+    edges = [(f"s{i}", "S", f"N{i}", 10.0 - i) for i in range(6)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    o = config.indexing.opensearch
+
+    async def limits(prefix: str, suffix: str | None) -> IndexLimits:
+        small = prefix == o.relationships_index_prefix
+        return IndexLimits(max_result_window=2) if small else IndexLimits()
+
+    index.aindex_limits = limits  # type: ignore[method-assign]
+    o.max_query_size = 3
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
+    )
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert set(reached) == {"S"} | {f"N{i}" for i in range(6)}
+
+
+async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
+    config: Config,
+) -> None:
+    # Regression: the walk's exclusion (every reached vertex) and its read of
+    # the reached entities named more values than max_terms_count, and the
+    # query failed with InvalidFilterError. The exclusion is cut (it only
+    # saves page room) and the read keeps the vertices reached first.
+    chain = ["S", "A", "B", "C", "D"]
+    pairs = zip(chain, chain[1:], strict=False)
+    edges = [(f"e{i}", a, b, 1.0) for i, (a, b) in enumerate(pairs)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.opensearch.index_settings = {"max_terms_count": 2}
+    config.indexing.neptune.max_hops = 4
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert reached == ["S", "A"]
+    assert {r.source for r in kept} == {"S", "A"}
+
+
+async def test_the_requests_on_their_own_are_sized_by_their_wave(
+    config: Config,
+) -> None:
+    # Regression: every vertex asked on its own asked for what all the open
+    # seeds might still take (100 seeds: 8,300 edges read for 200 reached).
+    # They go in waves of max_concurrency; each asks for what its wave may
+    # take, with what the waves before it reached left out.
+    seeds = [f"M{j}" for j in range(6)]
+    edges = [
+        (f"m{j}-{i:03d}", f"M{j}", f"V{j}-{i:03d}", 100.0)
+        for j in range(6)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    asked: list[tuple[list[str], int, list[str]]] = []
+    ask = index.aretrieve
+
+    async def recorded(query: SearchQuery) -> list[RetrievalResult]:
+        ends = (query.filters or {}).get("source_id")
+        if ends is not None and len(ends) == 1:
+            exclude = (query.exclude or {}).get("target_id") or []
+            asked.append((ends, query.top_k, exclude))
+        return await ask(query)
+
+    index.aretrieve = recorded  # type: ignore[method-assign]
+    config.search.max_concurrency = 2
+    config.indexing.neptune.max_hops = 1
+    query = SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"})
+    await _strategy(config, _Graph(), index)._expand_via_graph(query, seeds)
+
+    share = seed_share(query, config.indexing.neptune.traversal_fetch_multiplier, 6)
+    # The first page closed M0, the joint one M1; M2-M5 go two at a time.
+    assert [ends for ends, _, _ in asked] == [["M2"], ["M3"], ["M4"], ["M5"]]
+    assert {size for _, size, _ in asked} == {2 * share}
+    first_wave = {f"V{j}-{i:03d}" for j in (2, 3) for i in range(share)}
+    assert first_wave <= set(asked[2][2]) and first_wave <= set(asked[3][2])
+
+
 async def test_seeds_sharing_their_neighbours_each_reach_their_share(
     config: Config,
 ) -> None:
@@ -824,8 +916,8 @@ class _Document:
         self.o = config.indexing.opensearch
         self.calls: list[tuple[str, list[str]]] = []
 
-    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
-        return id_batch_size(self.o.index_settings)
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits.of(self.o.index_settings)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         ids = list((query.filters or {}).get("id") or [])
@@ -917,3 +1009,56 @@ async def test_the_check_walks_a_long_list_once(config: Config) -> None:
     )
     assert len(passed) == 2_000
     assert lookups < 10 * len(ids)  # the rescan: about 100 per id
+
+
+class _Window:
+    """A store whose live index returns at most ``window`` hits a search, in
+    its own (reverse) order: what a fetch by id over the window got."""
+
+    def __init__(self, window: int) -> None:
+        self.window = window
+        self.asked: list[list[str]] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(max_result_window=self.window)
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        ids = list((query.filters or {}).get("id") or [])
+        self.asked.append(ids)
+        return [_entity(i) for i in sorted(ids, reverse=True)][: self.window]
+
+
+def _relationship(source: str, target: str) -> RetrievalResult:
+    return RetrievalResult(
+        content=f"{source}-{target}",
+        score=1.0,
+        source=f"{source}-{target}",
+        retriever_type="relationship",
+        metadata={"source_id": source, "target_id": target},
+    )
+
+
+@pytest.mark.parametrize("fetch", ["local text units", "lightrag endpoints"])
+async def test_a_fetch_by_id_keeps_the_best_ranked_ids_the_window_holds(
+    config: Config, fetch: str
+) -> None:
+    # Regression: a fetch by id named every ranked id and a live window
+    # below their count returned the engine's pick (here the last-ranked),
+    # not the best-ranked.
+    store = _Window(window=2)
+    ranked = ["e1", "e2", "e3", "e4"]
+    if fetch == "local text units":
+        strategy = _strategy(config, _Graph(), store)
+        found = await strategy._retrieve_documents(ranked, None)
+        got = [r.source for r in found["text_units"]]
+    else:
+        strategy = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+            config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+        )
+        found = await strategy._retrieve_endpoint_entities(
+            SearchQuery(query="q"),
+            [_relationship("e1", "e2"), _relationship("e3", "e4")],
+        )
+        got = [r.source for r in found["lightrag_endpoint_entities"]]
+    assert store.asked == [["e1", "e2"]]
+    assert got == ["e1", "e2"]

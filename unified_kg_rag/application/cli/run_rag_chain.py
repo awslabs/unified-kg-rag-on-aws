@@ -42,7 +42,12 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     create_rag_chain,
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    InvalidFilterError,
+    get_logger,
+    setup_logging,
+)
 from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import (
@@ -75,9 +80,11 @@ def _rerank_line(rerank: dict[str, Any]) -> str:
 
 
 def _filter_pair(item: str) -> str:
-    """A ``--filters`` pair: ``key:value`` with a key. Anything else is a
-    usage error rather than a filter left out (which widened the search)."""
-    if ":" not in item or not item.split(":", 1)[0]:
+    """A ``--filters`` pair: ``key:value`` with a key and a value. Anything
+    else is a usage error rather than a filter left out or matching nothing
+    (which widened or emptied the search)."""
+    key, colon, value = item.partition(":")
+    if not colon or not key.strip() or not value.strip():
         raise argparse.ArgumentTypeError(
             f"invalid filter '{item}': expected 'key:value'"
         )
@@ -164,6 +171,12 @@ class CommandLineInterface:
             self.parser.error(
                 f"--mode {args.mode} is not supported with --interactive, which "
                 "always generates answers; use --query for retrieval-only output"
+            )
+        keys = [pair.split(":", 1)[0] for pair in args.filters or []]
+        if repeated := sorted({key for key in keys if keys.count(key) > 1}):
+            self.parser.error(
+                f"--filters gives {', '.join(repeated)} more than once; give "
+                "each key once"
             )
         if args.interactive and args.output_format == "json":
             self.parser.error(
@@ -377,6 +390,9 @@ class RAGChainRunner:
             return {"success": True, **output}
 
         except Exception as e:
+            if isinstance(e, InvalidFilterError) and not self.args.interactive:
+                # A --filters key no index declares: the command line is wrong.
+                usage_error(str(e))
             logger.exception("Error during query execution: %s", e)
             console.print(
                 f"\n[bold red]Error executing query: {markup_safe(e)}[/bold red]"
@@ -555,10 +571,12 @@ class RAGChainRunner:
 
     @staticmethod
     def _handle_set_filter(state: dict[str, Any], args: list[str]) -> None:
-        if not args or ":" not in args[0]:
+        try:
+            pair = _filter_pair(args[0] if args else "")
+        except argparse.ArgumentTypeError:
             console.print("[red]Invalid filter format. Use 'key:value'[/red]")
             return
-        key, value = args[0].split(":", 1)
+        key, value = pair.split(":", 1)
         state["filters"][key] = value
         console.print(
             f"[green]Filter added: '{markup_safe(key)}' = '{markup_safe(value)}'"

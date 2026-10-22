@@ -1965,6 +1965,16 @@ class NeptuneIndexingConfig(BaseModel):
         return value
 
 
+# The settings an index this package creates gets when index_settings leaves
+# them out (the indexer adds each one missing from a configured map).
+# refresh_interval trades search-visibility latency for indexing throughput.
+DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s",
+}
+
+
 class OpenSearchIndexingConfig(BaseModel):
     text_units_index_prefix: str = Field(
         default="graphrag-text-units",
@@ -2065,22 +2075,23 @@ class OpenSearchIndexingConfig(BaseModel):
         description="Maximum number of hits returned per OpenSearch query",
     )
     index_settings: dict[str, Any] = Field(
-        default_factory=lambda: {
-            "number_of_shards": 1,
-            "number_of_replicas": 0,
-            "refresh_interval": "1s",
-        },
+        default_factory=lambda: dict(DEFAULT_INDEX_SETTINGS),
         description=(
             "OpenSearch index settings of the indices this package creates "
             "(number_of_shards, number_of_replicas, refresh_interval, "
             "max_result_window, max_terms_count, ...; with or without the "
-            "index. prefix, but not the knn keys, which follow vector_search); "
+            "index. prefix or under an index: map, but not the knn keys, which "
+            "follow vector_search; the two limits are whole numbers >= 1); "
             "every key is passed to index creation (OpenSearch rejects one it "
-            "does not know, before extraction; the embedded engine applies "
-            "only max_result_window) and applies to indices created "
-            "afterwards, so reindex after changing it. Reads and searches are "
-            "sized by the smaller of max_result_window / max_terms_count here "
-            "and on the live index. Raise refresh_interval "
+            "does not know: each run first creates and deletes a probe index "
+            "with them, so a refused key fails it before any extraction call, "
+            "existing indices or not; the embedded engine applies only "
+            "max_result_window) and applies to indices created afterwards, so "
+            "reindex after changing it. Reads and searches are sized by the "
+            "smaller of max_result_window / max_terms_count here and on the "
+            "live index (read again when a search is refused for them): a "
+            "fetch by id names the best-ranked ids that fit. Raise "
+            "refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
             "querying. Setting the key replaces the whole map; a left-out "
             "shard, replica or refresh setting is 1, 0 or 1s."
@@ -2134,8 +2145,19 @@ class OpenSearchIndexingConfig(BaseModel):
     @field_validator("index_settings")
     @classmethod
     def _check_index_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
-        # A setting may be written with or without its "index." prefix; the
+        # A setting may be written with or without its "index." prefix, or
+        # under a nested "index" mapping (as OpenSearch takes it); the
         # indexer writes it without. The knn settings follow vector_search.
+        nested = value.get("index")
+        if isinstance(nested, dict):
+            flat = {k: v for k, v in value.items() if k != "index"}
+            for key, setting in nested.items():
+                if f"index.{key}" in flat:
+                    raise ValueError(
+                        f"index_settings sets 'index.{key}' twice (nested and " "flat)"
+                    )
+                flat[f"index.{key}"] = setting
+            value = flat
         names: dict[str, str] = {}
         for key in value:
             name = key.removeprefix("index.")
@@ -2151,6 +2173,17 @@ class OpenSearchIndexingConfig(BaseModel):
                     f"'{key}')"
                 )
             names[name] = key
+            if name in ("max_result_window", "max_terms_count"):
+                # Read back as numbers to size reads and searches.
+                setting = value[key]
+                if isinstance(setting, str) and setting.strip().isdigit():
+                    setting = int(setting)
+                if isinstance(setting, bool) or not isinstance(setting, int):
+                    setting = 0
+                if setting < 1:
+                    raise ValueError(
+                        f"index_settings.{key} must be a whole number of at " "least 1"
+                    )
         return value
 
 
@@ -2851,8 +2884,12 @@ class SearchConfig(BaseModel):
         ge=1,
         description=(
             "LLM calls and sub-searches one query keeps in flight: the global "
-            "map calls, the dynamic-selection ratings, and the DRIFT primer "
-            "calls and follow-up local searches. Per query, so concurrent "
+            "map calls, the dynamic-selection ratings, the DRIFT primer calls "
+            "and follow-up local searches, and a filtered graph walk's "
+            "per-vertex edge requests (each asks both endpoint sides, so up "
+            "to twice that many store requests). The walk's bound is its "
+            "own: in DRIFT, each follow-up search's walk has one, so up to "
+            "its square of walk requests. Per query, so concurrent "
             "queries (run-eval keeps processing.max_concurrency of them in "
             "flight) multiply it; lower it if a query's calls are throttled."
         ),
@@ -3004,6 +3041,10 @@ class LoggingConfig(BaseModel):
             # run-visualization) and httpcore every connection step (httpx).
             "numba": "WARNING",
             "httpcore": "WARNING",
+            # At INFO: every OpenSearch request (opensearch) and every model
+            # server request (httpx: Ollama and OpenAI-compatible servers).
+            "opensearch": "WARNING",
+            "httpx": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",
         },

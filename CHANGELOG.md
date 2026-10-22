@@ -1332,6 +1332,56 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Retrieval: the filtered walk asks the vertices it asks on its own in
+  waves of `search.max_concurrency`, each request sized for what its wave
+  may still take and leaving out what earlier waves reached; each asked
+  for what every open seed might take. Same reach and request count; on a
+  synthetic 100-seed walk the edges read drop from 8,300 to 1,100, on 300
+  seeds from 29,200 to 3,100 (#411).
+- Logging: `opensearch` and `httpx` are at WARNING in the default
+  `logging.library_levels`; at INFO they logged every OpenSearch request
+  and every Ollama / OpenAI-compatible call. `search.max_concurrency`
+  states that it also bounds a filtered walk's per-vertex requests (both
+  endpoint sides each) and that a walk inside each DRIFT follow-up has its
+  own bound (#411).
+- `run-rag`: a `--filters` pair with a blank key or an empty value, a key
+  given twice, and a key no index the strategy reads declares are usage
+  errors (exit 2); the later of two pairs replaced the earlier one, and an
+  unknown key failed the query with exit 1. Interactive `set-filter`
+  refuses the same pairs (#411).
+- Config: an `index_settings` key set by an environment variable replaces
+  the file's other spelling of it, so a file with `index.number_of_replicas`
+  no longer fails every CDK-deployed run (the compute stack sets
+  `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`) as one
+  setting given twice. A validation error the environment causes names the
+  variables instead of the config file. A nested `index:` map is read as
+  its flat keys (it skipped the knn and duplicate checks), and
+  `max_result_window` / `max_terms_count` must be whole numbers of at least
+  1 (a bad value failed every search with a raw `ValueError`) (#411).
+- Retrieval: the live index limits (#408) reach every search. A fetch by
+  id (local search's text units, LightRAG's linked chunks and endpoint
+  entities, the filtered walk's reached entities, `run-eval`'s source
+  files) names the best-ranked ids one search returns, where a live
+  `max_result_window` below their count got the engine's pick; `run-eval`
+  resolved only 300 of 600 text units under a window of 200 and cached the
+  rest as unknown. The filtered walk judges a page full against the hits a
+  search returns (a window below `max_query_size` stopped it after one
+  page, silently), and cuts its own vertex and exclusion lists to
+  `max_terms_count` instead of failing the query with
+  `InvalidFilterError`. A retriever reads each alias's settings once for
+  concurrent searches, keeps a missing index's, and reads them again when
+  a search is refused for asking more than the live index allows (an index
+  rebuilt with a smaller window failed every query until a restart). A
+  query role denied the settings logs one warning; the permissions it
+  needs are listed in [Operations](docs/operations.md) (#411).
+- Ingestion: `index_settings` are checked before extraction on every run,
+  not only when the extraction-records index is missing: each run creates
+  and deletes a probe index with the vector indices' settings first. A
+  reset or an incremental run over an existing namespace with a key
+  OpenSearch refuses (a typo such as `refresh_intervl` or `knnx`)
+  extracted and summarized the whole corpus before the indexing stage
+  failed. The indexing stage's error now also states the first store
+  error instead of only pointing at the logs (#411).
 - OpenSearch and the embedded engine: the indexer's reads and the
   retriever's searches are sized by the limits in force on each live
   index: the smaller of `index_settings` and the `max_result_window` /

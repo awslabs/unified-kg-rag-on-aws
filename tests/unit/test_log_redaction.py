@@ -25,6 +25,7 @@ from unified_kg_rag.adapters.aws import neptune as neptune_module
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -62,6 +63,9 @@ def _assert_no_secret(caplog: pytest.LogCaptureFixture) -> None:
 class _FakeRetriever:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         if self.fail:

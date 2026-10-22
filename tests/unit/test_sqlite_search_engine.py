@@ -1362,6 +1362,7 @@ def test_every_retriever_request_shape_runs_on_the_engine(
         if search_query.query and search_type != SearchType.LEXICAL
         else None
     )
+    window = retriever._configured_limits.max_result_window
     for prefix, fields in retriever._field_mappings.items():
         index_filters = retriever._filters_for_index(prefix, search_query.filters)
         index_query = search_query.model_copy(update={"filters": index_filters})
@@ -1371,7 +1372,8 @@ def test_every_retriever_request_shape_runs_on_the_engine(
             fields["lexical"],
             fields["vector"],
             vector,
-            size=retriever._hit_count(index_query),
+            size=retriever._hit_count(index_query, window),
+            window=window,
         )
         alias = retriever._get_name(prefix, None)
         for body in bodies:

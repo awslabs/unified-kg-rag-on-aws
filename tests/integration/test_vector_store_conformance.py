@@ -657,7 +657,7 @@ def test_reads_follow_the_window_of_the_live_index(
     async def fetch_by_id() -> tuple[int, int]:
         retriever = later.vector_retriever()
         try:
-            batch = await retriever.aid_batch_size(
+            limits = await retriever.aindex_limits(
                 prefixes.text_units_index_prefix, tenant
             )
             hits = await retriever.aretrieve(
@@ -674,11 +674,54 @@ def test_reads_follow_the_window_of_the_live_index(
             )
         finally:
             await retriever.aclose()
-        return batch, len(hits)
+        return limits.id_batch_size, len(hits)
 
     # One fetch by id names at most a window of ids (the strategies batch by
-    # aid_batch_size) and returns that many, rather than failing the query.
+    # IndexLimits.id_batch_size) and returns that many, rather than failing the query.
     assert asyncio.run(fetch_by_id()) == (3, 3)
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_retriever_follows_an_index_rebuilt_with_a_smaller_window(
+    harness: StoreHarness,
+) -> None:
+    # A retriever read each index's limits once for its life: after a reset
+    # rebuilt the index with a smaller max_result_window, its searches asked
+    # for the old window's worth and failed (a 400) until the process
+    # restarted. The rejection now drops the limits read and searches again.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    harness = harness.derive(
+        lambda config: setattr(config.indexing.opensearch, "max_query_size", 5)
+    )
+    tenant = harness.suffix("rebuilt")
+    _write(harness, "entities", "index", _entities(tenant))
+    small = _windowed(harness, 1)
+    query = SearchQuery(
+        query="",
+        search_type=SearchType.LEXICAL,
+        top_k=5,
+        retrieval_multiplier=1,
+        index_prefixes=[harness.config.indexing.opensearch.entities_index_prefix],
+        suffix=tenant,
+    )
+
+    async def search_before_and_after() -> tuple[int, int]:
+        retriever = harness.vector_retriever()
+        try:
+            before = len(await retriever.aretrieve(query))
+            await asyncio.to_thread(small.vector_indexer.clear, [tenant])
+            await asyncio.to_thread(
+                _write, small, "entities", "index", _entities(tenant)
+            )
+            return before, len(await retriever.aretrieve(query))
+        finally:
+            await retriever.aclose()
+
+    before, after = asyncio.run(search_before_and_after())
+    assert (before, after) == (len(_entities(tenant)), 1)
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
@@ -697,6 +740,9 @@ def test_index_settings_the_engine_refuses_fail_before_extraction(
 
     typo = harness.derive(misspell)
     tenant = typo.suffix("typo")
+    # The namespace exists (a reset or an incremental run): its records
+    # index is not created again, and the settings are checked all the same.
+    harness.vector_indexer.prepare_extraction_records(tenant)
     store = ExtractionStore(typo.config, lambda: typo.vector_indexer)
     units = _tagged([TextUnit(id="t1", text="Vendor ships widgets.")], tenant)
 
