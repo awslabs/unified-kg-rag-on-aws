@@ -1378,30 +1378,30 @@ changed once with the full-config keys (#332).
   window of 100 at top_k 100 x 5 kept 20% of the expansion and a
   `max_terms_count` of 3 kept 6%. The filtered walk asks a frontier longer
   than `max_terms_count` in batches too, instead of leaving the vertices past
-  it unasked, and its exclusion list keeps the vertices reached last (#PR).
+  it unasked, and its exclusion list keeps the vertices reached last (#414).
 - Retrieval: after a search was rejected for the index's limits (an index
   rebuilt under smaller `index_settings`), the retry read the new limits but
   kept the old id list, so a lowered `max_terms_count` failed the query with
   `InvalidFilterError`; the retry now batches by the limits it read. The
   filtered walk also judges a page full by the window the store answered
-  with, so a shrunk window no longer ends the walk silently (#PR).
+  with, so a shrunk window no longer ends the walk silently (#414).
 - Retrieval: a settings read whose cache entry a rejected search dropped
   meanwhile raised `KeyError` and left the searches waiting for it hanging;
-  the read now always answers its waiters (#PR).
+  the read now always answers its waiters (#414).
 - Global search: the report cap also follows the reports index's live
   `max_result_window` (`min(max_reports_per_level, min(max_query_size,
   window) - 1)`). Under a smaller window the probe for the cut came back
   short and read as the whole cut, dropping reports with no
-  `global_level_capped` and no fallback to a shallower cut (#PR).
+  `global_level_capped` and no fallback to a shallower cut (#414).
 - Evaluation: the source resolver no longer caches every id of a batch
   that came back with no hit as unknown. The retriever degrades a failed
   request to no hits, so one transient failure hid those files from the
-  `retrieval` evaluator for the rest of the run (#PR).
+  `retrieval` evaluator for the rest of the run (#414).
 - Docs: the design guide states the filtered walk's page (`min(max_query_size,
   live max_result_window)`, a frontier past `max_terms_count` in batches)
   and its per-vertex waves; the template notes that the default
   `max_reports_per_level` of 100 maps at most 99, and that
-  `search.max_concurrency` bounds the walk's per-vertex requests (#PR).
+  `search.max_concurrency` bounds the walk's per-vertex requests (#414).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
@@ -3971,7 +3971,7 @@ changed once with the full-config keys (#332).
 ### Removed
 - Unused code: the module-level `filter_schema.id_batch_size()` (use
   `IndexLimits.id_batch_size`), and the two copies of the warn-once helper
-  of the local reranker and analyzers (now `shared.logging.warn_once`) (#PR).
+  of the local reranker and analyzers (now `shared.logging.warn_once`) (#414).
 - The `aws.bedrock.guardrail.intervened` attribute on model (`chat <model>`)
   spans, and the detector behind it: no model call carries a guardrail since
   the guardrail screens the query and answer through `ApplyGuardrail`, so it
