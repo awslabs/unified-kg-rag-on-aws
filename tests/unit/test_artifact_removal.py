@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Document,
     Entity,
+    Relationship,
     TextUnit,
 )
 
@@ -478,6 +479,39 @@ def test_a_removed_vector_only_entity_takes_its_vector_edges() -> None:
     manager.remove_text_units("default", ["t1"])
 
     assert "r" not in vector.data.get("relationships", {})
+
+
+@pytest.mark.parametrize("vector_copy", [True, False])
+def test_a_missing_vector_copy_of_a_re_pointed_edge_is_written(
+    vector_copy: bool,
+) -> None:
+    # A strip writes its graph edges before their vector copies: killed in
+    # between, an edge at a rewired entity has a current graph copy and no
+    # vector copy. Its name and rank are unchanged, so only the missing
+    # vector copy says it must be written.
+    manager, graph, vector = _manager()
+    acme = Entity(id="a", name="Acme", text_unit_ids=["t1"])
+    buyer = Entity(id="b", name="Buyer", text_unit_ids=["t1"])
+    edge = Relationship(
+        id="r",
+        source_id="a",
+        target_id="b",
+        source_name="Acme",
+        target_name="Buyer",
+        description="Acme sells to Buyer.",
+        text_unit_ids=["t1"],
+        rank=2,
+    )
+    graph.upsert_entities([acme, buyer])
+    graph.upsert_relationships([edge])
+    if vector_copy:
+        vector.upsert_relationships([edge])
+
+    _, written = manager._finish(
+        "default", [acme.model_copy()], [], stored_entities=[acme], rewired={"a"}
+    )
+
+    assert [r.id for r in written] == ([] if vector_copy else ["r"])
 
 
 def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> None:
