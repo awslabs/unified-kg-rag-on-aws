@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     model_id_value,
 )
+from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
@@ -69,14 +70,6 @@ _FIND_BATCH_SIZE = 100
 # The settings _get_base_mapping adds for the vector indices (the config
 # refuses them in index_settings); the extraction-records index has no vectors.
 _KNN_SETTINGS = ("knn", "knn.algo_param.ef_search")
-# Index settings an index gets when index_settings leaves them out.
-# refresh_interval trades search-visibility latency for indexing throughput;
-# raising it (e.g. "30s" or "-1") speeds bulk loads.
-_INDEX_SETTING_DEFAULTS: dict[str, Any] = {
-    "number_of_shards": 1,
-    "number_of_replicas": 0,
-    "refresh_interval": "1s",
-}
 # The index prefix (config field) and stored fields of read_vector_copies.
 _VECTOR_COPY_FIELDS = {
     "entities": (
@@ -1753,7 +1746,7 @@ class OpenSearchIndexer(VectorIndexer):
             key.removeprefix("index."): value
             for key, value in self.opensearch_config.index_settings.items()
         }
-        for name, default in _INDEX_SETTING_DEFAULTS.items():
+        for name, default in DEFAULT_INDEX_SETTINGS.items():
             settings.setdefault(name, default)
         return {
             "settings": {

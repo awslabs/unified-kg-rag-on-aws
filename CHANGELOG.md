@@ -1332,6 +1332,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Config: an `index_settings` key set by an environment variable replaces
+  the file's other spelling of it, so a file with `index.number_of_replicas`
+  no longer fails every CDK-deployed run (the compute stack sets
+  `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`) as one
+  setting given twice. A validation error the environment causes names the
+  variables instead of the config file. A nested `index:` map is read as
+  its flat keys (it skipped the knn and duplicate checks), and
+  `max_result_window` / `max_terms_count` must be whole numbers of at least
+  1 (a bad value failed every search with a raw `ValueError`) (#PR).
 - Retrieval: the live index limits (#408) reach every search. A fetch by
   id (local search's text units, LightRAG's linked chunks and endpoint
   entities, the filtered walk's reached entities, `run-eval`'s source

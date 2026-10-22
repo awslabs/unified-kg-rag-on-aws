@@ -1965,6 +1965,16 @@ class NeptuneIndexingConfig(BaseModel):
         return value
 
 
+# The settings an index this package creates gets when index_settings leaves
+# them out (the indexer adds each one missing from a configured map).
+# refresh_interval trades search-visibility latency for indexing throughput.
+DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s",
+}
+
+
 class OpenSearchIndexingConfig(BaseModel):
     text_units_index_prefix: str = Field(
         default="graphrag-text-units",
@@ -2065,16 +2075,13 @@ class OpenSearchIndexingConfig(BaseModel):
         description="Maximum number of hits returned per OpenSearch query",
     )
     index_settings: dict[str, Any] = Field(
-        default_factory=lambda: {
-            "number_of_shards": 1,
-            "number_of_replicas": 0,
-            "refresh_interval": "1s",
-        },
+        default_factory=lambda: dict(DEFAULT_INDEX_SETTINGS),
         description=(
             "OpenSearch index settings of the indices this package creates "
             "(number_of_shards, number_of_replicas, refresh_interval, "
             "max_result_window, max_terms_count, ...; with or without the "
-            "index. prefix, but not the knn keys, which follow vector_search); "
+            "index. prefix or under an index: map, but not the knn keys, which "
+            "follow vector_search; the two limits are whole numbers >= 1); "
             "every key is passed to index creation (OpenSearch rejects one it "
             "does not know: each run first creates and deletes a probe index "
             "with them, so a refused key fails it before any extraction call, "
@@ -2138,8 +2145,19 @@ class OpenSearchIndexingConfig(BaseModel):
     @field_validator("index_settings")
     @classmethod
     def _check_index_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
-        # A setting may be written with or without its "index." prefix; the
+        # A setting may be written with or without its "index." prefix, or
+        # under a nested "index" mapping (as OpenSearch takes it); the
         # indexer writes it without. The knn settings follow vector_search.
+        nested = value.get("index")
+        if isinstance(nested, dict):
+            flat = {k: v for k, v in value.items() if k != "index"}
+            for key, setting in nested.items():
+                if f"index.{key}" in flat:
+                    raise ValueError(
+                        f"index_settings sets 'index.{key}' twice (nested and " "flat)"
+                    )
+                flat[f"index.{key}"] = setting
+            value = flat
         names: dict[str, str] = {}
         for key in value:
             name = key.removeprefix("index.")
@@ -2155,6 +2173,17 @@ class OpenSearchIndexingConfig(BaseModel):
                     f"'{key}')"
                 )
             names[name] = key
+            if name in ("max_result_window", "max_terms_count"):
+                # Read back as numbers to size reads and searches.
+                setting = value[key]
+                if isinstance(setting, str) and setting.strip().isdigit():
+                    setting = int(setting)
+                if isinstance(setting, bool) or not isinstance(setting, int):
+                    setting = 0
+                if setting < 1:
+                    raise ValueError(
+                        f"index_settings.{key} must be a whole number of at " "least 1"
+                    )
         return value
 
 

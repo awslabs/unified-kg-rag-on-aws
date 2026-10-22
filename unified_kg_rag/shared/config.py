@@ -197,13 +197,22 @@ class ConfigLoader:
             _warn_removed(f"'{path}'{where}", path)
         try:
             file_config = Config(**config_data)
-            env_data, unknown_env = self._environment_layer(file_config, config_data)
-            config = (
-                Config(**merge_over(config_data, env_data)) if env_data else file_config
-            )
         except ValidationError as e:
             raise ConfigurationError(
                 f"Configuration validation error: {validation_summary(e)}{where}"
+            ) from e
+        env_data, unknown_env, env_paths = self._environment_layer(
+            file_config, config_data
+        )
+        try:
+            config = (
+                Config(**_merged(config_data, env_data)) if env_data else file_config
+            )
+        except ValidationError as e:
+            # The file alone is valid: the environment layer made it invalid.
+            raise ConfigurationError(
+                f"Configuration validation error: {validation_summary(e)} "
+                f"(set by environment variable {_variables_at(e, env_paths)})"
             ) from e
         self._check_unknown(
             [f"'{path}'{where}" for path in unknown]
@@ -276,9 +285,10 @@ class ConfigLoader:
     @staticmethod
     def _environment_layer(
         config: Config, file_data: dict[str, Any]
-    ) -> tuple[dict[str, Any], list[str]]:
-        """The set environment overrides as raw config data, and the
-        ``UKR__`` variables that name no config key.
+    ) -> tuple[dict[str, Any], list[str], dict[str, tuple[str, ...]]]:
+        """The set environment overrides as raw config data, the ``UKR__``
+        variables that name no config key, and the config path each applied
+        variable sets.
 
         Each value is converted and checked against its field in ``config``
         (the config without them), so an invalid one is reported by variable.
@@ -328,11 +338,40 @@ class ConfigLoader:
                     f"Invalid environment variable {name} "
                     f"(overrides {'.'.join(path)}): {reason}"
                 ) from e
-        return layer, unknown
+        return layer, unknown, overrides
 
     @property
     def config(self) -> Config:
         return self._config if self._config is not None else self.load_config()
+
+
+def _merged(file_data: dict[str, Any], env_data: dict[str, Any]) -> dict[str, Any]:
+    """``env_data`` over ``file_data``. The layer writes ``index_settings``
+    whole, with the variable's spelling of a setting in place of the
+    other: it replaces the file's map rather than merging into it, which
+    would bring the other spelling back."""
+    merged = merge_over(file_data, env_data)
+    opensearch = env_data.get("indexing", {}).get("opensearch", {})
+    if "index_settings" in opensearch:
+        merged["indexing"]["opensearch"]["index_settings"] = opensearch[
+            "index_settings"
+        ]
+    return merged
+
+
+def _variables_at(error: ValidationError, paths: dict[str, tuple[str, ...]]) -> str:
+    """The environment variables setting a key ``error`` reports (inside it,
+    or a section around it); all of them when none does."""
+    locations = [
+        tuple(str(part) for part in detail["loc"])
+        for detail in error.errors(include_url=False, include_input=False)
+    ]
+    named = [
+        name
+        for name, path in paths.items()
+        if any(path[: len(loc)] == loc or loc[: len(path)] == path for loc in locations)
+    ]
+    return ", ".join(named or paths)
 
 
 def _is_set(data: Any, path: tuple[str, ...]) -> bool:
@@ -371,8 +410,18 @@ def _set_env_value(
 
     final_key = path_tuple[-1]
     is_mapping = isinstance(current, dict)
+    # An index setting has two spellings (with and without "index."): the
+    # variable replaces the one the file or default used.
+    other_spelling = (
+        final_key.removeprefix("index.")
+        if final_key.startswith("index.")
+        else f"index.{final_key}"
+    )
+    spelled = is_mapping and path_tuple[-2] == "index_settings"
     current_value = (
-        current.get(final_key) if is_mapping else getattr(current, final_key)
+        current.get(final_key, current.get(other_spelling) if spelled else None)
+        if is_mapping
+        else getattr(current, final_key)
     )
 
     # Coerce the string env value to the field's declared type. SecretStr is
@@ -402,6 +451,8 @@ def _set_env_value(
         parsed_value = value
 
     if is_mapping:
+        if spelled:
+            target.pop(other_spelling, None)
         target[final_key] = parsed_value
         return
     # Checked against the field's type and constraints here, so an invalid

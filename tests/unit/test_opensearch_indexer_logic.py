@@ -789,3 +789,39 @@ def test_index_settings_refuse_one_setting_spelled_twice() -> None:
         OpenSearchIndexingConfig(
             index_settings={"max_result_window": 200, "index.max_result_window": 300}
         )
+
+
+def test_index_settings_flatten_a_nested_index_map() -> None:
+    # A nested "index" map (as OpenSearch takes it) skipped the knn,
+    # spelling and limit checks; it is read as its flat keys.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.domain.models.config import OpenSearchIndexingConfig
+
+    config = OpenSearchIndexingConfig(
+        index_settings={"index": {"max_result_window": 50}, "number_of_shards": 1}
+    )
+    assert config.index_settings == {
+        "number_of_shards": 1,
+        "index.max_result_window": 50,
+    }
+    for refused, match in (
+        ({"index": {"knn": False}}, "vector_search"),
+        ({"index": {"refresh_interval": "1s"}, "refresh_interval": "2s"}, "twice"),
+    ):
+        with pytest.raises(ValidationError, match=match):
+            OpenSearchIndexingConfig(index_settings=refused)
+
+
+@pytest.mark.parametrize("value", [0, -1, "many", 1.5, True, None])
+def test_index_settings_limits_are_whole_numbers(value: object) -> None:
+    # Retrieval reads them back as numbers: a bad one failed every search
+    # with a raw ValueError instead of failing the config load.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.domain.models.config import OpenSearchIndexingConfig
+
+    for key in ("max_result_window", "index.max_terms_count"):
+        with pytest.raises(ValidationError, match="whole number"):
+            OpenSearchIndexingConfig(index_settings={key: value})
+    assert OpenSearchIndexingConfig(index_settings={"max_terms_count": "300"})
