@@ -1599,6 +1599,51 @@ changed once with the full-config keys (#332).
   claims again. The pending-strip note is now written once the claims are
   derived, before the first write, with their new ids, also when the
   strip re-keys nothing else (#407).
+- Incremental indexing: a pending-strip note left by an interrupted
+  removal (or by a failed best-effort delete of the note) no longer
+  deletes an entity the next strip writes. An id the note named that the
+  graph no longer held was retired as a vector-only copy even when the
+  strip split a part off again under that id, so the part and its
+  unchanged edges were deleted. Only the absent ids the strip does not
+  write are retired now (#410).
+- Incremental indexing: a removal killed between its graph edge writes and
+  their vector copies leaves no stale vector edge. The retry found the
+  re-pointed edges' graph copies current and kept their vector copies
+  naming (and pointing at) the old endpoint, or none at all. The stored
+  edges at rewired entities and at a split's parts and origins are now
+  compared with their vector copies, and a missing copy is written (#410).
+- Incremental indexing: a removal that splits a spelling off and is
+  killed after the split is written but before the re-keyed edge's old
+  copy is deleted ends as a full build on retry. The retry derived that
+  edge again under its old id, and ranked the entity it was re-pointed
+  away from with the old copy's link still counted (#410).
+- Incremental indexing with a graph indexer injected into the pipeline
+  (`DataIngestionPipeline(graph_indexer=...)`) whose adapter cannot read
+  entities back: a removal no longer deletes the shared vector entities.
+  Whether the graph store reads back was asked of the type of the view
+  the pipeline hands its stages (#408), which hid the adapter's, so every
+  shared id looked like a vector-only copy (#410).
+- An entity's type and a claim's type and status merged from several
+  statements no longer come out empty when one statement leaves them
+  empty: the empty value counted as a vote and, sorting first, won every
+  tie (since #407 an empty element is an empty field, not `{}`). It is
+  now no vote, and stays only when no statement gives a value. Names,
+  claim objects and descriptions already skipped empty values (#410).
+- Incremental indexing: an edit that changes how a kept unit's claim
+  resolves no longer leaves a duplicate claim (here a self-claim), with
+  no fault involved. The removal derived the kept unit's claim under an
+  interim id before the edited document's entities were in the graph;
+  the commit then derived the same statement into the full build's
+  claim, and the interim copy stayed. Stored claims citing a unit the
+  derived claims gained are now derived with them (#410).
+- Incremental indexing: an `indexing.reset` that drops documents and is
+  interrupted after it swapped an index in no longer blocks the next
+  incremental runs. The dropped documents' records stayed PROCESSED over
+  stores that no longer held them, so every later run failed its store
+  probe until another reset, and a dropped document added back unchanged
+  was never indexed again. The reset now writes them PENDING before it
+  rebuilds, and fails before it rebuilds anything when the registry
+  cannot be read (#410).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

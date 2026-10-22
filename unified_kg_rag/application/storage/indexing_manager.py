@@ -100,8 +100,11 @@ def _other_spellings_of_parts(
 
 def _reads_back(graph: GraphIndexer) -> bool:
     """Whether ``graph`` reads stored entities back (the port's default
-    reads nothing, so every id would look absent)."""
-    return getattr(type(graph), "read_entities", None) is not GraphIndexer.read_entities
+    reads nothing, so every id would look absent). Asked of the bound
+    method, not the type: the pipeline hands stages a borrowed view of an
+    injected indexer."""
+    method = getattr(graph, "read_entities", None)
+    return getattr(method, "__func__", method) is not GraphIndexer.read_entities
 
 
 def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
@@ -736,20 +739,50 @@ class IndexingManager:
                 )
                 - {c.id for c in group}
             )
-            for claim in self.opensearch_indexer.read_claims(about, suffix=suffix):
-                claim.attributes = {
-                    **(claim.attributes or {}),
-                    Constants.INDEX.value: suffix,
-                }
-                group.append(claim)
+            group += self._read_stored_claims(about, suffix)
             if not group:
                 continue
             if not stored and not about and suffix in self._fresh:
                 # Nothing stored: the delta claims are the full build's.
                 merged.extend(group)
                 continue
-            merged.extend(self._derive_claims(suffix, group, units))
+            derived = self._derive_claims(suffix, group, units)
+            # A stored claim citing a unit a derived claim gained (this run's
+            # removal derived it from a kept unit, before the delta's
+            # entities were in the graph) may state what the derived claim
+            # does under another id: it is derived with them.
+            gained = sorted(
+                {u for c in derived for u in c.text_unit_ids or []}
+                - {u for c in group for u in c.text_unit_ids or []}
+            )
+            overlapping = (
+                set(
+                    self._vector_citing(
+                        self.config.indexing.opensearch.claims_index_prefix,
+                        gained,
+                        suffix,
+                    )
+                )
+                - {c.id for c in [*group, *derived]}
+                if gained
+                else set()
+            )
+            if overlapping:
+                group += self._read_stored_claims(sorted(overlapping), suffix)
+                derived = self._derive_claims(suffix, group, units)
+            merged.extend(derived)
         return merged if claims is not None or merged else claims
+
+    def _read_stored_claims(self, ids: list[str], suffix: str) -> list[Claim]:
+        """The stored claims of ``ids`` in ``suffix``, tagged with it (the
+        write-back groups claims by their own index tag)."""
+        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix) if ids else []
+        for claim in claims:
+            claim.attributes = {
+                **(claim.attributes or {}),
+                Constants.INDEX.value: suffix,
+            }
+        return claims
 
     def _merge_suffix(
         self,
@@ -976,6 +1009,7 @@ class IndexingManager:
             # (read with them): their stored links do not count either.
             rewired=set(derived.rewired) | noted,
             dropped=derived.dropped,
+            split_from=derived.split_from,
         )
         # A delta id the merge folded into a stored item of another id has no
         # graph copy (the stored one of that id would have been merged), but
@@ -1111,6 +1145,13 @@ class IndexingManager:
                 else {}
             )
             moved = set(derived.rewired)
+            # And the stored endpoints a given edge was re-pointed away from
+            # (onto a part an earlier, interrupted strip split off): their
+            # stored links still count that edge's old copy.
+            now = {r.id: {r.source_id, r.target_id} for r in derived.relationships}
+            for rel in items[1]:
+                if ends := now.get(derived.id_remap.get(rel.id, rel.id)):
+                    moved |= {rel.source_id, rel.target_id} - ends
             candidates = sorted({*moved, *spellings.values()})
             parted: list[Relationship] = []
             if candidates and not claims:
@@ -1150,14 +1191,19 @@ class IndexingManager:
                 # attempt: derived without its other statements, a spelling
                 # the full build keeps apart (another type) merges in. Only
                 # the other held items keep their holders.
-                items[0].extend(e for e in held[0] if e.id in sibling_ids)
+                # So is the copy an interrupted re-key left at a new id this
+                # attempt maps to (found only once a late sibling joined).
+                joining = sibling_ids | set(derived.id_remap.values())
+                items[0].extend(e for e in held[0] if e.id in joining)
+                items[1].extend(r for r in held[1] if r.id in joining)
                 blocked |= {
                     item.id
                     for group in held
                     for item in group
-                    if item.id not in sibling_ids
+                    if item.id not in joining
                 }
-            items[1].extend(parted)
+            known_edges = {r.id for r in items[1]}
+            items[1].extend(r for r in parted if r.id not in known_edges)
             # Their other endpoints too: a re-pointed edge changes their rank.
             ends = {i for r in parted for i in (r.source_id, r.target_id)}
             known = {e.id for e in items[0]}
@@ -1230,16 +1276,10 @@ class IndexingManager:
         self, suffix: str, ids: list[str]
     ) -> tuple[list[Entity], list[Relationship], list[Claim]]:
         """The stored entities, relationships and claims of ``ids``."""
-        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix)
-        for claim in claims:
-            claim.attributes = {
-                **(claim.attributes or {}),
-                Constants.INDEX.value: suffix,
-            }
         return (
             self.neptune_indexer.read_entities(ids, suffix=suffix),
             self.neptune_indexer.read_relationships(ids, suffix=suffix),
-            claims,
+            self._read_stored_claims(ids, suffix),
         )
 
     def _unit_records(
@@ -1293,6 +1333,7 @@ class IndexingManager:
         rekey: Mapping[str, str] | None = None,
         rewired: Collection[str] = (),
         dropped: Collection[str] = (),
+        split_from: Mapping[str, str] | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
@@ -1305,7 +1346,9 @@ class IndexingManager:
         -> derived id, see ``Derived.id_remap``) re-points the stored edges
         of a re-keyed entity at its new id. The stored edges of the
         ``rewired`` entities (``Derived.rewired``) are all among
-        ``relationships``: their stored links do not count.
+        ``relationships``: their stored links do not count. The stored edges
+        at them and at a split's parts and origins (``split_from``, see
+        ``Derived.split_from``) are compared with their vector copies too.
         """
         rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
@@ -1393,19 +1436,31 @@ class IndexingManager:
         for e in stored_entities:  # the stored copy, before a delta's of its id
             stored_names.setdefault(e.id, e.name)
         moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
+        # And where the derivation re-pointed edges (rewired, split): a strip
+        # writes the graph edges before their vector copies, so a retry after
+        # a kill in between finds the graph copies current and the vector
+        # copies behind or missing (a missing one is written).
+        split_from = split_from or {}
+        repointed = {*rewired, *split_from, *split_from.values()}
+        moved |= repointed
+        vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
                 "relationships",
                 [r.id for r in extra if {r.source_id, r.target_id} & moved],
                 suffix=suffix,
             )
-            if moved and self.config.indexing.opensearch.build_relationship_vector_index
+            if moved and vectors
             else {}
         )
         stale = {
             r.id
             for r in extra
-            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
+            if (
+                _vector_stale(r, vector_copy[r.id])
+                if r.id in vector_copy
+                else vectors and bool({r.source_id, r.target_id} & repointed)
+            )
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:
@@ -1849,13 +1904,14 @@ class IndexingManager:
             # vector copy whose graph write an interrupted run never made:
             # nothing strips it, so it goes with the retired ids (with the
             # vector edges at it, see delete_documents).
+            # Retired once the derivation is known: a noted id an earlier
+            # strip retired may be derived again (see below).
+            absent: tuple[set[str], set[str]] = (set(), set())
             if _reads_back(self.neptune_indexer):
-                vector_only = set(entity_ids) - {e.id for e in entities}
-                if vector_only:
-                    self._vector_only.setdefault(suffix, set()).update(vector_only)
-                vector_only |= set(relationship_ids) - {r.id for r in relationships}
-                if vector_only:
-                    self._dropped.setdefault(suffix, set()).update(vector_only)
+                absent = (
+                    set(entity_ids) - {e.id for e in entities},
+                    set(relationship_ids) - {r.id for r in relationships},
+                )
             # An edge is derived with its endpoints (the resolved entities map
             # to them). They cite the removed units too, unless a killed run
             # stripped them and left the edge (re-keyed, not yet deleted).
@@ -1897,8 +1953,18 @@ class IndexingManager:
                 rekey=derived.id_remap,
                 rewired=set(derived.rewired),
                 dropped=derived.dropped,
+                split_from=derived.split_from,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
+            # Not an absent id this strip writes (a part split off again
+            # under the id an earlier, interrupted strip re-keyed away).
+            written = {e.id for e in new_entities} | {r.id for r in new_relationships}
+            vector_only = absent[0] - written
+            if vector_only:
+                self._vector_only.setdefault(suffix, set()).update(vector_only)
+            vector_only |= absent[1] - written
+            if vector_only:
+                self._dropped.setdefault(suffix, set()).update(vector_only)
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
@@ -2124,14 +2190,9 @@ class IndexingManager:
         note: Callable[[set[str]], None] | None = None,
     ) -> dict[str, IndexingStats]:
         try:
-            claims = self.opensearch_indexer.read_claims(claim_ids, suffix=suffix)
             # The write-back groups by the claim's own index tag, so tag what
             # was read with the index it came from.
-            for claim in claims:
-                claim.attributes = {
-                    **(claim.attributes or {}),
-                    Constants.INDEX.value: suffix,
-                }
+            claims = self._read_stored_claims(claim_ids, suffix)
             # The claims citing none of them were read because their subject
             # or object was re-keyed: they are derived again too.
             stripped = {c.id: c for c in remove_claim_text_units(claims, text_unit_ids)}

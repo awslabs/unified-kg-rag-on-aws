@@ -346,9 +346,11 @@ class IncrementalIndexer:
         self,
         delta: DocumentDelta,
         lineages: list[DocumentLineage],
+        dropped: Sequence[str] = (),
     ) -> None:
         """Record the documents about to be (re)indexed PENDING, before any
-        store write.
+        store write, and the ``dropped`` ones a reset's rebuild leaves out (it
+        replaces their stores; their records go once it is recorded).
 
         Call after extraction and before removing or writing anything for the
         delta. Each new and changed document (and any other document with a
@@ -382,9 +384,11 @@ class IncrementalIndexer:
         check_write_fence()
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
-        if not doc_ids:
+        # Not in flight: the rebuild neither removes nor records them.
+        dropped = [doc_id for doc_id in dropped if doc_id not in doc_ids]
+        if not doc_ids and not dropped:
             return
-        self._prior = self.doc_status.get_many(doc_ids)
+        self._prior = self.doc_status.get_many([*doc_ids, *dropped])
         self._in_flight = set(doc_ids)
         self._pending = {
             doc_id: self._pending_record(
@@ -405,10 +409,19 @@ class IncrementalIndexer:
                 "10,000); split them into smaller files. Nothing was written "
                 "for this run's delta: " + ", ".join(too_large[:10])
             )
-        self.doc_status.put_many(list(self._pending.values()))
+        self.doc_status.put_many(
+            [
+                *self._pending.values(),
+                *(
+                    self._pending_record(doc_id, self._prior[doc_id], None)
+                    for doc_id in dropped
+                    if doc_id in self._prior
+                ),
+            ]
+        )
         logger.info(
             "Recorded %d documents PENDING before indexing the delta",
-            len(self._pending),
+            len(self._pending) + len(dropped),
         )
 
     def _pending_record(

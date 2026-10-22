@@ -180,6 +180,7 @@ def _state(
     suffix: str | None = None,
     resume: bool = True,
     fail_resumed_at: tuple[Any, ...] | None = None,
+    ranks: bool = False,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -190,7 +191,8 @@ def _state(
     that call completes before the run dies and, optionally, the class
     (default the vector store's). ``fail_resumed_at`` (a method and its
     class) makes the resumed run's first call of it report every item
-    failed; that run fails and is resumed once more."""
+    failed; that run fails and is resumed once more. With ``ranks``, the
+    graph's entity ranks and edge ids and ranks too."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
@@ -246,7 +248,7 @@ def _state(
         )
     except NotFoundError:  # no edge was ever written
         vector_edges = []
-    return {
+    state = {
         "entities": sorted(
             (e.id, e.name, e.type, len(e.text_unit_ids or []), e.description)
             for e in entities
@@ -284,6 +286,12 @@ def _state(
             for hit in vector_edges
         ),
     }
+    if ranks:
+        state["ranks"] = sorted((e.name, e.rank) for e in entities)
+        state["edge_ranks"] = sorted(
+            (r.id, r.source_name, r.target_name, r.rank) for r in edges
+        )
+    return state
 
 
 @pytest.mark.parametrize(
@@ -1810,3 +1818,214 @@ def test_a_strip_killed_after_its_claim_writes_leaves_no_claim_behind(
     )
 
     assert incremental == full
+
+
+def test_a_leftover_strip_note_keeps_an_entity_the_strip_writes(
+    tmp_path: Path,
+) -> None:
+    # Run 2's strip re-keys "ACME" onto "Acme LLC" (both noted) and dies
+    # before it deletes its note (a failed best-effort delete leaves it
+    # too). Run 3's strip reads the note: "ACME" is no longer in the graph,
+    # so it was retired as a vector-only copy, yet the strip splits "ACME"
+    # off again under that id; deleting it dropped d7.txt's unchanged edges.
+    d7 = (
+        "Depot and Acme Ltd and Acme Inc trade cash 2. "
+        "Buyer and ACME Inc and Acme LLC trade goods 1."
+    )
+    d4 = "Acme Corp and Acme Corp trade cash 2. Acme LLC and Acme Corp trade cash 3."
+    runs = [
+        {
+            "d7.txt": d7,
+            "d4.txt": "Acme Corp and ACME Inc trade cash 2. "
+            "Acme LLC and Acme Corp trade cash 3.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": d4,
+            "r2.txt": "Acme and ACME and Acme Corp trade cash 1.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": d4,
+            "r2.txt": "Acme and Acme and Acme Corp trade cash 1.",
+        },
+        {
+            "d7.txt": d7,
+            "d4.txt": "Acme and Acme Corp and Acme LLC trade parts 1. ACME trade cash 2.",
+            "r7.txt": "Acme and Acme and Acme Corp trade cash 1.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_clear_pending_strip", 1, False, IndexingManager),
+        resume=False,
+        gleaning=True,
+    )
+
+    assert incremental == full
+
+
+def test_a_resumed_strip_rewrites_the_vector_copies_of_its_re_pointed_edges(
+    tmp_path: Path,
+) -> None:
+    # Removing d7.txt re-points edges onto other spellings. Killed between
+    # the strip's graph edge phase and its vector edge phase, the retry
+    # found the graph copies current and left the vector copies naming (and
+    # pointing at) the old endpoint, or missing.
+    d0 = (
+        "Acme and Depot trade parts 2. Acme Corp and Acme Inc and Acme Ltd "
+        "trade cash 3. Acme Inc and Acme trade cash 1."
+    )
+    d4 = "Depot and Buyer trade parts 3. Acme Corp and Acme Inc trade parts 3."
+    runs = [
+        {
+            "d7.txt": "Acme Ltd and Depot and Acme LLC trade cash 1. "
+            "Acme trade cash 2.",
+            "d0.txt": d0,
+        },
+        {
+            "d7.txt": "Acme Ltd and Depot and Acme LLC trade parts 1. "
+            "Acme trade parts 2.",
+            "d0.txt": d0,
+            "d4.txt": d4,
+        },
+        {"d0.txt": d0, "d4.txt": d4},
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_run_indexing_phase", 3, False, IndexingManager),
+        gleaning=True,
+    )
+
+    assert incremental == full
+
+
+def test_a_resumed_split_strip_ranks_and_keys_edges_as_a_full_build(
+    tmp_path: Path,
+) -> None:
+    # Removing d4.txt splits "Acme Corp" off "Acme". Killed after the split
+    # was written and before the re-keyed edge's old copy was deleted, the
+    # retry re-derived that edge under its old id and ranked its endpoints
+    # with the old copy's link still counted.
+    kept = {
+        "d7.txt": "Acme trade goods 2. Acme and Acme Inc and Buyer trade goods 2.",
+        "d1.txt": "Acme Corp and Depot trade parts 1.",
+    }
+    runs = [
+        {"d4.txt": "Acme Corp trade goods 3. Buyer trade cash 1.", **kept},
+        kept,
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], ranks=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("delete_by_id", 2, False, SQLiteGraphIndexer),
+        ranks=True,
+    )
+
+    assert incremental == full
+
+
+def test_an_edit_leaves_no_interim_claim(tmp_path: Path) -> None:
+    # No fault. The edit makes the removal derive a claim of a kept unit
+    # under an interim id (its subject resolved without the edited
+    # document's spellings); the commit then derives the same statement
+    # into the full build's claim, and the interim copy stayed: a duplicate,
+    # here a self-claim.
+    first = "Acme Inc and Acme and ACME trade cash 2. ACME Inc and ACME and Acme Ltd trade goods 3."
+    d4 = "Acme Ltd and Acme Corp trade parts 2."
+    runs = [
+        {"d5.txt": first, "d4.txt": d4},
+        {
+            "d5.txt": f"{first} Acme Corp and Acme Ltd and ACME trade parts 1.",
+            "d4.txt": d4,
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "corpora",
+    [
+        pytest.param(
+            [
+                {"d0.txt": "Acme and Buyer trade goods 3."},
+                {"d4.txt": "Depot and Buyer trade cash 1."},
+                {"d0.txt": "Buyer and Acme trade cash 2."},
+            ],
+            id="the-next-run-passes-its-store-probe",
+        ),
+        pytest.param(
+            [
+                {
+                    "d0.txt": "Acme and Buyer trade goods 3.",
+                    "d1.txt": "Depot and Carrier trade parts 1.",
+                },
+                {"d1.txt": "Depot and Carrier trade parts 1."},
+                {
+                    "d0.txt": "Acme and Buyer trade goods 3.",
+                    "d1.txt": "Depot and Carrier trade parts 1.",
+                },
+            ],
+            id="a-dropped-document-back-unchanged-is-indexed",
+        ),
+    ],
+)
+def test_a_reset_killed_after_its_index_swap_leaves_no_stale_record(
+    tmp_path: Path, corpora: list[dict[str, str]]
+) -> None:
+    # The reset of the second corpus drops a document and is killed after
+    # it swapped an index in. The dropped document's record stayed
+    # PROCESSED over stores that no longer hold it: every later incremental
+    # run failed its store probe, or diffed the document unchanged when it
+    # came back and never indexed it again.
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+
+    def write(corpus: dict[str, str]) -> None:
+        shutil.rmtree(source, ignore_errors=True)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+
+    write(corpora[0])
+    assert _ingest(config, providers, source, tmp_path / "run-0").status is (
+        PipelineStageStatus.COMPLETED
+    )
+    write(corpora[1])
+    config.indexing.reset = True
+    with (
+        patch.object(
+            IndexingManager,
+            "_run_indexing_phase",
+            _dying("_run_indexing_phase", 2, True, IndexingManager),
+        ),
+        pytest.raises(_Died),
+    ):
+        _ingest(config, providers, source, tmp_path / "run-1")
+    config.indexing.reset = False
+    write(corpora[2])
+    context = _ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    texts = _stored(
+        config, providers, config.indexing.opensearch.text_units_index_prefix
+    )
+    assert {hit["_source"]["text"].strip() for hit in texts} == set(corpora[2].values())

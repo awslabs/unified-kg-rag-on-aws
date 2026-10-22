@@ -291,9 +291,10 @@ def test_reset_keeps_the_records_of_another_namespace_of_the_suffix(
 
 
 def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
-    # The stores were rebuilt: a registry left with the replaced documents'
-    # records would make a later incremental run remove what their files no
-    # longer state, so the reset fails instead of reporting success.
+    # A registry left with the replaced documents' records would make a
+    # later incremental run remove what their files no longer state, so the
+    # reset fails instead of reporting success: before it rebuilds anything,
+    # as it reads the records it drops to write them PENDING first.
     from unified_kg_rag.shared.exceptions import DocStatusRegistryError
 
     class _UnreachableStore(FakeDocStatusStore):
@@ -308,7 +309,7 @@ def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
 
     with pytest.raises(DocStatusRegistryError, match="registry unreachable"):
         stage._execute_core(context)
-    stage.indexing_manager.index_all_data.assert_called_once()
+    stage.indexing_manager.index_all_data.assert_not_called()
 
 
 def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None:

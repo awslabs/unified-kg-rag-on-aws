@@ -487,13 +487,20 @@ class BaseProcessor:
                 # `or ""` guards an explicit None field value (e.g. model-default
                 # Relationship.type / Claim.status): getattr's "" default only
                 # applies when the attribute is missing, not when it is None.
+                # An empty value (a missing or empty element) is no vote: it
+                # stays only when no statement gives one.
                 counts: dict[str, int] = defaultdict(int)
                 for i in group:
-                    counts[(getattr(i, field, "") or "").lower()] += 1
+                    if value := (getattr(i, field, "") or "").lower():
+                        counts[value] += 1
                 # The most frequent value, the smallest on a tie: the order
                 # of the group (of the text units) differs between corpora
                 # and namespaces of the same text.
-                setattr(first, field, min(counts, key=lambda k: (-counts[k], k)))
+                setattr(
+                    first,
+                    field,
+                    min(counts, key=lambda k: (-counts[k], k)) if counts else "",
+                )
 
         total_merges = 0
         for item_id, count in merge_counts.items():
