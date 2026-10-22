@@ -47,16 +47,17 @@ async def test_resolves_in_batches_and_caches(config: Config) -> None:
     store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt"})
     resolver = TextUnitFileResolver(config, lambda: store)
 
-    assert await resolver.aresolve(["t1", "t2", "t3"], "v2") == {
+    assert await resolver.aresolve(["t1", "t3", "t2"], "v2") == {
         "t1": "vendor.pdf",
         "t2": "buyer.txt",
     }
-    assert [q.filters for q in store.queries] == [{"id": ["t1", "t2"]}, {"id": ["t3"]}]
+    assert [q.filters for q in store.queries] == [{"id": ["t1", "t3"]}, {"id": ["t2"]}]
     query = store.queries[0]
     assert query.suffix == "v2"
     assert query.index_prefixes == [config.indexing.opensearch.text_units_index_prefix]
 
-    # Known and unknown ids are cached per suffix: no second lookup.
+    # Known and unknown ids (of a batch that answered) are cached per
+    # suffix: no second lookup.
     assert await resolver.aresolve(["t1", "t3"], "v2") == {"t1": "vendor.pdf"}
     assert len(store.queries) == 2
     # A different suffix is a different index.
@@ -89,6 +90,24 @@ async def test_batches_follow_the_live_limits(config: Config) -> None:
         "t1": "f1.txt",
         "t2": "f2.txt",
     }
+
+
+async def test_a_batch_without_any_hit_is_not_cached(config: Config) -> None:
+    # Regression: the retriever degrades a failed request to no hits, and
+    # every id of the batch was cached as unknown for the evaluator's life.
+    store = _Store({"t1": "vendor.pdf"})
+    fetch = store.aretrieve
+    calls = 0
+
+    async def failing_once(query: SearchQuery) -> list[RetrievalResult]:
+        nonlocal calls
+        calls += 1
+        return [] if calls == 1 else await fetch(query)
+
+    store.aretrieve = failing_once  # type: ignore[method-assign]
+    resolver = TextUnitFileResolver(config, lambda: store)
+    assert await resolver.aresolve(["t1"], None) == {}
+    assert await resolver.aresolve(["t1"], None) == {"t1": "vendor.pdf"}
 
 
 def test_file_name_of() -> None:

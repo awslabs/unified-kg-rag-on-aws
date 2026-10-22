@@ -1393,6 +1393,10 @@ changed once with the full-config keys (#332).
   window) - 1)`). Under a smaller window the probe for the cut came back
   short and read as the whole cut, dropping reports with no
   `global_level_capped` and no fallback to a shallower cut (#PR).
+- Evaluation: the source resolver no longer caches every id of a batch
+  that came back with no hit as unknown. The retriever degrades a failed
+  request to no hits, so one transient failure hid those files from the
+  `retrieval` evaluator for the rest of the run (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
