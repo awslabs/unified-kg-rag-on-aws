@@ -760,9 +760,12 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   (`max_hops`, `max_results_per_hop`, the budget split per seed, each seed
   at most its share) and scoring, but `degree` importance reads as `rank`
   (the index holds no degree). A side returns at most `max_query_size`
-  edges, best first; when a page is full, each vertex still open is asked
-  once more on its own, concurrently, at the full side: a hop costs two
-  requests, plus one per open vertex when a page is full, in two rounds.
+  edges, best first; when a side's page is full, the vertices still open
+  are asked together once more at that side, and when that page is full
+  too, each on its own (`search.max_concurrency` at a time) for what all
+  the open seeds may still take. A hop costs one request per side, one more
+  per full side, then one per open vertex and full side; under two or more
+  keys each page adds a text-unit check.
   Edges back to a vertex already reached are left out by the store (a
   `must_not` on the other endpoint), so they cannot fill a page. An index
   built before

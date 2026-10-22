@@ -81,6 +81,8 @@ class _Index:
         self.has_relationships = has_relationships
         self.units_passing = units_passing
         self.calls: list[tuple[str, dict]] = []
+        self.excludes: list[tuple[str, dict | None]] = []  # (asked end, exclude)
+        self.honours_exclude = True
         self.edge_fields: list[list[str] | None] = []
 
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool:
@@ -99,13 +101,23 @@ class _Index:
                 return []
             side = "source_id" if "source_id" in filters else "target_id"
             ends = set(filters[side])
+            self.excludes.append((side, query.exclude))
+            # The store leaves the excluded edges out before the page is cut.
+            excluded = {
+                k: set(v)
+                for k, v in (query.exclude or {}).items()
+                if self.honours_exclude
+            }
             out = []
             # Best first, as the retriever's importance sort: a page holds
             # the top_k best edges only.
             for eid, a, b, rank in sorted(self.edges, key=lambda e: (-e[3], e[0])):
                 if len(out) >= query.top_k:
                     break
-                if eid in self.passing and (a if side == "source_id" else b) in ends:
+                endpoints = {"source_id": a, "target_id": b}
+                if any(endpoints[k] in v for k, v in excluded.items()):
+                    continue
+                if eid in self.passing and endpoints[side] in ends:
                     out.append(
                         RetrievalResult(
                             content=eid,
@@ -482,12 +494,15 @@ async def test_every_seed_reaches_its_share(config: Config) -> None:
         assert len([v for v in reached if v.startswith(f"V{seed[1:]}-")]) == 2
 
 
-async def test_a_full_page_asks_each_open_vertex_once_more(config: Config) -> None:
+async def test_a_full_page_asks_the_open_vertices_together_then_each(
+    config: Config,
+) -> None:
     # Regression: a full page was asked again for the still-open vertices
     # together, round after round, each round closing about one hub (20
-    # hubs: 30 sequential requests, and L's neighbour never reached). Each
-    # open vertex is now asked once more on its own, all at once, at the
-    # full end only: one more round.
+    # hubs: 30 sequential requests, and L's neighbour never reached). The
+    # open vertices are now asked together once (with the reached vertices
+    # left out, a page of new edges), then, when that page is full too,
+    # each on its own, all at once, at the full end only.
     edges = [
         (f"m{j:02d}-{i:03d}", f"M{j:02d}", f"V{j:02d}-{i:03d}", 100.0)
         for j in range(20)
@@ -504,50 +519,133 @@ async def test_a_full_page_asks_each_open_vertex_once_more(config: Config) -> No
     (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
     assert "LX" in reached and len(reached) == 21 + 2 * 20 + 1
     asks = _relationship_calls(config, index)
-    # One request per end, then one per vertex still open at the full end
-    # (the source side): the first page closed one hub of the 20.
-    assert len(asks) == 2 + 20
-    assert all(len(f["source_id"]) == 1 for f in asks[2:])
+    # One request per end; the open vertices together at the full end (the
+    # source side; the first page closed one hub of the 20); then one per
+    # vertex still open (the second page closed one more).
+    assert len(asks) == 2 + 1 + 19
+    assert len(asks[2]["source_id"]) == 20
+    assert all(len(f["source_id"]) == 1 for f in asks[3:])
     assert len(kept) == 21 + 10  # the seeds and the cut
 
 
-async def test_a_closed_seeds_vertices_are_not_asked(config: Config) -> None:
-    # Before a hop the frontier keeps only the vertices whose seed is short
-    # of its share: a1 belongs to A, which took its one (B found nothing,
-    # so the budget of 2 was not spent and a1 was asked at hop 2).
-    config.indexing.neptune.traversal_fetch_multiplier = 1
-    edges = [("r1", "A", "a1", 2.0), ("r2", "a1", "a2", 1.0)]
-    index = _Index(config, edges=edges, passing={e[0] for e in edges})
-    await _strategy(config, _Graph(), index)._expand_via_graph(
-        SearchQuery(query="q", top_k=2, filters={"attr_grp": "a"}), ["A", "B"]
-    )
-    calls = _relationship_calls(config, index)
-    assert len(calls) == 2  # hop 1 only
-    assert all(
-        sorted(f.get("source_id", f.get("target_id"))) == ["A", "B"] for f in calls
-    )
-
-
-async def test_two_keys_do_not_let_a_hubs_failing_edges_starve_a_seed(
+async def test_the_requests_on_their_own_run_max_concurrency_at_a_time(
     config: Config,
 ) -> None:
-    # Regression: the hub's 150 edges pass the relationships index (each key
-    # by another document) but no document passes both; they filled the
-    # page, closed nothing, and the "same page again" guard stopped before
-    # S2 was asked: X was never reached.
-    hub = [(f"h{i:03d}", "H", f"N{i:03d}", 100.0) for i in range(150)]
-    edges = [*hub, ("s2", "S2", "X", 1.0)]
+    # Regression: every open vertex was asked at once (DRIFT under a broad
+    # filter: 420 requests in flight).
+    edges = [
+        (f"m{j:02d}-{i:03d}", f"M{j:02d}", f"V{j:02d}-{i:03d}", 100.0)
+        for j in range(20)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    in_flight, peak = 0, 0
+    ask = index.aretrieve
+
+    async def counted(query: SearchQuery) -> list[RetrievalResult]:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        try:
+            await asyncio.sleep(0.001)
+            return await ask(query)
+        finally:
+            in_flight -= 1
+
+    index.aretrieve = counted  # type: ignore[method-assign]
+    config.search.max_concurrency = 3
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}),
+        [f"M{j:02d}" for j in range(20)],
+    )
+    assert len(_relationship_calls(config, index)) == 2 + 1 + 18
+    assert peak == 3
+
+
+async def test_seeds_sharing_their_neighbours_each_reach_their_share(
+    config: Config,
+) -> None:
+    # Regression: the concurrent requests per open vertex left out the same
+    # reached vertices and each asked for what its vertex needed: they all
+    # got the same best shared neighbours, the first seed took them and the
+    # others nothing (20 seeds around a shared core: 4 entities reached
+    # instead of 40). Each now asks for what all the open seeds may take.
+    seeds = [f"S{i:02d}" for i in range(20)]
+    edges = [
+        (f"{s}-c{j:03d}", s, f"C{j:03d}", 100.0) for s in seeds for j in range(150)
+    ]
+    edges += [(f"{s}-p{j}", s, f"{s}P{j}", 1.0) for s in seeds for j in range(5)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert len(reached) == 20 + 20 * 2  # share: ceil(10 * 3 / 20)
+
+
+@pytest.mark.parametrize("respected", [True, False])
+async def test_edges_back_to_reached_vertices_do_not_fill_a_page(
+    config: Config, respected: bool
+) -> None:
+    # Regression: B's 150 best edges lead back to A (a seed: reached) and
+    # filled every page of B's, so B's one new neighbour X was never
+    # reached. The store leaves edges to reached vertices out (exclude on
+    # the other end); a store that ignored it would starve B again.
+    edges = [(f"ba{i:03d}", "B", "A", 100.0) for i in range(150)]
+    edges += [("bx", "B", "X", 1.0), ("ay", "A", "Y", 1.0)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    index.honours_exclude = respected
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["A", "B"]
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert ("X" in reached) is respected
+    # Left out at the other end of the asked one: an edge from B to A is B's.
+    other = {"source_id": "target_id", "target_id": "source_id"}
+    assert index.excludes
+    for side, exclude in index.excludes:
+        assert exclude is not None and set(exclude) == {other[side]}
+        assert {"A", "B"} <= set(exclude[other[side]])
+
+
+async def test_two_keys_ask_again_past_the_edges_the_check_dropped(
+    config: Config,
+) -> None:
+    # B's best edges pass the relationships index but no document passes
+    # both keys; they come back on each of B's pages (10 on the first, all
+    # 15 on the joint one). B's request on its own asks for them on top of
+    # what the open seeds may take, so B's one passing edge (ranked last)
+    # is on its page.
+    config.indexing.opensearch.max_query_size = 20
+    edges = [(f"a{i}", "A", f"VA{i}", 200.0) for i in range(10)]
+    edges += [(f"bf{i:02d}", "B", f"F{i:02d}", 100.0) for i in range(15)]
+    edges += [(f"hf{i:02d}", "H", f"G{i:02d}", 100.0) for i in range(50)]
+    edges.append(("bx", "B", "X", 1.0))
+    units = {f"u-{v}" for v in ("bx", "X", "A", "B", "H")}
+    units |= {f"u-a{i}" for i in range(10)} | {f"u-VA{i}" for i in range(10)}
     index = _Index(
-        config,
-        edges=edges,
-        passing={e[0] for e in edges},
-        units_passing={"u-s2", "u-X", "u-S2", "u-H"},
+        config, edges=edges, passing={e[0] for e in edges}, units_passing=units
     )
-    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
-        SearchQuery(query="q", filters={"attr_grp": "a", "attr_category": "x"}),
-        ["H", "S2"],
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(
+            query="q", top_k=2, filters={"attr_grp": "a", "attr_category": "x"}
+        ),
+        ["A", "H", "B"],
     )
-    assert _paths(kept)["X"] == "S2 -> X"
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert "X" in reached
+    asked = [
+        f["source_id"] for f in _relationship_calls(config, index) if "source_id" in f
+    ]
+    # A took its share on the first page; H and B together, then each.
+    assert asked[1] == ["H", "B"] and sorted(asked[2:]) == [["B"], ["H"]]
 
 
 async def test_a_query_asks_for_a_frontiers_edges_once(config: Config) -> None:

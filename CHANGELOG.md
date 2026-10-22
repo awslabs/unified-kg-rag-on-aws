@@ -1553,6 +1553,19 @@ changed once with the full-config keys (#332).
   its other neighbour (150 edges between two seeds hid B's edge to X), and
   on e136253c a page of back edges left 20 of 30 leaves unreached with
   budget left (#406).
+- Filtered graph expansion's refetch of a full page asks the vertices still
+  open together once more (with the reached vertices left out, that page
+  holds new edges only) and, only when that page is full too, each on its
+  own, `search.max_concurrency` at a time: each open vertex was asked at
+  once, so DRIFT under a category filter (20 hub seeds) sent 923 store
+  requests with 372 in flight, now 301 with 62, p50 4.4 s to 3.3 s on
+  OpenSearch and 6.4 s to 2.2 s on the embedded engine; the walk on a random graph took 251 requests, now 133, on a
+  dense one 185, now 46, the same entities on both engines. The requests on
+  their own also ask for what all the open seeds may still take: asked at
+  once with what each needed, they got the same shared neighbours and the
+  first seed took them all (20 seeds around a shared core reached 4
+  entities instead of 40). Under a filter every document passes, responses
+  grow by about a quarter (larger pages) for fewer requests (#PR).
 - Ingestion no longer fails for good on a name with braces: the merge of
   an item's statements built its debug message with `str.format` over the
   item's names and types, so an entity, edge or claim named like
