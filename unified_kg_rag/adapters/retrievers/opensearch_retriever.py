@@ -447,8 +447,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     update={"filters": self._filters_for_index(prefix, query.filters)}
                 )
 
-            window = limits[prefix]
-            size = self._hit_count(index_query, window.max_result_window)
+            window = limits[prefix].max_result_window
+            size = self._hit_count(index_query, window)
             bodies = self._build_search_bodies(
                 index_query,
                 search_type,
@@ -457,7 +457,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 query_vector,
                 size=size,
                 sort=self._importance_sort(prefix, index_query, search_type),
-                window=window.max_result_window,
+                window=window,
             )
             if query.source_fields is not None:
                 # A check that needs the ids only ships no document back.

@@ -112,11 +112,6 @@ class IndexLimits:
         return max(1, min(self.max_terms_count, self.max_result_window))
 
 
-def id_batch_size(settings: dict[str, Any]) -> int:
-    """``IndexLimits.id_batch_size`` under ``settings`` alone."""
-    return IndexLimits.of(settings).id_batch_size
-
-
 _SCALARS = (str, int, float, bool)
 _RANGE_BOUNDS = frozenset({"gt", "gte", "lt", "lte"})
 

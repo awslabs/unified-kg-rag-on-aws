@@ -2156,7 +2156,7 @@ class OpenSearchIndexingConfig(BaseModel):
             for key, setting in nested.items():
                 if f"index.{key}" in flat:
                     raise ValueError(
-                        f"index_settings sets 'index.{key}' twice (nested and " "flat)"
+                        f"index_settings sets 'index.{key}' twice (nested and flat)"
                     )
                 flat[f"index.{key}"] = setting
             value = flat
@@ -2184,7 +2184,7 @@ class OpenSearchIndexingConfig(BaseModel):
                     setting = 0
                 if setting < 1:
                     raise ValueError(
-                        f"index_settings.{key} must be a whole number of at " "least 1"
+                        f"index_settings.{key} must be a whole number of at least 1"
                     )
         return value
 

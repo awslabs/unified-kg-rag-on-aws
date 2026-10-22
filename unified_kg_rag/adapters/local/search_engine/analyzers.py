@@ -44,6 +44,7 @@ from collections.abc import Callable
 from functools import cache, lru_cache
 
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
 
 logger = get_logger(__name__)
@@ -53,8 +54,6 @@ Analyzer = Callable[[str], list[str]]
 STANDARD = "standard"
 
 _ANALYZERS: dict[str, Analyzer] = {}
-_warned: set[str] = set()
-_warned_lock = threading.Lock()
 
 # Code point ranges by their part in a word under Unicode word boundaries
 # (UAX #29, which OpenSearch's standard tokenizer follows), read from
@@ -203,20 +202,13 @@ def register_analyzer(*names: str) -> Callable[[Analyzer], Analyzer]:
     return decorator
 
 
-def _warn_once(key: str, message: str, *args: object) -> None:
-    with _warned_lock:
-        if key in _warned:
-            return
-        _warned.add(key)
-    logger.warning(message, *args)
-
-
 def get_analyzer(name: str | None) -> Analyzer:
     """The analyzer registered as ``name`` (``standard`` when none is)."""
     analyzer = _ANALYZERS.get(name or STANDARD)
     if analyzer is not None:
         return analyzer
-    _warn_once(
+    warn_once(
+        logger,
         f"analyzer:{name}",
         "The embedded search engine has no '%s' analyzer; analyzing that "
         "field with 'standard' instead",
@@ -272,7 +264,8 @@ def _porter_stem() -> Callable[[str], str] | None:
     try:
         import snowballstemmer
     except ImportError:
-        _warn_once(
+        warn_once(
+            logger,
             "stemmer",
             "snowballstemmer is not installed, so the embedded search engine's "
             "'english' analyzer does not stem (install the [local] extra)",

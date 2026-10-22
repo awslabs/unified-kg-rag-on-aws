@@ -3969,6 +3969,9 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: the module-level `filter_schema.id_batch_size()` (use
+  `IndexLimits.id_batch_size`), and the two copies of the warn-once helper
+  of the local reranker and analyzers (now `shared.logging.warn_once`) (#PR).
 - The `aws.bedrock.guardrail.intervened` attribute on model (`chat <model>`)
   spans, and the detector behind it: no model call carries a guardrail since
   the guardrail screens the query and answer through `ApplyGuardrail`, so it
