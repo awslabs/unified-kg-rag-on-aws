@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -70,8 +71,8 @@ class _Store:
         self.entities_suffix = entities_suffix
         self.queries: list[SearchQuery] = []
 
-    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
-        return self.id_batch
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(max_terms_count=self.id_batch)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)

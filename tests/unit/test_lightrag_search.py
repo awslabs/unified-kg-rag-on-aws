@@ -18,6 +18,7 @@ from tests.fixtures.fakes.retrievers import FakeRetriever
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     _pick_by_weighted_polling,
 )
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -156,6 +157,9 @@ class LineageRetriever:
     def __init__(self) -> None:
         self.calls: list[SearchQuery] = []
 
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         prefix = query.index_prefixes[0] if query.index_prefixes else "x"
@@ -253,6 +257,9 @@ class RelationshipEndpointRetriever:
     def __init__(self) -> None:
         self.calls: list[SearchQuery] = []
 
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         return [
@@ -306,6 +313,9 @@ class FailingRetriever:
 
     def __init__(self, tag: str) -> None:
         self.tag = tag
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         raise RuntimeError(f"{self.tag} backend down")
@@ -642,6 +652,9 @@ class IncidentEdgeRetriever:
         self.edges = edges
         self.calls: list[SearchQuery] = []
 
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         prefix = query.index_prefixes[0] if query.index_prefixes else ""
@@ -881,6 +894,9 @@ class EndpointEntityRetriever:
         self.present = present
         self.ll_entity_ids = ll_entity_ids
         self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -1252,6 +1268,9 @@ class _ConcurrencyProbe:
         self.in_flight = 0
         self.max_in_flight = 0
         self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)

@@ -2082,7 +2082,9 @@ class OpenSearchIndexingConfig(BaseModel):
             "max_result_window) and applies to indices created afterwards, so "
             "reindex after changing it. Reads and searches are sized by the "
             "smaller of max_result_window / max_terms_count here and on the "
-            "live index. Raise refresh_interval "
+            "live index (read again when a search is refused for them): a "
+            "fetch by id names the best-ranked ids that fit. Raise "
+            "refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
             "querying. Setting the key replaces the whole map; a left-out "
             "shard, replica or refresh setting is 1, 0 or 1s."

@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -64,6 +65,9 @@ class FakeDocumentRetriever:
         self.relationships_prefix = relationships_prefix
         self.calls: list[SearchQuery] = []
 
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         filters = query.filters or {}
@@ -84,6 +88,9 @@ class FakeDocumentRetriever:
 
 
 class FakeGraphRetriever:
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         return [
             RetrievalResult(

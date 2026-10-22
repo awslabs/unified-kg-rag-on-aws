@@ -26,8 +26,8 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
+    IndexLimits,
     document_filters,
-    id_batch_size,
     opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -248,11 +248,11 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         """
         return None
 
-    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
-        """Ids one fetch by id on ``prefix``'s index for ``suffix`` can name
-        (``IndexLimits.id_batch_size``); by default under the configured
-        ``index_settings``."""
-        return id_batch_size(self._config.indexing.opensearch.index_settings)
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        """The limits in force on ``prefix``'s index for ``suffix``: the hits
+        one search returns and the values one ``terms`` clause takes. By
+        default the configured ``index_settings``'."""
+        return IndexLimits.of(self._config.indexing.opensearch.index_settings)
 
     async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
         """Whether ``prefix``'s index exists for ``suffix``; ``None`` (the
@@ -364,6 +364,19 @@ class BaseSearchStrategy(ABC):
                 span.set_attributes(_retrieval_attributes(results))
             return results
 
+    async def _fetchable_ids(
+        self, prefix: str, suffix: str | None, ranked: list[str]
+    ) -> list[str]:
+        """The best-ranked of ``ranked`` one fetch by id on ``prefix``'s index
+        can name (``IndexLimits.id_batch_size``). Past that many, a search returns the
+        window's worth in the engine's order, not the best-ranked, or a terms
+        clause over ``max_terms_count`` fails the query."""
+        retriever = self.document_retriever
+        if retriever is None:
+            return ranked
+        limits = await retriever.aindex_limits(prefix, suffix)
+        return ranked[: limits.id_batch_size]
+
     async def _ids_passing(
         self,
         query: SearchQuery,
@@ -377,7 +390,7 @@ class BaseSearchStrategy(ABC):
         """The ``ids`` of ``prefix``'s index that pass ``filters``.
 
         Ids only come back, in batches one request can hold
-        (``aid_batch_size``) of the ids not known yet. With ``enough`` the ids
+        (``IndexLimits.id_batch_size``) of the ids not known yet. With ``enough`` the ids
         are counted in the order given and the check stops once ``enough`` of
         them passed: every id ranked above the ``enough``-th passing one is
         known, so a caller cutting the ranked ids to the passing ones keeps
@@ -398,7 +411,7 @@ class BaseSearchStrategy(ABC):
             [prefix, query.suffix, filters], sort_keys=True, default=str
         )
         known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
-        batch = await retriever.aid_batch_size(prefix, query.suffix)
+        batch = (await retriever.aindex_limits(prefix, query.suffix)).id_batch_size
 
         def note(outcomes: dict[str, bool]) -> None:
             if checked is not None:
@@ -760,7 +773,14 @@ class BaseSearchStrategy(ABC):
         def open_(vertex: str) -> bool:
             return needed(vertex) > 0
 
-        page = self._incident_fetch_limit()
+        page = min(
+            self._incident_fetch_limit(),
+            (
+                await retriever.aindex_limits(
+                    o.relationships_index_prefix, query.suffix
+                )
+            ).max_result_window,
+        )
 
         def take(edges: list[RetrievalResult], asked: set[str]) -> None:
             """Walk ``edges`` from the ``asked`` vertices."""
@@ -867,16 +887,20 @@ class BaseSearchStrategy(ABC):
                 for vertex, (edges, _, _) in zip(still_open, pages, strict=True):
                     take(edges, {vertex})
             frontier = reached
+        # The seeds first, then by distance: the order the walk reached them.
+        reached_ids = await self._fetchable_ids(
+            o.entities_index_prefix, query.suffix, list(parent)
+        )
         entities = await self._safe_aretrieve(
             retriever,
             SearchQuery(
                 query="",
                 search_type=SearchType.LEXICAL,
-                top_k=len(parent),
+                top_k=len(reached_ids),
                 retrieval_multiplier=1,
                 index_prefixes=[o.entities_index_prefix],
                 suffix=query.suffix,
-                filters=self._scoped_filters(query, id=list(parent)),
+                filters=self._scoped_filters(query, id=reached_ids),
             ),
             "Filtered graph expansion entities",
         )
@@ -1014,7 +1038,8 @@ class BaseSearchStrategy(ABC):
     ) -> tuple[list[RetrievalResult], tuple[str, ...]]:
         """The relationships incident to ``entity_ids`` (only
         ``source_fields`` of each when given) at the ``ends`` named, at most
-        ``size`` per end (``_incident_fetch_limit`` by default), without those
+        ``size`` per end (``_incident_fetch_limit`` by default; never past
+        the index's live ``max_result_window``), without those
         whose other endpoint is in ``away_from``, and the ends whose page came
         back full (the edges past it were dropped).
 
@@ -1091,7 +1116,17 @@ class BaseSearchStrategy(ABC):
         the ends whose page came back full and whether a request failed."""
         retriever = self.document_retriever
         assert retriever is not None
-        page = size or self._incident_fetch_limit()
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        limits = await retriever.aindex_limits(prefix, query.suffix)
+        # A page is judged full against the hits a search returns: the live
+        # window may be below max_query_size.
+        cap = min(self._incident_fetch_limit(), limits.max_result_window)
+        page = min(size or cap, cap)
+        # One terms clause per list: past max_terms_count the store refuses
+        # the query. The vertices beyond are not asked (the walk's frontier
+        # is in reach order); the exclusion only saves page room.
+        entity_ids = entity_ids[: limits.max_terms_count]
+        away_from = (away_from or [])[: limits.max_terms_count]
         failures: list[Exception] = []
 
         async def by_endpoint(field: str) -> list[RetrievalResult]:
@@ -1101,9 +1136,7 @@ class BaseSearchStrategy(ABC):
                     query="",
                     search_type=SearchType.LEXICAL,
                     top_k=page,
-                    index_prefixes=[
-                        self.config.indexing.opensearch.relationships_index_prefix
-                    ],
+                    index_prefixes=[prefix],
                     suffix=query.suffix,
                     filters=self._scoped_filters(query, **{field: entity_ids}),
                     exclude=({_OTHER_END[field]: away_from} if away_from else None),
@@ -1122,7 +1155,7 @@ class BaseSearchStrategy(ABC):
         full = tuple(
             end for end, side in zip(ends, sides, strict=True) if len(side) >= page
         )
-        if full and page >= self._incident_fetch_limit():  # not a sized page
+        if full and page >= cap:  # not a sized page
             memo = current_query_scope()
             warned = memo is not None and _MEMO_PAGE_CAP in memo
             (logger.debug if warned else logger.warning)(

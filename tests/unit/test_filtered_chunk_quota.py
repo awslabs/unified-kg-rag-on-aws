@@ -17,6 +17,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -49,8 +50,8 @@ class _Store:
         self.fetches: list[list[str]] = []  # content fetches
         self.checks: list[list[str]] = []  # ids-only checks
 
-    async def aid_batch_size(self, prefix: str, suffix: str | None) -> int:
-        return 65536
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         filters = query.filters or {}

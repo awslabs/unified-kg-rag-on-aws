@@ -8,6 +8,7 @@ retriever's tag), so a test can tell which index a strategy searched.
 
 from __future__ import annotations
 
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
 
 
@@ -17,6 +18,9 @@ class FakeRetriever:
     def __init__(self, tag: str) -> None:
         self.tag = tag
         self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)

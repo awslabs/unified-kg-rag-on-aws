@@ -1332,6 +1332,22 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Retrieval: the live index limits (#408) reach every search. A fetch by
+  id (local search's text units, LightRAG's linked chunks and endpoint
+  entities, the filtered walk's reached entities, `run-eval`'s source
+  files) names the best-ranked ids one search returns, where a live
+  `max_result_window` below their count got the engine's pick; `run-eval`
+  resolved only 300 of 600 text units under a window of 200 and cached the
+  rest as unknown. The filtered walk judges a page full against the hits a
+  search returns (a window below `max_query_size` stopped it after one
+  page, silently), and cuts its own vertex and exclusion lists to
+  `max_terms_count` instead of failing the query with
+  `InvalidFilterError`. A retriever reads each alias's settings once for
+  concurrent searches, keeps a missing index's, and reads them again when
+  a search is refused for asking more than the live index allows (an index
+  rebuilt with a smaller window failed every query until a restart). A
+  query role denied the settings logs one warning; the permissions it
+  needs are listed in [Operations](docs/operations.md) (#PR).
 - Ingestion: `index_settings` are checked before extraction on every run,
   not only when the extraction-records index is missing: each run creates
   and deletes a probe index with the vector indices' settings first. A

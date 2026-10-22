@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.evaluation.source_resolver import (
     TextUnitFileResolver,
@@ -18,9 +19,13 @@ pytestmark = pytest.mark.unit
 class _Store:
     """Fake document retriever: answers id-batch fetches from a dict."""
 
-    def __init__(self, files: dict[str, str]) -> None:
+    def __init__(self, files: dict[str, str], batch: int = 2) -> None:
         self.files = files
+        self.batch = batch
         self.queries: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(max_result_window=self.batch)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
@@ -41,7 +46,6 @@ class _Store:
 async def test_resolves_in_batches_and_caches(config: Config) -> None:
     store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt"})
     resolver = TextUnitFileResolver(config, lambda: store)
-    resolver.BATCH_SIZE = 2
 
     assert await resolver.aresolve(["t1", "t2", "t3"], "v2") == {
         "t1": "vendor.pdf",
@@ -58,6 +62,33 @@ async def test_resolves_in_batches_and_caches(config: Config) -> None:
     # A different suffix is a different index.
     await resolver.aresolve(["t1"], None)
     assert len(store.queries) == 3
+
+
+async def test_batches_follow_the_live_limits(config: Config) -> None:
+    # Batches were a fixed 500 ids: under a live max_result_window of 200 a
+    # search returned 200 of them, and the other 300 were cached as unknown.
+    store = _Store({f"t{i}": f"f{i % 7}.txt" for i in range(600)}, batch=200)
+    resolver = TextUnitFileResolver(config, lambda: store)
+
+    assert len(await resolver.aresolve(list(store.files), None)) == 600
+    assert [len(q.filters["id"]) for q in store.queries] == [200, 200, 200]
+
+    # Limits lowered by a reindex between the batching and the fetch: the
+    # misses of the cut batch are asked again next time, not cached.
+    fetch = store.aretrieve
+
+    async def shrinking(query: SearchQuery) -> list[RetrievalResult]:
+        store.batch = 1
+        return (await fetch(query))[:1]
+
+    store.aretrieve = shrinking  # type: ignore[method-assign]
+    other = TextUnitFileResolver(config, lambda: store)
+    assert await other.aresolve(["t1", "t2"], None) == {"t1": "f1.txt"}
+    store.aretrieve = fetch  # type: ignore[method-assign]
+    assert await other.aresolve(["t1", "t2"], None) == {
+        "t1": "f1.txt",
+        "t2": "f2.txt",
+    }
 
 
 def test_file_name_of() -> None:
