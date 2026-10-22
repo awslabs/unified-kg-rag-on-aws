@@ -1397,6 +1397,11 @@ changed once with the full-config keys (#332).
   that came back with no hit as unknown. The retriever degrades a failed
   request to no hits, so one transient failure hid those files from the
   `retrieval` evaluator for the rest of the run (#PR).
+- Docs: the design guide states the filtered walk's page (`min(max_query_size,
+  live max_result_window)`, a frontier past `max_terms_count` in batches)
+  and its per-vertex waves; the template notes that the default
+  `max_reports_per_level` of 100 maps at most 99, and that
+  `search.max_concurrency` bounds the walk's per-vertex requests (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,

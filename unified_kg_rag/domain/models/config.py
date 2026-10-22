@@ -2456,8 +2456,9 @@ class GlobalSearchConfig(BaseModel):
             "to the cut, global_level_capped). "
             "At most indexing.opensearch.max_query_size - 1 (and the reports "
             "index's live max_result_window - 1): one store request returns at "
-            "most that many hits and the cut asks for one more than the cap. "
-            "Each report costs map-step input tokens."
+            "most that many hits and the cut asks for one more than the cap "
+            "(the default of 100 maps at most 99). Each report costs map-step "
+            "input tokens."
         ),
     )
     use_dynamic_selection: bool = Field(
