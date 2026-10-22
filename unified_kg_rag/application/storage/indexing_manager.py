@@ -750,10 +750,17 @@ class IndexingManager:
             # A stored claim citing a unit a derived claim gained (this run's
             # removal derived it from a kept unit, before the delta's
             # entities were in the graph) may state what the derived claim
-            # does under another id: it is derived with them.
+            # does under another id: it is derived with them. Under a killed
+            # commit's note, the removal may have derived it from a cited
+            # unit too (against the commit's unfinished graph): every unit
+            # the derived claims cite is checked.
             gained = sorted(
                 {u for c in derived for u in c.text_unit_ids or []}
-                - {u for c in group for u in c.text_unit_ids or []}
+                - (
+                    set()
+                    if self._noted_commit_entities.get(suffix)
+                    else {u for c in group for u in c.text_unit_ids or []}
+                )
             )
             overlapping = (
                 set(

@@ -2029,3 +2029,69 @@ def test_a_reset_killed_after_its_index_swap_leaves_no_stale_record(
         config, providers, config.indexing.opensearch.text_units_index_prefix
     )
     assert {hit["_source"]["text"].strip() for hit in texts} == set(corpora[2].values())
+
+
+KEPT_REMOVAL = {
+    "d7.txt": "Acme Corp and Depot and Acme Ltd trade goods 3. Acme Ltd trade cash 2.",
+    "r2.txt": "Acme Ltd and Acme LLC trade goods 2.",
+}
+RUNS_COMMIT_REMOVAL = [
+    {
+        "d7.txt": "Acme LLC and Depot and Acme Ltd trade goods 3. Acme Inc trade cash 2.",
+        "r2.txt": "Acme Ltd and Acme LLC trade goods 2.",
+    },
+    KEPT_REMOVAL,
+    {
+        **KEPT_REMOVAL,
+        "d4.txt": "Acme LLC trade cash 1. Depot and Acme LLC trade goods 2.",
+    },
+    KEPT_REMOVAL,
+]
+
+
+@pytest.mark.parametrize("first", [0, 1], ids=["with-r0", "without-r0"])
+def test_a_removal_after_a_killed_commit_leaves_no_interim_claim(
+    tmp_path: Path, first: int
+) -> None:
+    # The commit adding d4 re-keys the claims of the kept units onto the
+    # spelling d4 adds (Acme LLC) and dies at its first graph entity write:
+    # the vector store holds the re-keyed claims, the graph not their
+    # subject. The next run removes d4. Its strip derived the d7 claim
+    # against that graph: the subject, absent, resolved to the stated
+    # spelling (Acme Corp) under a new id no later derivation read, beside
+    # the full build's claim the finished commit note derived.
+    runs = RUNS_COMMIT_REMOVAL[first:]
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=len(runs) - 2,
+        die_at=("upsert_entities", 1, False, SQLiteGraphIndexer),
+        resume=False,
+    )
+    assert incremental == full
+
+
+def test_a_removal_after_a_commit_killed_past_its_retire_keeps_the_strips_claim(
+    tmp_path: Path,
+) -> None:
+    # The commit's writes and retire all landed; it died before deleting its
+    # note. The removal's strip re-keys the noted ACME onto Acme Ltd and
+    # derives the claim about it with that re-key: the commit finishing the
+    # note must not derive it again from a graph without the old id.
+
+    d0 = {
+        "d0.txt": "Depot and Acme LLC and Acme Ltd trade cash 3. "
+        "ACME and ACME Inc and Acme Ltd trade goods 1."
+    }
+    runs = [d0, {**d0, "d7.txt": "Acme and ACME and Acme Inc trade goods 2."}, d0]
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("delete_retired_ids", 1, True, IndexingManager),
+        gleaning=True,
+        resume=False,
+    )
+    assert incremental == full

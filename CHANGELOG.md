@@ -1332,6 +1332,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal run after a commit killed mid-write no
+  longer leaves an extra claim. The removal derived a kept unit's claim
+  against the killed commit's unfinished graph, where the subject was
+  missing, under an id no later derivation read; the commit finishing its
+  note then derived the full build's claim beside it. Under a pending
+  commit note, stored claims citing any unit the derived claims cite are
+  now derived with them (#PR).
 - Retrieval: the filtered walk asks the vertices it asks on its own in
   waves of `search.max_concurrency`, each request sized for what its wave
   may still take and leaving out what earlier waves reached; each asked
