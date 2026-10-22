@@ -3043,9 +3043,11 @@ class LoggingConfig(BaseModel):
             # run-visualization) and httpcore every connection step (httpx).
             "numba": "WARNING",
             "httpcore": "WARNING",
-            # At INFO: every OpenSearch request (opensearch) and every model
-            # server request (httpx: Ollama and OpenAI-compatible servers).
-            "opensearch": "WARNING",
+            # At WARNING: every failed OpenSearch request, the 404s of an
+            # alias not created yet included (the client's errors are logged
+            # by adapters.aws.opensearch). At INFO: every model server
+            # request (httpx: Ollama and OpenAI-compatible servers).
+            "opensearch": "ERROR",
             "httpx": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",

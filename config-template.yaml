@@ -939,7 +939,7 @@ logging:
     urllib3: "WARNING"
     numba: "WARNING" # at DEBUG, a line per JIT compile (run-visualization)
     httpcore: "WARNING" # at DEBUG, a line per connection step (httpx)
-    opensearch: "WARNING" # at INFO, a line per OpenSearch request
+    opensearch: "ERROR" # at WARNING, a line per failed request (expected 404s too)
     httpx: "WARNING" # at INFO, a line per Ollama / OpenAI-compatible request
     opentelemetry: "ERROR" # the OTLP exporter warns on every retry
 

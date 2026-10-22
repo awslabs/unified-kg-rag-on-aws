@@ -94,6 +94,20 @@ def test_info_leaves_the_request_loggers_quiet(stream: io.StringIO) -> None:
     assert [r["event"] for r in _records(stream)] == ["kept"]
 
 
+def test_a_failed_opensearch_request_is_logged_by_the_package_only(
+    stream: io.StringIO,
+) -> None:
+    # opensearch-py logs every failed request at WARNING, the 404 of each
+    # alias lookup before its index exists included; the package's client
+    # logs the failures that matter.
+    setup_logging(_config(), stream=stream)
+    logging.getLogger("opensearch").warning(
+        "GET http://localhost:9200/graphrag-entities-default/_alias [status:404]"
+    )
+    logging.getLogger("unified_kg_rag.adapters.aws.opensearch").error("kept")
+    assert [r["event"] for r in _records(stream)] == ["kept"]
+
+
 def test_debug_leaves_numba_and_httpcore_quiet(stream: io.StringIO) -> None:
     # At DEBUG numba logged every JIT compile (run-visualization) and
     # httpcore every connection step.

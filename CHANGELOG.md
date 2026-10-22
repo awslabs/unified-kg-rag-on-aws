@@ -830,6 +830,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Logging: `logging.library_levels` sets `opensearch` to `ERROR` by default.
+  At `WARNING` opensearch-py logged every failed request, the expected 404
+  of each alias lookup before its index exists included; the package's
+  client logs the failures that matter (#PR).
 - `run-rag --filters`: a pair without a key and a `:` (`key=value`,
   `noColon`) is a usage error (exit 2); it was skipped with a warning and
   the query ran without the filter, over the documents it was meant to
