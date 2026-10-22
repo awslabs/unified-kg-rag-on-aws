@@ -1352,8 +1352,9 @@ class IndexingManager:
         of a re-keyed entity at its new id. The stored edges of the
         ``rewired`` entities (``Derived.rewired``) are all among
         ``relationships``: their stored links do not count. The stored edges
-        at them and at a split's parts and origins (``split_from``, see
-        ``Derived.split_from``) are compared with their vector copies too.
+        at them and at a split's parts (``split_from``, see
+        ``Derived.split_from``; the entities they split from are among
+        ``rewired``) are compared with their vector copies too.
         """
         rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
@@ -1441,12 +1442,12 @@ class IndexingManager:
         for e in stored_entities:  # the stored copy, before a delta's of its id
             stored_names.setdefault(e.id, e.name)
         moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
-        # And where the derivation re-pointed edges (rewired, split): a strip
+        # And where the derivation re-pointed edges (rewired, and the parts
+        # split off; the entities they split from are rewired): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
         # copies behind.
-        split_from = split_from or {}
-        moved |= {*rewired, *split_from, *split_from.values()}
+        moved |= {*rewired, *(split_from or {})}
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
