@@ -713,9 +713,7 @@ class IndexingManager:
             | self._noted_commit_entities.keys()
         ):
             group = groups.get(suffix, [])
-            stored = self.opensearch_indexer.read_claims(
-                sorted({c.id for c in group}), suffix=suffix
-            )
+            stored = self._read_stored_claims(sorted({c.id for c in group}), suffix)
             group = merge_claims(stored, group) if stored else group
             units = [u for u in text_units if BaseIndexer.get_suffix(u) == suffix]
             # The stored claims about an entity the graph merge re-keyed
@@ -1446,10 +1444,9 @@ class IndexingManager:
         # And where the derivation re-pointed edges (rewired, split): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
-        # copies behind or missing (a missing one is written).
+        # copies behind.
         split_from = split_from or {}
-        repointed = {*rewired, *split_from, *split_from.values()}
-        moved |= repointed
+        moved |= {*rewired, *split_from, *split_from.values()}
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
@@ -1463,11 +1460,7 @@ class IndexingManager:
         stale = {
             r.id
             for r in extra
-            if (
-                _vector_stale(r, vector_copy[r.id])
-                if r.id in vector_copy
-                else vectors and bool({r.source_id, r.target_id} & repointed)
-            )
+            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:

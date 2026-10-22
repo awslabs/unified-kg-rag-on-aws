@@ -1332,6 +1332,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Docs: the design guide (§8.2, §15) states who closes an injected indexer.
+  `IndexingManager.close()` closes both its indexers, injected ones too;
+  indexers passed to `DataIngestionPipeline(vector_indexer=...,
+  graph_indexer=...)` are borrowed and never closed by the pipeline; a
+  `Providers` indexer factory returns a new instance per call, which its
+  caller closes. It said the manager closed only what it built (#PR).
 - Incremental indexing: an `indexing.reset` writes the records of the
   documents it drops PENDING from the namespace listing that found them,
   instead of reading them again by id: one corpus-sized registry read
