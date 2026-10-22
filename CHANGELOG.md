@@ -1566,6 +1566,11 @@ changed once with the full-config keys (#332).
   first seed took them all (20 seeds around a shared core reached 4
   entities instead of 40). Under a filter every document passes, responses
   grow by about a quarter (larger pages) for fewer requests (#PR).
+- Filtered graph expansion's exclusion of reached vertices sits beside the
+  filters in one bool on every search body (lexical, kNN filter, filter
+  browse): nested in the filters, a `must_not` alone made the embedded
+  engine build every other document first; the walk over 103,000
+  relationships took 31 s, now 19 s (#PR).
 - Ingestion no longer fails for good on a name with braces: the merge of
   an item's statements built its debug message with `str.format` over the
   item's names and types, so an entity, edge or claim named like

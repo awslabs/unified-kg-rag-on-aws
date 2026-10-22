@@ -203,6 +203,55 @@ def test_text_less_search_ranks_by_rank_then_weight(harness: StoreHarness) -> No
     assert [r.source for r in hits] == ["r7", "r6", "r5"]
 
 
+@pytest.mark.parametrize("text", ["", "node"], ids=["browse", "text"])
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+@pytest.mark.parametrize("attribute", [False, True], ids=["ids", "ids+attribute"])
+def test_exclude_leaves_its_matches_out_before_the_page_is_cut(
+    harness: StoreHarness, text: str, search_type: SearchType, attribute: bool
+) -> None:
+    # The filtered walk leaves the vertices it reached out of its edge
+    # pages (SearchQuery.exclude), so edges back to them cannot fill a page.
+    h = harness.derive(lambda c: setattr(c.indexing.opensearch, "max_query_size", 3))
+    edges = [
+        Relationship(
+            id=f"r{i}",
+            source_id="e-hub",
+            target_id=f"e{i}",
+            source_name="Hub",
+            target_name=f"Node {i}",
+            description=f"Hub relates to node {i}",
+            rank=i,
+            weight=float(i),
+            attributes={"filters": {"grp": "a" if i % 2 else "b"}},
+        )
+        for i in range(8)
+    ]
+    h.initialize()
+    assert h.vector_indexer.index_relationships(edges).failed_items == 0
+    filters: dict[str, Any] = {"source_id": ["e-hub"]}
+    if attribute:
+        filters["attr_grp"] = "a"
+    (hits,) = _search(
+        h,
+        _query(
+            text,
+            _prefixes(h).relationships_index_prefix,
+            search_type=search_type,
+            top_k=3,
+            retrieval_multiplier=1,
+            filters=filters,
+            exclude={"target_id": ["e7", "e6", "e5"]},
+        ),
+    )
+    kept = ["r3", "r1"] if attribute else ["r4", "r3", "r2", "r1", "r0"]
+    got = [r.source for r in hits]
+    if text or search_type != SearchType.LEXICAL:
+        # By relevance, or a browse in index order: kept edges, as many as fit.
+        assert set(got) <= set(kept) and len(got) == min(3, len(kept))
+    else:  # the walk's page: by rank, the best of the kept edges
+        assert got == kept[:3]
+
+
 @pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
 def test_index_sweep_keeps_each_index_best_hits(
     harness: StoreHarness, search_type: SearchType
