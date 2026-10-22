@@ -180,6 +180,7 @@ def _state(
     suffix: str | None = None,
     resume: bool = True,
     fail_resumed_at: tuple[Any, ...] | None = None,
+    ranks: bool = False,
 ) -> dict[str, list[tuple]]:
     """The stored entities, edges and claims after indexing ``corpora`` one
     after the other (run ``repeat`` twice under its pipeline id; run
@@ -190,7 +191,8 @@ def _state(
     that call completes before the run dies and, optionally, the class
     (default the vector store's). ``fail_resumed_at`` (a method and its
     class) makes the resumed run's first call of it report every item
-    failed; that run fails and is resumed once more."""
+    failed; that run fails and is resumed once more. With ``ranks``, the
+    graph's entity ranks and edge ids and ranks too."""
     config = _config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = gleaning
@@ -246,7 +248,7 @@ def _state(
         )
     except NotFoundError:  # no edge was ever written
         vector_edges = []
-    return {
+    state = {
         "entities": sorted(
             (e.id, e.name, e.type, len(e.text_unit_ids or []), e.description)
             for e in entities
@@ -284,6 +286,12 @@ def _state(
             for hit in vector_edges
         ),
     }
+    if ranks:
+        state["ranks"] = sorted((e.name, e.rank) for e in entities)
+        state["edge_ranks"] = sorted(
+            (r.id, r.source_name, r.target_name, r.rank) for r in edges
+        )
+    return state
 
 
 @pytest.mark.parametrize(
@@ -1895,6 +1903,34 @@ def test_a_resumed_strip_rewrites_the_vector_copies_of_its_re_pointed_edges(
         die_in=2,
         die_at=("_run_indexing_phase", 3, False, IndexingManager),
         gleaning=True,
+    )
+
+    assert incremental == full
+
+
+def test_a_resumed_split_strip_ranks_and_keys_edges_as_a_full_build(
+    tmp_path: Path,
+) -> None:
+    # Removing d4.txt splits "Acme Corp" off "Acme". Killed after the split
+    # was written and before the re-keyed edge's old copy was deleted, the
+    # retry re-derived that edge under its old id and ranked its endpoints
+    # with the old copy's link still counted.
+    kept = {
+        "d7.txt": "Acme trade goods 2. Acme and Acme Inc and Buyer trade goods 2.",
+        "d1.txt": "Acme Corp and Depot trade parts 1.",
+    }
+    runs = [
+        {"d4.txt": "Acme Corp trade goods 3. Buyer trade cash 1.", **kept},
+        kept,
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], ranks=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=("delete_by_id", 2, False, SQLiteGraphIndexer),
+        ranks=True,
     )
 
     assert incremental == full

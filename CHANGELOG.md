@@ -1612,6 +1612,11 @@ changed once with the full-config keys (#332).
   naming (and pointing at) the old endpoint, or none at all. The stored
   edges at rewired entities and at a split's parts and origins are now
   compared with their vector copies, and a missing copy is written (#PR).
+- Incremental indexing: a removal that splits a spelling off and is
+  killed after the split is written but before the re-keyed edge's old
+  copy is deleted ends as a full build on retry. The retry derived that
+  edge again under its old id, and ranked the entity it was re-pointed
+  away from with the old copy's link still counted (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

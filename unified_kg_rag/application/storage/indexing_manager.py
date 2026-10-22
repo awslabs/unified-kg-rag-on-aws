@@ -1112,6 +1112,13 @@ class IndexingManager:
                 else {}
             )
             moved = set(derived.rewired)
+            # And the stored endpoints a given edge was re-pointed away from
+            # (onto a part an earlier, interrupted strip split off): their
+            # stored links still count that edge's old copy.
+            now = {r.id: {r.source_id, r.target_id} for r in derived.relationships}
+            for rel in items[1]:
+                if ends := now.get(derived.id_remap.get(rel.id, rel.id)):
+                    moved |= {rel.source_id, rel.target_id} - ends
             candidates = sorted({*moved, *spellings.values()})
             parted: list[Relationship] = []
             if candidates and not claims:
@@ -1151,14 +1158,19 @@ class IndexingManager:
                 # attempt: derived without its other statements, a spelling
                 # the full build keeps apart (another type) merges in. Only
                 # the other held items keep their holders.
-                items[0].extend(e for e in held[0] if e.id in sibling_ids)
+                # So is the copy an interrupted re-key left at a new id this
+                # attempt maps to (found only once a late sibling joined).
+                joining = sibling_ids | set(derived.id_remap.values())
+                items[0].extend(e for e in held[0] if e.id in joining)
+                items[1].extend(r for r in held[1] if r.id in joining)
                 blocked |= {
                     item.id
                     for group in held
                     for item in group
-                    if item.id not in sibling_ids
+                    if item.id not in joining
                 }
-            items[1].extend(parted)
+            known_edges = {r.id for r in items[1]}
+            items[1].extend(r for r in parted if r.id not in known_edges)
             # Their other endpoints too: a re-pointed edge changes their rank.
             ends = {i for r in parted for i in (r.source_id, r.target_id)}
             known = {e.id for e in items[0]}
