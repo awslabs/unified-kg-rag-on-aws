@@ -1366,6 +1366,8 @@ changed once with the full-config keys (#332).
 - Config: an index-setting variable with a nested `INDEX__` segment
   (`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__INDEX__NUMBER_OF_SHARDS`)
   is reported with the variable to set instead (#PR).
+- `run-rag` interactive mode: `set-filter key:value` keeps a value with
+  spaces; it was cut at the first one (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,

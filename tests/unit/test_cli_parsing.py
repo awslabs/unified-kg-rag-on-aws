@@ -356,6 +356,14 @@ async def test_rag_an_unknown_filter_key_is_a_usage_error(config, mocker) -> Non
     assert result["success"] is False
 
 
+def test_rag_interactive_set_filter_keeps_a_value_with_spaces() -> None:
+    # The command line is split on whitespace: the value was cut at its
+    # first space ("title:Annual report" filtered on "Annual").
+    state: dict = {"filters": {}}
+    run_rag_chain.RAGChainRunner._handle_set_filter(state, ["title:Annual", "report"])
+    assert state["filters"] == {"title": "Annual report"}
+
+
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:
     out = run_rag_chain.RAGChainRunner._parse_filters(["url:http://x:8080"])
     assert out == {"url": "http://x:8080"}
