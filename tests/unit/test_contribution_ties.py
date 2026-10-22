@@ -173,3 +173,53 @@ def test_statements_of_a_name_with_braces_merge(name: str) -> None:
     assert [e.name for e in merge_entity_contributions(entities)] == [name]
     assert len(merge_relationship_contributions(relationships)) == 1
     assert len(merge_claim_contributions(claims)) == 1
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+@pytest.mark.parametrize("empty", ["", None])
+def test_an_empty_value_casts_no_vote(
+    order: tuple[int, ...], empty: str | None
+) -> None:
+    # A missing or empty element (an empty <type/>) is no vote: "" sorts
+    # first, so it won every tie it took part in.
+    entities = [
+        Entity(id="e", name=name, type=type_, text_unit_ids=[f"t{n}"])
+        for n, (name, type_) in enumerate([("Acme", "ORGANIZATION"), ("", empty)])
+    ]
+    claims = [
+        Claim(
+            id="c",
+            subject_id="e",
+            subject_name="Acme",
+            object_name=object_name,
+            type=type_,
+            status=status,
+            description=description,
+            text_unit_ids=[f"t{n}"],
+        )
+        for n, (object_name, type_, status, description) in enumerate(
+            [("Buyer", "PAYS", "TRUE", "Acme pays."), ("", "", empty, empty)]
+        )
+    ]
+
+    (entity,) = merge_entity_contributions([entities[n] for n in order])
+    (claim,) = merge_claim_contributions([claims[n] for n in order])
+
+    assert (entity.name, entity.type) == ("Acme", "organization")
+    assert (claim.object_name, claim.type, claim.status, claim.description) == (
+        "Buyer",
+        "pays",
+        "true",
+        "Acme pays.",
+    )
+
+
+def test_a_value_no_statement_gives_stays_empty() -> None:
+    entities = [
+        Entity(id="e", name="Acme", type=t, text_unit_ids=[f"t{n}"])
+        for n, t in enumerate(["", None])
+    ]
+
+    (merged,) = merge_entity_contributions(entities)
+
+    assert merged.type == ""

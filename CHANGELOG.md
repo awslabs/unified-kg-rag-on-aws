@@ -1623,6 +1623,12 @@ changed once with the full-config keys (#332).
   Whether the graph store reads back was asked of the type of the view
   the pipeline hands its stages (#408), which hid the adapter's, so every
   shared id looked like a vector-only copy (#PR).
+- An entity's type and a claim's type and status merged from several
+  statements no longer come out empty when one statement leaves them
+  empty: the empty value counted as a vote and, sorting first, won every
+  tie (since #407 an empty element is an empty field, not `{}`). It is
+  now no vote, and stays only when no statement gives a value. Names,
+  claim objects and descriptions already skipped empty values (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half
