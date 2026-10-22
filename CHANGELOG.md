@@ -1332,6 +1332,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: an `indexing.reset` writes the records of the
+  documents it drops PENDING from the namespace listing that found them,
+  instead of reading them again by id: one corpus-sized registry read
+  fewer per reset (#PR).
 - Incremental indexing: a run resumed under its pipeline id no longer pairs
   one attempt's documents with another attempt's delta. The delta is saved
   with the run's metadata, the loaded documents in the stage cache under a

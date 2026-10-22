@@ -1812,7 +1812,7 @@ class IndexingStage(_RegistryStage):
                 # again).
                 kept = set(context.incremental_fingerprints or ())
                 dropped = [
-                    record.doc_id
+                    record
                     for namespace in sorted(
                         reset_namespaces(self.config, context, text_units)
                     )
