@@ -319,6 +319,12 @@ class PipelineContext(BaseModel):
         "(cache_keys.extraction_settings): recorded for the registry scope at "
         "commit, and compared field by field when the run resumes.",
     )
+    incremental_loading_key: str | None = Field(
+        default=None,
+        description="Cache key of the document_loading output the delta was "
+        "computed with. The delta is saved with the run's metadata, not with "
+        "that output: a resume restores both only when they match.",
+    )
     incremental_retired_scopes: list[str] | None = Field(
         default=None,
         description="The indexing.retire_source_scopes values the delta "

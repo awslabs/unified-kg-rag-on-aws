@@ -346,11 +346,12 @@ class IncrementalIndexer:
         self,
         delta: DocumentDelta,
         lineages: list[DocumentLineage],
-        dropped: Sequence[str] = (),
+        dropped: Sequence[DocStatusRecord] = (),
     ) -> None:
         """Record the documents about to be (re)indexed PENDING, before any
         store write, and the ``dropped`` ones a reset's rebuild leaves out (it
-        replaces their stores; their records go once it is recorded).
+        replaces their stores; their records go once it is recorded), from
+        their records as the caller listed them.
 
         Call after extraction and before removing or writing anything for the
         delta. Each new and changed document (and any other document with a
@@ -385,10 +386,13 @@ class IncrementalIndexer:
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
         # Not in flight: the rebuild neither removes nor records them.
-        dropped = [doc_id for doc_id in dropped if doc_id not in doc_ids]
+        dropped = [record for record in dropped if record.doc_id not in doc_ids]
         if not doc_ids and not dropped:
             return
-        self._prior = self.doc_status.get_many([*doc_ids, *dropped])
+        self._prior = {
+            **self.doc_status.get_many(doc_ids),
+            **{record.doc_id: record for record in dropped},
+        }
         self._in_flight = set(doc_ids)
         self._pending = {
             doc_id: self._pending_record(
@@ -413,9 +417,8 @@ class IncrementalIndexer:
             [
                 *self._pending.values(),
                 *(
-                    self._pending_record(doc_id, self._prior[doc_id], None)
-                    for doc_id in dropped
-                    if doc_id in self._prior
+                    self._pending_record(record.doc_id, record, None)
+                    for record in dropped
                 ),
             ]
         )

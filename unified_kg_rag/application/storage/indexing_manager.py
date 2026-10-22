@@ -713,9 +713,7 @@ class IndexingManager:
             | self._noted_commit_entities.keys()
         ):
             group = groups.get(suffix, [])
-            stored = self.opensearch_indexer.read_claims(
-                sorted({c.id for c in group}), suffix=suffix
-            )
+            stored = self._read_stored_claims(sorted({c.id for c in group}), suffix)
             group = merge_claims(stored, group) if stored else group
             units = [u for u in text_units if BaseIndexer.get_suffix(u) == suffix]
             # The stored claims about an entity the graph merge re-keyed
@@ -750,10 +748,17 @@ class IndexingManager:
             # A stored claim citing a unit a derived claim gained (this run's
             # removal derived it from a kept unit, before the delta's
             # entities were in the graph) may state what the derived claim
-            # does under another id: it is derived with them.
+            # does under another id: it is derived with them. Under a killed
+            # commit's note, the removal may have derived it from a cited
+            # unit too (against the commit's unfinished graph): every unit
+            # the derived claims cite is checked.
             gained = sorted(
                 {u for c in derived for u in c.text_unit_ids or []}
-                - {u for c in group for u in c.text_unit_ids or []}
+                - (
+                    set()
+                    if self._noted_commit_entities.get(suffix)
+                    else {u for c in group for u in c.text_unit_ids or []}
+                )
             )
             overlapping = (
                 set(
@@ -1347,8 +1352,9 @@ class IndexingManager:
         of a re-keyed entity at its new id. The stored edges of the
         ``rewired`` entities (``Derived.rewired``) are all among
         ``relationships``: their stored links do not count. The stored edges
-        at them and at a split's parts and origins (``split_from``, see
-        ``Derived.split_from``) are compared with their vector copies too.
+        at them and at a split's parts (``split_from``, see
+        ``Derived.split_from``; the entities they split from are among
+        ``rewired``) are compared with their vector copies too.
         """
         rekey = rekey or {}
         reuse_summaries(entities, stored_entities)
@@ -1436,13 +1442,12 @@ class IndexingManager:
         for e in stored_entities:  # the stored copy, before a delta's of its id
             stored_names.setdefault(e.id, e.name)
         moved = {e.id for e in entities if stored_names.get(e.id) != e.name}
-        # And where the derivation re-pointed edges (rewired, split): a strip
+        # And where the derivation re-pointed edges (rewired, and the parts
+        # split off; the entities they split from are rewired): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
-        # copies behind or missing (a missing one is written).
-        split_from = split_from or {}
-        repointed = {*rewired, *split_from, *split_from.values()}
-        moved |= repointed
+        # copies behind.
+        moved |= {*rewired, *(split_from or {})}
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
@@ -1456,11 +1461,7 @@ class IndexingManager:
         stale = {
             r.id
             for r in extra
-            if (
-                _vector_stale(r, vector_copy[r.id])
-                if r.id in vector_copy
-                else vectors and bool({r.source_id, r.target_id} & repointed)
-            )
+            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:

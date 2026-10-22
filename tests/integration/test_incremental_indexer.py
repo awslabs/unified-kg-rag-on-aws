@@ -290,7 +290,7 @@ def test_a_rebuild_writes_the_documents_it_drops_pending_and_leaves_them(
     delta, fps = detect_delta([_doc("/a.txt", "A")], rig.store)
     inc = IncrementalIndexer(rig.store, rig.manager)
 
-    inc.write_ahead(delta, [_lineage("/a.txt")], dropped=[dropped.doc_id])
+    inc.write_ahead(delta, [_lineage("/a.txt")], dropped=[dropped])
     pending = rig.store.get(dropped.doc_id)
     assert pending.status is DocStatus.PENDING
     assert pending.text_unit_ids == dropped.text_unit_ids

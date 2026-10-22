@@ -332,3 +332,30 @@ def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None
     with pytest.raises(ConfigurationError, match="table_name must be set") as info:
         stage._execute_core(context)
     assert not isinstance(info.value, DocStatusRegistryError)
+
+
+def test_a_reset_writes_the_records_it_drops_from_its_listing(mocker) -> None:
+    # The records of the documents a reset drops come from the namespace
+    # listing that found them: they are written PENDING from it, not read
+    # again by id (a second corpus-sized read on a large namespace).
+    store = FakeDocStatusStore()
+    dropped = DocStatusRecord(
+        doc_id=compute_doc_id("gone.txt", "default", "/"),
+        content_hash="h",
+        scope="default|/",
+        status=DocStatus.PROCESSED,
+        text_unit_ids=["tu-gone"],
+    )
+    store.put(dropped)
+    config = _reset_config()
+    stage = _reset_stage(mocker, config, store)
+    context = _reset_context(config, store)
+    asked = mocker.spy(store, "get_many")
+    written = mocker.spy(store, "put_many")
+
+    stage._execute_core(context)
+
+    assert not any(dropped.doc_id in call.args[0] for call in asked.call_args_list)
+    first = {r.doc_id: r for r in written.call_args_list[0].args[0]}
+    assert first[dropped.doc_id].status is DocStatus.PENDING
+    assert first[dropped.doc_id].text_unit_ids == dropped.text_unit_ids

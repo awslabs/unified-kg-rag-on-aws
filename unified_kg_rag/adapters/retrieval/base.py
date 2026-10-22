@@ -773,15 +773,6 @@ class BaseSearchStrategy(ABC):
         def open_(vertex: str) -> bool:
             return needed(vertex) > 0
 
-        page = min(
-            self._incident_fetch_limit(),
-            (
-                await retriever.aindex_limits(
-                    o.relationships_index_prefix, query.suffix
-                )
-            ).max_result_window,
-        )
-
         def take(edges: list[RetrievalResult], asked: set[str]) -> None:
             """Walk ``edges`` from the ``asked`` vertices."""
             for edge in edges:
@@ -875,7 +866,8 @@ class BaseSearchStrategy(ABC):
                         *(
                             passing(
                                 [v],
-                                min(page, max(dropped[e, v] for e in full) + room),
+                                # At most a page (_incident_relationships).
+                                max(dropped[e, v] for e in full) + room,
                                 full,
                             )
                             for v in wave

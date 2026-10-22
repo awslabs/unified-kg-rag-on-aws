@@ -1332,6 +1332,32 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Docs: the design guide (§8.2, §15) states who closes an injected indexer.
+  `IndexingManager.close()` closes both its indexers, injected ones too;
+  indexers passed to `DataIngestionPipeline(vector_indexer=...,
+  graph_indexer=...)` are borrowed and never closed by the pipeline; a
+  `Providers` indexer factory returns a new instance per call, which its
+  caller closes. It said the manager closed only what it built (#412).
+- Incremental indexing: an `indexing.reset` writes the records of the
+  documents it drops PENDING from the namespace listing that found them,
+  instead of reading them again by id: one corpus-sized registry read
+  fewer per reset (#412).
+- Incremental indexing: a run resumed under its pipeline id no longer pairs
+  one attempt's documents with another attempt's delta. The delta is saved
+  with the run's metadata, the loaded documents in the stage cache under a
+  key over the inputs; after an attempt as a reset or over another corpus
+  version, a resume over the first attempt's inputs restored its documents
+  with the later delta, and could commit a changed document as new and keep
+  its old version's text unit and statements. The loading cache key is now
+  recorded with the delta, and a resume whose key differs loads the
+  documents again (#412).
+- Incremental indexing: a removal run after a commit killed mid-write no
+  longer leaves an extra claim. The removal derived a kept unit's claim
+  against the killed commit's unfinished graph, where the subject was
+  missing, under an id no later derivation read; the commit finishing its
+  note then derived the full build's claim beside it. Under a pending
+  commit note, stored claims citing any unit the derived claims cite are
+  now derived with them (#412).
 - Retrieval: the filtered walk asks the vertices it asks on its own in
   waves of `search.max_concurrency`, each request sized for what its wave
   may still take and leaving out what earlier waves reached; each asked
