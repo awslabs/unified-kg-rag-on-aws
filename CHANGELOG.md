@@ -1332,6 +1332,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Retrieval: the filtered walk asks the vertices it asks on its own in
+  waves of `search.max_concurrency`, each request sized for what its wave
+  may still take and leaving out what earlier waves reached; each asked
+  for what every open seed might take. Same reach and request count; on a
+  synthetic 100-seed walk the edges read drop from 8,300 to 1,100, on 300
+  seeds from 29,200 to 3,100 (#PR).
 - Logging: `opensearch` and `httpx` are at WARNING in the default
   `logging.library_levels`; at INFO they logged every OpenSearch request
   and every Ollama / OpenAI-compatible call. `search.max_concurrency`

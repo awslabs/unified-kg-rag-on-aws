@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from unified_kg_rag.adapters.retrieval.base import query_scope
+from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -615,6 +615,44 @@ async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
     (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
     assert reached == ["S", "A"]
     assert {r.source for r in kept} == {"S", "A"}
+
+
+async def test_the_requests_on_their_own_are_sized_by_their_wave(
+    config: Config,
+) -> None:
+    # Regression: every vertex asked on its own asked for what all the open
+    # seeds might still take (100 seeds: 8,300 edges read for 200 reached).
+    # They go in waves of max_concurrency; each asks for what its wave may
+    # take, with what the waves before it reached left out.
+    seeds = [f"M{j}" for j in range(6)]
+    edges = [
+        (f"m{j}-{i:03d}", f"M{j}", f"V{j}-{i:03d}", 100.0)
+        for j in range(6)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    asked: list[tuple[list[str], int, list[str]]] = []
+    ask = index.aretrieve
+
+    async def recorded(query: SearchQuery) -> list[RetrievalResult]:
+        ends = (query.filters or {}).get("source_id")
+        if ends is not None and len(ends) == 1:
+            exclude = (query.exclude or {}).get("target_id") or []
+            asked.append((ends, query.top_k, exclude))
+        return await ask(query)
+
+    index.aretrieve = recorded  # type: ignore[method-assign]
+    config.search.max_concurrency = 2
+    config.indexing.neptune.max_hops = 1
+    query = SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"})
+    await _strategy(config, _Graph(), index)._expand_via_graph(query, seeds)
+
+    share = seed_share(query, config.indexing.neptune.traversal_fetch_multiplier, 6)
+    # The first page closed M0, the joint one M1; M2-M5 go two at a time.
+    assert [ends for ends, _, _ in asked] == [["M2"], ["M3"], ["M4"], ["M5"]]
+    assert {size for _, size, _ in asked} == {2 * share}
+    first_wave = {f"V{j}-{i:03d}" for j in (2, 3) for i in range(share)}
+    assert first_wave <= set(asked[2][2]) and first_wave <= set(asked[3][2])
 
 
 async def test_seeds_sharing_their_neighbours_each_reach_their_share(

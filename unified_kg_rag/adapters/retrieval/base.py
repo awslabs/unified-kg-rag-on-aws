@@ -731,10 +731,10 @@ class BaseSearchStrategy(ABC):
         (``exclude`` on the other endpoint), so they cannot fill a page. A
         page that comes back full holds the busiest vertices' best edges
         only: the vertices still open are then asked together once more at
-        the full end, and if that page is full too, each on its own
-        (``search.max_concurrency`` at a time) for what all the open seeds
-        may still take (two requests a hop; one more when a page is full;
-        one per vertex still open when the next is full too). The reached
+        the full end, and if that page is full too, each on its own, in
+        waves of ``search.max_concurrency``, for what its wave may still
+        take (two requests a hop; one more when a page is full; one per
+        vertex still open when the next is full too). The reached
         entities are read from the entities index under the caller's
         filters (a vertex filter such as ``type`` keeps only its entities,
         the walk goes through the others), scored by distance and importance
@@ -828,16 +828,6 @@ class BaseSearchStrategy(ABC):
                 edges = kept
             return edges, full, dropped
 
-        gate = asyncio.Semaphore(self.config.search.max_concurrency)
-
-        async def alone(
-            vertex: str, size: int, ends: tuple[str, ...]
-        ) -> tuple[list[RetrievalResult], tuple[str, ...], Counter[tuple[str, str]]]:
-            """``passing`` for ``vertex`` on its own, ``search.max_concurrency``
-            such requests at a time."""
-            async with gate:
-                return await passing([vertex], size, ends)
-
         for hop in range(neptune.max_hops):
             per_vertex.clear()
             # Only the vertices whose seed is still short of its share.
@@ -870,22 +860,29 @@ class BaseSearchStrategy(ABC):
                 take(edges, set(still_open))
                 still_open = [vertex for vertex in still_open if open_(vertex)]
             if full and still_open:
-                # Full again: each vertex still open is asked on its own
-                # (search.max_concurrency at a time). Asked at once, the
-                # requests share their neighbours and the first to take one
-                # keeps it, so each asks for what all the open seeds may still
-                # take, plus its edges the check dropped (they come back).
-                room = sum(share - taken[r] for r in {root[v] for v in still_open})
-                pages = await asyncio.gather(
-                    *(
-                        alone(
-                            v, min(page, max(dropped[e, v] for e in full) + room), full
+                # Full again: each vertex still open is asked on its own, in
+                # waves of search.max_concurrency. Asked at once, the requests
+                # share their neighbours and the first to take one keeps it,
+                # so each asks for what its wave may still take, plus its
+                # edges the check dropped (they come back). A wave leaves out
+                # what the waves before it reached, so it asks for less than
+                # all the open seeds' room (which a request on its own got).
+                step = self.config.search.max_concurrency
+                for start in range(0, len(still_open), step):
+                    wave = [v for v in still_open[start : start + step] if open_(v)]
+                    room = sum(needed(v) for v in wave)
+                    pages = await asyncio.gather(
+                        *(
+                            passing(
+                                [v],
+                                min(page, max(dropped[e, v] for e in full) + room),
+                                full,
+                            )
+                            for v in wave
                         )
-                        for v in still_open
                     )
-                )
-                for vertex, (edges, _, _) in zip(still_open, pages, strict=True):
-                    take(edges, {vertex})
+                    for vertex, (edges, _, _) in zip(wave, pages, strict=True):
+                        take(edges, {vertex})
             frontier = reached
         # The seeds first, then by distance: the order the walk reached them.
         reached_ids = await self._fetchable_ids(
