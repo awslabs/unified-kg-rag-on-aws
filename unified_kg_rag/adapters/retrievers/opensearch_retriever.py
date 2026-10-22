@@ -112,6 +112,16 @@ def _lexical_query_text(text: str, max_terms: int) -> tuple[str, int]:
     return text, terms
 
 
+def _scope(
+    filters: list[dict[str, Any]], must_not: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The bool clauses that scope a search: its filters and exclusions."""
+    scope: dict[str, Any] = {"filter": filters} if filters else {}
+    if must_not:
+        scope["must_not"] = must_not
+    return scope
+
+
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     # Query embeddings are reused across the sub-queries of one search (local
     # search sends the same entity-focus text to several indices) and across
@@ -724,13 +734,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         range does not depend on ``size``; ``_fuse`` cuts to ``size``.
         """
         filters = self._build_filter_clauses(query.filters)
-        if query.exclude:
-            filters.append(
-                {"bool": {"must_not": self._build_filter_clauses(query.exclude)}}
-            )
+        # The exclusions sit beside the filters, in their bool: a bool of
+        # must_not alone matches every other document, which the embedded
+        # engine builds in full before the filters narrow it.
+        must_not = self._build_filter_clauses(query.exclude)
+        scope = _scope(filters, must_not)
         lexical = self._build_lexical_query(query, lexical_fields)
-        if filters:
-            lexical = {"bool": {"must": [lexical], "filter": filters}}
+        if scope:
+            lexical = {"bool": {"must": [lexical], **scope}}
         if query_vector is not None and search_type != SearchType.LEXICAL:
             if search_type != SearchType.VECTOR:
                 size = min(
@@ -739,7 +750,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
             knn = self._search_body(
                 self._build_vector_query(
-                    query_vector, self._knn_k(size), vector_fields, filters
+                    query_vector, self._knn_k(size), vector_fields, filters, must_not
                 ),
                 size,
             )
@@ -748,7 +759,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return [self._search_body(lexical, size), knn]
         if search_type != SearchType.LEXICAL and not query.query:
             # A filter browse: no text to score by.
-            lexical = {"bool": {"filter": filters}} if filters else {"match_all": {}}
+            lexical = {"bool": scope} if scope else {"match_all": {}}
         return [self._search_body(lexical, size, sort)]
 
     def _knn_k(self, size: int) -> int:
@@ -824,15 +835,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         k: int,
         fields: list[str],
         filters: list[dict[str, Any]] | None = None,
+        must_not: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        # Attach filters to the kNN clause itself (efficient/pre-filtering on the
-        # Lucene engine). Without this, a VECTOR query that also carries filters
-        # (e.g. a non-empty query scoped to a community_id set) returns the
-        # global top-k nearest vectors, leaking documents outside the filter.
+        # Attach filters (and exclusions) to the kNN clause itself
+        # (efficient/pre-filtering on the Lucene engine). Without this, a
+        # VECTOR query that also carries filters (e.g. a non-empty query
+        # scoped to a community_id set) returns the global top-k nearest
+        # vectors, leaking documents outside the filter.
+        scope = _scope(filters or [], must_not or [])
+
         def _knn(field: str) -> dict[str, Any]:
             clause: dict[str, Any] = {"vector": vector, "k": k}
-            if filters:
-                clause["filter"] = {"bool": {"filter": filters}}
+            if scope:
+                clause["filter"] = {"bool": scope}
             return {"knn": {field: clause}}
 
         if len(fields) == 1:

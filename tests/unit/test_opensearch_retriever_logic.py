@@ -460,6 +460,47 @@ def test_text_less_search_is_a_filter_browse(retriever, search_type) -> None:
     assert [b["query"] for b in _bodies(retriever, q)] == [{"match_all": {}}]
 
 
+@pytest.mark.parametrize(
+    ("query", "search_type", "vector"),
+    [
+        ("alice", SearchType.LEXICAL, None),
+        ("alice", SearchType.HYBRID, [0.1]),
+        ("alice", SearchType.VECTOR, [0.1]),
+        ("", SearchType.HYBRID, None),  # a filter browse
+    ],
+)
+def test_exclusions_sit_beside_the_filters(
+    retriever, query, search_type, vector
+) -> None:
+    # The walk leaves the vertices it reached out of its edge pages. In one
+    # bool with the filters (a bool of must_not alone matches every other
+    # document, which the embedded engine built in full).
+    q = SearchQuery(
+        query=query,
+        search_type=search_type,
+        filters={"source_id": ["a"]},
+        exclude={"target_id": ["b", "c"]},
+    )
+    scope = {
+        "filter": [{"terms": {"source_id": ["a"]}}],
+        "must_not": [{"terms": {"target_id": ["b", "c"]}}],
+    }
+    for body in _bodies(retriever, q, vector):
+        clause = body["query"]
+        if "knn" in clause:
+            assert clause["knn"]["name_embedding"]["filter"] == {"bool": scope}
+        else:
+            assert {k: v for k, v in clause["bool"].items() if k != "must"} == scope
+
+
+def test_exclusions_alone_scope_a_search(retriever) -> None:
+    q = SearchQuery(query="", search_type=SearchType.LEXICAL, exclude={"id": ["b"]})
+    (body,) = _bodies(retriever, q)
+    assert body["query"] == {
+        "bool": {"must": [{"match_all": {}}], "must_not": [{"terms": {"id": ["b"]}}]}
+    }
+
+
 def test_hit_count_clamps_size_to_max(retriever) -> None:
     retriever_max = retriever._max_size
     q = SearchQuery(query="x", top_k=retriever_max * 10, retrieval_multiplier=1)

@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -63,6 +64,12 @@ _WALK_EDGE_FIELDS = (
 # each (``_build_filter_clauses`` ANDs every filter).
 _ENDPOINTS = ("source_id", "target_id")
 _OTHER_END = {"source_id": "target_id", "target_id": "source_id"}
+
+# The query memo's entries (``query_scope``): the incident-edge pages, the
+# filter check's outcomes and whether the incident page cap was logged.
+_MEMO_INCIDENT = "incident"
+_MEMO_PASSING = "passing"
+_MEMO_PAGE_CAP = "incident page cap"
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -139,6 +146,18 @@ def rank_expanded(
             others += 1
         kept.append(result)
     return kept
+
+
+def seed_share(query: SearchQuery, fetch_multiplier: int, seeds: int) -> int:
+    """How many entities each of ``seeds`` seeds reaches at most: the
+    expansion's budget (``top_k * retrieval_multiplier *
+    traversal_fetch_multiplier``) split evenly, rounded up, so every seed
+    gets one and the seeds together still reach the budget for the slots
+    ``rank_expanded`` keeps. The one split of the graph walks and the
+    filtered walk."""
+    return math.ceil(
+        query.top_k * query.retrieval_multiplier * fetch_multiplier / seeds
+    )
 
 
 def graph_relevance(path_length: int, importance: float) -> float:
@@ -375,7 +394,7 @@ class BaseSearchStrategy(ABC):
         if retriever is None or not ordered:
             return passed
         memo = current_query_scope()
-        key = "passing\n" + json.dumps(
+        key = f"{_MEMO_PASSING}\n" + json.dumps(
             [prefix, query.suffix, filters], sort_keys=True, default=str
         )
         known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
@@ -695,18 +714,20 @@ class BaseSearchStrategy(ABC):
         seed reaches at most its share (rounded up, so the shares and no
         global cap bound the total), so a hub seed cannot use up the others'.
         A hop asks only the vertices whose seed is still short of its share.
-        A page of edges that comes back full holds the busiest vertices' best
-        edges only: each vertex still open is then asked once more on its own,
-        concurrently, at the full end, for what it still needs (two requests
-        a hop, plus one per open vertex when a page is full). Edges back to
-        a vertex already reached are left out by the store (``exclude`` on
-        the other endpoint), so they cannot fill a page. The reached
-        entities are read
-        from the entities index under the caller's filters (a vertex filter
-        such as ``type`` keeps only its entities, the walk goes through the
-        others), scored by distance and importance as the graph walk does
-        (``degree`` reads as ``rank``: the index holds no degree), and cut to
-        ``top_k * retrieval_multiplier``; ``Path:`` follows the walk.
+        Edges back to a vertex already reached are left out by the store
+        (``exclude`` on the other endpoint), so they cannot fill a page. A
+        page that comes back full holds the busiest vertices' best edges
+        only: the vertices still open are then asked together once more at
+        the full end, and if that page is full too, each on its own
+        (``search.max_concurrency`` at a time) for what all the open seeds
+        may still take (two requests a hop; one more when a page is full;
+        one per vertex still open when the next is full too). The reached
+        entities are read from the entities index under the caller's
+        filters (a vertex filter such as ``type`` keeps only its entities,
+        the walk goes through the others), scored by distance and importance
+        as the graph walk does (``degree`` reads as ``rank``: the index holds
+        no degree), and cut to ``top_k * retrieval_multiplier``; ``Path:``
+        follows the walk.
 
         ``None`` when the relationships index is missing at query time: the
         caller falls back to the graph walk.
@@ -717,8 +738,7 @@ class BaseSearchStrategy(ABC):
         neptune = self.config.indexing.neptune
         filters = document_filters(query.filters)
         limit = query.top_k * query.retrieval_multiplier
-        budget = limit * max(1, neptune.traversal_fetch_multiplier)
-        share = math.ceil(budget / len(seeds))
+        share = seed_share(query, neptune.traversal_fetch_multiplier, len(seeds))
         # Text units only decide an edge under two or more keys.
         fields = [
             f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
@@ -767,20 +787,36 @@ class BaseSearchStrategy(ABC):
             ends: tuple[str, ...] = _ENDPOINTS,
         ) -> tuple[list[RetrievalResult], tuple[str, ...], Counter[tuple[str, str]]]:
             """The passing edges incident to ``vertices`` at the ``ends``
-            named, the ends whose page came back full and how many edges each
-            (end, vertex) had on its page (before the check under two or more
-            keys)."""
+            named, the ends whose page came back full and how many edges of
+            each (end, vertex) the check under two or more keys dropped
+            (they come back on the vertex's next page)."""
             # An edge back to a vertex already reached adds nothing: left out
             # by the store, so such edges cannot fill a page.
             edges, full = await self._incident_relationships(
                 query, vertices, fields, size, ends, away_from=list(parent)
             )
-            on_page = Counter(
-                (end, str((e.metadata or {}).get(end))) for e in edges for end in ends
-            )
+            dropped: Counter[tuple[str, str]] = Counter()
             if len(filters) > 1 and edges:
-                edges = await self._edges_one_document_passes(query, edges, filters)
-            return edges, full, on_page
+                kept = await self._edges_one_document_passes(query, edges, filters)
+                ids = {self._relationship_identity(e) for e in kept}
+                dropped.update(
+                    (end, str((e.metadata or {}).get(end)))
+                    for e in edges
+                    if self._relationship_identity(e) not in ids
+                    for end in ends
+                )
+                edges = kept
+            return edges, full, dropped
+
+        gate = asyncio.Semaphore(self.config.search.max_concurrency)
+
+        async def alone(
+            vertex: str, size: int, ends: tuple[str, ...]
+        ) -> tuple[list[RetrievalResult], tuple[str, ...], Counter[tuple[str, str]]]:
+            """``passing`` for ``vertex`` on its own, ``search.max_concurrency``
+            such requests at a time."""
+            async with gate:
+                return await passing([vertex], size, ends)
 
         for hop in range(neptune.max_hops):
             per_vertex.clear()
@@ -789,7 +825,7 @@ class BaseSearchStrategy(ABC):
             if not frontier:
                 break
             reached: list[str] = []
-            edges, full, on_page = await passing(frontier)
+            edges, full, dropped = await passing(frontier)
             if hop == 0 and not edges:
                 exists = await retriever.ahas_index(
                     o.relationships_index_prefix, query.suffix
@@ -803,19 +839,27 @@ class BaseSearchStrategy(ABC):
                     )
                     return None
             take(edges, set(frontier))
-            if full:
-                # A full page held the busiest vertices' best edges only. Each
-                # vertex still open is asked once more on its own at the full
-                # ends, all at once, for its edges seen there plus what it
-                # still needs: one more round, however many vertices (asked
-                # together, the next busiest filled the page again).
-                still_open = [vertex for vertex in frontier if open_(vertex)]
+            still_open = [vertex for vertex in frontier if open_(vertex)]
+            if full and still_open:
+                # A full page held the busiest vertices' best edges only. The
+                # vertices still open are asked again together at the full
+                # ends: with the reached vertices left out, that page holds
+                # new edges only.
+                edges, full, more = await passing(still_open, None, full)
+                dropped |= more  # the same edges come back: the larger count
+                take(edges, set(still_open))
+                still_open = [vertex for vertex in still_open if open_(vertex)]
+            if full and still_open:
+                # Full again: each vertex still open is asked on its own
+                # (search.max_concurrency at a time). Asked at once, the
+                # requests share their neighbours and the first to take one
+                # keeps it, so each asks for what all the open seeds may still
+                # take, plus its edges the check dropped (they come back).
+                room = sum(share - taken[r] for r in {root[v] for v in still_open})
                 pages = await asyncio.gather(
                     *(
-                        passing(
-                            [v],
-                            min(page, max(on_page[e, v] for e in full) + needed(v)),
-                            full,
+                        alone(
+                            v, min(page, max(dropped[e, v] for e in full) + room), full
                         )
                         for v in still_open
                     )
@@ -988,18 +1032,22 @@ class BaseSearchStrategy(ABC):
         if not retriever or not entity_ids:
             return [], ()
         memo = current_query_scope()
-        key = "incident\n" + json.dumps(
-            [
-                query.suffix,
-                query.filters,
-                sorted(set(entity_ids)),
-                source_fields,
-                size,
-                ends,
-                sorted(set(away_from or ())),
-            ],
-            sort_keys=True,
-            default=str,
+        # Hashed: the vertices left out alone run to megabytes a walk.
+        key = f"{_MEMO_INCIDENT}\n" + compute_hash(
+            json.dumps(
+                [
+                    query.suffix,
+                    query.filters,
+                    sorted(set(entity_ids)),
+                    source_fields,
+                    size,
+                    ends,
+                    sorted(set(away_from or ())),
+                ],
+                sort_keys=True,
+                default=str,
+            ),
+            length=64,
         )
         if memo is not None:
             if (pending := memo.get(key)) is not None:
@@ -1076,14 +1124,14 @@ class BaseSearchStrategy(ABC):
         )
         if full and page >= self._incident_fetch_limit():  # not a sized page
             memo = current_query_scope()
-            warned = memo is not None and "incident page cap" in memo
+            warned = memo is not None and _MEMO_PAGE_CAP in memo
             (logger.debug if warned else logger.warning)(
                 "Incident-edge fetch hit the %s-hit page cap; the lowest-ranked "
                 "edges are dropped (upstream truncates by tokens only)",
                 page,
             )
             if memo is not None:
-                memo["incident page cap"] = True
+                memo[_MEMO_PAGE_CAP] = True
 
         # Dedup by relationship id, so an edge reachable from both of its
         # endpoints is carried once. Upstream dedups by the undirected endpoint

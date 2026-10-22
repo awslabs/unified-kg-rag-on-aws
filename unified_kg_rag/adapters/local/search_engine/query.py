@@ -377,7 +377,7 @@ def _bool(index: LoadedIndex, body: Any) -> Scores:
             candidates.intersection_update(matched)
     elif should:
         candidates = {doc_id for scores in should for doc_id in scores}
-    elif excluded or "must_not" in body:
+    elif "must_not" in body:
         # Only must_not: every other document, unscored (as OpenSearch).
         return dict.fromkeys(set(index.sources) - excluded, 0.0)
     else:
