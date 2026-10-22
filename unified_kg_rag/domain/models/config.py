@@ -2083,10 +2083,12 @@ class OpenSearchIndexingConfig(BaseModel):
             "index. prefix or under an index: map, but not the knn keys, which "
             "follow vector_search; the two limits are whole numbers >= 1); "
             "every key is passed to index creation (OpenSearch rejects one it "
-            "does not know: each run first creates and deletes a probe index "
-            "with them, so a refused key fails it before any extraction call, "
-            "existing indices or not; the embedded engine applies only "
-            "max_result_window) and applies to indices created afterwards, so "
+            "does not know: before its first model call, each run that "
+            "extracts creates and deletes a probe index with them and the "
+            "vector indices' fields, so a refused key, vector_search method "
+            "or analyzer fails it before any model call, existing indices or "
+            "not; the embedded engine applies only max_result_window) and "
+            "applies to indices created afterwards, so "
             "reindex after changing it. Reads and searches are sized by the "
             "smaller of max_result_window / max_terms_count here and on the "
             "live index (read again when a search is refused for them): a "
@@ -3041,9 +3043,11 @@ class LoggingConfig(BaseModel):
             # run-visualization) and httpcore every connection step (httpx).
             "numba": "WARNING",
             "httpcore": "WARNING",
-            # At INFO: every OpenSearch request (opensearch) and every model
-            # server request (httpx: Ollama and OpenAI-compatible servers).
-            "opensearch": "WARNING",
+            # At WARNING: every failed OpenSearch request, the 404s of an
+            # alias not created yet included (the client's errors are logged
+            # by adapters.aws.opensearch). At INFO: every model server
+            # request (httpx: Ollama and OpenAI-compatible servers).
+            "opensearch": "ERROR",
             "httpx": "WARNING",
             # The OTLP exporter warns on every retry to an unreachable collector.
             "opentelemetry": "ERROR",

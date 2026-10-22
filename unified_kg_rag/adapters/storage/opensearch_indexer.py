@@ -98,6 +98,25 @@ class _ItemSpec(NamedTuple):
     prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]]
 
 
+def _creation_refused(e: StoreRequestRejectedError) -> StoreRequestRejectedError:
+    """The error for an index creation the engine refused (``e``)."""
+    if "maximum shards open" in str(e):
+        hint = (
+            "The cluster has no room for another index's shards: delete "
+            "indices it no longer needs or raise cluster.max_shards_per_node."
+        )
+    else:
+        hint = (
+            "Every indexing.opensearch.index_settings key is passed to index "
+            "creation, and the mapping follows vector_search and the language "
+            "analyzers: fix or remove the setting it names."
+        )
+    return StoreRequestRejectedError(
+        f"The search engine refused to create an index: {e}. {hint}",
+        reason=e.reason,
+    )
+
+
 class OpenSearchIndexer(VectorIndexer):
     # Recorded in the _meta of the indices a full build creates (None records
     # nothing); see set_doc_status_tracking.
@@ -124,8 +143,6 @@ class OpenSearchIndexer(VectorIndexer):
         )
         # The limits in force on each live index read (see _limits).
         self._index_limits: dict[str, IndexLimits] = {}
-        # Whether index_settings passed a probe index (prepare_extraction_records).
-        self._index_settings_probed = False
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -1007,35 +1024,55 @@ class OpenSearchIndexer(VectorIndexer):
         return index_name
 
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
-        """Create ``suffix``'s extraction-records index unless it exists, and
-        once per indexer create and delete a probe index with the vector
-        indices' settings (see the port): index settings the engine refuses
-        then fail the run before extraction, also when every index exists
-        already (an incremental run or a reset) and the first index created
-        would be the indexing stage's."""
+        """Create ``suffix``'s extraction-records index unless it exists."""
         try:
-            if not self._index_settings_probed:
-                self._probe_index_settings(suffix)
             self._extraction_records_index(suffix)
         except StoreRequestRejectedError as e:
-            raise StoreRequestRejectedError(
-                "The search engine refused to create an index with "
-                f"indexing.opensearch.index_settings: {e}. Every key is passed "
-                "to index creation; fix or remove the one it names.",
-                reason=e.reason,
-            ) from e
+            raise _creation_refused(e) from e
 
-    def _probe_index_settings(self, suffix: str | None) -> None:
-        """Create and delete an index with ``_get_base_mapping``'s settings."""
+    def check_index_creation(self, suffix: str | None = None) -> None:
+        """Create and delete a probe index with every setting and field
+        definition of the vector indices (see the port).
+
+        Probes a stopped run left of ``suffix`` (it was between the two
+        requests) are deleted first; the run holds the namespace's write
+        lease. A probe that cannot be deleted is left to the next run.
+        """
         alias_name = self._get_name(
             self.opensearch_config.extraction_records_index_prefix, suffix
         )
+        pattern = f"{alias_name}-settings-probe-*"
+        try:
+            if stale := sorted(self.opensearch_client.get_aliases_by_index(pattern)):
+                self.opensearch_client.delete_indices(stale)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the next run deletes them
+            logger.warning("Deleting the probe indices '%s' failed: %s", pattern, e)
         probe = f"{alias_name}-settings-probe-{uuid.uuid4().hex[:12]}"
-        self.opensearch_client.create_index(
-            probe, self._get_base_mapping({}), exist_ok=False
-        )
-        self.opensearch_client.delete_indices([probe])
-        self._index_settings_probed = True
+        try:
+            self.opensearch_client.create_index(
+                probe, self._probe_mapping(), exist_ok=False
+            )
+        except StoreRequestRejectedError as e:
+            raise _creation_refused(e) from e
+        finally:
+            # Also when the create failed: its response may have been lost
+            # after the index was made (a missing one is no error).
+            try:
+                self.opensearch_client.delete_indices([probe])
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the next run deletes it
+                logger.warning("Deleting the probe index '%s' failed: %s", probe, e)
+
+    def _probe_mapping(self) -> dict[str, Any]:
+        """One mapping with the fields of every vector index: their settings,
+        knn methods and analyzers, all an engine may refuse at creation."""
+        properties: dict[str, Any] = {}
+        for spec in reversed(self._specs()):
+            properties.update(spec.mapping()["mappings"]["properties"])
+        return self._get_base_mapping(properties)
 
     def _get_extraction_records_mapping(self) -> dict[str, Any]:
         return {

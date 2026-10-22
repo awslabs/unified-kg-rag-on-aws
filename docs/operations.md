@@ -271,7 +271,10 @@ would stop every later run, so runs count deaths and isolate the culprit.
 - **Resumed runs** with the same pipeline id reuse their delta unless the
   registry no longer matches it or a culprit can be isolated; they then
   resume from `document_loading` (WARNING
-  `... resuming from 'document_loading' ...`).
+  `... resuming from 'document_loading' ...`). So do they when
+  `document_loading`'s inputs changed since the delta was computed (a reset,
+  retry or corpus setting; WARNING `Rewinding resume point from ... to
+  'document_loading'`).
 
 ### Concurrent runs
 

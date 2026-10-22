@@ -830,6 +830,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Logging: `logging.library_levels` sets `opensearch` to `ERROR` by default.
+  At `WARNING` opensearch-py logged every failed request, the expected 404
+  of each alias lookup before its index exists included; the package's
+  client logs the failures that matter (#413).
 - `run-rag --filters`: a pair without a key and a `:` (`key=value`,
   `noColon`) is a usage error (exit 2); it was skipped with a warning and
   the query ran without the filter, over the documents it was meant to
@@ -1332,6 +1336,41 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: the store check runs once per run before the first stage
+  that may call a model, and its probe index holds the vector indices'
+  fields, not only their settings. It ran when `graph_extraction` prepared
+  its records store, after translation had translated every text unit
+  (paid again by a rerun without `--pipeline-id`), once per extraction
+  stage; and a `vector_search` method or language analyzer the engine
+  refuses (faiss with `cosinesimil` before OpenSearch 2.19, `m: 0`, a
+  missing `nori` plugin) passed it and failed the first index creation
+  after extraction. A refused setting now ends the run as a configuration
+  error (exit 2, `StoreRequestRejectedError` from
+  `DataIngestionPipeline.run`) instead of a failed `graph_extraction`
+  stage. An incremental run with nothing to extract is not checked, as
+  before (#413).
+- Ingestion: a probe index is deleted also when its creation fails after
+  the index was made, and the probes a stopped or killed run left are
+  deleted by the next run before it creates its own; a probe that could not
+  be deleted no longer fails the run. Nothing deleted them before (#413).
+- Ingestion: a refused index creation names `index_settings` only among
+  the causes; a shard limit (`maximum shards open`) says the cluster has no
+  room for another index instead (#413).
+- Ingestion: a lost write lease while the extraction store is prepared
+  fails the run; it was logged as a failing cache and extraction went on
+  (#413).
+- Config: a free-form mapping set from the environment replaces the
+  file's, as `index_settings` already did: a whole-map variable such as
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS='{"ko": "cjk"}'` merged
+  into the file's map and kept the keys it left out (#413).
+- Config: an index-setting variable with a nested `INDEX__` segment
+  (`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__INDEX__NUMBER_OF_SHARDS`)
+  is reported with the variable to set instead (#413).
+- `run-rag` interactive mode: `set-filter key:value` keeps a value with
+  spaces; it was cut at the first one (#413).
+- Docs: the retriever contract in the design guide names `aindex_limits`,
+  the vector indexer's `check_index_creation`; Operations names the changed
+  `document_loading` inputs as a reason a resume reloads its delta (#413).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,

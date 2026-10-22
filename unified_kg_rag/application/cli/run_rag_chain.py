@@ -572,7 +572,8 @@ class RAGChainRunner:
     @staticmethod
     def _handle_set_filter(state: dict[str, Any], args: list[str]) -> None:
         try:
-            pair = _filter_pair(args[0] if args else "")
+            # The line was split on whitespace: a value may hold spaces.
+            pair = _filter_pair(" ".join(args))
         except argparse.ArgumentTypeError:
             console.print("[red]Invalid filter format. Use 'key:value'[/red]")
             return

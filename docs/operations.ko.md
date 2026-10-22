@@ -251,7 +251,9 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   남고 같은 방식으로 격리됩니다.
 - **재개한 실행**은 같은 파이프라인 ID의 델타를 다시 쓰지만, 레지스트리가 그 델타와
   맞지 않거나 원인 문서를 가려낼 수 있으면 `document_loading`부터 재개합니다(WARNING
-  `... resuming from 'document_loading' ...`).
+  `... resuming from 'document_loading' ...`). 델타를 계산한 뒤 `document_loading`의
+  입력(초기화, 재시도, 말뭉치 설정)이 바뀐 경우에도 마찬가지입니다(WARNING
+  `Rewinding resume point from ... to 'document_loading'`).
 
 ### 동시 실행
 

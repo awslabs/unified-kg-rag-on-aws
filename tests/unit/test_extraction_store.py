@@ -307,6 +307,19 @@ class TestExtractionStore:
         vectors.prepare_extraction_records = unreachable  # type: ignore[method-assign]
         assert store.load([_unit("t1", "a")], "fp", _raw) == {}
 
+    def test_a_lost_lease_is_raised_by_the_preparation(self) -> None:
+        # It was logged as a failing cache and the run went on extracting.
+        from unified_kg_rag.shared import NamespaceLeaseError
+
+        vectors = FakeVectorStore()
+
+        def lost(suffix=None):
+            raise NamespaceLeaseError("another run took the namespace")
+
+        vectors.prepare_extraction_records = lost  # type: ignore[method-assign]
+        with pytest.raises(NamespaceLeaseError):
+            ExtractionStore(Config(), lambda: vectors).load([_unit("t1")], "fp", _raw)
+
     def test_save_returns_the_units_of_the_rejected_keys(self) -> None:
         vectors = FakeVectorStore()
         other = TextUnit(id="t2", text="Buyer pays Vendor.")
@@ -404,6 +417,34 @@ def _indexer(path) -> OpenSearchIndexer:
     )
 
 
+def _strict_engine(path, refused):
+    """An embedded engine that refuses, as OpenSearch would, every index
+    whose body ``refused`` names a reason for; and the names it was asked
+    to create."""
+    from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+    engine = SQLiteSearchEngine(path)
+    create = engine.create_index
+    created: list[str] = []
+
+    def strict(index, body, *, exist_ok=True):
+        created.append(index)
+        if reason := refused(body):
+            raise StoreRequestRejectedError(reason, reason="illegal_argument_exception")
+        return create(index, body, exist_ok=exist_ok)
+
+    engine.create_index = strict  # type: ignore[method-assign]
+    return engine, created
+
+
+def _probing_indexer(config: Config, engine) -> OpenSearchIndexer:
+    return OpenSearchIndexer(
+        config,
+        embedding_factory=HashingEmbeddingFactory(dimensions=8),
+        opensearch_client=engine,
+    )
+
+
 class TestOpenSearchExtractionRecords:
     def test_preparing_creates_the_index_once_and_reports_a_refusal(
         self, tmp_path
@@ -435,11 +476,10 @@ class TestOpenSearchExtractionRecords:
     ) -> None:
         # Only a missing records index was created, so a reset or an
         # incremental run over an existing namespace extracted every unit
-        # before the indexing stage's first index creation was refused. Each
-        # indexer now creates and deletes a probe index with the vector
-        # indices' settings (a "knn"-prefixed typo included) first.
+        # before the indexing stage's first index creation was refused. The
+        # run creates and deletes a probe index with the vector indices'
+        # settings (a "knn"-prefixed typo included) first.
         from unified_kg_rag.shared import ConfigurationError
-        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
         path = tmp_path / "vector.sqlite3"
         _indexer(path).prepare_extraction_records("x")  # the namespace exists
@@ -448,37 +488,113 @@ class TestOpenSearchExtractionRecords:
             **config.indexing.opensearch.index_settings,
             typo: "1s",
         }
-        engine = SQLiteSearchEngine(path)
-        create = engine.create_index
-        created: list[str] = []
-
-        def strict(index, body, *, exist_ok=True):
-            # OpenSearch refuses a setting it does not know.
-            created.append(index)
-            if typo in body["settings"]:
-                raise StoreRequestRejectedError(
-                    f"unknown setting [index.{typo}]",
-                    reason="illegal_argument_exception",
-                )
-            return create(index, body, exist_ok=exist_ok)
-
-        engine.create_index = strict  # type: ignore[method-assign]
-        indexer = OpenSearchIndexer(
-            config,
-            embedding_factory=HashingEmbeddingFactory(dimensions=8),
-            opensearch_client=engine,
+        engine, created = _strict_engine(
+            path, lambda body: typo in body["settings"] and f"unknown [{typo}]"
         )
+        indexer = _probing_indexer(config, engine)
         with pytest.raises(ConfigurationError, match=typo):
-            indexer.prepare_extraction_records("x")
+            indexer.check_index_creation("x")
 
-        # Accepted settings: the probe is created once per indexer and
-        # deleted, the records index is left as it was.
+        # Accepted settings: the probe is created and deleted, the records
+        # index is left as it was.
         config.indexing.opensearch.index_settings.pop(typo)
         created.clear()
-        indexer.prepare_extraction_records("x")
-        indexer.prepare_extraction_records("y")
+        indexer.check_index_creation("x")
         assert len([name for name in created if "settings-probe" in name]) == 1
         assert not engine.get_aliases_by_index("*settings-probe*")
+
+    def test_the_probe_holds_every_field_an_engine_may_refuse(self, tmp_path) -> None:
+        # The probe index had no fields: a vector method or an analyzer the
+        # engine refuses passed it and failed the first real index creation
+        # after extraction.
+        config = Config()
+        config.processing.translation.enabled = True
+        config.processing.translation.source_language = LanguageCode.KO
+        config.processing.translation.target_language = LanguageCode.EN
+        engine, created = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        bodies: list[dict] = []
+        create = engine.create_index
+
+        def keep(index, body, *, exist_ok=True):
+            bodies.append(body)
+            return create(index, body, exist_ok=exist_ok)
+
+        engine.create_index = keep  # type: ignore[method-assign]
+        indexer = _probing_indexer(config, engine)
+        indexer.check_index_creation("x")
+
+        probe = bodies[0]["mappings"]["properties"]
+        for spec in indexer._specs():
+            for name, field in spec.mapping()["mappings"]["properties"].items():
+                for key in ("analyzer", "method"):
+                    if key in field:
+                        assert any(
+                            other.get(key) == field[key] for other in probe.values()
+                        ), (spec.name, name)
+        assert {"text", "translated_text_en", "name"} <= set(probe)
+
+    def test_probes_a_stopped_run_left_are_deleted_first(self, tmp_path) -> None:
+        # A run stopped between the probe's create and delete (SIGTERM: the
+        # stop fence refuses the delete), or whose delete failed, left the
+        # probe for good: nothing else deletes it.
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        indexer = _probing_indexer(Config(), engine)
+        delete = engine.delete_indices
+
+        def lost(names):
+            raise RuntimeError("connection reset")
+
+        engine.delete_indices = lost  # type: ignore[method-assign]
+        indexer.check_index_creation("x")  # the run goes on
+        assert len(engine.get_aliases_by_index("*settings-probe*")) == 1
+
+        engine.delete_indices = delete  # type: ignore[method-assign]
+        _probing_indexer(Config(), engine).check_index_creation("x")
+        assert not engine.get_aliases_by_index("*settings-probe*")
+
+    def test_a_probe_created_before_a_failure_is_deleted(self, tmp_path) -> None:
+        # The create's response lost after the index was made (or a stop
+        # raised in it): the probe is deleted all the same.
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        create = engine.create_index
+
+        def lost_response(index, body, *, exist_ok=True):
+            create(index, body, exist_ok=exist_ok)
+            raise TimeoutError("no answer")
+
+        engine.create_index = lost_response  # type: ignore[method-assign]
+        with pytest.raises(TimeoutError):
+            _probing_indexer(Config(), engine).check_index_creation("x")
+        assert not engine.get_aliases_by_index("*settings-probe*")
+
+    @pytest.mark.parametrize(
+        ("error", "blamed", "named"),
+        [
+            ("unknown setting [index.refresh_intervl]", True, "index_settings"),
+            (
+                "validation_exception: Validation Failed: 1: this action would "
+                "add [1] total shards, but this cluster currently has "
+                "[1000]/[1000] maximum shards open;",
+                False,
+                "max_shards_per_node",
+            ),
+        ],
+    )
+    def test_the_error_blames_the_settings_only_when_they_are_at_fault(
+        self, tmp_path, error: str, blamed: bool, named: str
+    ) -> None:
+        # A shard limit was reported as a refused index_settings key.
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: error)
+        for check in (
+            lambda ix: ix.check_index_creation("x"),
+            lambda ix: ix.prepare_extraction_records("x"),
+        ):
+            with pytest.raises(StoreRequestRejectedError) as raised:
+                check(_probing_indexer(Config(), engine))
+            assert named in str(raised.value)
+            assert ("index_settings" in str(raised.value)) is blamed
 
     def test_records_are_upserted_and_read_per_suffix(self, tmp_path) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")

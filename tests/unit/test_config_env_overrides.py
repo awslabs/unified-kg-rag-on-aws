@@ -98,6 +98,54 @@ def test_an_env_index_setting_replaces_its_other_spelling(
     assert settings == {"number_of_replicas": 1, "number_of_shards": 1}
 
 
+@pytest.mark.parametrize(
+    ("name", "value", "key", "expected"),
+    [
+        (
+            "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS",
+            '{"ko": "cjk"}',
+            "language_analyzers",
+            {"ko": "cjk"},
+        ),
+        (
+            "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS",
+            '{"number_of_shards": 2}',
+            "index_settings",
+            {"number_of_shards": 2},
+        ),
+    ],
+)
+def test_a_whole_map_variable_replaces_the_files_map(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, name, value, key, expected
+) -> None:
+    # Only index_settings was replaced: every other map merged into the
+    # file's, so the keys a whole-map variable left out came back.
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "indexing:\n  opensearch:\n"
+        "    language_analyzers: {en: english, ja: kuromoji}\n"
+        "    index_settings: {number_of_shards: 1, refresh_interval: 5s}\n"
+    )
+    monkeypatch.setenv(name, value)
+    opensearch = ConfigLoader(path).load_config().indexing.opensearch
+    assert getattr(opensearch, key) == expected
+
+
+def test_a_nested_index_variable_names_the_bare_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A file may nest index settings under index:, a variable cannot: it was
+    # reported as an unknown variable with no hint.
+    name = "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__INDEX__NUMBER_OF_SHARDS"
+    monkeypatch.setenv(name, "2")
+    with pytest.raises(ConfigurationError) as raised:
+        ConfigLoader().load_config()
+    assert name in str(raised.value)
+    assert "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_SHARDS" in (
+        str(raised.value).replace(name, "")
+    )
+
+
 def test_an_error_the_environment_causes_names_the_variable(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
