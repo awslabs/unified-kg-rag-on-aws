@@ -833,7 +833,7 @@ changed once with the full-config keys (#332).
 - Logging: `logging.library_levels` sets `opensearch` to `ERROR` by default.
   At `WARNING` opensearch-py logged every failed request, the expected 404
   of each alias lookup before its index exists included; the package's
-  client logs the failures that matter (#PR).
+  client logs the failures that matter (#413).
 - `run-rag --filters`: a pair without a key and a `:` (`key=value`,
   `noColon`) is a usage error (exit 2); it was skipped with a warning and
   the query ran without the filter, over the documents it was meant to
@@ -1348,29 +1348,29 @@ changed once with the full-config keys (#332).
   error (exit 2, `StoreRequestRejectedError` from
   `DataIngestionPipeline.run`) instead of a failed `graph_extraction`
   stage. An incremental run with nothing to extract is not checked, as
-  before (#PR).
+  before (#413).
 - Ingestion: a probe index is deleted also when its creation fails after
   the index was made, and the probes a stopped or killed run left are
   deleted by the next run before it creates its own; a probe that could not
-  be deleted no longer fails the run. Nothing deleted them before (#PR).
+  be deleted no longer fails the run. Nothing deleted them before (#413).
 - Ingestion: a refused index creation names `index_settings` only among
   the causes; a shard limit (`maximum shards open`) says the cluster has no
-  room for another index instead (#PR).
+  room for another index instead (#413).
 - Ingestion: a lost write lease while the extraction store is prepared
   fails the run; it was logged as a failing cache and extraction went on
-  (#PR).
+  (#413).
 - Config: a free-form mapping set from the environment replaces the
   file's, as `index_settings` already did: a whole-map variable such as
   `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS='{"ko": "cjk"}'` merged
-  into the file's map and kept the keys it left out (#PR).
+  into the file's map and kept the keys it left out (#413).
 - Config: an index-setting variable with a nested `INDEX__` segment
   (`UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__INDEX__NUMBER_OF_SHARDS`)
-  is reported with the variable to set instead (#PR).
+  is reported with the variable to set instead (#413).
 - `run-rag` interactive mode: `set-filter key:value` keeps a value with
-  spaces; it was cut at the first one (#PR).
+  spaces; it was cut at the first one (#413).
 - Docs: the retriever contract in the design guide names `aindex_limits`,
   the vector indexer's `check_index_creation`; Operations names the changed
-  `document_loading` inputs as a reason a resume reloads its delta (#PR).
+  `document_loading` inputs as a reason a resume reloads its delta (#413).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
