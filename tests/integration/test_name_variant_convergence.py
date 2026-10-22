@@ -1956,3 +1956,76 @@ def test_an_edit_leaves_no_interim_claim(tmp_path: Path) -> None:
     incremental = _state(tmp_path / "inc", runs)
 
     assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "corpora",
+    [
+        pytest.param(
+            [
+                {"d0.txt": "Acme and Buyer trade goods 3."},
+                {"d4.txt": "Depot and Buyer trade cash 1."},
+                {"d0.txt": "Buyer and Acme trade cash 2."},
+            ],
+            id="the-next-run-passes-its-store-probe",
+        ),
+        pytest.param(
+            [
+                {
+                    "d0.txt": "Acme and Buyer trade goods 3.",
+                    "d1.txt": "Depot and Carrier trade parts 1.",
+                },
+                {"d1.txt": "Depot and Carrier trade parts 1."},
+                {
+                    "d0.txt": "Acme and Buyer trade goods 3.",
+                    "d1.txt": "Depot and Carrier trade parts 1.",
+                },
+            ],
+            id="a-dropped-document-back-unchanged-is-indexed",
+        ),
+    ],
+)
+def test_a_reset_killed_after_its_index_swap_leaves_no_stale_record(
+    tmp_path: Path, corpora: list[dict[str, str]]
+) -> None:
+    # The reset of the second corpus drops a document and is killed after
+    # it swapped an index in. The dropped document's record stayed
+    # PROCESSED over stores that no longer hold it: every later incremental
+    # run failed its store probe, or diffed the document unchanged when it
+    # came back and never indexed it again.
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+
+    def write(corpus: dict[str, str]) -> None:
+        shutil.rmtree(source, ignore_errors=True)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+
+    write(corpora[0])
+    assert _ingest(config, providers, source, tmp_path / "run-0").status is (
+        PipelineStageStatus.COMPLETED
+    )
+    write(corpora[1])
+    config.indexing.reset = True
+    with (
+        patch.object(
+            IndexingManager,
+            "_run_indexing_phase",
+            _dying("_run_indexing_phase", 2, True, IndexingManager),
+        ),
+        pytest.raises(_Died),
+    ):
+        _ingest(config, providers, source, tmp_path / "run-1")
+    config.indexing.reset = False
+    write(corpora[2])
+    context = _ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    texts = _stored(
+        config, providers, config.indexing.opensearch.text_units_index_prefix
+    )
+    assert {hit["_source"]["text"].strip() for hit in texts} == set(corpora[2].values())

@@ -81,6 +81,7 @@ from unified_kg_rag.domain.models import (
     CommunityReport,
     Config,
     Constants,
+    DocStatus,
     Document,
     Entity,
     IndexBuildRecord,
@@ -1804,7 +1805,23 @@ class IndexingStage(_RegistryStage):
                     text_units,
                 )
                 lineages = context_lineages(context, incremental.suffix, text_units)
-                incremental.write_ahead(context.incremental_delta, lineages)
+                # And the documents it drops: once it swaps an index in, an
+                # interrupted rebuild left their records PROCESSED over stores
+                # that no longer hold them (diffed unchanged, never indexed
+                # again).
+                kept = set(context.incremental_fingerprints or ())
+                dropped = [
+                    record.doc_id
+                    for namespace in sorted(
+                        reset_namespaces(self.config, context, text_units)
+                    )
+                    for record in incremental.doc_status.list_namespace(namespace)
+                    if record.doc_id not in kept
+                    and record.status is DocStatus.PROCESSED
+                ]
+                incremental.write_ahead(
+                    context.incremental_delta, lineages, dropped=dropped
+                )
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
             # incrementally later (see VectorIndexer.check_index_settings).

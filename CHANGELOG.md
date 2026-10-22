@@ -1636,6 +1636,14 @@ changed once with the full-config keys (#332).
   the commit then derived the same statement into the full build's
   claim, and the interim copy stayed. Stored claims citing a unit the
   derived claims gained are now derived with them (#PR).
+- Incremental indexing: an `indexing.reset` that drops documents and is
+  interrupted after it swapped an index in no longer blocks the next
+  incremental runs. The dropped documents' records stayed PROCESSED over
+  stores that no longer held them, so every later run failed its store
+  probe until another reset, and a dropped document added back unchanged
+  was never indexed again. The reset now writes them PENDING before it
+  rebuilds, and fails before it rebuilds anything when the registry
+  cannot be read (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

@@ -530,8 +530,8 @@ derived again on every run.
 
 `indexing.reset` skips the diff and rebuilds the whole corpus with the
 full-index path, without taking the suffix offline. Quarantined documents
-(§5.3) are skipped and keep their records; every other document is recorded
-`PENDING`; the vector indices are written into new timestamped indices whose
+(§5.3) are skipped and keep their records; every other document, and every
+indexed one the corpus dropped, is recorded `PENDING`; the vector indices are written into new timestamped indices whose
 aliases swap when each is built; the graph is rebuilt in place
 (`GraphIndexer.begin_rebuild` tags every vertex and edge the build writes, and
 `end_rebuild` drops the suffix's entities, communities and edges without the

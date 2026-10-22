@@ -26,6 +26,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
+    DocStatus,
     Document,
     DocumentLineage,
     Entity,
@@ -273,3 +274,27 @@ def test_failure_count_resets_on_success_and_on_new_content(rig) -> None:
     inc.commit([_lineage("/a.txt")], edited)
     record = store.get(doc_id)
     assert record is not None and record.failure_count == 0
+
+
+def test_a_rebuild_writes_the_documents_it_drops_pending_and_leaves_them(
+    rig,
+) -> None:
+    # A reset's rebuild records them PENDING before it writes, so an
+    # interruption leaves no PROCESSED record over stores that no longer
+    # hold the document. They are not in flight: the rebuild neither
+    # removes nor records them (nor counts an attempt of them).
+    _, fps = detect_delta([_doc("/a.txt", "A"), _doc("/b.txt", "B")], rig.store)
+    _commit(rig.inc, fps, "/a.txt", [("ea", "A")])
+    _commit(rig.inc, fps, "/b.txt", [("eb", "B")])
+    dropped = rig.store.get(compute_doc_id("/b.txt"))
+    delta, fps = detect_delta([_doc("/a.txt", "A")], rig.store)
+    inc = IncrementalIndexer(rig.store, rig.manager)
+
+    inc.write_ahead(delta, [_lineage("/a.txt")], dropped=[dropped.doc_id])
+    pending = rig.store.get(dropped.doc_id)
+    assert pending.status is DocStatus.PENDING
+    assert pending.text_unit_ids == dropped.text_unit_ids
+    inc.record([_lineage("/a.txt")], fps, {})
+
+    assert rig.store.get(dropped.doc_id) == pending
+    assert rig.store.get(compute_doc_id("/a.txt")).status is DocStatus.PROCESSED
