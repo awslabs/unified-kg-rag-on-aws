@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 import time
+import uuid
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
@@ -65,6 +66,9 @@ _WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 _READ_BATCH_SIZE = 1000
 # Values per terms search of find_documents at most.
 _FIND_BATCH_SIZE = 100
+# The settings _get_base_mapping adds for the vector indices (the config
+# refuses them in index_settings); the extraction-records index has no vectors.
+_KNN_SETTINGS = ("knn", "knn.algo_param.ef_search")
 # Index settings an index gets when index_settings leaves them out.
 # refresh_interval trades search-visibility latency for indexing throughput;
 # raising it (e.g. "30s" or "-1") speeds bulk loads.
@@ -127,6 +131,8 @@ class OpenSearchIndexer(VectorIndexer):
         )
         # The limits in force on each live index read (see _limits).
         self._index_limits: dict[str, IndexLimits] = {}
+        # Whether index_settings passed a probe index (prepare_extraction_records).
+        self._index_settings_probed = False
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -1008,25 +1014,42 @@ class OpenSearchIndexer(VectorIndexer):
         return index_name
 
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
-        """Create ``suffix``'s extraction-records index unless it exists (see
-        the port): the first index a run creates, so index settings the
-        engine refuses fail the run before extraction, not after it."""
+        """Create ``suffix``'s extraction-records index unless it exists, and
+        once per indexer create and delete a probe index with the vector
+        indices' settings (see the port): index settings the engine refuses
+        then fail the run before extraction, also when every index exists
+        already (an incremental run or a reset) and the first index created
+        would be the indexing stage's."""
         try:
+            if not self._index_settings_probed:
+                self._probe_index_settings(suffix)
             self._extraction_records_index(suffix)
         except StoreRequestRejectedError as e:
             raise StoreRequestRejectedError(
-                "The search engine refused to create the extraction-records "
-                f"index: {e}. Check indexing.opensearch.index_settings: every "
-                "key is passed to index creation.",
+                "The search engine refused to create an index with "
+                f"indexing.opensearch.index_settings: {e}. Every key is passed "
+                "to index creation; fix or remove the one it names.",
                 reason=e.reason,
             ) from e
+
+    def _probe_index_settings(self, suffix: str | None) -> None:
+        """Create and delete an index with ``_get_base_mapping``'s settings."""
+        alias_name = self._get_name(
+            self.opensearch_config.extraction_records_index_prefix, suffix
+        )
+        probe = f"{alias_name}-settings-probe-{uuid.uuid4().hex[:12]}"
+        self.opensearch_client.create_index(
+            probe, self._get_base_mapping({}), exist_ok=False
+        )
+        self.opensearch_client.delete_indices([probe])
+        self._index_settings_probed = True
 
     def _get_extraction_records_mapping(self) -> dict[str, Any]:
         return {
             "settings": {
                 key: value
                 for key, value in self._get_base_mapping({})["settings"].items()
-                if not key.startswith("knn")
+                if key not in _KNN_SETTINGS
             },
             "mappings": {
                 "dynamic": False,

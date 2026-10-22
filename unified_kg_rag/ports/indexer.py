@@ -621,10 +621,11 @@ class VectorIndexer(BaseIndexer):
         return IndexingStats()
 
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
-        """Create ``suffix``'s extraction-record store unless it exists, before
-        extraction: a store the backend refuses to create (index settings it
-        does not know) then fails the run before any model call rather than
-        every unit's record write after them. Raises
+        """Create ``suffix``'s extraction-record store unless it exists, and
+        check that the backend accepts the configured index settings, before
+        extraction: settings it refuses then fail the run before any model
+        call, whether or not the stores exist already, rather than every
+        write after them. Raises
         :class:`~unified_kg_rag.shared.exceptions.StoreRequestRejectedError`
         (a ``ConfigurationError``) when refused. Default does nothing."""
         return None

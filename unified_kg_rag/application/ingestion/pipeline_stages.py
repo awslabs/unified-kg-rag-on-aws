@@ -2009,10 +2009,23 @@ class IndexingStage(_RegistryStage):
                 )
 
         if failed_index_types:
+            first_error = next(
+                (
+                    indexing_results[key].errors[0]
+                    for key in failed_index_types
+                    if indexing_results[key].errors
+                ),
+                None,
+            )
             error_msg = (
                 f"Indexing failed: {', '.join(failed_index_types)} "
                 f"exceeded the tolerated failure rate ({max_failure_rate:.0%}) or "
                 f"failed to index any items. This indicates a configuration or "
-                f"connectivity issue. Check the logs above for specific errors."
+                f"connectivity issue. "
+                + (
+                    f"First error: {first_error}"
+                    if first_error
+                    else "Check the logs above for specific errors."
+                )
             )
             raise PipelineStageError(error_msg)

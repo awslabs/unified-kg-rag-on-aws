@@ -60,6 +60,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ChunkingStrategy
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
 pytestmark = pytest.mark.integration
 
@@ -439,3 +440,49 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     assert data.is_file()
     for method in ("none", "description"):
         assert _render(tmp_path, monkeypatch, data, method)
+
+
+def test_a_reset_with_a_refused_index_setting_fails_before_any_model_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+) -> None:
+    # Only a missing extraction-records index was created before extraction,
+    # so a reset (or an incremental run) over a built namespace extracted and
+    # summarized the corpus again before the indexing stage's first index
+    # creation was refused.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    context = _ingest(
+        config, _providers(config, server, encoder), source, tmp_path / "run-1"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    create = SQLiteSearchEngine.create_index
+
+    def strict(self, index, body, *, exist_ok=True):
+        # OpenSearch refuses a setting it does not know; the embedded engine
+        # ignores every setting but max_result_window.
+        if "refresh_intervl" in body["settings"]:
+            raise StoreRequestRejectedError(
+                "unknown setting [index.refresh_intervl]",
+                reason="illegal_argument_exception",
+            )
+        return create(self, index, body, exist_ok=exist_ok)
+
+    monkeypatch.setattr(SQLiteSearchEngine, "create_index", strict)
+    # A new document: extracting it would be a model call.
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    typo = config.model_copy(deep=True)
+    typo.indexing.reset = True
+    typo.indexing.opensearch.index_settings = {"refresh_intervl": "1s"}
+    calls = len(server.chat_models)
+    context = _ingest(
+        typo, _providers(typo, server, encoder), source, tmp_path / "run-2"
+    )
+
+    assert context.status is PipelineStageStatus.FAILED
+    assert "refresh_intervl" in _errors(context)
+    assert len(server.chat_models) == calls

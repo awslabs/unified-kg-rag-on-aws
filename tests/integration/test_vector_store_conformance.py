@@ -697,6 +697,9 @@ def test_index_settings_the_engine_refuses_fail_before_extraction(
 
     typo = harness.derive(misspell)
     tenant = typo.suffix("typo")
+    # The namespace exists (a reset or an incremental run): its records
+    # index is not created again, and the settings are checked all the same.
+    harness.vector_indexer.prepare_extraction_records(tenant)
     store = ExtractionStore(typo.config, lambda: typo.vector_indexer)
     units = _tagged([TextUnit(id="t1", text="Vendor ships widgets.")], tenant)
 

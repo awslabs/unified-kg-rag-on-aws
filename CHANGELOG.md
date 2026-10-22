@@ -1332,6 +1332,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: `index_settings` are checked before extraction on every run,
+  not only when the extraction-records index is missing: each run creates
+  and deletes a probe index with the vector indices' settings first. A
+  reset or an incremental run over an existing namespace with a key
+  OpenSearch refuses (a typo such as `refresh_intervl` or `knnx`)
+  extracted and summarized the whole corpus before the indexing stage
+  failed. The indexing stage's error now also states the first store
+  error instead of only pointing at the logs (#PR).
 - OpenSearch and the embedded engine: the indexer's reads and the
   retriever's searches are sized by the limits in force on each live
   index: the smaller of `index_settings` and the `max_result_window` /
