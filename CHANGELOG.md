@@ -1629,6 +1629,13 @@ changed once with the full-config keys (#332).
   tie (since #407 an empty element is an empty field, not `{}`). It is
   now no vote, and stays only when no statement gives a value. Names,
   claim objects and descriptions already skipped empty values (#PR).
+- Incremental indexing: an edit that changes how a kept unit's claim
+  resolves no longer leaves a duplicate claim (here a self-claim), with
+  no fault involved. The removal derived the kept unit's claim under an
+  interim id before the edited document's entities were in the graph;
+  the commit then derived the same statement into the full build's
+  claim, and the interim copy stayed. Stored claims citing a unit the
+  derived claims gained are now derived with them (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

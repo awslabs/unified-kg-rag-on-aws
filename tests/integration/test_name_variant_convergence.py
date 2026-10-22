@@ -1934,3 +1934,25 @@ def test_a_resumed_split_strip_ranks_and_keys_edges_as_a_full_build(
     )
 
     assert incremental == full
+
+
+def test_an_edit_leaves_no_interim_claim(tmp_path: Path) -> None:
+    # No fault. The edit makes the removal derive a claim of a kept unit
+    # under an interim id (its subject resolved without the edited
+    # document's spellings); the commit then derives the same statement
+    # into the full build's claim, and the interim copy stayed: a duplicate,
+    # here a self-claim.
+    first = "Acme Inc and Acme and ACME trade cash 2. ACME Inc and ACME and Acme Ltd trade goods 3."
+    d4 = "Acme Ltd and Acme Corp trade parts 2."
+    runs = [
+        {"d5.txt": first, "d4.txt": d4},
+        {
+            "d5.txt": f"{first} Acme Corp and Acme Ltd and ACME trade parts 1.",
+            "d4.txt": d4,
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]])
+    incremental = _state(tmp_path / "inc", runs)
+
+    assert incremental == full

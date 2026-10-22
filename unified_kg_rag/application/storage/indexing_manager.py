@@ -739,20 +739,50 @@ class IndexingManager:
                 )
                 - {c.id for c in group}
             )
-            for claim in self.opensearch_indexer.read_claims(about, suffix=suffix):
-                claim.attributes = {
-                    **(claim.attributes or {}),
-                    Constants.INDEX.value: suffix,
-                }
-                group.append(claim)
+            group += self._read_stored_claims(about, suffix)
             if not group:
                 continue
             if not stored and not about and suffix in self._fresh:
                 # Nothing stored: the delta claims are the full build's.
                 merged.extend(group)
                 continue
-            merged.extend(self._derive_claims(suffix, group, units))
+            derived = self._derive_claims(suffix, group, units)
+            # A stored claim citing a unit a derived claim gained (this run's
+            # removal derived it from a kept unit, before the delta's
+            # entities were in the graph) may state what the derived claim
+            # does under another id: it is derived with them.
+            gained = sorted(
+                {u for c in derived for u in c.text_unit_ids or []}
+                - {u for c in group for u in c.text_unit_ids or []}
+            )
+            overlapping = (
+                set(
+                    self._vector_citing(
+                        self.config.indexing.opensearch.claims_index_prefix,
+                        gained,
+                        suffix,
+                    )
+                )
+                - {c.id for c in [*group, *derived]}
+                if gained
+                else set()
+            )
+            if overlapping:
+                group += self._read_stored_claims(sorted(overlapping), suffix)
+                derived = self._derive_claims(suffix, group, units)
+            merged.extend(derived)
         return merged if claims is not None or merged else claims
+
+    def _read_stored_claims(self, ids: list[str], suffix: str) -> list[Claim]:
+        """The stored claims of ``ids`` in ``suffix``, tagged with it (the
+        write-back groups claims by their own index tag)."""
+        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix) if ids else []
+        for claim in claims:
+            claim.attributes = {
+                **(claim.attributes or {}),
+                Constants.INDEX.value: suffix,
+            }
+        return claims
 
     def _merge_suffix(
         self,
@@ -1246,16 +1276,10 @@ class IndexingManager:
         self, suffix: str, ids: list[str]
     ) -> tuple[list[Entity], list[Relationship], list[Claim]]:
         """The stored entities, relationships and claims of ``ids``."""
-        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix)
-        for claim in claims:
-            claim.attributes = {
-                **(claim.attributes or {}),
-                Constants.INDEX.value: suffix,
-            }
         return (
             self.neptune_indexer.read_entities(ids, suffix=suffix),
             self.neptune_indexer.read_relationships(ids, suffix=suffix),
-            claims,
+            self._read_stored_claims(ids, suffix),
         )
 
     def _unit_records(
@@ -2166,14 +2190,9 @@ class IndexingManager:
         note: Callable[[set[str]], None] | None = None,
     ) -> dict[str, IndexingStats]:
         try:
-            claims = self.opensearch_indexer.read_claims(claim_ids, suffix=suffix)
             # The write-back groups by the claim's own index tag, so tag what
             # was read with the index it came from.
-            for claim in claims:
-                claim.attributes = {
-                    **(claim.attributes or {}),
-                    Constants.INDEX.value: suffix,
-                }
+            claims = self._read_stored_claims(claim_ids, suffix)
             # The claims citing none of them were read because their subject
             # or object was re-keyed: they are derived again too.
             stripped = {c.id: c for c in remove_claim_text_units(claims, text_unit_ids)}
