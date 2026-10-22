@@ -313,10 +313,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         raise
                     # An index replaced since its limits were read (a reset
                     # or reindex under other index_settings): read again, once.
+                    # A read still in flight is left to finish: it is newer.
                     for prefix in limits:
-                        self._index_limits.pop(
-                            self._get_name(prefix, query.suffix), None
-                        )
+                        name = self._get_name(prefix, query.suffix)
+                        if isinstance(self._index_limits.get(name), IndexLimits):
+                            del self._index_limits[name]
                     logger.info("Index limits changed; searching again: %s", e)
                     continue
                 break
@@ -636,17 +637,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return shared if shared is not None else (await self._read_limits(alias))[0]
         pending: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._index_limits[alias] = pending
+        limits: IndexLimits | None = None
+        keep = False
         try:
             limits, keep = await self._read_limits(alias)
-        except BaseException:
-            del self._index_limits[alias]
-            pending.set_result(None)  # the waiters read for themselves
-            raise
-        if keep:
-            self._index_limits[alias] = limits
-        else:
-            del self._index_limits[alias]
-        pending.set_result(limits)
+        finally:
+            # Resolved whatever happens (None: the waiters read for
+            # themselves), and the entry replaced only while it is still this
+            # read's: a rejected search may have dropped it meanwhile.
+            if self._index_limits.get(alias) is pending:
+                if keep and limits is not None:
+                    self._index_limits[alias] = limits
+                else:
+                    self._index_limits.pop(alias, None)
+            pending.set_result(limits)
         return limits
 
     async def _read_limits(self, alias: str) -> tuple[IndexLimits, bool]:

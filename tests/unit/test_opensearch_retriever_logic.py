@@ -1345,3 +1345,33 @@ async def test_an_unanswered_settings_read_fails_the_query(retriever) -> None:
     assert all(isinstance(f, StoreTimeoutError) for f in found)
     assert "did not answer" in str(found[0])
     assert client.reads == 3 and retriever._index_limits == {}
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_limits_dropped_during_their_read_leave_no_waiter_hanging(
+    retriever, fails: bool
+) -> None:
+    # Regression: a rejected search dropped the entry of a read still in
+    # flight; the read's own `del` then raised KeyError and its waiters
+    # never got an answer.
+    from unified_kg_rag.shared.exceptions import StoreTimeoutError
+
+    class _Slow:
+        async def aget_index_settings(self, index: str) -> dict:
+            await asyncio.sleep(0.05)
+            raise StoreTimeoutError("no answer") if fails else RuntimeError("503")
+
+    object.__setattr__(retriever, "_opensearch_client", _Slow())
+    owner = asyncio.create_task(retriever._limits("alias"))
+    await asyncio.sleep(0.01)
+    waiter = asyncio.create_task(retriever._limits("alias"))
+    await asyncio.sleep(0.01)
+    retriever._index_limits.pop("alias", None)  # what a rejected search does
+    found = await asyncio.wait_for(
+        asyncio.gather(owner, waiter, return_exceptions=True), 2
+    )
+    if fails:
+        assert all(isinstance(f, StoreTimeoutError) for f in found)
+    else:
+        assert found == [retriever._configured_limits] * 2
+    assert retriever._index_limits == {}

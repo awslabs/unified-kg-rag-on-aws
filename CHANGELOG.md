@@ -1371,6 +1371,9 @@ changed once with the full-config keys (#332).
 - Docs: the retriever contract in the design guide names `aindex_limits`,
   the vector indexer's `check_index_creation`; Operations names the changed
   `document_loading` inputs as a reason a resume reloads its delta (#413).
+- Retrieval: a settings read whose cache entry a rejected search dropped
+  meanwhile raised `KeyError` and left the searches waiting for it hanging;
+  the read now always answers its waiters (#PR).
 - Docs: the design guide (§8.2, §15) states who closes an injected indexer.
   `IndexingManager.close()` closes both its indexers, injected ones too;
   indexers passed to `DataIngestionPipeline(vector_indexer=...,
