@@ -1371,6 +1371,20 @@ changed once with the full-config keys (#332).
 - Docs: the retriever contract in the design guide names `aindex_limits`,
   the vector indexer's `check_index_creation`; Operations names the changed
   `document_loading` inputs as a reason a resume reloads its delta (#413).
+- Retrieval: a fetch by id of more ids than one search returns (the live
+  `max_result_window` or `max_terms_count`) goes in batches and returns every
+  one. The local and mix expansions, the LightRAG endpoint read and the
+  filtered walk's entity read cut their ids to one search's worth, so a live
+  window of 100 at top_k 100 x 5 kept 20% of the expansion and a
+  `max_terms_count` of 3 kept 6%. The filtered walk asks a frontier longer
+  than `max_terms_count` in batches too, instead of leaving the vertices past
+  it unasked, and its exclusion list keeps the vertices reached last (#PR).
+- Retrieval: after a search was rejected for the index's limits (an index
+  rebuilt under smaller `index_settings`), the retry read the new limits but
+  kept the old id list, so a lowered `max_terms_count` failed the query with
+  `InvalidFilterError`; the retry now batches by the limits it read. The
+  filtered walk also judges a page full by the window the store answered
+  with, so a shrunk window no longer ends the walk silently (#PR).
 - Retrieval: a settings read whose cache entry a rejected search dropped
   meanwhile raised `KeyError` and left the searches waiting for it hanging;
   the read now always answers its waiters (#PR).

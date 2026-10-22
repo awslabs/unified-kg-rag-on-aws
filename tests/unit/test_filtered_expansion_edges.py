@@ -20,6 +20,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -94,11 +95,19 @@ class _Index:
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = (query.index_prefixes or [""])[0]
+        limits = await self.aindex_limits(prefix, query.suffix)
+        # As the retriever: a list over one search's limits goes in batches,
+        # an exclusion keeps its last max_terms_count values, a terms clause
+        # over max_terms_count is refused, and a search returns at most
+        # max_result_window hits.
+        if batches := OpenSearchRetriever._batches(
+            query, {prefix: limits}, limits.max_terms_count
+        ):
+            parts = await asyncio.gather(*(self.aretrieve(b) for b in batches))
+            return [hit for part in parts for hit in part]
+        query = OpenSearchRetriever._within_terms(query, limits.max_terms_count)
         filters = dict(query.filters or {})
         self.calls.append((prefix, filters))
-        # As the retriever: a terms clause over max_terms_count is refused,
-        # and a search returns at most max_result_window hits.
-        limits = await self.aindex_limits(prefix, query.suffix)
         for values in [*filters.values(), *(query.exclude or {}).values()]:
             if isinstance(values, list) and len(values) > limits.max_terms_count:
                 raise InvalidFilterError(f"{len(values)} values")
@@ -595,13 +604,42 @@ async def test_a_live_window_below_the_page_is_judged_full(config: Config) -> No
     assert set(reached) == {"S"} | {f"N{i}" for i in range(6)}
 
 
+async def test_a_window_shrunk_under_the_walk_is_judged_full(config: Config) -> None:
+    # Regression: the page was sized by the limits read before the request;
+    # a store that rejected that window (an index rebuilt smaller) was asked
+    # again with the live one and returned 2 edges, which the stale page of
+    # 3 did not read as full: the walk stopped at 2 of S's 6 neighbours.
+    edges = [(f"s{i}", "S", f"N{i}", 10.0 - i) for i in range(6)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    o = config.indexing.opensearch
+    reads = 0
+
+    async def limits(prefix: str, suffix: str | None) -> IndexLimits:
+        nonlocal reads
+        if prefix != o.relationships_index_prefix:
+            return IndexLimits()
+        reads += 1
+        return IndexLimits(max_result_window=10 if reads == 1 else 2)
+
+    index.aindex_limits = limits  # type: ignore[method-assign]
+    o.max_query_size = 3
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
+    )
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert set(reached) == {"S"} | {f"N{i}" for i in range(6)}
+
+
 async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
     config: Config,
 ) -> None:
     # Regression: the walk's exclusion (every reached vertex) and its read of
     # the reached entities named more values than max_terms_count, and the
-    # query failed with InvalidFilterError. The exclusion is cut (it only
-    # saves page room) and the read keeps the vertices reached first.
+    # query failed with InvalidFilterError; then the read kept the vertices
+    # reached first only (S and A of 5). The read now goes in batches, and
+    # the exclusion (it only saves page room) keeps the vertices reached
+    # last, the frontier's neighbourhood.
     chain = ["S", "A", "B", "C", "D"]
     pairs = zip(chain, chain[1:], strict=False)
     edges = [(f"e{i}", a, b, 1.0) for i, (a, b) in enumerate(pairs)]
@@ -612,9 +650,32 @@ async def test_internal_lists_over_max_terms_count_do_not_fail_the_query(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), ["S"]
     )
     o = config.indexing.opensearch
-    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
-    assert reached == ["S", "A"]
-    assert {r.source for r in kept} == {"S", "A"}
+    reads = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert [v for read in reads for v in read] == chain
+    assert {r.source for r in kept} == set(chain)
+    # The last hop (from C, both ends) leaves out B and C, not S and A.
+    assert [list((x or {}).values()) for _, x in index.excludes[-2:]] == [
+        [["B", "C"]],
+        [["B", "C"]],
+    ]
+
+
+async def test_a_frontier_over_max_terms_count_is_asked_in_batches(
+    config: Config,
+) -> None:
+    # Regression: a frontier of more vertices than max_terms_count was cut
+    # to that many: the seeds past it were never asked (2 of 5 neighbours).
+    seeds = [f"S{i}" for i in range(5)]
+    edges = [(f"e{i}", f"S{i}", f"N{i}", 1.0) for i in range(5)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.opensearch.index_settings = {"max_terms_count": 2}
+    config.indexing.neptune.max_hops = 1
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), seeds
+    )
+    assert {r.source for r in kept} == set(seeds) | {f"N{i}" for i in range(5)}
+    asked = [f.get("source_id") for f in _relationship_calls(config, index)]
+    assert sorted(len(a) for a in asked if a) == [1, 2, 2]
 
 
 async def test_the_requests_on_their_own_are_sized_by_their_wave(
@@ -1051,8 +1112,8 @@ async def test_the_check_walks_a_long_list_once(config: Config) -> None:
 
 
 class _Window:
-    """A store whose live index returns at most ``window`` hits a search, in
-    its own (reverse) order: what a fetch by id over the window got."""
+    """A retriever over an index whose live window is ``window`` that returns
+    every id asked for (it batches them), in its own (reverse) order."""
 
     def __init__(self, window: int) -> None:
         self.window = window
@@ -1064,7 +1125,7 @@ class _Window:
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         ids = list((query.filters or {}).get("id") or [])
         self.asked.append(ids)
-        return [_entity(i) for i in sorted(ids, reverse=True)][: self.window]
+        return [_entity(i) for i in sorted(ids, reverse=True)]
 
 
 def _relationship(source: str, target: str) -> RetrievalResult:
@@ -1078,12 +1139,11 @@ def _relationship(source: str, target: str) -> RetrievalResult:
 
 
 @pytest.mark.parametrize("fetch", ["local text units", "lightrag endpoints"])
-async def test_a_fetch_by_id_keeps_the_best_ranked_ids_the_window_holds(
-    config: Config, fetch: str
-) -> None:
-    # Regression: a fetch by id named every ranked id and a live window
-    # below their count returned the engine's pick (here the last-ranked),
-    # not the best-ranked.
+async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -> None:
+    # Regression: a fetch by id was cut to the ids one search returns (the
+    # live window), so a window of 100 kept 100 of 500 ranked text units.
+    # The strategy names every id (the retriever batches them) and keeps
+    # the rank order.
     store = _Window(window=2)
     ranked = ["e1", "e2", "e3", "e4"]
     if fetch == "local text units":
@@ -1099,5 +1159,5 @@ async def test_a_fetch_by_id_keeps_the_best_ranked_ids_the_window_holds(
             [_relationship("e1", "e2"), _relationship("e3", "e4")],
         )
         got = [r.source for r in found["lightrag_endpoint_entities"]]
-    assert store.asked == [["e1", "e2"]]
-    assert got == ["e1", "e2"]
+    assert store.asked == [ranked]
+    assert got == ranked

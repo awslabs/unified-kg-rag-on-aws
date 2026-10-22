@@ -364,19 +364,6 @@ class BaseSearchStrategy(ABC):
                 span.set_attributes(_retrieval_attributes(results))
             return results
 
-    async def _fetchable_ids(
-        self, prefix: str, suffix: str | None, ranked: list[str]
-    ) -> list[str]:
-        """The best-ranked of ``ranked`` one fetch by id on ``prefix``'s index
-        can name (``IndexLimits.id_batch_size``). Past that many, a search returns the
-        window's worth in the engine's order, not the best-ranked, or a terms
-        clause over ``max_terms_count`` fails the query."""
-        retriever = self.document_retriever
-        if retriever is None:
-            return ranked
-        limits = await retriever.aindex_limits(prefix, suffix)
-        return ranked[: limits.id_batch_size]
-
     async def _ids_passing(
         self,
         query: SearchQuery,
@@ -877,9 +864,7 @@ class BaseSearchStrategy(ABC):
                         take(edges, {vertex})
             frontier = reached
         # The seeds first, then by distance: the order the walk reached them.
-        reached_ids = await self._fetchable_ids(
-            o.entities_index_prefix, query.suffix, list(parent)
-        )
+        reached_ids = list(parent)
         entities = await self._safe_aretrieve(
             retriever,
             SearchQuery(
@@ -1101,7 +1086,8 @@ class BaseSearchStrategy(ABC):
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
     ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
-        """``_incident_relationships``' requests (one per end): the edges,
+        """``_incident_relationships``' requests (one per end and batch of
+        ``max_terms_count`` vertices): the edges,
         the ends whose page came back full and whether a request failed."""
         retriever = self.document_retriever
         assert retriever is not None
@@ -1112,13 +1098,14 @@ class BaseSearchStrategy(ABC):
         cap = min(self._incident_fetch_limit(), limits.max_result_window)
         page = min(size or cap, cap)
         # One terms clause per list: past max_terms_count the store refuses
-        # the query. The vertices beyond are not asked (the walk's frontier
-        # is in reach order); the exclusion only saves page room.
-        entity_ids = entity_ids[: limits.max_terms_count]
-        away_from = (away_from or [])[: limits.max_terms_count]
+        # the query, so the vertices are asked in batches, each with its own
+        # page. The exclusion only saves page room; past max_terms_count the
+        # retriever keeps the vertices reached last (it is in reach order).
+        step = limits.max_terms_count
+        batches = [entity_ids[i : i + step] for i in range(0, len(entity_ids), step)]
         failures: list[Exception] = []
 
-        async def by_endpoint(field: str) -> list[RetrievalResult]:
+        async def by_batch(field: str, vertices: list[str]) -> list[RetrievalResult]:
             return await self._safe_aretrieve(
                 retriever,
                 SearchQuery(
@@ -1127,7 +1114,7 @@ class BaseSearchStrategy(ABC):
                     top_k=page,
                     index_prefixes=[prefix],
                     suffix=query.suffix,
-                    filters=self._scoped_filters(query, **{field: entity_ids}),
+                    filters=self._scoped_filters(query, **{field: vertices}),
                     exclude=({_OTHER_END[field]: away_from} if away_from else None),
                     source_fields=source_fields,
                 ),
@@ -1135,14 +1122,23 @@ class BaseSearchStrategy(ABC):
                 failures,
             )
 
+        async def by_endpoint(field: str) -> list[list[RetrievalResult]]:
+            return list(await asyncio.gather(*(by_batch(field, b) for b in batches)))
+
         sides = await asyncio.gather(*(by_endpoint(end) for end in ends))
+        # A store that rejected the window was asked again with the live one
+        # and returned that many hits: a page that size is full too.
+        window = (await retriever.aindex_limits(prefix, query.suffix)).max_result_window
+        cap, page = min(cap, window), min(page, window)
         # A text-less search is ordered by (rank, weight) server-side (the
         # retriever's importance sort), so a full page holds the best edges.
         # Still, the count cap bound and edges were dropped — upstream drops
         # none. Say so (once a query: DRIFT asks again and again) rather than
         # let a silent truncation read as "all edges".
         full = tuple(
-            end for end, side in zip(ends, sides, strict=True) if len(side) >= page
+            end
+            for end, side in zip(ends, sides, strict=True)
+            if any(len(hits) >= page for hits in side)
         )
         if full and page >= cap:  # not a sized page
             memo = current_query_scope()
@@ -1161,7 +1157,12 @@ class BaseSearchStrategy(ABC):
         # ours keeps typed, directed edges, and a pair key dropped every edge
         # between two entities but the first ("supplies" and "invoices" alike).
         deduped = list(
-            {self._relationship_identity(r): r for side in sides for r in side}.values()
+            {
+                self._relationship_identity(r): r
+                for side in sides
+                for hits in side
+                for r in hits
+            }.values()
         )
 
         def order(r: RetrievalResult) -> tuple[float, float, str]:

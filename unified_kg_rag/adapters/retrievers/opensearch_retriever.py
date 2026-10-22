@@ -294,10 +294,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     (lim.max_terms_count for lim in limits.values()),
                     default=self._configured_limits.max_terms_count,
                 )
-                self._check_filter_values(query.filters, terms_limit)
-                self._check_filter_values(query.exclude, terms_limit)
+                if batches := self._batches(query, limits, terms_limit):
+                    parts = await asyncio.gather(*(self.aretrieve(b) for b in batches))
+                    return [hit for part in parts for hit in part]
+                asked = self._within_terms(query, terms_limit)
+                self._check_filter_values(asked.filters, terms_limit)
+                self._check_filter_values(asked.exclude, terms_limit)
                 search_tasks = self._create_search_tasks(
-                    query, search_type, index_prefixes, query_vector, limits
+                    asked, search_type, index_prefixes, query_vector, limits
                 )
 
                 if not search_tasks:
@@ -352,6 +356,66 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 exc_info=True,
             )
             return []
+
+    @staticmethod
+    def _batches(
+        query: SearchQuery, limits: dict[str, IndexLimits], terms_limit: int
+    ) -> list[SearchQuery] | None:
+        """A text-less search split by a list filter longer than one search
+        takes, or ``None`` when it fits.
+
+        A fetch by id naming more ids than ``IndexLimits.id_batch_size``
+        returns the window's worth in the engine's order (or fails past
+        ``max_terms_count``): the local/mix expansion, the walk's entity read
+        and source resolution name ids by the hundred. Each batch fetches
+        its ids in full. Any other list over ``max_terms_count`` (the walk's
+        frontier, sized by limits read before an index was rebuilt smaller)
+        goes in batches of that many, each with its own ``top_k``. Sized by
+        the ``limits`` just read, so a search asked again after the store
+        rejected the old limits is split by the new ones.
+        """
+        if query.query:
+            return None
+        id_step = min(
+            (lim.id_batch_size for lim in limits.values()), default=terms_limit
+        )
+        filters = query.filters or {}
+        for key, values in filters.items():
+            step = id_step if key == "id" else terms_limit
+            if not isinstance(values, list) or len(values) <= step:
+                continue
+            logger.debug(
+                "Searching %s %s values in batches of %s", len(values), key, step
+            )
+            return [
+                query.model_copy(
+                    update={"filters": {**filters, key: values[i : i + step]}}
+                    | (
+                        {"top_k": len(values[i : i + step]), "retrieval_multiplier": 1}
+                        if key == "id"
+                        else {}
+                    )
+                )
+                for i in range(0, len(values), step)
+            ]
+        return None
+
+    @staticmethod
+    def _within_terms(query: SearchQuery, terms_limit: int) -> SearchQuery:
+        """``query`` with each exclusion list cut to the ``terms_limit``
+        values listed last. An exclusion only keeps hits out of the page (the
+        walk leaves out the vertices it reached, in reach order: the last
+        are the frontier's neighbourhood, whose edges would fill it)."""
+        exclude = query.exclude or {}
+        if not any(
+            isinstance(v, list) and len(v) > terms_limit for v in exclude.values()
+        ):
+            return query
+        cut = {
+            k: v[-terms_limit:] if isinstance(v, list) else v
+            for k, v in exclude.items()
+        }
+        return query.model_copy(update={"exclude": cut})
 
     def _create_search_tasks(
         self,
@@ -934,10 +998,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     def _check_filter_values(filters: dict[str, Any] | None, limit: int) -> None:
         """Reject a filter value OpenSearch would answer with a 400.
 
-        A ``terms`` query is one clause however many values it holds, so a
-        long id list needs no splitting; the limit is the index's
-        ``max_terms_count`` (65,536 by default), which the cluster would
-        otherwise answer with a 400.
+        A ``terms`` query takes at most the index's ``max_terms_count``
+        values (65,536 by default), which the cluster would otherwise answer
+        with a 400 (a text-less search is split under it first: ``_batches``).
 
         A value OpenSearch would refuse is rejected too (``check_filter_values``),
         so both engines refuse the same filters.

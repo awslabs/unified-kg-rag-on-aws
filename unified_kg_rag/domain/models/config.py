@@ -2092,7 +2092,7 @@ class OpenSearchIndexingConfig(BaseModel):
             "reindex after changing it. Reads and searches are sized by the "
             "smaller of max_result_window / max_terms_count here and on the "
             "live index (read again when a search is refused for them): a "
-            "fetch by id names the best-ranked ids that fit. Raise "
+            "fetch by id of more ids goes in batches that fit. Raise "
             "refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
             "querying. Setting the key replaces the whole map; a left-out "
