@@ -2092,7 +2092,7 @@ class OpenSearchIndexingConfig(BaseModel):
             "reindex after changing it. Reads and searches are sized by the "
             "smaller of max_result_window / max_terms_count here and on the "
             "live index (read again when a search is refused for them): a "
-            "fetch by id names the best-ranked ids that fit. Raise "
+            "fetch by id of more ids goes in batches that fit. Raise "
             "refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
             "querying. Setting the key replaces the whole map; a left-out "
@@ -2156,7 +2156,7 @@ class OpenSearchIndexingConfig(BaseModel):
             for key, setting in nested.items():
                 if f"index.{key}" in flat:
                     raise ValueError(
-                        f"index_settings sets 'index.{key}' twice (nested and " "flat)"
+                        f"index_settings sets 'index.{key}' twice (nested and flat)"
                     )
                 flat[f"index.{key}"] = setting
             value = flat
@@ -2184,7 +2184,7 @@ class OpenSearchIndexingConfig(BaseModel):
                     setting = 0
                 if setting < 1:
                     raise ValueError(
-                        f"index_settings.{key} must be a whole number of at " "least 1"
+                        f"index_settings.{key} must be a whole number of at least 1"
                     )
         return value
 
@@ -2454,9 +2454,11 @@ class GlobalSearchConfig(BaseModel):
             "metadata); when even the root cut does not fit, to the reports "
             "of the cut most similar to the query (a hybrid search restricted "
             "to the cut, global_level_capped). "
-            "At most indexing.opensearch.max_query_size - 1: one store request "
-            "returns at most max_query_size hits and the cut asks for one more "
-            "than the cap. Each report costs map-step input tokens."
+            "At most indexing.opensearch.max_query_size - 1 (and the reports "
+            "index's live max_result_window - 1): one store request returns at "
+            "most that many hits and the cut asks for one more than the cap "
+            "(the default of 100 maps at most 99). Each report costs map-step "
+            "input tokens."
         ),
     )
     use_dynamic_selection: bool = Field(

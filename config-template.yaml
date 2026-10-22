@@ -724,7 +724,8 @@ search:
   auto_routable_strategies: ["local", "mix", "global"]
 
   # LLM calls and sub-searches one query keeps in flight (global map calls,
-  # dynamic-selection ratings, DRIFT primer calls and follow-up searches).
+  # dynamic-selection ratings, DRIFT primer calls and follow-up searches,
+  # the filtered walk's per-vertex edge requests).
   # Per query: concurrent queries multiply it.
   max_concurrency: 10
 
@@ -790,8 +791,10 @@ search:
     # Most reports one cut (or one dynamic-selection step) contributes. A
     # bigger cut gives way to the deepest shallower cut that fits
     # (global_cut_depth); when even the root cut does not fit, the reports
-    # most similar to the query are mapped (global_level_capped). Bounded by
-    # indexing.opensearch.max_query_size.
+    # most similar to the query are mapped (global_level_capped). At most
+    # indexing.opensearch.max_query_size - 1 and the reports index's live
+    # max_result_window - 1 (the cut asks for one more), so the default of
+    # 100 maps at most 99.
     max_reports_per_level: 100
     # MS GraphRAG dynamic community selection instead of a fixed cut: rate the
     # root reports, descend into the relevant ones' children down to the

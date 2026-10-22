@@ -676,9 +676,10 @@ def test_reads_follow_the_window_of_the_live_index(
             await retriever.aclose()
         return limits.id_batch_size, len(hits)
 
-    # One fetch by id names at most a window of ids (the strategies batch by
-    # IndexLimits.id_batch_size) and returns that many, rather than failing the query.
-    assert asyncio.run(fetch_by_id()) == (3, 3)
+    # A fetch by id of more ids than one search returns goes in batches of
+    # IndexLimits.id_batch_size and returns every one, rather than failing
+    # the query or keeping a window's worth.
+    assert asyncio.run(fetch_by_id()) == (3, 7)
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
@@ -757,9 +758,9 @@ def test_reads_and_searches_follow_the_live_max_terms_count(
     # Text units and claims indexed with max_terms_count 2, entities with
     # the default; read under the default config (the setting reverted, no
     # reindex). OpenSearch refuses a terms clause past the live count (a
-    # 400): the reads by field batch under it, a fetch by id names at most
-    # that many ids, and a search filter listing more fails up front, also
-    # when another index searched beside it takes more.
+    # 400): the reads by field batch under it, a fetch by id goes in batches
+    # of that many ids, and a search filter listing more fails up front,
+    # also when another index searched beside it takes more.
     import asyncio
 
     from unified_kg_rag.domain.models import SearchQuery, SearchType
@@ -806,18 +807,18 @@ def test_reads_and_searches_follow_the_live_max_terms_count(
                 SearchQuery(
                     query="",
                     search_type=SearchType.LEXICAL,
-                    top_k=limits.id_batch_size,
+                    top_k=len(ids),
                     retrieval_multiplier=1,
                     index_prefixes=[prefixes.text_units_index_prefix],
                     suffix=tenant,
-                    filters={"id": ids[: limits.id_batch_size]},
+                    filters={"id": ids},
                     source_fields=[],
                 )
             )
             with pytest.raises(InvalidFilterError, match="max_terms_count"):
                 await retriever.aretrieve(
                     SearchQuery(
-                        query="",
+                        query="widget",
                         search_type=SearchType.LEXICAL,
                         top_k=3,
                         retrieval_multiplier=1,
@@ -826,14 +827,14 @@ def test_reads_and_searches_follow_the_live_max_terms_count(
                             prefixes.text_units_index_prefix,
                         ],
                         suffix=tenant,
-                        filters={"id": ids[:3]},
+                        filters={"type": ["a", "b", "c"]},
                     )
                 )
         finally:
             await retriever.aclose()
         return limits.max_terms_count, limits.id_batch_size, len(hits)
 
-    assert asyncio.run(fetch_by_id()) == (2, 2, 2)
+    assert asyncio.run(fetch_by_id()) == (2, 2, 5)
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)

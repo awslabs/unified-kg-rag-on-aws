@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -47,16 +49,17 @@ async def test_resolves_in_batches_and_caches(config: Config) -> None:
     store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt"})
     resolver = TextUnitFileResolver(config, lambda: store)
 
-    assert await resolver.aresolve(["t1", "t2", "t3"], "v2") == {
+    assert await resolver.aresolve(["t1", "t3", "t2"], "v2") == {
         "t1": "vendor.pdf",
         "t2": "buyer.txt",
     }
-    assert [q.filters for q in store.queries] == [{"id": ["t1", "t2"]}, {"id": ["t3"]}]
+    assert [q.filters for q in store.queries] == [{"id": ["t1", "t3"]}, {"id": ["t2"]}]
     query = store.queries[0]
     assert query.suffix == "v2"
     assert query.index_prefixes == [config.indexing.opensearch.text_units_index_prefix]
 
-    # Known and unknown ids are cached per suffix: no second lookup.
+    # Known and unknown ids (of a batch that answered) are cached per
+    # suffix: no second lookup.
     assert await resolver.aresolve(["t1", "t3"], "v2") == {"t1": "vendor.pdf"}
     assert len(store.queries) == 2
     # A different suffix is a different index.
@@ -89,6 +92,41 @@ async def test_batches_follow_the_live_limits(config: Config) -> None:
         "t1": "f1.txt",
         "t2": "f2.txt",
     }
+
+
+async def test_a_batch_without_any_hit_is_not_cached(config: Config) -> None:
+    # Regression: the retriever degrades a failed request to no hits, and
+    # every id of the batch was cached as unknown for the evaluator's life.
+    store = _Store({"t1": "vendor.pdf"})
+    fetch = store.aretrieve
+    calls = 0
+
+    async def failing_once(query: SearchQuery) -> list[RetrievalResult]:
+        nonlocal calls
+        calls += 1
+        return [] if calls == 1 else await fetch(query)
+
+    store.aretrieve = failing_once  # type: ignore[method-assign]
+    resolver = TextUnitFileResolver(config, lambda: store)
+    assert await resolver.aresolve(["t1"], None) == {}
+    assert await resolver.aresolve(["t1"], None) == {"t1": "vendor.pdf"}
+
+
+async def test_batches_follow_max_terms_count_too(config: Config) -> None:
+    # A batch names at most id_batch_size ids: the smaller of the window
+    # and max_terms_count, not the window alone.
+    store = _Store({f"t{i}": "f.txt" for i in range(5)}, batch=10)
+    store.aindex_limits = _limits(IndexLimits(max_terms_count=2))  # type: ignore[method-assign]
+    resolver = TextUnitFileResolver(config, lambda: store)
+    assert len(await resolver.aresolve(list(store.files), None)) == 5
+    assert [len(q.filters["id"]) for q in store.queries] == [2, 2, 1]
+
+
+def _limits(limits: IndexLimits) -> Any:
+    async def read(prefix: str, suffix: str | None) -> IndexLimits:
+        return limits
+
+    return read
 
 
 def test_file_name_of() -> None:

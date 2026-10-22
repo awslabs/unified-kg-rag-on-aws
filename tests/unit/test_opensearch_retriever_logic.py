@@ -1345,3 +1345,194 @@ async def test_an_unanswered_settings_read_fails_the_query(retriever) -> None:
     assert all(isinstance(f, StoreTimeoutError) for f in found)
     assert "did not answer" in str(found[0])
     assert client.reads == 3 and retriever._index_limits == {}
+
+
+class _IdIndex:
+    """An index of ``ids`` under live settings, which (as OpenSearch) rejects a
+    search asking more hits than its window or naming more terms than its
+    ``max_terms_count``, and returns the named ids it holds."""
+
+    def __init__(self, ids: list[str], window: int, terms: int) -> None:
+        self.ids, self.window, self.terms = ids, window, terms
+        self.named: list[int] = []
+        self.accepted: list[dict[str, list[str]]] = []  # terms lists asked
+        self.searches = 0
+        self.error: Exception | None = None  # raised by every search
+
+    async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+        return {
+            f"{index}-1": {
+                "index.max_result_window": str(self.window),
+                "index.max_terms_count": str(self.terms),
+            }
+        }
+
+    async def asearch(self, index: str, body: dict[str, Any]) -> dict:
+        lists: dict[str, list[str]] = {}
+
+        def collect(node: Any) -> None:
+            if isinstance(node, dict):
+                if isinstance(node.get("terms"), dict):
+                    lists.update(node["terms"])
+                for child in node.values():
+                    collect(child)
+            elif isinstance(node, list):
+                for child in node:
+                    collect(child)
+
+        collect(body["query"])
+        named = lists.get("id", [])
+        if body["size"] > self.window:
+            raise StoreRequestRejectedError(
+                "rejected", reason="Result window is too large"
+            )
+        self.searches += 1
+        if self.error is not None:
+            raise self.error
+        sizes = [len(values) for values in lists.values()] or [0]
+        if max(sizes) > self.terms:
+            # OpenSearch 2.13's words.
+            raise StoreRequestRejectedError(
+                "rejected",
+                reason=(
+                    f"query_shard_exception: The number of terms [{max(sizes)}] "
+                    "used in the Terms Query request has exceeded the allowed "
+                    f"maximum of [{self.terms}]. This maximum can be set by "
+                    "changing the [index.max_terms_count] index level setting."
+                ),
+            )
+        self.named.append(len(named))
+        self.accepted.append(lists)
+        hits = [i for i in self.ids if i in set(named)][: body["size"]]
+        return {
+            "hits": {
+                "hits": [
+                    {"_index": f"{index}-1", "_id": i, "_score": 0.0, "_source": {}}
+                    for i in hits
+                ]
+            }
+        }
+
+
+def _fetch_by_id(config: Config, ids: list[str]) -> SearchQuery:
+    return SearchQuery(
+        query="",
+        search_type=SearchType.LEXICAL,
+        top_k=len(ids),
+        index_prefixes=[config.indexing.opensearch.text_units_index_prefix],
+        filters={"id": ids},
+    )
+
+
+@pytest.mark.parametrize(("window", "terms"), [(100, 65536), (10000, 30), (20, 3)])
+async def test_a_fetch_by_id_past_the_live_limits_returns_every_id(
+    retriever, config, window: int, terms: int
+) -> None:
+    # Regression: past the live window a fetch by id returned the window's
+    # worth (100 of 250), and past max_terms_count it failed the query; the
+    # strategies cut their ids to one search's worth, so expansion kept 20%
+    # (window 100 at top_k 100 x 5) or 6% (terms 3). The retriever now asks
+    # in batches of IndexLimits.id_batch_size.
+    ids = [f"t{n:03d}" for n in range(250)]
+    index = _IdIndex(ids, window, terms)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    hits = await retriever.aretrieve(_fetch_by_id(config, ids))
+    assert sorted(str(h.source) for h in hits) == ids
+    assert max(index.named) <= min(window, terms)
+
+
+async def test_a_rejected_fetch_by_id_is_batched_by_the_limits_read_again(
+    retriever, config
+) -> None:
+    # Regression: the retry after a rejection read the new limits but kept
+    # the id list, so a max_terms_count lowered under a running retriever
+    # (an index rebuilt) failed every first query with InvalidFilterError.
+    ids = [f"t{n}" for n in range(10)]
+    index = _IdIndex(ids, window=10000, terms=65536)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    alias = retriever._get_name(
+        config.indexing.opensearch.text_units_index_prefix, None
+    )
+    assert (await retriever._limits(alias)).max_terms_count == 65536
+    index.terms, index.window = 3, 5  # rebuilt under smaller limits
+    hits = await retriever.aretrieve(_fetch_by_id(config, ids))
+    assert sorted(str(h.source) for h in hits) == ids
+    assert sorted(index.named) == [1, 3, 3, 3]
+
+
+@pytest.mark.parametrize("limit_error", [True, False])
+async def test_only_a_limits_rejection_is_asked_again_and_once(
+    retriever, config, limit_error: bool
+) -> None:
+    # A rejection for the index's limits drops them and searches once more;
+    # any other rejection, or a second one, fails the query.
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    index = _IdIndex(["t0"], window=10000, terms=65536)
+    reason = "Result window is too large" if limit_error else "failed to parse"
+    index.error = StoreRequestRejectedError("rejected", reason=reason)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    with pytest.raises(ConfigurationError, match=reason):
+        await retriever.aretrieve(_fetch_by_id(config, ["t0"]))
+    assert index.searches == (2 if limit_error else 1)
+
+
+async def test_internal_lists_are_sized_by_the_limits_read_again(
+    retriever, config
+) -> None:
+    # Regression: the walk sizes its frontier batches and exclusion by the
+    # limits it read; after a rejection the retry read the new ones but
+    # kept the lists, so the first walk after a max_terms_count lowered
+    # under a running retriever failed with InvalidFilterError. The retry
+    # splits the frontier and keeps the exclusion's last values.
+    prefix = config.indexing.opensearch.relationships_index_prefix
+    index = _IdIndex([], window=10000, terms=65536)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    alias = retriever._get_name(prefix, None)
+    assert (await retriever._limits(alias)).max_terms_count == 65536
+    index.terms = 2  # rebuilt under a smaller max_terms_count
+    await retriever.aretrieve(
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=5,
+            index_prefixes=[prefix],
+            filters={"source_id": ["a", "b", "c", "d", "e"]},
+            exclude={"target_id": ["v1", "v2", "v3"]},
+        )
+    )
+    assert sorted(index.accepted, key=lambda lists: lists["source_id"]) == [
+        {"source_id": ["a", "b"], "target_id": ["v2", "v3"]},
+        {"source_id": ["c", "d"], "target_id": ["v2", "v3"]},
+        {"source_id": ["e"], "target_id": ["v2", "v3"]},
+    ]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_limits_dropped_during_their_read_leave_no_waiter_hanging(
+    retriever, fails: bool
+) -> None:
+    # Regression: a rejected search dropped the entry of a read still in
+    # flight; the read's own `del` then raised KeyError and its waiters
+    # never got an answer.
+    from unified_kg_rag.shared.exceptions import StoreTimeoutError
+
+    class _Slow:
+        async def aget_index_settings(self, index: str) -> dict:
+            await asyncio.sleep(0.05)
+            raise StoreTimeoutError("no answer") if fails else RuntimeError("503")
+
+    object.__setattr__(retriever, "_opensearch_client", _Slow())
+    owner = asyncio.create_task(retriever._limits("alias"))
+    await asyncio.sleep(0.01)
+    waiter = asyncio.create_task(retriever._limits("alias"))
+    await asyncio.sleep(0.01)
+    retriever._index_limits.pop("alias", None)  # what a rejected search does
+    found = await asyncio.wait_for(
+        asyncio.gather(owner, waiter, return_exceptions=True), 2
+    )
+    if fails:
+        assert all(isinstance(f, StoreTimeoutError) for f in found)
+    else:
+        assert found == [retriever._configured_limits] * 2
+    assert retriever._index_limits == {}

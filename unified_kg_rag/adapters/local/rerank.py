@@ -39,19 +39,9 @@ from unified_kg_rag.shared.genai import (
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_MODEL,
 )
+from unified_kg_rag.shared.logging import warn_once
 
 logger = get_logger(__name__)
-
-_warned: set[str] = set()
-_warned_lock = threading.Lock()
-
-
-def _warn_once(key: str, message: str, *args: Any) -> None:
-    with _warned_lock:
-        if key in _warned:
-            return
-        _warned.add(key)
-    logger.warning(message, *args)
 
 
 class CrossEncoderReranker(BaseDocumentCompressor):
@@ -164,7 +154,8 @@ class CrossEncoderRerankFactory:
         try:
             encoder = self._encoder(name)
         except ConfigurationError as e:
-            _warn_once(
+            warn_once(
+                logger,
                 f"cross_encoder:{name}",
                 "Reranking is off: %s Queries keep the fused order.",
                 e,
@@ -193,7 +184,8 @@ class NoRerankFactory:
 
     def get_model(self, model_id: Any, **kwargs: Any) -> None:
         if self.config.search.reranking.enabled:
-            _warn_once(
+            warn_once(
+                logger,
                 "none",
                 "search.reranking.enabled is true but providers.rerank.kind is "
                 "'none'; queries keep the fused order.",

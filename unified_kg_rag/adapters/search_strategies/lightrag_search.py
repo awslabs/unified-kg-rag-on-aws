@@ -592,9 +592,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             chunk_ids = self._collect_linked_chunk_ids(
                 entity_results, relationship_results, limit=limit, exclude=exclude
             )
-        chunk_ids = await self._fetchable_ids(
-            self._os_config.text_units_index_prefix, query.suffix, chunk_ids
-        )
         if not chunk_ids:
             return {}
         search_query = SearchQuery(
@@ -761,9 +758,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             for eid in self._relationship_endpoint_ids(relationship_results)
             if eid not in already
         ]
-        endpoint_ids = await self._fetchable_ids(
-            self._os_config.entities_index_prefix, query.suffix, endpoint_ids
-        )
         if not endpoint_ids:
             return {}
         search_query = SearchQuery(

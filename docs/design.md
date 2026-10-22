@@ -759,13 +759,15 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   second text-unit check of the entities it reached). It keeps the graph walk's bounds
   (`max_hops`, `max_results_per_hop`, the budget split per seed, each seed
   at most its share) and scoring, but `degree` importance reads as `rank`
-  (the index holds no degree). A side returns at most `max_query_size`
-  edges, best first; when a side's page is full, the vertices still open
-  are asked together once more at that side, and when that page is full
-  too, each on its own (`search.max_concurrency` at a time) for what all
-  the open seeds may still take. A hop costs one request per side, one more
-  per full side, then one per open vertex and full side; under two or more
-  keys each page adds a text-unit check.
+  (the index holds no degree). A side returns at most `min(max_query_size,
+  live max_result_window)` edges, best first (a frontier past
+  `max_terms_count` is asked in batches, each with its own page); when a
+  side's page is full, the vertices still open are asked together once
+  more at that side, and when that page is full too, each on its own, in
+  waves of `search.max_concurrency`: each asks for what its wave may still
+  take, and a wave leaves out what the waves before it reached. A hop costs
+  one request per side, one more per full side, then one per open vertex
+  and full side; under two or more keys each page adds a text-unit check.
   Edges back to a vertex already reached are left out by the store (a
   `must_not` on the other endpoint), so they cannot fill a page. An index
   built before
@@ -833,8 +835,8 @@ every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
 - **Fixed cut (default)** — the cut is browsed by rank, one report more than
-  the cap (`max_reports_per_level`, at most `max_query_size` - 1 so the probe
-  fits one request) so a cut of exactly the cap is complete. A larger cut
+  the cap (`max_reports_per_level`, at most `max_query_size` - 1, and the
+  live `max_result_window` - 1, so the probe fits one request) so a cut of exactly the cap is complete. A larger cut
   gives way to the deepest shallower cut that fits (`global_cut_depth`), covering the same entities in broader
   reports. Only when even the root cut does not fit does a hybrid search,
   restricted to the configured cut, pick that many most similar reports

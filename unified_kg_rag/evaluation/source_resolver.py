@@ -83,10 +83,13 @@ class TextUnitFileResolver:
             size = await self._batch_size(retriever, suffix)
             for start in range(0, len(missing), size):
                 batch = missing[start : start + size]
-                found = await self._fetch(retriever, batch, suffix)
-                # Past the limits read after the fetch (a reindex lowered
-                # them), the hits were cut short: a miss is not cached.
-                fits = len(batch) <= await self._batch_size(retriever, suffix)
+                found, answered = await self._fetch(retriever, batch, suffix)
+                # A miss is cached only from a batch that answered with a hit
+                # (a failed request degrades to none) and fit the limits read
+                # after the fetch (a reindex lowered them: the hits were cut).
+                fits = answered and len(batch) <= await self._batch_size(
+                    retriever, suffix
+                )
                 for unit_id in batch:
                     if fits or unit_id in found:
                         self._cache[(suffix, unit_id)] = found.get(unit_id)
@@ -104,7 +107,9 @@ class TextUnitFileResolver:
 
     async def _fetch(
         self, retriever: _DocumentRetriever, batch: list[str], suffix: str | None
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], bool]:
+        """The file names of ``batch``'s text units, and whether any came
+        back."""
         query = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
@@ -114,9 +119,10 @@ class TextUnitFileResolver:
             filters={"id": batch},
         )
         found: dict[str, str] = {}
-        for hit in await retriever.aretrieve(query):
+        hits = await retriever.aretrieve(query)
+        for hit in hits:
             metadata = hit.metadata or {}
             unit_id = str(metadata.get("id") or hit.source)
             if name := file_name_of(metadata):
                 found[unit_id] = name
-        return found
+        return found, bool(hits)

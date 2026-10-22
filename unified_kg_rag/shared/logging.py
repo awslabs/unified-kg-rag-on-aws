@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -188,6 +189,20 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         _configure_structlog()
     logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
     return logger
+
+
+_warned_once: set[str] = set()
+_warned_once_lock = threading.Lock()
+
+
+def warn_once(logger: Any, key: str, message: str, *args: Any) -> None:
+    """Log ``message`` at WARNING on ``logger`` the first time ``key`` is
+    seen in this process (a missing optional model or analyzer)."""
+    with _warned_once_lock:
+        if key in _warned_once:
+            return
+        _warned_once.add(key)
+    logger.warning(message, *args)
 
 
 def setup_logging(

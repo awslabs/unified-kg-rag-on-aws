@@ -216,21 +216,22 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     # Report selection
     # ------------------------------------------------------------------ #
 
-    def _report_cap(self) -> int:
+    async def _report_cap(self, suffix: str | None) -> int:
         """Reports one cut or selection step contributes at most.
 
-        A store request returns at most ``max_query_size`` hits and the cut
-        probe asks for one more than the cap (``_browse_reports``), so the cap
-        is at most ``max_query_size - 1``: at the cap of ``max_query_size`` a
+        A store request returns at most ``max_query_size`` hits, and no more
+        than the reports index's live ``max_result_window``; the cut probe
+        asks for one more than the cap (``_browse_reports``), so the cap is
+        at most the smaller of the two less one: at a cap of the page size a
         cut of exactly the cap could not be told apart from a larger one.
         """
-        return max(
-            1,
-            min(
-                self.global_search_config.max_reports_per_level,
-                self.config.indexing.opensearch.max_query_size - 1,
-            ),
-        )
+        page = self.config.indexing.opensearch.max_query_size
+        if (retriever := self.document_retriever) is not None:
+            limits = await retriever.aindex_limits(
+                self.config.indexing.opensearch.community_reports_index_prefix, suffix
+            )
+            page = min(page, limits.max_result_window)
+        return max(1, min(self.global_search_config.max_reports_per_level, page - 1))
 
     async def _browse_reports(
         self, query: SearchQuery, scope: dict[str, Any], label: str
@@ -244,7 +245,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         retriever = self.document_retriever
         if retriever is None:
             return [], True
-        cap = self._report_cap()
+        cap = await self._report_cap(query.suffix)
         probe = cap + 1
         browse = SearchQuery(
             query="",
@@ -272,7 +273,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         retriever = self.document_retriever
         if retriever is None:
             return []
-        cap = self._report_cap()
+        cap = await self._report_cap(query.suffix)
         similar = query.model_copy(
             update={
                 "top_k": cap,
@@ -290,7 +291,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         logger.warning(
             "%s: more than %s community reports; mapping the %s most similar "
             "to the query (search.global_search.max_reports_per_level, at most "
-            "indexing.opensearch.max_query_size - 1).",
+            "indexing.opensearch.max_query_size - 1 and the reports index's "
+            "max_result_window - 1).",
             label,
             cap,
             cap,
@@ -350,7 +352,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     "same entities in broader reports "
                     "(search.global_search.max_reports_per_level)",
                     depth,
-                    self._report_cap(),
+                    await self._report_cap(query.suffix),
                     used,
                     len(reports),
                 )

@@ -18,6 +18,7 @@ from unified_kg_rag.adapters.local.search_engine.analyzers import (
     register_analyzer,
     standard_analyzer,
 )
+from unified_kg_rag.shared import logging as shared_logging
 from unified_kg_rag.shared.utils.scripts import is_dense_script_char
 
 pytestmark = pytest.mark.unit
@@ -109,7 +110,7 @@ def test_english_without_snowballstemmer_does_not_stem(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setitem(sys.modules, "snowballstemmer", None)  # import fails
-    monkeypatch.setattr(analyzers, "_warned", set())
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
     analyzers._porter_stem.cache_clear()
     try:
         with caplog.at_level(logging.WARNING):

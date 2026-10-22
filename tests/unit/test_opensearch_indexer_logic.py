@@ -808,6 +808,10 @@ def test_index_settings_flatten_a_nested_index_map() -> None:
     for refused, match in (
         ({"index": {"knn": False}}, "vector_search"),
         ({"index": {"refresh_interval": "1s"}, "refresh_interval": "2s"}, "twice"),
+        (
+            {"index": {"refresh_interval": "1s"}, "index.refresh_interval": "2s"},
+            "twice \\(nested and flat\\)",
+        ),
     ):
         with pytest.raises(ValidationError, match=match):
             OpenSearchIndexingConfig(index_settings=refused)
