@@ -482,7 +482,11 @@ def test_a_removed_vector_only_entity_takes_its_vector_edges() -> None:
 
 def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> None:
     # The port's read_entities reads nothing back: every shared id would
-    # look like a copy only the vector store holds, and be deleted.
+    # look like a copy only the vector store holds, and be deleted. Also
+    # through the view the pipeline hands its stages of an injected graph
+    # indexer (asked of its type, the view hid it, and a removal deleted
+    # the shared vector entities).
+    from unified_kg_rag.application.ingestion.pipeline import _Borrowed
     from unified_kg_rag.application.storage.indexing_manager import _reads_back
     from unified_kg_rag.ports.indexer import GraphIndexer
 
@@ -490,9 +494,12 @@ def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> No
         pass
 
     NoReadBack.__abstractmethods__ = frozenset()
+    no_read_back = NoReadBack.__new__(NoReadBack)
 
     assert _reads_back(FakeGraphStore())
-    assert not _reads_back(NoReadBack.__new__(NoReadBack))
+    assert _reads_back(_Borrowed(FakeGraphStore()))
+    assert not _reads_back(no_read_back)
+    assert not _reads_back(_Borrowed(no_read_back))
 
 
 @pytest.mark.parametrize(

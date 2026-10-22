@@ -1617,6 +1617,12 @@ changed once with the full-config keys (#332).
   copy is deleted ends as a full build on retry. The retry derived that
   edge again under its old id, and ranked the entity it was re-pointed
   away from with the old copy's link still counted (#PR).
+- Incremental indexing with a graph indexer injected into the pipeline
+  (`DataIngestionPipeline(graph_indexer=...)`) whose adapter cannot read
+  entities back: a removal no longer deletes the shared vector entities.
+  Whether the graph store reads back was asked of the type of the view
+  the pipeline hands its stages (#408), which hid the adapter's, so every
+  shared id looked like a vector-only copy (#PR).
 - Incremental indexing: a commit that splits spellings apart (or re-keys
   or rewires entities) and is killed partway is finished by the next run.
   Those decisions lived in memory only: the next run derived from the half

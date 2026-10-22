@@ -100,8 +100,11 @@ def _other_spellings_of_parts(
 
 def _reads_back(graph: GraphIndexer) -> bool:
     """Whether ``graph`` reads stored entities back (the port's default
-    reads nothing, so every id would look absent)."""
-    return getattr(type(graph), "read_entities", None) is not GraphIndexer.read_entities
+    reads nothing, so every id would look absent). Asked of the bound
+    method, not the type: the pipeline hands stages a borrowed view of an
+    injected indexer."""
+    method = getattr(graph, "read_entities", None)
+    return getattr(method, "__func__", method) is not GraphIndexer.read_entities
 
 
 def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
