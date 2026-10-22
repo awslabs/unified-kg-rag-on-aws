@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -63,6 +64,12 @@ _WALK_EDGE_FIELDS = (
 # each (``_build_filter_clauses`` ANDs every filter).
 _ENDPOINTS = ("source_id", "target_id")
 _OTHER_END = {"source_id": "target_id", "target_id": "source_id"}
+
+# The query memo's entries (``query_scope``): the incident-edge pages, the
+# filter check's outcomes and whether the incident page cap was logged.
+_MEMO_INCIDENT = "incident"
+_MEMO_PASSING = "passing"
+_MEMO_PAGE_CAP = "incident page cap"
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -139,6 +146,18 @@ def rank_expanded(
             others += 1
         kept.append(result)
     return kept
+
+
+def seed_share(query: SearchQuery, fetch_multiplier: int, seeds: int) -> int:
+    """How many entities each of ``seeds`` seeds reaches at most: the
+    expansion's budget (``top_k * retrieval_multiplier *
+    traversal_fetch_multiplier``) split evenly, rounded up, so every seed
+    gets one and the seeds together still reach the budget for the slots
+    ``rank_expanded`` keeps. The one split of the graph walks and the
+    filtered walk."""
+    return math.ceil(
+        query.top_k * query.retrieval_multiplier * fetch_multiplier / seeds
+    )
 
 
 def graph_relevance(path_length: int, importance: float) -> float:
@@ -375,7 +394,7 @@ class BaseSearchStrategy(ABC):
         if retriever is None or not ordered:
             return passed
         memo = current_query_scope()
-        key = "passing\n" + json.dumps(
+        key = f"{_MEMO_PASSING}\n" + json.dumps(
             [prefix, query.suffix, filters], sort_keys=True, default=str
         )
         known: dict[str, bool] = memo.setdefault(key, {}) if memo is not None else {}
@@ -719,8 +738,7 @@ class BaseSearchStrategy(ABC):
         neptune = self.config.indexing.neptune
         filters = document_filters(query.filters)
         limit = query.top_k * query.retrieval_multiplier
-        budget = limit * max(1, neptune.traversal_fetch_multiplier)
-        share = math.ceil(budget / len(seeds))
+        share = seed_share(query, neptune.traversal_fetch_multiplier, len(seeds))
         # Text units only decide an edge under two or more keys.
         fields = [
             f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
@@ -1014,18 +1032,22 @@ class BaseSearchStrategy(ABC):
         if not retriever or not entity_ids:
             return [], ()
         memo = current_query_scope()
-        key = "incident\n" + json.dumps(
-            [
-                query.suffix,
-                query.filters,
-                sorted(set(entity_ids)),
-                source_fields,
-                size,
-                ends,
-                sorted(set(away_from or ())),
-            ],
-            sort_keys=True,
-            default=str,
+        # Hashed: the vertices left out alone run to megabytes a walk.
+        key = f"{_MEMO_INCIDENT}\n" + compute_hash(
+            json.dumps(
+                [
+                    query.suffix,
+                    query.filters,
+                    sorted(set(entity_ids)),
+                    source_fields,
+                    size,
+                    ends,
+                    sorted(set(away_from or ())),
+                ],
+                sort_keys=True,
+                default=str,
+            ),
+            length=64,
         )
         if memo is not None:
             if (pending := memo.get(key)) is not None:
@@ -1102,14 +1124,14 @@ class BaseSearchStrategy(ABC):
         )
         if full and page >= self._incident_fetch_limit():  # not a sized page
             memo = current_query_scope()
-            warned = memo is not None and "incident page cap" in memo
+            warned = memo is not None and _MEMO_PAGE_CAP in memo
             (logger.debug if warned else logger.warning)(
                 "Incident-edge fetch hit the %s-hit page cap; the lowest-ranked "
                 "edges are dropped (upstream truncates by tokens only)",
                 page,
             )
             if memo is not None:
-                memo["incident page cap"] = True
+                memo[_MEMO_PAGE_CAP] = True
 
         # Dedup by relationship id, so an edge reachable from both of its
         # endpoints is carried once. Upstream dedups by the undirected endpoint

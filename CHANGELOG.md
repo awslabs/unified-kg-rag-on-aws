@@ -1571,6 +1571,8 @@ changed once with the full-config keys (#332).
   browse): nested in the filters, a `must_not` alone made the embedded
   engine build every other document first; the walk over 103,000
   relationships took 31 s, now 19 s (#PR).
+- The query memo's incident-edge keys are hashed: they held every vertex
+  the walk had reached (1.2 MB of keys a walk, now 8 KB) (#PR).
 - Ingestion no longer fails for good on a name with braces: the merge of
   an item's statements built its debug message with `str.format` over the
   item's names and types, so an entity, edge or claim named like

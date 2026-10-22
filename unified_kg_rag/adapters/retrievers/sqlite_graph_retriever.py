@@ -10,10 +10,10 @@ from ``GraphExpansionRetriever``, so both backends rank the same graph alike.
 from __future__ import annotations
 
 import asyncio
-import math
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore, VertexFilter
+from unified_kg_rag.adapters.retrieval.base import seed_share
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.models import Config, SearchQuery
@@ -129,12 +129,6 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             len(seed_ids),
             self._max_hops,
         )
-        # The fetch budget split across the seeds, as NeptuneRetriever does.
-        fetch_limit = (
-            query.top_k
-            * query.retrieval_multiplier
-            * self._neptune_config.traversal_fetch_multiplier
-        )
         filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
         return await asyncio.to_thread(
             self._store.traverse,
@@ -142,7 +136,9 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             [str(seed) for seed in seed_ids],
             max_hops=self._max_hops,
             max_results_per_hop=self._max_results_per_hop,
-            per_seed_limit=math.ceil(fetch_limit / len(seed_ids)),
+            per_seed_limit=seed_share(
+                query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
+            ),
             keep=vertex_filter(filters),
             with_degree=self._neptune_config.entity_importance_source == "degree",
         )

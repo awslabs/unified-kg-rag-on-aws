@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import math
 import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +18,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     neptune_pool_size,
     neptune_request_error,
 )
+from unified_kg_rag.adapters.retrieval.base import seed_share
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -178,15 +178,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # entities. Both shapes stay Neptune-friendly:
         # repeat().times().emit() and union(identity(), ...). An emit()
         # before repeat() is not optimized by Neptune and times out.
-        fetch_limit = (
-            query.top_k
-            * query.retrieval_multiplier
-            * self._neptune_config.traversal_fetch_multiplier
+        per_seed_limit = seed_share(
+            query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
         )
-        # No per-seed floor is needed: ceil() gives every seed at least one and
-        # the seeds together still fetch >= fetch_limit candidates for the
-        # top_k * retrieval_multiplier expansion slots the cut keeps.
-        per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
         filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
         with_degree = self._neptune_config.entity_importance_source == "degree"
 
