@@ -39,6 +39,7 @@ from tests.integration.test_embedded_e2e import (
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import PipelineStageStatus
 
@@ -2095,3 +2096,68 @@ def test_a_removal_after_a_commit_killed_past_its_retire_keeps_the_strips_claim(
         resume=False,
     )
     assert incremental == full
+
+
+RESUMED_V1 = {"d0.txt": "Depot and Buyer trade parts 1. Acme and Depot trade cash 2."}
+RESUMED_V2 = {
+    "d0.txt": "Depot and Buyer trade parts 1. Acme LLC and Depot trade cash 2.",
+    "r4.txt": "Acme Inc and Depot trade parts 1.",
+}
+
+
+@pytest.mark.parametrize("between", ["reset", "corpus"])
+def test_a_resume_restores_documents_with_the_delta_they_were_filtered_by(
+    tmp_path: Path, between: str
+) -> None:
+    # The incremental attempt caches its loading output (d0 changed, r4 new)
+    # and dies in extraction. The same pipeline id is run again, as a reset
+    # (every document new) or over a corpus with d0 back at its stored
+    # version (only r4 new); that attempt caches its loading output under
+    # another key, saves its delta with the metadata and dies before
+    # chunking. Resumed once more over the first attempt's inputs, the run
+    # restored the first attempt's documents with the second attempt's
+    # delta and did not end as a full build (under the reset's, d0 was
+    # committed as new and its old version's text unit and statements
+    # stayed).
+    full = _state(tmp_path / "full", [RESUMED_V2])
+    inc = tmp_path / "inc"
+    config = _config(inc / "stores", inc / "viz")
+    config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.max_rounds = 1
+    config.processing.document_parsing.source_scope = "fuzz-corpus"
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    source = inc / "corpus"
+
+    def write(corpus: dict[str, str]) -> None:
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+
+    def dying(stage: type) -> Any:
+        def die(self: Any, context: Any) -> Any:
+            raise _Died
+
+        return patch.object(stage, "_execute_core", die)
+
+    write(RESUMED_V1)
+    _ingest(config, providers, source, inc / "run-0")
+    write(RESUMED_V2)
+    run = inc / "run-1"
+    with dying(ps.GraphExtractionStage), pytest.raises(_Died):
+        _ingest(config, providers, source, run)
+    if between == "reset":
+        config.indexing.reset = True
+    else:
+        write({**RESUMED_V2, **RESUMED_V1})
+    with dying(ps.TextChunkingStage), pytest.raises(_Died):
+        _ingest(config, providers, source, run)
+    config.indexing.reset = False
+    write(RESUMED_V2)
+    _ingest(config, providers, source, run)
+
+    # _state over no corpora reads the stores under ``inc``.
+    assert _state(inc, []) == full

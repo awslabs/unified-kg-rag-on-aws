@@ -1332,6 +1332,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a run resumed under its pipeline id no longer pairs
+  one attempt's documents with another attempt's delta. The delta is saved
+  with the run's metadata, the loaded documents in the stage cache under a
+  key over the inputs; after an attempt as a reset or over another corpus
+  version, a resume over the first attempt's inputs restored its documents
+  with the later delta, and could commit a changed document as new and keep
+  its old version's text unit and statements. The loading cache key is now
+  recorded with the delta, and a resume whose key differs loads the
+  documents again (#PR).
 - Incremental indexing: a removal run after a commit killed mid-write no
   longer leaves an extra claim. The removal derived a kept unit's claim
   against the killed commit's unfinished graph, where the subject was

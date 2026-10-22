@@ -417,6 +417,7 @@ class DocumentLoadingStage(_RegistryStage):
         context.incremental_extraction_fingerprint = None
         context.incremental_extraction_settings = None
         context.incremental_retired_scopes = []
+        context.incremental_loading_key = None
 
         failed_files: list[str] = []
         if self._parsing_completed(context):

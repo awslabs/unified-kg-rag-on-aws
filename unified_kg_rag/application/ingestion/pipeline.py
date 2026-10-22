@@ -1570,6 +1570,16 @@ class DataIngestionPipeline:
 
         try:
             result = stage.execute(context)
+            if stage.stage_type is PipelineStageType.DOCUMENT_LOADING:
+                # The delta is saved with the metadata, the documents it
+                # filtered under this key: a resume restores them together
+                # only (see PipelineResumeManager).
+                context.incremental_loading_key = stage_cache_key(
+                    self.config,
+                    PipelineStageType.DOCUMENT_LOADING,
+                    "documents",
+                    self.corpus_fingerprint,
+                )
             with self._checkpoint_write():
                 self.state_manager.update_stage_result(context, result)
                 if result.status == PipelineStageStatus.COMPLETED:

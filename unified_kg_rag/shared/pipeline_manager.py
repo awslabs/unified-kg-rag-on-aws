@@ -361,6 +361,9 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
 }
 
 
+_NO_DELTA = object()
+
+
 class PipelineResumeManager:
     # Derived from STAGE_OUTPUTS (never edit separately).
     STAGE_CACHE_MAPPING: dict[PipelineStageType, dict[str, str]] = {
@@ -391,6 +394,9 @@ class PipelineResumeManager:
         # restore_pipeline_context so a resume reads (and hash-checks) each
         # cache file once rather than once to verify and again to restore.
         self._verified_outputs: dict[tuple[str, str], Any] = {}
+        # The loading key the metadata's delta was computed with (see
+        # determine_resume_strategy).
+        self._loading_key: Any = _NO_DELTA
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -405,6 +411,13 @@ class PipelineResumeManager:
         try:
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
             stage_results = metadata.get("stage_results", [])
+            # The delta in the metadata is the last attempt's; the loading
+            # output restored is the one under the current inputs.
+            self._loading_key = (
+                metadata.get("incremental_loading_key")
+                if metadata.get("incremental_delta") is not None
+                else _NO_DELTA
+            )
 
             if explicit_stage:
                 start_stage, completed_stages = self._handle_explicit_stage_resume(
@@ -581,6 +594,15 @@ class PipelineResumeManager:
             cache_key = stage_cache_key(
                 self.config, stage_type, context_attr, self.corpus_fingerprint
             )
+            if (
+                stage_type is PipelineStageType.DOCUMENT_LOADING
+                and self._loading_key is not _NO_DELTA
+                and self._loading_key != cache_key
+            ):
+                # Filtered by another attempt's delta (another reset, retry
+                # or corpus setting): recomputed with the delta.
+                missing.append((context_attr, cache_key))
+                continue
             if load:
                 data = self._load_output(pipeline_id, context_attr, cache_key)
                 if data is None:
