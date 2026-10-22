@@ -724,6 +724,196 @@ def test_a_retriever_follows_an_index_rebuilt_with_a_smaller_window(
     assert (before, after) == (len(_entities(tenant)), 1)
 
 
+def _with_settings(harness: StoreHarness, **settings: int) -> StoreHarness:
+    def apply(config: Config) -> None:
+        config.indexing.opensearch.index_settings = {
+            **config.indexing.opensearch.index_settings,
+            **settings,
+        }
+
+    return harness.derive(apply)
+
+
+def _terms_lists(body: Any) -> list[int]:
+    """The length of every ``terms`` and ``ids`` list in a search body."""
+    if isinstance(body, dict):
+        found = [
+            len(v)
+            for k, clause in body.items()
+            if k in ("terms", "ids") and isinstance(clause, dict)
+            for v in clause.values()
+            if isinstance(v, list)
+        ]
+        return found + [n for v in body.values() for n in _terms_lists(v)]
+    if isinstance(body, list):
+        return [n for v in body for n in _terms_lists(v)]
+    return []
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_reads_and_searches_follow_the_live_max_terms_count(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Text units and claims indexed with max_terms_count 2, entities with
+    # the default; read under the default config (the setting reverted, no
+    # reindex). OpenSearch refuses a terms clause past the live count (a
+    # 400): the reads by field batch under it, a fetch by id names at most
+    # that many ids, and a search filter listing more fails up front, also
+    # when another index searched beside it takes more.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+    from unified_kg_rag.shared.exceptions import InvalidFilterError
+
+    built = _with_settings(harness, max_terms_count=2)
+    tenant = built.suffix("terms")
+    ids = [f"t{n}" for n in range(5)]
+    units = _tagged(
+        [TextUnit(id=i, text=f"Vendor ships widget lot {i}.") for i in ids], tenant
+    )
+    claims = [
+        claim.model_copy(update={"id": f"cl-{n}", "subject_id": f"s{n}"})
+        for n in range(5)
+        for claim in _claims(tenant)
+    ]
+    _write(built, "text_units", "index", units, suffixes=[tenant])
+    _write(built, "claims", "index", claims, suffixes=[tenant])
+    _write(harness, "entities", "index", _entities(tenant), suffixes=[tenant])
+    prefixes = harness.config.indexing.opensearch
+    indexer = harness.vector_indexer
+    asked: list[int] = []
+    search = indexer.opensearch_client.search
+
+    def recorded(index: str, body: dict[str, Any]) -> Any:
+        asked.extend(_terms_lists(body))
+        return search(index=index, body=body)
+
+    monkeypatch.setattr(indexer.opensearch_client, "search", recorded)
+
+    found = indexer.find_documents(
+        prefixes.claims_index_prefix, "subject_id", [f"s{n}" for n in range(5)], tenant
+    )
+    assert len(found or {}) == 5
+    assert asked and max(asked) <= 2
+
+    async def fetch_by_id() -> tuple[int, int, int]:
+        retriever = harness.vector_retriever()
+        try:
+            limits = await retriever.aindex_limits(
+                prefixes.text_units_index_prefix, tenant
+            )
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=limits.id_batch_size,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefixes.text_units_index_prefix],
+                    suffix=tenant,
+                    filters={"id": ids[: limits.id_batch_size]},
+                    source_fields=[],
+                )
+            )
+            with pytest.raises(InvalidFilterError, match="max_terms_count"):
+                await retriever.aretrieve(
+                    SearchQuery(
+                        query="",
+                        search_type=SearchType.LEXICAL,
+                        top_k=3,
+                        retrieval_multiplier=1,
+                        index_prefixes=[
+                            prefixes.entities_index_prefix,
+                            prefixes.text_units_index_prefix,
+                        ],
+                        suffix=tenant,
+                        filters={"id": ids[:3]},
+                    )
+                )
+        finally:
+            await retriever.aclose()
+        return limits.max_terms_count, limits.id_batch_size, len(hits)
+
+    assert asyncio.run(fetch_by_id()) == (2, 2, 2)
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_hybrid_search_stays_inside_the_live_window(harness: StoreHarness) -> None:
+    # A hybrid search asks each leg for the normalization window (50 hits)
+    # at least: under an index created with max_result_window 3 and searched
+    # under the default config, past the live window it failed (a 400).
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    built = _with_settings(harness, max_result_window=3)
+    tenant = built.suffix("hybrid")
+    units = _tagged(
+        [TextUnit(id=f"t{n}", text=f"Vendor ships widget lot {n}.") for n in range(6)],
+        tenant,
+    )
+    _write(built, "text_units", "index", units, suffixes=[tenant])
+    prefix = harness.config.indexing.opensearch.text_units_index_prefix
+
+    async def search() -> int:
+        retriever = harness.vector_retriever()
+        try:
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="Vendor widget",
+                    search_type=SearchType.HYBRID,
+                    top_k=2,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    suffix=tenant,
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return len(hits)
+
+    assert asyncio.run(search()) == 2
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_configured_limit_below_the_live_one_wins(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The limits in force are the smaller of the configured and the live
+    # ones: an index created with the defaults, read and searched under a
+    # smaller configured window and terms count.
+    import asyncio
+
+    tenant = harness.suffix("smaller")
+    ids = [f"t{n}" for n in range(7)]
+    units = _tagged(
+        [TextUnit(id=i, text=f"Vendor ships widget lot {i}.") for i in ids], tenant
+    )
+    _write(harness, "text_units", "index", units, suffixes=[tenant])
+    later = _with_settings(harness, max_result_window=4, max_terms_count=3)
+    prefix = later.config.indexing.opensearch.text_units_index_prefix
+    indexer = later.vector_indexer
+    asked: list[int] = []
+    search = indexer.opensearch_client.search
+
+    def recorded(index: str, body: dict[str, Any]) -> Any:
+        asked.extend(_terms_lists(body))
+        return search(index=index, body=body)
+
+    monkeypatch.setattr(indexer.opensearch_client, "search", recorded)
+    assert set(indexer.read_text_unit_attributes(ids, tenant)) == set(ids)
+    assert asked and max(asked) <= 3
+
+    async def limits() -> tuple[int, int]:
+        retriever = later.vector_retriever()
+        try:
+            found = await retriever.aindex_limits(prefix, tenant)
+        finally:
+            await retriever.aclose()
+        return found.max_result_window, found.max_terms_count
+
+    assert asyncio.run(limits()) == (4, 3)
+
+
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_index_settings_the_engine_refuses_fail_before_extraction(
     harness: StoreHarness,

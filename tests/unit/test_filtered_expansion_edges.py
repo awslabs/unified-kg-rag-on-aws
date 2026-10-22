@@ -655,6 +655,38 @@ async def test_the_requests_on_their_own_are_sized_by_their_wave(
     assert first_wave <= set(asked[2][2]) and first_wave <= set(asked[3][2])
 
 
+async def test_the_requests_on_their_own_never_ask_past_a_page(
+    config: Config,
+) -> None:
+    # A wave's room (what its vertices may still take, here more than a
+    # page) is capped at the page the store returns: a request on its own
+    # asks for at most a page.
+    seeds = [f"M{j}" for j in range(6)]
+    edges = [
+        (f"m{j}-{i:03d}", f"M{j}", f"V{j}-{i:03d}", 100.0)
+        for j in range(6)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    sizes: list[int] = []
+    ask = index.aretrieve
+
+    async def recorded(query: SearchQuery) -> list[RetrievalResult]:
+        ends = (query.filters or {}).get("source_id")
+        if ends is not None and len(ends) == 1:
+            sizes.append(query.top_k)
+        return await ask(query)
+
+    index.aretrieve = recorded  # type: ignore[method-assign]
+    config.indexing.opensearch.max_query_size = 20
+    config.search.max_concurrency = 6
+    config.indexing.neptune.max_hops = 1
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=30, filters={"attr_grp": "a"}), seeds
+    )
+    assert sizes and set(sizes) == {20}
+
+
 async def test_seeds_sharing_their_neighbours_each_reach_their_share(
     config: Config,
 ) -> None:
@@ -766,22 +798,29 @@ async def test_a_query_asks_for_a_frontiers_edges_once(config: Config) -> None:
     [
         ({"filters": {"attr_grp": "a"}}, {"filters": {"attr_grp": "b"}}),
         ({"source_fields": ["id"]}, {"source_fields": ["id", "rank"]}),
+        ({"size": 1}, {"size": 3}),
+        ({"away_from": ["X"]}, {"away_from": ["A"]}),
     ],
-    ids=["filters", "source_fields"],
+    ids=["filters", "source_fields", "size", "away_from"],
 )
 async def test_incident_edges_asked_otherwise_are_asked_again(
     config: Config, first: dict, second: dict
 ) -> None:
     # The per-query cache keys on the filters and the fields read too: an
     # edge page read under another filter, or without a field, answered for
-    # the other.
+    # the other. So does a page of another size or leaving out other
+    # vertices (the walk's pages per vertex differ in both).
     index = _Index(config)
     strategy = _strategy(config, _Graph(), index)
 
     async def ask(how: dict) -> None:
         query = SearchQuery(query="q", filters=how.get("filters", {"attr_grp": "a"}))
         await strategy._incident_relationships(
-            query, ["S"], source_fields=how.get("source_fields")
+            query,
+            ["S"],
+            source_fields=how.get("source_fields"),
+            size=how.get("size"),
+            away_from=how.get("away_from"),
         )
 
     with query_scope():

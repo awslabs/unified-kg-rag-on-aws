@@ -825,3 +825,18 @@ def test_index_settings_limits_are_whole_numbers(value: object) -> None:
         with pytest.raises(ValidationError, match="whole number"):
             OpenSearchIndexingConfig(index_settings={key: value})
     assert OpenSearchIndexingConfig(index_settings={"max_terms_count": "300"})
+
+
+def test_an_indexs_limits_are_read_once(indexer, mocker) -> None:
+    # Every read and lookup of an incremental run sizes its searches by the
+    # index's limits: its settings are read once per index, not once per
+    # batch.
+    client = mocker.MagicMock()
+    client.get_index_settings.return_value = {
+        "idx-1": {"index.max_result_window": "40", "index.max_terms_count": "7"}
+    }
+    indexer.opensearch_client = client
+    for _ in range(3):
+        limits = indexer._limits("idx-1")
+    assert (limits.max_result_window, limits.max_terms_count) == (40, 7)
+    assert client.get_index_settings.call_count == 1

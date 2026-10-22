@@ -1328,3 +1328,20 @@ async def test_a_denied_settings_read_is_logged_once(retriever, caplog) -> None:
         assert await retriever._limits(alias) == retriever._configured_limits
     warnings = [r for r in caplog.records if "settings/get" in r.getMessage()]
     assert len(warnings) == 1 and client.reads == 2
+
+
+async def test_an_unanswered_settings_read_fails_the_query(retriever) -> None:
+    # A settings read OpenSearch never answered fails the query as an
+    # unanswered search does, rather than sizing the searches by the config
+    # (past a live window below it they fail with a 400). Nothing is kept,
+    # and the callers waiting for the read ask for themselves.
+    from unified_kg_rag.shared.exceptions import StoreTimeoutError
+
+    client = _SettingsClient(StoreTimeoutError("read timed out"))
+    object.__setattr__(retriever, "_opensearch_client", client)
+    found = await asyncio.gather(
+        *(retriever._limits("alias") for _ in range(3)), return_exceptions=True
+    )
+    assert all(isinstance(f, StoreTimeoutError) for f in found)
+    assert "did not answer" in str(found[0])
+    assert client.reads == 3 and retriever._index_limits == {}
