@@ -400,6 +400,27 @@ def test_an_index_name_part_that_opensearch_rejects_fails_at_load(
 
 
 @pytest.mark.parametrize(
+    ("section", "field"),
+    [("indexing", "additional_suffix"), ("document_parsing", "index_value")],
+)
+def test_an_index_name_part_set_in_code_is_checked_too(
+    section: str, field: str
+) -> None:
+    # Set after load, an uppercase suffix reached the index-creation probe,
+    # which blamed indexing.opensearch.index_settings for the refused name.
+    from pydantic import ValidationError
+
+    config = Config()
+    owner = (
+        config.indexing if section == "indexing" else config.processing.document_parsing
+    )
+    with pytest.raises(ValidationError, match="lowercase letters"):
+        setattr(owner, field, "V2")
+    setattr(owner, field, "tenant_b-2")
+    assert getattr(owner, field) == "tenant_b-2"
+
+
+@pytest.mark.parametrize(
     "field",
     [
         "text_units_index_prefix",

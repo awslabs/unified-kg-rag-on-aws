@@ -1368,6 +1368,11 @@ changed once with the full-config keys (#332).
 - Docs: Operations states that a reset stopped or killed before it swapped
   an index in leaves that index until the next reset; incremental runs do
   not delete it (#PR).
+- Config: an `indexing.additional_suffix` or
+  `processing.document_parsing.index_value` set in code is validated as at
+  load (lowercase letters, digits, `-`, `_`). Assigned after load, an
+  uppercase suffix reached the index-creation probe, which reported the
+  refused index name as a refused `index_settings` key (#PR).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared
