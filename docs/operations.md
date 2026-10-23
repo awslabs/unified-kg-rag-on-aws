@@ -81,7 +81,8 @@ scope, and a WARNING names the spelling used). So:
   `source_scope` before moving, or run once with
   `--retire-source-scope <old source directory>`
   ([Deletion scope](./user-guide.md#deletion-scope)). A run with new documents
-  logs a WARNING naming the suffix's other local source directories.
+  logs a WARNING naming the suffix's other local source directories (a
+  document only a refused or failed run recorded counts as new).
 - **Never let corpus files expire or disappear**: the next run removes their
   content.
 - **One index suffix and config file per tenant or corpus version.**
