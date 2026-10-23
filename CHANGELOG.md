@@ -4104,6 +4104,8 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: the uncurated-model warning's own once-per-id set and lock in
+  `bedrock_models` (now `shared.logging.warn_once`) (#PR).
 - Unused code: `IncrementalIndexer.write_ahead`'s second filter of a
   reset's dropped records (the indexing stage lists only records outside the
   corpus) and their registry snapshot, which nothing read, and the

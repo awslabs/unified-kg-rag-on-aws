@@ -74,6 +74,18 @@ def test_unknown_analyzer_falls_back_to_standard_and_warns_once(
     assert caplog.text.count("no-such-analyzer-x") == 1
 
 
+def test_each_unknown_analyzer_warns_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # One warning per analyzer name, not one for the first unknown name.
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    with caplog.at_level(logging.WARNING):
+        for name in ("no-such-analyzer-y", "no-such-analyzer-z", "no-such-analyzer-y"):
+            assert get_analyzer(name) is standard_analyzer
+    assert caplog.text.count("no-such-analyzer-y") == 1
+    assert caplog.text.count("no-such-analyzer-z") == 1
+
+
 def test_register_analyzer_adds_a_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(analyzers, "_ANALYZERS", dict(analyzers._ANALYZERS))
 

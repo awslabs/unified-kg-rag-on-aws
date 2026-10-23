@@ -9,7 +9,6 @@ and lookups: no boto3 or LangChain clients are constructed here.
 """
 
 import re
-import threading
 from typing import Any
 
 from pydantic import ValidationError
@@ -26,6 +25,7 @@ from unified_kg_rag.ports.model_factory import (
     RerankModelInfo,
 )
 from unified_kg_rag.shared import LanguageModelError, get_logger
+from unified_kg_rag.shared.logging import warn_once
 
 logger = get_logger(__name__)
 
@@ -524,9 +524,6 @@ _UNKNOWN_DEFAULT = LanguageModelInfo(
     supports_count_tokens=False,
 )
 
-_warned_uncurated: set[str] = set()
-_warned_lock = threading.Lock()
-
 
 def base_model_id(model_id: str) -> str:
     """``model_id`` without a cross-region inference-profile prefix."""
@@ -557,12 +554,11 @@ def _family_default(model_id: str) -> LanguageModelInfo:
 
 
 def _warn_uncurated(model_id: str, info: LanguageModelInfo) -> None:
-    with _warned_lock:
-        if model_id in _warned_uncurated:
-            return
-        _warned_uncurated.add(model_id)
+    key = f"uncurated model {model_id}"
     if info is _UNKNOWN_DEFAULT:
-        logger.warning(
+        warn_once(
+            logger,
+            key,
             "Model '%s' has no capability record and no known provider family; "
             "using conservative defaults (Converse, no reasoning or sampling "
             "params, %d-token window, %d-token output). Set "
@@ -573,7 +569,9 @@ def _warn_uncurated(model_id: str, info: LanguageModelInfo) -> None:
             model_id,
         )
     else:
-        logger.warning(
+        warn_once(
+            logger,
+            key,
             "Model '%s' has no capability record; using %s family defaults "
             "(%d-token window, %d-token output). Set "
             "aws.bedrock.model_overrides['%s'] if they do not fit.",
