@@ -1374,6 +1374,8 @@ changed once with the full-config keys (#332).
 - Config: `indexing.opensearch` settings set in code are validated as at
   load (`index_settings` knn keys, index prefixes), as `indexing` and
   `processing.document_parsing` are since #415 (#PR).
+- `run-rag --interactive`: `set-filter key:value` keeps the value's
+  whitespace; runs of spaces were collapsed to one (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

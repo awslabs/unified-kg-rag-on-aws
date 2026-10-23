@@ -364,6 +364,28 @@ def test_rag_interactive_set_filter_keeps_a_value_with_spaces() -> None:
     assert state["filters"] == {"title": "Annual report"}
 
 
+async def test_rag_interactive_set_filter_keeps_the_values_whitespace(
+    config, mocker
+) -> None:
+    # The line was split on whitespace and joined with one space, so
+    # "title:Annual  report" filtered on "Annual report".
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["--interactive"]))
+    seen: dict = {}
+
+    def keep(state, args):
+        seen.update(state["filters"])
+
+    mocker.patch.object(
+        run_rag_chain.console,
+        "input",
+        side_effect=["set-filter title:Annual  report", "show-config", "quit"],
+    )
+    runner.interactive_commands["show-config"] = keep
+    await runner._interactive_mode()
+    assert seen == {"title": "Annual  report"}
+
+
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:
     out = run_rag_chain.RAGChainRunner._parse_filters(["url:http://x:8080"])
     assert out == {"url": "http://x:8080"}
