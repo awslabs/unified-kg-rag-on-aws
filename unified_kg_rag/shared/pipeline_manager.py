@@ -742,11 +742,37 @@ class PipelineResumeManager:
             logger.error("Pipeline integrity validation failed: %s", e)
             return False, [str(e)]
 
+        loading = PipelineStageType.DOCUMENT_LOADING
+        recorded = metadata.get("incremental_loading_key")
+        reloaded = (
+            metadata.get("incremental_delta") is not None
+            and recorded is not None
+            and recorded
+            != stage_cache_key(
+                self.config, loading, "documents", self.corpus_fingerprint
+            )
+        )
+        if reloaded:
+            # The documents a reset, retry or corpus setting filtered: the
+            # resume loads them again and recomputes every stage after it,
+            # whose outputs are cached under other keys too.
+            error_msg = (
+                "The document_loading inputs changed since this pipeline "
+                "loaded its documents (a reset, retry or corpus setting, or "
+                "the corpus): document_loading and the stages after it run again"
+            )
+            errors.append(error_msg)
+            logger.warning("%s", error_msg)
+
         for result in metadata.get("stage_results", []):
             if result.get("status") != "completed":
                 continue
 
             stage_name = result["stage_name"]
+            if reloaded and _canonical_index(stage_name) >= _canonical_index(
+                loading.value
+            ):
+                continue
             for _, cache_key in self._missing_cache_keys(pipeline_id, stage_name):
                 error_msg = (
                     f"Missing cache for completed stage '{stage_name}', "

@@ -1361,6 +1361,13 @@ changed once with the full-config keys (#332).
   delta's documents was committed at its content with other settings, or a
   diff of the delta's fingerprints shows a change outside the delta. A run
   resumed after its own kill or stop keeps its delta (#PR).
+- `run-ingestion`: a resume whose `document_loading` inputs changed (after
+  a reset toggle, say) says so in its integrity check, instead of listing a
+  missing cache for every stage from `document_loading` on; those stages run
+  again, as before (#PR).
+- Docs: Operations states that a reset stopped or killed before it swapped
+  an index in leaves that index until the next reset; incremental runs do
+  not delete it (#PR).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared

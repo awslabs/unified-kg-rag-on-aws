@@ -60,7 +60,10 @@ swaps in; graph queries see previous and rebuilt items mixed until the final
 drop. Quarantined documents are skipped and keep their records. A failed reset
 drops nothing: re-run it. One whose graph writes partly failed (even within
 `indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
-results); the next run removes what the previous graph still holds.
+results); the next run removes what the previous graph still holds. A
+reset stopped or killed before it swapped an index in leaves that index
+(`<alias>-<timestamp>`, no alias) until the next reset deletes it; an
+incremental run does not. Delete it by hand, or re-run the reset.
 **Set `indexing.reset` back to `false` afterwards**, or every run rebuilds.
 
 ### Incremental runs

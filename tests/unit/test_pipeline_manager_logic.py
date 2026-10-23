@@ -21,6 +21,7 @@ import pytest
 
 from unified_kg_rag.domain.models import (
     Config,
+    DocumentDelta,
     Entity,
     PipelineContext,
     PipelineStageResult,
@@ -644,3 +645,28 @@ def test_merge_drops_results_downstream_of_a_rerun_stage(tmp_path) -> None:
         "document_parsing",
         "graph_extraction",
     ]
+
+
+def test_validate_integrity_names_changed_loading_inputs(tmp_path) -> None:
+    # A resume after a reset toggle (a document_loading input): the stages
+    # from document_loading on are cached under other keys and run again,
+    # which is said once instead of a missing-cache line per output.
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    context = _context(
+        "pid",
+        [
+            _stage_result("document_loading", "completed"),
+            _stage_result("graph_extraction", "completed"),
+        ],
+    )
+    context.incremental_delta = DocumentDelta(new=["d1"])
+    context.incremental_loading_key = "documents-of-another-attempt"
+    state.save_pipeline_metadata(context)
+    resume = PipelineResumeManager(state)
+
+    ok, errors = resume.validate_pipeline_integrity("pid")
+
+    assert ok is False
+    assert len(errors) == 1
+    assert "document_loading inputs changed" in errors[0]
