@@ -417,7 +417,6 @@ class DocumentLoadingStage(_RegistryStage):
         context.incremental_extraction_fingerprint = None
         context.incremental_extraction_settings = None
         context.incremental_retired_scopes = []
-        context.incremental_loading_key = None
 
         failed_files: list[str] = []
         if self._parsing_completed(context):
@@ -1809,7 +1808,8 @@ class IndexingStage(_RegistryStage):
                 # And the documents it drops: once it swaps an index in, an
                 # interrupted rebuild left their records PROCESSED over stores
                 # that no longer hold them (diffed unchanged, never indexed
-                # again).
+                # again). Not a document of the corpus (quarantined ones
+                # included): write_ahead takes them as listed.
                 kept = set(context.incremental_fingerprints or ())
                 dropped = [
                     record

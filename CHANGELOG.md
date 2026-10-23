@@ -3995,6 +3995,12 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: `IncrementalIndexer.write_ahead`'s second filter of a
+  reset's dropped records (the indexing stage lists only records outside the
+  corpus) and their registry snapshot, which nothing read, and the
+  document_loading stage's clear of the loading cache key, which the
+  pipeline sets after the stage anyway. A reset with no document to rebuild
+  still writes the records it drops PENDING, now pinned by a test (#PR).
 - Unused code: the module-level `filter_schema.id_batch_size()` (use
   `IndexLimits.id_batch_size`), and the two copies of the warn-once helper
   of the local reranker and analyzers (now `shared.logging.warn_once`) (#414).
