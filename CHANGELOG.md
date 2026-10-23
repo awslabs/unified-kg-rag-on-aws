@@ -1425,6 +1425,9 @@ changed once with the full-config keys (#332).
   send (each batch's vertices and the kept exclusion) rather than the vertex
   sets, so the same sets in another order past `max_terms_count` no longer
   reuse edges another exclusion left out (#PR).
+- Evaluation: the source resolver caches the misses of a batch of unknown
+  ids when another batch of the same call answered with a hit, instead of
+  asking for them on every query (#PR).
 - Docs: the design guide (§15) states that strategies size every list by
   `aindex_limits`, so a retriever need not batch, and (§8.2) that past
   `max_terms_count` the walk's exclusion keeps the vertices reached last, so
