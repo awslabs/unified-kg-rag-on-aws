@@ -1030,49 +1030,92 @@ class OpenSearchIndexer(VectorIndexer):
         except StoreRequestRejectedError as e:
             raise _creation_refused(e) from e
 
-    def check_index_creation(self, suffix: str | None = None) -> None:
-        """Create and delete a probe index with every setting and field
-        definition of the vector indices (see the port).
+    def check_index_creation(
+        self, suffix: str | None = None, *, rebuild: bool = True
+    ) -> None:
+        """Create and delete a probe index per index the run will create, with
+        its settings and field definitions (see the port).
 
-        Probes a stopped run left of ``suffix`` (it was between the two
-        requests) are deleted first; the run holds the namespace's write
-        lease. A probe that cannot be deleted is left to the next run.
+        The probes exist together, as the run's new indices do (a full build
+        writes its index types concurrently), so a cluster with room for
+        fewer of them refuses one. Probes a stopped run left of ``suffix``
+        (it was between the two requests) are deleted first; the run holds
+        the namespace's write lease. A probe that cannot be deleted is left
+        to the next run.
         """
         alias_name = self._get_name(
             self.opensearch_config.extraction_records_index_prefix, suffix
         )
-        pattern = f"{alias_name}-settings-probe-*"
+        # Only this run's own naming, on an unaliased index: a sibling
+        # namespace's suffix may extend '<suffix>-settings-probe-'.
+        probe_name = re.compile(re.escape(alias_name) + r"-settings-probe-[0-9a-f]{12}")
         try:
-            if stale := sorted(self.opensearch_client.get_aliases_by_index(pattern)):
+            if stale := sorted(
+                name
+                for name, aliases in self.opensearch_client.get_aliases_by_index(
+                    f"{alias_name}-settings-probe-*"
+                ).items()
+                if probe_name.fullmatch(name) and not aliases
+            ):
                 self.opensearch_client.delete_indices(stale)
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - the next run deletes them
-            logger.warning("Deleting the probe indices '%s' failed: %s", pattern, e)
-        probe = f"{alias_name}-settings-probe-{uuid.uuid4().hex[:12]}"
-        try:
-            self.opensearch_client.create_index(
-                probe, self._probe_mapping(), exist_ok=False
+            logger.warning(
+                "Deleting the probe indices of '%s' failed: %s", alias_name, e
             )
+        probes: list[str] = []
+        try:
+            for mapping in self._mappings_to_create(suffix, rebuild):
+                probes.append(f"{alias_name}-settings-probe-{uuid.uuid4().hex[:12]}")
+                self.opensearch_client.create_index(probes[-1], mapping, exist_ok=False)
         except StoreRequestRejectedError as e:
             raise _creation_refused(e) from e
         finally:
-            # Also when the create failed: its response may have been lost
+            # Also when a create failed: its response may have been lost
             # after the index was made (a missing one is no error).
             try:
-                self.opensearch_client.delete_indices([probe])
+                if probes:
+                    self.opensearch_client.delete_indices(probes)
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the next run deletes it
-                logger.warning("Deleting the probe index '%s' failed: %s", probe, e)
+                logger.warning("Deleting the probe indices %s failed: %s", probes, e)
 
-    def _probe_mapping(self) -> dict[str, Any]:
-        """One mapping with the fields of every vector index: their settings,
-        knn methods and analyzers, all an engine may refuse at creation."""
-        properties: dict[str, Any] = {}
-        for spec in reversed(self._specs()):
-            properties.update(spec.mapping()["mappings"]["properties"])
-        return self._get_base_mapping(properties)
+    def _mappings_to_create(
+        self, suffix: str | None, rebuild: bool
+    ) -> list[dict[str, Any]]:
+        """The mappings of the indices of ``suffix`` a run creates: every
+        vector index it builds on a ``rebuild`` (a full build or reset, empty
+        ones included), otherwise those of the types it may write that have
+        no live index; and the extraction records' when it has none."""
+        config = self.opensearch_config
+        builds = {
+            config.relationships_index_prefix: config.build_relationship_vector_index,
+        }
+        if not rebuild:
+            # An incremental run upserts only the types it extracted.
+            builds[config.claims_index_prefix] = (
+                self.config.processing.claim_extraction.enabled
+            )
+            builds[config.community_reports_index_prefix] = (
+                self.config.graph.community_detection.enabled
+            )
+        mappings = [
+            spec.mapping()
+            for spec in self._specs()
+            if builds.get(spec.alias_prefix, True)
+            and (
+                rebuild
+                or not self.opensearch_client.get_index_name_by_alias(
+                    self._get_name(spec.alias_prefix, suffix)
+                )
+            )
+        ]
+        records_alias = self._get_name(config.extraction_records_index_prefix, suffix)
+        if not self.opensearch_client.get_index_name_by_alias(records_alias):
+            mappings.append(self._get_extraction_records_mapping())
+        return mappings
 
     def _get_extraction_records_mapping(self) -> dict[str, Any]:
         return {

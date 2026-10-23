@@ -60,7 +60,10 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ChunkingStrategy, LanguageCode
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    StoreRequestRejectedError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -586,3 +589,93 @@ def test_a_refused_index_setting_fails_before_translation(
 
     assert server.chat_models == []
     assert server.embed_models == []
+
+
+def _translate_to_korean(config: Config) -> None:
+    config.processing.translation.enabled = True
+    config.processing.translation.source_language = LanguageCode.EN
+    config.processing.translation.target_language = LanguageCode.KO
+
+
+def _other_embedding_dimension(config: Config) -> None:
+    config.models.embedding.dimension = DIM * 2
+
+
+@pytest.mark.parametrize(
+    ("change", "named"),
+    [
+        (_translate_to_korean, "other language settings"),
+        (_other_embedding_dimension, "holds embeddings of"),
+    ],
+    ids=["translation", "embedding"],
+)
+def test_an_incremental_run_over_other_live_indices_fails_before_any_model_call(
+    tmp_path: Path, no_aws, change, named: str
+) -> None:
+    # The live indices' settings were compared with the run's in the
+    # indexing stage only: an incremental run with another translation,
+    # analyzer or embedding setting re-translated and re-extracted the whole
+    # corpus first. The reset the error recommends then pays for it once.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    context = _ingest(
+        config, _providers(config, server, encoder), source, tmp_path / "run-1"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    changed = config.model_copy(deep=True)
+    change(changed)
+    if changed.models.embedding.dimension != DIM:
+        server = FakeOllama(_respond, ANSWER, changed.models.embedding.dimension)
+    calls = len(server.chat_models), len(server.embed_models)
+    with pytest.raises(ConfigurationError, match=named):
+        _ingest(
+            changed, _providers(changed, server, encoder), source, tmp_path / "run-2"
+        )
+    assert (len(server.chat_models), len(server.embed_models)) == calls
+
+    changed.indexing.reset = True
+    context = _ingest(
+        changed, _providers(changed, server, encoder), source, tmp_path / "run-3"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+
+def test_an_incremental_run_at_the_shard_cap_writes_into_its_live_indices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+) -> None:
+    # The run always created a probe index, so a cluster with no room for
+    # another index refused an incremental run that creates none.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    built = config.model_copy(deep=True)
+    built.indexing.reset = True  # a full build: every index exists
+    context = _ingest(
+        built, _providers(built, server, encoder), source, tmp_path / "run-1"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    _refusing(
+        monkeypatch,
+        lambda _: "validation_exception: this action would add [1] total shards, "
+        "but this cluster currently has [9]/[9] maximum shards open;",
+    )
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    context = _ingest(
+        config, _providers(config, server, encoder), source, tmp_path / "run-2"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    calls = len(server.chat_models)
+    with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
+        _ingest(built, _providers(built, server, encoder), source, tmp_path / "run-3")
+    assert len(server.chat_models) == calls

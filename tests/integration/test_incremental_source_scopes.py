@@ -49,7 +49,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ChunkingStrategy
 from unified_kg_rag.ports import DocStatusPort
-from unified_kg_rag.shared import PipelineExecutionError
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.integration
 
@@ -391,7 +391,8 @@ def test_retiring_the_runs_own_scope_fails_without_touching_anything(
     before = (_store_snapshot(stack), registry.list_all())
 
     stack.config.indexing.retire_source_scopes = [f"{source.as_posix()}/"]
-    with pytest.raises(PipelineExecutionError, match="own source scope"):
+    # A usage error (exit 2), not wrapped in a PipelineExecutionError.
+    with pytest.raises(ConfigurationError, match="own source scope"):
         stack.run(source)
 
     assert (_store_snapshot(stack), registry.list_all()) == before

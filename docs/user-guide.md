@@ -981,17 +981,20 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   editing one.
 - **Change the embedding model or its dimension**
   (`models.embedding.model_id` / `dimension`): each OpenSearch index records
-  the model and dimension it was built with, and the indexing stage stops
-  before any write when they differ from the run's (an index that records
-  none is refused too). Re-run once with `indexing.reset: true`. `run-rag` and
+  the model and dimension it was built with, and an incremental run stops
+  before its first model call (exit 2) when they differ from the run's (an
+  index that records none is refused too). Re-run once with
+  `indexing.reset: true`. `run-rag` and
   `run-eval` with another model or dimension fail with a `ConfigurationError`
   instead of answering from empty search results.
 - **Change the corpus or translation languages** (`processing.translation`
   languages, `indexing.opensearch.language_analyzers`): live text fields keep
-  their analyzers, so the indexing stage stops before any write; re-run once
-  with `indexing.reset: true`. Dropping a language does not stop it.
+  their analyzers, so an incremental run stops before its first model call
+  (exit 2); re-run once with `indexing.reset: true`. Dropping a language does
+  not stop it.
 - **Index a suffix with the registry off** (as the `backend: local` preset
-  does): a later incremental run on that suffix stops before any write.
+  does): a later incremental run on that suffix stops before its first model
+  call.
   Re-run once with `indexing.reset: true` and the registry on, or keep it off
   for that suffix.
 - **Rebuild** with `indexing.reset: true`: the whole corpus is indexed again

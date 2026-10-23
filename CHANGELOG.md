@@ -830,6 +830,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `DataIngestionPipeline.run` raises a `ConfigurationError` met outside a
+  stage as itself (exit 2 in `run-ingestion`), not wrapped in a
+  `PipelineExecutionError` (exit 1): for example retiring the run's own
+  source scope. Only `StoreRequestRejectedError` was passed through (#PR).
+- `VectorIndexer.check_index_creation` takes `rebuild=` (default `True`):
+  `False` (an incremental run) checks only the indices that do not exist
+  yet (#PR).
 - Logging: `logging.library_levels` sets `opensearch` to `ERROR` by default.
   At `WARNING` opensearch-py logged every failed request, the expected 404
   of each alias lookup before its index exists included; the package's
@@ -1336,6 +1343,27 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: an incremental run over live indices built for another
+  embedding model or dimension, other translation languages or
+  `language_analyzers`, or with the registry off, stops before its first
+  model call (exit 2, `ConfigurationError` from `DataIngestionPipeline.run`).
+  The indexing stage compared them only after the run had translated and
+  extracted every new and changed document, so the `indexing.reset: true`
+  the error recommends paid for the corpus a second time. A run with nothing
+  to extract is still checked only by its indexing stage (#PR).
+- Ingestion: the store check probes each index the run will create, with
+  that index's own mapping, all at once: every vector index on a full build
+  or reset, only the missing ones (of the types it extracts) on an
+  incremental run, and the extraction records' when missing. It created one
+  merged probe every run, so at a cluster's shard limit it refused an
+  incremental run that creates no index, and it passed a full build or
+  reset with room for one index, which then failed in the indexing stage
+  after extraction (#PR).
+- Ingestion: the sweep of probe indices a stopped run left deletes only
+  unaliased indices named `<extraction-records alias>-settings-probe-` and
+  12 hex digits. Its `<alias>-settings-probe-*` pattern also matched a
+  sibling namespace whose suffix extends `<suffix>-settings-probe-`, whose
+  live extraction-records index it deleted (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

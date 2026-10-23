@@ -73,7 +73,6 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
-from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import (
@@ -537,9 +536,11 @@ class DataIngestionPipeline:
         Raises:
             PipelineExecutionError: The run could not be set up or crashed
                 outside a stage (for example a missing source directory).
-            StoreRequestRejectedError: The vector store refused to create
-                an index with the run's settings, checked before any model
-                call (a ``ConfigurationError``).
+            ConfigurationError: The configuration cannot be run, for
+                example the vector store refused to create an index with
+                the run's settings (``StoreRequestRejectedError``) or an
+                incremental run's live indices were built for other
+                settings, both checked before any model call.
         """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
@@ -630,9 +631,10 @@ class DataIngestionPipeline:
         except NamespaceLeaseError:
             # Another run writes the namespace: nothing was read or written.
             raise
-        except StoreRequestRejectedError:
-            # The store refused the run's index settings before any model
-            # call (_check_index_creation): a usage error, not a crash.
+        except ConfigurationError:
+            # The store refused the run's index settings, or its live
+            # indices were built for other settings, before any model call
+            # (_check_index_creation): a usage error, not a crash.
             raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
@@ -1479,28 +1481,36 @@ class DataIngestionPipeline:
     )
 
     def _check_index_creation(self, context: PipelineContext) -> None:
-        """Have the vector store refuse the run's index settings now, before
-        any model call (``VectorIndexer.check_index_creation``), rather than at
-        the first index creation after extraction. An incremental run with no
-        document to (re)extract is not checked: it creates no index, its
-        deletions go to the live ones. A check that fails otherwise is
-        logged: the stages then meet the store's error themselves.
+        """Have the vector store refuse the run now, before any model call,
+        rather than in the indexing stage after extraction: an incremental
+        run's live indices built for other settings
+        (``VectorIndexer.check_index_settings``), and the indices the run
+        will create (``VectorIndexer.check_index_creation``: every one on a
+        full build or reset, an incremental run's missing ones). An
+        incremental run with no document to (re)extract is not checked: it
+        calls no model. A check that fails otherwise is logged: the stages
+        then meet the store's error themselves.
 
         Raises:
-            StoreRequestRejectedError: The store refused the settings.
+            ConfigurationError: The live indices do not match, or the store
+                refused the settings (``StoreRequestRejectedError``).
             NamespaceLeaseError: The run lost its write lease.
         """
-        if context.incremental_delta is not None and not context.documents:
-            return
         try:
+            incremental = (
+                context.incremental_delta is not None and not self.config.indexing.reset
+            )
+            if incremental and not context.documents:
+                return
+            suffix = self.config.processing.document_parsing.index_value
             indexer = self.providers.build_vector_indexer()
             try:
-                indexer.check_index_creation(
-                    self.config.processing.document_parsing.index_value
-                )
+                if incremental:
+                    indexer.check_index_settings(suffix)
+                indexer.check_index_creation(suffix, rebuild=not incremental)
             finally:
                 indexer.close()
-        except (StoreRequestRejectedError, NamespaceLeaseError):
+        except (ConfigurationError, NamespaceLeaseError):
             raise
         except Exception as e:  # noqa: BLE001 - the stages report the store
             logger.warning("Checking the vector store's index creation failed: %s", e)
