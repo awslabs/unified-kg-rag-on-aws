@@ -1364,6 +1364,8 @@ changed once with the full-config keys (#332).
   12 hex digits. Its `<alias>-settings-probe-*` pattern also matched a
   sibling namespace whose suffix extends `<suffix>-settings-probe-`, whose
   live extraction-records index it deleted (#PR).
+- `run-ingestion --retire-source-scope ""` (or blanks) is a usage error
+  (exit 2); it ended with a validation traceback and exit 1 (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

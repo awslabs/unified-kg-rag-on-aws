@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -72,6 +73,13 @@ def _pipeline_id_arg(value: str) -> str | None:
         return validate_path_segment(value, "pipeline_id")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _source_scope_arg(value: str) -> str:
+    """A source scope to retire, stripped; a blank one is a usage error."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("a source scope must not be blank")
+    return value.strip()
 
 
 def _stage_name_arg(value: str) -> str:
@@ -206,6 +214,7 @@ class CommandLineInterface:
         parser.add_argument(
             "--retire-source-scope",
             action="append",
+            type=_source_scope_arg,
             default=[],
             metavar="SCOPE",
             help="Incremental runs: treat every doc-status record of this "
@@ -246,14 +255,13 @@ class IngestionPipelineRunner:
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
             indexing = self.config.indexing
-            indexing.retire_source_scopes = list(
-                dict.fromkeys(
-                    [
-                        *indexing.retire_source_scopes,
-                        *(value.strip() for value in retired),
-                    ]
-                )
-            )
+            try:
+                indexing.retire_source_scopes = [
+                    *indexing.retire_source_scopes,
+                    *retired,
+                ]
+            except ValidationError as e:
+                usage_error(f"--retire-source-scope: {e}")
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.pipeline: DataIngestionPipeline | None = None
