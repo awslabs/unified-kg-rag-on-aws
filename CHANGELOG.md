@@ -1366,6 +1366,9 @@ changed once with the full-config keys (#332).
   live extraction-records index it deleted (#PR).
 - `run-ingestion --retire-source-scope ""` (or blanks) is a usage error
   (exit 2); it ended with a validation traceback and exit 1 (#PR).
+- Config: `indexing.opensearch` settings set in code are validated as at
+  load (`index_settings` knn keys, index prefixes), as `indexing` and
+  `processing.document_parsing` are since #415 (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

@@ -1980,6 +1980,10 @@ DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
 
 
 class OpenSearchIndexingConfig(BaseModel):
+    # Settings set in code (config.indexing.opensearch.index_settings = ...)
+    # are checked too, as IndexingConfig's are.
+    model_config = ConfigDict(validate_assignment=True)
+
     text_units_index_prefix: str = Field(
         default="graphrag-text-units",
         min_length=1,
