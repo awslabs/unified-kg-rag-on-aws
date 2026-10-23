@@ -645,6 +645,9 @@ changed once with the full-config keys (#332).
   document filters and dropped out of filtered retrieval) (#376).
 
 ### Added
+- The public API exports the errors it raises for callers to tell apart:
+  `GraphRAGException`, `ConfigurationError`, `StoreRequestRejectedError`,
+  `PipelineExecutionError` and `NamespaceLeaseError` (#PR).
 - `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
   `model_purpose=ModelPurpose.INGESTION` to `setup_chain` / `get_model` as
   the user guide says without importing an internal module (#365).
