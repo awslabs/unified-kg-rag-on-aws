@@ -1336,6 +1336,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a removal whose strip splits a spelling off and is
+  killed between its graph edge writes and their vector copies leaves no
+  vector edge missing. Since #412 the retry wrote a vector copy only where
+  one was stored and stale, so the split part's edge under its new id kept
+  none and LightRAG's relationship search never found it. A re-pointed
+  edge without a vector copy is written again, as #410 did (#PR).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared
@@ -1756,8 +1762,9 @@ changed once with the full-config keys (#332).
   their vector copies leaves no stale vector edge. The retry found the
   re-pointed edges' graph copies current and kept their vector copies
   naming (and pointing at) the old endpoint, or none at all. The stored
-  edges at rewired entities and at a split's parts and origins are now
-  compared with their vector copies, and a missing copy is written (#410).
+  edges at rewired entities (the entities a split's parts split from among
+  them) and at a split's parts are now compared with their vector copies,
+  and a missing copy is written (#410).
 - Incremental indexing: a removal that splits a spelling off and is
   killed after the split is written but before the re-keyed edge's old
   copy is deleted ends as a full build on retry. The retry derived that

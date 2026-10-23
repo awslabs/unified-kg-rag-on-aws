@@ -1446,8 +1446,10 @@ class IndexingManager:
         # split off; the entities they split from are rewired): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
-        # copies behind.
-        moved |= {*rewired, *(split_from or {})}
+        # copies behind, or missing (an edge under a new id, written when
+        # its endpoints are re-pointed): a missing one is written.
+        repointed = {*rewired, *(split_from or {})}
+        moved |= repointed
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
@@ -1461,7 +1463,11 @@ class IndexingManager:
         stale = {
             r.id
             for r in extra
-            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
+            if (
+                _vector_stale(r, vector_copy[r.id])
+                if r.id in vector_copy
+                else vectors and bool({r.source_id, r.target_id} & repointed)
+            )
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:

@@ -2161,3 +2161,48 @@ def test_a_resume_restores_documents_with_the_delta_they_were_filtered_by(
 
     # _state over no corpora reads the stores under ``inc``.
     assert _state(inc, []) == full
+
+
+STRIP_SPLIT_RUNS = [
+    {
+        "d3.txt": "Buyer and Acme trade parts 1. Acme Corp and Acme Inc trade "
+        "parts 1. Acme trade parts 3."
+    },
+    {
+        "d3.txt": "Buyer and Acme trade parts 1. Acme Corp and Acme Inc trade "
+        "parts 1. Acme trade parts 3.",
+        "r0.txt": "Acme Corp and Acme and Buyer trade goods 2. "
+        "Acme Ltd and Acme LLC and Buyer trade parts 2.",
+    },
+    {
+        "r0.txt": "Acme Corp and Acme and Buyer trade goods 2. "
+        "Acme Ltd and Acme LLC and Buyer trade parts 2.",
+        "d2.txt": "Depot and Acme trade parts 1. Acme Ltd and Depot trade parts 3.",
+    },
+]
+
+
+@pytest.mark.parametrize("call", [1, 2, 3, 4])
+@pytest.mark.parametrize("resume", [True, False], ids=["resume", "fresh"])
+def test_a_strip_killed_before_its_vector_edges_writes_the_missing_ones(
+    tmp_path: Path, call: int, resume: bool
+) -> None:
+    # Removing d3.txt splits "Acme LLC" off "Acme": the strip writes the
+    # edge "Acme LLC"-"Buyer" under a new id to the graph and is killed
+    # (call 3) before its vector edges. The retry found the graph copy
+    # current and wrote a vector copy only where one was stored and
+    # stale: the edge had none for good.
+    runs = STRIP_SPLIT_RUNS if resume else [*STRIP_SPLIT_RUNS, STRIP_SPLIT_RUNS[-1]]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_run_indexing_phase", call, False, IndexingManager),
+        gleaning=True,
+        resume=resume,
+    )
+
+    assert incremental["vector_edges"] == full["vector_edges"]
+    assert incremental == full
