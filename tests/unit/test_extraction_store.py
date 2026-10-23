@@ -12,6 +12,9 @@ records a full build names when asked to.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -758,3 +761,145 @@ class TestOpenSearchExtractionRecords:
         stats = indexer.write_extraction_records({"k1": {}}, suffix="x")
         assert isinstance(stats, IndexingStats)
         assert (stats.failed_items, stats.successful_items) == (1, 0)
+
+
+def _pipeline(config: Config, indexer) -> Any:
+    """A pipeline shell whose providers build ``indexer``."""
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = config
+    pipe.providers = SimpleNamespace(build_vector_indexer=lambda: indexer)
+    return pipe
+
+
+def _run_context(incremental: bool = False) -> Any:
+    return SimpleNamespace(
+        incremental_delta=object() if incremental else None,
+        documents=[object()],
+        stage_results=[],
+        pipeline_id="pid",
+    )
+
+
+class TestRunIndexCreationCheck:
+    """``DataIngestionPipeline._check_index_creation``: once per run, before
+    the first stage that may call a model, on the run's suffix."""
+
+    @pytest.mark.parametrize("incremental", [False, True])
+    def test_the_check_runs_on_the_runs_suffix_and_closes_its_indexer(
+        self, mocker, incremental: bool
+    ) -> None:
+        config = Config()
+        config.processing.document_parsing.index_value = "tenant-a"
+        indexer = mocker.MagicMock()
+        _pipeline(config, indexer)._check_index_creation(_run_context(incremental))
+
+        indexer.check_index_creation.assert_called_once_with(
+            "tenant-a", rebuild=not incremental
+        )
+        if incremental:
+            indexer.check_index_settings.assert_called_once_with("tenant-a")
+        else:
+            indexer.check_index_settings.assert_not_called()
+        indexer.close.assert_called_once_with()
+
+    def test_a_failed_check_is_logged_and_its_indexer_closed(
+        self, mocker, caplog
+    ) -> None:
+        indexer = mocker.MagicMock()
+        indexer.check_index_creation.side_effect = RuntimeError("connection reset")
+        with caplog.at_level("WARNING"):
+            _pipeline(Config(), indexer)._check_index_creation(_run_context())
+        assert "connection reset" in caplog.text
+        indexer.close.assert_called_once_with()
+
+    @pytest.mark.parametrize("stale", [False, True])
+    def test_a_lost_lease_while_deleting_probes_stops_the_run(
+        self, tmp_path, stale: bool
+    ) -> None:
+        # The sweep of a stopped run's probes (stale) or the delete of this
+        # run's own: a run that lost its lease must stop, not log and go on.
+        from unified_kg_rag.shared import NamespaceLeaseError
+
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        delete = engine.delete_indices
+        if stale:
+            engine.delete_indices = lambda names: None  # type: ignore[method-assign]
+            _probing_indexer(Config(), engine).check_index_creation()
+            assert engine.get_aliases_by_index("*settings-probe*")
+        deletes: list[list[str]] = []
+
+        def lost(names):
+            deletes.append(list(names))
+            raise NamespaceLeaseError("lease lost")
+
+        engine.delete_indices = lost  # type: ignore[method-assign]
+        pipe = _pipeline(Config(), _probing_indexer(Config(), engine))
+        with pytest.raises(NamespaceLeaseError):
+            pipe._check_index_creation(_run_context())
+        # Raised by the first delete: the sweep's, or the run's own probes'.
+        assert len(deletes) == 1
+        engine.delete_indices = delete  # type: ignore[method-assign]
+
+    def test_a_failed_sweep_lets_the_run_check_its_own_probes(self, tmp_path) -> None:
+        engine, created = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+
+        def unreachable(pattern):
+            raise RuntimeError("connection reset")
+
+        engine.get_aliases_by_index = unreachable  # type: ignore[method-assign]
+        indexer = _probing_indexer(Config(), engine)
+        indexer.check_index_creation("x")
+        assert len(created) == len(indexer._specs()) + 1
+
+    def test_a_refusal_keeps_the_engines_reason(self, tmp_path) -> None:
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        engine, _ = _strict_engine(
+            tmp_path / "vector.sqlite3", lambda _: "unknown setting [index.x]"
+        )
+        with pytest.raises(StoreRequestRejectedError) as raised:
+            _probing_indexer(Config(), engine).check_index_creation("x")
+        assert raised.value.reason == "illegal_argument_exception"
+
+    def test_the_check_runs_once_before_the_first_model_stage(self, mocker) -> None:
+        from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+        pipe = object.__new__(DataIngestionPipeline)
+        pipe._stop_signal = None
+        pipe._checkpointing = False
+        pipe.s3_cache_manager = None
+        pipe.llm_response_cache = None
+        names = [
+            "document_parsing",
+            "document_loading",
+            "chunking",
+            "graph_extraction",
+            "indexing",
+        ]
+        pipe.stages = [SimpleNamespace(name=name) for name in names]
+        order: list[str] = []
+        mocker.patch.object(
+            pipe,
+            "_execute_stage",
+            side_effect=lambda stage, context: order.append(stage.name)
+            or SimpleNamespace(status=None),
+        )
+        mocker.patch.object(
+            pipe,
+            "_check_index_creation",
+            side_effect=lambda context: order.append("check"),
+        )
+        mocker.patch.object(pipe, "_emit_stage_metrics")
+        mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
+        mocker.patch.object(pipe, "_start_index", return_value=0)
+        pipe._execute_pipeline_stages(_run_context(), None)
+        assert order == [
+            "document_parsing",
+            "document_loading",
+            "check",
+            "chunking",
+            "graph_extraction",
+            "indexing",
+        ]

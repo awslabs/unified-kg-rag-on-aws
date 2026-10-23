@@ -225,6 +225,9 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
 
 
 @pytest.mark.slow
+# 300 examples take seconds alone and over 120 s (the default timeout) on a
+# loaded runner: the timeout leaves margin for that, not for a hang.
+@pytest.mark.timeout(600)
 @settings(
     max_examples=300,
     deadline=None,

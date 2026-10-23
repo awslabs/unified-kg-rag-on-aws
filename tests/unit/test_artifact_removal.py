@@ -750,3 +750,113 @@ def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     assert any(call.args[0] == ["pending-strip"] for call in read.call_args_list)
     assert vector.read_extraction_records(["pending-strip"], suffix="default") == {}
     assert "e-x" not in graph.ids("entities")
+
+
+@pytest.mark.parametrize(
+    ("rewired", "split_from", "vectors", "copy", "rewritten"),
+    [
+        pytest.param({"a"}, None, True, False, True, id="rewired-missing-copy"),
+        pytest.param(
+            set(), {"a": "z"}, True, False, True, id="split-part-missing-copy"
+        ),
+        pytest.param({"a"}, None, True, True, False, id="rewired-current-copy"),
+        pytest.param(set(), None, True, False, False, id="not-re-pointed"),
+        pytest.param({"a"}, None, False, False, False, id="no-relationship-vectors"),
+    ],
+)
+def test_a_retry_writes_the_missing_vector_copy_of_a_re_pointed_edge(
+    rewired: set[str],
+    split_from: dict[str, str] | None,
+    vectors: bool,
+    copy: bool,
+    rewritten: bool,
+) -> None:
+    # A run killed between a derivation's graph edges and their vector
+    # copies left an edge at a re-pointed entity (rewired, or a split's
+    # part) current in the graph and missing from the vector store: its
+    # retry finds nothing else to rewrite it for, so it is rewritten because
+    # its copy is missing, unless the run builds no relationship vectors.
+    from unified_kg_rag.domain.models import Relationship
+
+    manager, graph, vector = _manager()
+    manager.config.indexing.opensearch.build_relationship_vector_index = vectors
+    entities = [
+        Entity(id="a", name="A", type="ORGANIZATION", text_unit_ids=["t1"]),
+        Entity(id="b", name="B", type="ORGANIZATION", text_unit_ids=["t1"]),
+    ]
+    graph.upsert_entities(entities)
+    vector.upsert_entities(entities)
+    edge = Relationship(
+        id="r1",
+        source_id="a",
+        target_id="b",
+        source_name="A",
+        target_name="B",
+        type="SUPPLIES",
+        text_unit_ids=["t1"],
+        rank=2,
+    )
+    graph.upsert_relationships([edge])
+    if copy:
+        vector.upsert_relationships([edge])
+
+    _, relationships = manager._finish(
+        "default",
+        entities,
+        [],
+        stored_entities=entities,
+        rewired=rewired,
+        split_from=split_from,
+    )
+
+    assert ([r.id for r in relationships] == ["r1"]) is rewritten
+
+
+def test_a_strip_derives_claims_with_the_stored_spellings_of_derived_names() -> None:
+    # A strip re-derives a claim whose object is an entity this run derived
+    # (not stored yet): the stored entities sharing its name key are read
+    # too (a split's part may be among them), once each, besides those the
+    # claim names.
+    from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+    from unified_kg_rag.domain.models import Claim
+
+    manager, graph, _ = _manager()
+    graph.upsert_entities(
+        [
+            Entity(id="a", name="Acme", type="ORGANIZATION", text_unit_ids=["t1"]),
+            Entity(id="g", name="Globex", type="ORGANIZATION", text_unit_ids=["t1"]),
+        ]
+    )
+    derived = Entity(
+        id="x", name="Globex Ltd", type="ORGANIZATION", text_unit_ids=["t1"]
+    )
+    manager._derived_entities["default"] = {"x": derived}
+    keys: list[list[str]] = []
+    reads: list[list[str]] = []
+    by_key, read = graph.find_entity_ids_by_name_key, graph.read_entities
+
+    def find_by_key(name_keys, suffix=None):
+        keys.append(sorted(name_keys))
+        return by_key(name_keys, suffix)
+
+    def read_entities(ids, suffix=None):
+        reads.append(list(ids))
+        return read(ids, suffix)
+
+    graph.find_entity_ids_by_name_key = find_by_key  # type: ignore[method-assign]
+    graph.read_entities = read_entities  # type: ignore[method-assign]
+    claim = Claim(
+        id="c1",
+        subject_id="a",
+        subject_name="Acme",
+        object_id="x",
+        object_name="Globex Ltd",
+        type="OWNS",
+        description="Acme owns Globex Ltd",
+        text_unit_ids=["t1"],
+    )
+
+    manager._derive_claims("default", [claim], removed=["t9"])
+
+    assert keys == [sorted({compact_name_key("Acme"), compact_name_key("Globex Ltd")})]
+    assert reads == [["a"], ["g"]]

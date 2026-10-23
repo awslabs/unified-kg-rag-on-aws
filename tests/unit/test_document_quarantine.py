@@ -346,6 +346,64 @@ def test_a_resumed_delta_is_recomputed_when_another_run_moved_a_document_outside
     assert delta_still_applies(harness.store, delta, fingerprints, 3)
 
 
+def _resumable_delta() -> tuple[IncrementalRun, list, DocumentDelta, dict[str, str]]:
+    """a.txt indexed; the delta of a.txt + b.txt (b.txt new) computed and
+    its attempts opened, as a pipeline id that is resumed later."""
+    harness = IncrementalRun()
+    harness.run(_A)
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    return harness, docs, delta, fingerprints
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_deleted_a_document_outside_it() -> (
+    None
+):
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+    # a.txt's record is gone: the delta left it unchanged, a fresh diff has
+    # it new.
+    harness.store.delete(document_doc_id(docs[0]))
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_indexed_a_document_outside_the_corpus() -> (
+    None
+):
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    a = harness.store.get(document_doc_id(docs[0]))
+    assert a is not None
+    c = document("/c/c.txt", [[("Seller", "Port", 3)]])
+    harness.store.put(
+        a.model_copy(
+            update={"doc_id": document_doc_id(c), "content_hash": "hc", "scope": scope}
+        )
+    )
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_re_extracted_a_document_outside_it() -> (
+    None
+):
+    # a.txt committed at its content under other settings: unchanged for a
+    # run with those settings, changed (and not a failing document) for
+    # this one's.
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    a = harness.store.get(document_doc_id(docs[0]))
+    assert a is not None
+    harness.store.put(a.model_copy(update={"extraction_fingerprint": "other"}))
+    assert delta_still_applies(
+        harness.store, delta, fingerprints, 3, "other", scope=scope
+    )
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, "mine", scope=scope
+    )
+
+
 def test_a_resumed_delta_is_recomputed_when_another_pipeline_id_wrote_its_records() -> (
     None
 ):
