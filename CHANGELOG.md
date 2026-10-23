@@ -1376,6 +1376,10 @@ changed once with the full-config keys (#332).
   `processing.document_parsing` are since #415 (#PR).
 - `run-rag --interactive`: `set-filter key:value` keeps the value's
   whitespace; runs of spaces were collapsed to one (#PR).
+- `--output-format json`: the status a run that fails before printing its
+  result prints names the `error` it exited for (a usage error's message
+  included), and `run-ingestion`'s the `pipeline_id` once resolved. The
+  keys are added; `status` and `exit_code` are unchanged (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

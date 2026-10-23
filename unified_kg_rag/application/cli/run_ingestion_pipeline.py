@@ -28,6 +28,7 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     json_output,
     print_json,
+    print_status,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -663,6 +664,17 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
         print_json(status)
 
 
+def _print_failed(
+    runner: IngestionPipelineRunner | None, exit_code: int, error: Exception
+) -> None:
+    """The JSON status of a run that failed before it printed its result,
+    with its error and, once resolved, its pipeline id."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    print_status(
+        exit_code, error, **({"pipeline_id": pipeline_id} if pipeline_id else {})
+    )
+
+
 @exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
@@ -689,15 +701,18 @@ def main() -> None:
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Ingestion configuration error: %s", e)
+        _print_failed(runner, EXIT_USAGE, e)
         sys.exit(EXIT_USAGE)
     except PipelineExecutionError as e:
         # A failed stage, a failed metadata check or a refused prompt: say
         # which before exiting non-zero.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+        _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during pipeline execution")
+        _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
 
 

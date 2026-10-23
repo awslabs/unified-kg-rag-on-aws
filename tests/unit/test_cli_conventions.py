@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -638,7 +639,44 @@ def test_an_early_usage_error_still_prints_a_json_status(
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
-    assert json.loads(capsys.readouterr().out) == {"status": "failed", "exit_code": 2}
+    status = json.loads(capsys.readouterr().out)
+    # The error it exited for is named (it was not).
+    assert ("--top-k" if "--top-k" in argv else "nope.yaml") in status.pop("error")
+    assert status == {"status": "failed", "exit_code": 2}
+
+
+def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A run the store refused before any model call printed only
+    # {"status": "failed", "exit_code": 2}: no reason and no run to resume.
+    from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-ingestion", "--output-format", "json", "--source-directory", "src"],
+    )
+
+    def refused(self) -> None:
+        self.pipeline = MagicMock(pipeline_id="run-7")
+        raise StoreRequestRejectedError("unknown setting [index.refresh_intervl]")
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", refused)
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "failed",
+        "exit_code": 2,
+        "error": "unknown setting [index.refresh_intervl]",
+        "pipeline_id": "run-7",
+    }
 
 
 def test_a_stopped_cli_exits_without_joining_the_threads_it_abandoned() -> None:

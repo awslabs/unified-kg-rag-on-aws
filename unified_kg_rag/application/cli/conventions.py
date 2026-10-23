@@ -19,7 +19,8 @@ stdout and sends everything else (banner, progress, logs) to stderr, so the
 output pipes into ``jq``. A run stopped by a signal before it printed one
 prints ``{"status": "interrupted", "exit_code": 143}`` (or 130) instead, and
 one that fails before it printed one ``{"status": "failed", "exit_code": 1}``
-(or 2).
+(or 2) with the ``error`` it failed with, when it knows one (and
+``run-ingestion`` the ``pipeline_id``, once resolved).
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ _CHILD_EXIT_SECONDS = 1.0
 def usage_error(message: str) -> NoReturn:
     """Report a usage or configuration error as argparse does and exit 2."""
     print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
+    print_status(EXIT_USAGE, message)
     raise SystemExit(EXIT_USAGE)
 
 
@@ -96,15 +98,16 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         try:
             result = main(*args, **kwargs)
             if isinstance(result, int) and result:  # mains that return the code
-                _print_status(result)
+                print_status(result)
             return result
         except KeyboardInterrupt:
-            _print_status(EXIT_INTERRUPTED)
+            print_status(EXIT_INTERRUPTED)
             _exit_stopped(EXIT_INTERRUPTED)
             raise
         except SystemExit as e:
             if isinstance(e.code, int) and e.code:
-                _print_status(e.code)
+                # The error the CLI exited for, if it exited handling one.
+                print_status(e.code, e.__context__)
                 if e.code > 128:
                     _exit_stopped(e.code)
             raise
@@ -130,7 +133,8 @@ def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
         default="text",
         choices=["text", "json"],
         help="'text' (default) for people; 'json' prints one JSON result to "
-        "stdout and everything else to stderr",
+        "stdout (for a run that failed or was stopped before it, a status with "
+        "the exit code and the error) and everything else to stderr",
     )
 
 
@@ -148,14 +152,21 @@ def print_json(result: Any) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
 
 
-def _print_status(exit_code: int) -> None:
-    """The status document of a run that exits ``exit_code`` without having
-    printed its result."""
+def print_status(
+    exit_code: int, error: BaseException | str | None = None, **fields: Any
+) -> None:
+    """Print the status document of a run that exits ``exit_code`` without
+    having printed its result (once, and only with JSON output): a failed
+    one names its ``error``; ``fields`` (``pipeline_id``) are added."""
     if _json["enabled"] and not _json["printed"]:
         stopped = exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED)
-        print_json(
-            {"status": "interrupted" if stopped else "failed", "exit_code": exit_code}
-        )
+        status: dict[str, Any] = {
+            "status": "interrupted" if stopped else "failed",
+            "exit_code": exit_code,
+        }
+        if not stopped and isinstance(error, str | Exception) and str(error):
+            status["error"] = str(error)
+        print_json({**status, **fields})
 
 
 def _exit_stopped(exit_code: int) -> None:

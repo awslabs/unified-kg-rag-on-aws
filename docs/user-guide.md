@@ -1610,10 +1610,11 @@ path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
-`{"status": "failed", "exit_code": 1}` (or `2`), so stdout is always JSON;
-`run-ingestion` adds the `pipeline_id` to resume with and, when the next run
-on the namespace must wait for writes possibly still in flight (this run's,
-or those of the run whose expired lease it took over),
+`{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
+with when it has one, so stdout is always JSON; `run-ingestion` adds the
+`pipeline_id` to resume with (once the run resolved it) and, when a stopped
+run's next run on the namespace must wait for writes possibly still in
+flight (this run's, or those of the run whose expired lease it took over),
 `next_run_writes_from` (UTC, ISO 8601).
 
 ### Large / multilingual / heterogeneous corpora
