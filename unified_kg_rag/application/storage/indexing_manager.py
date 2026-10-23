@@ -1014,6 +1014,8 @@ class IndexingManager:
             # (read with them): their stored links do not count either.
             rewired=set(derived.rewired) | noted,
             dropped=derived.dropped,
+            # A commit killed between its vector and graph edge writes left
+            # the vector copies of a split part's edges ahead of the graph's.
             split_from=derived.split_from,
         )
         # A delta id the merge folded into a stored item of another id has no
@@ -1200,6 +1202,8 @@ class IndexingManager:
                 # attempt maps to (found only once a late sibling joined).
                 joining = sibling_ids | set(derived.id_remap.values())
                 items[0].extend(e for e in held[0] if e.id in joining)
+                # Edges too: a re-key killed after writing an edge's copy at
+                # its new id, before retiring the old one, left that copy.
                 items[1].extend(r for r in held[1] if r.id in joining)
                 blocked |= {
                     item.id
@@ -1207,6 +1211,8 @@ class IndexingManager:
                     for item in group
                     if item.id not in joining
                 }
+            # Not twice: after a split killed before its edges were written,
+            # a leftover edge is both held (merged in above) and parted.
             known_edges = {r.id for r in items[1]}
             items[1].extend(r for r in parted if r.id not in known_edges)
             # Their other endpoints too: a re-pointed edge changes their rank.
@@ -1969,6 +1975,8 @@ class IndexingManager:
             vector_only = absent[0] - written
             if vector_only:
                 self._vector_only.setdefault(suffix, set()).update(vector_only)
+            # Edges alike: an edge an interrupted strip re-keyed away is kept
+            # when this strip writes it again under that id.
             vector_only |= absent[1] - written
             if vector_only:
                 self._dropped.setdefault(suffix, set()).update(vector_only)
