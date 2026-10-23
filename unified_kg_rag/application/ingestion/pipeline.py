@@ -746,6 +746,7 @@ class DataIngestionPipeline:
             context.incremental_delta,
             context.incremental_fingerprints,
             scope=context.incremental_scope,
+            written_by=context.pipeline_id,
         )
 
     def _close_attempts(
@@ -765,6 +766,7 @@ class DataIngestionPipeline:
             self._doc_status,
             context.incremental_delta,
             context.incremental_fingerprints,
+            context.pipeline_id,
         )
         try:
             try:
@@ -1319,6 +1321,7 @@ class DataIngestionPipeline:
             self.config.indexing.max_document_attempts,
             context.incremental_extraction_fingerprint,
             context.incremental_scope,
+            context.pipeline_id,
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value

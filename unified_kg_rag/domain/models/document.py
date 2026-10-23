@@ -178,6 +178,14 @@ class DocStatusRecord(BaseModel):
         "changed. None (a record written without one, e.g. by the direct API) "
         "is never re-extracted for a settings change",
     )
+    written_by: str | None = Field(
+        default=None,
+        description="Pipeline id of the run that wrote the record last. A run "
+        "resumed past document_loading recomputes its delta when a record of "
+        "it was written by another pipeline id since. None (a record written "
+        "before this field existed, or by the direct API) is unknown: only "
+        "the content and settings checks decide",
+    )
     created_at: str | None = Field(
         default=None, description="ISO timestamp when first registered"
     )

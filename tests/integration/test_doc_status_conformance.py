@@ -101,6 +101,7 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         attempt_batch=3,
         crash_batch=4,
         extraction_fingerprint="x1",
+        written_by="pipeline-a",
         updated_at="2026-01-01T00:00:00",
     )
     store.put(record)

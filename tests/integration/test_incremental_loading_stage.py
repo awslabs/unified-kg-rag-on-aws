@@ -37,6 +37,7 @@ class _Ctx:
     documents: list[Document] = []
     incremental_scope: str | None = None
     failed_source_files: list[str] = []
+    pipeline_id = "pipeline"
 
 
 def test_deletion_only_run_allows_empty_output() -> None:
