@@ -1434,8 +1434,8 @@ custom_prompts:
 | 코드 | 의미 |
 |---|---|
 | `0` | 성공 |
-| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 실행 중에 발견한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 `run-ingestion` 외의 CLI가 실행 중에 발견한 `ConfigurationError` |
+| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 삭제만 있는 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중 단계 밖에서 발견한 `ConfigurationError`. 예: `run-ingestion`이 첫 모델 호출 전에 실행을 거부한 경우(실행에 필요한 인덱스를 검색 엔진이 만들지 않거나, 증분 실행의 현재 인덱스가 다른 임베딩·언어·레지스트리 설정으로 만들어짐) |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 

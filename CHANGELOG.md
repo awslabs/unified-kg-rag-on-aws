@@ -1380,6 +1380,13 @@ changed once with the full-config keys (#332).
   result prints names the `error` it exited for (a usage error's message
   included), and `run-ingestion`'s the `pipeline_id` once resolved. The
   keys are added; `status` and `exit_code` are unchanged (#PR).
+- Docs: the CLI exit-code table and `conventions` state that a
+  configuration error met outside a stage (the pre-run store refusal) exits
+  2; Operations lists the refused index creation and the probe index names;
+  `iac/README.md` says a Step Functions re-run with the same `pipeline_id`
+  after a corpus change runs again from document parsing as an incremental
+  update (a new task has no local checkpoint for the CLI's integrity
+  prompt to check), not that it fails its integrity check (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

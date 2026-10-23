@@ -5,12 +5,15 @@
 Exit codes:
 
 - ``0``: success.
-- ``1`` (:data:`EXIT_FAILURE`): the run failed (a failed stage, query or
-  upload, a breached evaluation failure budget, nothing rendered).
+- ``1`` (:data:`EXIT_FAILURE`): the run failed (a failed stage, also one
+  that met a configuration error, a failed query or upload, a breached
+  evaluation failure budget, nothing rendered).
 - ``2`` (:data:`EXIT_USAGE`): the command line or the configuration is
   wrong (argparse errors, an invalid flag combination, a missing input, an
   invalid configuration file, an unset store endpoint: nothing was run), or
-  a ``ConfigurationError`` met while running.
+  the run refused it before its first model call (a ``ConfigurationError``
+  outside a stage: the store refused to create an index with the run's
+  settings, or an incremental run's live indices were built for others).
 - ``128 + signal``: stopped by a signal, ``130`` for Ctrl-C (SIGINT) and
   ``143`` for SIGTERM (ECS ``StopTask``, a Step Functions timeout).
 

@@ -648,6 +648,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤 다시 실행 |
+| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함: `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
 
 ### 수집 실행과 문서 상태 레지스트리
 
@@ -661,6 +662,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
+| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...`(종료 코드 2, 모델 호출 전) | 증분 실행의 임베딩 모델이나 차원, 번역 언어, `language_analyzers`가 현재 인덱스를 만든 설정과 다름 | `indexing.reset: true`로 한 번 실행(코퍼스 전체를 한 번 다시 임베딩하거나 번역함)하거나 이전 설정으로 되돌림 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림, 또는 #410 이전 빌드에서 문서를 빼는 reset이 인덱스를 교체한 뒤 중단됨 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 
 ### 질의
