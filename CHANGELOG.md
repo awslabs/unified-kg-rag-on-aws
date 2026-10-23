@@ -1342,6 +1342,15 @@ changed once with the full-config keys (#332).
   one was stored and stale, so the split part's edge under its new id kept
   none and LightRAG's relationship search never found it. A re-pointed
   edge without a vector copy is written again, as #410 did (#PR).
+- Incremental indexing: a removal whose strip splits a spelling off, killed
+  once its writes landed (at the retire or the note delete), keeps the
+  claim about the part. The retry derived the noted claims without the part
+  (the split had landed), so the claim object resolved to the stated
+  spelling under a new id no later derivation read. A strip's claim
+  derivation also reads the stored entities that share a name key with the
+  claims' entities: one graph lookup per strip, about 1% of a removal
+  stripping 5,000 claims about one entity on the embedded stores; a
+  commit's claims are not affected (#PR).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared

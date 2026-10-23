@@ -2206,3 +2206,39 @@ def test_a_strip_killed_before_its_vector_edges_writes_the_missing_ones(
 
     assert incremental["vector_edges"] == full["vector_edges"]
     assert incremental == full
+
+
+SPLIT_RETRY_KEPT = {
+    "d4.txt": "Acme Corp and Acme trade cash 2.",
+    "d3.txt": "Depot and Acme Ltd and Buyer trade goods 1. "
+    "Acme and Acme Inc and Acme LLC trade goods 2.",
+}
+SPLIT_RETRY_RUNS = [
+    {**SPLIT_RETRY_KEPT, "d0.txt": "Acme Inc and Acme and Acme Ltd trade cash 2."},
+    SPLIT_RETRY_KEPT,
+]
+
+
+@pytest.mark.parametrize("resume", [True, False], ids=["resume", "fresh"])
+@pytest.mark.parametrize("method", ["delete_retired_ids", "_clear_pending_strip"])
+def test_a_retried_split_strip_resolves_the_claim_object_to_the_part(
+    tmp_path: Path, method: str, resume: bool
+) -> None:
+    # d0.txt bridged "Acme Ltd" into "Acme"; removing it splits "Acme Ltd"
+    # off. Killed once every strip write landed (at its retire, or at the
+    # note delete), the retry derived the noted claims about the split's
+    # entities without the part: the claim object resolved to the stated
+    # spelling under a new id no later derivation read.
+    runs = SPLIT_RETRY_RUNS if resume else [*SPLIT_RETRY_RUNS, SPLIT_RETRY_KEPT]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=(method, 1, False, IndexingManager),
+        gleaning=True,
+        resume=resume,
+    )
+
+    assert incremental == full

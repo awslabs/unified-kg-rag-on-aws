@@ -2271,6 +2271,25 @@ class IndexingManager:
             sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
         if removed:
+            # And the stored entities of the other spellings of their names:
+            # a retried strip re-derives the claims it noted about a split's
+            # entities without the split (it landed), and the stated
+            # spelling resolves to the part only when the part is among
+            # them. Only a strip reads them (a commit's merge reads its
+            # names' spellings already, see merge_with_existing_graph).
+            keys = {compact_name_key(e.name) for e in entities} | {
+                compact_name_key(derived_entities[i].name)
+                for i in entity_ids
+                if i in derived_entities
+            }
+            family = set(
+                self.neptune_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
+                or []
+            ) - (entity_ids | set(derived_entities))
+            if family:
+                entities += self.neptune_indexer.read_entities(
+                    sorted(family), suffix=suffix
+                )
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
             entities = [stripped.get(e.id, e) for e in entities]
         entities += [
