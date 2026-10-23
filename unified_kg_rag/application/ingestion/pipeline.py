@@ -1178,6 +1178,14 @@ class DataIngestionPipeline:
             context = self.resume_manager.restore_pipeline_context(
                 pipeline_id, completed_stages
             )
+            rewound = self._rewind_to_failed_stage(
+                context, start_stage_name, completed_stages
+            )
+            if rewound is not None:
+                start_stage_name, completed_stages = rewound
+                context = self.resume_manager.restore_pipeline_context(
+                    pipeline_id, completed_stages
+                )
             if self._delta_is_stale(context, start_stage_name):
                 start_stage_name, completed_stages = self._rewind_to_loading(
                     start_stage_name, completed_stages, _STALE_DELTA
@@ -1233,6 +1241,53 @@ class DataIngestionPipeline:
                     if canonical_order.index(name) < position
                 ]
         return start_stage_name, completed_stages
+
+    def _rewind_to_failed_stage(
+        self,
+        context: PipelineContext,
+        start_stage_name: str | None,
+        completed_stages: list[str],
+    ) -> tuple[str, list[str]] | None:
+        """Move a resume back to the earliest completed, enabled stage that
+        recorded failed text units (``context.failed_text_unit_ids``), or
+        None to keep it.
+
+        Its restored output would make the indexing stage record their
+        documents FAILED once more without extracting them again, so every
+        re-run of the pipeline id would count one more failure until the
+        documents reach ``indexing.max_document_failures``. Run again, the
+        stage retries only the failed units (the extraction store keeps
+        what succeeded).
+        """
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            return None
+        start = canonical_order.index(start_stage_name)
+        enabled = {stage.name for stage in self.stages}
+        failed = [
+            name
+            for name, unit_ids in context.failed_text_unit_ids.items()
+            if unit_ids
+            and name in completed_stages
+            and name in enabled
+            and name in canonical_order
+            and canonical_order.index(name) < start
+        ]
+        if not failed:
+            return None
+        first = min(failed, key=canonical_order.index)
+        logger.warning(
+            "Stage '%s' failed on %d text units; resuming from it instead of '%s'",
+            first,
+            len(context.failed_text_unit_ids[first]),
+            start_stage_name,
+        )
+        position = canonical_order.index(first)
+        return first, [
+            name
+            for name in completed_stages
+            if name in canonical_order and canonical_order.index(name) < position
+        ]
 
     def _rewind_on_extraction_change(
         self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]

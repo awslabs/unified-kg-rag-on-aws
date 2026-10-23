@@ -3,13 +3,18 @@
 """A pipeline id run again on the embedded stores (``backend: local``).
 
 A finished pipeline id run again resumes: it restores its delta and its
-stages' cached outputs. When another pipeline id had written a document of
-the delta since (left it PENDING or FAILED under other settings, or removed
-and retried it), the restored delta still read as applying, and the rerun
-indexed the document over that run's artifacts. The registry records which
-pipeline id wrote each record (``DocStatusRecord.written_by``), and a record
-of the delta another pipeline id wrote makes the resume compute the delta
-again.
+stages' cached outputs. Two ways that went wrong:
+
+- Another pipeline id wrote a document of the delta since (left it PENDING
+  or FAILED under other settings, or removed and retried it): the restored
+  delta still read as applying, and the rerun indexed the document over
+  that run's artifacts. The registry records which pipeline id wrote each
+  record (``DocStatusRecord.written_by``), and a record of the delta another
+  pipeline id wrote makes the resume compute the delta again.
+- A stage recorded failed text units: the restored output recorded their
+  documents FAILED once more without extracting them again, so each rerun
+  counted one more failure until the documents were excluded for good. The
+  resume starts at the earliest such stage instead.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from tests.integration.test_name_variant_convergence import _Died, _dying, _resp
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import ChunkingStrategy
 
 pytestmark = pytest.mark.integration
 
@@ -176,3 +182,65 @@ def test_a_rerun_pipeline_id_recomputes_a_delta_another_id_removed_and_retried(
         ],
     )
     assert rerun == full
+
+
+# --- a stage recorded failed text units --------------------------------------
+
+_FAILING = "Acme LLC and Acme Corp trade goods 3. Acme Inc and Acme Corp trade cash 3."
+
+
+def _failing_document_states(
+    tmp: Path, steps: list[tuple[str, bool]], *, gleaning: bool, reset: bool = False
+) -> list[tuple[str, int]]:
+    """Run (pipeline id, extraction failing) steps; d5's (status, failure
+    count) after each."""
+    config, providers, failing = _setup(tmp, lambda unit: "Acme Corp" in unit)
+    config.indexing.reset = reset
+    chunking = config.processing.chunking
+    chunking.chunker_type = ChunkingStrategy.SIMPLE
+    chunking.fallback_chunk_size, chunking.chunk_overlap = 60, 0
+    chunking.min_chunk_size = 1
+    config.processing.gleaning.enabled = gleaning
+    config.processing.gleaning.max_rounds = 1
+    source = tmp / "corpus"
+    _write_corpus(
+        source,
+        {
+            "d5.txt": _FAILING,
+            "d4.txt": "Acme LLC trade cash 3. Buyer and Acme Inc trade goods 2.",
+        },
+    )
+    seen = []
+    for pipeline_id, fail in steps:
+        failing["on"] = fail
+        e2e._ingest(config, providers, source, tmp / pipeline_id)
+        registry = providers.build_doc_status()
+        (record,) = [r for r in registry.list_all() if r.file_path == "d5.txt"]
+        if not seen:
+            # The first run wrote every record and names itself on them.
+            assert {r.written_by for r in registry.list_all()} == {pipeline_id}
+        seen.append((record.status.value, record.failure_count))
+    return seen
+
+
+@pytest.mark.parametrize("gleaning", [False, True])
+@pytest.mark.parametrize("reruns", [0, 2])
+def test_a_rerun_pipeline_id_retries_its_failed_units(
+    tmp_path: Path, reruns: int, gleaning: bool
+) -> None:
+    # P1 fails on a unit of d5; P1 run again (the model is back) retries
+    # it instead of recording d5 FAILED again, so a later run finds it
+    # processed rather than excluded after max_document_failures.
+    steps = [("P1", True), *[("P1", False)] * reruns, ("F", False)]
+    seen = _failing_document_states(tmp_path, steps, gleaning=gleaning)
+    assert seen[-1] == ("processed", 0), seen
+    assert all(count <= 1 for _, count in seen), seen
+
+
+def test_a_rerun_reset_pipeline_id_retries_its_failed_units(tmp_path: Path) -> None:
+    # A reset's resume skips the delta check: the failed-stage rewind still
+    # applies.
+    seen = _failing_document_states(
+        tmp_path, [("P1", True), ("P1", False)], gleaning=False, reset=True
+    )
+    assert seen == [("failed", 1), ("processed", 0)], seen

@@ -602,7 +602,8 @@ whose processing kills the task would stop every later run the same way.
   delta names a document whose record is gone, holds other content, reached
   the limit or was written by another pipeline id since (`written_by`; none
   on a record written before the field) resumes from document_loading
-  instead. Metrics:
+  instead. A resume past a stage that recorded failed text units starts at
+  that stage, so the units are retried rather than recorded `FAILED` again. Metrics:
   `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm) and
   `total_documents_deferred`.
 

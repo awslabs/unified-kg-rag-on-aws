@@ -211,7 +211,10 @@ A document is recorded `FAILED` in five cases:
   extraction).
 
 The next run treats a `FAILED` document as changed: it removes what the failed
-run wrote and processes it again. Any other stage failure records nothing and
+run wrote and processes it again. A run of the same pipeline id resumes from
+the earliest completed stage that recorded failed text units and retries
+those units (WARNING `Stage '...' failed on N text units; resuming from it
+...`); the extraction store keeps the units that succeeded. Any other stage failure records nothing and
 stops the run before indexing, leaving the stores and registry as they were;
 the next run processes the same delta again.
 

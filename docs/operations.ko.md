@@ -203,7 +203,9 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   `records_not_stored`)
 
 다음 실행은 `FAILED` 문서를 바뀐 문서로 보고, 실패한 실행이 쓴 것을 지운 뒤 다시
-처리합니다. 그 밖의 단계 실패는 아무것도 기록하지 않고 인덱싱 전에 실행을 멈추므로
+처리합니다. 같은 파이프라인 ID로 다시 실행하면 실패한 텍스트 단위를 기록한 완료 단계 중
+가장 앞선 단계부터 재개해 그 단위를 다시 시도합니다(WARNING `Stage '...' failed on N
+text units; resuming from it ...`). 성공한 단위는 추출 저장소에 남아 있습니다. 그 밖의 단계 실패는 아무것도 기록하지 않고 인덱싱 전에 실행을 멈추므로
 저장소와 레지스트리는 이전 상태로 남으며, 다음 실행이 같은 델타를 다시 처리합니다.
 
 - **재시도 한도.** 내용이 그대로인 채 `indexing.max_document_failures`(기본값 `3`)번
