@@ -253,7 +253,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   맞지 않거나 원인 문서를 가려낼 수 있으면 `document_loading`부터 재개합니다(WARNING
   `... resuming from 'document_loading' ...`). 델타를 계산한 뒤 `document_loading`의
   입력(초기화, 재시도, 말뭉치 설정)이 바뀐 경우에도 마찬가지입니다(WARNING
-  `Rewinding resume point from ... to 'document_loading'`).
+  `Rewinding resume point from ... to 'document_loading'`). 끝난 파이프라인 ID를 다시
+  실행해도 재개로 취급합니다. 그 뒤 다른 파이프라인 ID가 델타의 문서를 다른 추출 설정으로
+  커밋했거나 델타 밖의 문서를 추가·변경·삭제했으면 다시 비교합니다. 자신이 종료되거나
+  정지된 뒤 재개한 실행은 델타를 그대로 씁니다.
 
 ### 동시 실행
 

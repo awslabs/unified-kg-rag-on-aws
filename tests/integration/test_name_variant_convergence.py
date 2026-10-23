@@ -37,6 +37,7 @@ from tests.integration.test_embedded_e2e import (
     _providers,
     _stored,
 )
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
@@ -2242,3 +2243,82 @@ def test_a_retried_split_strip_resolves_the_claim_object_to_the_part(
     )
 
     assert incremental == full
+
+
+def _run_steps(tmp: Path, steps: list[tuple[dict[str, str], bool, str]]) -> Providers:
+    """Index each ``(corpus, gleaning, pipeline_id)`` step in turn (claims
+    on) and return the providers of the stores."""
+    config = _config(tmp / "stores", tmp / "viz")
+    config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.max_rounds = 1
+    config.processing.document_parsing.source_scope = "fuzz-corpus"
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    source = tmp / "corpus"
+    for corpus, gleaning, pipeline_id in steps:
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+        config.processing.gleaning.enabled = gleaning
+        context = _ingest(config, providers, source, tmp / pipeline_id)
+        assert context.status is PipelineStageStatus.COMPLETED
+    return providers
+
+
+def _entities(providers: Providers) -> list[tuple]:
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        ids = [i for i, _ in graph.read_entity_names()]
+        return sorted((e.name, e.description) for e in graph.read_entities(ids))
+    finally:
+        graph.close()
+
+
+PID_V0 = {
+    "d7.txt": "Acme and Acme Ltd trade cash 3. "
+    "Acme and Acme Ltd and Acme Corp trade cash 1."
+}
+PID_V1 = {
+    **PID_V0,
+    "d6.txt": "Acme Inc and Acme Corp trade goods 1. Acme Ltd trade parts 3.",
+}
+
+
+def test_a_finished_pipeline_run_again_does_not_index_over_other_settings(
+    tmp_path: Path,
+) -> None:
+    # P1 indexes d6.txt with gleaning; C then re-extracts the corpus without
+    # it. P1 run again restored its own delta (d6.txt new) and indexed it
+    # over C's artifacts of d6.txt; the registry then recorded P1's
+    # settings, so no later run repaired the store.
+    full = _entities(_run_steps(tmp_path / "full", [(PID_V1, True, "F")]))
+    incremental = _entities(
+        _run_steps(
+            tmp_path / "inc",
+            [(PID_V0, False, "A"), (PID_V1, True, "P1"), (PID_V1, False, "C")]
+            + [(PID_V1, True, "P1")],
+        )
+    )
+
+    assert incremental == full
+
+
+def test_a_finished_pipeline_run_again_sees_another_runs_changes(
+    tmp_path: Path,
+) -> None:
+    # P1 finds nothing to do (A indexed v1); C then indexes v2 (d1.txt
+    # renamed to r4.txt). P1 run again over v1 restored its empty delta:
+    # the stores kept r4.txt and never got d1.txt back.
+    v1 = {"d1.txt": "Acme Corp and Buyer trade goods 1."}
+    v2 = {"r4.txt": v1["d1.txt"]}
+    steps = [(v1, "A"), (v1, "P1"), (v2, "C"), (v1, "P1"), (v1, "P1")]
+    providers = _run_steps(
+        tmp_path, [(corpus, False, pipeline_id) for corpus, pipeline_id in steps]
+    )
+
+    registry = providers.build_doc_status().list_all()
+    assert {r.file_path: r.status.value for r in registry} == {"d1.txt": "processed"}

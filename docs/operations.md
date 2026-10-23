@@ -274,7 +274,11 @@ would stop every later run, so runs count deaths and isolate the culprit.
   `... resuming from 'document_loading' ...`). So do they when
   `document_loading`'s inputs changed since the delta was computed (a reset,
   retry or corpus setting; WARNING `Rewinding resume point from ... to
-  'document_loading'`).
+  'document_loading'`). A finished pipeline id run again counts as resumed:
+  it resumes from `document_loading` when another pipeline id has since
+  committed one of its documents with other extraction settings, or added,
+  changed or deleted a document outside its delta. A run resumed after its
+  own kill or stop keeps its delta.
 
 ### Concurrent runs
 

@@ -74,6 +74,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     Relationship,
     TextUnit,
+    settings_changed,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.ports.indexer import BaseIndexer
@@ -1398,6 +1399,8 @@ def delta_still_applies(
     delta: DocumentDelta,
     fingerprints: Mapping[str, str],
     max_attempts: int,
+    extraction_fingerprint: str | None = None,
+    scope: str | None = None,
 ) -> bool:
     """Whether a resumed run may index ``delta`` as it was computed.
 
@@ -1411,6 +1414,13 @@ def delta_still_applies(
     died, with the deaths now at ``max_attempts``, needs the plan of a new
     diff (``attempts.plan_attempts``), or the resumed runs would keep dying
     on the same delta.
+
+    A finished pipeline id run again restores its delta too, so two more
+    checks catch another pipeline id's runs since: a document of the delta
+    committed at its content under other ``extraction_fingerprint``
+    settings, and a diff of ``fingerprints`` in ``scope`` that classifies
+    a document outside the delta new, changed or deleted. A run resumed
+    after its own kill passes both: only it wrote these records since.
     """
     stored = store.get_many(delta.to_process)
     for doc_id in delta.to_process:
@@ -1420,8 +1430,48 @@ def delta_still_applies(
             return False
         if content_hash not in (record.attempted_hash, record.content_hash):
             return False
+        # Committed at this content by a run with other extraction settings
+        # (another pipeline id): its artifacts are not this delta's, and a
+        # document the delta has as new would be indexed over them.
+        if (
+            record.status is DocStatus.PROCESSED
+            and record.content_hash == content_hash
+            and doc_id not in delta.settings_changed
+            and settings_changed(record.extraction_fingerprint, extraction_fingerprint)
+        ):
+            return False
         deaths, _ = settled_attempts(record, content_hash)
         if record.attempt_batch is not None and deaths >= max_attempts:
+            return False
+    # And every other document of the scope reads as the delta classified
+    # it: another pipeline id may have indexed, deleted or re-extracted one
+    # since (a finished pipeline run again restores its own delta).
+    if scope is not None:
+        fresh = store.diff(
+            dict(fingerprints),
+            scope=scope,
+            extraction_fingerprint=extraction_fingerprint,
+        )
+        known = {
+            *delta.new,
+            *delta.changed,
+            *delta.deleted,
+            *delta.deferred,
+            *delta.quarantined,
+            *delta.failed,
+        }
+        moved = {*fresh.new, *fresh.changed, *fresh.deleted} - known
+        if moved:
+            # Not a document still failing on this content (left unchanged
+            # after max_document_failures, see detect_delta).
+            records = store.get_many(sorted(moved & set(fresh.changed)))
+            moved -= {
+                doc_id
+                for doc_id, record in records.items()
+                if record.status is DocStatus.FAILED
+                and record.content_hash == fingerprints.get(doc_id)
+            }
+        if moved:
             return False
     return True
 

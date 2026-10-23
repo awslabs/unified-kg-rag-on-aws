@@ -1351,6 +1351,16 @@ changed once with the full-config keys (#332).
   claims' entities: one graph lookup per strip, about 1% of a removal
   stripping 5,000 claims about one entity on the embedded stores; a
   commit's claims are not affected (#PR).
+- Incremental indexing: a finished pipeline id run again no longer restores
+  a delta another pipeline id has overtaken. The check compared only the
+  delta's own documents' content, so after a run with other extraction
+  settings committed them, the rerun indexed its delta over that run's
+  artifacts and recorded its own settings; and after a run that added,
+  changed or deleted a document the delta left alone, the rerun restored its
+  delta and never undid it. The resume now also starts at `document_loading` when one of the
+  delta's documents was committed at its content with other settings, or a
+  diff of the delta's fingerprints shows a change outside the delta. A run
+  resumed after its own kill or stop keeps its delta (#PR).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared
