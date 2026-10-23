@@ -1411,6 +1411,12 @@ changed once with the full-config keys (#332).
   best-ranked text units, linked chunks, endpoint entities and walk entities
   were dropped. The walk also cuts its exclusion to `max_terms_count` itself
   (#PR).
+- Global search: dynamic selection no longer fails the query under a
+  lowered `max_terms_count`. With more child communities than one terms
+  clause takes, the browse goes in batches and is merged by (rank, id)
+  before the cut (it was cut in batch order, keeping worse-ranked reports),
+  and the similarity search, which cannot be split, gives way to the browse
+  instead of raising `InvalidFilterError` (#PR).
 - Retrieval: the batches of one search (a fetch by id, the walk's frontier
   on both ends, the child browse, a retry split) go to the store at most
   `search.max_concurrency` at once; a DRIFT query at top_k 100 x 5 under a
