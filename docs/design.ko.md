@@ -513,7 +513,10 @@ import는 순환이 됨).
   `release_quarantined`가 changed로 분류). 죽은 횟수는 내용별로 세므로 추출 설정을 바꿔도
   다시 격리되고, 전체 재구축도 이 문서를 건너뜁니다.
 - **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
-  내용을 담았거나 한도에 이른 것이 있으면 document_loading부터 재개합니다. 지표:
+  내용을 담았거나 한도에 이르렀거나 그 뒤 다른 파이프라인 ID가 쓴 것(`written_by`. 이 필드가
+  생기기 전에 쓴 레코드에는 없음)이 있으면 document_loading부터 재개합니다. 실패한 텍스트
+  단위를 기록한 단계를 지나 재개하면 그 단계부터 시작하므로, 그 단위를 다시 `FAILED`로
+  기록하지 않고 다시 시도합니다. 지표:
   `total_documents_quarantined`(CDK `DocumentsQuarantined` 경보)와 `total_documents_deferred`.
 
 비용은 실행마다 레지스트리 일괄 쓰기 한 번(시도에 쓰기와 읽기 두 번씩 더)과 접미사마다 몇

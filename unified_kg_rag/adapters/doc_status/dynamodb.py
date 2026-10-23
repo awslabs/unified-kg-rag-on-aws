@@ -608,6 +608,7 @@ class DynamoDBDocStatusStore:
             "error_info",
             "attempted_hash",
             "extraction_fingerprint",
+            "written_by",
             "created_at",
             "updated_at",
         ):
@@ -653,6 +654,7 @@ class DynamoDBDocStatusStore:
             attempt_count=_int("attempt_count"),
             attempted_hash=_str("attempted_hash"),
             crash_batch=_int("crash_batch"),
+            written_by=_str("written_by"),
             attempt_batch=_int("attempt_batch") or None,
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),

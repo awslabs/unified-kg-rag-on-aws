@@ -585,11 +585,15 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         assert stack.model.extractions
         records = {r.doc_id: r for r in registry.list_all()}
         kept = records.pop(indexed.doc_id)
-        assert kept.model_dump(
-            exclude={"attempted_hash", "attempt_count", "attempt_batch", "crash_batch"}
-        ) == indexed.model_dump(
-            exclude={"attempted_hash", "attempt_count", "attempt_batch", "crash_batch"}
-        )
+        # Only the attempt fields change (and the pipeline id writing them).
+        attempt = {
+            "attempted_hash",
+            "attempt_count",
+            "attempt_batch",
+            "crash_batch",
+            "written_by",
+        }
+        assert kept.model_dump(exclude=attempt) == indexed.model_dump(exclude=attempt)
         # The new document's attempt record: no text units, nothing counted.
         (new,) = records.values()
         assert (new.status, new.text_unit_ids) == (DocStatus.PENDING, [])

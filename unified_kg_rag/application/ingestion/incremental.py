@@ -251,6 +251,7 @@ class IncrementalIndexer:
         scope: str | None = None,
         extraction_fingerprint: str | None = None,
         extraction_settings: ExtractionSettings | None = None,
+        written_by: str | None = None,
     ) -> None:
         self.doc_status = doc_status
         self.indexing_manager = indexing_manager
@@ -263,6 +264,9 @@ class IncrementalIndexer:
         # for, recorded once for the scope; None records none.
         self.extraction_fingerprint = extraction_fingerprint
         self.extraction_settings = extraction_settings
+        # The pipeline id of the run, stamped on every record it writes
+        # (DocStatusRecord.written_by; see delta_still_applies).
+        self.written_by = written_by
         # Write-ahead state of the current run (see write_ahead): the records
         # stored before it, the PENDING records written, and the documents
         # being (re)indexed.
@@ -412,7 +416,7 @@ class IncrementalIndexer:
                 "10,000); split them into smaller files. Nothing was written "
                 "for this run's delta: " + ", ".join(too_large[:10])
             )
-        self.doc_status.put_many(
+        self._put(
             [
                 *self._pending.values(),
                 *(
@@ -792,6 +796,10 @@ class IncrementalIndexer:
         )
         return failed_docs
 
+    def _put(self, records: Sequence[DocStatusRecord]) -> None:
+        """Write ``records``, stamped with the run's pipeline id."""
+        self.doc_status.put_many(_written_by(records, self.written_by))
+
     def _delete_records(self, doc_ids: list[str]) -> None:
         """Delete removed documents' records."""
         for doc_id in doc_ids:
@@ -863,7 +871,7 @@ class IncrementalIndexer:
         ]
         if pending:
             check_write_fence()
-            self.doc_status.put_many(pending)
+            self._put(pending)
         if not self.remove_obsolete_artifacts(doc_ids):
             if delta.deleted or delta.quarantined:
                 logger.warning(
@@ -912,7 +920,7 @@ class IncrementalIndexer:
                     }
                 )
             )
-        self.doc_status.put_many(records)
+        self._put(records)
 
     def _record_processed(
         self,
@@ -985,7 +993,7 @@ class IncrementalIndexer:
             )
             for doc_id in unrecorded
         ]
-        self.doc_status.put_many(records + unproductive)
+        self._put(records + unproductive)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1302,6 +1310,7 @@ def filter_to_delta(
             or document.file_path
             for document in documents
         },
+        written_by=context.pipeline_id,
     )
     if not config.processing.document_parsing.source_scope:
         _warn_about_other_local_scopes(
@@ -1326,6 +1335,14 @@ def filter_to_delta(
     return to_process, skipped
 
 
+def _written_by(
+    records: Iterable[DocStatusRecord], pipeline_id: str | None
+) -> list[DocStatusRecord]:
+    """``records`` stamped with the pipeline id of the run writing them
+    (None: unknown, as a record written before the field existed)."""
+    return [record.model_copy(update={"written_by": pipeline_id}) for record in records]
+
+
 def open_attempts(
     store: DocStatusPort,
     delta: DocumentDelta,
@@ -1334,6 +1351,7 @@ def open_attempts(
     scope: str | None = None,
     suffix: str = DEFAULT_NAMESPACE,
     file_paths: Mapping[str, str | None] | None = None,
+    written_by: str | None = None,
 ) -> None:
     """Open an attempt on every document the run processes (``delta.to_process``).
 
@@ -1344,7 +1362,8 @@ def open_attempts(
     without text units, under the run's ``scope``, so a run that dies before
     the indexing stage still counts against it. Status, content hash and
     text units of a stored record are kept: the diff, the failure count and
-    the removal read them as before. One batched read and write.
+    the removal read them as before. Every record is stamped
+    ``written_by`` (the run's pipeline id). One batched read and write.
     """
     check_write_fence()
     batch = delta.to_process
@@ -1353,35 +1372,42 @@ def open_attempts(
     stored = store.get_many(batch)
     paths = file_paths or {}
     store.put_many(
-        [
-            opened_attempt(
-                stored.get(doc_id)
-                or DocStatusRecord(
-                    doc_id=doc_id,
-                    content_hash=PENDING_CONTENT_HASH,
-                    status=DocStatus.PENDING,
-                    error_info=_WRITE_AHEAD_INFO,
-                    suffix=suffix,
-                    scope=scope,
-                    file_path=paths.get(doc_id),
-                ),
-                fingerprints[doc_id],
-                len(batch),
-            )
-            for doc_id in batch
-        ]
+        _written_by(
+            [
+                opened_attempt(
+                    stored.get(doc_id)
+                    or DocStatusRecord(
+                        doc_id=doc_id,
+                        content_hash=PENDING_CONTENT_HASH,
+                        status=DocStatus.PENDING,
+                        error_info=_WRITE_AHEAD_INFO,
+                        suffix=suffix,
+                        scope=scope,
+                        file_path=paths.get(doc_id),
+                    ),
+                    fingerprints[doc_id],
+                    len(batch),
+                )
+                for doc_id in batch
+            ],
+            written_by,
+        )
     )
 
 
 def close_attempts(
-    store: DocStatusPort, delta: DocumentDelta, fingerprints: Mapping[str, str]
+    store: DocStatusPort,
+    delta: DocumentDelta,
+    fingerprints: Mapping[str, str],
+    written_by: str | None = None,
 ) -> int:
     """Close the attempts :func:`open_attempts` opened for ``delta``.
 
     Called whenever the run ends in the process (it finished, a stage
     failed, or it was stopped): only a run that died leaves its attempts
     open, so only deaths count toward quarantine. Records the run committed
-    are new and have none. Returns how many it closed.
+    are new and have none. The records are stamped ``written_by``. Returns
+    how many it closed.
     """
     check_write_fence()
     stored = store.get_many(delta.to_process)
@@ -1392,7 +1418,7 @@ def close_attempts(
         and record.attempted_hash == fingerprints.get(doc_id)
     ]
     if still_open:
-        store.put_many(still_open)
+        store.put_many(_written_by(still_open, written_by))
     return len(still_open)
 
 
@@ -1403,6 +1429,7 @@ def delta_still_applies(
     max_attempts: int,
     extraction_fingerprint: str | None = None,
     scope: str | None = None,
+    pipeline_id: str | None = None,
 ) -> bool:
     """Whether a resumed run may index ``delta`` as it was computed.
 
@@ -1417,18 +1444,29 @@ def delta_still_applies(
     diff (``attempts.plan_attempts``), or the resumed runs would keep dying
     on the same delta.
 
-    A finished pipeline id run again restores its delta too, so two more
-    checks catch another pipeline id's runs since: a document of the delta
-    committed at its content under other ``extraction_fingerprint``
-    settings, and a diff of ``fingerprints`` in ``scope`` that classifies
-    a document outside the delta new, changed or deleted. A run resumed
-    after its own kill passes both: only it wrote these records since.
+    A finished pipeline id run again restores its delta too, so three
+    more checks catch another pipeline id's runs since: a record of the
+    delta another pipeline id wrote (``written_by``; the run opened an
+    attempt on every one, so only another run's write replaces its id,
+    e.g. one that left the document PENDING or FAILED under other
+    settings), a document of the delta committed at its content under
+    other ``extraction_fingerprint`` settings, and a diff of
+    ``fingerprints`` in ``scope`` that classifies a document outside the
+    delta new, changed or deleted. A record without a writer (written
+    before the field existed) is left to the other checks. A run resumed
+    after its own kill passes them all: only it wrote these records since.
     """
     stored = store.get_many(delta.to_process)
     for doc_id in delta.to_process:
         record = stored.get(doc_id)
         content_hash = fingerprints.get(doc_id)
         if record is None or content_hash is None:
+            return False
+        if (
+            pipeline_id is not None
+            and record.written_by is not None
+            and record.written_by != pipeline_id
+        ):
             return False
         if content_hash not in (record.attempted_hash, record.content_hash):
             return False
@@ -1683,6 +1721,7 @@ def run_incremental_indexer(
         scope=context.incremental_scope,
         extraction_fingerprint=context.incremental_extraction_fingerprint,
         extraction_settings=context.incremental_extraction_settings,
+        written_by=context.pipeline_id,
     )
 
 

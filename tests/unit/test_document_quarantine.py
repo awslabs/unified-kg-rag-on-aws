@@ -346,6 +346,109 @@ def test_a_resumed_delta_is_recomputed_when_another_run_moved_a_document_outside
     assert delta_still_applies(harness.store, delta, fingerprints, 3)
 
 
+def _resumable_delta() -> tuple[IncrementalRun, list, DocumentDelta, dict[str, str]]:
+    """a.txt indexed; the delta of a.txt + b.txt (b.txt new) computed and
+    its attempts opened, as a pipeline id that is resumed later."""
+    harness = IncrementalRun()
+    harness.run(_A)
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    return harness, docs, delta, fingerprints
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_deleted_a_document_outside_it() -> (
+    None
+):
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+    # a.txt's record is gone: the delta left it unchanged, a fresh diff has
+    # it new.
+    harness.store.delete(document_doc_id(docs[0]))
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_indexed_a_document_outside_the_corpus() -> (
+    None
+):
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    a = harness.store.get(document_doc_id(docs[0]))
+    assert a is not None
+    c = document("/c/c.txt", [[("Seller", "Port", 3)]])
+    harness.store.put(
+        a.model_copy(
+            update={"doc_id": document_doc_id(c), "content_hash": "hc", "scope": scope}
+        )
+    )
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+
+
+def test_a_resumed_delta_is_recomputed_when_another_run_re_extracted_a_document_outside_it() -> (
+    None
+):
+    # a.txt committed at its content under other settings: unchanged for a
+    # run with those settings, changed (and not a failing document) for
+    # this one's.
+    harness, docs, delta, fingerprints = _resumable_delta()
+    scope = "default|corpus"
+    a = harness.store.get(document_doc_id(docs[0]))
+    assert a is not None
+    harness.store.put(a.model_copy(update={"extraction_fingerprint": "other"}))
+    assert delta_still_applies(
+        harness.store, delta, fingerprints, 3, "other", scope=scope
+    )
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, "mine", scope=scope
+    )
+
+
+def test_a_resumed_delta_is_recomputed_when_another_pipeline_id_wrote_its_records() -> (
+    None
+):
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints, written_by="P1")
+    assert {r.written_by for r in harness.store.list_all()} == {"P1"}
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
+    # P1 resumed after its own death opens its attempts again: still its delta.
+    open_attempts(harness.store, delta, fingerprints, written_by="P1")
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
+
+    # Another pipeline id opened (or committed, or left PENDING) one of them:
+    # P1's delta no longer describes what the registry holds.
+    b_id = document_doc_id(docs[1])
+    b = harness.store.get(b_id)
+    assert b is not None
+    harness.store.put(b.model_copy(update={"written_by": "C"}))
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, pipeline_id="P1"
+    )
+    # Without a pipeline id (the direct API) the writer is not checked.
+    assert delta_still_applies(harness.store, delta, fingerprints, 3)
+    assert close_attempts(harness.store, delta, fingerprints, "P1") == 2
+    assert {r.written_by for r in harness.store.list_all()} == {"P1"}
+
+
+def test_a_record_without_a_writer_is_left_to_the_other_checks() -> None:
+    # Written before DocStatusRecord.written_by existed: unknown, so the
+    # writer check passes it and the content check still decides.
+    harness = IncrementalRun()
+    corpus = {**_A, **_B}
+    docs = [document(path, content) for path, content in corpus.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
+    harness.run({"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B})
+    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, pipeline_id="P1"
+    )
+
+
 def test_a_resumed_delta_is_replanned_once_its_runs_died_too_often() -> None:
     harness = IncrementalRun()
     docs = [document(path, content) for path, content in {**_A, **_B}.items()]
@@ -485,7 +588,9 @@ def test_a_run_that_lost_its_lease_closes_its_attempts_unless_another_holds_it(
     pipe.config = Config()
     pipe._doc_status = harness.store
     context = SimpleNamespace(
-        incremental_delta=delta, incremental_fingerprints=fingerprints
+        incremental_delta=delta,
+        incremental_fingerprints=fingerprints,
+        pipeline_id="P1",
     )
     with NamespaceLease(harness.store, "ns", 60) as lease:
         lease._lose("a renewal failed")

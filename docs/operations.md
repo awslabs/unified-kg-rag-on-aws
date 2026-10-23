@@ -211,7 +211,10 @@ A document is recorded `FAILED` in five cases:
   extraction).
 
 The next run treats a `FAILED` document as changed: it removes what the failed
-run wrote and processes it again. Any other stage failure records nothing and
+run wrote and processes it again. A run of the same pipeline id resumes from
+the earliest completed stage that recorded failed text units and retries
+those units (WARNING `Stage '...' failed on N text units; resuming from it
+...`); the extraction store keeps the units that succeeded. Any other stage failure records nothing and
 stops the run before indexing, leaving the stores and registry as they were;
 the next run processes the same delta again.
 
@@ -280,9 +283,12 @@ would stop every later run, so runs count deaths and isolate the culprit.
   retry or corpus setting; WARNING `Rewinding resume point from ... to
   'document_loading'`). A finished pipeline id run again counts as resumed:
   it resumes from `document_loading` when another pipeline id has since
-  committed one of its documents with other extraction settings, or added,
-  changed or deleted a document outside its delta. A run resumed after its
-  own kill or stop keeps its delta.
+  written a record of one of its documents (every record names the pipeline
+  id that wrote it last; a record written before that was recorded names
+  none and is left to the other checks), committed one of its documents
+  with other extraction settings, or added, changed or deleted a document
+  outside its delta. A run resumed after its own kill or stop keeps its
+  delta.
 
 ### Concurrent runs
 

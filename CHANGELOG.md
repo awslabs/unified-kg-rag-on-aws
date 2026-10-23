@@ -1346,6 +1346,19 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a pipeline id run again recomputes its delta when
+  another pipeline id has written a record of one of its documents since,
+  for example one that left the document `PENDING` (killed while indexing)
+  or `FAILED` under other extraction settings. It indexed its old delta
+  over that run's artifacts, which then stayed. Each doc-status record now
+  names the pipeline id that wrote it last (`written_by`, also in DynamoDB);
+  records written before have none and are left to the content and
+  settings checks, so no reset is needed (#417).
+- Incremental indexing: a pipeline id run again after a stage failed on
+  some text units resumes from that stage and retries them. It restored the
+  stage's output and recorded the documents `FAILED` once more without
+  extracting them, so each rerun counted one more failure until
+  `indexing.max_document_failures` excluded the documents for good (#417).
 - Ingestion: an incremental run over live indices built for another
   embedding model or dimension, other translation languages or
   `language_analyzers`, or with the registry off, stops before its first

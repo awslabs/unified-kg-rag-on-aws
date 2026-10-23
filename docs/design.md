@@ -599,8 +599,11 @@ whose processing kills the task would stop every later run the same way.
   changed); deaths count per content, so new extraction settings quarantine
   it again, and a reset skips it too.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
-  delta names a document whose record is gone, holds other content or reached
-  the limit resumes from document_loading instead. Metrics:
+  delta names a document whose record is gone, holds other content, reached
+  the limit or was written by another pipeline id since (`written_by`; none
+  on a record written before the field) resumes from document_loading
+  instead. A resume past a stage that recorded failed text units starts at
+  that stage, so the units are retried rather than recorded `FAILED` again. Metrics:
   `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm) and
   `total_documents_deferred`.
 

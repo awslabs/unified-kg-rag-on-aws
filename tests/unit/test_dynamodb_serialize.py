@@ -96,3 +96,17 @@ def test_record_with_removed_content_attributes_still_loads() -> None:
     assert DynamoDBDocStatusStore._deserialize(item) == _full_record()
     stored_json = _full_record().model_dump() | {"content_length": 42}
     assert DocStatusRecord.model_validate(stored_json) == _full_record()
+
+
+def test_writer_round_trips_and_a_record_without_one_reads_as_unknown() -> None:
+    record = _full_record().model_copy(update={"written_by": "pipeline-a"})
+    item = DynamoDBDocStatusStore._serialize(record)
+    assert item["written_by"] == {"S": "pipeline-a"}
+    assert DynamoDBDocStatusStore._deserialize(item) == record
+
+    # Written before the attribute existed (DynamoDB), or before the field
+    # existed (the SQLite registry's JSON): no writer.
+    del item["written_by"]
+    assert DynamoDBDocStatusStore._deserialize(item).written_by is None
+    stored_json = _full_record().model_dump(exclude={"written_by"})
+    assert DocStatusRecord.model_validate(stored_json).written_by is None
