@@ -8,7 +8,14 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from types import TracebackType
@@ -46,6 +53,19 @@ async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[
     except BaseException:
         await discard(tasks)
         raise
+
+
+async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
+    """``asyncio.gather`` of ``aws`` (results in order), at most ``limit``
+    of them awaited at once: the batches of one search, so a long list does
+    not put hundreds of requests on a store at the same time."""
+    semaphore = asyncio.Semaphore(max(1, limit))
+
+    async def one(aw: Awaitable[_T]) -> _T:
+        async with semaphore:
+            return await aw
+
+    return list(await asyncio.gather(*(one(aw) for aw in aws)))
 
 
 async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:

@@ -1403,6 +1403,27 @@ changed once with the full-config keys (#332).
   after a corpus change runs again from document parsing as an incremental
   update (a new task has no local checkpoint for the CLI's integrity
   prompt to check), not that it fails its integrity check (#416).
+- Retrieval: the strategies ask a fetch by id in batches of the live
+  `IndexLimits.id_batch_size` themselves (`BaseSearchStrategy._fetch_by_ids`)
+  instead of leaving it to `OpenSearchRetriever`. Since #414 a custom
+  document retriever written to the documented contract got every id at once
+  and, answering a window, kept the window's worth in its own order: the
+  best-ranked text units, linked chunks, endpoint entities and walk entities
+  were dropped. The walk also cuts its exclusion to `max_terms_count` itself
+  (#PR).
+- Retrieval: the batches of one search (a fetch by id, the walk's frontier
+  on both ends, the child browse, a retry split) go to the store at most
+  `search.max_concurrency` at once; a DRIFT query at top_k 100 x 5 under a
+  `max_terms_count` of 3 peaked at 3,800 requests in flight, now 200 (#PR).
+- Retrieval: the per-query memo of incident edges keys on what the requests
+  send (each batch's vertices and the kept exclusion) rather than the vertex
+  sets, so the same sets in another order past `max_terms_count` no longer
+  reuse edges another exclusion left out (#PR).
+- Docs: the design guide (§15) states that strategies size every list by
+  `aindex_limits`, so a retriever need not batch, and (§8.2) that past
+  `max_terms_count` the walk's exclusion keeps the vertices reached last, so
+  edges back to the others can fill a page; the template's `max_query_size`
+  note no longer says a fetch by id keeps only its best-ranked ids (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

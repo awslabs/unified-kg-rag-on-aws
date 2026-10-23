@@ -602,7 +602,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
             filters=self._scoped_filters(query, id=chunk_ids),
         )
-        results = await self._safe_aretrieve(
+        results = await self._fetch_by_ids(
             self.document_retriever, search_query, "Linked chunk retrieval"
         )
         if not results:
@@ -768,7 +768,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
             filters=self._scoped_filters(query, id=endpoint_ids),
         )
-        results = await self._safe_aretrieve(
+        results = await self._fetch_by_ids(
             retriever, search_query, "Endpoint entity retrieval"
         )
         if not results:

@@ -1441,6 +1441,31 @@ async def test_a_fetch_by_id_past_the_live_limits_returns_every_id(
     assert max(index.named) <= min(window, terms)
 
 
+async def test_the_batches_of_one_search_respect_the_search_concurrency(
+    retriever, config
+) -> None:
+    # Regression: every batch of a search went to the store at once (a
+    # DRIFT query under a small max_terms_count peaked at ~4,000 requests).
+    config.search.max_concurrency = 2
+
+    class _Counting(_IdIndex):
+        in_flight = peak = 0
+
+        async def asearch(self, index: str, body: dict[str, Any]) -> dict:
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            await asyncio.sleep(0.005)
+            self.in_flight -= 1
+            return await super().asearch(index, body)
+
+    ids = [f"t{n:02d}" for n in range(30)]
+    index = _Counting(ids, window=10000, terms=3)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    hits = await retriever.aretrieve(_fetch_by_id(config, ids))
+    assert sorted(str(h.source) for h in hits) == ids
+    assert index.peak == 2
+
+
 async def test_a_rejected_fetch_by_id_is_batched_by_the_limits_read_again(
     retriever, config
 ) -> None:
