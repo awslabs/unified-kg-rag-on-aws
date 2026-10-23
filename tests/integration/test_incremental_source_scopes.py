@@ -49,7 +49,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ChunkingStrategy
 from unified_kg_rag.ports import DocStatusPort
-from unified_kg_rag.shared import PipelineExecutionError
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.integration
 
@@ -333,6 +333,36 @@ def _store_snapshot(stack: ScopeStack) -> dict[str, Any]:
     }
 
 
+def test_a_moved_corpus_is_reported_after_a_refused_first_run(
+    registry, tmp_path, caplog
+) -> None:
+    # The refused first run at the new location left PENDING records there,
+    # so the next run found no new document and did not name the old
+    # directory.
+    from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+    stack = ScopeStack(registry, tmp_path)
+    old = write_corpus(tmp_path / "old", {"contract.txt": A_TEXT})
+    stack.run(old)
+    new = old.rename(tmp_path / "new")
+
+    def refuse(suffix=None, *, rebuild=True):
+        raise StoreRequestRejectedError("unknown setting [index.refresh_intervl]")
+
+    stack.vectors.check_index_creation = refuse  # type: ignore[method-assign]
+    with pytest.raises(StoreRequestRejectedError):
+        stack.run(new)
+    del stack.vectors.check_index_creation
+
+    caplog.clear()  # the refused run warned
+    with caplog.at_level("WARNING"):
+        stack.run(new)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        old.as_posix() in m and "--retire-source-scope" in m for m in warnings
+    ), warnings
+
+
 def test_retiring_the_old_scope_of_a_moved_corpus_removes_its_content(
     registry, tmp_path, caplog
 ) -> None:
@@ -391,7 +421,8 @@ def test_retiring_the_runs_own_scope_fails_without_touching_anything(
     before = (_store_snapshot(stack), registry.list_all())
 
     stack.config.indexing.retire_source_scopes = [f"{source.as_posix()}/"]
-    with pytest.raises(PipelineExecutionError, match="own source scope"):
+    # A usage error (exit 2), not wrapped in a PipelineExecutionError.
+    with pytest.raises(ConfigurationError, match="own source scope"):
         stack.run(source)
 
     assert (_store_snapshot(stack), registry.list_all()) == before

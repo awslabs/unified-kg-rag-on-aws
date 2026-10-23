@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -27,6 +28,7 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     json_output,
     print_json,
+    print_status,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -72,6 +74,13 @@ def _pipeline_id_arg(value: str) -> str | None:
         return validate_path_segment(value, "pipeline_id")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _source_scope_arg(value: str) -> str:
+    """A source scope to retire, stripped; a blank one is a usage error."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("a source scope must not be blank")
+    return value.strip()
 
 
 def _stage_name_arg(value: str) -> str:
@@ -206,6 +215,7 @@ class CommandLineInterface:
         parser.add_argument(
             "--retire-source-scope",
             action="append",
+            type=_source_scope_arg,
             default=[],
             metavar="SCOPE",
             help="Incremental runs: treat every doc-status record of this "
@@ -246,14 +256,13 @@ class IngestionPipelineRunner:
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
             indexing = self.config.indexing
-            indexing.retire_source_scopes = list(
-                dict.fromkeys(
-                    [
-                        *indexing.retire_source_scopes,
-                        *(value.strip() for value in retired),
-                    ]
-                )
-            )
+            try:
+                indexing.retire_source_scopes = [
+                    *indexing.retire_source_scopes,
+                    *retired,
+                ]
+            except ValidationError as e:
+                usage_error(f"--retire-source-scope: {e}")
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.pipeline: DataIngestionPipeline | None = None
@@ -655,6 +664,17 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
         print_json(status)
 
 
+def _print_failed(
+    runner: IngestionPipelineRunner | None, exit_code: int, error: Exception
+) -> None:
+    """The JSON status of a run that failed before it printed its result,
+    with its error and, once resolved, its pipeline id."""
+    pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
+    print_status(
+        exit_code, error, **({"pipeline_id": pipeline_id} if pipeline_id else {})
+    )
+
+
 @exits_on_sigterm
 def main() -> None:
     load_cli_dotenv()
@@ -681,15 +701,18 @@ def main() -> None:
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Ingestion configuration error: %s", e)
+        _print_failed(runner, EXIT_USAGE, e)
         sys.exit(EXIT_USAGE)
     except PipelineExecutionError as e:
         # A failed stage, a failed metadata check or a refused prompt: say
         # which before exiting non-zero.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+        _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during pipeline execution")
+        _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
 
 

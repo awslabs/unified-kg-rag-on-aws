@@ -628,10 +628,14 @@ class VectorIndexer(BaseIndexer):
         (a ``ConfigurationError``) when refused. Default does nothing."""
         return None
 
-    def check_index_creation(self, suffix: str | None = None) -> None:
-        """Raise when the backend refuses to create the indices of
-        ``suffix`` with this config (index settings, vector method,
-        analyzers), whether or not they exist already.
+    def check_index_creation(
+        self, suffix: str | None = None, *, rebuild: bool = True
+    ) -> None:
+        """Raise when the backend refuses to create the indices of ``suffix``
+        the run will create with this config (index settings, vector method,
+        analyzers, room for them all): every one on a ``rebuild`` (a full
+        build or reset), otherwise (an incremental run) only those that do
+        not exist yet.
 
         The ingestion pipeline calls it once per run, under the namespace's
         write lease, before the first stage that may call a model: a refused

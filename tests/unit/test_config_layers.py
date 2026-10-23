@@ -420,6 +420,20 @@ def test_an_index_name_part_set_in_code_is_checked_too(
     assert getattr(owner, field) == "tenant_b-2"
 
 
+def test_opensearch_indexing_settings_set_in_code_are_checked_too() -> None:
+    # Set after load, a knn key or an invalid prefix reached index creation
+    # unchecked (OpenSearchIndexingConfig did not validate assignments).
+    from pydantic import ValidationError
+
+    opensearch = Config().indexing.opensearch
+    with pytest.raises(ValidationError, match="knn"):
+        opensearch.index_settings = {"knn": True}
+    with pytest.raises(ValidationError):
+        opensearch.claims_index_prefix = "_claims"
+    opensearch.index_settings = {"index": {"refresh_interval": "5s"}}
+    assert opensearch.index_settings == {"index.refresh_interval": "5s"}
+
+
 @pytest.mark.parametrize(
     "field",
     [

@@ -645,6 +645,9 @@ changed once with the full-config keys (#332).
   document filters and dropped out of filtered retrieval) (#376).
 
 ### Added
+- The public API exports the errors it raises for callers to tell apart:
+  `GraphRAGException`, `ConfigurationError`, `StoreRequestRejectedError`,
+  `PipelineExecutionError` and `NamespaceLeaseError` (#416).
 - `ModelPurpose` is exported from `unified_kg_rag`, so custom code can pass
   `model_purpose=ModelPurpose.INGESTION` to `setup_chain` / `get_model` as
   the user guide says without importing an internal module (#365).
@@ -830,6 +833,13 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- `DataIngestionPipeline.run` raises a `ConfigurationError` met outside a
+  stage as itself (exit 2 in `run-ingestion`), not wrapped in a
+  `PipelineExecutionError` (exit 1): for example retiring the run's own
+  source scope. Only `StoreRequestRejectedError` was passed through (#416).
+- `VectorIndexer.check_index_creation` takes `rebuild=` (default `True`):
+  `False` (an incremental run) checks only the indices that do not exist
+  yet (#416).
 - Logging: `logging.library_levels` sets `opensearch` to `ERROR` by default.
   At `WARNING` opensearch-py logged every failed request, the expected 404
   of each alias lookup before its index exists included; the package's
@@ -1336,6 +1346,50 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Ingestion: an incremental run over live indices built for another
+  embedding model or dimension, other translation languages or
+  `language_analyzers`, or with the registry off, stops before its first
+  model call (exit 2, `ConfigurationError` from `DataIngestionPipeline.run`).
+  The indexing stage compared them only after the run had translated and
+  extracted every new and changed document, so the `indexing.reset: true`
+  the error recommends paid for the corpus a second time. A run with nothing
+  to extract is still checked only by its indexing stage (#416).
+- Ingestion: the store check probes each index the run will create, with
+  that index's own mapping, all at once: every vector index on a full build
+  or reset, only the missing ones (of the types it extracts) on an
+  incremental run, and the extraction records' when missing. It created one
+  merged probe every run, so at a cluster's shard limit it refused an
+  incremental run that creates no index, and it passed a full build or
+  reset with room for one index, which then failed in the indexing stage
+  after extraction (#416).
+- Ingestion: the sweep of probe indices a stopped run left deletes only
+  unaliased indices named `<extraction-records alias>-settings-probe-` and
+  12 hex digits. Its `<alias>-settings-probe-*` pattern also matched a
+  sibling namespace whose suffix extends `<suffix>-settings-probe-`, whose
+  live extraction-records index it deleted (#416).
+- Ingestion: after a refused or failed first run at a corpus's new
+  location, the next run still warns about the namespace's other local
+  source directories. The first run's PENDING records made its documents
+  changed rather than new, which hid the warning; a PENDING record no run
+  committed counts as new for it (#416).
+- `run-ingestion --retire-source-scope ""` (or blanks) is a usage error
+  (exit 2); it ended with a validation traceback and exit 1 (#416).
+- Config: `indexing.opensearch` settings set in code are validated as at
+  load (`index_settings` knn keys, index prefixes), as `indexing` and
+  `processing.document_parsing` are since #415 (#416).
+- `run-rag --interactive`: `set-filter key:value` keeps the value's
+  whitespace; runs of spaces were collapsed to one (#416).
+- `--output-format json`: the status a run that fails before printing its
+  result prints names the `error` it exited for (a usage error's message
+  included), and `run-ingestion`'s the `pipeline_id` once resolved. The
+  keys are added; `status` and `exit_code` are unchanged (#416).
+- Docs: the CLI exit-code table and `conventions` state that a
+  configuration error met outside a stage (the pre-run store refusal) exits
+  2; Operations lists the refused index creation and the probe index names;
+  `iac/README.md` says a Step Functions re-run with the same `pipeline_id`
+  after a corpus change runs again from document parsing as an incremental
+  update (a new task has no local checkpoint for the CLI's integrity
+  prompt to check), not that it fails its integrity check (#416).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

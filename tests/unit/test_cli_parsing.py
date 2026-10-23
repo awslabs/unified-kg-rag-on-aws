@@ -364,6 +364,28 @@ def test_rag_interactive_set_filter_keeps_a_value_with_spaces() -> None:
     assert state["filters"] == {"title": "Annual report"}
 
 
+async def test_rag_interactive_set_filter_keeps_the_values_whitespace(
+    config, mocker
+) -> None:
+    # The line was split on whitespace and joined with one space, so
+    # "title:Annual  report" filtered on "Annual report".
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["--interactive"]))
+    seen: dict = {}
+
+    def keep(state, args):
+        seen.update(state["filters"])
+
+    mocker.patch.object(
+        run_rag_chain.console,
+        "input",
+        side_effect=["set-filter title:Annual  report", "show-config", "quit"],
+    )
+    runner.interactive_commands["show-config"] = keep
+    await runner._interactive_mode()
+    assert seen == {"title": "Annual  report"}
+
+
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:
     out = run_rag_chain.RAGChainRunner._parse_filters(["url:http://x:8080"])
     assert out == {"url": "http://x:8080"}
@@ -884,6 +906,28 @@ def test_ingestion_retire_source_scope_is_kept_as_given(
         "./real/old/../old",
         "contracts",
     ]
+
+
+@pytest.mark.parametrize("blank", ["", " "])
+def test_ingestion_a_blank_retire_source_scope_is_a_usage_error(
+    config, mocker, tmp_path, capsys, blank: str
+) -> None:
+    # The value reached the config's assignment validation, whose
+    # ValidationError ended the run with a traceback and exit 1.
+    with pytest.raises(SystemExit) as exc:
+        _ing_parser().parse_args(["--retire-source-scope", blank])
+    assert exc.value.code == 2
+    assert "must not be blank" in capsys.readouterr().err
+
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    args = _ing_parser().parse_args(["--source-directory", str(src)])
+    args.retire_source_scope = [blank]  # past the argument type
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert exc.value.code == 2
+    assert "--retire-source-scope" in capsys.readouterr().err
 
 
 def test_ingestion_create_pipeline_config_rejects_invalid_stage(

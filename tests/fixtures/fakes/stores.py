@@ -648,7 +648,9 @@ class FakeVectorStore(_Recorder):
         # The records live in a dict: nothing to create or refuse.
         return None
 
-    def check_index_creation(self, suffix: str | None = None) -> None:
+    def check_index_creation(
+        self, suffix: str | None = None, *, rebuild: bool = True
+    ) -> None:
         # No index settings: nothing to refuse.
         return None
 

@@ -300,7 +300,9 @@ class RAGChainRunner:
                     console.print("[yellow]Ending conversation.[/yellow]")
                     break
 
-                parts = raw_input.split()
+                # The rest of the line stays one argument, whitespace kept
+                # (a filter value may hold several spaces).
+                parts = raw_input.split(maxsplit=1)
                 command, cmd_args = parts[0].lower(), parts[1:]
 
                 if handler := self.interactive_commands.get(command):
@@ -572,7 +574,6 @@ class RAGChainRunner:
     @staticmethod
     def _handle_set_filter(state: dict[str, Any], args: list[str]) -> None:
         try:
-            # The line was split on whitespace: a value may hold spaces.
             pair = _filter_pair(" ".join(args))
         except argparse.ArgumentTypeError:
             console.print("[red]Invalid filter format. Use 'key:value'[/red]")

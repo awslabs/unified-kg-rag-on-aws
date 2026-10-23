@@ -358,8 +358,11 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   store requests may still land), so the resumed execution holds its first
   write until about 185 s after that lease expired, with a WARNING
   (`Took over the expired write lease ...`); the stopped task's log says
-  until when. If the corpus changed in between,
-  the task fails its integrity check; use a new `pipeline_id` to rebuild.
+  until when. If the corpus changed in between, the resumed task runs
+  again from document parsing (the corpus is part of every stage's cache
+  key) as an incremental update of the current corpus. The CLI's integrity
+  prompt does not apply: it checks the local checkpoint, which a new task
+  downloads only after it.
 - **Buckets.** The task role reads and writes the cache bucket only
   (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`
   mode the gateway endpoints allow only this deployment's buckets, table and

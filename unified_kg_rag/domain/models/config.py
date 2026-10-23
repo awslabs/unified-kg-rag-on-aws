@@ -1980,6 +1980,10 @@ DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
 
 
 class OpenSearchIndexingConfig(BaseModel):
+    # Settings set in code (config.indexing.opensearch.index_settings = ...)
+    # are checked too, as IndexingConfig's are.
+    model_config = ConfigDict(validate_assignment=True)
+
     text_units_index_prefix: str = Field(
         default="graphrag-text-units",
         min_length=1,
@@ -2088,10 +2092,12 @@ class OpenSearchIndexingConfig(BaseModel):
             "follow vector_search; the two limits are whole numbers >= 1); "
             "every key is passed to index creation (OpenSearch rejects one it "
             "does not know: before its first model call, each run that "
-            "extracts creates and deletes a probe index with them and the "
-            "vector indices' fields, so a refused key, vector_search method "
-            "or analyzer fails it before any model call, existing indices or "
-            "not; the embedded engine applies only max_result_window) and "
+            "extracts creates and deletes, together, a probe index per index "
+            "it will create (all of them on a full build or reset, the "
+            "missing ones on an incremental run) with them and that index's "
+            "fields, so a refused key, vector_search method, analyzer or a "
+            "shard limit fails it before any model call; the embedded engine "
+            "applies only max_result_window) and "
             "applies to indices created afterwards, so "
             "reindex after changing it. Reads and searches are sized by the "
             "smaller of max_result_window / max_terms_count here and on the "

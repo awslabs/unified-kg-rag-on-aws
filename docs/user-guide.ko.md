@@ -893,16 +893,16 @@ aws:
   추출하는 청크도 저장된 레코드를 씁니다(예: 해석이나 청킹만 바꾼 경우). 내장 프롬프트
   템플릿(코드)을 고친 것은 감지하지 못하므로 고친 뒤에는 초기화하세요.
 - **임베딩 모델이나 차원 변경**(`models.embedding.model_id` / `dimension`):
-  OpenSearch 인덱스마다 만들 때 쓴 모델과 차원을 기록하며, 인덱싱 단계는 그 값이 이번
-  실행과 다르면 아무것도 쓰기 전에 멈춥니다(기록이 없는 인덱스도 거부).
+  OpenSearch 인덱스마다 만들 때 쓴 모델과 차원을 기록하며, 증분 실행은 그 값이 이번
+  실행과 다르면 첫 모델 호출 전에 멈춥니다(종료 코드 2, 기록이 없는 인덱스도 거부).
   `indexing.reset: true`로 한 번 다시 실행하세요. 다른 모델이나 차원으로 `run-rag`·`run-eval`을
   실행하면 빈 검색 결과로 답하지 않고 `ConfigurationError`로 실패합니다.
 - **코퍼스 언어나 번역 언어 변경**(`processing.translation`의 언어 설정,
   `indexing.opensearch.language_analyzers`): 운영 중인 텍스트 필드는 만들 때의
-  분석기를 그대로 쓰므로 인덱싱 단계가 아무것도 쓰기 전에 멈춥니다.
+  분석기를 그대로 쓰므로 증분 실행이 첫 모델 호출 전에 멈춥니다(종료 코드 2).
   `indexing.reset: true`로 한 번 다시 실행하세요. 언어를 뺄 때는 멈추지 않습니다.
 - **레지스트리를 끄고 접미사 인덱싱**(`backend: local` 프리셋처럼): 그 접미사의 다음
-  증분 실행은 아무것도 쓰기 전에 멈춥니다. 레지스트리를 켜고 `indexing.reset: true`로
+  증분 실행은 첫 모델 호출 전에 멈춥니다. 레지스트리를 켜고 `indexing.reset: true`로
   한 번 다시 실행하거나, 그 접미사는 레지스트리를 끈 채로 쓰세요.
 - **재구축**(`indexing.reset: true`): 접미사를 서비스에서 내리지 않고 코퍼스 전체를
   다시 인덱싱합니다. 격리된 문서는 건너뛰고 레코드를 그대로 둡니다. 실패한 reset은 아무것도
@@ -1434,8 +1434,8 @@ custom_prompts:
 | 코드 | 의미 |
 |---|---|
 | `0` | 성공 |
-| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 실행 중에 발견한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 `run-ingestion` 외의 CLI가 실행 중에 발견한 `ConfigurationError` |
+| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 삭제만 있는 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중 단계 밖에서 발견한 `ConfigurationError`. 예: `run-ingestion`이 첫 모델 호출 전에 실행을 거부한 경우(실행에 필요한 인덱스를 검색 엔진이 만들지 않거나, 증분 실행의 현재 인덱스가 다른 임베딩·언어·레지스트리 설정으로 만들어짐) |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
@@ -1450,10 +1450,11 @@ custom_prompts:
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
-실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)을 출력하므로 표준 출력은 항상
-JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를 덧붙이고, 같은 네임스페이스의
-다음 실행이 아직 진행 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은
-실행의 쓰기)를 기다려야 하면 `next_run_writes_from`(UTC, ISO 8601)도 덧붙입니다.
+실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(알 수 있을 때)를
+붙여 출력하므로 표준 출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
+(실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
+중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를
+기다려야 하면 `next_run_writes_from`(UTC, ISO 8601)도 덧붙입니다.
 
 ### 대규모, 다국어, 이질적인 코퍼스
 

@@ -14,6 +14,11 @@ internal and may change in any release. Two groups:
   bundle that injects them, and the registries for providers, search
   strategies, parsers and renderers (see the design doc's extension guide).
 
+The errors these raise for a caller to tell apart are exported too: every
+one is a :class:`GraphRAGException`; a :class:`ConfigurationError` (among
+them a :class:`StoreRequestRejectedError`) is a setting to fix, not a
+failure to retry.
+
 Names load on first access, so ``import unified_kg_rag`` stays cheap and
 pulls in no model, AWS or store SDK.
 
@@ -60,6 +65,12 @@ _EXPORTS: dict[str, str] = {
     "ConversationKey": "unified_kg_rag.adapters.retrieval.memory_manager",
     # Evaluation
     "EvaluationManager": "unified_kg_rag.evaluation.evaluation_manager",
+    # Errors
+    "GraphRAGException": "unified_kg_rag.shared.exceptions",
+    "ConfigurationError": "unified_kg_rag.shared.exceptions",
+    "StoreRequestRejectedError": "unified_kg_rag.shared.exceptions",
+    "PipelineExecutionError": "unified_kg_rag.shared.exceptions",
+    "NamespaceLeaseError": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
     "build_providers": "unified_kg_rag.application.bootstrap",
@@ -151,6 +162,13 @@ if TYPE_CHECKING:
         VectorIndexer,
     )
     from unified_kg_rag.shared.config import get_config
+    from unified_kg_rag.shared.exceptions import (
+        ConfigurationError,
+        GraphRAGException,
+        NamespaceLeaseError,
+        PipelineExecutionError,
+        StoreRequestRejectedError,
+    )
     from unified_kg_rag.shared.logging import setup_logging
     from unified_kg_rag.shared.metrics import CloudWatchEMFSink, MetricsSink
     from unified_kg_rag.shared.utils.event_loop import configure_event_loop

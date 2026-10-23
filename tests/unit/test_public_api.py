@@ -50,6 +50,12 @@ PUBLIC_API = sorted(
         "configure_event_loop",
         "get_config",
         "setup_logging",
+        # Errors
+        "ConfigurationError",
+        "GraphRAGException",
+        "NamespaceLeaseError",
+        "PipelineExecutionError",
+        "StoreRequestRejectedError",
         # Extending it
         "BaseGraphRAGRetriever",
         "BaseRenderer",

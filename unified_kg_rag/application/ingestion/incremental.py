@@ -1303,9 +1303,13 @@ def filter_to_delta(
             for document in documents
         },
     )
-    if delta.new and not config.processing.document_parsing.source_scope:
+    if not config.processing.document_parsing.source_scope:
         _warn_about_other_local_scopes(
-            delta, scope, namespace, [s for group in retired for s in group.scopes]
+            store,
+            delta,
+            scope,
+            namespace,
+            [s for group in retired for s in group.scopes],
         )
     if delta.is_empty:
         logger.info("Incremental: no new/changed documents detected")
@@ -1495,18 +1499,32 @@ def _stored_spelling(
 
 
 def _warn_about_other_local_scopes(
-    delta: DocumentDelta, scope: str, namespace: str, retired: list[str]
+    store: DocStatusPort,
+    delta: DocumentDelta,
+    scope: str,
+    namespace: str,
+    retired: list[str],
 ) -> None:
     """Name the other local source directories of the run's namespace.
 
-    Only a run whose scope defaulted to its source directory and that has
-    new documents gets here: that is what a moved corpus looks like. The
+    Only a run whose scope defaulted to its source directory gets here, and
+    it warns when it has new documents: that is what a moved corpus looks
+    like. A changed document whose record no run committed (the PENDING
+    record of a refused or failed first run here) counts as new. The
     records stay: a directory that is missing here may be another host's
     corpus sharing the registry, so only the user can tell a move from a
     second corpus. Uses the scopes the diff already read.
     """
     others = other_local_scopes(delta, scope, namespace, retired)
     if not others:
+        return
+    if not delta.new and not (
+        delta.changed
+        and any(
+            record.status is DocStatus.PENDING and record.extraction_fingerprint is None
+            for record in store.get_many(delta.changed).values()
+        )
+    ):
         return
     logger.warning(
         "The doc-status registry also holds records of index namespace %r "

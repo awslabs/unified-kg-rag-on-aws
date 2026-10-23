@@ -981,17 +981,20 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   editing one.
 - **Change the embedding model or its dimension**
   (`models.embedding.model_id` / `dimension`): each OpenSearch index records
-  the model and dimension it was built with, and the indexing stage stops
-  before any write when they differ from the run's (an index that records
-  none is refused too). Re-run once with `indexing.reset: true`. `run-rag` and
+  the model and dimension it was built with, and an incremental run stops
+  before its first model call (exit 2) when they differ from the run's (an
+  index that records none is refused too). Re-run once with
+  `indexing.reset: true`. `run-rag` and
   `run-eval` with another model or dimension fail with a `ConfigurationError`
   instead of answering from empty search results.
 - **Change the corpus or translation languages** (`processing.translation`
   languages, `indexing.opensearch.language_analyzers`): live text fields keep
-  their analyzers, so the indexing stage stops before any write; re-run once
-  with `indexing.reset: true`. Dropping a language does not stop it.
+  their analyzers, so an incremental run stops before its first model call
+  (exit 2); re-run once with `indexing.reset: true`. Dropping a language does
+  not stop it.
 - **Index a suffix with the registry off** (as the `backend: local` preset
-  does): a later incremental run on that suffix stops before any write.
+  does): a later incremental run on that suffix stops before its first model
+  call.
   Re-run once with `indexing.reset: true` and the registry on, or keep it off
   for that suffix.
 - **Rebuild** with `indexing.reset: true`: the whole corpus is indexed again
@@ -1588,8 +1591,8 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` found while running, e.g. an incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or, outside `run-ingestion`, a `ConfigurationError` found while running |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, e.g. a deletion-only incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, or an incremental run's live indices were built for other embedding, language or registry settings) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -1607,10 +1610,11 @@ path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
-`{"status": "failed", "exit_code": 1}` (or `2`), so stdout is always JSON;
-`run-ingestion` adds the `pipeline_id` to resume with and, when the next run
-on the namespace must wait for writes possibly still in flight (this run's,
-or those of the run whose expired lease it took over),
+`{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
+with when it has one, so stdout is always JSON; `run-ingestion` adds the
+`pipeline_id` to resume with (once the run resolved it) and, when a stopped
+run's next run on the namespace must wait for writes possibly still in
+flight (this run's, or those of the run whose expired lease it took over),
 `next_run_writes_from` (UTC, ISO 8601).
 
 ### Large / multilingual / heterogeneous corpora

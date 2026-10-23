@@ -53,7 +53,7 @@ Guide: [User Guide](./user-guide.md#3-ingestion-run-ingestion). Also takes the [
 | `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value (a value that is not a URI is also tried as a path resolved like --source-directory; a bare value whose name and path readings both have records stops the run: use ./ or an absolute path). Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## `run-rag`
 
@@ -76,7 +76,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--disable-query-processing` | off | Skip query translation and entity extraction. |
 | `--filters` | — | Attribute filters as space-separated 'key:value' pairs. |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
@@ -103,7 +103,7 @@ Guide: [User Guide](./user-guide.md#6-evaluation-run-eval). Also takes the [prov
 | `--verbose`, `-v` | off | Enable detailed logging output for debugging. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## `run-visualization`
 
@@ -118,7 +118,7 @@ Guide: [User Guide](./user-guide.md#7-visualization-run-visualization). Also tak
 | `--renderers` `RENDERER` | `interactive`, `static` | Renderers to run. Available: interactive, static. |
 | `--config-path` | — | Config YAML path; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## `run-prompt-tuning`
 
@@ -133,7 +133,7 @@ Guide: [User Guide](./user-guide.md#8-prompt-tuning-run-prompt-tuning). Also tak
 | `--max-docs` | `20` | Max documents to sample (at least 1). |
 | `--config-path` | — | Config YAML path; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## `prepare-benchmark`
 
@@ -148,7 +148,7 @@ Guide: [User Guide](./user-guide.md#benchmarks-musique).
 | `--data-path` | — | Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the official download); default: download the answerable dev split. |
 | `--limit` | — | Number of questions to sample (default: all 2,417 of dev). |
 | `--seed` | `0` | Sampling seed (default 0). |
-| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout and everything else to stderr. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## Provider flags
 

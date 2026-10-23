@@ -81,7 +81,8 @@ scope, and a WARNING names the spelling used). So:
   `source_scope` before moving, or run once with
   `--retire-source-scope <old source directory>`
   ([Deletion scope](./user-guide.md#deletion-scope)). A run with new documents
-  logs a WARNING naming the suffix's other local source directories.
+  logs a WARNING naming the suffix's other local source directories (a
+  document only a refused or failed run recorded counts as new).
 - **Never let corpus files expire or disappear**: the next run removes their
   content.
 - **One index suffix and config file per tenant or corpus version.**
@@ -699,6 +700,7 @@ model or credential error fails a query rather than answering from no context.
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package; re-run |
+| `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one: an `indexing.opensearch.index_settings` key, the `vector_search` method or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
 
 ### Ingestion runs and the doc-status registry
 
@@ -712,6 +714,7 @@ model or credential error fails a query rather than answering from no context.
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
+| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #410 that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
 
 ### Queries

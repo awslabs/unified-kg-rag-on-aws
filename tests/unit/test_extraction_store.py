@@ -495,12 +495,13 @@ class TestOpenSearchExtractionRecords:
         with pytest.raises(ConfigurationError, match=typo):
             indexer.check_index_creation("x")
 
-        # Accepted settings: the probe is created and deleted, the records
-        # index is left as it was.
+        # Accepted settings: a probe per vector index is created and
+        # deleted, the records index is left as it was.
         config.indexing.opensearch.index_settings.pop(typo)
         created.clear()
         indexer.check_index_creation("x")
-        assert len([name for name in created if "settings-probe" in name]) == 1
+        probes = [name for name in created if "settings-probe" in name]
+        assert len(probes) == len(indexer._specs())
         assert not engine.get_aliases_by_index("*settings-probe*")
 
     def test_the_probe_holds_every_field_an_engine_may_refuse(self, tmp_path) -> None:
@@ -523,15 +524,102 @@ class TestOpenSearchExtractionRecords:
         indexer = _probing_indexer(config, engine)
         indexer.check_index_creation("x")
 
-        probe = bodies[0]["mappings"]["properties"]
-        for spec in indexer._specs():
-            for name, field in spec.mapping()["mappings"]["properties"].items():
-                for key in ("analyzer", "method"):
-                    if key in field:
-                        assert any(
-                            other.get(key) == field[key] for other in probe.values()
-                        ), (spec.name, name)
-        assert {"text", "translated_text_en", "name"} <= set(probe)
+        # Each index's own mapping (one merged mapping kept only one
+        # definition of a field several indices map), the records' too.
+        assert bodies == [
+            *(spec.mapping() for spec in indexer._specs()),
+            indexer._get_extraction_records_mapping(),
+        ]
+        assert {"text", "translated_text_en"} <= set(
+            bodies[0]["mappings"]["properties"]
+        )
+
+    def test_the_probes_cover_only_the_indices_the_run_creates(self, tmp_path) -> None:
+        # One probe index was created for every run: an incremental run into
+        # existing indices (it creates none) was refused at a cluster's shard
+        # cap, and a full build with room for one index passed, then failed
+        # in the indexing stage after extraction.
+        from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+
+        engine, created = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        config = Config()
+        config.processing.claim_extraction.enabled = True
+        indexer = _probing_indexer(config, engine)
+        indexer.upsert_text_units([_unit("t1", "x")])
+        indexer.prepare_extraction_records("x")
+        built = set(engine.get_aliases_by_index("*"))
+        room = {"indices": 0}
+        create = engine.create_index
+
+        def at_cap(index, body, *, exist_ok=True):
+            if len(engine.get_aliases_by_index("*")) >= room["indices"]:
+                raise StoreRequestRejectedError(
+                    "validation_exception: this action would add [1] total "
+                    "shards, but this cluster currently has [9]/[9] maximum "
+                    "shards open;",
+                    reason="validation_exception",
+                )
+            return create(index, body, exist_ok=exist_ok)
+
+        engine.create_index = at_cap  # type: ignore[method-assign]
+
+        def live() -> int:
+            return len(engine.get_aliases_by_index("*"))
+
+        # Incremental: only the vector indices without a live one, together.
+        missing = [
+            spec
+            for spec in indexer._specs()
+            if not engine.get_index_name_by_alias(
+                indexer._get_name(spec.alias_prefix, "x")
+            )
+        ]
+        assert 1 < len(missing) < len(indexer._specs())
+        room["indices"] = live() + len(missing) - 1
+        with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
+            indexer.check_index_creation("x", rebuild=False)
+        room["indices"] += 1
+        created.clear()
+        indexer.check_index_creation("x", rebuild=False)
+        assert len(created) == len(missing)
+
+        # Every alias live: an incremental run creates nothing to refuse.
+        for spec in missing:
+            alias = indexer._get_name(spec.alias_prefix, "x")
+            index = indexer._new_index_name(alias, spec.alias_prefix, "x")
+            create(index, spec.mapping())
+            engine.update_alias(alias, index)
+        room["indices"] = live()
+        created.clear()
+        indexer.check_index_creation("x", rebuild=False)
+        assert created == []
+        # Nor for a type it does not extract (its index is created only on a
+        # full build).
+        claims = indexer._get_name(indexer.opensearch_config.claims_index_prefix, "x")
+        engine.delete_indices(engine.get_indices_by_alias(claims))
+        config.processing.claim_extraction.enabled = False
+        indexer.check_index_creation("x", rebuild=False)
+        assert created == []
+
+        # A full build or reset needs room for all its new indices at once.
+        room["indices"] = live() + len(indexer._specs()) - 1
+        with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
+            indexer.check_index_creation("x")
+        room["indices"] += 1
+        indexer.check_index_creation("x")
+        assert not engine.get_aliases_by_index("*settings-probe*")
+        assert set(engine.get_aliases_by_index("*")) >= built
+
+    def test_the_sweep_leaves_a_sibling_namespaces_indices(self, tmp_path) -> None:
+        # A namespace whose suffix extends '<suffix>-settings-probe-' lost its
+        # live extraction-records index to the other namespace's sweep.
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        indexer = _probing_indexer(Config(), engine)
+        indexer.prepare_extraction_records("a-settings-probe-x")
+        indexer.prepare_extraction_records("a-settings-probe-0123456789ab")
+        before = sorted(engine.get_aliases_by_index("*extraction*"))
+        indexer.check_index_creation("a")
+        assert sorted(engine.get_aliases_by_index("*extraction*")) == before
 
     def test_probes_a_stopped_run_left_are_deleted_first(self, tmp_path) -> None:
         # A run stopped between the probe's create and delete (SIGTERM: the
@@ -546,7 +634,9 @@ class TestOpenSearchExtractionRecords:
 
         engine.delete_indices = lost  # type: ignore[method-assign]
         indexer.check_index_creation("x")  # the run goes on
-        assert len(engine.get_aliases_by_index("*settings-probe*")) == 1
+        assert len(engine.get_aliases_by_index("*settings-probe*")) == (
+            len(indexer._specs()) + 1
+        )
 
         engine.delete_indices = delete  # type: ignore[method-assign]
         _probing_indexer(Config(), engine).check_index_creation("x")
