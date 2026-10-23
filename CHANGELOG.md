@@ -1341,7 +1341,7 @@ changed once with the full-config keys (#332).
   vector edge missing. Since #412 the retry wrote a vector copy only where
   one was stored and stale, so the split part's edge under its new id kept
   none and LightRAG's relationship search never found it. A re-pointed
-  edge without a vector copy is written again, as #410 did (#PR).
+  edge without a vector copy is written again, as #410 did (#415).
 - Incremental indexing: a removal whose strip splits a spelling off, killed
   once its writes landed (at the retire or the note delete), keeps the
   claim about the part. The retry derived the noted claims without the part
@@ -1350,7 +1350,7 @@ changed once with the full-config keys (#332).
   derivation also reads the stored entities that share a name key with the
   claims' entities: one graph lookup per strip, about 1% of a removal
   stripping 5,000 claims about one entity on the embedded stores; a
-  commit's claims are not affected (#PR).
+  commit's claims are not affected (#415).
 - Incremental indexing: a finished pipeline id run again no longer restores
   a delta another pipeline id has overtaken. The check compared only the
   delta's own documents' content, so after a run with other extraction
@@ -1360,19 +1360,19 @@ changed once with the full-config keys (#332).
   delta and never undid it. The resume now also starts at `document_loading` when one of the
   delta's documents was committed at its content with other settings, or a
   diff of the delta's fingerprints shows a change outside the delta. A run
-  resumed after its own kill or stop keeps its delta (#PR).
+  resumed after its own kill or stop keeps its delta (#415).
 - `run-ingestion`: a resume whose `document_loading` inputs changed (after
   a reset toggle, say) says so in its integrity check, instead of listing a
   missing cache for every stage from `document_loading` on; those stages run
-  again, as before (#PR).
+  again, as before (#415).
 - Docs: Operations states that a reset stopped or killed before it swapped
   an index in leaves that index until the next reset; incremental runs do
-  not delete it (#PR).
+  not delete it (#415).
 - Config: an `indexing.additional_suffix` or
   `processing.document_parsing.index_value` set in code is validated as at
   load (lowercase letters, digits, `-`, `_`). Assigned after load, an
   uppercase suffix reached the index-creation probe, which reported the
-  refused index name as a refused `index_settings` key (#PR).
+  refused index name as a refused `index_settings` key (#415).
 - Ingestion: the store check runs once per run before the first stage
   that may call a model, and its probe index holds the vector indices'
   fields, not only their settings. It ran when `graph_extraction` prepared
@@ -4012,7 +4012,7 @@ changed once with the full-config keys (#332).
   corpus) and their registry snapshot, which nothing read, and the
   document_loading stage's clear of the loading cache key, which the
   pipeline sets after the stage anyway. A reset with no document to rebuild
-  still writes the records it drops PENDING, now pinned by a test (#PR).
+  still writes the records it drops PENDING, now pinned by a test (#415).
 - Unused code: the module-level `filter_schema.id_batch_size()` (use
   `IndexLimits.id_batch_size`), and the two copies of the warn-once helper
   of the local reranker and analyzers (now `shared.logging.warn_once`) (#414).
