@@ -359,3 +359,33 @@ def test_a_reset_writes_the_records_it_drops_from_its_listing(mocker) -> None:
     first = {r.doc_id: r for r in written.call_args_list[0].args[0]}
     assert first[dropped.doc_id].status is DocStatus.PENDING
     assert first[dropped.doc_id].text_unit_ids == dropped.text_unit_ids
+
+
+def test_a_reset_with_nothing_to_rebuild_still_writes_the_records_it_drops(
+    mocker,
+) -> None:
+    # Every document of the corpus is gone or quarantined: the reset
+    # processes none, and still replaces the stores, so the dropped
+    # records go PENDING first (an interrupted rebuild leaves none
+    # PROCESSED over stores that no longer hold them).
+    store = FakeDocStatusStore()
+    dropped = DocStatusRecord(
+        doc_id=compute_doc_id("gone.txt", "default", "/"),
+        content_hash="h",
+        scope="default|/",
+        status=DocStatus.PROCESSED,
+        text_unit_ids=["tu-gone"],
+    )
+    store.put(dropped)
+    config = _reset_config()
+    stage = _reset_stage(mocker, config, store)
+    context = _context()
+    context.documents, _ = _loading_stage(config, store)._apply_incremental_filter(
+        [], context
+    )
+    written = mocker.spy(store, "put_many")
+
+    stage._execute_core(context)
+
+    first = {r.doc_id: r for r in written.call_args_list[0].args[0]}
+    assert first[dropped.doc_id].status is DocStatus.PENDING

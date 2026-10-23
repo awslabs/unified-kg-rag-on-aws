@@ -61,7 +61,10 @@ reset 동안 벡터 질의는 새 인덱스로 하나씩 바뀔 때까지 이전
 그대로 둡니다. 실패한 reset은 아무것도 지우지 않으므로
 다시 실행하면 됩니다. 그래프 쓰기가 일부 실패한 reset은(`indexing.max_failure_rate`
 이내라도) 역시 실패하며(인덱싱 결과의 `neptune_sweep`), 이전 그래프에 남은 것은 다음
-실행이 지웁니다. **끝나면 `indexing.reset`을 `false`로 되돌리세요.** 그러지 않으면
+실행이 지웁니다. 인덱스를 별칭에 연결하기 전에 정지되거나 종료된 reset은 그 인덱스
+(`<alias>-<timestamp>`, 별칭 없음)를 남기며, 다음 reset이 지울 때까지 남습니다. 증분
+실행은 지우지 않으니 직접 지우거나 reset을 다시 실행하세요.
+**끝나면 `indexing.reset`을 `false`로 되돌리세요.** 그러지 않으면
 실행할 때마다 재구축합니다.
 
 ### 증분 실행
@@ -253,7 +256,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   맞지 않거나 원인 문서를 가려낼 수 있으면 `document_loading`부터 재개합니다(WARNING
   `... resuming from 'document_loading' ...`). 델타를 계산한 뒤 `document_loading`의
   입력(초기화, 재시도, 말뭉치 설정)이 바뀐 경우에도 마찬가지입니다(WARNING
-  `Rewinding resume point from ... to 'document_loading'`).
+  `Rewinding resume point from ... to 'document_loading'`). 끝난 파이프라인 ID를 다시
+  실행해도 재개로 취급합니다. 그 뒤 다른 파이프라인 ID가 델타의 문서를 다른 추출 설정으로
+  커밋했거나 델타 밖의 문서를 추가·변경·삭제했으면 다시 비교합니다. 자신이 종료되거나
+  정지된 뒤 재개한 실행은 델타를 그대로 씁니다.
 
 ### 동시 실행
 

@@ -319,6 +319,33 @@ def test_a_resumed_delta_is_recomputed_when_another_run_changed_its_documents() 
     assert not delta_still_applies(harness.store, delta, fingerprints, 3)
 
 
+def test_a_resumed_delta_is_recomputed_when_another_run_moved_a_document_outside_it() -> (
+    None
+):
+    # A finished pipeline id run again restores its delta (b.txt new) too.
+    harness = IncrementalRun()
+    harness.run(_A)
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    scope = "default|corpus"
+    assert delta.new == [document_doc_id(docs[1])]
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+
+    # a.txt still failing on this content (max_document_failures left it
+    # unchanged) is no change since the delta.
+    a_id = document_doc_id(docs[0])
+    failed = harness.store.get(a_id)
+    assert failed is not None
+    harness.store.put(failed.model_copy(update={"status": DocStatus.FAILED}))
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+    # Another run indexed another version of a.txt, which the delta left
+    # unchanged: indexing the delta again would not bring it back.
+    harness.run({"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B})
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
+    assert delta_still_applies(harness.store, delta, fingerprints, 3)
+
+
 def test_a_resumed_delta_is_replanned_once_its_runs_died_too_often() -> None:
     harness = IncrementalRun()
     docs = [document(path, content) for path, content in {**_A, **_B}.items()]

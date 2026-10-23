@@ -15,6 +15,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     BeforeValidator,
+    ConfigDict,
     Field,
     ModelWrapValidatorHandler,
     PrivateAttr,
@@ -993,6 +994,9 @@ class FixingConfig(BaseModel):
 
 
 class DocumentParsingConfig(BaseModel):
+    # index_value set in code is checked too (see IndexingConfig).
+    model_config = ConfigDict(validate_assignment=True)
+
     source_directory: str | Path = Field(
         default="source",
         description=(
@@ -2190,6 +2194,11 @@ class OpenSearchIndexingConfig(BaseModel):
 
 
 class IndexingConfig(BaseModel):
+    # A suffix set in code (config.indexing.additional_suffix = ...) is
+    # checked too: an index name the engine refuses read as a refused index
+    # setting.
+    model_config = ConfigDict(validate_assignment=True)
+
     reset: bool = Field(
         default=False,
         description=(

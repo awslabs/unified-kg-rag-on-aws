@@ -37,6 +37,7 @@ from tests.integration.test_embedded_e2e import (
     _providers,
     _stored,
 )
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
@@ -2161,3 +2162,163 @@ def test_a_resume_restores_documents_with_the_delta_they_were_filtered_by(
 
     # _state over no corpora reads the stores under ``inc``.
     assert _state(inc, []) == full
+
+
+STRIP_SPLIT_RUNS = [
+    {
+        "d3.txt": "Buyer and Acme trade parts 1. Acme Corp and Acme Inc trade "
+        "parts 1. Acme trade parts 3."
+    },
+    {
+        "d3.txt": "Buyer and Acme trade parts 1. Acme Corp and Acme Inc trade "
+        "parts 1. Acme trade parts 3.",
+        "r0.txt": "Acme Corp and Acme and Buyer trade goods 2. "
+        "Acme Ltd and Acme LLC and Buyer trade parts 2.",
+    },
+    {
+        "r0.txt": "Acme Corp and Acme and Buyer trade goods 2. "
+        "Acme Ltd and Acme LLC and Buyer trade parts 2.",
+        "d2.txt": "Depot and Acme trade parts 1. Acme Ltd and Depot trade parts 3.",
+    },
+]
+
+
+@pytest.mark.parametrize("call", [1, 2, 3, 4])
+@pytest.mark.parametrize("resume", [True, False], ids=["resume", "fresh"])
+def test_a_strip_killed_before_its_vector_edges_writes_the_missing_ones(
+    tmp_path: Path, call: int, resume: bool
+) -> None:
+    # Removing d3.txt splits "Acme LLC" off "Acme": the strip writes the
+    # edge "Acme LLC"-"Buyer" under a new id to the graph and is killed
+    # (call 3) before its vector edges. The retry found the graph copy
+    # current and wrote a vector copy only where one was stored and
+    # stale: the edge had none for good.
+    runs = STRIP_SPLIT_RUNS if resume else [*STRIP_SPLIT_RUNS, STRIP_SPLIT_RUNS[-1]]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=2,
+        die_at=("_run_indexing_phase", call, False, IndexingManager),
+        gleaning=True,
+        resume=resume,
+    )
+
+    assert incremental["vector_edges"] == full["vector_edges"]
+    assert incremental == full
+
+
+SPLIT_RETRY_KEPT = {
+    "d4.txt": "Acme Corp and Acme trade cash 2.",
+    "d3.txt": "Depot and Acme Ltd and Buyer trade goods 1. "
+    "Acme and Acme Inc and Acme LLC trade goods 2.",
+}
+SPLIT_RETRY_RUNS = [
+    {**SPLIT_RETRY_KEPT, "d0.txt": "Acme Inc and Acme and Acme Ltd trade cash 2."},
+    SPLIT_RETRY_KEPT,
+]
+
+
+@pytest.mark.parametrize("resume", [True, False], ids=["resume", "fresh"])
+@pytest.mark.parametrize("method", ["delete_retired_ids", "_clear_pending_strip"])
+def test_a_retried_split_strip_resolves_the_claim_object_to_the_part(
+    tmp_path: Path, method: str, resume: bool
+) -> None:
+    # d0.txt bridged "Acme Ltd" into "Acme"; removing it splits "Acme Ltd"
+    # off. Killed once every strip write landed (at its retire, or at the
+    # note delete), the retry derived the noted claims about the split's
+    # entities without the part: the claim object resolved to the stated
+    # spelling under a new id no later derivation read.
+    runs = SPLIT_RETRY_RUNS if resume else [*SPLIT_RETRY_RUNS, SPLIT_RETRY_KEPT]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True)
+    incremental = _state(
+        tmp_path / "inc",
+        runs,
+        die_in=1,
+        die_at=(method, 1, False, IndexingManager),
+        gleaning=True,
+        resume=resume,
+    )
+
+    assert incremental == full
+
+
+def _run_steps(tmp: Path, steps: list[tuple[dict[str, str], bool, str]]) -> Providers:
+    """Index each ``(corpus, gleaning, pipeline_id)`` step in turn (claims
+    on) and return the providers of the stores."""
+    config = _config(tmp / "stores", tmp / "viz")
+    config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.max_rounds = 1
+    config.processing.document_parsing.source_scope = "fuzz-corpus"
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    source = tmp / "corpus"
+    for corpus, gleaning, pipeline_id in steps:
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name, text in corpus.items():
+            (source / name).write_text(text)
+        config.processing.gleaning.enabled = gleaning
+        context = _ingest(config, providers, source, tmp / pipeline_id)
+        assert context.status is PipelineStageStatus.COMPLETED
+    return providers
+
+
+def _entities(providers: Providers) -> list[tuple]:
+    graph = providers.build_graph_indexer()
+    try:
+        assert isinstance(graph, SQLiteGraphIndexer)
+        ids = [i for i, _ in graph.read_entity_names()]
+        return sorted((e.name, e.description) for e in graph.read_entities(ids))
+    finally:
+        graph.close()
+
+
+PID_V0 = {
+    "d7.txt": "Acme and Acme Ltd trade cash 3. "
+    "Acme and Acme Ltd and Acme Corp trade cash 1."
+}
+PID_V1 = {
+    **PID_V0,
+    "d6.txt": "Acme Inc and Acme Corp trade goods 1. Acme Ltd trade parts 3.",
+}
+
+
+def test_a_finished_pipeline_run_again_does_not_index_over_other_settings(
+    tmp_path: Path,
+) -> None:
+    # P1 indexes d6.txt with gleaning; C then re-extracts the corpus without
+    # it. P1 run again restored its own delta (d6.txt new) and indexed it
+    # over C's artifacts of d6.txt; the registry then recorded P1's
+    # settings, so no later run repaired the store.
+    full = _entities(_run_steps(tmp_path / "full", [(PID_V1, True, "F")]))
+    incremental = _entities(
+        _run_steps(
+            tmp_path / "inc",
+            [(PID_V0, False, "A"), (PID_V1, True, "P1"), (PID_V1, False, "C")]
+            + [(PID_V1, True, "P1")],
+        )
+    )
+
+    assert incremental == full
+
+
+def test_a_finished_pipeline_run_again_sees_another_runs_changes(
+    tmp_path: Path,
+) -> None:
+    # P1 finds nothing to do (A indexed v1); C then indexes v2 (d1.txt
+    # renamed to r4.txt). P1 run again over v1 restored its empty delta:
+    # the stores kept r4.txt and never got d1.txt back.
+    v1 = {"d1.txt": "Acme Corp and Buyer trade goods 1."}
+    v2 = {"r4.txt": v1["d1.txt"]}
+    steps = [(v1, "A"), (v1, "P1"), (v2, "C"), (v1, "P1"), (v1, "P1")]
+    providers = _run_steps(
+        tmp_path, [(corpus, False, pipeline_id) for corpus, pipeline_id in steps]
+    )
+
+    registry = providers.build_doc_status().list_all()
+    assert {r.file_path: r.status.value for r in registry} == {"d1.txt": "processed"}

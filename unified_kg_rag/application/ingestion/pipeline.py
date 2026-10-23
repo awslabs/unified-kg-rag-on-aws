@@ -1315,6 +1315,8 @@ class DataIngestionPipeline:
             context.incremental_delta,
             context.incremental_fingerprints,
             self.config.indexing.max_document_attempts,
+            context.incremental_extraction_fingerprint,
+            context.incremental_scope,
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value

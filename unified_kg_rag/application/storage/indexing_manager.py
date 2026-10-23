@@ -1014,6 +1014,8 @@ class IndexingManager:
             # (read with them): their stored links do not count either.
             rewired=set(derived.rewired) | noted,
             dropped=derived.dropped,
+            # A commit killed between its vector and graph edge writes left
+            # the vector copies of a split part's edges ahead of the graph's.
             split_from=derived.split_from,
         )
         # A delta id the merge folded into a stored item of another id has no
@@ -1200,6 +1202,8 @@ class IndexingManager:
                 # attempt maps to (found only once a late sibling joined).
                 joining = sibling_ids | set(derived.id_remap.values())
                 items[0].extend(e for e in held[0] if e.id in joining)
+                # Edges too: a re-key killed after writing an edge's copy at
+                # its new id, before retiring the old one, left that copy.
                 items[1].extend(r for r in held[1] if r.id in joining)
                 blocked |= {
                     item.id
@@ -1207,6 +1211,8 @@ class IndexingManager:
                     for item in group
                     if item.id not in joining
                 }
+            # Not twice: after a split killed before its edges were written,
+            # a leftover edge is both held (merged in above) and parted.
             known_edges = {r.id for r in items[1]}
             items[1].extend(r for r in parted if r.id not in known_edges)
             # Their other endpoints too: a re-pointed edge changes their rank.
@@ -1446,8 +1452,10 @@ class IndexingManager:
         # split off; the entities they split from are rewired): a strip
         # writes the graph edges before their vector copies, so a retry after
         # a kill in between finds the graph copies current and the vector
-        # copies behind.
-        moved |= {*rewired, *(split_from or {})}
+        # copies behind, or missing (an edge under a new id, written when
+        # its endpoints are re-pointed): a missing one is written.
+        repointed = {*rewired, *(split_from or {})}
+        moved |= repointed
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
             self.opensearch_indexer.read_vector_copies(
@@ -1461,7 +1469,11 @@ class IndexingManager:
         stale = {
             r.id
             for r in extra
-            if r.id in vector_copy and _vector_stale(r, vector_copy[r.id])
+            if (
+                _vector_stale(r, vector_copy[r.id])
+                if r.id in vector_copy
+                else vectors and bool({r.source_id, r.target_id} & repointed)
+            )
         }
         extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
         if not extra:
@@ -1963,6 +1975,8 @@ class IndexingManager:
             vector_only = absent[0] - written
             if vector_only:
                 self._vector_only.setdefault(suffix, set()).update(vector_only)
+            # Edges alike: an edge an interrupted strip re-keyed away is kept
+            # when this strip writes it again under that id.
             vector_only |= absent[1] - written
             if vector_only:
                 self._dropped.setdefault(suffix, set()).update(vector_only)
@@ -2265,6 +2279,25 @@ class IndexingManager:
             sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
         if removed:
+            # And the stored entities of the other spellings of their names:
+            # a retried strip re-derives the claims it noted about a split's
+            # entities without the split (it landed), and the stated
+            # spelling resolves to the part only when the part is among
+            # them. Only a strip reads them (a commit's merge reads its
+            # names' spellings already, see merge_with_existing_graph).
+            keys = {compact_name_key(e.name) for e in entities} | {
+                compact_name_key(derived_entities[i].name)
+                for i in entity_ids
+                if i in derived_entities
+            }
+            family = set(
+                self.neptune_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
+                or []
+            ) - (entity_ids | set(derived_entities))
+            if family:
+                entities += self.neptune_indexer.read_entities(
+                    sorted(family), suffix=suffix
+                )
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
             entities = [stripped.get(e.id, e) for e in entities]
         entities += [
