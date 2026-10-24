@@ -53,8 +53,12 @@ PUBLIC_API = sorted(
         # Errors
         "ConfigurationError",
         "GraphRAGException",
+        "IndexNotFoundError",
+        "InvalidFilterError",
         "NamespaceLeaseError",
         "PipelineExecutionError",
+        "PipelineInterrupted",
+        "StoreConnectionError",
         "StoreRequestRejectedError",
         # Extending it
         "BaseGraphRAGRetriever",

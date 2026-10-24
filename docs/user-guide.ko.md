@@ -1521,6 +1521,12 @@ finally:
 
 - 단계가 실패하면 예외를 던지지 않고 반환한 `PipelineContext`의 `status`를 `FAILED`로
   설정하므로 위 예시처럼 확인하세요.
+- 구분해 처리할 오류는 패키지 최상위에서 내보냅니다. `ConfigurationError`(고칠 설정.
+  `StoreRequestRejectedError` 포함), `InvalidFilterError`, `IndexNotFoundError`,
+  `StoreConnectionError`, `NamespaceLeaseError`, `PipelineExecutionError`,
+  `PipelineInterrupted`(`KeyboardInterrupt`)이며, 마지막을 빼면 모두
+  `GraphRAGException`입니다. 모델 클라이언트 자체의 전송 오류(로컬 모델 서버의
+  `httpx.ConnectError` 등)는 그대로 전달됩니다.
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다(`search_strategy`, `search_type`,
   `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`,
   `use_memory`, `target_language`). 일반 딕셔너리도 됩니다.

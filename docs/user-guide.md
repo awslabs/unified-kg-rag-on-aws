@@ -1685,6 +1685,13 @@ finally:
 
 - A failed stage sets the returned `PipelineContext`'s `status` to `FAILED`
   rather than raising, so check it as above.
+- The errors to tell apart are exported from the package root:
+  `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
+  them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
+  `NamespaceLeaseError`, `PipelineExecutionError` and `PipelineInterrupted`
+  (a `KeyboardInterrupt`); all but the last are `GraphRAGException`s. A
+  model client's own transport error (`httpx.ConnectError` from a local
+  model server, say) is raised as is.
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
   `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `target_language`); a plain dict
