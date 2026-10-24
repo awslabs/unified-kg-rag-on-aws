@@ -22,8 +22,9 @@ stdout and sends everything else (banner, progress, logs) to stderr, so the
 output pipes into ``jq``. A run stopped by a signal before it printed one
 prints ``{"status": "interrupted", "exit_code": 143}`` (or 130) instead, and
 one that fails before it printed one ``{"status": "failed", "exit_code": 1}``
-(or 2) with the ``error`` it failed with, when it knows one (and
-``run-ingestion`` the ``pipeline_id``, once resolved).
+(or 2) with the ``error`` it failed with (an argparse error included, see
+:class:`ArgumentParser`), and ``run-ingestion`` the ``pipeline_id`` once
+resolved.
 """
 
 from __future__ import annotations
@@ -67,6 +68,23 @@ def usage_error(message: str) -> NoReturn:
     print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
     print_status(EXIT_USAGE, message)
     raise SystemExit(EXIT_USAGE)
+
+
+def failed(exit_code: int, error: BaseException | str) -> int:
+    """``exit_code``, for a ``main`` that returns it after logging ``error``:
+    the JSON status names the error (:func:`print_status`)."""
+    print_status(exit_code, error)
+    return exit_code
+
+
+class ArgumentParser(argparse.ArgumentParser):
+    """``argparse.ArgumentParser`` whose errors (an unknown flag, a missing
+    or invalid value) exit through :func:`usage_error`, so the JSON status
+    names them."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        usage_error(message)
 
 
 def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:

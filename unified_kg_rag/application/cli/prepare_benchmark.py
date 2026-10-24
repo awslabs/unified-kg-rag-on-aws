@@ -17,6 +17,7 @@ from pathlib import Path
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -31,7 +32,7 @@ from unified_kg_rag.shared.utils.display import console, markup_safe
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParser(
         allow_abbrev=False,
         description=(
             "Prepare a public benchmark (MuSiQue answerable) as a corpus "

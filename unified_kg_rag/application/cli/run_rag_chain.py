@@ -20,8 +20,10 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failed,
     json_output,
     print_json,
     usage_error,
@@ -97,7 +99,7 @@ class CommandLineInterface:
 
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser(
+        parser = ArgumentParser(
             allow_abbrev=False,
             description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -625,11 +627,11 @@ async def async_main(args: argparse.Namespace) -> int:
     except ConfigurationError as e:
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Configuration error: %s", e)
-        return EXIT_USAGE
+        return failed(EXIT_USAGE, e)
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
-        return EXIT_FAILURE
+        return failed(EXIT_FAILURE, e)
 
 
 @exits_on_sigterm

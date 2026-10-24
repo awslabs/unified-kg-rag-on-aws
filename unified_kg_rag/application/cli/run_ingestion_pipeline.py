@@ -24,6 +24,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -99,7 +100,7 @@ class CommandLineInterface:
 
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser(
+        parser = ArgumentParser(
             allow_abbrev=False,
             description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -589,6 +590,7 @@ class IngestionPipelineRunner:
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
             "duration_seconds": context.duration_seconds,
+            "failed_documents": len(context.failed_documents),
             "stages": [
                 {
                     **result.model_dump(
