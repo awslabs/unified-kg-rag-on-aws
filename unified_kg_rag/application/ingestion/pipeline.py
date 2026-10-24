@@ -1600,9 +1600,11 @@ class DataIngestionPipeline:
         (``VectorIndexer.check_index_settings``), and the indices the run
         will create (``VectorIndexer.check_index_creation``: every one on a
         full build or reset, an incremental run's missing ones). An
-        incremental run with no document to (re)extract is not checked: it
-        calls no model. Any other failure of the check is logged: the stages
-        then meet the store's error themselves.
+        incremental run with no document to (re)extract (no change, or only
+        deletions) creates no index: only its live indices are checked, so it
+        is refused like the next run that extracts would be. Any other
+        failure of the check is logged: the stages then meet the store's
+        error themselves.
 
         Raises:
             ConfigurationError: The live indices do not match, or the store
@@ -1617,14 +1619,13 @@ class DataIngestionPipeline:
             incremental = (
                 context.incremental_delta is not None and not self.config.indexing.reset
             )
-            if incremental and not context.documents:
-                return
             suffix = self.config.processing.document_parsing.index_value
             indexer = self.providers.build_vector_indexer()
             try:
                 if incremental:
                     indexer.check_index_settings(suffix)
-                indexer.check_index_creation(suffix, rebuild=not incremental)
+                if not incremental or context.documents:
+                    indexer.check_index_creation(suffix, rebuild=not incremental)
             finally:
                 indexer.close()
         except (ConfigurationError, NamespaceLeaseError, StoreConnectionError):
