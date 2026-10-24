@@ -509,8 +509,12 @@ class TestOpenSearchExtractionRecords:
             path, lambda body: typo in body["settings"] and f"unknown [{typo}]"
         )
         indexer = _probing_indexer(config, engine)
-        with pytest.raises(ConfigurationError, match=typo):
+        with pytest.raises(ConfigurationError, match=typo) as refused:
             indexer.check_index_creation("x")
+        # It names the index the refused probe stood in for (the probe's own
+        # name is the extraction records'): the first one the run creates.
+        target = indexer._get_name(indexer._specs()[0].alias_prefix, "x")
+        assert f"(a probe of '{target}')" in str(refused.value)
 
         # Accepted settings: a probe per vector index is created and
         # deleted, the records index is left as it was.

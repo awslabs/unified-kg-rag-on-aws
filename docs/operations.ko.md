@@ -663,7 +663,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤 다시 실행 |
-| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함: `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
+| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함(오류의 `(a probe of '<별칭>')`이 대신한 인덱스를 밝힘): `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
 
 ### 수집 실행과 문서 상태 레지스트리
 
