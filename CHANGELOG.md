@@ -1355,6 +1355,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a finished pipeline id run again with only its later
+  stages enabled (an indexing-only phase, say) on the restored output of a
+  stage that failed on some documents recorded them `FAILED` once more each
+  time, without retrying them, until `indexing.max_document_failures`
+  excluded them. Such a resume is now refused (`PipelineResumeError`, the
+  message names the stage to enable); an explicit `--resume-from-stage` is
+  kept with a warning (#PR).
 - Incremental indexing, upgrade window: a pipeline id run again computes its
   delta again when a document of it has a record without a writer (written
   by a release before `written_by`) that is `PENDING`, `FAILED` or holds an

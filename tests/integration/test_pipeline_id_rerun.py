@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphInde
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config, PipelineConfig, PipelineStageType
 from unified_kg_rag.domain.models.config import ChunkingStrategy
+from unified_kg_rag.shared import PipelineExecutionError
 
 pytestmark = pytest.mark.integration
 
@@ -322,3 +323,38 @@ def test_an_explicit_resume_point_is_kept_past_a_failed_stage(
     ]
     assert (record.status.value, record.failure_count) == ("failed", 2)
     assert "resuming from 'indexing' as asked" in caplog.text
+
+
+def test_an_indexing_only_rerun_does_not_count_a_disabled_stage_again(
+    tmp_path: Path,
+) -> None:
+    # Indexing alone run again on the restored output of a stage that failed
+    # on d5 recorded d5 FAILED once more each time, without retrying it,
+    # until indexing.max_document_failures excluded it. It is refused.
+    config, providers, failing = _setup(tmp_path, lambda unit: "Acme Corp" in unit)
+    source = tmp_path / "corpus"
+    _write_corpus(source, {"d5.txt": _FAILING, "d4.txt": "Buyer and Acme LLC trade."})
+    failing["on"] = True
+    e2e._ingest(config, providers, source, tmp_path / "P1")
+    failing["on"] = False
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled={
+                stage: stage is PipelineStageType.INDEXING
+                for stage in PipelineStageType
+            },
+            local_directory=tmp_path / "P1",
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    try:
+        with pytest.raises(PipelineExecutionError, match="graph_extraction"):
+            pipeline.run(source, pipeline_id="P1")
+    finally:
+        pipeline.close()
+    (record,) = [
+        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+    ]
+    assert (record.status.value, record.failure_count) == ("failed", 1)

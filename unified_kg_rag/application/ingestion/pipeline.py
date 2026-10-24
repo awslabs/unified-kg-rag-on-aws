@@ -1298,6 +1298,9 @@ class DataIngestionPipeline:
             and canonical_order.index(name) < start
         ]
         if not failed:
+            self._refuse_rerun_of_unrun_failures(
+                context, start_stage_name, completed_stages, explicit=explicit
+            )
             return None
         first = min(failed, key=canonical_order.index)
         if explicit:
@@ -1427,6 +1430,57 @@ class DataIngestionPipeline:
             for name in completed_stages
             if name in canonical_order and canonical_order.index(name) < position
         ]
+
+    def _refuse_rerun_of_unrun_failures(
+        self,
+        context: PipelineContext,
+        start_stage_name: str,
+        completed_stages: list[str],
+        *,
+        explicit: bool,
+    ) -> None:
+        """Refuse to run a completed stage again on the restored output of a
+        stage that failed on text units and is not enabled in this run (an
+        indexing-only phase run again, say).
+
+        The completed run recorded those documents FAILED already; run
+        again, the indexing stage would record them FAILED once more
+        without retrying them, until ``indexing.max_document_failures``
+        excludes them. Only the failed stage can retry them. An ``explicit``
+        resume point is kept with a warning, like the rewind it replaces.
+
+        Raises:
+            PipelineResumeError: An auto resume would count those failures
+                again.
+        """
+        if self._doc_status is None or start_stage_name not in completed_stages:
+            return
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        start = canonical_order.index(start_stage_name)
+        enabled = {stage.name for stage in self.stages}
+        unrun = [
+            name
+            for name, unit_ids in context.failed_text_unit_ids.items()
+            if unit_ids
+            and name not in enabled
+            and name in canonical_order
+            and canonical_order.index(name) < start
+        ]
+        if not unrun:
+            return
+        first = min(unrun, key=canonical_order.index)
+        message = (
+            f"Stage '{first}' failed on "
+            f"{len(context.failed_text_unit_ids[first])} text units and is not "
+            f"enabled in this run: running '{start_stage_name}' again would "
+            f"record their documents FAILED once more without retrying them"
+        )
+        if explicit:
+            logger.warning("%s", message)
+            return
+        raise PipelineResumeError(
+            f"{message}. Re-run with '{first}' enabled to retry them."
+        )
 
     def _drop_unrun_failures(
         self, context: PipelineContext, start_stage_name: str | None
