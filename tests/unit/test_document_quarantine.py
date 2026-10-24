@@ -13,6 +13,8 @@ and a run that stopped cleanly count nothing.
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
@@ -344,6 +346,34 @@ def test_a_resumed_delta_is_recomputed_when_another_run_moved_a_document_outside
     harness.run({"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B})
     assert not delta_still_applies(harness.store, delta, fingerprints, 3, scope=scope)
     assert delta_still_applies(harness.store, delta, fingerprints, 3)
+
+
+def test_a_resumed_delta_is_recomputed_when_another_scope_indexed_a_document_it_deletes() -> (
+    None
+):
+    # An interrupted reset of A moved B's record into A, a run of A deleted
+    # it, a run of B indexed it again: A's restored delta still deletes it.
+    store = FakeDocStatusStore()
+    record = DocStatusRecord(
+        doc_id="default#b",
+        content_hash="hb",
+        status=DocStatus.PROCESSED,
+        scope="default|B",
+        written_by="P1",
+    )
+    store.put(record)
+    delta = DocumentDelta(deleted=[record.doc_id])
+    check = functools.partial(
+        delta_still_applies, store, delta, {}, 3, scope="default|A", pipeline_id="P0"
+    )
+    assert not check()
+    # A scope the delta retired is the delta's to delete.
+    assert check(retired=["B"])
+    # Still in the delta's scope, or written by this pipeline id.
+    store.put(record.model_copy(update={"scope": "default|A"}))
+    assert check()
+    store.put(record.model_copy(update={"written_by": "P0"}))
+    assert check()
 
 
 def _resumable_delta() -> tuple[IncrementalRun, list, DocumentDelta, dict[str, str]]:

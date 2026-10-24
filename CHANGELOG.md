@@ -1355,6 +1355,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a pipeline id of one source scope run again no
+  longer deletes another scope's live documents. After an interrupted reset
+  of scope A moved scope B's records into A, the next run of A deleted them
+  and a run of B indexed them again; the A pipeline id, run again, restored
+  its delta and deleted them once more. A delta that deletes a document
+  another pipeline id has recorded in another scope since (not one the
+  delta retires) is now computed again (#PR).
 - Reset: a reset pipeline id run again after another pipeline id replaced
   its extraction records (an incremental run with other settings deletes
   the records of the units it re-extracts) resumed at indexing from its

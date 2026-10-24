@@ -1546,6 +1546,7 @@ class DataIngestionPipeline:
             context.incremental_scope,
             context.pipeline_id,
             self.config.indexing.max_document_failures,
+            context.incremental_retired_scopes or (),
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value

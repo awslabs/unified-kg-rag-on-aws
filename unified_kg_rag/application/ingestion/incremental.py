@@ -1431,6 +1431,7 @@ def delta_still_applies(
     scope: str | None = None,
     pipeline_id: str | None = None,
     max_failures: int | None = None,
+    retired: Iterable[str] = (),
 ) -> bool:
     """Whether a resumed run may index ``delta`` as it was computed.
 
@@ -1458,6 +1459,14 @@ def delta_still_applies(
     delta new, changed or deleted. A record without a writer (written
     before the field existed) is left to the other checks. A run resumed
     after its own kill passes them all: only it wrote these records since.
+
+    A document the delta deletes whose record another pipeline id wrote in
+    another scope than the delta's, and not in one of the ``retired``
+    values (``indexing.retire_source_scopes`` the delta applied), was
+    indexed there since: an interrupted reset of this scope moved that
+    scope's record here, a run of this scope deleted it, and a run of the
+    other scope indexed it again. Deleting it would remove that scope's
+    live document.
     """
     stored = store.get_many(delta.to_process)
     for doc_id in delta.to_process:
@@ -1496,6 +1505,21 @@ def delta_still_applies(
             )
         ):
             return False
+    if scope is not None and delta.deleted:
+        namespace = scope_namespace(scope)
+        expected = {scope} | {
+            registry_scope(namespace, normalize_source_scope(reading))
+            for value in retired
+            for reading in retired_scope_readings(value)[0]
+            if namespace is not None
+        }
+        for record in store.get_many(delta.deleted).values():
+            if (
+                record.scope not in expected
+                and record.written_by is not None
+                and record.written_by != pipeline_id
+            ):
+                return False
     # And every other document of the scope reads as the delta classified
     # it: another pipeline id may have indexed, deleted or re-extracted one
     # since (a finished pipeline run again restores its own delta).
