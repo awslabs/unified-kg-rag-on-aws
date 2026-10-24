@@ -1499,6 +1499,9 @@ changed once with the full-config keys (#332).
   `InvalidFilterError` when more reports were selected (#PR).
 - Retrieval: a fetch by id asks a repeated id once; it was asked by two
   batches and its hit came back twice (#PR).
+- Docs: the design guide's new-strategy recipe (§15) says to fetch by id
+  through `BaseSearchStrategy._fetch_by_ids` and to size other list filters
+  by `aindex_limits` (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
