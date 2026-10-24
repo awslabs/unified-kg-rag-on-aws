@@ -1485,6 +1485,67 @@ async def test_a_rejected_fetch_by_id_is_batched_by_the_limits_read_again(
     assert sorted(index.named) == [1, 3, 3, 3]
 
 
+async def test_concurrent_rejected_searches_share_one_settings_read(
+    retriever, config
+) -> None:
+    # Two searches rejected for the same index's limits: the first drops
+    # the limits and reads them again; the second leaves that read in
+    # flight alone and waits for it instead of starting another.
+    class _Counting(_IdIndex):
+        reads = 0
+
+        async def aget_index_settings(self, index: str) -> dict[str, dict[str, Any]]:
+            self.reads += 1
+            await asyncio.sleep(0.05)
+            return await super().aget_index_settings(index)
+
+        asked = 0
+
+        async def asearch(self, index: str, body: dict[str, Any]) -> dict:
+            # The second search is refused once the first has dropped the
+            # limits and is reading them again.
+            self.asked += 1
+            await asyncio.sleep(0.02 if self.asked == 2 else 0)
+            return await super().asearch(index, body)
+
+    ids = [f"t{n}" for n in range(10)]
+    index = _Counting(ids, window=10000, terms=65536)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    alias = retriever._get_name(
+        config.indexing.opensearch.text_units_index_prefix, None
+    )
+    await retriever._limits(alias)
+    index.window = 5  # rebuilt under a smaller window
+    found = await asyncio.gather(
+        *(retriever.aretrieve(_fetch_by_id(config, ids)) for _ in range(2))
+    )
+    assert all(sorted(str(h.source) for h in hits) == ids for hits in found)
+    assert index.reads == 2
+
+
+async def test_a_retry_splits_other_lists_by_max_terms_count_not_the_id_step(
+    retriever, config
+) -> None:
+    # The id step is the smaller of the window and max_terms_count; a list
+    # of endpoints narrows the hits rather than naming them, so it goes in
+    # batches of max_terms_count, whatever the window.
+    prefix = config.indexing.opensearch.relationships_index_prefix
+    index = _IdIndex([], window=10000, terms=65536)
+    object.__setattr__(retriever, "_opensearch_client", index)
+    await retriever._limits(retriever._get_name(prefix, None))
+    index.terms, index.window = 3, 2
+    await retriever.aretrieve(
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=2,
+            index_prefixes=[prefix],
+            filters={"source_id": ["a", "b", "c", "d", "e"]},
+        )
+    )
+    assert sorted(len(lists["source_id"]) for lists in index.accepted) == [2, 3]
+
+
 @pytest.mark.parametrize("limit_error", [True, False])
 async def test_only_a_limits_rejection_is_asked_again_and_once(
     retriever, config, limit_error: bool
@@ -1552,7 +1613,7 @@ async def test_limits_dropped_during_their_read_leave_no_waiter_hanging(
     await asyncio.sleep(0.01)
     waiter = asyncio.create_task(retriever._limits("alias"))
     await asyncio.sleep(0.01)
-    retriever._index_limits.pop("alias", None)  # what a rejected search does
+    retriever._index_limits.pop("alias", None)  # dropped from outside
     found = await asyncio.wait_for(
         asyncio.gather(owner, waiter, return_exceptions=True), 2
     )

@@ -4106,6 +4106,10 @@ changed once with the full-config keys (#332).
 ### Removed
 - Unused code: the uncurated-model warning's own once-per-id set and lock in
   `bedrock_models` (now `shared.logging.warn_once`) (#PR).
+- Unused code: `OpenSearchRetriever`'s `top_k` override on a fetch by id's
+  batches (every caller asks for all its ids, more than a batch names) and
+  the limits read's check that its entry was still its own (a rejected
+  search drops only limits already read, now pinned by a test) (#PR).
 - Unused code: `IncrementalIndexer.write_ahead`'s second filter of a
   reset's dropped records (the indexing stage lists only records outside the
   corpus) and their registry snapshot, which nothing read, and the

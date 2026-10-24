@@ -372,10 +372,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         search's browse, the source resolver), so theirs fit unless the
         store rejected the limits they were sized by: asked again after an
         index was rebuilt smaller, a search is split by the ``limits`` just
-        read, a fetch by id by ``IndexLimits.id_batch_size`` (each batch
-        with a ``top_k`` of its ids), any other list by ``max_terms_count``
-        (each batch with the search's ``top_k``). A direct caller's
-        oversized list is split the same way.
+        read, a fetch by id by ``IndexLimits.id_batch_size``, any other
+        list by ``max_terms_count``, each batch with the search's ``top_k``.
+        A direct caller's oversized list is split the same way.
         """
         if query.query:
             return None
@@ -390,14 +389,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             logger.debug(
                 "Searching %s %s values in batches of %s", len(values), key, step
             )
+            # Each batch keeps the search's top_k: a fetch by id asks for
+            # all its ids (top_k=len(ids)), more than any batch names.
             return [
                 query.model_copy(
                     update={"filters": {**filters, key: values[i : i + step]}}
-                    | (
-                        {"top_k": len(values[i : i + step]), "retrieval_multiplier": 1}
-                        if key == "id"
-                        else {}
-                    )
                 )
                 for i in range(0, len(values), step)
             ]
@@ -710,13 +706,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             limits, keep = await self._read_limits(alias)
         finally:
             # Resolved whatever happens (None: the waiters read for
-            # themselves), and the entry replaced only while it is still this
-            # read's: a rejected search may have dropped it meanwhile.
-            if self._index_limits.get(alias) is pending:
-                if keep and limits is not None:
-                    self._index_limits[alias] = limits
-                else:
-                    self._index_limits.pop(alias, None)
+            # themselves). The entry is still this read's: a rejected search
+            # drops only limits already read, never a read in flight.
+            if keep and limits is not None:
+                self._index_limits[alias] = limits
+            else:
+                self._index_limits.pop(alias, None)
             pending.set_result(limits)
         return limits
 
