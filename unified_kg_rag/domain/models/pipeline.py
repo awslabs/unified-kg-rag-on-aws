@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -353,23 +353,27 @@ class PipelineContext(BaseModel):
         "indexing.max_document_failures; a model outage counts for none.",
     )
 
+    def documents_of_units(self, unit_ids: Iterable[str]) -> "list[Document]":
+        """The run's documents the text units ``unit_ids`` belong to."""
+        wanted = set(unit_ids)
+        if not wanted:
+            return []
+        document_ids = {
+            document_id
+            for unit in self.translated_units or self.text_units or []
+            if unit.id in wanted
+            for document_id in unit.document_ids or []
+        }
+        return [doc for doc in self.documents if doc.document_id in document_ids]
+
     @property
     def failed_documents(self) -> "list[Document]":
         """The run's documents a stage failed on (some of their text units
         are in ``failed_text_unit_ids``): an incremental run records them
         FAILED."""
-        failed = {
+        return self.documents_of_units(
             unit_id for ids in self.failed_text_unit_ids.values() for unit_id in ids
-        }
-        if not failed:
-            return []
-        document_ids = {
-            document_id
-            for unit in self.translated_units or self.text_units or []
-            if unit.id in failed
-            for document_id in unit.document_ids or []
-        }
-        return [doc for doc in self.documents if doc.document_id in document_ids]
+        )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

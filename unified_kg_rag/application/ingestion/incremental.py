@@ -1694,23 +1694,13 @@ def documents_with_failed_units(
     context: PipelineContext, text_units: list[TextUnit]
 ) -> set[str]:
     """Registry ids of the documents an extraction stage failed on."""
-    return _documents_of_units(
-        context,
-        text_units,
-        {unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids},
-    )
-
-
-def _documents_of_units(
-    context: PipelineContext, text_units: list[TextUnit], unit_ids: Collection[str]
-) -> set[str]:
-    """Registry ids of the run's documents the ``unit_ids`` of ``text_units``
-    belong to."""
-    wanted = set(unit_ids)
+    failed_units = {
+        unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids
+    }
     run_document_ids = {
         document_id
         for unit in text_units
-        if unit.id in wanted
+        if unit.id in failed_units
         for document_id in unit.document_ids or []
     }
     return {
@@ -1723,22 +1713,12 @@ def _documents_of_units(
 def unit_source_files(context: PipelineContext, unit_ids: Collection[str]) -> list[str]:
     """Source files (relative to the corpus root) of the run's documents the
     text units ``unit_ids`` belong to, sorted."""
-    wanted = set(unit_ids)
-    if not wanted:
-        return []
-    document_ids = {
-        document_id
-        for unit in context.translated_units or context.text_units or []
-        if unit.id in wanted
-        for document_id in unit.document_ids or []
-    }
     return sorted(
         {
             document.metadata.get(RELATIVE_PATH_KEY)
             or document.file_path
             or document.document_id
-            for document in context.documents
-            if document.document_id in document_ids
+            for document in context.documents_of_units(unit_ids)
         }
     )
 
@@ -1761,9 +1741,7 @@ def record_item_failures(
     so the stored text units (of the indexed version) are kept for a later
     removal. Returns the records written.
     """
-    doc_ids = _documents_of_units(
-        context, context.translated_units or context.text_units or [], unit_ids
-    )
+    doc_ids = {document_doc_id(d) for d in context.documents_of_units(unit_ids)}
     if not doc_ids:
         return []
     check_write_fence()
