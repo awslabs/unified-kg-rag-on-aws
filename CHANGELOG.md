@@ -835,13 +835,13 @@ changed once with the full-config keys (#332).
 ### Changed
 - `run-ingestion --output-format json` reports `failed_documents`, the
   number of documents a stage failed on (recorded `FAILED`), and the summary
-  table a "Documents Failed" row (#PR).
+  table a "Documents Failed" row (#420).
 - The package root exports `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError` and `PipelineInterrupted`; the facade documents
   that a model client's own transport error (`httpx.ConnectError`, say)
-  passes through unwrapped (#PR).
+  passes through unwrapped (#420).
 - `search.max_concurrency`'s description names every bound it sets (the
-  fetch-by-id, scope and filter batches too) and how they nest (#PR).
+  fetch-by-id, scope and filter batches too) and how they nest (#420).
 - `DataIngestionPipeline.run` raises a `ConfigurationError` met outside a
   stage as itself (exit 2 in `run-ingestion`), not wrapped in a
   `PipelineExecutionError` (exit 1): for example retiring the run's own
@@ -1367,33 +1367,33 @@ changed once with the full-config keys (#332).
   or an unknown model (HTTP 401/403/404, Bedrock `AccessDeniedException`,
   `ResourceNotFoundException`, an invalid model identifier), which fail
   every document alike. The stage error names the source files it failed
-  on (#PR).
+  on (#420).
 - Incremental indexing: a pipeline id run again stops retrying a document
   once it reached `indexing.max_document_failures` (it diffs the corpus
   again and skips it), instead of counting one more failure per rerun. The
   failed-stage rewind keeps an explicit `--resume-from-stage`, with a
   warning, and the failures a restored run holds for a stage it no longer
   runs (gleaning switched off, say) no longer record the documents `FAILED`
-  again (#PR).
+  again (#420).
 - Ingestion: an unreachable vector store fails the run at its store check,
   before any model call (`StoreConnectionError`); the check, and the
   extraction store's preparation, only logged it, so the run paid for the
-  whole extraction before its indexing stage failed (#PR).
+  whole extraction before its indexing stage failed (#420).
 - Ingestion: an incremental run with nothing to extract (no change, or only
   deletions) is checked against its live indices before its first stage
   too, and refused like the next run that extracts (exit 2) when they were
-  built for another embedding model or other language settings (#PR).
+  built for another embedding model or other language settings (#420).
 - CLI JSON output: the failed status names the `error` also for an argparse
   error without an exception (an unknown flag, a missing `--query`) and for
   the failures `run-visualization`, `run-prompt-tuning` and `run-rag` exit
-  with after logging them (#PR).
+  with after logging them (#420).
 - `run-rag --interactive`: a line is a command only as a whole (only
   `set-filter` takes an argument), so "help me find ..." is asked, not
-  answered with the help (#PR).
+  answered with the help (#420).
 - The store check's refusal names the index whose mapping the store refused,
-  not only the probe (named after the extraction-records alias) (#PR).
+  not only the probe (named after the extraction-records alias) (#420).
 - Retrieval: a plain search whose size a live index's lower
-  `max_result_window` cuts logs a WARNING (#PR).
+  `max_result_window` cuts logs a WARNING (#420).
 - Incremental indexing: a pipeline id run again recomputes its delta when
   another pipeline id has written a record of one of its documents since,
   for example one that left the document `PENDING` (killed while indexing)
