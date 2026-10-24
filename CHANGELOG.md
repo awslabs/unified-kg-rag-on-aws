@@ -1410,29 +1410,29 @@ changed once with the full-config keys (#332).
   and, answering a window, kept the window's worth in its own order: the
   best-ranked text units, linked chunks, endpoint entities and walk entities
   were dropped. The walk also cuts its exclusion to `max_terms_count` itself
-  (#PR).
+  (#418).
 - Global search: dynamic selection no longer fails the query under a
   lowered `max_terms_count`. With more child communities than one terms
   clause takes, the browse goes in batches and is merged by (rank, id)
   before the cut (it was cut in batch order, keeping worse-ranked reports),
   and the similarity search, which cannot be split, gives way to the browse
-  instead of raising `InvalidFilterError` (#PR).
+  instead of raising `InvalidFilterError` (#418).
 - Retrieval: the batches of one search (a fetch by id, the walk's frontier
   on both ends, the child browse, a retry split) go to the store at most
   `search.max_concurrency` at once; a DRIFT query at top_k 100 x 5 under a
-  `max_terms_count` of 3 peaked at 3,800 requests in flight, now 200 (#PR).
+  `max_terms_count` of 3 peaked at 3,800 requests in flight, now 200 (#418).
 - Retrieval: the per-query memo of incident edges keys on what the requests
   send (each batch's vertices and the kept exclusion) rather than the vertex
   sets, so the same sets in another order past `max_terms_count` no longer
-  reuse edges another exclusion left out (#PR).
+  reuse edges another exclusion left out (#418).
 - Evaluation: the source resolver caches the misses of a batch of unknown
   ids when another batch of the same call answered with a hit, instead of
-  asking for them on every query (#PR).
+  asking for them on every query (#418).
 - Docs: the design guide (§15) states that strategies size every list by
   `aindex_limits`, so a retriever need not batch, and (§8.2) that past
   `max_terms_count` the walk's exclusion keeps the vertices reached last, so
   edges back to the others can fill a page; the template's `max_query_size`
-  note no longer says a fetch by id keeps only its best-ranked ids (#PR).
+  note no longer says a fetch by id keeps only its best-ranked ids (#418).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
@@ -4105,11 +4105,11 @@ changed once with the full-config keys (#332).
 
 ### Removed
 - Unused code: the uncurated-model warning's own once-per-id set and lock in
-  `bedrock_models` (now `shared.logging.warn_once`) (#PR).
+  `bedrock_models` (now `shared.logging.warn_once`) (#418).
 - Unused code: `OpenSearchRetriever`'s `top_k` override on a fetch by id's
   batches (every caller asks for all its ids, more than a batch names) and
   the limits read's check that its entry was still its own (a rejected
-  search drops only limits already read, now pinned by a test) (#PR).
+  search drops only limits already read, now pinned by a test) (#418).
 - Unused code: `IncrementalIndexer.write_ahead`'s second filter of a
   reset's dropped records (the indexing stage lists only records outside the
   corpus) and their registry snapshot, which nothing read, and the
