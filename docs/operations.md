@@ -64,6 +64,14 @@ results); the next run removes what the previous graph still holds. A
 reset stopped or killed before it swapped an index in leaves that index
 (`<alias>-<timestamp>`, no alias) until the next reset deletes it; an
 incremental run does not. Delete it by hand, or re-run the reset.
+A reset pipeline id run again resumes from its cached stages like any
+other; when another pipeline id has since deleted extraction records its
+text units name (an incremental run with other settings deletes the
+records of the units it re-extracts), it resumes from the stage that
+stores them instead (WARNING `Extraction records this pipeline stored are
+gone ...`) and extracts those units again: the LLM response cache answers
+them, and with `cache.llm_responses.enabled: false` the rerun costs what
+the reset did.
 **Set `indexing.reset` back to `false` afterwards**, or every run rebuilds.
 
 ### Incremental runs
@@ -218,7 +226,12 @@ this run that recorded failed text units and retries those units (WARNING
 store keeps the units that succeeded. An explicit `--resume-from-stage` past
 it is kept, with a WARNING: the indexing stage records those documents
 `FAILED` again without retrying them. Failures of a stage that is not
-enabled in the rerun are dropped from the restored state. A document that
+enabled in the rerun are dropped from the restored state when the stage is
+at or after the resume point. Before it, a stage the run does not enable
+keeps them: an indexing-only phase records them once, and that phase run
+again after it finished is refused (`PipelineResumeError`: enable the named
+stage to retry them; an explicit `--resume-from-stage` is kept, with a
+WARNING). A document that
 reached the retry limit makes the rerun diff the corpus again, which skips it.
 
 A stage failure records nothing else and stops the run before indexing,
@@ -302,10 +315,15 @@ would stop every later run, so runs count deaths and isolate the culprit.
   it resumes from `document_loading` when another pipeline id has since
   written a record of one of its documents (every record names the pipeline
   id that wrote it last; a record written before that was recorded names
-  none and is left to the other checks), committed one of its documents
-  with other extraction settings, or added, changed or deleted a document
-  outside its delta. A run resumed after its own kill or stop keeps its
-  delta.
+  none: a `PENDING` or `FAILED` one, or one with an open attempt, counts as
+  another pipeline id's, a `PROCESSED` one is left to the other checks),
+  committed one of its documents with other extraction settings, or added,
+  changed or deleted a document outside its delta. A run diffs within its
+  own scope (index namespace and source scope), so the last check reads
+  only that scope; a document the delta deletes that another pipeline id
+  has since recorded in another scope (one the delta does not retire) makes
+  it diff again too, so a rerun never deletes another scope's live
+  document. A run resumed after its own kill or stop keeps its delta.
 
 ### Concurrent runs
 
