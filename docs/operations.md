@@ -229,6 +229,10 @@ files: ...`), the documents whose units failed with an error of their own (a
 4xx or validation error, a response that does not parse) are recorded
 `FAILED`, so the retry limit below applies. Throttling, 5xx, timeouts and
 connection errors count for none: a model outage never excludes a document.
+Nor do denied credentials or an unknown model (HTTP 401/403/404, Bedrock
+`AccessDeniedException`, `ResourceNotFoundException`, `The provided model
+identifier is invalid`): they fail every document alike, which stays
+`PENDING`, uncounted, until the configuration is fixed.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` (with the same

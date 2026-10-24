@@ -101,8 +101,14 @@ def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     assert errors == []
 
 
-def test_a_model_outage_counts_no_failure(tmp_path: Path) -> None:
-    *seen, errors = _runs(tmp_path, 503)
+@pytest.mark.parametrize("status", [503, 403, 404])
+def test_a_model_outage_or_misconfiguration_counts_no_failure(
+    tmp_path: Path, status: int
+) -> None:
+    # 503: the model is down; 403 (access denied) and 404 (no such model):
+    # it is misconfigured. Neither is the document's fault: it stays
+    # PENDING, uncounted, run after run.
+    *seen, errors = _runs(tmp_path, status)
     assert {(status, record[1]) for status, record, _ in seen} == {
         (PipelineStageStatus.FAILED.value, 0)
     }, seen

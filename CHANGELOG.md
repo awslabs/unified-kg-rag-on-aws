@@ -1363,8 +1363,11 @@ changed once with the full-config keys (#332).
   records `FAILED` the documents whose units failed for an error of their
   own (a 4xx or validation error, a response that does not parse);
   throttling, 5xx, timeouts and connection errors count for none, so a
-  model outage never excludes a document. The stage error names the source
-  files it failed on (#PR).
+  model outage never excludes a document, and neither do denied credentials
+  or an unknown model (HTTP 401/403/404, Bedrock `AccessDeniedException`,
+  `ResourceNotFoundException`, an invalid model identifier), which fail
+  every document alike. The stage error names the source files it failed
+  on (#PR).
 - Incremental indexing: a pipeline id run again stops retrying a document
   once it reached `indexing.max_document_failures` (it diffs the corpus
   again and skips it), instead of counting one more failure per rerun. The

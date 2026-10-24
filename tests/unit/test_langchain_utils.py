@@ -1057,3 +1057,41 @@ def test_batch_errors_name_each_failed_item_and_classify_its_own() -> None:
     ]
     assert not processor.is_item_error(TimeoutError())
     assert not BatchProcessor().is_item_error(_Status(400))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "status:401",
+        "status:403",
+        "status:404",
+        "AccessDeniedException",
+        "ResourceNotFoundException",
+        "UnrecognizedClientException",
+        "ValidationException:The provided model identifier is invalid.",
+    ],
+)
+def test_a_misconfigured_model_is_no_item_error(error: str) -> None:
+    # Denied credentials or an unknown model fail every item alike: counting
+    # them excluded every document of the delta after max_document_failures.
+    class _Error(Exception):
+        pass
+
+    exc = _Error(error)
+    if error.startswith("status:"):
+        exc.status_code = int(error.split(":")[1])  # type: ignore[attr-defined]
+    else:
+        code, _, message = error.partition(":")
+        exc.response = {  # type: ignore[attr-defined]
+            "Error": {"Code": code, "Message": message},
+            "ResponseMetadata": {"HTTPStatusCode": 400},
+        }
+    processor = BatchProcessor(is_transient_error=lambda _e: False)
+    assert not processor.is_item_error(exc)
+    # A plain validation error is still the item's.
+    other = _Error("too long")
+    other.response = {  # type: ignore[attr-defined]
+        "Error": {"Code": "ValidationException", "Message": "Input is too long"},
+        "ResponseMetadata": {"HTTPStatusCode": 400},
+    }
+    assert processor.is_item_error(other)

@@ -216,7 +216,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 추출이 모든 단위에서 실패하면(`Critical stage 'graph_extraction' ... produced 0 outputs.
 It failed on N files: ...`) 단위 자체의 오류(4xx나 검증 오류, 파싱할 수 없는 응답)로 실패한
 문서를 `FAILED`로 기록해 아래 재시도 한도가 적용됩니다. 스로틀링, 5xx, 시간 초과, 연결
-오류는 세지 않으므로 모델 장애로 문서가 제외되지는 않습니다.
+오류는 세지 않으므로 모델 장애로 문서가 제외되지는 않습니다. 거부된 자격 증명이나 없는
+모델(HTTP 401/403/404, Bedrock `AccessDeniedException`, `ResourceNotFoundException`,
+`The provided model identifier is invalid`)도 세지 않습니다. 모든 문서가 똑같이 실패하므로
+설정을 고칠 때까지 문서는 세지 않은 채 `PENDING`으로 남습니다.
 
 - **재시도 한도.** 내용과 추출 설정이 그대로인 채 `indexing.max_document_failures`(기본값
   `3`)번 연속으로 `FAILED`가 기록되면 문서는 `FAILED`로 남고 인덱싱한 내용을 유지한 채
