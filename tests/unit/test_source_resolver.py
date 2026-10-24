@@ -112,22 +112,33 @@ async def test_a_batch_without_any_hit_is_not_cached(config: Config) -> None:
     assert await resolver.aresolve(["t1"], None) == {"t1": "vendor.pdf"}
 
 
-async def test_a_batch_of_unknown_ids_is_cached_when_another_answered(
+async def test_a_failed_batch_is_not_cached_when_another_answered(
     config: Config,
 ) -> None:
-    # Regression: a batch whose ids were all unknown was never cached, even
-    # when the store answered another batch of the same call: every
-    # evaluation query asked for those ids again.
-    store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt"})
+    # Regression: a batch with no hit was cached as unknown whenever another
+    # batch of the same call answered. The retriever degrades a failed
+    # request to no hits, so a transient error on one batch cached its known
+    # ids as unknown for the evaluator's life.
+    store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt", "t3": "terms.txt"})
+    fetch = store.aretrieve
+
+    async def second_fails(query: SearchQuery) -> list[RetrievalResult]:
+        return [] if len(store.queries) == 1 else await fetch(query)
+
+    store.aretrieve = second_fails  # type: ignore[method-assign]
     resolver = TextUnitFileResolver(config, lambda: store)
-    wanted = ["t1", "t2", "x1", "x2"]
-    assert await resolver.aresolve(wanted, None) == {
-        "t1": "vendor.pdf",
-        "t2": "buyer.txt",
+    assert await resolver.aresolve(["t1", "x1", "t2", "t3"], None) == {
+        "t1": "vendor.pdf"
     }
-    assert len(store.queries) == 2
-    assert await resolver.aresolve(["x1", "x2"], None) == {}
-    assert len(store.queries) == 2
+    store.aretrieve = fetch  # type: ignore[method-assign]
+    assert await resolver.aresolve(["t2", "t3"], None) == {
+        "t2": "buyer.txt",
+        "t3": "terms.txt",
+    }
+    # x1 shared a batch that answered: cached, not asked again.
+    asked = len(store.queries)
+    assert await resolver.aresolve(["t1", "x1"], None) == {"t1": "vendor.pdf"}
+    assert len(store.queries) == asked
 
 
 async def test_batches_follow_max_terms_count_too(config: Config) -> None:

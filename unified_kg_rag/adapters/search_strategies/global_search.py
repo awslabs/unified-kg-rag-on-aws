@@ -564,24 +564,30 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         rerank: RerankTrace,
     ) -> list[RetrievalResult]:
-        """``text_unit_slots`` text units of the reports' communities, reranked."""
-        community_ids = [
-            self._community_id(r)
-            for r in results
-            if r.retriever_type == SectionType.COMMUNITY.value
-        ]
+        """``text_unit_slots`` text units of the reports' communities, reranked.
+
+        The query has text, so it is one search: its ``community_ids`` are
+        those of the best-ranked reports one ``terms`` clause of the text
+        units index takes."""
+        community_ids = list(
+            dict.fromkeys(
+                self._community_id(r)
+                for r in results
+                if r.retriever_type == SectionType.COMMUNITY.value
+            )
+        )
         if not community_ids or self.document_retriever is None:
             return []
+        prefix = self.config.indexing.opensearch.text_units_index_prefix
+        limits = await self.document_retriever.aindex_limits(prefix, query.suffix)
         slots = self.global_search_config.text_unit_slots
         search_query = query.model_copy(
             update={
                 "top_k": slots,
                 "retrieval_multiplier": 1,
-                "index_prefixes": [
-                    self.config.indexing.opensearch.text_units_index_prefix
-                ],
+                "index_prefixes": [prefix],
                 "filters": self._scoped_filters(
-                    query, community_ids=list(dict.fromkeys(community_ids))
+                    query, community_ids=community_ids[: limits.max_terms_count]
                 ),
             }
         )

@@ -1481,6 +1481,27 @@ changed once with the full-config keys (#332).
   `max_terms_count` the walk's exclusion keeps the vertices reached last, so
   edges back to the others can fill a page; the template's `max_query_size`
   note no longer says a fetch by id keeps only its best-ranked ids (#418).
+- Retrieval: a fatal store error (a timeout, a denied or refused search)
+  in one batch of a search now cancels the batches still queued or in
+  flight before the query fails. Since #418 they kept going to the store
+  after the query had already failed: a fetch of 200 ids one per batch sent
+  all 200 requests instead of 8 (#421).
+- Evaluation: the source resolver caches misses only from a batch that
+  itself answered with a hit. #418 also cached a batch with none whenever
+  another batch of the same call answered, and the retriever degrades a
+  failed request to no hits, so one transient error cached that batch's
+  known text units as unknown for the evaluator's life (12 of 3,102 ids in
+  the reviewer's run). A batch of only unknown ids is asked again on the next
+  query, one extra request (#421).
+- Global search: the community text-unit search (`text_unit_slots`) names
+  at most the text units index's live `max_terms_count` communities, those
+  of the best-ranked reports, instead of failing the query with
+  `InvalidFilterError` when more reports were selected (#421).
+- Retrieval: a fetch by id asks a repeated id once; it was asked by two
+  batches and its hit came back twice (#421).
+- Docs: the design guide's new-strategy recipe (§15) says to fetch by id
+  through `BaseSearchStrategy._fetch_by_ids` and to size other list filters
+  by `aindex_limits` (#421).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where

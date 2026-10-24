@@ -86,14 +86,15 @@ class TextUnitFileResolver:
                 batch = missing[start : start + size]
                 found, answered = await self._fetch(retriever, batch, suffix)
                 fetched.append((batch, found, answered))
-            # A miss is cached only when a batch of this call answered with a
+            # A miss is cached only from a batch that itself answered with a
             # hit (a failed request degrades to none, as a batch of unknown
-            # ids does) and from a batch that fit the limits read after the
-            # fetches (a reindex lowered them: the hits were cut).
+            # ids does: another batch's answer does not tell them apart, so a
+            # batch of unknown ids is asked again next time) and that fit the
+            # limits read after the fetches (a reindex lowered them: the hits
+            # were cut).
             size = await self._batch_size(retriever, suffix)
-            store_answered = any(answered for _, _, answered in fetched)
-            for batch, found, _ in fetched:
-                fits = store_answered and len(batch) <= size
+            for batch, found, answered in fetched:
+                fits = answered and len(batch) <= size
                 for unit_id in batch:
                     if fits or unit_id in found:
                         self._cache[(suffix, unit_id)] = found.get(unit_id)

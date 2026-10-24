@@ -12,6 +12,7 @@ covered in ``test_global_search_map_reduce.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -466,6 +467,84 @@ async def test_children_past_max_terms_count_are_browsed_by_rank() -> None:
     # A (rank 2), B (3), C (4): the two best ranked children are rated.
     assert sorted(rater.rated) == ["B", "C", "R0", "R1"]
     assert result.metadata["global_level_capped"] is True
+
+
+class _ReportTermsStore(_TermsStore):
+    """A ``_TermsStore`` whose reports index alone takes ``terms`` values
+    (the other indexes the default) and that counts the searches in flight."""
+
+    def __init__(self, documents: list[dict[str, Any]], terms: int) -> None:
+        super().__init__(documents, terms)
+        self.in_flight = self.peak = 0
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(
+            max_terms_count=self.terms if prefix == REPORTS_PREFIX else 65536
+        )
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(0.005)
+            return await super().aretrieve(query)
+        finally:
+            self.in_flight -= 1
+
+
+async def test_a_long_browse_scope_is_split_by_the_reports_terms_limit() -> None:
+    # The batches follow the reports index's max_terms_count, at most
+    # search.max_concurrency at once, and reports of one rank are merged in
+    # id order, whatever order the batches came back in.
+    documents = [{**d, "rank": 1} for d in _documents()]
+    store = _ReportTermsStore(documents, terms=1)
+    strat = _strategy(store, max_reports_per_level=50)
+    strat.config.search.max_concurrency = 2
+    scope = {"community_id": ["C2", "C1", "C", "B", "A2", "A1"]}
+
+    reports, complete = await strat._browse_reports(
+        SearchQuery(query="q"), scope, "children"
+    )
+
+    assert complete
+    assert [r.source for r in reports] == [
+        "r-A1",
+        "r-A2",
+        "r-B",
+        "r-C",
+        "r-C1",
+        "r-C2",
+    ]
+    assert [len(q.filters["community_id"]) for q in store.calls] == [1] * 6
+    assert store.peak == 2
+
+
+async def test_community_text_units_name_what_one_terms_clause_takes() -> None:
+    # Regression: the text-unit search named the community of every
+    # selected report, so a text units index whose max_terms_count is below
+    # that refused the query (InvalidFilterError). The best-ranked reports'
+    # communities are kept.
+    class _TextTerms(_ReportStore):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits(max_terms_count=2 if prefix == TEXT_PREFIX else 65536)
+
+    store = _TextTerms(_documents())
+    strat = _strategy(store, text_unit_slots=3)
+    reports = [
+        RetrievalResult(
+            content="r",
+            score=1.0,
+            source=f"r-{cid}",
+            retriever_type="community",
+            metadata={"community_id": cid},
+        )
+        for cid in ["C1", "A1", "C1", "B"]
+    ]
+    await strat._text_units(
+        reports, SearchQuery(query="themes"), strat.hybrid_scorer.new_trace()
+    )
+    (chunk_query,) = store.calls
+    assert chunk_query.filters["community_ids"] == ["C1", "A1"]
 
 
 async def test_community_depth_bounds_the_whole_depth_fallback() -> None:
