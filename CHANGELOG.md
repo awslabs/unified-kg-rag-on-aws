@@ -1355,6 +1355,16 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Reset: a reset pipeline id run again after another pipeline id replaced
+  its extraction records (an incremental run with other settings deletes
+  the records of the units it re-extracts) resumed at indexing from its
+  cached stages, so the full build kept none of the records its text units
+  name and the next incremental run could not derive what those units cite.
+  The rerun now resumes from the first stage whose records are gone
+  (graph_extraction or claim_extraction), which extracts those units again:
+  the LLM response cache answers them, and with
+  `cache.llm_responses.enabled: false` the rerun costs what the first reset
+  did (#PR).
 - Incremental indexing: a document that always fails extraction no longer
   blocks every later run. Alone in a delta it failed graph extraction on all
   of its units, which stopped the run before the indexing stage recorded it

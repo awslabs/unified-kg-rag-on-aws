@@ -45,8 +45,10 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     PipelineStage,
     TextChunkingStage,
     TranslationStage,
+    _with_record_keys,
 )
 from unified_kg_rag.application.observability import configure_observability
+from unified_kg_rag.domain.ingestion.contributions import record_keys
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.models import (
     Config,
@@ -60,6 +62,7 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
@@ -1192,6 +1195,14 @@ class DataIngestionPipeline:
                 context = self.resume_manager.restore_pipeline_context(
                     pipeline_id, completed_stages
                 )
+            rewound = self._rewind_on_missing_records(
+                context, start_stage_name, completed_stages
+            )
+            if rewound is not None:
+                start_stage_name, completed_stages = rewound
+                context = self.resume_manager.restore_pipeline_context(
+                    pipeline_id, completed_stages
+                )
             if self._delta_is_stale(context, start_stage_name):
                 start_stage_name, completed_stages = self._rewind_to_loading(
                     start_stage_name, completed_stages, _STALE_DELTA
@@ -1304,6 +1315,110 @@ class DataIngestionPipeline:
             "Stage '%s' failed on %d text units; resuming from it instead of '%s'",
             first,
             len(context.failed_text_unit_ids[first]),
+            start_stage_name,
+        )
+        position = canonical_order.index(first)
+        return first, [
+            name
+            for name in completed_stages
+            if name in canonical_order and canonical_order.index(name) < position
+        ]
+
+    def _rewind_on_missing_records(
+        self,
+        context: PipelineContext,
+        start_stage_name: str | None,
+        completed_stages: list[str],
+    ) -> tuple[str, list[str]] | None:
+        """Move a reset resumed past the stages that store extraction records
+        back to the first of them whose records the store no longer holds, or
+        None to keep it.
+
+        The restored text units name the records this pipeline's stages
+        stored (graph records at graph_resolution, claim records at
+        claim_extraction). Another pipeline id may have deleted them since
+        (an incremental run deletes the records of the units it replaces, a
+        full build keeps only the ones its units name). Indexed anyway, the
+        units name records that are gone: the full build keeps none of them,
+        and the next incremental run cannot derive the items those units
+        cite. Run again, the stage extracts only the units whose records are
+        gone (the LLM response cache of the pipeline id answers them, unless
+        ``cache.llm_responses.enabled`` is off) and stores them. An
+        incremental resume needs no check: another pipeline id's write makes
+        its delta stale (``incremental.delta_still_applies``).
+
+        Raises:
+            PipelineResumeError: Records are missing and the stage that
+                stores them is not enabled in this run.
+        """
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if not self.config.indexing.reset or start_stage_name not in canonical_order:
+            return None
+        start = canonical_order.index(start_stage_name)
+        stores = {
+            "graph": PipelineStageType.GRAPH_RESOLUTION.value,
+            "claims": PipelineStageType.CLAIM_EXTRACTION.value,
+        }
+        checked = {
+            kind: stage
+            for kind, stage in stores.items()
+            if stage in completed_stages and canonical_order.index(stage) < start
+        }
+        if not checked:
+            return None
+        units = _with_record_keys(
+            self.config, context, context.translated_units or context.text_units
+        )
+        named: dict[str, dict[str, str]] = {}
+        for unit in units:
+            for kind, key in record_keys(unit).items():
+                if kind in checked:
+                    named.setdefault(BaseIndexer.get_suffix(unit), {})[key] = kind
+        if not named:
+            return None
+        missing: set[str] = set()
+        try:
+            indexer = self.providers.build_vector_indexer()
+            try:
+                read = indexer.read_extraction_records
+                if (
+                    getattr(read, "__func__", read)
+                    is VectorIndexer.read_extraction_records
+                ):
+                    return None  # the backend keeps no records
+                for suffix, kinds in named.items():
+                    found = read(sorted(kinds), suffix=suffix)
+                    missing |= {kinds[key] for key in kinds.keys() - found.keys()}
+            finally:
+                indexer.close()
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the indexing stage meets the store
+            logger.warning("Checking the stored extraction records failed: %s", e)
+            return None
+        if not missing:
+            return None
+        first = min(
+            (
+                (
+                    PipelineStageType.GRAPH_EXTRACTION.value
+                    if kind == "graph"
+                    else checked[kind]
+                )
+                for kind in missing
+            ),
+            key=canonical_order.index,
+        )
+        if first not in {stage.name for stage in self.stages}:
+            raise PipelineResumeError(
+                f"Extraction records this pipeline stored are gone (another "
+                f"run replaced them), so '{first}' must run again. Re-run with "
+                f"'{first}' enabled (--resume-from-stage {first})."
+            )
+        logger.warning(
+            "Extraction records this pipeline stored are gone (another run "
+            "replaced them); resuming from '%s' instead of '%s'",
+            first,
             start_stage_name,
         )
         position = canonical_order.index(first)
