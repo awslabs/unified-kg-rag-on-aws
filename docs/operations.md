@@ -211,18 +211,31 @@ A document is recorded `FAILED` in five cases:
   extraction).
 
 The next run treats a `FAILED` document as changed: it removes what the failed
-run wrote and processes it again. A run of the same pipeline id resumes from
-the earliest completed stage that recorded failed text units and retries
-those units (WARNING `Stage '...' failed on N text units; resuming from it
-...`); the extraction store keeps the units that succeeded. Any other stage failure records nothing and
-stops the run before indexing, leaving the stores and registry as they were;
-the next run processes the same delta again.
+run wrote and processes it again. A run of the same pipeline id without
+`--resume-from-stage` resumes from the earliest completed stage enabled in
+this run that recorded failed text units and retries those units (WARNING
+`Stage '...' failed on N text units; resuming from it ...`); the extraction
+store keeps the units that succeeded. An explicit `--resume-from-stage` past
+it is kept, with a WARNING: the indexing stage records those documents
+`FAILED` again without retrying them. Failures of a stage that is not
+enabled in the rerun are dropped from the restored state. A document that
+reached the retry limit makes the rerun diff the corpus again, which skips it.
+
+A stage failure records nothing else and stops the run before indexing,
+leaving the stores and registry as they were; the next run processes the same
+delta again. The exception: when graph extraction fails on all of its units
+(`Critical stage 'graph_extraction' ... produced 0 outputs. It failed on N
+files: ...`), the documents whose units failed with an error of their own (a
+4xx or validation error, a response that does not parse) are recorded
+`FAILED`, so the retry limit below applies. Throttling, 5xx, timeouts and
+connection errors count for none: a model outage never excludes a document.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
-  consecutive failures of unchanged content the document stays `FAILED`,
-  keeps what it indexed, and each run logs a WARNING naming the file. Fix the
-  cause (often an oversized or malformed file), edit the file, or raise the
-  limit.
+  consecutive runs that recorded unchanged content `FAILED` (with the same
+  extraction settings) the document stays `FAILED`, keeps what it indexed, and
+  is skipped: each run logs a WARNING naming the file and goes on with the
+  rest of the delta, deletions included. Fix the cause (often an oversized or
+  malformed file), edit the file, or raise the limit.
 - **Too large for the registry.** A document whose text-unit ids exceed one
   DynamoDB item (400 KB, about 10,000 ids, half that for an edited document)
   fails indexing before anything is written, with an error naming the file:

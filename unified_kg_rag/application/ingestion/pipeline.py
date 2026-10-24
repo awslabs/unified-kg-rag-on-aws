@@ -1182,7 +1182,10 @@ class DataIngestionPipeline:
                 pipeline_id, completed_stages
             )
             rewound = self._rewind_to_failed_stage(
-                context, start_stage_name, completed_stages
+                context,
+                start_stage_name,
+                completed_stages,
+                explicit=resume_from_stage is not None,
             )
             if rewound is not None:
                 start_stage_name, completed_stages = rewound
@@ -1197,6 +1200,7 @@ class DataIngestionPipeline:
                     pipeline_id, completed_stages
                 )
 
+            self._drop_unrun_failures(context, start_stage_name)
             self._prepare_context_for_resume(context, start_stage_name)
 
             logger.info(
@@ -1250,6 +1254,8 @@ class DataIngestionPipeline:
         context: PipelineContext,
         start_stage_name: str | None,
         completed_stages: list[str],
+        *,
+        explicit: bool = False,
     ) -> tuple[str, list[str]] | None:
         """Move a resume back to the earliest completed, enabled stage that
         recorded failed text units (``context.failed_text_unit_ids``), or
@@ -1257,10 +1263,14 @@ class DataIngestionPipeline:
 
         Its restored output would make the indexing stage record their
         documents FAILED once more without extracting them again, so every
-        re-run of the pipeline id would count one more failure until the
-        documents reach ``indexing.max_document_failures``. Run again, the
-        stage retries only the failed units (the extraction store keeps
-        what succeeded).
+        re-run of the pipeline id would count one more failure. Run again,
+        the stage retries only the failed units (the extraction store keeps
+        what succeeded). A document that reached
+        ``indexing.max_document_failures`` meanwhile is not retried: the
+        delta no longer applies (``incremental.delta_still_applies``), and
+        the resume diffs again. An ``explicit`` resume point
+        (``--resume-from-stage``) is kept, with a warning, as the other
+        rewinds of an auto resume do.
         """
         canonical_order = [st.value for st in self.STAGE_CLASSES]
         if start_stage_name not in canonical_order:
@@ -1279,6 +1289,17 @@ class DataIngestionPipeline:
         if not failed:
             return None
         first = min(failed, key=canonical_order.index)
+        if explicit:
+            logger.warning(
+                "Stage '%s' failed on %d text units; resuming from '%s' as "
+                "asked records their documents FAILED again without retrying "
+                "them (resume from '%s' to retry them)",
+                first,
+                len(context.failed_text_unit_ids[first]),
+                start_stage_name,
+                first,
+            )
+            return None
         logger.warning(
             "Stage '%s' failed on %d text units; resuming from it instead of '%s'",
             first,
@@ -1291,6 +1312,35 @@ class DataIngestionPipeline:
             for name in completed_stages
             if name in canonical_order and canonical_order.index(name) < position
         ]
+
+    def _drop_unrun_failures(
+        self, context: PipelineContext, start_stage_name: str | None
+    ) -> None:
+        """Forget the failed text units the restored context holds for the
+        stages this resumed run neither runs nor restores (not enabled, at or
+        after ``start_stage_name``; gleaning switched off since, say): the run
+        does not use their output, so the indexing stage must not record
+        their documents FAILED again. A stage before the start point keeps
+        them: its restored output is the run's (a phased run's earlier
+        window)."""
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            return
+        start = canonical_order.index(start_stage_name)
+        enabled = {stage.name for stage in self.stages}
+        for name in list(context.failed_text_unit_ids):
+            if (
+                name in canonical_order
+                and name not in enabled
+                and canonical_order.index(name) >= start
+            ):
+                logger.info(
+                    "Stage '%s' is not enabled in this run: its failed text "
+                    "units of an earlier run are not recorded",
+                    name,
+                )
+                del context.failed_text_unit_ids[name]
+                context.item_failed_text_unit_ids.pop(name, None)
 
     def _rewind_on_extraction_change(
         self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]

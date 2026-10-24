@@ -33,7 +33,7 @@ from tests.integration.test_ingestion_stages import _source_text
 from tests.integration.test_name_variant_convergence import _Died, _dying, _respond
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, PipelineConfig, PipelineStageType
 from unified_kg_rag.domain.models.config import ChunkingStrategy
 
 pytestmark = pytest.mark.integration
@@ -190,12 +190,18 @@ _FAILING = "Acme LLC and Acme Corp trade goods 3. Acme Inc and Acme Corp trade c
 
 
 def _failing_document_states(
-    tmp: Path, steps: list[tuple[str, bool]], *, gleaning: bool, reset: bool = False
+    tmp: Path,
+    steps: list[tuple[str, bool]],
+    *,
+    gleaning: bool,
+    reset: bool = False,
+    max_failures: int = 3,
 ) -> list[tuple[str, int]]:
     """Run (pipeline id, extraction failing) steps; d5's (status, failure
     count) after each."""
     config, providers, failing = _setup(tmp, lambda unit: "Acme Corp" in unit)
     config.indexing.reset = reset
+    config.indexing.max_document_failures = max_failures
     chunking = config.processing.chunking
     chunking.chunker_type = ChunkingStrategy.SIMPLE
     chunking.fallback_chunk_size, chunking.chunk_overlap = 60, 0
@@ -244,3 +250,75 @@ def test_a_rerun_reset_pipeline_id_retries_its_failed_units(tmp_path: Path) -> N
         tmp_path, [("P1", True), ("P1", False)], gleaning=False, reset=True
     )
     assert seen == [("failed", 1), ("processed", 0)], seen
+
+
+def test_a_rerun_pipeline_id_stops_retrying_at_max_document_failures(
+    tmp_path: Path,
+) -> None:
+    # Each rerun rewound to the failed stage and counted one more failure,
+    # past indexing.max_document_failures (2): the limit a fresh pipeline
+    # id applies. The rerun now diffs again and skips d5.
+    seen = _failing_document_states(
+        tmp_path, [("P1", True)] * 4, gleaning=False, max_failures=2
+    )
+    assert seen == [("failed", 1), ("failed", 2), ("failed", 2), ("failed", 2)], seen
+
+
+def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
+    tmp_path: Path,
+) -> None:
+    # P1 fails gleaning d5; P1 run again with gleaning off re-extracted d5
+    # but still recorded it FAILED for the restored gleaning failure.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.document_parsing.source_scope = "rerun-corpus"
+    config.processing.gleaning.max_rounds = 1
+
+    def respond(system: str, human: str) -> str:
+        if config.processing.gleaning.enabled and "refinement specialist" in system:
+            raise RuntimeError("rejected")
+        return _respond(system, human)
+
+    providers = e2e._providers(
+        config, FakeOllama(respond, "x", e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    _write_corpus(source, {"d5.txt": _FAILING})
+    states = []
+    for gleaning in (True, False):
+        config.processing.gleaning.enabled = gleaning
+        e2e._ingest(config, providers, source, tmp_path / "P1")
+        (record,) = providers.build_doc_status().list_all()
+        states.append((record.status.value, record.failure_count))
+    assert states == [("failed", 1), ("processed", 0)], states
+
+
+def test_an_explicit_resume_point_is_kept_past_a_failed_stage(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The failed-stage rewind overrode --resume-from-stage; the other
+    # rewinds of an auto resume keep it. It is kept, with a warning.
+    config, providers, failing = _setup(tmp_path, lambda unit: "Acme Corp" in unit)
+    source = tmp_path / "corpus"
+    _write_corpus(source, {"d5.txt": _FAILING, "d4.txt": "Buyer and Acme LLC trade."})
+    failing["on"] = True
+    e2e._ingest(config, providers, source, tmp_path / "P1")
+    failing["on"] = False
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "P1",
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    try:
+        with caplog.at_level("WARNING"):
+            pipeline.run(source, pipeline_id="P1", resume_from_stage="indexing")
+    finally:
+        pipeline.close()
+    (record,) = [
+        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+    ]
+    assert (record.status.value, record.failure_count) == ("failed", 2)
+    assert "resuming from 'indexing' as asked" in caplog.text
