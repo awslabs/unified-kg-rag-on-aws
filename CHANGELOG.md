@@ -1361,19 +1361,19 @@ changed once with the full-config keys (#332).
   time, without retrying them, until `indexing.max_document_failures`
   excluded them. Such a resume is now refused (`PipelineResumeError`, the
   message names the stage to enable); an explicit `--resume-from-stage` is
-  kept with a warning (#PR).
+  kept with a warning (#424).
 - Incremental indexing, upgrade window: a pipeline id run again computes its
   delta again when a document of it has a record without a writer (written
   by a release before `written_by`) that is `PENDING`, `FAILED` or holds an
   open attempt: an unfinished run, maybe another pipeline id's, left it, and
-  only a committed (`PROCESSED`) one is left to the other checks (#PR).
+  only a committed (`PROCESSED`) one is left to the other checks (#424).
 - Incremental indexing: a pipeline id of one source scope run again no
   longer deletes another scope's live documents. After an interrupted reset
   of scope A moved scope B's records into A, the next run of A deleted them
   and a run of B indexed them again; the A pipeline id, run again, restored
   its delta and deleted them once more. A delta that deletes a document
   another pipeline id has recorded in another scope since (not one the
-  delta retires) is now computed again (#PR).
+  delta retires) is now computed again (#424).
 - Reset: a reset pipeline id run again after another pipeline id replaced
   its extraction records (an incremental run with other settings deletes
   the records of the units it re-extracts) resumed at indexing from its
@@ -1383,7 +1383,7 @@ changed once with the full-config keys (#332).
   (graph_extraction or claim_extraction), which extracts those units again:
   the LLM response cache answers them, and with
   `cache.llm_responses.enabled: false` the rerun costs what the first reset
-  did (#PR).
+  did (#424).
 - Incremental indexing: a document that always fails extraction no longer
   blocks every later run. Alone in a delta it failed graph extraction on all
   of its units, which stopped the run before the indexing stage recorded it
