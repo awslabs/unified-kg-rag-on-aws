@@ -74,6 +74,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import (
@@ -1550,12 +1551,16 @@ class DataIngestionPipeline:
         will create (``VectorIndexer.check_index_creation``: every one on a
         full build or reset, an incremental run's missing ones). An
         incremental run with no document to (re)extract is not checked: it
-        calls no model. A check that fails otherwise is logged: the stages
+        calls no model. Any other failure of the check is logged: the stages
         then meet the store's error themselves.
 
         Raises:
             ConfigurationError: The live indices do not match, or the store
-                refused the settings (``StoreRequestRejectedError``).
+                refused the settings or the caller (``StoreRequestRejectedError``,
+                ``StoreAccessDeniedError``: HTTP 400, 401/403).
+            StoreConnectionError: The store is unreachable (after the
+                client's retries): the run would pay for the extraction and
+                then fail to write it.
             NamespaceLeaseError: The run lost its write lease.
         """
         try:
@@ -1572,7 +1577,7 @@ class DataIngestionPipeline:
                 indexer.check_index_creation(suffix, rebuild=not incremental)
             finally:
                 indexer.close()
-        except (ConfigurationError, NamespaceLeaseError):
+        except (ConfigurationError, NamespaceLeaseError, StoreConnectionError):
             raise
         except Exception as e:  # noqa: BLE001 - the stages report the store
             logger.warning("Checking the vector store's index creation failed: %s", e)
