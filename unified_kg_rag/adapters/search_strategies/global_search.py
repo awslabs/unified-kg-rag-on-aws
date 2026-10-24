@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    as_float,
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
@@ -52,6 +53,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
+from unified_kg_rag.shared.utils.concurrency import gather_bounded
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
@@ -233,31 +235,71 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             page = min(page, limits.max_result_window)
         return max(1, min(self.global_search_config.max_reports_per_level, page - 1))
 
+    async def _scope_terms(self, scope: dict[str, Any], suffix: str | None) -> int:
+        """The values one ``terms`` clause of the reports index takes, or 0
+        when every list of ``scope`` fits in one."""
+        retriever = self.document_retriever
+        assert retriever is not None
+        prefix = self.config.indexing.opensearch.community_reports_index_prefix
+        terms = (await retriever.aindex_limits(prefix, suffix)).max_terms_count
+        fits = all(not isinstance(v, list) or len(v) <= terms for v in scope.values())
+        return 0 if fits else terms
+
     async def _browse_reports(
         self, query: SearchQuery, scope: dict[str, Any], label: str
     ) -> tuple[list[RetrievalResult], bool]:
         """Up to the cap of the reports matching ``scope`` (and the caller's
-        filters), most important (``rank``) first, and whether that is all.
+        filters), most important (``rank``, then id) first, and whether that
+        is all.
 
         One more report than the cap is asked for, so a set of exactly the
         cap is complete (``_report_cap`` leaves room for it in one request).
+        A scope list past ``max_terms_count`` (the children of many relevant
+        reports) is asked in batches of that many, each for the probe, at
+        most ``search.max_concurrency`` at once, and merged before the cut.
         """
         retriever = self.document_retriever
         if retriever is None:
             return [], True
         cap = await self._report_cap(query.suffix)
         probe = cap + 1
-        browse = SearchQuery(
-            query="",
-            search_type=SearchType.LEXICAL,
-            top_k=probe,
-            index_prefixes=[
-                self.config.indexing.opensearch.community_reports_index_prefix
-            ],
-            suffix=query.suffix,
-            filters=self._scoped_filters(query, **scope),
+        scopes = [scope]
+        if terms := await self._scope_terms(scope, query.suffix):
+            key = next(
+                k for k, v in scope.items() if isinstance(v, list) and len(v) > terms
+            )
+            values = scope[key]
+            scopes = [
+                {**scope, key: values[i : i + terms]}
+                for i in range(0, len(values), terms)
+            ]
+        parts = await gather_bounded(
+            self.config.search.max_concurrency,
+            (
+                self._safe_aretrieve(
+                    retriever,
+                    SearchQuery(
+                        query="",
+                        search_type=SearchType.LEXICAL,
+                        top_k=probe,
+                        index_prefixes=[
+                            self.config.indexing.opensearch.community_reports_index_prefix
+                        ],
+                        suffix=query.suffix,
+                        filters=self._scoped_filters(query, **part),
+                    ),
+                    label,
+                )
+                for part in scopes
+            ),
         )
-        reports = await self._safe_aretrieve(retriever, browse, label)
+        reports = [report for part in parts for report in part]
+        reports.sort(
+            key=lambda r: (
+                -(as_float((r.metadata or {}).get("rank")) or 0.0),
+                str((r.metadata or {}).get("id") or r.source),
+            )
+        )
         return reports[:cap], len(reports) < probe
 
     async def _most_similar_reports(
@@ -274,6 +316,21 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if retriever is None:
             return []
         cap = await self._report_cap(query.suffix)
+        if terms := await self._scope_terms(scope, query.suffix):
+            # A query with text is one search, and a terms clause takes at
+            # most max_terms_count values: the browse's reports (by rank) are
+            # mapped instead.
+            stats["global_level_capped"] = True
+            logger.warning(
+                "%s: more than %s community reports, of more communities than "
+                "a similarity search can scope (the reports index's "
+                "max_terms_count, %s); mapping the %s with the highest rank.",
+                label,
+                cap,
+                terms,
+                cap,
+            )
+            return []
         similar = query.model_copy(
             update={
                 "top_k": cap,

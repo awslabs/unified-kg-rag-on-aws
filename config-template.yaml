@@ -633,9 +633,9 @@ indexing:
     language_analyzers:
       en: "english"
       ko: "nori"
-    # Most hits one query returns (a fetch by id returns its best-ranked ids,
-    # as many as the smaller max_result_window / max_terms_count of
-    # index_settings and the live index allow).
+    # Most hits one query returns (a fetch by id returns every id it names,
+    # asked in batches of the smaller max_result_window / max_terms_count of
+    # the live index).
     max_query_size: 100
 
     # Index settings, all passed to index creation (indices created

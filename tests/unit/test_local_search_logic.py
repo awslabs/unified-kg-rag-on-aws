@@ -54,7 +54,8 @@ def _bare_strategy(
             neptune=SimpleNamespace(entity_label_prefix="Entity"),
         ),
         search=SimpleNamespace(
-            local_search=SimpleNamespace(entity_frequency_threshold=20)
+            local_search=SimpleNamespace(entity_frequency_threshold=20),
+            max_concurrency=4,
         ),
     )
     strat.retrievers = retrievers or {}

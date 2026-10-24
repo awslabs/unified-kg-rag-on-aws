@@ -20,7 +20,6 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share
-from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -28,6 +27,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SearchType,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.shared.exceptions import InvalidFilterError
@@ -96,21 +96,9 @@ class _Index:
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = (query.index_prefixes or [""])[0]
         limits = await self.aindex_limits(prefix, query.suffix)
-        # As the retriever: a fetch by id over one search's limits goes in
-        # batches, an exclusion keeps its last max_terms_count values, a terms clause
-        # over max_terms_count is refused, and a search returns at most
-        # max_result_window hits.
-        # The walk sizes its endpoint lists itself (the retriever splits
-        # those only on its retry), so only a fetch by id is split here.
-        split = "id" in (query.filters or {})
-        if split and (
-            batches := OpenSearchRetriever._batches(
-                query, {prefix: limits}, limits.max_terms_count
-            )
-        ):
-            parts = await asyncio.gather(*(self.aretrieve(b) for b in batches))
-            return [hit for part in parts for hit in part]
-        query = OpenSearchRetriever._within_terms(query, limits.max_terms_count)
+        # A store that batches nothing: a terms clause (or exclusion) over
+        # max_terms_count is refused and a search returns at most
+        # max_result_window hits. The strategies size every list themselves.
         filters = dict(query.filters or {})
         self.calls.append((prefix, filters))
         for values in [*filters.values(), *(query.exclude or {}).values()]:
@@ -922,6 +910,86 @@ async def test_incident_edges_asked_otherwise_are_asked_again(
     assert len(_relationship_calls(config, index)) == 2 * asked
 
 
+async def test_the_incident_edge_memo_keys_on_what_the_requests_send(
+    config: Config,
+) -> None:
+    # Regression: the memo keyed on the vertex sets, but past
+    # max_terms_count the exclusion keeps the vertices listed last: the same
+    # sets in another order leave out other vertices, and the second call
+    # got the first's edges.
+    edges = [("r-sx", "S", "X", 3.0), ("r-sy", "S", "Y", 2.0), ("r-sz", "S", "Z", 1.0)]
+    config.indexing.opensearch.index_settings = {"max_terms_count": 1}
+    query = SearchQuery(query="q", filters={"attr_grp": "a"})
+
+    async def ask(away: list[str]) -> list[str]:
+        index = _Index(config, edges=edges, passing={e[0] for e in edges})
+        strategy = _strategy(config, _Graph(), index)
+        found, _ = await strategy._incident_relationships(
+            query, ["S"], ends=("source_id",), away_from=away
+        )
+        return sorted(str(e.source) for e in found)
+
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    strategy = _strategy(config, _Graph(), index)
+    with query_scope():
+        await strategy._incident_relationships(
+            query, ["S"], ends=("source_id",), away_from=["X", "Y"]
+        )
+        found, _ = await strategy._incident_relationships(
+            query, ["S"], ends=("source_id",), away_from=["Y", "X"]
+        )
+    assert sorted(str(e.source) for e in found) == await ask(["Y", "X"])
+    assert await ask(["Y", "X"]) == ["r-sy", "r-sz"]
+
+
+async def test_one_full_batch_makes_its_end_full_and_warns(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Past max_terms_count the vertices go in batches: an end whose page
+    # came back full in any batch dropped edges, though the others did not.
+    config.indexing.opensearch.index_settings = {"max_terms_count": 1}
+    config.indexing.opensearch.max_query_size = 2
+    edges = [("r-a1", "A", "X1", 3.0), ("r-a2", "A", "X2", 2.0)]
+    edges += [("r-a3", "A", "X3", 1.0), ("r-b1", "B", "Y1", 1.0)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    with caplog.at_level(logging.WARNING):
+        found, full = await _strategy(config, _Graph(), index)._incident_relationships(
+            SearchQuery(query="q", filters={"attr_grp": "a"}),
+            ["A", "B"],
+            ends=("source_id",),
+        )
+    assert sorted(str(e.source) for e in found) == ["r-a1", "r-a2", "r-b1"]
+    assert full == ("source_id",)
+    assert "page cap" in caplog.text
+
+
+async def test_the_incident_edge_batches_respect_the_search_concurrency(
+    config: Config,
+) -> None:
+    # Regression: every batch of both ends went to the store at once.
+    config.indexing.opensearch.index_settings = {"max_terms_count": 1}
+    config.search.max_concurrency = 3
+    vertices = [f"V{i}" for i in range(10)]
+    edges = [(f"e{i}", v, "S", 1.0) for i, v in enumerate(vertices)]
+    in_flight = peak = 0
+
+    class _Counting(_Index):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.005)
+            in_flight -= 1
+            return await super().aretrieve(query)
+
+    index = _Counting(config, edges=edges, passing={e[0] for e in edges})
+    found, _ = await _strategy(config, _Graph(), index)._incident_relationships(
+        SearchQuery(query="q", filters={"attr_grp": "a"}), vertices
+    )
+    assert len(found) == 10
+    assert peak == 3
+
+
 async def test_a_waiter_asks_again_after_the_request_in_flight_failed(
     config: Config,
 ) -> None:
@@ -1142,8 +1210,9 @@ async def test_the_check_walks_a_long_list_once(config: Config) -> None:
 
 
 class _Window:
-    """A retriever over an index whose live window is ``window`` that returns
-    every id asked for (it batches them), in its own (reverse) order."""
+    """A custom retriever following the documented contract over an index
+    whose live window is ``window``: it batches nothing and answers a search
+    with at most a window of hits, in its own (reverse) order."""
 
     def __init__(self, window: int) -> None:
         self.window = window
@@ -1155,7 +1224,35 @@ class _Window:
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         ids = list((query.filters or {}).get("id") or [])
         self.asked.append(ids)
-        return [_entity(i) for i in sorted(ids, reverse=True)]
+        return [_entity(i) for i in sorted(ids, reverse=True)][: self.window]
+
+
+async def test_a_fetch_by_id_is_batched_by_the_smallest_step_of_its_indexes(
+    config: Config,
+) -> None:
+    # Over two indexes the batch fits the one whose window is smaller;
+    # the step is the window (2) here, not max_terms_count (3).
+    class _TwoIndexes(_Window):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            window = 2 if prefix == "small" else 5
+            return IndexLimits(max_result_window=window, max_terms_count=3)
+
+    store = _TwoIndexes(window=2)
+    strategy = _strategy(config, _Graph(), store)
+    ids = [f"e{i}" for i in range(5)]
+    found = await strategy._fetch_by_ids(
+        store,
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=len(ids),
+            index_prefixes=["large", "small"],
+            filters={"id": ids},
+        ),
+        "fetch",
+    )
+    assert store.asked == [["e0", "e1"], ["e2", "e3"], ["e4"]]
+    assert sorted(str(r.source) for r in found) == ids
 
 
 def _relationship(source: str, target: str) -> RetrievalResult:
@@ -1173,8 +1270,10 @@ def _relationship(source: str, target: str) -> RetrievalResult:
 )
 async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -> None:
     # Regression: a fetch by id was cut to the ids one search returns (the
-    # live window), so a window of 100 kept 100 of 500 ranked text units.
-    # The strategy names every id (the retriever batches them) and keeps
+    # live window), so a window of 100 kept 100 of 500 ranked text units;
+    # then only OpenSearchRetriever batched, so a custom retriever that
+    # answers a window kept the window's worth in its own order, not the
+    # best-ranked ids. The strategy asks in batches of the window and keeps
     # the rank order.
     store = _Window(window=2)
     ranked = ["e1", "e2", "e3", "e4"]
@@ -1202,5 +1301,5 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
             SearchQuery(query="q"), [cited], []
         )
         got = [r.source for r in found["lightrag_linked_chunks"]]
-    assert store.asked == [ranked]
+    assert store.asked == [["e1", "e2"], ["e3", "e4"]]
     assert got == ranked

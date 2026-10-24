@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models.config import (
     ROLE_TIERS,
 )
 from unified_kg_rag.shared import LanguageModelError
+from unified_kg_rag.shared import logging as shared_logging
 
 pytestmark = pytest.mark.unit
 
@@ -41,10 +42,8 @@ TEMPLATE = Path(__file__).resolve().parents[2] / "config-template.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _reset_warnings() -> Any:
-    bedrock_models._warned_uncurated.clear()
-    yield
-    bedrock_models._warned_uncurated.clear()
+def _reset_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
 
 
 # --- config ---------------------------------------------------------------

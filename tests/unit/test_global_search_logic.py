@@ -32,7 +32,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
 )
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import ConfigurationError, InvalidFilterError
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
@@ -297,6 +297,22 @@ async def test_a_live_window_below_the_cap_bounds_it() -> None:
     assert _mapped(strat) == {"A", "B", "C"}
 
 
+async def test_the_cap_follows_the_reports_index_of_the_querys_suffix() -> None:
+    # The cap reads the live window of the community-reports index under the
+    # query's suffix, not another index's or the unsuffixed one's.
+    class _Scoped(_ReportStore):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            small = prefix == REPORTS_PREFIX and suffix == "v2"
+            return IndexLimits(max_result_window=4 if small else 10000)
+
+    store = _Scoped(_documents())
+    strat = _strategy(store)
+    result = await strat.asearch(SearchQuery(query="themes", suffix="v2"))
+
+    assert store.calls[0].top_k == 4
+    assert result.metadata["global_cut_depth"] == 1
+
+
 async def test_a_cut_of_exactly_the_cap_is_complete() -> None:
     # Regression: a cut of exactly max_reports_per_level reports was taken
     # for a truncated one and re-fetched by similarity.
@@ -415,6 +431,41 @@ async def test_dynamic_selection_follows_relevant_children_past_community_depth(
     strat.community_relevance_scorer = _Rater({"R0", "A", "A1"})
     await strat.asearch(SearchQuery(query="themes"))
     assert _mapped(strat) == {"A1"}
+
+
+class _TermsStore(_ReportStore):
+    """A report store whose terms clause takes ``terms`` values: a search
+    with a longer list is refused, as OpenSearch refuses it."""
+
+    def __init__(self, documents: list[dict[str, Any]], terms: int) -> None:
+        super().__init__(documents)
+        self.terms = terms
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits(max_terms_count=self.terms)
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        for key, values in (query.filters or {}).items():
+            if isinstance(values, list) and len(values) > self.terms:
+                raise InvalidFilterError(f"{key} lists {len(values)} values")
+        return await super().aretrieve(query)
+
+
+async def test_children_past_max_terms_count_are_browsed_by_rank() -> None:
+    # Regression: past max_terms_count the child browse came back batch
+    # after batch and was cut in that order (A, B kept over the better
+    # ranked C), and the similarity search over the children failed the
+    # query (InvalidFilterError): a terms clause takes max_terms_count
+    # values. The browse goes in batches and is merged by rank.
+    store = _TermsStore(_documents(), terms=1)
+    strat = _strategy(store, use_dynamic_selection=True, max_reports_per_level=2)
+    rater = _Rater({"R0", "R1"})
+    strat.community_relevance_scorer = rater
+    result = await strat.asearch(SearchQuery(query="themes"))
+
+    # A (rank 2), B (3), C (4): the two best ranked children are rated.
+    assert sorted(rater.rated) == ["B", "C", "R0", "R1"]
+    assert result.metadata["global_level_capped"] is True
 
 
 async def test_community_depth_bounds_the_whole_depth_fallback() -> None:

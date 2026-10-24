@@ -112,6 +112,24 @@ async def test_a_batch_without_any_hit_is_not_cached(config: Config) -> None:
     assert await resolver.aresolve(["t1"], None) == {"t1": "vendor.pdf"}
 
 
+async def test_a_batch_of_unknown_ids_is_cached_when_another_answered(
+    config: Config,
+) -> None:
+    # Regression: a batch whose ids were all unknown was never cached, even
+    # when the store answered another batch of the same call: every
+    # evaluation query asked for those ids again.
+    store = _Store({"t1": "vendor.pdf", "t2": "buyer.txt"})
+    resolver = TextUnitFileResolver(config, lambda: store)
+    wanted = ["t1", "t2", "x1", "x2"]
+    assert await resolver.aresolve(wanted, None) == {
+        "t1": "vendor.pdf",
+        "t2": "buyer.txt",
+    }
+    assert len(store.queries) == 2
+    assert await resolver.aresolve(["x1", "x2"], None) == {}
+    assert len(store.queries) == 2
+
+
 async def test_batches_follow_max_terms_count_too(config: Config) -> None:
     # A batch names at most id_batch_size ids: the smaller of the window
     # and max_terms_count, not the window alone.

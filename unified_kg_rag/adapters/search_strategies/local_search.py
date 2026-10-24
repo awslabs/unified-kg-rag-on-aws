@@ -468,7 +468,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             filters={**(filters or {}), "id": text_unit_ids},
         )
 
-        results = await self._safe_aretrieve(
+        results = await self._fetch_by_ids(
             self.document_retriever, search_query, "Text unit fetch"
         )
         if not results:

@@ -56,7 +56,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard
+from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded
 from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
@@ -295,7 +295,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     default=self._configured_limits.max_terms_count,
                 )
                 if batches := self._batches(query, limits, terms_limit):
-                    parts = await asyncio.gather(*(self.aretrieve(b) for b in batches))
+                    parts = await gather_bounded(
+                        self._config.search.max_concurrency,
+                        (self.aretrieve(b) for b in batches),
+                    )
                     return [hit for part in parts for hit in part]
                 asked = self._within_terms(query, terms_limit)
                 self._check_filter_values(asked.filters, terms_limit)
@@ -364,15 +367,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         """A text-less search split by a list filter longer than one search
         takes, or ``None`` when it fits.
 
-        A fetch by id naming more ids than ``IndexLimits.id_batch_size``
-        returns the window's worth in the engine's order (or fails past
-        ``max_terms_count``): the local/mix expansion, the walk's entity read
-        and source resolution name ids by the hundred. Each batch fetches
-        its ids in full. Any other list over ``max_terms_count`` (the walk's
-        frontier, sized by limits read before an index was rebuilt smaller)
-        goes in batches of that many, each with its own ``top_k``. Sized by
-        the ``limits`` just read, so a search asked again after the store
-        rejected the old limits is split by the new ones.
+        The strategies size every list by ``aindex_limits`` themselves
+        (``BaseSearchStrategy._fetch_by_ids``, ``_ask_incident``, global
+        search's browse, the source resolver), so theirs fit unless the
+        store rejected the limits they were sized by: asked again after an
+        index was rebuilt smaller, a search is split by the ``limits`` just
+        read, a fetch by id by ``IndexLimits.id_batch_size``, any other
+        list by ``max_terms_count``, each batch with the search's ``top_k``.
+        A direct caller's oversized list is split the same way.
         """
         if query.query:
             return None
@@ -387,14 +389,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             logger.debug(
                 "Searching %s %s values in batches of %s", len(values), key, step
             )
+            # Each batch keeps the search's top_k: a fetch by id asks for
+            # all its ids (top_k=len(ids)), more than any batch names.
             return [
                 query.model_copy(
                     update={"filters": {**filters, key: values[i : i + step]}}
-                    | (
-                        {"top_k": len(values[i : i + step]), "retrieval_multiplier": 1}
-                        if key == "id"
-                        else {}
-                    )
                 )
                 for i in range(0, len(values), step)
             ]
@@ -707,13 +706,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             limits, keep = await self._read_limits(alias)
         finally:
             # Resolved whatever happens (None: the waiters read for
-            # themselves), and the entry replaced only while it is still this
-            # read's: a rejected search may have dropped it meanwhile.
-            if self._index_limits.get(alias) is pending:
-                if keep and limits is not None:
-                    self._index_limits[alias] = limits
-                else:
-                    self._index_limits.pop(alias, None)
+            # themselves). The entry is still this read's: a rejected search
+            # drops only limits already read, never a read in flight.
+            if keep and limits is not None:
+                self._index_limits[alias] = limits
+            else:
+                self._index_limits.pop(alias, None)
             pending.set_result(limits)
         return limits
 

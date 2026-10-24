@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.common import compute_hash
+from unified_kg_rag.shared.utils.concurrency import gather_bounded
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -238,7 +239,12 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
 
     @abstractmethod
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        pass
+        """The hits of one search: at most ``top_k * retrieval_multiplier``
+        and no more than the index's ``aindex_limits`` allow, leaving out
+        what ``query.exclude`` matches. Past those limits a backend may cut
+        or refuse a request: the strategies size theirs by
+        :meth:`aindex_limits` (``BaseSearchStrategy._fetch_by_ids`` asks a
+        fetch by id in batches), so a backend need not batch one itself."""
 
     def filter_fields(self) -> FilterFields | None:
         """Filter keys some index or label this retriever searches can match.
@@ -363,6 +369,44 @@ class BaseSearchStrategy(ABC):
             if observability.is_enabled():
                 span.set_attributes(_retrieval_attributes(results))
             return results
+
+    async def _fetch_by_ids(
+        self,
+        retriever: BaseGraphRAGRetriever,
+        query: SearchQuery,
+        label: str,
+    ) -> list[RetrievalResult]:
+        """``query``, a fetch by id (no text, ``filters["id"]`` listing the
+        ids), through ``_safe_aretrieve`` in batches one search returns in
+        full: at most ``IndexLimits.id_batch_size`` ids of every index it
+        reads (``aindex_limits``), each batch with a ``top_k`` of its ids, at
+        most ``search.max_concurrency`` at once. Asked at once, ids past the
+        window came back as the window's worth in the store's order, not the
+        best-ranked ones. The hits come back batch after batch."""
+        ids = list((query.filters or {}).get("id") or ())
+        prefixes = query.index_prefixes or []
+        if isinstance(prefixes, str):
+            prefixes = [prefixes]
+        limits = [await retriever.aindex_limits(p, query.suffix) for p in prefixes]
+        step = max(1, min((lim.id_batch_size for lim in limits), default=len(ids)))
+        parts = await gather_bounded(
+            self.config.search.max_concurrency,
+            (
+                self._safe_aretrieve(
+                    retriever,
+                    query.model_copy(
+                        update={
+                            "filters": {**(query.filters or {}), "id": batch},
+                            "top_k": len(batch),
+                            "retrieval_multiplier": 1,
+                        }
+                    ),
+                    label,
+                )
+                for batch in (ids[i : i + step] for i in range(0, len(ids), step))
+            ),
+        )
+        return [hit for part in parts for hit in part]
 
     async def _ids_passing(
         self,
@@ -865,7 +909,7 @@ class BaseSearchStrategy(ABC):
             frontier = reached
         # The seeds first, then by distance: the order the walk reached them.
         reached_ids = list(parent)
-        entities = await self._safe_aretrieve(
+        entities = await self._fetch_by_ids(
             retriever,
             SearchQuery(
                 query="",
@@ -1030,18 +1074,30 @@ class BaseSearchStrategy(ABC):
         retriever = self.document_retriever
         if not retriever or not entity_ids:
             return [], ()
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        step = (await retriever.aindex_limits(prefix, query.suffix)).max_terms_count
+        # One terms clause per list: past max_terms_count the store refuses
+        # the query, so the vertices are asked in batches, each with its own
+        # page. The exclusion only saves page room: past max_terms_count it
+        # keeps the vertices reached last (it is in reach order), so edges
+        # back to the others can take a page.
+        batches = [entity_ids[i : i + step] for i in range(0, len(entity_ids), step)]
+        away = list(away_from or ())[-step:]
         memo = current_query_scope()
-        # Hashed: the vertices left out alone run to megabytes a walk.
+        # What the requests send: the batches' and the kept exclusion's
+        # values (the order matters only past max_terms_count, by what it
+        # puts in which batch or keeps). Hashed: the vertices left out alone
+        # run to megabytes a walk.
         key = f"{_MEMO_INCIDENT}\n" + compute_hash(
             json.dumps(
                 [
                     query.suffix,
                     query.filters,
-                    sorted(set(entity_ids)),
+                    sorted(sorted(set(batch)) for batch in batches),
                     source_fields,
                     size,
                     ends,
-                    sorted(set(away_from or ())),
+                    sorted(set(away)),
                 ],
                 sort_keys=True,
                 default=str,
@@ -1060,7 +1116,7 @@ class BaseSearchStrategy(ABC):
                 memo[key] = outcome
                 try:
                     edges, full, failed = await self._ask_incident(
-                        query, entity_ids, source_fields, size, ends, away_from
+                        query, batches, source_fields, size, ends, away
                     )
                 except BaseException:
                     del memo[key]
@@ -1073,21 +1129,21 @@ class BaseSearchStrategy(ABC):
                     outcome.set_result((edges, full))
                 return list(edges), full
         edges, full, _ = await self._ask_incident(
-            query, entity_ids, source_fields, size, ends, away_from
+            query, batches, source_fields, size, ends, away
         )
         return edges, full
 
     async def _ask_incident(
         self,
         query: SearchQuery,
-        entity_ids: list[str],
+        batches: list[list[str]],
         source_fields: list[str] | None,
         size: int | None = None,
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
     ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
         """``_incident_relationships``' requests (one per end and batch of
-        ``max_terms_count`` vertices): the edges,
+        vertices, at most ``search.max_concurrency`` at once): the edges,
         the ends whose page came back full and whether a request failed."""
         retriever = self.document_retriever
         assert retriever is not None
@@ -1097,12 +1153,6 @@ class BaseSearchStrategy(ABC):
         # window may be below max_query_size.
         cap = min(self._incident_fetch_limit(), limits.max_result_window)
         page = min(size or cap, cap)
-        # One terms clause per list: past max_terms_count the store refuses
-        # the query, so the vertices are asked in batches, each with its own
-        # page. The exclusion only saves page room; past max_terms_count the
-        # retriever keeps the vertices reached last (it is in reach order).
-        step = limits.max_terms_count
-        batches = [entity_ids[i : i + step] for i in range(0, len(entity_ids), step)]
         failures: list[Exception] = []
 
         async def by_batch(field: str, vertices: list[str]) -> list[RetrievalResult]:
@@ -1122,10 +1172,13 @@ class BaseSearchStrategy(ABC):
                 failures,
             )
 
-        async def by_endpoint(field: str) -> list[list[RetrievalResult]]:
-            return list(await asyncio.gather(*(by_batch(field, b) for b in batches)))
-
-        sides = await asyncio.gather(*(by_endpoint(end) for end in ends))
+        pages = await gather_bounded(
+            self.config.search.max_concurrency,
+            (by_batch(end, batch) for end in ends for batch in batches),
+        )
+        sides = [
+            pages[i : i + len(batches)] for i in range(0, len(pages), len(batches))
+        ]
         # A store that rejected the window was asked again with the live one
         # and returned that many hits: a page that size is full too.
         window = (await retriever.aindex_limits(prefix, query.suffix)).max_result_window
