@@ -1493,6 +1493,10 @@ changed once with the full-config keys (#332).
   known text units as unknown for the evaluator's life (12 of 3,102 ids in
   the reviewer's run). A batch of only unknown ids is asked again on the next
   query, one extra request (#PR).
+- Global search: the community text-unit search (`text_unit_slots`) names
+  at most the text units index's live `max_terms_count` communities, those
+  of the best-ranked reports, instead of failing the query with
+  `InvalidFilterError` when more reports were selected (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
