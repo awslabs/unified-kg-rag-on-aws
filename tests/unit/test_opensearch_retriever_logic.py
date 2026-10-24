@@ -511,6 +511,15 @@ def test_hit_count_clamps_size_to_max(retriever) -> None:
     )
 
 
+def test_hit_count_warns_when_the_live_window_cuts_a_search(retriever, caplog) -> None:
+    # A live index with a lower max_result_window cut a plain search's
+    # top_k silently.
+    q = SearchQuery(query="x", top_k=50, retrieval_multiplier=1)
+    with caplog.at_level("WARNING"):
+        assert retriever._hit_count(q, 20) == 20
+    assert "cut to max_result_window 20" in caplog.text
+
+
 def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
     # Fetch-by-id: ids passed as a terms filter with top_k=len(ids). size must
     # not be clamped to max_query_size (default 100) or ids beyond 100 are

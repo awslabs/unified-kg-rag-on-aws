@@ -386,6 +386,33 @@ async def test_rag_interactive_set_filter_keeps_the_values_whitespace(
     assert seen == {"title": "Annual  report"}
 
 
+async def test_rag_interactive_a_line_starting_with_a_command_is_a_question(
+    config, mocker
+) -> None:
+    # "help me find ..." printed the help instead of asking it; a command
+    # that takes no argument is a command only as the whole line.
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["--interactive"]))
+    asked: list[str] = []
+
+    async def ask(rag_input):
+        asked.append(rag_input.query)
+        return {"success": True, "answer": "a"}
+
+    runner._run_query = ask  # type: ignore[method-assign]
+    runner._print_result = lambda *_a, **_k: None  # type: ignore[method-assign]
+    helped = mocker.Mock()
+    runner.interactive_commands["help"] = helped
+    mocker.patch.object(
+        run_rag_chain.console,
+        "input",
+        side_effect=["help me find the vendor", "new contract terms?", "help", "quit"],
+    )
+    await runner._interactive_mode()
+    assert asked == ["help me find the vendor", "new contract terms?"]
+    helped.assert_called_once()
+
+
 def test_rag_parse_filters_value_with_colon_splits_once() -> None:
     out = run_rag_chain.RAGChainRunner._parse_filters(["url:http://x:8080"])
     assert out == {"url": "http://x:8080"}

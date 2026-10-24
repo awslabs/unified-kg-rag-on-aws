@@ -14,10 +14,17 @@ internal and may change in any release. Two groups:
   bundle that injects them, and the registries for providers, search
   strategies, parsers and renderers (see the design doc's extension guide).
 
-The errors these raise for a caller to tell apart are exported too: every
-one is a :class:`GraphRAGException`; a :class:`ConfigurationError` (among
-them a :class:`StoreRequestRejectedError`) is a setting to fix, not a
-failure to retry.
+The errors these raise for a caller to tell apart are exported too. Each is
+a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
+``KeyboardInterrupt`` (a stop asked for by a signal). A
+:class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
+is a setting to fix and an :class:`InvalidFilterError` a search filter to
+fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
+store, an :class:`IndexNotFoundError` a suffix with no index (not ingested,
+or a typo).
+Errors outside the framework's own code pass through as raised: a missing
+config file (``FileNotFoundError``), or the model client's transport error
+(an ``httpx.ConnectError`` from a local model server, say).
 
 Names load on first access, so ``import unified_kg_rag`` stays cheap and
 pulls in no model, AWS or store SDK.
@@ -71,6 +78,10 @@ _EXPORTS: dict[str, str] = {
     "StoreRequestRejectedError": "unified_kg_rag.shared.exceptions",
     "PipelineExecutionError": "unified_kg_rag.shared.exceptions",
     "NamespaceLeaseError": "unified_kg_rag.shared.exceptions",
+    "InvalidFilterError": "unified_kg_rag.shared.exceptions",
+    "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
+    "StoreConnectionError": "unified_kg_rag.shared.exceptions",
+    "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
     "build_providers": "unified_kg_rag.application.bootstrap",
@@ -165,8 +176,12 @@ if TYPE_CHECKING:
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         GraphRAGException,
+        IndexNotFoundError,
+        InvalidFilterError,
         NamespaceLeaseError,
         PipelineExecutionError,
+        PipelineInterrupted,
+        StoreConnectionError,
         StoreRequestRejectedError,
     )
     from unified_kg_rag.shared.logging import setup_logging

@@ -907,7 +907,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 
 Interactive mode turns memory on. Commands: `help`, `new` (a fresh
 conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
-`quit` / `exit`.
+`quit` / `exit`. A command is the whole line (only `set-filter` takes an
+argument): `help me find ...` is a question.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):
@@ -1603,15 +1604,16 @@ Flags must be spelled out in full: a prefix such as `--output` is rejected.
 `--output-format json` prints one JSON document to stdout and moves the
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
 `--metrics-sink cloudwatch`, which also writes to stdout): the answer or
-search results (`run-rag`), the pipeline id, status and per-stage results
-(`run-ingestion`), each run's summary, the comparison and the failure-budget
+search results (`run-rag`), the pipeline id, status, the number of documents
+a stage failed on (`failed_documents`, recorded `FAILED`) and per-stage
+results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-with when it has one, so stdout is always JSON; `run-ingestion` adds the
+with (an argparse error included), so stdout is always JSON; `run-ingestion` adds the
 `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in
 flight (this run's, or those of the run whose expired lease it took over),
@@ -1684,6 +1686,13 @@ finally:
 
 - A failed stage sets the returned `PipelineContext`'s `status` to `FAILED`
   rather than raising, so check it as above.
+- The errors to tell apart are exported from the package root:
+  `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
+  them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
+  `NamespaceLeaseError`, `PipelineExecutionError` and `PipelineInterrupted`
+  (a `KeyboardInterrupt`); all but the last are `GraphRAGException`s. A
+  model client's own transport error (`httpx.ConnectError` from a local
+  model server, say) is raised as is.
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
   `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `target_language`); a plain dict

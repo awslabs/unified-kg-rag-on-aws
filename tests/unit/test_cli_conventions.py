@@ -216,6 +216,7 @@ def test_ingestion_json_result_lists_each_stage(
     result = json.loads(json.dumps(runner._json_result(context)))
     assert result["pipeline_id"] == "run-1"
     assert result["status"] == "failed"
+    assert result["failed_documents"] == 0
     assert result["stages"] == [
         {
             "stage_name": "text_chunking",
@@ -227,6 +228,37 @@ def test_ingestion_json_result_lists_each_stage(
             "executed": True,
         }
     ]
+
+
+async def test_ingestion_json_result_counts_the_failed_documents() -> None:
+    # The result named no failed document: a run that recorded some FAILED
+    # read as a clean success.
+    from unified_kg_rag.domain.models import Document, TextUnit
+
+    documents = [
+        Document(page_content=t, document_id=t, file_name=t, file_path=t)
+        for t in ("a", "b", "c")
+    ]
+    units = [
+        TextUnit(id=f"u{i}", text="x", document_ids=[doc])
+        for i, doc in enumerate(["a", "a", "b", "c"])
+    ]
+    context = PipelineContext(
+        pipeline_id="run-1",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.COMPLETED,
+        start_time=datetime.now(),
+        documents=documents,
+        text_units=units,
+        source_directory=Path("src"),
+        failed_text_unit_ids={"graph_extraction": ["u0", "u1"], "gleaning": ["u3"]},
+    )
+    assert [d.document_id for d in context.failed_documents] == ["a", "c"]
+    runner = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
+        run_ingestion_pipeline.IngestionPipelineRunner
+    )
+    runner.pipeline = MagicMock(executed_stages=frozenset())
+    assert runner._json_result(context)["failed_documents"] == 2
 
 
 async def test_eval_json_output_is_the_only_stdout(
@@ -509,7 +541,7 @@ def test_a_failed_json_run_prints_a_failed_status(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Before, run-visualization and run-prompt-tuning exited 1 with nothing
-    # on stdout in JSON mode.
+    # on stdout in JSON mode, then without the error.
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
     monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _args: Config())
@@ -523,19 +555,20 @@ def test_a_failed_json_run_prints_a_failed_status(
         (
             run_visualization.main,
             ["run-visualization", "--data-path", str(data), *json_flags],
+            "renderer crashed",
         ),
         (
             run_prompt_tuning.main,
             ["run-prompt-tuning", "--source-directory", str(empty), *json_flags],
+            "No text documents found",
         ),
     ]
-    for main, argv in cases:
+    for main, argv, error in cases:
         monkeypatch.setattr(sys, "argv", argv)
         assert main() == 1, argv[0]
-        assert json.loads(capsys.readouterr().out) == {
-            "status": "failed",
-            "exit_code": 1,
-        }, argv[0]
+        status = json.loads(capsys.readouterr().out)
+        assert error in status.pop("error"), argv[0]
+        assert status == {"status": "failed", "exit_code": 1}, argv[0]
 
 
 def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
@@ -604,21 +637,40 @@ def test_a_malformed_musique_item_is_a_usage_error(tmp_path: Path, line: str) ->
 
 
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "error"),
     [
         # An argparse error.
-        ["run-rag", "--output-format", "json", "--top-k", "0", "--query", "q"],
+        (
+            ["run-rag", "--output-format", "json", "--top-k", "0", "--query", "q"],
+            "--top-k",
+        ),
+        # An unknown flag, and a parser.error call: no exception to name (the
+        # status had no error).
+        (
+            ["run-ingestion", "--output-format", "json", "--no-such-flag"],
+            "--no-such-flag",
+        ),
+        (["run-rag", "--output-format", "json"], "--query"),
         # A config file that fails to load, before json_output ran.
-        [
-            "run-rag",
-            "--output-format=json",
-            "--query",
-            "q",
-            "--config-path",
+        (
+            [
+                "run-rag",
+                "--output-format=json",
+                "--query",
+                "q",
+                "--config-path",
+                "nope.yaml",
+            ],
             "nope.yaml",
-        ],
-        ["run-eval", "--output-format", "json", "--config-path", "nope.yaml"],
-        ["run-ingestion", "--output-format", "json", "--config-path", "nope.yaml"],
+        ),
+        (
+            ["run-eval", "--output-format", "json", "--config-path", "nope.yaml"],
+            "nope.yaml",
+        ),
+        (
+            ["run-ingestion", "--output-format", "json", "--config-path", "nope.yaml"],
+            "nope.yaml",
+        ),
     ],
 )
 def test_an_early_usage_error_still_prints_a_json_status(
@@ -626,6 +678,7 @@ def test_an_early_usage_error_still_prints_a_json_status(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     argv: list[str],
+    error: str,
 ) -> None:
     # Before, stdout was empty: the error came before json_output(args).
     monkeypatch.setattr(console, "stderr", console.stderr)
@@ -641,7 +694,7 @@ def test_an_early_usage_error_still_prints_a_json_status(
     assert exc.value.code == 2
     status = json.loads(capsys.readouterr().out)
     # The error it exited for is named (it was not).
-    assert ("--top-k" if "--top-k" in argv else "nope.yaml") in status.pop("error")
+    assert error in status.pop("error")
     assert status == {"status": "failed", "exit_code": 2}
 
 

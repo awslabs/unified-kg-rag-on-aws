@@ -34,6 +34,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
     json_output,
@@ -155,7 +156,7 @@ class CommandLineInterface:
 
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser(
+        parser = ArgumentParser(
             allow_abbrev=False,
             description="GraphRAG Evaluation System - Assess retrieval and generation performance",
             formatter_class=argparse.RawDescriptionHelpFormatter,

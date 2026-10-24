@@ -203,14 +203,28 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   `records_not_stored`)
 
 다음 실행은 `FAILED` 문서를 바뀐 문서로 보고, 실패한 실행이 쓴 것을 지운 뒤 다시
-처리합니다. 같은 파이프라인 ID로 다시 실행하면 실패한 텍스트 단위를 기록한 완료 단계 중
-가장 앞선 단계부터 재개해 그 단위를 다시 시도합니다(WARNING `Stage '...' failed on N
-text units; resuming from it ...`). 성공한 단위는 추출 저장소에 남아 있습니다. 그 밖의 단계 실패는 아무것도 기록하지 않고 인덱싱 전에 실행을 멈추므로
-저장소와 레지스트리는 이전 상태로 남으며, 다음 실행이 같은 델타를 다시 처리합니다.
+처리합니다. 같은 파이프라인 ID로 `--resume-from-stage` 없이 다시 실행하면, 이번 실행에서
+켜진 완료 단계 중 실패한 텍스트 단위를 기록한 가장 앞선 단계부터 재개해 그 단위를 다시
+시도합니다(WARNING `Stage '...' failed on N text units; resuming from it ...`). 성공한
+단위는 추출 저장소에 남아 있습니다. 그보다 뒤를 가리키는 `--resume-from-stage`는 WARNING과
+함께 그대로 따르며, 인덱싱 단계는 그 문서를 다시 시도하지 않고 다시 `FAILED`로 기록합니다.
+재실행에서 켜지지 않은 단계의 실패는 복원한 상태에서 버립니다. 재시도 한도에 이른 문서가
+있으면 재실행이 코퍼스를 다시 비교해 그 문서를 건너뜁니다.
 
-- **재시도 한도.** 내용이 그대로인 채 `indexing.max_document_failures`(기본값 `3`)번
-  연속 실패하면 문서는 `FAILED`로 남고 인덱싱한 내용을 유지하며, 실행마다 파일 이름을
-  밝힌 WARNING을 남깁니다. 원인(흔히 너무 크거나 잘못된 파일)을 고치거나, 파일을
+그 밖의 단계 실패는 아무것도 기록하지 않고 인덱싱 전에 실행을 멈추므로 저장소와
+레지스트리는 이전 상태로 남으며, 다음 실행이 같은 델타를 다시 처리합니다. 예외로 그래프
+추출이 모든 단위에서 실패하면(`Critical stage 'graph_extraction' ... produced 0 outputs.
+It failed on N files: ...`) 단위 자체의 오류(4xx나 검증 오류, 파싱할 수 없는 응답)로 실패한
+문서를 `FAILED`로 기록해 아래 재시도 한도가 적용됩니다. 스로틀링, 5xx, 시간 초과, 연결
+오류는 세지 않으므로 모델 장애로 문서가 제외되지는 않습니다. 거부된 자격 증명이나 없는
+모델(HTTP 401/403/404, Bedrock `AccessDeniedException`, `ResourceNotFoundException`,
+`The provided model identifier is invalid`)도 세지 않습니다. 모든 문서가 똑같이 실패하므로
+설정을 고칠 때까지 문서는 세지 않은 채 `PENDING`으로 남습니다.
+
+- **재시도 한도.** 내용과 추출 설정이 그대로인 채 `indexing.max_document_failures`(기본값
+  `3`)번 연속으로 `FAILED`가 기록되면 문서는 `FAILED`로 남고 인덱싱한 내용을 유지한 채
+  건너뜁니다. 실행마다 파일 이름을 밝힌 WARNING을 남기고 삭제를 포함한 나머지 델타를
+  처리합니다. 원인(흔히 너무 크거나 잘못된 파일)을 고치거나, 파일을
   수정하거나, 한도를 올리세요.
 - **레지스트리에 담기에 너무 큼.** 텍스트 단위 ID가 DynamoDB 항목 하나(400KB, 약
   10,000개, 수정한 문서는 그 절반)를 넘는 문서는 아무것도 쓰기 전에 파일 이름을 밝힌
@@ -645,14 +659,14 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 연결 거부나 이름 확인 실패, Neptune이 연결을 닫음(재시작, 장애 조치. 다음에 다시 엶), 또는 OpenSearch가 `search.store_max_attempts`번 모두 429/502/503/504로 답함 | 엔드포인트, 포트, 저장소 실행 여부, 보안 그룹과 VPC 엔드포인트 확인 |
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 연결 거부나 이름 확인 실패, Neptune이 연결을 닫음(재시작, 장애 조치. 다음에 다시 엶), 또는 OpenSearch가 `search.store_max_attempts`번 모두 429/502/503/504로 답함. 벡터 저장소에 연결할 수 없으면 `run-ingestion`은 모델 호출 전 저장소 검사에서 실패함 | 엔드포인트, 포트, 저장소 실행 여부, 보안 그룹과 VPC 엔드포인트 확인 |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | `search.store_timeout_seconds` 안에 답이 없음(수집 중 Neptune은 고정 180초, 항목 재시도) | 저장소 상태와 부하를 확인하거나 제한 시간을 늘림 |
 | `OpenSearch denied the search on <index>: ... status=403 ...`(또는 `401`) | 세분화된 액세스 제어에서 역할에 `indices:data/read/search`가 없거나 자격 증명이 잘못됨 | 권한(과 `indices:admin/mappings/get`, `indices:monitor/settings/get`)을 부여하거나 자격 증명을 고침 |
 | `Neptune refused the connection (HTTP 403)` | 클러스터에 대한 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | 권한(과 필요한 `neptune-db:*` 데이터 작업)을 부여하고 `aws.region_name`을 클러스터 리전으로 설정 |
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤 다시 실행 |
-| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함: `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
+| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함(오류의 `(a probe of '<별칭>')`이 대신한 인덱스를 밝힘): `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
 
 ### 수집 실행과 문서 상태 레지스트리
 
@@ -666,7 +680,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
-| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...`(종료 코드 2, 모델 호출 전) | 증분 실행의 임베딩 모델이나 차원, 번역 언어, `language_analyzers`가 현재 인덱스를 만든 설정과 다름 | `indexing.reset: true`로 한 번 실행(코퍼스 전체를 한 번 다시 임베딩하거나 번역함)하거나 이전 설정으로 되돌림 |
+| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...`(종료 코드 2, 모델 호출 전) | 증분 실행의 임베딩 모델이나 차원, 번역 언어, `language_analyzers`가 현재 인덱스를 만든 설정과 다름(바뀐 문서가 없거나 삭제만 있는 실행도 해당) | `indexing.reset: true`로 한 번 실행(코퍼스 전체를 한 번 다시 임베딩하거나 번역함)하거나 이전 설정으로 되돌림 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림, 또는 #410 이전 빌드에서 문서를 빼는 reset이 인덱스를 교체한 뒤 중단됨 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 
 ### 질의

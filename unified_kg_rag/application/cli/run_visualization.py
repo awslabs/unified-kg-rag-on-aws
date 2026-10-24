@@ -36,8 +36,10 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failed,
     json_output,
     print_json,
     usage_error,
@@ -197,7 +199,7 @@ def run_visualization(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParser(
         allow_abbrev=False,
         description="Render graph visualizations from exported data (no ingestion).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -262,20 +264,25 @@ def main() -> int:
                     "files": [str(path) for path in written],
                 }
             )
-        return 0 if written else EXIT_FAILURE
+        if not written:
+            return failed(
+                EXIT_FAILURE,
+                f"No visualization files were rendered from '{args.data_path}'",
+            )
+        return 0
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")
         # Raised, not returned: exits_on_sigterm prints the JSON status.
         raise SystemExit(EXIT_INTERRUPTED) from None
     except (ConfigurationError, InvalidVisualizationDataError) as e:
         logger.error("Visualization input error: %s", e)
-        return EXIT_USAGE
+        return failed(EXIT_USAGE, e)
     except Exception as e:
         # Clean error line rather than a raw traceback (parity with the other
         # CLIs); full detail goes to the log at debug level.
         logger.error("Visualization failed: %s", e)
         logger.debug("Traceback:", exc_info=True)
-        return EXIT_FAILURE
+        return failed(EXIT_FAILURE, e)
 
 
 if __name__ == "__main__":

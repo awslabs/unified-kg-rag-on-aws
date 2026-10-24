@@ -558,24 +558,43 @@ def test_run_reads_and_scopes_the_directory_it_is_given(registry, tmp_path) -> N
     assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
 
 
+@pytest.mark.parametrize("own_error", [False, True])
 def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
-    registry, tmp_path
+    registry, tmp_path, own_error: bool
 ) -> None:
-    # A stage that stops the run before indexing cannot tell one bad document
-    # from a systemic failure (throttling, an outage, expired credentials), so
-    # it records nothing but the attempts it opened and closed (a run that
-    # ends is no death): however many such runs, under whichever pipeline
-    # ids, the new and changed documents are diffed and processed again, and a
-    # changed document keeps its indexed content and its old content hash.
+    # A stage that stops the run before indexing on a model outage (the
+    # model unreachable, throttling, 5xx) records nothing but the attempts it
+    # opened and closed (a run that ends is no death): however many such
+    # runs, under whichever pipeline ids, the new and changed documents are
+    # diffed and processed again, and a changed document keeps its indexed
+    # content and its old content hash. An error of the document's own (here
+    # a response that never parses) is counted instead: after
+    # indexing.max_document_failures runs it is skipped and the run goes on.
     stack = ScopeStack(registry, tmp_path)
+    if not own_error:
+        extraction = stack.model._extraction
+
+        def unreachable(text: str) -> str:
+            if "UNREADABLE" in text:
+                stack.model.extractions[text.strip()] += 1
+                raise ConnectionError("model down")
+            return extraction(text)
+
+        stack.model._extraction = unreachable  # type: ignore[method-assign]
     source = write_corpus(tmp_path / "src", {"good.txt": A_TEXT})
     stack.run(source)
     (indexed,) = registry.list_all()
 
     (source / "good.txt").write_text("UNREADABLE Vendor.", encoding="utf-8")
     (source / "new.txt").write_text("UNREADABLE Buyer.", encoding="utf-8")
-    runs = stack.config.indexing.max_document_failures + 1
-    for _ in range(runs):
+    limit = stack.config.indexing.max_document_failures
+    for run in range(limit + 1):
+        if own_error and run == limit:
+            # Both skipped: nothing to extract, the run completes.
+            context = stack.run(source)
+            assert context.incremental_delta.to_process == []
+            assert not stack.model.extractions
+            break
         context = stack.run(source, expect=PipelineStageStatus.FAILED)
         failed = {r.stage_name for r in context.stage_results if r.status == "failed"}
         assert "graph_extraction" in failed
@@ -585,6 +604,16 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         assert stack.model.extractions
         records = {r.doc_id: r for r in registry.list_all()}
         kept = records.pop(indexed.doc_id)
+        (new,) = records.values()
+        assert {r.attempt_count for r in (kept, new)} == {0}
+        assert {r.attempt_batch for r in (kept, new)} == {None}
+        if own_error:
+            # FAILED at the new content, the indexed text units kept.
+            assert (kept.status, kept.failure_count) == (DocStatus.FAILED, run + 1)
+            assert kept.text_unit_ids == indexed.text_unit_ids
+            assert (new.status, new.failure_count) == (DocStatus.FAILED, run + 1)
+            assert new.text_unit_ids == []
+            continue
         # Only the attempt fields change (and the pipeline id writing them).
         attempt = {
             "attempted_hash",
@@ -595,8 +624,5 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         }
         assert kept.model_dump(exclude=attempt) == indexed.model_dump(exclude=attempt)
         # The new document's attempt record: no text units, nothing counted.
-        (new,) = records.values()
         assert (new.status, new.text_unit_ids) == (DocStatus.PENDING, [])
-        assert {r.attempt_count for r in (kept, new)} == {0}
-        assert {r.attempt_batch for r in (kept, new)} == {None}
     assert stack.texts() == {A_TEXT}

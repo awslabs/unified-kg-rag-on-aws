@@ -98,8 +98,11 @@ class _ItemSpec(NamedTuple):
     prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]]
 
 
-def _creation_refused(e: StoreRequestRejectedError) -> StoreRequestRejectedError:
-    """The error for an index creation the engine refused (``e``)."""
+def _creation_refused(
+    e: StoreRequestRejectedError, index: str | None = None
+) -> StoreRequestRejectedError:
+    """The error for an index creation the engine refused (``e``); ``index``
+    names the index a probe stood in for."""
     if "maximum shards open" in str(e):
         hint = (
             "The cluster has no room for another index's shards: delete "
@@ -111,8 +114,9 @@ def _creation_refused(e: StoreRequestRejectedError) -> StoreRequestRejectedError
             "creation, and the mapping follows vector_search and the language "
             "analyzers: fix or remove the setting it names."
         )
+    target = f" (a probe of '{index}')" if index else ""
     return StoreRequestRejectedError(
-        f"The search engine refused to create an index: {e}. {hint}",
+        f"The search engine refused to create an index{target}: {e}. {hint}",
         reason=e.reason,
     )
 
@@ -1065,12 +1069,13 @@ class OpenSearchIndexer(VectorIndexer):
                 "Deleting the probe indices of '%s' failed: %s", alias_name, e
             )
         probes: list[str] = []
+        targets = self._mappings_to_create(suffix, rebuild)
         try:
-            for mapping in self._mappings_to_create(suffix, rebuild):
+            for _, mapping in targets:
                 probes.append(f"{alias_name}-settings-probe-{uuid.uuid4().hex[:12]}")
                 self.opensearch_client.create_index(probes[-1], mapping, exist_ok=False)
         except StoreRequestRejectedError as e:
-            raise _creation_refused(e) from e
+            raise _creation_refused(e, targets[len(probes) - 1][0]) from e
         finally:
             # Also when a create failed: its response may have been lost
             # after the index was made (a missing one is no error).
@@ -1084,8 +1089,8 @@ class OpenSearchIndexer(VectorIndexer):
 
     def _mappings_to_create(
         self, suffix: str | None, rebuild: bool
-    ) -> list[dict[str, Any]]:
-        """The mappings of the indices of ``suffix`` a run creates: every
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """The aliases and mappings of the indices of ``suffix`` a run creates: every
         vector index it builds on a ``rebuild`` (a full build or reset, empty
         ones included), otherwise those of the types it may write that have
         no live index; and the extraction records' when it has none."""
@@ -1102,19 +1107,15 @@ class OpenSearchIndexer(VectorIndexer):
                 self.config.graph.community_detection.enabled
             )
         mappings = [
-            spec.mapping()
+            (alias, spec.mapping())
             for spec in self._specs()
             if builds.get(spec.alias_prefix, True)
-            and (
-                rebuild
-                or not self.opensearch_client.get_index_name_by_alias(
-                    self._get_name(spec.alias_prefix, suffix)
-                )
-            )
+            and (alias := self._get_name(spec.alias_prefix, suffix))
+            and (rebuild or not self.opensearch_client.get_index_name_by_alias(alias))
         ]
         records_alias = self._get_name(config.extraction_records_index_prefix, suffix)
         if not self.opensearch_client.get_index_name_by_alias(records_alias):
-            mappings.append(self._get_extraction_records_mapping())
+            mappings.append((records_alias, self._get_extraction_records_mapping()))
         return mappings
 
     def _get_extraction_records_mapping(self) -> dict[str, Any]:

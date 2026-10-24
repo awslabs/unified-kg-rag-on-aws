@@ -832,7 +832,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 ```
 
 대화형 모드에서는 메모리가 켜집니다. 명령: `help`, `new`(새 대화 ID),
-`set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`.
+`set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
+하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 
@@ -1446,11 +1447,12 @@ custom_prompts:
 `--output-format json`은 JSON 문서 하나를 표준 출력에 쓰고 배너·진행 상황·로그는 표준
 오류로 보내므로 출력을 `jq`로 바로 넘길 수 있습니다(표준 출력에 함께 쓰는
 `--metrics-sink cloudwatch`와는 같이 쓸 수 없음). 담기는 내용은 답변이나 검색
-결과(`run-rag`), 파이프라인 ID와 상태, 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
+결과(`run-rag`), 파이프라인 ID와 상태, 단계가 실패한 문서 수(`failed_documents`, `FAILED`로
+기록됨), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
-실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(알 수 있을 때)를
+실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
 붙여 출력하므로 표준 출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
 (실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를
@@ -1520,6 +1522,12 @@ finally:
 
 - 단계가 실패하면 예외를 던지지 않고 반환한 `PipelineContext`의 `status`를 `FAILED`로
   설정하므로 위 예시처럼 확인하세요.
+- 구분해 처리할 오류는 패키지 최상위에서 내보냅니다. `ConfigurationError`(고칠 설정.
+  `StoreRequestRejectedError` 포함), `InvalidFilterError`, `IndexNotFoundError`,
+  `StoreConnectionError`, `NamespaceLeaseError`, `PipelineExecutionError`,
+  `PipelineInterrupted`(`KeyboardInterrupt`)이며, 마지막을 빼면 모두
+  `GraphRAGException`입니다. 모델 클라이언트 자체의 전송 오류(로컬 모델 서버의
+  `httpx.ConnectError` 등)는 그대로 전달됩니다.
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다(`search_strategy`, `search_type`,
   `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`,
   `use_memory`, `target_language`). 일반 딕셔너리도 됩니다.

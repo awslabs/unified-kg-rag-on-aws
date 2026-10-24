@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -344,6 +344,36 @@ class PipelineContext(BaseModel):
         "stage name. An incremental commit records their documents as FAILED "
         "so the next run re-extracts them.",
     )
+    item_failed_text_unit_ids: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="The failed text units whose error was their own (a 4xx "
+        "or validation error, a response that does not parse), by stage name. "
+        "When such a stage fails the run, their documents are still recorded "
+        "FAILED, so a document that always fails reaches "
+        "indexing.max_document_failures; a model outage counts for none.",
+    )
+
+    def documents_of_units(self, unit_ids: Iterable[str]) -> "list[Document]":
+        """The run's documents the text units ``unit_ids`` belong to."""
+        wanted = set(unit_ids)
+        if not wanted:
+            return []
+        document_ids = {
+            document_id
+            for unit in self.translated_units or self.text_units or []
+            if unit.id in wanted
+            for document_id in unit.document_ids or []
+        }
+        return [doc for doc in self.documents if doc.document_id in document_ids]
+
+    @property
+    def failed_documents(self) -> "list[Document]":
+        """The run's documents a stage failed on (some of their text units
+        are in ``failed_text_unit_ids``): an incremental run records them
+        FAILED."""
+        return self.documents_of_units(
+            unit_id for ids in self.failed_text_unit_ids.values() for unit_id in ids
+        )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

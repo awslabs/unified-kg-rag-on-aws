@@ -24,6 +24,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
     delta_still_applies,
     open_attempts,
+    record_item_failures,
     retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.namespace_lease import (
@@ -73,6 +74,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import (
@@ -101,8 +103,9 @@ logger = get_logger(__name__)
 _STALE_DELTA = (
     "the doc-status registry changed since this pipeline computed its "
     "incremental delta (another run committed some of its documents, a "
-    "commit of this pipeline did not finish, or runs died processing it "
-    "often enough to isolate the document that kills them)"
+    "commit of this pipeline did not finish, runs died processing it "
+    "often enough to isolate the document that kills them, or a document "
+    "failed indexing.max_document_failures times)"
 )
 T = TypeVar("T", bound=BaseModel)
 
@@ -1179,7 +1182,10 @@ class DataIngestionPipeline:
                 pipeline_id, completed_stages
             )
             rewound = self._rewind_to_failed_stage(
-                context, start_stage_name, completed_stages
+                context,
+                start_stage_name,
+                completed_stages,
+                explicit=resume_from_stage is not None,
             )
             if rewound is not None:
                 start_stage_name, completed_stages = rewound
@@ -1194,6 +1200,7 @@ class DataIngestionPipeline:
                     pipeline_id, completed_stages
                 )
 
+            self._drop_unrun_failures(context, start_stage_name)
             self._prepare_context_for_resume(context, start_stage_name)
 
             logger.info(
@@ -1247,6 +1254,8 @@ class DataIngestionPipeline:
         context: PipelineContext,
         start_stage_name: str | None,
         completed_stages: list[str],
+        *,
+        explicit: bool = False,
     ) -> tuple[str, list[str]] | None:
         """Move a resume back to the earliest completed, enabled stage that
         recorded failed text units (``context.failed_text_unit_ids``), or
@@ -1254,10 +1263,14 @@ class DataIngestionPipeline:
 
         Its restored output would make the indexing stage record their
         documents FAILED once more without extracting them again, so every
-        re-run of the pipeline id would count one more failure until the
-        documents reach ``indexing.max_document_failures``. Run again, the
-        stage retries only the failed units (the extraction store keeps
-        what succeeded).
+        re-run of the pipeline id would count one more failure. Run again,
+        the stage retries only the failed units (the extraction store keeps
+        what succeeded). A document that reached
+        ``indexing.max_document_failures`` meanwhile is not retried: the
+        delta no longer applies (``incremental.delta_still_applies``), and
+        the resume diffs again. An ``explicit`` resume point
+        (``--resume-from-stage``) is kept, with a warning, as the other
+        rewinds of an auto resume do.
         """
         canonical_order = [st.value for st in self.STAGE_CLASSES]
         if start_stage_name not in canonical_order:
@@ -1276,6 +1289,17 @@ class DataIngestionPipeline:
         if not failed:
             return None
         first = min(failed, key=canonical_order.index)
+        if explicit:
+            logger.warning(
+                "Stage '%s' failed on %d text units; resuming from '%s' as "
+                "asked records their documents FAILED again without retrying "
+                "them (resume from '%s' to retry them)",
+                first,
+                len(context.failed_text_unit_ids[first]),
+                start_stage_name,
+                first,
+            )
+            return None
         logger.warning(
             "Stage '%s' failed on %d text units; resuming from it instead of '%s'",
             first,
@@ -1288,6 +1312,35 @@ class DataIngestionPipeline:
             for name in completed_stages
             if name in canonical_order and canonical_order.index(name) < position
         ]
+
+    def _drop_unrun_failures(
+        self, context: PipelineContext, start_stage_name: str | None
+    ) -> None:
+        """Forget the failed text units the restored context holds for the
+        stages this resumed run neither runs nor restores (not enabled, at or
+        after ``start_stage_name``; gleaning switched off since, say): the run
+        does not use their output, so the indexing stage must not record
+        their documents FAILED again. A stage before the start point keeps
+        them: its restored output is the run's (a phased run's earlier
+        window)."""
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            return
+        start = canonical_order.index(start_stage_name)
+        enabled = {stage.name for stage in self.stages}
+        for name in list(context.failed_text_unit_ids):
+            if (
+                name in canonical_order
+                and name not in enabled
+                and canonical_order.index(name) >= start
+            ):
+                logger.info(
+                    "Stage '%s' is not enabled in this run: its failed text "
+                    "units of an earlier run are not recorded",
+                    name,
+                )
+                del context.failed_text_unit_ids[name]
+                context.item_failed_text_unit_ids.pop(name, None)
 
     def _rewind_on_extraction_change(
         self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]
@@ -1377,6 +1430,7 @@ class DataIngestionPipeline:
             context.incremental_extraction_fingerprint,
             context.incremental_scope,
             context.pipeline_id,
+            self.config.indexing.max_document_failures,
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value
@@ -1523,6 +1577,7 @@ class DataIngestionPipeline:
                         self._upload_checkpoint(context.pipeline_id)
 
                 if self._should_stop_pipeline(result):
+                    self._record_item_failures(stage, context)
                     logger.warning(
                         "Pipeline execution stopped due to stage failure: '%s'",
                         stage.name,
@@ -1545,30 +1600,35 @@ class DataIngestionPipeline:
         (``VectorIndexer.check_index_settings``), and the indices the run
         will create (``VectorIndexer.check_index_creation``: every one on a
         full build or reset, an incremental run's missing ones). An
-        incremental run with no document to (re)extract is not checked: it
-        calls no model. A check that fails otherwise is logged: the stages
-        then meet the store's error themselves.
+        incremental run with no document to (re)extract (no change, or only
+        deletions) creates no index: only its live indices are checked, so it
+        is refused like the next run that extracts would be. Any other
+        failure of the check is logged: the stages then meet the store's
+        error themselves.
 
         Raises:
             ConfigurationError: The live indices do not match, or the store
-                refused the settings (``StoreRequestRejectedError``).
+                refused the settings or the caller (``StoreRequestRejectedError``,
+                ``StoreAccessDeniedError``: HTTP 400, 401/403).
+            StoreConnectionError: The store is unreachable (after the
+                client's retries): the run would pay for the extraction and
+                then fail to write it.
             NamespaceLeaseError: The run lost its write lease.
         """
         try:
             incremental = (
                 context.incremental_delta is not None and not self.config.indexing.reset
             )
-            if incremental and not context.documents:
-                return
             suffix = self.config.processing.document_parsing.index_value
             indexer = self.providers.build_vector_indexer()
             try:
                 if incremental:
                     indexer.check_index_settings(suffix)
-                indexer.check_index_creation(suffix, rebuild=not incremental)
+                if not incremental or context.documents:
+                    indexer.check_index_creation(suffix, rebuild=not incremental)
             finally:
                 indexer.close()
-        except (ConfigurationError, NamespaceLeaseError):
+        except (ConfigurationError, NamespaceLeaseError, StoreConnectionError):
             raise
         except Exception as e:  # noqa: BLE001 - the stages report the store
             logger.warning("Checking the vector store's index creation failed: %s", e)
@@ -1618,6 +1678,7 @@ class DataIngestionPipeline:
         # A failure recorded for this stage by an earlier attempt is replaced
         # by what this execution reports.
         context.failed_text_unit_ids.pop(stage.name, None)
+        context.item_failed_text_unit_ids.pop(stage.name, None)
         blocked_by = self._failed_corpus_stage(stage, context)
         if blocked_by is not None:
             result = PipelineStageResult(
@@ -1676,6 +1737,40 @@ class DataIngestionPipeline:
                 "their documents are not committed as processed",
                 stage.name,
                 len(units),
+            )
+
+    def _record_item_failures(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> None:
+        """Record FAILED the documents ``stage``, which stops the run, failed
+        on for errors of their own (``incremental.record_item_failures``).
+
+        The indexing stage records a failed document only when the run gets
+        there; a stage that failed on all of its units stops the run first,
+        so without this a document that always fails (a request the model
+        rejects, a response that never parses) never reaches
+        ``indexing.max_document_failures`` and stops every later run, with
+        the deletions of its delta. Errors of the model (throttling, 5xx,
+        timeouts, connections) count for none. Best effort: the run fails
+        either way.
+        """
+        unit_ids = context.item_failed_text_unit_ids.get(stage.name)
+        if not unit_ids or not self._incremental_delta(context):
+            return
+        assert self._doc_status is not None
+        try:
+            record_item_failures(
+                self._doc_status,
+                context,
+                unit_ids,
+                self.config.indexing.max_document_failures,
+            )
+        except Exception as e:  # noqa: BLE001 - the run fails either way
+            logger.warning(
+                "Recording the documents stage '%s' failed on failed (%s); the "
+                "next run retries them without counting this failure",
+                stage.name,
+                e,
             )
 
     def _run_stage(

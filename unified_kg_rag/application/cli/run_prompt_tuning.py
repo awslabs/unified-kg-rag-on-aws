@@ -25,8 +25,10 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failed,
     json_output,
     print_json,
     usage_error,
@@ -84,7 +86,7 @@ def load_corpus_texts(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParser(
         allow_abbrev=False,
         description="Generate domain-adapted custom_prompts from a corpus sample.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -135,8 +137,9 @@ def main() -> int:
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:
-            logger.error("No text documents found under '%s'", args.source_directory)
-            return EXIT_FAILURE
+            error = f"No text documents found under '{args.source_directory}'"
+            logger.error("%s", error)
+            return failed(EXIT_FAILURE, error)
 
         tuner = PromptTuner(config)
         result = event_loop.run(
@@ -160,13 +163,13 @@ def main() -> int:
         raise SystemExit(EXIT_INTERRUPTED) from None
     except ConfigurationError as e:
         logger.error("Prompt tuning configuration error: %s", e)
-        return EXIT_USAGE
+        return failed(EXIT_USAGE, e)
     except Exception as e:
         # Surface a clean error line instead of a raw traceback (parity with the
         # other CLIs); details still go to the log at debug level.
         logger.error("Prompt tuning failed: %s", e)
         logger.debug("Traceback:", exc_info=True)
-        return EXIT_FAILURE
+        return failed(EXIT_FAILURE, e)
 
 
 if __name__ == "__main__":

@@ -211,18 +211,35 @@ A document is recorded `FAILED` in five cases:
   extraction).
 
 The next run treats a `FAILED` document as changed: it removes what the failed
-run wrote and processes it again. A run of the same pipeline id resumes from
-the earliest completed stage that recorded failed text units and retries
-those units (WARNING `Stage '...' failed on N text units; resuming from it
-...`); the extraction store keeps the units that succeeded. Any other stage failure records nothing and
-stops the run before indexing, leaving the stores and registry as they were;
-the next run processes the same delta again.
+run wrote and processes it again. A run of the same pipeline id without
+`--resume-from-stage` resumes from the earliest completed stage enabled in
+this run that recorded failed text units and retries those units (WARNING
+`Stage '...' failed on N text units; resuming from it ...`); the extraction
+store keeps the units that succeeded. An explicit `--resume-from-stage` past
+it is kept, with a WARNING: the indexing stage records those documents
+`FAILED` again without retrying them. Failures of a stage that is not
+enabled in the rerun are dropped from the restored state. A document that
+reached the retry limit makes the rerun diff the corpus again, which skips it.
+
+A stage failure records nothing else and stops the run before indexing,
+leaving the stores and registry as they were; the next run processes the same
+delta again. The exception: when graph extraction fails on all of its units
+(`Critical stage 'graph_extraction' ... produced 0 outputs. It failed on N
+files: ...`), the documents whose units failed with an error of their own (a
+4xx or validation error, a response that does not parse) are recorded
+`FAILED`, so the retry limit below applies. Throttling, 5xx, timeouts and
+connection errors count for none: a model outage never excludes a document.
+Nor do denied credentials or an unknown model (HTTP 401/403/404, Bedrock
+`AccessDeniedException`, `ResourceNotFoundException`, `The provided model
+identifier is invalid`): they fail every document alike, which stays
+`PENDING`, uncounted, until the configuration is fixed.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
-  consecutive failures of unchanged content the document stays `FAILED`,
-  keeps what it indexed, and each run logs a WARNING naming the file. Fix the
-  cause (often an oversized or malformed file), edit the file, or raise the
-  limit.
+  consecutive runs that recorded unchanged content `FAILED` (with the same
+  extraction settings) the document stays `FAILED`, keeps what it indexed, and
+  is skipped: each run logs a WARNING naming the file and goes on with the
+  rest of the delta, deletions included. Fix the cause (often an oversized or
+  malformed file), edit the file, or raise the limit.
 - **Too large for the registry.** A document whose text-unit ids exceed one
   DynamoDB item (400 KB, about 10,000 ids, half that for an edited document)
   fails indexing before anything is written, with an error naming the file:
@@ -699,14 +716,14 @@ model or credential error fails a query rather than answering from no context.
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `search.store_max_attempts` attempts | Check endpoint, port, that the store runs, security groups and VPC endpoints |
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `search.store_max_attempts` attempts. An unreachable vector store fails `run-ingestion` at its store check, before any model call | Check endpoint, port, that the store runs, security groups and VPC endpoints |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | No answer within `search.store_timeout_seconds` (ingestion: Neptune fixed 180 s, item retried) | Check the store's health and load, or raise the timeout |
 | `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | Fine-grained access control: the role lacks `indices:data/read/search`; or bad credentials | Grant it (and `indices:admin/mappings/get`, `indices:monitor/settings/get`), or fix the credentials |
 | `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package; re-run |
-| `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one: an `indexing.opensearch.index_settings` key, the `vector_search` method or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
+| `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one (the error names the index it stood in for, `(a probe of '<alias>')`): an `indexing.opensearch.index_settings` key, the `vector_search` method or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
 
 ### Ingestion runs and the doc-status registry
 
@@ -720,7 +737,7 @@ model or credential error fails a query rather than answering from no context.
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
-| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
+| `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with (also a run with nothing to extract: no change, or only deletions) | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #410 that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
 
 ### Queries

@@ -310,6 +310,20 @@ class TestExtractionStore:
         vectors.prepare_extraction_records = unreachable  # type: ignore[method-assign]
         assert store.load([_unit("t1", "a")], "fp", _raw) == {}
 
+    def test_an_unreachable_store_fails_before_extraction(self) -> None:
+        # It was logged as a failing cache: the run paid for the whole
+        # extraction and then failed to write it.
+        from unified_kg_rag.shared.exceptions import StoreConnectionError
+
+        vectors = FakeVectorStore()
+
+        def unreachable(suffix=None):
+            raise StoreConnectionError("Failed to connect to OpenSearch.")
+
+        vectors.prepare_extraction_records = unreachable  # type: ignore[method-assign]
+        with pytest.raises(StoreConnectionError):
+            ExtractionStore(Config(), lambda: vectors).load([_unit("t1")], "fp", _raw)
+
     def test_a_lost_lease_is_raised_by_the_preparation(self) -> None:
         # It was logged as a failing cache and the run went on extracting.
         from unified_kg_rag.shared import NamespaceLeaseError
@@ -495,8 +509,12 @@ class TestOpenSearchExtractionRecords:
             path, lambda body: typo in body["settings"] and f"unknown [{typo}]"
         )
         indexer = _probing_indexer(config, engine)
-        with pytest.raises(ConfigurationError, match=typo):
+        with pytest.raises(ConfigurationError, match=typo) as refused:
             indexer.check_index_creation("x")
+        # It names the index the refused probe stood in for (the probe's own
+        # name is the extraction records'): the first one the run creates.
+        target = indexer._get_name(indexer._specs()[0].alias_prefix, "x")
+        assert f"(a probe of '{target}')" in str(refused.value)
 
         # Accepted settings: a probe per vector index is created and
         # deleted, the records index is left as it was.
