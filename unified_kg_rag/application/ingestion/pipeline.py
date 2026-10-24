@@ -45,8 +45,10 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     PipelineStage,
     TextChunkingStage,
     TranslationStage,
+    _with_record_keys,
 )
 from unified_kg_rag.application.observability import configure_observability
+from unified_kg_rag.domain.ingestion.contributions import record_keys
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.models import (
     Config,
@@ -60,6 +62,7 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
@@ -1192,6 +1195,14 @@ class DataIngestionPipeline:
                 context = self.resume_manager.restore_pipeline_context(
                     pipeline_id, completed_stages
                 )
+            rewound = self._rewind_on_missing_records(
+                context, start_stage_name, completed_stages
+            )
+            if rewound is not None:
+                start_stage_name, completed_stages = rewound
+                context = self.resume_manager.restore_pipeline_context(
+                    pipeline_id, completed_stages
+                )
             if self._delta_is_stale(context, start_stage_name):
                 start_stage_name, completed_stages = self._rewind_to_loading(
                     start_stage_name, completed_stages, _STALE_DELTA
@@ -1287,6 +1298,9 @@ class DataIngestionPipeline:
             and canonical_order.index(name) < start
         ]
         if not failed:
+            self._refuse_rerun_of_unrun_failures(
+                context, start_stage_name, completed_stages, explicit=explicit
+            )
             return None
         first = min(failed, key=canonical_order.index)
         if explicit:
@@ -1312,6 +1326,161 @@ class DataIngestionPipeline:
             for name in completed_stages
             if name in canonical_order and canonical_order.index(name) < position
         ]
+
+    def _rewind_on_missing_records(
+        self,
+        context: PipelineContext,
+        start_stage_name: str | None,
+        completed_stages: list[str],
+    ) -> tuple[str, list[str]] | None:
+        """Move a reset resumed past the stages that store extraction records
+        back to the first of them whose records the store no longer holds, or
+        None to keep it.
+
+        The restored text units name the records this pipeline's stages
+        stored (graph records at graph_resolution, claim records at
+        claim_extraction). Another pipeline id may have deleted them since
+        (an incremental run deletes the records of the units it replaces, a
+        full build keeps only the ones its units name). Indexed anyway, the
+        units name records that are gone: the full build keeps none of them,
+        and the next incremental run cannot derive the items those units
+        cite. Run again, the stage extracts only the units whose records are
+        gone (the LLM response cache of the pipeline id answers them, unless
+        ``cache.llm_responses.enabled`` is off) and stores them. An
+        incremental resume needs no check: another pipeline id's write makes
+        its delta stale (``incremental.delta_still_applies``).
+
+        Raises:
+            PipelineResumeError: Records are missing and the stage that
+                stores them is not enabled in this run.
+        """
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if not self.config.indexing.reset or start_stage_name not in canonical_order:
+            return None
+        start = canonical_order.index(start_stage_name)
+        stores = {
+            "graph": PipelineStageType.GRAPH_RESOLUTION.value,
+            "claims": PipelineStageType.CLAIM_EXTRACTION.value,
+        }
+        checked = {
+            kind: stage
+            for kind, stage in stores.items()
+            if stage in completed_stages and canonical_order.index(stage) < start
+        }
+        if not checked:
+            return None
+        units = _with_record_keys(
+            self.config, context, context.translated_units or context.text_units
+        )
+        named: dict[str, dict[str, str]] = {}
+        for unit in units:
+            for kind, key in record_keys(unit).items():
+                if kind in checked:
+                    named.setdefault(BaseIndexer.get_suffix(unit), {})[key] = kind
+        if not named:
+            return None
+        missing: set[str] = set()
+        try:
+            indexer = self.providers.build_vector_indexer()
+            try:
+                read = indexer.read_extraction_records
+                if (
+                    getattr(read, "__func__", read)
+                    is VectorIndexer.read_extraction_records
+                ):
+                    return None  # the backend keeps no records
+                for suffix, kinds in named.items():
+                    found = read(sorted(kinds), suffix=suffix)
+                    missing |= {kinds[key] for key in kinds.keys() - found.keys()}
+            finally:
+                indexer.close()
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the indexing stage meets the store
+            logger.warning("Checking the stored extraction records failed: %s", e)
+            return None
+        if not missing:
+            return None
+        first = min(
+            (
+                (
+                    PipelineStageType.GRAPH_EXTRACTION.value
+                    if kind == "graph"
+                    else checked[kind]
+                )
+                for kind in missing
+            ),
+            key=canonical_order.index,
+        )
+        if first not in {stage.name for stage in self.stages}:
+            raise PipelineResumeError(
+                f"Extraction records this pipeline stored are gone (another "
+                f"run replaced them), so '{first}' must run again. Re-run with "
+                f"'{first}' enabled (--resume-from-stage {first})."
+            )
+        logger.warning(
+            "Extraction records this pipeline stored are gone (another run "
+            "replaced them); resuming from '%s' instead of '%s'",
+            first,
+            start_stage_name,
+        )
+        position = canonical_order.index(first)
+        return first, [
+            name
+            for name in completed_stages
+            if name in canonical_order and canonical_order.index(name) < position
+        ]
+
+    def _refuse_rerun_of_unrun_failures(
+        self,
+        context: PipelineContext,
+        start_stage_name: str,
+        completed_stages: list[str],
+        *,
+        explicit: bool,
+    ) -> None:
+        """Refuse to run a completed stage again on the restored output of a
+        stage that failed on text units and is not enabled in this run (an
+        indexing-only phase run again, say).
+
+        The completed run recorded those documents FAILED already; run
+        again, the indexing stage would record them FAILED once more
+        without retrying them, until ``indexing.max_document_failures``
+        excludes them. Only the failed stage can retry them. An ``explicit``
+        resume point is kept with a warning, like the rewind it replaces.
+
+        Raises:
+            PipelineResumeError: An auto resume would count those failures
+                again.
+        """
+        if self._doc_status is None or start_stage_name not in completed_stages:
+            return
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        start = canonical_order.index(start_stage_name)
+        enabled = {stage.name for stage in self.stages}
+        unrun = [
+            name
+            for name, unit_ids in context.failed_text_unit_ids.items()
+            if unit_ids
+            and name not in enabled
+            and name in canonical_order
+            and canonical_order.index(name) < start
+        ]
+        if not unrun:
+            return
+        first = min(unrun, key=canonical_order.index)
+        message = (
+            f"Stage '{first}' failed on "
+            f"{len(context.failed_text_unit_ids[first])} text units and is not "
+            f"enabled in this run: running '{start_stage_name}' again would "
+            f"record their documents FAILED once more without retrying them"
+        )
+        if explicit:
+            logger.warning("%s", message)
+            return
+        raise PipelineResumeError(
+            f"{message}. Re-run with '{first}' enabled to retry them."
+        )
 
     def _drop_unrun_failures(
         self, context: PipelineContext, start_stage_name: str | None
@@ -1431,6 +1600,7 @@ class DataIngestionPipeline:
             context.incremental_scope,
             context.pipeline_id,
             self.config.indexing.max_document_failures,
+            context.incremental_retired_scopes or (),
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value

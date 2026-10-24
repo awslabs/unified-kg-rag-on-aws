@@ -1431,6 +1431,7 @@ def delta_still_applies(
     scope: str | None = None,
     pipeline_id: str | None = None,
     max_failures: int | None = None,
+    retired: Iterable[str] = (),
 ) -> bool:
     """Whether a resumed run may index ``delta`` as it was computed.
 
@@ -1456,8 +1457,18 @@ def delta_still_applies(
     other ``extraction_fingerprint`` settings, and a diff of
     ``fingerprints`` in ``scope`` that classifies a document outside the
     delta new, changed or deleted. A record without a writer (written
-    before the field existed) is left to the other checks. A run resumed
-    after its own kill passes them all: only it wrote these records since.
+    before the field existed) counts as another pipeline id's unless it is
+    PROCESSED without an open attempt, which is left to the other checks.
+    A run resumed after its own kill passes them all: only it wrote these
+    records since.
+
+    A document the delta deletes whose record another pipeline id wrote in
+    another scope than the delta's, and not in one of the ``retired``
+    values (``indexing.retire_source_scopes`` the delta applied), was
+    indexed there since: an interrupted reset of this scope moved that
+    scope's record here, a run of this scope deleted it, and a run of the
+    other scope indexed it again. Deleting it would remove that scope's
+    live document.
     """
     stored = store.get_many(delta.to_process)
     for doc_id in delta.to_process:
@@ -1465,12 +1476,18 @@ def delta_still_applies(
         content_hash = fingerprints.get(doc_id)
         if record is None or content_hash is None:
             return False
-        if (
-            pipeline_id is not None
-            and record.written_by is not None
-            and record.written_by != pipeline_id
-        ):
-            return False
+        if pipeline_id is not None and record.written_by != pipeline_id:
+            if record.written_by is not None:
+                return False
+            # No writer: a release before the field wrote it. A PROCESSED
+            # record is left to the other checks (this pipeline's own
+            # commit, say); one PENDING, FAILED or with an open attempt is
+            # an unfinished run's, maybe another pipeline id's.
+            if (
+                record.status is not DocStatus.PROCESSED
+                or record.attempt_batch is not None
+            ):
+                return False
         if content_hash not in (record.attempted_hash, record.content_hash):
             return False
         # Committed at this content by a run with other extraction settings
@@ -1496,6 +1513,21 @@ def delta_still_applies(
             )
         ):
             return False
+    if scope is not None and delta.deleted:
+        namespace = scope_namespace(scope)
+        expected = {scope} | {
+            registry_scope(namespace, normalize_source_scope(reading))
+            for value in retired
+            for reading in retired_scope_readings(value)[0]
+            if namespace is not None
+        }
+        for record in store.get_many(delta.deleted).values():
+            if (
+                record.scope not in expected
+                and record.written_by is not None
+                and record.written_by != pipeline_id
+            ):
+                return False
     # And every other document of the scope reads as the delta classified
     # it: another pipeline id may have indexed, deleted or re-extracted one
     # since (a finished pipeline run again restores its own delta).

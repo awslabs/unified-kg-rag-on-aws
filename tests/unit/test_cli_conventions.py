@@ -698,15 +698,34 @@ def test_an_early_usage_error_still_prints_a_json_status(
     assert status == {"status": "failed", "exit_code": 2}
 
 
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("refused", 2),
+        ("stage", 1),
+        ("unexpected", 1),
+    ],
+)
 def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    error: str,
+    code: int,
 ) -> None:
     # A run the store refused before any model call printed only
     # {"status": "failed", "exit_code": 2}: no reason and no run to resume.
-    from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+    # A failed stage and an unexpected error name them too.
+    from unified_kg_rag.shared.exceptions import (
+        PipelineExecutionError,
+        StoreRequestRejectedError,
+    )
 
+    raised = {
+        "refused": StoreRequestRejectedError("unknown setting [index.refresh_intervl]"),
+        "stage": PipelineExecutionError("stage 'indexing' failed"),
+        "unexpected": RuntimeError("boom"),
+    }[error]
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir()
@@ -716,18 +735,18 @@ def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
         ["run-ingestion", "--output-format", "json", "--source-directory", "src"],
     )
 
-    def refused(self) -> None:
+    def failed(self) -> None:
         self.pipeline = MagicMock(pipeline_id="run-7")
-        raise StoreRequestRejectedError("unknown setting [index.refresh_intervl]")
+        raise raised
 
-    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", refused)
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", failed)
     with pytest.raises(SystemExit) as exc:
         run_ingestion_pipeline.main()
-    assert exc.value.code == 2
+    assert exc.value.code == code
     assert json.loads(capsys.readouterr().out) == {
         "status": "failed",
-        "exit_code": 2,
-        "error": "unknown setting [index.refresh_intervl]",
+        "exit_code": code,
+        "error": str(raised),
         "pipeline_id": "run-7",
     }
 

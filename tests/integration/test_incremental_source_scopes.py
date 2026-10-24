@@ -363,6 +363,41 @@ def test_a_moved_corpus_is_reported_after_a_refused_first_run(
     ), warnings
 
 
+def test_an_edited_document_of_a_moved_corpus_does_not_warn_again(
+    registry, tmp_path, caplog
+) -> None:
+    # Only new documents (or a record no run committed) look like a moved
+    # corpus: an ordinary edit after the move is no reason to warn again.
+    stack = ScopeStack(registry, tmp_path)
+    old = write_corpus(tmp_path / "old", {"contract.txt": A_TEXT})
+    stack.run(old)
+    new = old.rename(tmp_path / "new")
+    with caplog.at_level("WARNING"):
+        stack.run(new)
+    assert any(old.as_posix() in r.getMessage() for r in caplog.records)
+    # Committed by a release that recorded no extraction fingerprint.
+    for record in stack.registry.list_all():
+        stack.registry.put(record.model_copy(update={"extraction_fingerprint": None}))
+    (new / "contract.txt").write_text(A_TEXT + "\nAmended.", encoding="utf-8")
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        stack.run(new)
+    assert not [r for r in caplog.records if old.as_posix() in r.getMessage()]
+    # Nor is a changed PENDING record a run committed before (it has a
+    # fingerprint): an interrupted reset left it so.
+    (record,) = [r for r in stack.registry.list_all() if r.scope.endswith(new.name)]
+    assert record.extraction_fingerprint is not None
+    stack.registry.put(
+        record.model_copy(
+            update={"status": DocStatus.PENDING, "content_hash": "earlier"}
+        )
+    )
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        stack.run(new)
+    assert not [r for r in caplog.records if old.as_posix() in r.getMessage()]
+
+
 def test_retiring_the_old_scope_of_a_moved_corpus_removes_its_content(
     registry, tmp_path, caplog
 ) -> None:

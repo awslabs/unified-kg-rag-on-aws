@@ -605,10 +605,14 @@ whose processing kills the task would stop every later run the same way.
   it again, and a reset skips it too.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
   delta names a document whose record is gone, holds other content, reached
-  the limit or was written by another pipeline id since (`written_by`; none
-  on a record written before the field) resumes from document_loading
-  instead. A resume past a stage that recorded failed text units starts at
-  that stage, so the units are retried rather than recorded `FAILED` again. Metrics:
+  the limit or was written by another pipeline id since (`written_by`; a
+  record written before the field has none and counts unless it is
+  `PROCESSED`), or deletes a document another pipeline id has recorded in
+  another scope since, resumes from document_loading instead. A resume past
+  a stage that recorded failed text units starts at that stage, so the units
+  are retried rather than recorded `FAILED` again; a reset resumed past the
+  stages that store extraction records starts at the first whose records
+  another run deleted. Metrics:
   `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm) and
   `total_documents_deferred`.
 

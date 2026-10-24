@@ -642,6 +642,51 @@ class TestOpenSearchExtractionRecords:
         indexer.check_index_creation("a")
         assert sorted(engine.get_aliases_by_index("*extraction*")) == before
 
+    def test_the_sweep_deletes_only_unaliased_probes(self, tmp_path) -> None:
+        # A sibling namespace's index between create and alias swap (a reset
+        # in flight, or a stopped reset's unswapped indices) has no alias yet,
+        # and a live index may carry a probe's name: only an unaliased index
+        # whose name is exactly a probe's is swept.
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        indexer = _probing_indexer(Config(), engine)
+        alias = indexer._get_name(
+            indexer.opensearch_config.extraction_records_index_prefix, "a"
+        )
+        kept = [
+            f"{alias}-settings-probe-0123456789ab-20261024000000000",
+            f"{alias}-settings-probe-x-20261024000000000",
+            f"{alias}-settings-probe-fedcba987654",
+        ]
+        swept = f"{alias}-settings-probe-0123456789ab"
+        for name in [*kept, swept]:
+            engine.create_index(name, indexer._get_extraction_records_mapping())
+        engine.update_alias(f"{alias}-live", kept[2])
+        indexer.check_index_creation("a")
+        left = set(engine.get_aliases_by_index(f"{alias}-settings-probe-*"))
+        assert set(kept) <= left, left
+        assert swept not in left
+
+    @pytest.mark.parametrize("rebuild", [True, False])
+    def test_an_index_the_run_does_not_build_is_not_probed(
+        self, tmp_path, rebuild: bool
+    ) -> None:
+        # No relationship vectors when they are off; no community reports
+        # without community detection on an incremental run (a full build
+        # creates every index, empty ones included).
+        engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
+        config = Config()
+        config.graph.community_detection.enabled = False
+        config.indexing.opensearch.build_relationship_vector_index = False
+        indexer = _probing_indexer(config, engine)
+        prefixes = config.indexing.opensearch
+        aliases = {alias for alias, _ in indexer._mappings_to_create("x", rebuild)}
+        assert (
+            indexer._get_name(prefixes.relationships_index_prefix, "x") not in aliases
+        )
+        reports = indexer._get_name(prefixes.community_reports_index_prefix, "x")
+        assert (reports in aliases) is rebuild
+        assert indexer._get_name(prefixes.entities_index_prefix, "x") in aliases
+
     def test_probes_a_stopped_run_left_are_deleted_first(self, tmp_path) -> None:
         # A run stopped between the probe's create and delete (SIGTERM: the
         # stop fence refuses the delete), or whose delete failed, left the
