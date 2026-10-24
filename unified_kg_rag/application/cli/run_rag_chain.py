@@ -188,6 +188,10 @@ class CommandLineInterface:
         return args
 
 
+# The interactive commands that take an argument (see _handle_help).
+_ARGUMENT_COMMANDS = frozenset({"set-filter"})
+
+
 class RAGChainRunner:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -307,7 +311,10 @@ class RAGChainRunner:
                 parts = raw_input.split(maxsplit=1)
                 command, cmd_args = parts[0].lower(), parts[1:]
 
-                if handler := self.interactive_commands.get(command):
+                # A command is the whole line, but for one that takes an
+                # argument: "help me find ..." is a question.
+                handler = self.interactive_commands.get(command)
+                if handler and (not cmd_args or command in _ARGUMENT_COMMANDS):
                     if command == "new":
                         state["conversation_id"] = handler()
                     else:
