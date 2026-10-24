@@ -2902,15 +2902,19 @@ class SearchConfig(BaseModel):
         default=10,
         ge=1,
         description=(
-            "LLM calls and sub-searches one query keeps in flight: the global "
-            "map calls, the dynamic-selection ratings, the DRIFT primer calls "
-            "and follow-up local searches, and a filtered graph walk's "
-            "per-vertex edge requests (each asks both endpoint sides, so up "
-            "to twice that many store requests). The walk's bound is its "
-            "own: in DRIFT, each follow-up search's walk has one, so up to "
-            "its square of walk requests. Per query, so concurrent "
-            "queries (run-eval keeps processing.max_concurrency of them in "
-            "flight) multiply it; lower it if a query's calls are throttled."
+            "LLM calls and store requests one query keeps in flight at each "
+            "level: the global map calls, the dynamic-selection ratings, the "
+            "DRIFT primer calls and follow-up local searches; and within a "
+            "search, its fetch-by-id batches (ids past the live index's "
+            "id_batch_size), the global report browse's scope batches and a "
+            "search's filter batches (lists past max_terms_count), and a "
+            "filtered graph walk's per-vertex edge requests (each asks both "
+            "endpoint sides, so up to twice that many). Each bound is its "
+            "own and they nest: each DRIFT follow-up search, and each batch "
+            "the retriever splits again, has one, so up to the square of "
+            "this many requests. Per query, so concurrent queries (run-eval "
+            "keeps processing.max_concurrency of them in flight) multiply it; "
+            "lower it if a query's calls are throttled."
         ),
     )
     store_timeout_seconds: float = Field(
