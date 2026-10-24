@@ -1255,6 +1255,50 @@ async def test_a_fetch_by_id_is_batched_by_the_smallest_step_of_its_indexes(
     assert sorted(str(r.source) for r in found) == ids
 
 
+async def test_a_fetch_by_id_reads_the_limits_of_a_single_named_index(
+    config: Config,
+) -> None:
+    # index_prefixes may name one index as a string: its limits, not those
+    # of a prefix per character.
+    class _ByName(_Window):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits(max_result_window=2 if prefix == "small" else 5)
+
+    store = _ByName(window=2)
+    ids = [f"e{i}" for i in range(5)]
+    await _strategy(config, _Graph(), store)._fetch_by_ids(
+        store,
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=len(ids),
+            index_prefixes="small",
+            filters={"id": ids},
+        ),
+        "fetch",
+    )
+    assert store.asked == [["e0", "e1"], ["e2", "e3"], ["e4"]]
+
+
+async def test_a_fetch_by_id_asks_a_repeated_id_once(config: Config) -> None:
+    # Regression: a repeated id was asked by two batches, and its hit came
+    # back twice.
+    store = _Window(window=2)
+    found = await _strategy(config, _Graph(), store)._fetch_by_ids(
+        store,
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=4,
+            index_prefixes=["entities"],
+            filters={"id": ["e1", "e2", "e1", "e3"]},
+        ),
+        "fetch",
+    )
+    assert store.asked == [["e1", "e2"], ["e3"]]
+    assert sorted(str(r.source) for r in found) == ["e1", "e2", "e3"]
+
+
 class _Slow(_Window):
     """A ``_Window`` whose searches take a moment, counted in flight; the
     batch naming ``fail_on`` fails the query with ``error``."""

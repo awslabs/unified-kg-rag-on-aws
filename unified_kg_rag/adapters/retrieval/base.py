@@ -382,8 +382,9 @@ class BaseSearchStrategy(ABC):
         reads (``aindex_limits``), each batch with a ``top_k`` of its ids, at
         most ``search.max_concurrency`` at once. Asked at once, ids past the
         window came back as the window's worth in the store's order, not the
-        best-ranked ones. The hits come back batch after batch."""
-        ids = list((query.filters or {}).get("id") or ())
+        best-ranked ones. The hits come back batch after batch, each id once
+        (a repeated id would be asked, and returned, by two batches)."""
+        ids = list(dict.fromkeys((query.filters or {}).get("id") or ()))
         prefixes = query.index_prefixes or []
         if isinstance(prefixes, str):
             prefixes = [prefixes]

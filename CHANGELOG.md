@@ -1497,6 +1497,8 @@ changed once with the full-config keys (#332).
   at most the text units index's live `max_terms_count` communities, those
   of the best-ranked reports, instead of failing the query with
   `InvalidFilterError` when more reports were selected (#PR).
+- Retrieval: a fetch by id asks a repeated id once; it was asked by two
+  batches and its hit came back twice (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
