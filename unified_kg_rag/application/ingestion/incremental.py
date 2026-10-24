@@ -1457,8 +1457,10 @@ def delta_still_applies(
     other ``extraction_fingerprint`` settings, and a diff of
     ``fingerprints`` in ``scope`` that classifies a document outside the
     delta new, changed or deleted. A record without a writer (written
-    before the field existed) is left to the other checks. A run resumed
-    after its own kill passes them all: only it wrote these records since.
+    before the field existed) counts as another pipeline id's unless it is
+    PROCESSED without an open attempt, which is left to the other checks.
+    A run resumed after its own kill passes them all: only it wrote these
+    records since.
 
     A document the delta deletes whose record another pipeline id wrote in
     another scope than the delta's, and not in one of the ``retired``
@@ -1474,12 +1476,18 @@ def delta_still_applies(
         content_hash = fingerprints.get(doc_id)
         if record is None or content_hash is None:
             return False
-        if (
-            pipeline_id is not None
-            and record.written_by is not None
-            and record.written_by != pipeline_id
-        ):
-            return False
+        if pipeline_id is not None and record.written_by != pipeline_id:
+            if record.written_by is not None:
+                return False
+            # No writer: a release before the field wrote it. A PROCESSED
+            # record is left to the other checks (this pipeline's own
+            # commit, say); one PENDING, FAILED or with an open attempt is
+            # an unfinished run's, maybe another pipeline id's.
+            if (
+                record.status is not DocStatus.PROCESSED
+                or record.attempt_batch is not None
+            ):
+                return False
         if content_hash not in (record.attempted_hash, record.content_hash):
             return False
         # Committed at this content by a run with other extraction settings

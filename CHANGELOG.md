@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing, upgrade window: a pipeline id run again computes its
+  delta again when a document of it has a record without a writer (written
+  by a release before `written_by`) that is `PENDING`, `FAILED` or holds an
+  open attempt: an unfinished run, maybe another pipeline id's, left it, and
+  only a committed (`PROCESSED`) one is left to the other checks (#PR).
 - Incremental indexing: a pipeline id of one source scope run again no
   longer deletes another scope's live documents. After an interrupted reset
   of scope A moved scope B's records into A, the next run of A deleted them

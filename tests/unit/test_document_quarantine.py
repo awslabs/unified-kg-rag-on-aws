@@ -33,6 +33,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     open_attempts,
 )
 from unified_kg_rag.domain.ingestion.attempts import (
+    closed_attempt,
     settled_attempts,
     unproductive_attempt,
 )
@@ -462,18 +463,41 @@ def test_a_resumed_delta_is_recomputed_when_another_pipeline_id_wrote_its_record
     assert {r.written_by for r in harness.store.list_all()} == {"P1"}
 
 
-def test_a_record_without_a_writer_is_left_to_the_other_checks() -> None:
-    # Written before DocStatusRecord.written_by existed: unknown, so the
-    # writer check passes it and the content check still decides.
+def test_a_processed_record_without_a_writer_is_left_to_the_other_checks() -> None:
+    # Written before DocStatusRecord.written_by existed: a committed record
+    # passes the writer check, and the content check still decides.
     harness = IncrementalRun()
     corpus = {**_A, **_B}
     docs = [document(path, content) for path, content in corpus.items()]
     delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
-    open_attempts(harness.store, delta, fingerprints)
+    harness.run(corpus)
     assert {r.written_by for r in harness.store.list_all()} == {None}
     assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
     harness.run({"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B})
     assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, pipeline_id="P1"
+    )
+
+
+@pytest.mark.parametrize("state", ["open", "pending", "failed"])
+def test_an_unfinished_record_without_a_writer_is_another_pipeline_ids(
+    state: str,
+) -> None:
+    # Upgrade window: a run of a release before written_by left the record
+    # with an open attempt, PENDING or FAILED; it may be another pipeline
+    # id's, so a resumed delta is computed again.
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    if state != "open":
+        for record in harness.store.list_all():
+            harness.store.put(
+                closed_attempt(record).model_copy(update={"status": DocStatus(state)})
+            )
+    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert delta_still_applies(harness.store, delta, fingerprints, 3)
     assert not delta_still_applies(
         harness.store, delta, fingerprints, 3, pipeline_id="P1"
     )
