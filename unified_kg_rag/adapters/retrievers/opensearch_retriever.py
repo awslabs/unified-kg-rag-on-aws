@@ -831,6 +831,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 wanted,
                 window,
             )
+        elif size > window:
+            logger.warning("Search size %s cut to max_result_window %s", size, window)
         return min(max(size, wanted), window)
 
     def _build_search_bodies(
