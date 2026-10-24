@@ -518,7 +518,11 @@ unless noted.
    units, scope and relative path (the five causes of `FAILED`:
    [runbook](./operations.md#failed-documents)). `failure_count` counts
    consecutive failures of the same content; after
-   `indexing.max_document_failures` the document reads unchanged. Extraction
+   `indexing.max_document_failures` the document reads unchanged. A run that
+   stops before this step at a stage that failed on all of its units still
+   records FAILED the documents whose units failed for an error of their own
+   (4xx, validation, unparseable output; a model outage counts for none),
+   so a document that always fails cannot block every later run. Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted
