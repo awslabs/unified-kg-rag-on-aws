@@ -1486,6 +1486,13 @@ changed once with the full-config keys (#332).
   flight before the query fails. Since #418 they kept going to the store
   after the query had already failed: a fetch of 200 ids one per batch sent
   all 200 requests instead of 8 (#PR).
+- Evaluation: the source resolver caches misses only from a batch that
+  itself answered with a hit. #418 also cached a batch with none whenever
+  another batch of the same call answered, and the retriever degrades a
+  failed request to no hits, so one transient error cached that batch's
+  known text units as unknown for the evaluator's life (12 of 3,102 ids in
+  the reviewer's run). A batch of only unknown ids is asked again on the next
+  query, one extra request (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
