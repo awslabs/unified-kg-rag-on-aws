@@ -49,6 +49,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     index_delta,
     reset_namespaces,
     run_incremental_indexer,
+    unit_source_files,
     warn_about_unapplied_retired_scopes,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -230,7 +231,13 @@ class PipelineStage(ABC):
             duration = (end_time - start_time).total_seconds()
 
             if not self._allows_empty_output(context):
-                self._validate_critical_stage_output(input_count, output_count)
+                self._validate_critical_stage_output(
+                    input_count,
+                    output_count,
+                    unit_source_files(
+                        context, context.failed_text_unit_ids.get(self.name, ())
+                    ),
+                )
 
             logger.info(
                 "Stage '%s' completed successfully in %.2f seconds. "
@@ -301,8 +308,11 @@ class PipelineStage(ABC):
         return "Check that the previous stage completed successfully."
 
     def _validate_critical_stage_output(
-        self, input_count: int, output_count: int
+        self, input_count: int, output_count: int, failed_files: Sequence[str] = ()
     ) -> None:
+        """Raise when a stage that must have input got none, or a critical
+        stage produced nothing; the message names ``failed_files``, the source
+        files of the units the stage failed on."""
         is_critical = self.stage_type not in self.OPTIONAL_OUTPUT_STAGES
         must_have_input = self.stage_type in self.MUST_HAVE_INPUT_STAGES
 
@@ -323,6 +333,12 @@ class PipelineStage(ABC):
                 f"{input_count} inputs but produced 0 outputs. Check the stage "
                 f"configuration and input data quality."
             )
+            if failed_files:
+                error_msg += (
+                    f" It failed on {len(failed_files)} files: "
+                    + ", ".join(failed_files[:10])
+                    + (" ..." if len(failed_files) > 10 else "")
+                )
             logger.error("%s", error_msg)
             raise PipelineStageError(error_msg)
 
@@ -875,6 +891,7 @@ class GraphExtractionStage(PipelineStage):
             by_unit[unit.id] for unit in text_units if unit.id in by_unit
         ]
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
+        context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
 
         entities_count, relationships_count = _distinct_counts(context.unit_extractions)
         metrics = {

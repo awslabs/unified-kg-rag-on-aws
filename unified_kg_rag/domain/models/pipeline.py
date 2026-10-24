@@ -344,6 +344,14 @@ class PipelineContext(BaseModel):
         "stage name. An incremental commit records their documents as FAILED "
         "so the next run re-extracts them.",
     )
+    item_failed_text_unit_ids: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="The failed text units whose error was their own (a 4xx "
+        "or validation error, a response that does not parse), by stage name. "
+        "When such a stage fails the run, their documents are still recorded "
+        "FAILED, so a document that always fails reaches "
+        "indexing.max_document_failures; a model outage counts for none.",
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

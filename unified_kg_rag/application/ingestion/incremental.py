@@ -1430,6 +1430,7 @@ def delta_still_applies(
     extraction_fingerprint: str | None = None,
     scope: str | None = None,
     pipeline_id: str | None = None,
+    max_failures: int | None = None,
 ) -> bool:
     """Whether a resumed run may index ``delta`` as it was computed.
 
@@ -1442,7 +1443,9 @@ def delta_still_applies(
     pipeline can be re-run. A document whose open attempt shows the last run
     died, with the deaths now at ``max_attempts``, needs the plan of a new
     diff (``attempts.plan_attempts``), or the resumed runs would keep dying
-    on the same delta.
+    on the same delta. Likewise a document recorded FAILED at its content
+    ``max_failures`` times since: a new diff skips it, the resumed runs
+    would retry it for ever.
 
     A finished pipeline id run again restores its delta too, so three
     more checks catch another pipeline id's runs since: a record of the
@@ -1482,6 +1485,16 @@ def delta_still_applies(
             return False
         deaths, _ = settled_attempts(record, content_hash)
         if record.attempt_batch is not None and deaths >= max_attempts:
+            return False
+        if (
+            max_failures is not None
+            and record.status is DocStatus.FAILED
+            and record.content_hash == content_hash
+            and record.failure_count >= max_failures
+            and not settings_changed(
+                record.extraction_fingerprint, extraction_fingerprint
+            )
+        ):
             return False
     # And every other document of the scope reads as the delta classified
     # it: another pipeline id may have indexed, deleted or re-extracted one
@@ -1681,13 +1694,23 @@ def documents_with_failed_units(
     context: PipelineContext, text_units: list[TextUnit]
 ) -> set[str]:
     """Registry ids of the documents an extraction stage failed on."""
-    failed_units = {
-        unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids
-    }
+    return _documents_of_units(
+        context,
+        text_units,
+        {unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids},
+    )
+
+
+def _documents_of_units(
+    context: PipelineContext, text_units: list[TextUnit], unit_ids: Collection[str]
+) -> set[str]:
+    """Registry ids of the run's documents the ``unit_ids`` of ``text_units``
+    belong to."""
+    wanted = set(unit_ids)
     run_document_ids = {
         document_id
         for unit in text_units
-        if unit.id in failed_units
+        if unit.id in wanted
         for document_id in unit.document_ids or []
     }
     return {
@@ -1695,6 +1718,98 @@ def documents_with_failed_units(
         for document in context.documents
         if document.document_id in run_document_ids
     }
+
+
+def unit_source_files(context: PipelineContext, unit_ids: Collection[str]) -> list[str]:
+    """Source files (relative to the corpus root) of the run's documents the
+    text units ``unit_ids`` belong to, sorted."""
+    wanted = set(unit_ids)
+    if not wanted:
+        return []
+    document_ids = {
+        document_id
+        for unit in context.translated_units or context.text_units or []
+        if unit.id in wanted
+        for document_id in unit.document_ids or []
+    }
+    return sorted(
+        {
+            document.metadata.get(RELATIVE_PATH_KEY)
+            or document.file_path
+            or document.document_id
+            for document in context.documents
+            if document.document_id in document_ids
+        }
+    )
+
+
+def record_item_failures(
+    store: DocStatusPort,
+    context: PipelineContext,
+    unit_ids: Collection[str],
+    max_failures: int,
+) -> list[DocStatusRecord]:
+    """Record FAILED the run's documents ``unit_ids`` belong to, after a
+    stage failed on those units for an error of their own and stopped the
+    run before the indexing stage could record them.
+
+    Counted like a FAILED commit (``_record_processed``): one more
+    consecutive failure of the content, its attempt closed, so a document
+    that always fails reaches ``max_failures`` and the next diff skips it
+    (``detect_delta``) instead of stopping every run, and the deletions of
+    the delta go through. Nothing was written to the stores for the run,
+    so the stored text units (of the indexed version) are kept for a later
+    removal. Returns the records written.
+    """
+    doc_ids = _documents_of_units(
+        context, context.translated_units or context.text_units or [], unit_ids
+    )
+    if not doc_ids:
+        return []
+    check_write_fence()
+    fingerprints = context.incremental_fingerprints
+    error_info = f"{_EXTRACTION_FAILED} (an error a retry does not fix)"
+    records = []
+    for doc_id, record in store.get_many(sorted(doc_ids)).items():
+        content_hash = fingerprints.get(doc_id, record.content_hash)
+        earlier = (
+            record.failure_count
+            if record.status is DocStatus.FAILED and record.content_hash == content_hash
+            else 0
+        )
+        records.append(
+            record.model_copy(
+                update={
+                    "status": DocStatus.FAILED,
+                    "content_hash": content_hash,
+                    "error_info": error_info,
+                    "failure_count": earlier + 1,
+                    "extraction_fingerprint": (
+                        context.incremental_extraction_fingerprint
+                        or record.extraction_fingerprint
+                    ),
+                    "attempt_count": 0,
+                    "attempted_hash": None,
+                    "attempt_batch": None,
+                    "crash_batch": 0,
+                }
+            )
+        )
+    store.put_many(_written_by(records, context.pipeline_id))
+    logger.warning(
+        "Recorded %d documents FAILED for extraction errors a retry does not "
+        "fix (a document is skipped once it failed indexing."
+        "max_document_failures=%d consecutive runs, until its content or the "
+        "extraction settings change): %s",
+        len(records),
+        max_failures,
+        ", ".join(
+            f"{record.file_path or record.doc_id} "
+            f"({record.failure_count}/{max_failures})"
+            for record in records[:10]
+        ),
+    )
+    return records
 
 
 def run_incremental_indexer(

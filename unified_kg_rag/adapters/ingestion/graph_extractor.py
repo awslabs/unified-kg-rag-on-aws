@@ -49,6 +49,12 @@ class ExtractionStats(BaseModel):
         default_factory=list,
         description="Ids of the text units whose extraction failed",
     )
+    item_failed_text_unit_ids: list[str] = Field(
+        default_factory=list,
+        description="The failed text units whose error was their own, not the "
+        "model's (BatchProcessor.is_item_error): a 4xx or validation error, or "
+        "a response that does not parse",
+    )
     total_entities_extracted: int = Field(
         default=0, description="Total number of entities extracted from all text units"
     )
@@ -168,6 +174,7 @@ class GraphExtractor(BaseProcessor):
         self.stats = ExtractionStats(num_total_units=len(text_units))
         logger.info("Starting graph extraction from %s text units", len(text_units))
 
+        errors: dict[int, BaseException] = {}
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=text_units,
@@ -175,6 +182,7 @@ class GraphExtractor(BaseProcessor):
                 sequential_func=self.graph_extractor.invoke,
                 task_name="Graph Extraction",
                 show_progress=self.show_progress,
+                errors=errors,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -185,6 +193,11 @@ class GraphExtractor(BaseProcessor):
             return [], self.stats
 
         records = self._process_extraction_results(text_units, extraction_results)
+        self.stats.item_failed_text_unit_ids.extend(
+            text_units[idx].id
+            for idx, error in sorted(errors.items())
+            if self.batch_processor.is_item_error(error)
+        )
 
         self.stats.total_entities_extracted = sum(len(r.entities) for r in records)
         self.stats.total_relationships_extracted = sum(
@@ -296,6 +309,7 @@ class GraphExtractor(BaseProcessor):
             except Exception as e:
                 self.stats.num_failed_extractions += 1
                 self.stats.failed_text_unit_ids.append(text_unit.id)
+                self.stats.item_failed_text_unit_ids.append(text_unit.id)
                 logger.error(
                     "Failed to parse extraction result for text unit '%s': %s",
                     text_unit.id,

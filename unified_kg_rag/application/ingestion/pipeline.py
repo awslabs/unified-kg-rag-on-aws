@@ -24,6 +24,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
     delta_still_applies,
     open_attempts,
+    record_item_failures,
     retired_scope_readings,
 )
 from unified_kg_rag.application.ingestion.namespace_lease import (
@@ -101,8 +102,9 @@ logger = get_logger(__name__)
 _STALE_DELTA = (
     "the doc-status registry changed since this pipeline computed its "
     "incremental delta (another run committed some of its documents, a "
-    "commit of this pipeline did not finish, or runs died processing it "
-    "often enough to isolate the document that kills them)"
+    "commit of this pipeline did not finish, runs died processing it "
+    "often enough to isolate the document that kills them, or a document "
+    "failed indexing.max_document_failures times)"
 )
 T = TypeVar("T", bound=BaseModel)
 
@@ -1377,6 +1379,7 @@ class DataIngestionPipeline:
             context.incremental_extraction_fingerprint,
             context.incremental_scope,
             context.pipeline_id,
+            self.config.indexing.max_document_failures,
         ):
             return False
         loading = PipelineStageType.DOCUMENT_LOADING.value
@@ -1523,6 +1526,7 @@ class DataIngestionPipeline:
                         self._upload_checkpoint(context.pipeline_id)
 
                 if self._should_stop_pipeline(result):
+                    self._record_item_failures(stage, context)
                     logger.warning(
                         "Pipeline execution stopped due to stage failure: '%s'",
                         stage.name,
@@ -1618,6 +1622,7 @@ class DataIngestionPipeline:
         # A failure recorded for this stage by an earlier attempt is replaced
         # by what this execution reports.
         context.failed_text_unit_ids.pop(stage.name, None)
+        context.item_failed_text_unit_ids.pop(stage.name, None)
         blocked_by = self._failed_corpus_stage(stage, context)
         if blocked_by is not None:
             result = PipelineStageResult(
@@ -1676,6 +1681,40 @@ class DataIngestionPipeline:
                 "their documents are not committed as processed",
                 stage.name,
                 len(units),
+            )
+
+    def _record_item_failures(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> None:
+        """Record FAILED the documents ``stage``, which stops the run, failed
+        on for errors of their own (``incremental.record_item_failures``).
+
+        The indexing stage records a failed document only when the run gets
+        there; a stage that failed on all of its units stops the run first,
+        so without this a document that always fails (a request the model
+        rejects, a response that never parses) never reaches
+        ``indexing.max_document_failures`` and stops every later run, with
+        the deletions of its delta. Errors of the model (throttling, 5xx,
+        timeouts, connections) count for none. Best effort: the run fails
+        either way.
+        """
+        unit_ids = context.item_failed_text_unit_ids.get(stage.name)
+        if not unit_ids or not self._incremental_delta(context):
+            return
+        assert self._doc_status is not None
+        try:
+            record_item_failures(
+                self._doc_status,
+                context,
+                unit_ids,
+                self.config.indexing.max_document_failures,
+            )
+        except Exception as e:  # noqa: BLE001 - the run fails either way
+            logger.warning(
+                "Recording the documents stage '%s' failed on failed (%s); the "
+                "next run retries them without counting this failure",
+                stage.name,
+                e,
             )
 
     def _run_stage(
