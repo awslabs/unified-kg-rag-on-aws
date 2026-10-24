@@ -503,6 +503,149 @@ def test_an_unfinished_record_without_a_writer_is_another_pipeline_ids(
     )
 
 
+def test_a_delta_document_committed_under_other_settings_is_stale() -> None:
+    # Records without a writer: only the settings check sees it.
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    delta, fingerprints = detect_delta(
+        docs, harness.store, max_attempts=3, extraction_fingerprint="mine"
+    )
+    open_attempts(harness.store, delta, fingerprints)
+    a_id = document_doc_id(docs[0])
+    record = harness.store.get(a_id)
+    assert record is not None
+    committed = record.model_copy(
+        update={
+            "status": DocStatus.PROCESSED,
+            "content_hash": fingerprints[a_id],
+            "extraction_fingerprint": "other",
+        }
+    )
+    harness.store.put(committed)
+    assert not delta_still_applies(harness.store, delta, fingerprints, 3, "mine")
+    harness.store.put(committed.model_copy(update={"extraction_fingerprint": "mine"}))
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, "mine")
+
+
+def test_a_delta_re_extracting_for_new_settings_still_applies() -> None:
+    harness = IncrementalRun()
+    harness.run(_A)
+    docs = [document(path, content) for path, content in _A.items()]
+    a_id = document_doc_id(docs[0])
+    record = harness.store.get(a_id)
+    assert record is not None and record.status is DocStatus.PROCESSED
+    harness.store.put(record.model_copy(update={"extraction_fingerprint": "old"}))
+    delta, fingerprints = detect_delta(
+        docs, harness.store, max_attempts=3, extraction_fingerprint="mine"
+    )
+    assert a_id in delta.settings_changed, delta
+    open_attempts(harness.store, delta, fingerprints)
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, "mine")
+
+
+def test_a_failed_document_retried_under_new_settings_still_applies() -> None:
+    # Only a commit (PROCESSED) under other settings is another run's work:
+    # a document that failed under them is retried by this delta.
+    harness = IncrementalRun()
+    harness.run(_A)
+    docs = [document(path, content) for path, content in _A.items()]
+    a_id = document_doc_id(docs[0])
+    record = harness.store.get(a_id)
+    assert record is not None
+    harness.store.put(
+        record.model_copy(
+            update={"status": DocStatus.FAILED, "extraction_fingerprint": "old"}
+        )
+    )
+    delta, fingerprints = detect_delta(
+        docs, harness.store, max_attempts=3, extraction_fingerprint="mine"
+    )
+    assert delta.changed == [a_id] and not delta.settings_changed, delta
+    open_attempts(harness.store, delta, fingerprints)
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, "mine")
+
+
+def test_a_changed_document_whose_old_version_had_other_settings_still_applies() -> (
+    None
+):
+    harness = IncrementalRun()
+    harness.run(_A)
+    a_id = document_doc_id(document(*next(iter(_A.items()))))
+    record = harness.store.get(a_id)
+    assert record is not None
+    harness.store.put(record.model_copy(update={"extraction_fingerprint": "old"}))
+    edited = document(next(iter(_A)), [[("Vendor", "Depot", 2)]])
+    delta, fingerprints = detect_delta(
+        [edited], harness.store, max_attempts=3, extraction_fingerprint="mine"
+    )
+    assert delta.changed == [a_id], delta
+    open_attempts(harness.store, delta, fingerprints)
+    assert delta_still_applies(harness.store, delta, fingerprints, 3, "mine")
+
+
+def test_a_document_that_failed_to_load_is_no_move() -> None:
+    harness = IncrementalRun()
+    harness.run({**_A, **_B})
+    for record in harness.store.list_all():
+        harness.store.put(record.model_copy(update={"scope": "default|corpus"}))
+    docs = [document(path, content) for path, content in {**_A, **_B}.items()]
+    b_id = document_doc_id(docs[1])
+    edited = document(next(iter(_A)), [[("Vendor", "Depot", 2)]])
+    delta, fingerprints = detect_delta(
+        [edited],
+        harness.store,
+        scope="default|corpus",
+        failed_doc_ids=[b_id],
+        max_attempts=3,
+    )
+    assert delta.failed == [b_id], delta
+    open_attempts(harness.store, delta, fingerprints)
+    assert delta_still_applies(
+        harness.store, delta, fingerprints, 3, scope="default|corpus"
+    )
+
+
+def _bisected_delta(runs: int) -> tuple[IncrementalRun, DocumentDelta, dict[str, str]]:
+    """The delta of a.txt-d.txt after ``runs`` runs died on c.txt, its
+    attempts opened."""
+    harness = IncrementalRun()
+    harness.run(_B)
+    corpus = {**_A, **_B, **_C, **_D}
+    harness.crash_on = lambda paths: "/c/c.txt" in paths
+    for _ in range(runs):
+        assert harness.run(corpus)
+    docs = [document(path, content) for path, content in corpus.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    open_attempts(harness.store, delta, fingerprints)
+    return harness, delta, fingerprints
+
+
+@pytest.mark.parametrize(("runs", "kind"), [(3, "deferred"), (5, "quarantined")])
+def test_a_deferred_or_quarantined_document_is_no_move(runs: int, kind: str) -> None:
+    harness, delta, fingerprints = _bisected_delta(runs)
+    assert getattr(delta, kind), delta
+    # max_attempts is raised past the deaths the runs left: with 3, the
+    # deaths check alone makes the delta stale and the scope diff, this
+    # test's subject, is never reached.
+    assert delta_still_applies(
+        harness.store, delta, fingerprints, 99, scope="default|corpus"
+    )
+
+
+def test_another_version_failing_outside_the_delta_is_a_move() -> None:
+    # Another run tried another version of a.txt (left unchanged by the
+    # delta) and it failed: not "still failing on this content".
+    harness, docs, delta, fingerprints = _resumable_delta()
+    record = harness.store.get(document_doc_id(docs[0]))
+    assert record is not None
+    harness.store.put(
+        record.model_copy(update={"status": DocStatus.FAILED, "content_hash": "v2"})
+    )
+    assert not delta_still_applies(
+        harness.store, delta, fingerprints, 3, scope="default|corpus"
+    )
+
+
 def test_a_resumed_delta_is_replanned_once_its_runs_died_too_often() -> None:
     harness = IncrementalRun()
     docs = [document(path, content) for path, content in {**_A, **_B}.items()]
