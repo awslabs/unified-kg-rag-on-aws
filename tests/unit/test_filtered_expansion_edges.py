@@ -30,7 +30,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
-from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared.exceptions import InvalidFilterError, StoreTimeoutError
 
 pytestmark = pytest.mark.unit
 
@@ -1253,6 +1253,73 @@ async def test_a_fetch_by_id_is_batched_by_the_smallest_step_of_its_indexes(
     )
     assert store.asked == [["e0", "e1"], ["e2", "e3"], ["e4"]]
     assert sorted(str(r.source) for r in found) == ids
+
+
+class _Slow(_Window):
+    """A ``_Window`` whose searches take a moment, counted in flight; the
+    batch naming ``fail_on`` fails the query with ``error``."""
+
+    def __init__(self, window: int, fail_on: str = "", error: Exception | None = None):
+        super().__init__(window)
+        self.fail_on, self.error = fail_on, error
+        self.in_flight = self.peak = self.started = 0
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.started += 1
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(0.005)
+            if self.error is not None and self.fail_on in query.filters["id"]:
+                raise self.error
+            return await super().aretrieve(query)
+        finally:
+            self.in_flight -= 1
+
+
+async def test_a_fetch_by_id_keeps_to_the_search_concurrency(config: Config) -> None:
+    config.search.max_concurrency = 3
+    store = _Slow(window=1)
+    ids = [f"e{i}" for i in range(20)]
+    found = await _strategy(config, _Graph(), store)._fetch_by_ids(
+        store,
+        SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=len(ids),
+            index_prefixes=["entities"],
+            filters={"id": ids},
+        ),
+        "fetch",
+    )
+    assert len(found) == 20
+    assert store.peak == 3
+
+
+async def test_a_fatal_batch_stops_the_fetch_by_id_from_sending_the_rest(
+    config: Config,
+) -> None:
+    # Regression: a fatal error (a timeout, denied access) of one batch
+    # failed the query, and the queued batches still went to the store.
+    config.search.max_concurrency = 2
+    store = _Slow(window=1, fail_on="e0", error=StoreTimeoutError("timed out"))
+    ids = [f"e{i}" for i in range(20)]
+    with pytest.raises(StoreTimeoutError):
+        await _strategy(config, _Graph(), store)._fetch_by_ids(
+            store,
+            SearchQuery(
+                query="",
+                search_type=SearchType.LEXICAL,
+                top_k=len(ids),
+                index_prefixes=["entities"],
+                filters={"id": ids},
+            ),
+            "fetch",
+        )
+    sent = store.started
+    await asyncio.sleep(0.05)
+    assert store.started == sent <= 4
+    assert store.in_flight == 0
 
 
 def _relationship(source: str, target: str) -> RetrievalResult:

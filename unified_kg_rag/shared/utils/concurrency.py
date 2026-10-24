@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
+import inspect
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -58,14 +59,29 @@ async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[
 async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
     """``asyncio.gather`` of ``aws`` (results in order), at most ``limit``
     of them awaited at once: the batches of one search, so a long list does
-    not put hundreds of requests on a store at the same time."""
+    not put hundreds of requests on a store at the same time.
+
+    When one raises (or the caller is cancelled) the others are cancelled
+    and waited for before the error propagates: a plain ``gather`` left the
+    queued ones going to the store after the search had already failed. An
+    awaitable cancelled before it started is closed, not left unawaited."""
     semaphore = asyncio.Semaphore(max(1, limit))
+    pending = list(aws)
 
     async def one(aw: Awaitable[_T]) -> _T:
         async with semaphore:
             return await aw
 
-    return list(await asyncio.gather(*(one(aw) for aw in aws)))
+    tasks = [asyncio.ensure_future(one(aw)) for aw in pending]
+    try:
+        async with cancel_on_exit(tasks):
+            return list(await asyncio.gather(*tasks))
+    finally:
+        for aw in pending:
+            if inspect.iscoroutine(aw) and (
+                inspect.getcoroutinestate(aw) == inspect.CORO_CREATED
+            ):
+                aw.close()
 
 
 async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:

@@ -1481,6 +1481,11 @@ changed once with the full-config keys (#332).
   `max_terms_count` the walk's exclusion keeps the vertices reached last, so
   edges back to the others can fill a page; the template's `max_query_size`
   note no longer says a fetch by id keeps only its best-ranked ids (#418).
+- Retrieval: a fatal store error (a timeout, a denied or refused search)
+  in one batch of a search now cancels the batches still queued or in
+  flight before the query fails. Since #418 they kept going to the store
+  after the query had already failed: a fetch of 200 ids one per batch sent
+  all 200 requests instead of 8 (#PR).
 - Incremental indexing: a removal whose strip splits a spelling off and is
   killed between its graph edge writes and their vector copies leaves no
   vector edge missing. Since #412 the retry wrote a vector copy only where
