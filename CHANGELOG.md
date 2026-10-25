@@ -1355,6 +1355,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a custom language-model factory without an
+  `is_item_error` hook counts a request its server rejects for its content
+  (HTTP 400/413/422 in `status_code` or `response.status_code`, other than
+  a rejected model or setting) against the document, as the local factories
+  do, instead of counting only unparseable or cut-off output; a document
+  such a model always rejects is excluded after
+  `indexing.max_document_failures` runs again, rather than failing every
+  run of its delta. The optional factory hooks (`is_transient_error`,
+  `is_item_error`, `transient_retry`) are documented in design §15 (#PR).
 - Incremental indexing: one error on every unit of several documents counts
   for none of them in claim extraction and gleaning too, as it did in graph
   extraction (`adapters.llm.retry.item_failed_indices`), so a setting the
@@ -1409,8 +1418,7 @@ changed once with the full-config keys (#332).
   `ValidationException`, HTTP 400/413/422 from a local server) other than a
   rejection of the model or a setting, and not one error that failed every
   unit of several documents. The language-model factories name these
-  (`is_item_error`, next to `is_transient_error`); a custom factory without
-  one has only the output failures counted. Graph extraction, gleaning and
+  (`is_item_error`, next to `is_transient_error`). Graph extraction, gleaning and
   claim extraction are classified; any other failure (translation, a
   report, a record not stored) is recorded `FAILED` without counting (#425).
 - Incremental indexing: the refusal to run a finished pipeline id again on

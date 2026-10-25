@@ -25,6 +25,7 @@ from botocore.exceptions import NoCredentialsError, TokenRetrievalError
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_ingestion_stages import _source_text
+from unified_kg_rag.adapters.local import models
 from unified_kg_rag.application.cli.run_ingestion_pipeline import (
     IngestionPipelineRunner,
 )
@@ -116,6 +117,21 @@ def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     # Skipped from the third run on: the run completes and deletes d1.
     assert seen[2:] == [(done, (DocStatus.FAILED.value, 2), False)] * 2, seen
     assert errors == []
+
+
+def test_a_factory_without_an_item_classifier_counts_http_rejections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A custom factory without is_item_error: the HTTP 400 its client raises
+    # still counts (looks_like_item_error), so the document is excluded and
+    # the delta's deletion applies instead of failing every run.
+    monkeypatch.setattr(models._LocalLanguageModelFactory, "is_item_error", None)
+    *seen, _ = _runs(tmp_path, 400)
+    assert [record for _, record, _ in seen] == [
+        (DocStatus.FAILED.value, 1),
+        *[(DocStatus.FAILED.value, 2)] * 3,
+    ], seen
+    assert seen[-1][2] is False, seen
 
 
 @pytest.mark.parametrize("status", [503, 403, 404])

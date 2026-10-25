@@ -88,7 +88,8 @@ def looks_like_item_error(exc: BaseException) -> bool:
     """Whether the server rejected the item's own request: HTTP 400/413/422
     (``status_code`` or ``response.status_code``) other than a rejection of
     the model or its settings (an unknown model, an unsupported parameter),
-    which fails every item alike. The local factories' ``is_item_error``."""
+    which fails every item alike. The local factories' ``is_item_error``, and
+    the classifier of a factory without one."""
     return _http_status(exc) in _ITEM_HTTP_STATUSES and not (
         _CONFIGURATION_MESSAGE.search(str(exc))
     )
@@ -100,17 +101,19 @@ def item_error_predicate(factory: object) -> ItemErrorPredicate:
 
     Positive only: a response that does not parse (``OutputParserException``)
     or was cut off (``LLMOutputTruncatedError``), or an error the factory's
-    ``is_item_error`` names (a request the model rejects for its content).
-    Any other error (throttling, 5xx, timeouts, connections, credentials,
-    quotas, a bug) says nothing about the item and counts for none; a factory
-    without ``is_item_error`` has only the two output failures counted.
+    ``is_item_error`` names (a request the model rejects for its content),
+    else :func:`looks_like_item_error`, so a custom backend's HTTP 400/413/422
+    counts without naming its error types. Any other error (throttling, 5xx,
+    timeouts, connections, credentials, quotas, a bug) says nothing about the
+    item and counts for none.
     """
     hook: ItemErrorPredicate | None = getattr(factory, "is_item_error", None)
+    named = hook if hook is not None else looks_like_item_error
 
     def is_item_error(exc: BaseException) -> bool:
         if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
             return True
-        return hook is not None and isinstance(exc, Exception) and hook(exc)
+        return isinstance(exc, Exception) and named(exc)
 
     return is_item_error
 

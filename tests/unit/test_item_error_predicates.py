@@ -241,10 +241,16 @@ def test_local_factories_read_the_status_of_the_response(
     assert predicate(error) is counted
 
 
-def test_a_factory_without_a_classifier_counts_output_errors_only() -> None:
+def test_a_factory_without_a_classifier_counts_http_item_rejections() -> None:
+    # A custom factory without is_item_error: its client's HTTP 400/413/422
+    # count (read from status_code), not only unparseable output; a document
+    # it always rejects is excluded rather than retried forever.
     predicate = item_error_predicate(object())
-    assert all(predicate(e) for e in _OUTPUT_ERRORS)
-    assert not any(predicate(e) for e in [*_BEDROCK_ITEM, *_LOCAL_ITEM])
+    assert all(predicate(e) for e in [*_OUTPUT_ERRORS, *_LOCAL_ITEM])
+    counted = [
+        e for e in [*_NOT_ITEM_ERRORS, *_LOCAL_NOT_ITEM, *_BEDROCK_ITEM] if predicate(e)
+    ]
+    assert counted == []
 
 
 def _documents(documents: list[str]) -> list[list[str]]:
