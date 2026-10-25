@@ -232,7 +232,8 @@ def test_ingestion_json_result_lists_each_stage(
 
 async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     # The result named no failed document: a run that recorded some FAILED
-    # read as a clean success.
+    # read as a clean success. It counts the records written FAILED, not the
+    # documents a stage failed on (a model outage records them PENDING).
     from unified_kg_rag.domain.models import Document, TextUnit
 
     documents = [
@@ -254,10 +255,13 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
         failed_text_unit_ids={"graph_extraction": ["u0", "u1"], "gleaning": ["u3"]},
     )
     assert [d.document_id for d in context.failed_documents] == ["a", "c"]
+    context.record_failed_documents(["doc-a"])
     runner = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
         run_ingestion_pipeline.IngestionPipelineRunner
     )
     runner.pipeline = MagicMock(executed_stages=frozenset())
+    assert runner._json_result(context)["failed_documents"] == 1
+    context.record_failed_documents(["doc-c", "doc-a"])
     assert runner._json_result(context)["failed_documents"] == 2
 
 
@@ -403,6 +407,28 @@ def test_a_configuration_error_while_running_exits_2_in_every_cli(
         except SystemExit as exc:
             code = exc.code
         assert code == 2, argv[0]
+
+
+def test_an_unreachable_store_exits_1_in_run_ingestion(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The pipeline raises it unwrapped now (the facade exports it): still a
+    # failed run, exit 1, not an unexpected crash.
+    from unified_kg_rag.shared import StoreConnectionError
+
+    def unreachable(*_args: object, **_kwargs: object) -> None:
+        raise StoreConnectionError("Failed to connect to OpenSearch.")
+
+    monkeypatch.setattr(
+        run_ingestion_pipeline.IngestionPipelineRunner, "__init__", unreachable
+    )
+    monkeypatch.setattr(sys, "argv", ["run-ingestion"])
+    with pytest.raises(SystemExit) as exited:
+        run_ingestion_pipeline.main()
+    assert exited.value.code == 1
+    out = capsys.readouterr().out
+    assert "Failed to connect to OpenSearch" in out
+    assert "unexpected" not in out
 
 
 def _raise_interrupt(*_args: object, **_kwargs: object) -> None:

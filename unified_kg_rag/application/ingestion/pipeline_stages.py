@@ -1880,6 +1880,7 @@ class IndexingStage(_RegistryStage):
                         context, text_units, own_errors=True
                     ),
                 )
+                context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 if recorded:
                     # The records of documents the rebuild replaced go; a
                     # failed rebuild keeps them (their artifacts may remain).

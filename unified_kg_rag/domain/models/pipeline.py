@@ -354,6 +354,17 @@ class PipelineContext(BaseModel):
         "quota, a setting) counts for none.",
     )
 
+    recorded_failed_doc_ids: list[str] = Field(
+        default_factory=list,
+        description="Registry ids of the documents this run recorded FAILED "
+        "(the indexing commit, or a stage that stopped the run on errors of "
+        "their own); the run's failed_documents count.",
+    )
+
+    def record_failed_documents(self, doc_ids: Iterable[str]) -> None:
+        """Add ``doc_ids`` to :attr:`recorded_failed_doc_ids`."""
+        self.recorded_failed_doc_ids = sorted({*self.recorded_failed_doc_ids, *doc_ids})
+
     def documents_of_units(self, unit_ids: Iterable[str]) -> "list[Document]":
         """The run's documents the text units ``unit_ids`` belong to."""
         wanted = set(unit_ids)

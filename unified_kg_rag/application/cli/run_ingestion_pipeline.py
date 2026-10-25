@@ -54,6 +54,7 @@ from unified_kg_rag.shared import (
     NullMetricsSink,
     PipelineExecutionError,
     PipelineInterrupted,
+    StoreConnectionError,
     get_logger,
     setup_logging,
 )
@@ -590,7 +591,7 @@ class IngestionPipelineRunner:
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
             "duration_seconds": context.duration_seconds,
-            "failed_documents": len(context.failed_documents),
+            "failed_documents": len(context.recorded_failed_doc_ids),
             "stages": [
                 {
                     **result.model_dump(
@@ -705,9 +706,9 @@ def main() -> None:
         logger.error("Ingestion configuration error: %s", e)
         _print_failed(runner, EXIT_USAGE, e)
         sys.exit(EXIT_USAGE)
-    except PipelineExecutionError as e:
-        # A failed stage, a failed metadata check or a refused prompt: say
-        # which before exiting non-zero.
+    except (PipelineExecutionError, StoreConnectionError) as e:
+        # A failed stage, a failed metadata check, a refused prompt or an
+        # unreachable store: say which before exiting non-zero.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)

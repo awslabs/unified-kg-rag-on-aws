@@ -1373,6 +1373,23 @@ changed once with the full-config keys (#332).
   one has only the output failures counted. Graph extraction, gleaning and
   claim extraction are classified; any other failure (translation, a
   report, a record not stored) is recorded `FAILED` without counting (#PR).
+- Incremental indexing: the refusal to run a finished pipeline id again on
+  the restored failures of a stage not enabled in the rerun was skipped when
+  an enabled stage had failed too: the resume rewound to that stage and the
+  indexing stage recorded the other stage's documents `FAILED` once more
+  without retrying them. The refusal now also holds for the stage the resume
+  rewinds to (#PR).
+- `run-ingestion --output-format json`: `failed_documents` counted the
+  documents a stage failed on, so a model outage that recorded every
+  document `PENDING` read as that many documents recorded `FAILED`. It now
+  counts the documents the run recorded `FAILED`, as does the summary's
+  "Documents Failed" row (#PR).
+- `DataIngestionPipeline.run` raises a `StoreConnectionError` met outside a
+  stage (the store preflight before any model call) as it is, like
+  `ConfigurationError` and `NamespaceLeaseError`, instead of wrapping it in
+  `PipelineExecutionError`, so a caller can tell an unreachable store from
+  a crash with the exception the package root exports. `run-ingestion`
+  still exits 1 (#PR).
 - Incremental indexing: a finished pipeline id run again with only its later
   stages enabled (an indexing-only phase, say) on the restored output of a
   stage that failed on some documents recorded them `FAILED` once more each

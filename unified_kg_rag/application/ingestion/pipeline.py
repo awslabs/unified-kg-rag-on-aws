@@ -547,6 +547,9 @@ class DataIngestionPipeline:
                 the run's settings (``StoreRequestRejectedError``) or an
                 incremental run's live indices were built for other
                 settings, both checked before any model call.
+            StoreConnectionError: A store could not be reached outside a
+                stage (the preflight before any model call, say).
+            NamespaceLeaseError: Another run writes the namespace.
         """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
@@ -641,6 +644,10 @@ class DataIngestionPipeline:
             # The store refused the run's index settings, or its live
             # indices were built for other settings, before any model call
             # (_check_index_creation): a usage error, not a crash.
+            raise
+        except StoreConnectionError:
+            # A store could not be reached: raised as the facade exports it,
+            # for a caller to tell an outage from a failed run.
             raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
@@ -1213,6 +1220,8 @@ class DataIngestionPipeline:
 
             self._drop_unrun_failures(context, start_stage_name)
             self._prepare_context_for_resume(context, start_stage_name)
+            # What an earlier run recorded is not this run's.
+            context.recorded_failed_doc_ids = []
 
             logger.info(
                 "Pipeline resume prepared successfully - will start from stage: '%s'",
@@ -1297,12 +1306,18 @@ class DataIngestionPipeline:
             and name in canonical_order
             and canonical_order.index(name) < start
         ]
-        if not failed:
-            self._refuse_rerun_of_unrun_failures(
-                context, start_stage_name, completed_stages, explicit=explicit
-            )
+        first = min(failed, key=canonical_order.index) if failed else None
+        # Also when the resume rewinds to ``first``: a stage not enabled
+        # that failed before it is not retried there either.
+        self._refuse_rerun_of_unrun_failures(
+            context,
+            start_stage_name,
+            completed_stages,
+            explicit=explicit,
+            resume_at=None if explicit else first,
+        )
+        if first is None:
             return None
-        first = min(failed, key=canonical_order.index)
         if explicit:
             logger.warning(
                 "Stage '%s' failed on %d text units; resuming from '%s' as "
@@ -1438,10 +1453,12 @@ class DataIngestionPipeline:
         completed_stages: list[str],
         *,
         explicit: bool,
+        resume_at: str | None = None,
     ) -> None:
         """Refuse to run a completed stage again on the restored output of a
         stage that failed on text units and is not enabled in this run (an
-        indexing-only phase run again, say).
+        indexing-only phase run again, say), restored before ``resume_at``
+        (the stage the resume rewinds to; default ``start_stage_name``).
 
         The completed run recorded those documents FAILED already; run
         again, the indexing stage would record them FAILED once more
@@ -1456,7 +1473,7 @@ class DataIngestionPipeline:
         if self._doc_status is None or start_stage_name not in completed_stages:
             return
         canonical_order = [st.value for st in self.STAGE_CLASSES]
-        start = canonical_order.index(start_stage_name)
+        start = canonical_order.index(resume_at or start_stage_name)
         enabled = {stage.name for stage in self.stages}
         unrun = [
             name

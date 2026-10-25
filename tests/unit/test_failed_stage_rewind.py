@@ -77,3 +77,28 @@ def test_a_completed_stage_run_again_on_a_disabled_stages_failures_is_refused(
     # A stage at or after the start is not restored (_drop_unrun_failures).
     late = _context({"claim_extraction": ["u1"]})
     assert rewind(_pipeline([]), late, "graph_resolution", finished) is None
+
+
+def test_the_refusal_holds_when_an_enabled_stage_also_failed() -> None:
+    # graph_extraction (not enabled) and claim_extraction (enabled) failed:
+    # the rewind to claim_extraction skipped the refusal, and the indexing
+    # stage recorded graph_extraction's documents FAILED once more without
+    # retrying them.
+    finished = [*DONE, "indexing"]
+    enabled = ORDER[ORDER.index("claim_extraction") :]
+    both = _context({"graph_extraction": ["u1"], "claim_extraction": ["u2"]})
+    rewind = DataIngestionPipeline._rewind_to_failed_stage
+    with pytest.raises(PipelineResumeError, match="'graph_extraction' failed on 1"):
+        rewind(_pipeline(enabled), both, "indexing", finished)
+    # Its first run still rewinds: the indexing stage records them once.
+    assert rewind(_pipeline(enabled), both, "indexing", DONE) == (
+        "claim_extraction",
+        DONE[: DONE.index("claim_extraction")],
+    )
+    # A failed stage after the rewind target is dropped, not refused.
+    late = _context({"claim_extraction": ["u2"], "community_detection": ["u3"]})
+    enabled = [name for name in ORDER if name != "community_detection"]
+    assert rewind(_pipeline(enabled), late, "indexing", finished) == (
+        "claim_extraction",
+        DONE[: DONE.index("claim_extraction")],
+    )

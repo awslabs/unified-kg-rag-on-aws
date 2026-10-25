@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -24,7 +25,10 @@ from botocore.exceptions import NoCredentialsError, TokenRetrievalError
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_ingestion_stages import _source_text
-from unified_kg_rag.domain.models import DocStatus, PipelineStageStatus
+from unified_kg_rag.application.cli.run_ingestion_pipeline import (
+    IngestionPipelineRunner,
+)
+from unified_kg_rag.domain.models import DocStatus, PipelineContext, PipelineStageStatus
 
 pytestmark = pytest.mark.integration
 
@@ -40,6 +44,7 @@ def _runs(
     status: int | Exception,
     pipeline_id: str | None = None,
     message: str = "rejected",
+    contexts: list[PipelineContext] | None = None,
 ) -> list[tuple]:
     """Index d0, d1; add fz.txt, whose extraction the model answers with
     ``status`` (and ``message``), or fails with an exception ``status``, and
@@ -77,6 +82,8 @@ def _runs(
         if pipeline_id is None and cache.exists():
             shutil.rmtree(cache)
         context = e2e._ingest(config, providers, source, cache)
+        if contexts is not None:
+            contexts.append(context)
         records = {r.file_path: r for r in providers.build_doc_status().list_all()}
         fz = records["fz.txt"]
         seen.append(
@@ -200,3 +207,18 @@ def test_a_whole_delta_outage_excludes_nothing_once_fixed(tmp_path: Path) -> Non
         config, providers, config.indexing.opensearch.entities_index_prefix
     )
     assert entities
+
+
+@pytest.mark.parametrize(("status", "recorded"), [(503, 0), (400, 1)])
+def test_failed_documents_counts_the_documents_recorded_failed(
+    tmp_path: Path, status: int, recorded: int
+) -> None:
+    # The JSON result counted the documents a stage failed on: a model
+    # outage that recorded nothing (fz.txt stays PENDING) read as one
+    # document recorded FAILED.
+    contexts: list[PipelineContext] = []
+    _runs(tmp_path, status, contexts=contexts)
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
+    result = runner._json_result(contexts[0])
+    assert result["failed_documents"] == recorded, result

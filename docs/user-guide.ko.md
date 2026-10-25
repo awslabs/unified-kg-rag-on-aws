@@ -1435,8 +1435,8 @@ custom_prompts:
 | 코드 | 의미 |
 |---|---|
 | `0` | 성공 |
-| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`도 포함. 예: 레지스트리를 끈 채 만든 인덱스에 대한 삭제만 있는 증분 실행), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
-| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중 단계 밖에서 발견한 `ConfigurationError`. 예: `run-ingestion`이 첫 모델 호출 전에 실행을 거부한 경우(실행에 필요한 인덱스를 검색 엔진이 만들지 않거나, 증분 실행의 현재 인덱스가 다른 임베딩·언어·레지스트리 설정으로 만들어짐) |
+| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`와 연결할 수 없는 저장소도 포함), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트(모두 작업 시작 전), 또는 실행 중 단계 밖에서 발견한 `ConfigurationError`. 예: `run-ingestion`이 첫 모델 호출 전에 실행을 거부한 경우(실행에 필요한 인덱스를 검색 엔진이 만들지 않거나, 삭제만 있는 실행을 포함해 증분 실행의 현재 인덱스가 다른 임베딩·언어·레지스트리 설정으로 만들어짐) |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
@@ -1447,8 +1447,8 @@ custom_prompts:
 `--output-format json`은 JSON 문서 하나를 표준 출력에 쓰고 배너·진행 상황·로그는 표준
 오류로 보내므로 출력을 `jq`로 바로 넘길 수 있습니다(표준 출력에 함께 쓰는
 `--metrics-sink cloudwatch`와는 같이 쓸 수 없음). 담기는 내용은 답변이나 검색
-결과(`run-rag`), 파이프라인 ID와 상태, 단계가 실패한 문서 수(`failed_documents`, `FAILED`로
-기록됨), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
+결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모델
+장애는 아무것도 기록하지 않음), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
@@ -1526,7 +1526,9 @@ finally:
   `StoreRequestRejectedError` 포함), `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `NamespaceLeaseError`, `PipelineExecutionError`,
   `PipelineInterrupted`(`KeyboardInterrupt`)이며, 마지막을 빼면 모두
-  `GraphRAGException`입니다. 모델 클라이언트 자체의 전송 오류(로컬 모델 서버의
+  `GraphRAGException`입니다. `DataIngestionPipeline.run`은 `ConfigurationError`,
+  `StoreConnectionError`, `NamespaceLeaseError`는 그대로 올리고, 단계 밖의 다른
+  오류는 `PipelineExecutionError`로 감쌉니다. 모델 클라이언트 자체의 전송 오류(로컬 모델 서버의
   `httpx.ConnectError` 등)는 그대로 전달됩니다.
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다(`search_strategy`, `search_type`,
   `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`,

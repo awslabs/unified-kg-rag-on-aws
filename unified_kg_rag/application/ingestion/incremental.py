@@ -275,6 +275,8 @@ class IncrementalIndexer:
         self._in_flight: set[str] = set()
         # Community drift of the last commit (None without communities).
         self.community_drift: CommunityDrift | None = None
+        # The documents the last commit recorded FAILED.
+        self.recorded_failed_doc_ids: list[str] = []
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -1007,6 +1009,9 @@ class IncrementalIndexer:
                 text_unit_ids=lineage.text_unit_ids,
             )
             records.append(record)
+        self.recorded_failed_doc_ids = [
+            r.doc_id for r in records if r.status is DocStatus.FAILED
+        ]
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
         # Counted as an attempt of the document alone (unproductive_attempt),
         # so one that never produces a text unit is quarantined instead of
@@ -1836,6 +1841,7 @@ def record_item_failures(
             )
         )
     store.put_many(_written_by(records, context.pipeline_id))
+    context.record_failed_documents(record.doc_id for record in records)
     logger.warning(
         "Recorded %d documents FAILED for extraction errors a retry does not "
         "fix (a document is skipped once it failed indexing."
@@ -1968,6 +1974,7 @@ def index_delta(
             0,
         ),
     )
+    context.record_failed_documents(incremental.recorded_failed_doc_ids)
     if not removed:
         raise PipelineStageError(
             "Removing the artifacts of deleted documents failed; their "
