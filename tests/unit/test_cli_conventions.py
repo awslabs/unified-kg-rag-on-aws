@@ -600,6 +600,103 @@ def test_a_failed_json_run_prints_a_failed_status(
         assert status == {"status": "failed", "exit_code": 1}, argv[0]
 
 
+def _json_status(main: Callable[[], object], argv: list[str], capsys: Any) -> Any:
+    """The exit code of ``main`` run with ``argv`` and its JSON status."""
+    sys.argv = argv
+    try:
+        code = main()  # run-visualization and run-prompt-tuning return it
+    except SystemExit as exc:
+        code = exc.code
+    return code, json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize(
+    ("cli", "error", "code"),
+    [
+        ("run-rag", ConfigurationError("index built with the registry off"), 2),
+        ("run-rag", RuntimeError("store unreachable"), 1),
+        ("run-visualization", ConfigurationError("unknown renderer option"), 2),
+        ("run-prompt-tuning", ConfigurationError("no tuning model set"), 2),
+        ("run-prompt-tuning", RuntimeError("model unreachable"), 1),
+    ],
+)
+def test_a_json_run_failing_while_running_names_the_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    cli: str,
+    error: Exception,
+    code: int,
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(sys, "argv", sys.argv)
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_prompt_tuning, "load_cli_config", lambda _args: Config())
+    monkeypatch.setattr(run_rag_chain.RAGChainRunner, "__init__", fail)
+    monkeypatch.setattr(run_visualization, "run_visualization", fail)
+    monkeypatch.setattr(run_prompt_tuning, "PromptTuner", fail)
+    data = tmp_path / "graph.json"
+    data.write_text("{}")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("Vendor ships parts to Buyer.")
+    main, argv = {
+        "run-rag": (run_rag_chain.main, ["--query", "Who ships?"]),
+        "run-visualization": (run_visualization.main, ["--data-path", str(data)]),
+        "run-prompt-tuning": (
+            run_prompt_tuning.main,
+            ["--source-directory", str(corpus)],
+        ),
+    }[cli]
+    got = _json_status(main, [cli, *argv, "--output-format", "json"], capsys)
+    assert got == (code, {"status": "failed", "exit_code": code, "error": str(error)})
+
+
+@pytest.mark.parametrize("cli", ["run-rag", "run-visualization", "run-prompt-tuning"])
+def test_a_json_run_with_an_unknown_flag_names_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], cli: str
+) -> None:
+    # The CLIs' ArgumentParser exits through usage_error: a plain argparse
+    # error printed a status without the error.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(sys, "argv", sys.argv)
+    main, argv = {
+        "run-rag": (run_rag_chain.main, ["--query", "Who ships?"]),
+        "run-visualization": (run_visualization.main, ["--data-path", "g.json"]),
+        "run-prompt-tuning": (run_prompt_tuning.main, ["--source-directory", "c"]),
+    }[cli]
+    code, status = _json_status(
+        main, [cli, *argv, "--bogus", "--output-format", "json"], capsys
+    )
+    assert code == 2
+    assert status.pop("error") == "unrecognized arguments: --bogus"
+    assert status == {"status": "failed", "exit_code": 2}
+
+
+def test_an_invalid_visualization_data_file_names_the_error_in_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(sys, "argv", sys.argv)
+    monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
+    data = tmp_path / "bad.json"
+    data.write_text("[]")
+    argv = ["--data-path", str(data), "--output-directory", str(tmp_path / "out")]
+    code, status = _json_status(
+        run_visualization.main,
+        ["run-visualization", *argv, "--output-format", "json"],
+        capsys,
+    )
+    assert code == 2
+    assert status.pop("error")
+    assert status == {"status": "failed", "exit_code": 2}
+
+
 def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
