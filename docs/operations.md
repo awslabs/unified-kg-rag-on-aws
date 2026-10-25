@@ -250,16 +250,18 @@ needs an inference profile, an unsupported parameter). Nothing else counts:
 throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 `NoCredentialsError`), a missing region, quotas
 (`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
-fail every document alike. Nor does one error that failed every unit of several documents. Such a
-document stays `PENDING` (or `FAILED`, retried by the next run), uncounted,
-until the cause is fixed: an outage or a bad setting never excludes it.
+fail every document alike. Nor does one error that failed every unit of
+several documents. Such a document stays `PENDING` (or `FAILED`, retried by
+the next run), uncounted, until the cause is fixed: an outage or a bad
+setting never excludes it.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
-  its own (see above; with the same extraction settings) the document stays `FAILED`, keeps what it indexed, and
-  is skipped: each run logs a WARNING naming the file and goes on with the
-  rest of the delta, deletions included. Fix the cause (often an oversized or
-  malformed file), edit the file, or raise the limit.
+  its own (see above; with the same extraction settings) the document stays
+  `FAILED`, keeps what it indexed, and is skipped: each run logs a WARNING
+  naming the file and goes on with the rest of the delta, deletions included.
+  Fix the cause (often an oversized or malformed file), edit the file, or
+  raise the limit.
 - **Too large for the registry.** A document whose text-unit ids exceed one
   DynamoDB item (400 KB, about 10,000 ids, half that for an edited document)
   fails indexing before anything is written, with an error naming the file:
@@ -325,13 +327,15 @@ would stop every later run, so runs count deaths and isolate the culprit.
   id that wrote it last; a record written before that was recorded names
   none: a `PENDING` or `FAILED` one, or one with an open attempt, counts as
   another pipeline id's, a `PROCESSED` one is left to the other checks),
-  committed one of its documents with other extraction settings, or added,
-  changed or deleted a document outside its delta. A run diffs within its
-  own scope (index namespace and source scope), so the last check reads
-  only that scope; a document the delta deletes that another pipeline id
-  has since recorded in another scope (one the delta does not retire) makes
-  it diff again too, so a rerun never deletes another scope's live
-  document. A run resumed after its own kill or stop keeps its delta.
+  committed one of its documents with other extraction settings (a record
+  naming no writer counts even for a document the delta re-extracts for a
+  settings change), or added, changed or deleted a document outside its
+  delta. A run diffs within its own scope (index namespace and source
+  scope), so the last check reads only that scope; a document the delta
+  deletes that another pipeline id (or a record naming none) has since
+  recorded in another scope (one the delta does not retire) makes it diff
+  again too, so a rerun never deletes another scope's live document. A run
+  resumed after its own kill or stop keeps its delta.
 
 ### Concurrent runs
 
