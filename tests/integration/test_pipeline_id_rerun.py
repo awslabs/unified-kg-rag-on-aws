@@ -299,13 +299,19 @@ def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
     tmp_path: Path,
 ) -> None:
     # P1 fails gleaning d5; P1 run again with gleaning off re-extracted d5
-    # but still recorded it FAILED for the restored gleaning failure.
+    # but still recorded it FAILED for the restored gleaning failure. The
+    # model rejects d5's requests only: a known-good request it answers
+    # makes the rejection d5's own (rejecting every request is a setting).
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     config.processing.document_parsing.source_scope = "rerun-corpus"
     config.processing.gleaning.max_rounds = 1
 
     def respond(system: str, human: str) -> str:
-        if config.processing.gleaning.enabled and "refinement specialist" in system:
+        if (
+            config.processing.gleaning.enabled
+            and "refinement specialist" in system
+            and "Acme Corp" in human
+        ):
             raise ModelRejects()
         return _respond(system, human)
 

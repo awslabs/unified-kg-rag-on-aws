@@ -1364,6 +1364,18 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: when every unit an extraction stage sends (graph
+  extraction, claim extraction or gleaning) fails with one identical error
+  the document could cause, the stage sends one known-good request through
+  the same chain, bypassing the LLM response cache: rejected too, the
+  error is taken for the model or a setting and counts against no
+  document; answered, it counts against each document. The rule asked for
+  more than one document instead, so a delta holding only documents the
+  model always rejects was never counted, failed every run and held back
+  its deletions, while a one-document delta's rejected setting excluded
+  that document. Trade-off: a content-specific rejection that later clears
+  with no change to the document or settings can now exclude it after
+  `indexing.max_document_failures` runs (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

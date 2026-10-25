@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
+    known_good_unit,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -365,9 +366,17 @@ class GraphGleaner(BaseProcessor):
             prepared_units[idx].id
             for idx in item_failed_indices(
                 errors,
-                [unit.document_ids for unit in prepared_units],
+                len(prepared_units),
                 self.is_item_error,
                 "Graph refinement",
+                lambda: self.batch_processor.answered(
+                    known_good_unit(),
+                    lambda units: [
+                        prepare_input(unit, [], [], config_for_task) for unit in units
+                    ],
+                    self.graph_refiner.invoke,
+                    "Graph Refinement (known-good request)",
+                ),
             )
         )
 

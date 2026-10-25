@@ -17,6 +17,7 @@ import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -273,7 +274,7 @@ def test_failed_documents_counts_the_documents_recorded_failed(
         assert seen[0][0] == PipelineStageStatus.COMPLETED.value, seen
 
 
-@pytest.mark.parametrize(
+_STAGES = pytest.mark.parametrize(
     "stage",
     [
         "knowledge graph extraction expert",
@@ -282,38 +283,101 @@ def test_failed_documents_counts_the_documents_recorded_failed(
     ],
     ids=["graph", "claims", "gleaning"],
 )
-def test_one_error_on_every_unit_of_a_delta_counts_for_no_document(
-    tmp_path: Path, stage: str
-) -> None:
-    # The model answers every request of one stage, for both documents, with
-    # one HTTP 400 no configuration pattern names: a setting it rejects, not
-    # each document's content. Counted in claim extraction or gleaning (as it
-    # was), three runs excluded both documents for good.
-    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+
+
+def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
+    """Embedded config (claims and gleaning on, max_document_failures 2) and
+    providers whose model answers HTTP 400 "request rejected" to the requests
+    of the stage whose system prompt contains ``rejects["stage"]`` and whose
+    text contains ``rejects["text"]`` (every one when that is ``""``)."""
+    config = e2e._config(tmp / "stores", tmp / "viz")
     config.indexing.max_document_failures = 2
     config.processing.claim_extraction.enabled = True
     config.processing.gleaning.enabled = True
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
 
     def transport(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/chat":
+        if request.url.path == "/api/chat" and rejects["stage"]:
             messages = json.loads(request.content)["messages"]
             system = "".join(m["content"] for m in messages if m["role"] == "system")
-            if stage in system:
+            human = "".join(m["content"] for m in messages if m["role"] == "user")
+            if rejects["stage"] in system and rejects["text"] in human:
                 return httpx.Response(400, json={"error": "request rejected"})
         return server(request)
 
     providers = e2e._providers(
         config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
     )
-    source = tmp_path / "corpus"
+    return config, providers, tmp / "corpus"
+
+
+def _counts(providers: Any) -> dict[str, int]:
+    return {
+        r.file_path: r.failure_count for r in providers.build_doc_status().list_all()
+    }
+
+
+@_STAGES
+@pytest.mark.parametrize("files", [_FILES, {"d0.txt": _FILES["d0.txt"]}], ids=len)
+def test_one_error_on_every_unit_of_a_delta_counts_for_no_document(
+    tmp_path: Path, stage: str, files: dict[str, str]
+) -> None:
+    # The model answers every request of one stage, a known-good one too,
+    # with one HTTP 400 no configuration pattern names: a setting it
+    # rejects, not the documents' content. Counted in claim extraction or
+    # gleaning (as it was), or for a delta of one document, three runs
+    # excluded the documents for good.
+    config, providers, source = _rejecting(tmp_path, {"stage": stage, "text": ""})
     source.mkdir()
-    for name, text in _FILES.items():
+    for name, text in files.items():
         (source / name).write_text(text)
     for run in range(3):
         e2e._ingest(config, providers, source, tmp_path / f"run{run}")
-        counts = {
-            r.file_path: r.failure_count
-            for r in providers.build_doc_status().list_all()
-        }
-        assert counts == dict.fromkeys(_FILES, 0), (run, counts)
+        assert _counts(providers) == dict.fromkeys(files, 0), run
+
+
+@_STAGES
+def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
+    tmp_path: Path, stage: str
+) -> None:
+    # Two documents whose every request the model rejects alike, alone in a
+    # delta with a deletion: taken for one cause, they were counted for
+    # none, so every run failed on them and the deletion never applied. The
+    # model answers a known-good request: they are counted, excluded after
+    # max_document_failures runs, and the deletion applies.
+    rejects = {"stage": "", "text": "Zorbix"}
+    config, providers, source = _rejecting(tmp_path, rejects)
+    source.mkdir()
+    for name, text in _FILES.items():
+        (source / name).write_text(text)
+    e2e._ingest(config, providers, source, tmp_path / "seed")
+    (source / "d1.txt").unlink()
+    (source / "z1.txt").write_text(_FAILING)
+    (source / "z2.txt").write_text("Zorbix and Depot trade parts.")
+    rejects["stage"] = stage
+    seen = []
+    for run in range(4):
+        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        counts = _counts(providers)
+        seen.append((counts["z1.txt"], counts["z2.txt"], "d1.txt" in counts))
+    assert [run[:2] for run in seen] == [(1, 1), (2, 2), (2, 2), (2, 2)], seen
+    # Graph extraction failing on every unit fails the run, so the deletion
+    # waits for the exclusion; in the other stages it applies at once.
+    assert seen[-1][2] is False, seen
+
+
+def test_a_cached_known_good_answer_does_not_hide_a_rejected_setting(
+    tmp_path: Path,
+) -> None:
+    # Run P1 again after the model began rejecting every request: the
+    # known-good request's answer of the first run, served from P1's LLM
+    # response cache, would have counted the setting's error against fz.txt.
+    rejects = {"stage": "knowledge graph extraction expert", "text": "Zorbix"}
+    config, providers, source = _rejecting(tmp_path, rejects)
+    source.mkdir()
+    (source / "fz.txt").write_text(_FAILING)
+    e2e._ingest(config, providers, source, tmp_path / "P1")
+    assert _counts(providers) == {"fz.txt": 1}
+    rejects["text"] = ""
+    e2e._ingest(config, providers, source, tmp_path / "P1")
+    assert _counts(providers) == {"fz.txt": 1}

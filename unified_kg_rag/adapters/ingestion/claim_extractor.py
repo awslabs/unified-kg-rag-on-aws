@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
+    known_good_unit,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -193,9 +194,17 @@ class ClaimExtractor(BaseProcessor):
             units_to_process[idx].id
             for idx in item_failed_indices(
                 errors,
-                [unit.document_ids for unit in units_to_process],
+                len(units_to_process),
                 self.is_item_error,
                 "Claim extraction",
+                lambda: self.batch_processor.answered(
+                    known_good_unit(),
+                    lambda units: list(
+                        self._prepare_extraction_inputs(units, []).values()
+                    ),
+                    self.claim_extractor.invoke,
+                    "Claim Extraction (known-good request)",
+                ),
             )
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
