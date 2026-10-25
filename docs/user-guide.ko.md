@@ -1453,7 +1453,8 @@ custom_prompts:
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
-붙여 출력하므로 표준 출력은 항상 JSON입니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
+붙여 출력하므로 표준 출력은 항상 JSON입니다. 단계가 실패한 `run-ingestion` 실행의 결과에도
+같은 `error`와 `exit_code`가 담깁니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
 (실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를
 기다려야 하면 `next_run_writes_from`(UTC, ISO 8601)도 덧붙입니다.

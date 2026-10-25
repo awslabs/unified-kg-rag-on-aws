@@ -1390,6 +1390,16 @@ changed once with the full-config keys (#332).
   `PipelineExecutionError`, so a caller can tell an unreachable store from
   a crash with the exception the package root exports. `run-ingestion`
   still exits 1 (#PR).
+- Incremental indexing: a failed store write no longer counts toward
+  `indexing.max_document_failures`. The documents owning it are still
+  recorded `FAILED` and rewritten by the next run, but a store outage over
+  three runs no longer excludes them. The WARNING for documents recorded
+  `FAILED` after a partial extraction failure now names their files and how
+  many of them were counted (#PR).
+- `run-ingestion --output-format json`: a run that a stage failed now has
+  the top-level `error` and `exit_code` that a run failing before it prints
+  has. A refused resume is reported once (`Pipeline resume failed: ...`),
+  not as `Failed to run pipeline: Pipeline resume failed: ...` (#PR).
 - Incremental indexing: a finished pipeline id run again with only its later
   stages enabled (an indexing-only phase, say) on the restored output of a
   stage that failed on some documents recorded them `FAILED` once more each

@@ -380,10 +380,12 @@ def test_an_indexing_only_rerun_does_not_count_a_disabled_stage_again(
         providers=providers,
     )
     try:
-        with pytest.raises(PipelineExecutionError, match="graph_extraction"):
+        with pytest.raises(PipelineExecutionError, match="graph_extraction") as raised:
             pipeline.run(source, pipeline_id="P1")
     finally:
         pipeline.close()
+    # Said once ("Failed to run pipeline: Pipeline resume failed: ..." before).
+    assert str(raised.value).startswith("Pipeline resume failed: "), raised.value
     (record,) = [
         r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
     ]

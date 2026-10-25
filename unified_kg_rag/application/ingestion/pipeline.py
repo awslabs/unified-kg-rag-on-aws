@@ -663,6 +663,11 @@ class DataIngestionPipeline:
             # A store could not be reached: raised as the facade exports it,
             # for a caller to tell an outage from a failed run.
             raise
+        except PipelineExecutionError:
+            # Already says what failed (a refused resume, say): wrapped again
+            # it read "Failed to run pipeline: Pipeline resume failed: ...".
+            logger.exception("Pipeline execution failed")
+            raise
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e

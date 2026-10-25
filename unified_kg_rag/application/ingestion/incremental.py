@@ -525,7 +525,7 @@ class IncrementalIndexer:
         fingerprints: dict[str, str],
         *,
         failed_doc_ids: Collection[str] = (),
-        counted_failed_doc_ids: Collection[str] | None = None,
+        counted_failed_doc_ids: Collection[str] = (),
         text_units: list[TextUnit] | None = None,
         entities: list[Entity] | None = None,
         relationships: list[Relationship] | None = None,
@@ -541,9 +541,9 @@ class IncrementalIndexer:
         separately are the union actually written to the stores this run. Docs in ``failed_doc_ids`` (an
         extraction stage failed on some of their text units) are recorded
         FAILED with their lineage, so the next run re-extracts them and first
-        prunes what this run wrote; only those in ``counted_failed_doc_ids``
-        (an error of their own; None: all) count toward
-        ``indexing.max_document_failures``.
+        prunes what this run wrote. Only those in ``counted_failed_doc_ids``
+        (an error of their own) count toward
+        ``indexing.max_document_failures``; a failed write counts for none.
 
         Entities and relationships are first merged with the stored graph state
         they touch; the communities and claims
@@ -685,7 +685,7 @@ class IncrementalIndexer:
         failed_doc_ids: Collection[str] = (),
         owners: Mapping[str, set[str]] | None = None,
         *,
-        counted_failed_doc_ids: Collection[str] | None = None,
+        counted_failed_doc_ids: Collection[str] = (),
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -948,13 +948,22 @@ class IncrementalIndexer:
         fingerprints: dict[str, str],
         failed_doc_ids: Collection[str] = (),
         write_failed_doc_ids: Collection[str] = (),
-        counted_failed_doc_ids: Collection[str] | None = None,
+        counted_failed_doc_ids: Collection[str] = (),
     ) -> None:
         if failed_doc_ids:
+            files = sorted(
+                lineage.file_path or lineage.doc_id
+                for lineage in lineages
+                if lineage.doc_id in failed_doc_ids
+            )
             logger.warning(
                 "Extraction failed on part of %d documents; recording them FAILED "
-                "so the next run re-extracts them",
+                "so the next run re-extracts them (%d counted toward "
+                "indexing.max_document_failures, failed for an error of their "
+                "own): %s",
                 len(failed_doc_ids),
+                len(set(failed_doc_ids) & set(counted_failed_doc_ids)),
+                ", ".join(files[:10]) + (", ..." if len(files) > 10 else ""),
             )
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
@@ -977,15 +986,12 @@ class IncrementalIndexer:
                 lineage.doc_id, existing.content_hash if existing else ""
             )
             # Consecutive failures of this content; new content starts over.
-            # An extraction failure that is not the document's own (an
-            # outage, credentials, a setting) neither counts nor resets it.
+            # A failure that is not the document's own (an outage,
+            # credentials, a setting, a failed write) neither counts nor
+            # resets it.
             failure_count = 0
             if failed:
-                failure_count = int(
-                    error_info == _WRITE_FAILED
-                    or counted_failed_doc_ids is None
-                    or lineage.doc_id in counted_failed_doc_ids
-                )
+                failure_count = int(lineage.doc_id in counted_failed_doc_ids)
                 if (
                     existing is not None
                     and existing.status is DocStatus.FAILED

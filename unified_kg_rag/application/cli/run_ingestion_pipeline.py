@@ -561,15 +561,9 @@ class IngestionPipelineRunner:
                 # (RUN_JOB, keyed on container exit code) marks the task
                 # SUCCEEDED and the failure is invisible. Raise so main() exits
                 # non-zero and the failure surfaces.
-                if context.status == PipelineStageStatus.FAILED:
-                    failed = [
-                        r.stage_name
-                        for r in context.stage_results
-                        if r.status == PipelineStageStatus.FAILED
-                    ]
-                    raise PipelineExecutionError(
-                        f"Pipeline failed at stage(s): {', '.join(failed) or 'unknown'}"
-                    )
+                error = self._stage_failure(context)
+                if error is not None:
+                    raise PipelineExecutionError(error)
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
                     Panel.fit(
@@ -584,12 +578,28 @@ class IngestionPipelineRunner:
             if previous_handler is not None:
                 signal.signal(signal.SIGTERM, previous_handler)
 
+    @staticmethod
+    def _stage_failure(context: PipelineContext) -> str | None:
+        """The error of a run a stage failed, or None."""
+        if context.status != PipelineStageStatus.FAILED:
+            return None
+        failed = [
+            r.stage_name
+            for r in context.stage_results
+            if r.status == PipelineStageStatus.FAILED
+        ]
+        return f"Pipeline failed at stage(s): {', '.join(failed) or 'unknown'}"
+
     def _json_result(self, context: PipelineContext) -> dict[str, Any]:
-        """The run's ``--output-format json`` result."""
+        """The run's ``--output-format json`` result; a run a stage failed
+        also has its ``error`` and ``exit_code``, as a run that fails before
+        printing does."""
         assert self.pipeline is not None
+        error = self._stage_failure(context)
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
+            **({"error": error, "exit_code": EXIT_FAILURE} if error else {}),
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
             "stages": [

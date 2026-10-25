@@ -233,7 +233,7 @@ It failed on N files: ...`) 단위 자체의 오류로 실패한 문서를 `FAIL
 경우(잘못된 모델 ID, 추론 프로필이 필요한 모델, 지원하지 않는 파라미터)는 제외합니다. 그
 밖의 오류는 세지 않습니다. 스로틀링, 5xx, 시간 초과, 연결, 자격 증명(만료된 SSO 토큰,
 `NoCredentialsError`), 리전 누락, 할당량(`ServiceQuotaExceededException`), 스트림 오류와
-버그는 모든 문서를 똑같이 실패시킵니다. 여러 문서의 모든 단위를 같은 오류 하나로 실패시킨
+버그, 저장소 쓰기 실패는 모든 문서를 똑같이 실패시킵니다. 여러 문서의 모든 단위를 같은 오류 하나로 실패시킨
 경우도 세지 않습니다. 이런 문서는 원인을 고칠 때까지 세지 않은 채 `PENDING`(또는 다음
 실행이 다시 시도하는 `FAILED`)으로 남으므로, 장애나 잘못된 설정 때문에 제외되지는 않습니다.
 
@@ -250,7 +250,8 @@ It failed on N files: ...`) 단위 자체의 오류로 실패한 문서를 `FAIL
   `indexing.neptune.max_attempts`(기본값 `4`)번 시도합니다. 한 산출물 유형의 쓰기가
   `indexing.max_failure_rate`(기본값 `0.2`)를 넘게 실패하면 인덱싱이 실패하고 문서를
   기록하지 않습니다. 그 이하면 실패한 산출물을 가진 문서만 `FAILED`가 됩니다(백엔드가
-  항목을 밝히지 않으면 실행의 모든 문서). `IndexingFailures`와 `ExtractionFailures`
+  항목을 밝히지 않으면 실행의 모든 문서). 이 문서는 다음 실행이 재시도 한도에 세지 않고 다시
+  시도합니다. `IndexingFailures`와 `ExtractionFailures`
   [경보](#경보)가 두 경우를 알립니다.
 
 ### 격리된 문서
@@ -693,6 +694,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 종료 코드 1 | 단계 로그를 보고 고친 뒤 같은 `--pipeline-id`로 재개(`--force-rebuild`는 처음부터 시작) |
+| `Pipeline resume failed: ...`(`PipelineResumeError`, 종료 코드 1, 모델 호출 전) | 요청한 방식으로 파이프라인 ID를 재개할 수 없음: 이번 실행이 다시 실행해야 하는 단계가 꺼져 있거나(메시지에 단계 이름이 나옴), 명시한 `--resume-from-stage`가 캐시 출력이 사라진 단계를 지나치거나, 저장된 상태를 읽지 못함 | 메시지의 단계를 켜거나 그 단계부터 재개(`--resume-from-stage <단계>`). 상태를 읽지 못하면 새 `--pipeline-id`나 `--force-rebuild` |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 재개 |
 | `DocStatusRegistryError` | 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고 메시지에 나온 권한을 부여한 뒤 재개 |
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱이 실행됨(`continue_on_error`로 로딩 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |

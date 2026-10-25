@@ -107,7 +107,8 @@ def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
     }
     failed = store.get("doc-a")
     assert failed is not None
-    assert failed.failure_count == 1
+    # A store's failure is not the document's: it is retried, not counted.
+    assert failed.failure_count == 0
     assert "artifacts" in (failed.error_info or "")
     # The text units are kept so the retry first prunes what this run wrote.
     assert failed.text_unit_ids == ["t-a"]
@@ -155,9 +156,10 @@ def _document(path: str) -> Document:
     )
 
 
-def test_repeated_write_failures_honour_max_document_failures() -> None:
-    # The write-failure count accumulates like an extraction failure, so a
-    # document whose artifact is rejected every run stops being retried.
+def test_repeated_write_failures_are_retried_without_counting() -> None:
+    # A failed write is the store's, not the document's (an outage or a
+    # throttled bulk item after the retries): counted, three runs of an
+    # outage excluded the document. It is retried every run instead.
     store = FakeDocStatusStore()
     document = _document("a.txt")
     _, fingerprints = detect_delta([document], store)
@@ -169,16 +171,15 @@ def test_repeated_write_failures_honour_max_document_failures() -> None:
         [lineage], [Entity(id="e-1", name="E", text_unit_ids=["t-1"])]
     )
 
-    for expected_count in (1, 2, 3):
+    for _ in range(3):
         indexer.record([lineage], fingerprints, results, owners=owners)
         record = store.get(doc_id)
         assert record is not None
         assert record.status is DocStatus.FAILED
-        assert record.failure_count == expected_count
+        assert record.failure_count == 0
 
     delta, _ = detect_delta([document], store, max_failures=3)
-    assert delta.unchanged == [doc_id]
-    assert delta.changed == []
+    assert delta.changed == [doc_id]
 
     store.put(
         DocStatusRecord(

@@ -249,8 +249,8 @@ than a rejection of the model or a setting (an invalid model id, a model that
 needs an inference profile, an unsupported parameter). Nothing else counts:
 throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 `NoCredentialsError`), a missing region, quotas
-(`ServiceQuotaExceededException`), stream errors and bugs fail every document
-alike. Nor does one error that failed every unit of several documents. Such a
+(`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
+fail every document alike. Nor does one error that failed every unit of several documents. Such a
 document stays `PENDING` (or `FAILED`, retried by the next run), uncounted,
 until the cause is fixed: an outage or a bad setting never excludes it.
 
@@ -270,7 +270,8 @@ until the cause is fixed: an outage or a bad setting never excludes it.
   more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
   writes still fail, indexing fails and records no document; below it, only
   the documents owning a failed artifact are `FAILED` (all of the run's when
-  the backend names no item). The `IndexingFailures` and
+  the backend names no item), retried by the next run without counting
+  toward the retry limit. The `IndexingFailures` and
   `ExtractionFailures` [alarms](#alarms) report both.
 
 ### Quarantined documents
@@ -755,6 +756,7 @@ model or credential error fails a query rather than answering from no context.
 | Message (abridged) | Meaning | Action |
 |---|---|---|
 | `Pipeline failed at stage(s): ...` | A stage failed; exit 1 | Fix from the stage's log and resume with the same `--pipeline-id` (`--force-rebuild` starts clean) |
+| `Pipeline resume failed: ...` (`PipelineResumeError`, exit 1, before any model call) | The pipeline id cannot be resumed as asked: a stage this run must rerun is not enabled (the message names it), an explicit `--resume-from-stage` past a stage whose cached output is gone, or its saved state could not be read | Enable the named stage or resume from it (`--resume-from-stage <stage>`); for unreadable state, a new `--pipeline-id` or `--force-rebuild` |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
