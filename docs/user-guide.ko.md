@@ -834,6 +834,7 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 대화형 모드에서는 메모리가 켜집니다. 명령: `help`, `new`(새 대화 ID),
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
+`set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 

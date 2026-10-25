@@ -533,6 +533,38 @@ def test_chain_scopes_validation_to_the_strategy_retrievers(config: Config) -> N
         GraphRAGChain._validate_filter_keys({"status": "open"}, [_neptune(config)])
 
 
+def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
+    config: Config,
+) -> None:
+    # ``status`` exists only on the OpenSearch claims index: a strategy that
+    # reads only the graph rejects it, auto accepts it when a strategy it may
+    # route to reads the claims index.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    reads = {
+        SearchStrategy.LOCAL: {"graph": _neptune(config)},
+        SearchStrategy.NAIVE: {"document": _retriever(config, _FakeOpenSearchClient())},
+    }
+    chain = object.__new__(GraphRAGChain)
+    chain.config = config
+    chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
+        retrievers=reads[s]
+    )
+    chain.check_filter_keys({"status": "open"}, SearchStrategy.NAIVE)
+    with pytest.raises(InvalidFilterError, match="status"):
+        chain.check_filter_keys({"status": "open"}, SearchStrategy.LOCAL)
+    config.search.auto_routable_strategies = [SearchStrategy.LOCAL]
+    with pytest.raises(InvalidFilterError, match="status"):
+        chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
+    config.search.auto_routable_strategies = [
+        SearchStrategy.LOCAL,
+        SearchStrategy.NAIVE,
+    ]
+    chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
+
+
 def test_chain_accepts_any_key_for_a_backend_without_schema(config: Config) -> None:
     class _CustomRetriever:
         def filter_fields(self) -> None:

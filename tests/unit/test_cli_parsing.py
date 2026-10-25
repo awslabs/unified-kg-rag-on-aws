@@ -360,7 +360,9 @@ def test_rag_interactive_set_filter_keeps_a_value_with_spaces() -> None:
     # The command line is split on whitespace: the value was cut at its
     # first space ("title:Annual report" filtered on "Annual").
     state: dict = {"filters": {}}
-    run_rag_chain.RAGChainRunner._handle_set_filter(state, ["title:Annual", "report"])
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.rag_chain = None
+    runner._handle_set_filter(state, ["title:Annual", "report"])
     assert state["filters"] == {"title": "Annual report"}
 
 
@@ -384,6 +386,49 @@ async def test_rag_interactive_set_filter_keeps_the_values_whitespace(
     runner.interactive_commands["show-config"] = keep
     await runner._interactive_mode()
     assert seen == {"title": "Annual  report"}
+
+
+async def test_rag_interactive_set_filter_rejects_a_key_no_index_declares(
+    config, mocker
+) -> None:
+    # The key was kept, and every later question failed on it until
+    # clear-filters.
+    from unified_kg_rag.shared import InvalidFilterError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["--interactive", "--search-strategy", "local"])
+    )
+    checked: list[tuple[dict, object]] = []
+
+    def check_filter_keys(filters, strategy):
+        checked.append((filters, strategy))
+        if "colour" in filters:
+            raise InvalidFilterError("Unknown filter key(s): colour.")
+
+    runner.rag_chain = mocker.Mock(check_filter_keys=check_filter_keys)
+    seen: dict = {}
+    runner.interactive_commands["show-config"] = lambda state, args: seen.update(
+        state["filters"]
+    )
+    printed = mocker.patch.object(run_rag_chain.console, "print")
+    mocker.patch.object(
+        run_rag_chain.console,
+        "input",
+        side_effect=[
+            "set-filter colour:red",
+            "set-filter attr_region:north",
+            "show-config",
+            "quit",
+        ],
+    )
+    await runner._interactive_mode()
+    assert seen == {"attr_region": "north"}
+    assert checked[0] == ({"colour": "red"}, run_rag_chain.SearchStrategy.LOCAL)
+    assert any(
+        "Filter not set: Unknown filter key(s): colour." in str(call.args[0])
+        for call in printed.call_args_list
+    )
 
 
 async def test_rag_interactive_a_line_starting_with_a_command_is_a_question(

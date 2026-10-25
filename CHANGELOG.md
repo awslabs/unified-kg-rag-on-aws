@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag --interactive`: `set-filter` refuses a key no index of the
+  search strategy declares (for `auto`, of any strategy it may route to)
+  instead of keeping it, which failed every later question until
+  `clear-filters`. `GraphRAGChain.check_filter_keys` runs the check a query
+  makes (#PR).
 - The WARNING for a search the index's `max_result_window` cuts names the
   `top_k` asked for, not the internal over-fetch (`top_k` x
   `retrieval_multiplier`), comes once per query rather than once per search
