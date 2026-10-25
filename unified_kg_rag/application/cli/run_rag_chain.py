@@ -580,14 +580,22 @@ class RAGChainRunner:
         )
         return new_id
 
-    @staticmethod
-    def _handle_set_filter(state: dict[str, Any], args: list[str]) -> None:
+    def _handle_set_filter(self, state: dict[str, Any], args: list[str]) -> None:
         try:
             pair = _filter_pair(" ".join(args))
         except argparse.ArgumentTypeError:
             console.print("[red]Invalid filter format. Use 'key:value'[/red]")
             return
         key, value = pair.split(":", 1)
+        # Rejected now, not by every later question until clear-filters.
+        if self.rag_chain is not None:
+            try:
+                self.rag_chain.check_filter_keys(
+                    {key: value}, SearchStrategy(self.args.search_strategy)
+                )
+            except InvalidFilterError as e:
+                console.print(f"[red]Filter not set: {markup_safe(e)}[/red]")
+                return
         state["filters"][key] = value
         console.print(
             f"[green]Filter added: '{markup_safe(key)}' = '{markup_safe(value)}'"

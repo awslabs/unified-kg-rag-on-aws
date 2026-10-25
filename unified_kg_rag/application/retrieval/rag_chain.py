@@ -970,6 +970,27 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     span.set_attribute("kg_rag.rerank_status", rerank["status"])
             return result
 
+    def check_filter_keys(
+        self, filters: dict[str, Any] | None, strategy: SearchStrategy
+    ) -> None:
+        """Raise ``InvalidFilterError`` if ``filters`` names a key no index
+        ``strategy`` reads declares, as each of its queries would (for
+        ``auto``: no index any routable strategy reads). For callers that
+        keep filters across queries (an interactive session)."""
+        strategies = (
+            routable_strategies(self.config)
+            if strategy is SearchStrategy.AUTO
+            else (strategy,)
+        )
+        self._validate_filter_keys(
+            filters,
+            [
+                retriever
+                for s in strategies
+                for retriever in self._get_strategy_instance(s).retrievers.values()
+            ],
+        )
+
     @staticmethod
     def _validate_filter_keys(
         filters: dict[str, Any] | None, retrievers: list[BaseGraphRAGRetriever]

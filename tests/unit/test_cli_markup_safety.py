@@ -162,10 +162,12 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
         verbose=True,
     )
     state: dict = {"filters": {}}
-    run_rag_chain.RAGChainRunner._handle_set_filter(state, ["k:[/red]v"])
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.rag_chain = None
+    runner._handle_set_filter(state, ["k:[/red]v"])
     # As --filters: a pair without a key or a value is refused.
     for pair in (":v", " :v", "k:"):
-        run_rag_chain.RAGChainRunner._handle_set_filter(state, [pair])
+        runner._handle_set_filter(state, [pair])
     assert state["filters"] == {"k": "[/red]v"}
 
     async def fail(**kwargs: object) -> None:

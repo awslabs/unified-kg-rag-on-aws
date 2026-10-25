@@ -19,9 +19,8 @@
 import asyncio
 import math
 import time
-from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
@@ -58,15 +57,13 @@ from unified_kg_rag.shared.utils import (
     safe_float_parse,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import cancel_on_exit
+from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
 
 # Follow-up queries one primer or action call is asked for (MS GraphRAG's
 # primer asks for "at least five").
 _FOLLOW_UPS_PER_ANSWER = 5
-
-_T = TypeVar("_T")
 
 
 @dataclass
@@ -88,17 +85,6 @@ def _score(value: Any) -> int:
     if number is None or not math.isfinite(number):
         return 0
     return max(0, min(100, int(number)))
-
-
-async def _gather_or_cancel(coroutines: Iterable[Awaitable[_T]]) -> list[_T]:
-    """``asyncio.gather`` that cancels the others once one raises.
-
-    A plain gather raises the first error and leaves its siblings running:
-    their LLM calls kept spending after the query had already failed.
-    """
-    tasks = [asyncio.ensure_future(c) for c in coroutines]
-    async with cancel_on_exit(tasks):
-        return list(await asyncio.gather(*tasks))
 
 
 def _follow_ups(payload: dict[str, Any]) -> list[str]:
@@ -215,7 +201,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             with observability.span(
                 "kg_rag.drift.actions", depth=depth, actions=len(batch)
             ):
-                done = await _gather_or_cancel(
+                done = await gather_or_cancel(
                     self._act(sub, query, semaphore, stats, config, degraded)
                     for sub in batch
                 )
@@ -389,7 +375,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 follow_ups=_follow_ups(payload),
             )
 
-        primed = await _gather_or_cancel(prime(fold) for fold in folds)
+        primed = await gather_or_cancel(prime(fold) for fold in folds)
         failed = [p for p in primed if isinstance(p, Exception)]
         if failed and len(failed) == len(primed) and not self.ignore_errors:
             raise failed[0]

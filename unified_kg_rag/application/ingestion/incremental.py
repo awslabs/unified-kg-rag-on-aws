@@ -1846,7 +1846,8 @@ def record_item_failures(
                 }
             )
         )
-    store.put_many(_written_by(records, context.pipeline_id))
+    records = _written_by(records, context.pipeline_id)
+    store.put_many(records)
     context.record_failed_documents(record.doc_id for record in records)
     logger.warning(
         "Recorded %d documents FAILED for extraction errors a retry does not "

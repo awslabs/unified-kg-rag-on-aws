@@ -68,6 +68,11 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 # context.
 _CLIENT_MAX_RETRIES = 5
 _CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
+# Per-attempt timeout of the connection check that opens the sync client
+# (the store preflight's first request): a cluster that accepts connections
+# but never answers failed it after 6 x INDEXING_REQUEST_TIMEOUT_SECONDS
+# (18 minutes), now after about a minute.
+_PING_TIMEOUT_SECONDS = 10.0
 # Backoff between the attempts of one query request (see
 # OpenSearchClient._aquery). opensearch-py retries back to back, so a 429
 # burst of a few milliseconds used up every attempt.
@@ -533,7 +538,7 @@ class OpenSearchClient:
 
         try:
             client = OpenSearch(**params)
-            if not client.ping():
+            if not client.ping(request_timeout=_PING_TIMEOUT_SECONDS):
                 raise ConnectionError("OpenSearch cluster is not reachable.")
 
             info = client.info()

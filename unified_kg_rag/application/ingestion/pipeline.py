@@ -1443,8 +1443,10 @@ class DataIngestionPipeline:
                 ):
                     return None  # the backend keeps no records
                 for suffix, kinds in named.items():
-                    found = read(sorted(kinds), suffix=suffix)
-                    missing |= {kinds[key] for key in kinds.keys() - found.keys()}
+                    stored = indexer.stored_extraction_record_keys(
+                        sorted(kinds), suffix=suffix
+                    )
+                    missing |= {kinds[key] for key in kinds.keys() - stored}
             finally:
                 indexer.close()
         except NamespaceLeaseError:
