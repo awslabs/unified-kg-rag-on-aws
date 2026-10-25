@@ -738,3 +738,44 @@ def test_claims_are_merged_in_text_unit_id_order(mocker) -> None:
     (claim,) = context.claims
     assert claim.description == "stated in u1\nstated in u2"
     assert claim.status == "false"
+
+
+@pytest.mark.parametrize("stage_name", ["claim_extraction", "gleaning"])
+def test_a_stage_hands_on_the_units_failed_for_their_own_error(
+    mocker, stage_name: str
+) -> None:
+    # Only the units failed for an error of their own count against their
+    # document (indexing.max_document_failures); a stage that left them out
+    # of the context counted none of its failures.
+    from unified_kg_rag.adapters.ingestion.claim_extractor import (
+        ClaimExtractionStats,
+    )
+    from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
+
+    failed = {"failed_text_unit_ids": ["u1", "u2"], "item_failed_text_unit_ids": ["u1"]}
+    context = _context()
+    context.text_units = [TextUnit(id=u, text=u) for u in ("u1", "u2")]
+    context.unit_extractions = [TextUnitExtraction(text_unit_id="u1")]
+    if stage_name == "gleaning":
+        gleaner = mocker.MagicMock()
+        mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
+        gleaner.glean.return_value = (context.unit_extractions, GleaningStats(**failed))
+        stage: Any = ps.GleaningStage(config=Config())
+    else:
+        extractor = mocker.patch.object(ps, "ClaimExtractor", autospec=True)
+        extractor.return_value.extract_units.return_value = (
+            {},
+            ClaimExtractionStats(**failed),
+        )
+        extractor.return_value.merge_claims.return_value = []
+        store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
+        store.return_value.load.return_value = {}
+        store.return_value.save.return_value = set()
+        stage = ps.ClaimExtractionStage(Config(), providers=mocker.MagicMock())
+
+    stage._execute_core(context)
+
+    assert context.failed_text_unit_ids[stage_name] == ["u1", "u2"]
+    assert context.item_failed_text_unit_ids[stage_name] == ["u1"]

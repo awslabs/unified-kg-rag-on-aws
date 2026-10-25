@@ -12,6 +12,7 @@ types built without a network.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -271,8 +272,12 @@ _BEDROCK = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
         # Not every unit failed, or not with the same error.
         (["a", "b"], {0: _ITEM}, [0]),
         (["a", "b"], {0: _ITEM, 1: OutputParserException("bad")}, [0, 1]),
-        # Output that does not parse is each unit's own, however alike.
+        # Output that does not parse or was cut off is each unit's own,
+        # however alike.
         (["a", "b"], {0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, [0, 1]),
+        (["a", "b"], {0: _OUTPUT_ERRORS[1], 1: _OUTPUT_ERRORS[1]}, [0, 1]),
+        # Alike in type, code and status but not in message: two causes.
+        (["a", "b"], {0: _ITEM, 1: _bedrock("ValidationException", 400, "y")}, [0, 1]),
         # Errors that are not the item's own count for none either way.
         (["a", "b"], {0: TimeoutError(), 1: _ITEM}, [1]),
     ],
@@ -285,29 +290,37 @@ def test_one_error_on_every_unit_of_several_documents_counts_none(
 
 
 class _Rejecting:
-    """A chain the model answers with one error for every request."""
+    """A chain the model answers with an error for every request: ``error``,
+    or the error ``error`` maps the text of the request's unit to."""
 
-    def __init__(self, error: Exception) -> None:
+    def __init__(self, error: Exception | dict[str, Exception]) -> None:
         self.error = error
 
-    def invoke(self, *_: Any, **__: Any) -> Any:
+    def invoke(self, request: Any, *_: Any, **__: Any) -> Any:
+        if isinstance(self.error, dict):
+            raise next(e for text, e in self.error.items() if text in str(request))
         raise self.error
 
     def batch(self, *_: Any, **__: Any) -> Any:
-        raise self.error
+        raise AssertionError("the extractors call the model per item")
 
 
-def _run(stage: str, config: Config, units: list[TextUnit]) -> list[str]:
-    """The ids of the units ``stage`` counts against their document when the
-    model rejects all of them with one error."""
+_STAGES = {
+    "graph": (graph_module, graph_module.GraphExtractor),
+    "claims": (claim_module, claim_module.ClaimExtractor),
+    "gleaning": (gleaner_module, gleaner_module.GraphGleaner),
+}
+# A message no configuration pattern names: only the rule tells it apart.
+_TOO_LONG = _bedrock("ValidationException", 400, "Input is too long.")
+
+
+def _processor(
+    stage: str, config: Config, error: Exception | dict[str, Exception]
+) -> Any:
+    """``stage``'s extractor, its model answering every request with
+    ``error`` (see :class:`_Rejecting`)."""
     config.processing.ignore_errors = True
-    module, cls = {
-        "graph": (graph_module, graph_module.GraphExtractor),
-        "claims": (claim_module, claim_module.ClaimExtractor),
-        "gleaning": (gleaner_module, gleaner_module.GraphGleaner),
-    }[stage]
-    # A message no configuration pattern names: only the rule tells it apart.
-    error = _bedrock("ValidationException", 400, "Input is too long.")
+    module, cls = _STAGES[stage]
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             bedrock_module, "BedrockLanguageModelFactory", lambda *_, **__: _BEDROCK
@@ -316,13 +329,36 @@ def _run(stage: str, config: Config, units: list[TextUnit]) -> list[str]:
         patch.setattr(module, "setup_chain", lambda **_: _Rejecting(error))
         processor: Any = cls(config)
     processor.show_progress = False
+    return processor
+
+
+def _counted(processor: Any, stage: str, units: list[TextUnit]) -> list[str]:
+    """The ids of the units ``processor`` counts against their document."""
     if stage == "gleaning":
         records = [TextUnitExtraction(text_unit_id=u.id) for u in units]
-        return list(processor.glean(units, records)[1].item_failed_text_unit_ids)
-    return list(processor.extract_units(units)[1].item_failed_text_unit_ids)
+        return sorted(processor.glean(units, records)[1].item_failed_text_unit_ids)
+    return sorted(processor.extract_units(units)[1].item_failed_text_unit_ids)
 
 
-@pytest.mark.parametrize("stage", ["graph", "claims", "gleaning"])
+def _run(
+    stage: str,
+    config: Config,
+    units: list[TextUnit],
+    error: Exception | dict[str, Exception] = _TOO_LONG,
+) -> list[str]:
+    """The ids of the units ``stage`` counts against their document when the
+    model rejects all of them with ``error``."""
+    return _counted(_processor(stage, config, error), stage, units)
+
+
+def _two_documents() -> list[TextUnit]:
+    return [
+        TextUnit(id="u0", text="alpha", document_ids=["a"]),
+        TextUnit(id="u1", text="beta", document_ids=["b"]),
+    ]
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
 def test_every_extraction_stage_counts_one_cause_for_none(
     stage: str, config: Config
 ) -> None:
@@ -332,4 +368,61 @@ def test_every_extraction_stage_counts_one_cause_for_none(
     two = [TextUnit(id=f"u{i}", text="t", document_ids=[d]) for i, d in enumerate("ab")]
     one = [TextUnit(id=f"u{i}", text="t", document_ids=["a"]) for i in range(2)]
     assert _run(stage, config, two) == []
-    assert sorted(_run(stage, config, one)) == ["u0", "u1"]
+    assert _run(stage, config, one) == ["u0", "u1"]
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
+def test_every_extraction_stage_counts_only_the_items_own_errors(
+    stage: str, config: Config
+) -> None:
+    # u0's request is rejected for its content; u1's for access, which is no
+    # document's fault: only u0 counts, in every stage.
+    errors = {
+        "alpha": _TOO_LONG,
+        "beta": _bedrock("AccessDeniedException", 403, "not authorized"),
+    }
+    assert _run(stage, config, _two_documents(), errors) == ["u0"]
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
+def test_every_extraction_stage_counts_distinct_errors_of_several_documents(
+    stage: str, config: Config
+) -> None:
+    # Both units rejected for their content, each with its own message: two
+    # causes, each its document's, not one setting.
+    errors = {
+        "alpha": _TOO_LONG,
+        "beta": _bedrock("ValidationException", 400, "Input is too long (2)."),
+    }
+    assert _run(stage, config, _two_documents(), errors) == ["u0", "u1"]
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
+def test_every_extraction_stage_counts_each_call_anew(
+    stage: str, config: Config
+) -> None:
+    # A second call on the same extractor reports its own failures, not the
+    # ones of the call before it.
+    errors: dict[str, Exception] = {"alpha": _TOO_LONG, "beta": _TOO_LONG}
+    processor = _processor(stage, config, errors)
+    one = [
+        TextUnit(id=f"u{i}", text=t, document_ids=["a"])
+        for i, t in enumerate(("alpha", "beta"))
+    ]
+    assert _counted(processor, stage, one) == ["u0", "u1"]
+    errors["alpha"] = errors["beta"] = _bedrock("AccessDeniedException", 403, "x")
+    assert _counted(processor, stage, one) == []
+
+
+def test_claims_count_an_answer_that_does_not_parse(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The model answered, but its answer does not parse: the unit's own.
+    processor = _processor("claims", config, _TOO_LONG)
+    processor.claim_extractor = SimpleNamespace(invoke=lambda *_: {"claims": "x"})
+    monkeypatch.setattr(
+        processor,
+        "_parse_extraction_result",
+        lambda *_: (_ for _ in ()).throw(OutputParserException("bad")),
+    )
+    assert _counted(processor, "claims", _two_documents()[:1]) == ["u0"]
