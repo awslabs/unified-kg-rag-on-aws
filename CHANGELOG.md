@@ -1355,6 +1355,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- An OpenSearch cluster that accepts connections but never answers fails
+  the store preflight after about a minute instead of 18: the connection
+  check that opens the indexing client waited the indexing request timeout
+  (180 s) on each of its 6 attempts and now waits 10 s (#PR).
 - A reset pipeline id run again checks that the extraction records its
   text units name are still stored by reading their ids only
   (`VectorIndexer.stored_extraction_record_keys`); it read every record
