@@ -50,3 +50,20 @@ def test_a_silent_cluster_fails_the_connection_check_quickly(
         opensearch.OpenSearchClient(config).client
     # Six attempts of 0.2 s, not of the 180 s an indexing request may take.
     assert time.monotonic() - started < 10
+
+
+@pytest.mark.timeout(30)
+def test_a_cluster_answering_the_ping_only_fails_the_check_quickly(
+    monkeypatch: pytest.MonkeyPatch, silent_port: int
+) -> None:
+    # The cluster-info request after the ping waited the indexing timeout too.
+    monkeypatch.setattr(opensearch, "_PING_TIMEOUT_SECONDS", 0.2, raising=False)
+    monkeypatch.setattr(opensearch.OpenSearch, "ping", lambda *_, **__: True)
+    config = Config()
+    store = config.aws.opensearch
+    store.endpoint, store.port = "127.0.0.1", silent_port
+    store.use_ssl, store.use_iam, store.allow_anonymous = False, False, True
+    started = time.monotonic()
+    with pytest.raises(StoreConnectionError, match="Failed to connect"):
+        opensearch.OpenSearchClient(config).client
+    assert time.monotonic() - started < 10
