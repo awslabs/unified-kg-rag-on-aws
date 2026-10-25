@@ -1359,26 +1359,26 @@ changed once with the full-config keys (#332).
   a stream, a wave of the relationship walk) cancels the parts running
   beside it; they kept sending store requests until they finished, after
   the query had already failed. DRIFT already did this; the helper is now
-  `shared.utils.concurrency.gather_or_cancel` (#PR).
+  `shared.utils.concurrency.gather_or_cancel` (#426).
 - `run-rag --interactive`: `set-filter` refuses a key no index of the
   search strategy declares (for `auto`, of any strategy it may route to)
   instead of keeping it, which failed every later question until
   `clear-filters`. `GraphRAGChain.check_filter_keys` runs the check a query
-  makes (#PR).
+  makes (#426).
 - The WARNING for a search the index's `max_result_window` cuts names the
   `top_k` asked for, not the internal over-fetch (`top_k` x
   `retrieval_multiplier`), comes once per query rather than once per search
   of each index, and only when fewer than `top_k` hits can come back; a cut
-  of the over-fetch alone is logged at DEBUG (#PR).
+  of the over-fetch alone is logged at DEBUG (#426).
 - An OpenSearch cluster that accepts connections but never answers fails
   the store preflight after about a minute instead of 18: the connection
   check that opens the indexing client waited the indexing request timeout
-  (180 s) on each of its 6 attempts and now waits 10 s (#PR).
+  (180 s) on each of its 6 attempts and now waits 10 s (#426).
 - A reset pipeline id run again checks that the extraction records its
   text units name are still stored by reading their ids only
   (`VectorIndexer.stored_extraction_record_keys`); it read every record
   in full, the whole extraction output of the corpus, before any stage
-  ran (#PR).
+  ran (#426).
 - Incremental indexing: a backend or configuration failure no longer
   excludes documents. Any error the model clients did not call transient
   counted toward `indexing.max_document_failures` as the document's own:
@@ -4352,7 +4352,7 @@ changed once with the full-config keys (#332).
   fixed release; `SECURITY.md` lists this and the filelock residual
   (GHSA-v4x8-3wr5-3wq8: `unstructured` caps filelock below 4, the fix needs
   4.2.1, and no installed dependency uses the affected `ReadWriteLock`).
-  The lock also moves certifi to 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#PR).
+  The lock also moves certifi to 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#426).
 - Graph expansion under a document filter keeps an expanded entity only
   when a walk over relationships that pass the filter reaches it from a
   seed: the walk crossed every edge, so entities (and through them chunks)
