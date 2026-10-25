@@ -2265,8 +2265,9 @@ class IndexingConfig(BaseModel):
     max_document_failures: int = Field(
         default=3,
         ge=1,
-        description="Incremental runs: a document recorded FAILED this many "
-        "consecutive runs with unchanged content is no longer retried. It stays "
+        description="Incremental runs: a document recorded FAILED for an error "
+        "of its own this many consecutive runs with unchanged content, under "
+        "the same extraction settings, is no longer retried. It stays "
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised.",
     )

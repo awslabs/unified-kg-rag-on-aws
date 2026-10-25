@@ -1607,7 +1607,10 @@ Flags must be spelled out in full: a prefix such as `--output` is rejected.
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
 `--metrics-sink cloudwatch`, which also writes to stdout): the answer or
 search results (`run-rag`), the pipeline id, status, the number of documents
-the run recorded `FAILED` (`failed_documents`; a model outage records none) and per-stage
+the run recorded `FAILED` (`failed_documents`; a model outage that fails
+every unit records none, one that fails some units records their documents,
+retried by the next run without counting toward
+`indexing.max_document_failures`) and per-stage
 results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written

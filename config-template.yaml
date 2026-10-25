@@ -559,8 +559,8 @@ indexing:
   # partial-failure gate.
   max_failure_rate: 0.2
   # Incremental runs only (providers.doc_status.enabled): a document recorded FAILED
-  # this many consecutive runs with unchanged content is no longer retried. It
-  # stays FAILED and is skipped as unchanged (WARNING per run) until the file
+  # for an error of its own this many consecutive runs with unchanged content,
+  # under the same extraction settings, is no longer retried. It stays FAILED and is skipped as unchanged (WARNING per run) until the file
   # changes or this value is raised.
   max_document_failures: 3
   # Incremental runs only: once runs died this many consecutive times (the task
