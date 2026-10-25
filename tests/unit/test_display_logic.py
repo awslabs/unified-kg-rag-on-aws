@@ -20,12 +20,14 @@ from unified_kg_rag.domain.models import (
     Claim,
     Community,
     CommunityReport,
+    Document,
     Entity,
     PipelineContext,
     PipelineMetrics,
     PipelineStageResult,
     PipelineStageStatus,
     Relationship,
+    TextUnit,
 )
 from unified_kg_rag.shared.utils import display
 
@@ -158,6 +160,27 @@ def test_pipeline_summary_shows_zero_baseline_rows_for_empty(cap) -> None:
     # Documents / Text Units rows are always shown even at zero.
     assert "Documents Processed" in out
     assert "Text Units Created" in out
+
+
+def test_pipeline_summary_counts_the_documents_recorded_failed(cap) -> None:
+    # "Documents Failed" counts the records written FAILED, not the documents
+    # a stage failed on: a model outage records them PENDING, retried
+    # without counting.
+    ctx = _context()
+    ctx.documents = [
+        Document(page_content="x", document_id=d, file_name=d, file_path=d)
+        for d in ("a", "b")
+    ]
+    ctx.text_units = [TextUnit(id="u0", text="x", document_ids=["a"])]
+    ctx.failed_text_unit_ids = {"graph_extraction": ["u0"]}
+    assert "Documents Failed" not in cap(display.display_pipeline_summary, ctx)
+    ctx.record_failed_documents(["doc-a", "doc-b"])
+    (row,) = [
+        line
+        for line in cap(display.display_pipeline_summary, ctx).splitlines()
+        if "Documents Failed" in line
+    ]
+    assert row.split("│")[2].strip() == "2", row
 
 
 # --- display_stage_results -----------------------------------------------

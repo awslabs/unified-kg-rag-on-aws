@@ -1839,3 +1839,42 @@ async def test_a_fatal_search_error_cancels_the_searches_beside_it(
         )
     assert len(started) > 1
     assert len(cancelled) == len(started) - 1
+
+
+@pytest.mark.parametrize("read", ["aget_mappings", "aget_index_settings"])
+async def test_a_failed_index_read_cancels_the_reads_beside_it(
+    config: Config, read: str
+) -> None:
+    # The mapping and settings reads before a search, one per index, ran
+    # under a plain gather too: the others kept going to the store after one
+    # had failed the query (a store that never answered).
+    started: list[str] = []
+    cancelled: list[str] = []
+
+    async def _read(index: str) -> dict:
+        started.append(index)
+        if len(started) == 1:
+            await asyncio.sleep(0.05)
+            raise StoreTimeoutError("timed out")
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.append(index)
+            raise
+        return {}
+
+    retriever = _opensearch_retriever(config)
+    client = _MockSearchClient(None)
+    setattr(client, read, _read)
+    object.__setattr__(retriever, "_opensearch_client", client)
+    o = config.indexing.opensearch
+    prefixes = [o.entities_index_prefix, o.text_units_index_prefix]
+    check = (
+        retriever._check_embedding_settings
+        if read == "aget_mappings"
+        else retriever._limits_by_prefix
+    )
+    with pytest.raises(StoreTimeoutError, match="did not answer a request on"):
+        await asyncio.wait_for(check(prefixes, None), timeout=30)
+    assert len(started) == 2
+    assert cancelled == started[1:]

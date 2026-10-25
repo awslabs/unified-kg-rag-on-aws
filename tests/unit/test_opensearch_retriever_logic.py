@@ -549,6 +549,17 @@ def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
     )
 
 
+def test_a_window_holding_top_k_exactly_cuts_only_the_over_fetch(
+    retriever, caplog
+) -> None:
+    # top_k == max_result_window: a search still returns every hit asked
+    # for, so the cut of the over-fetch is no warning.
+    q = SearchQuery(query="x", top_k=20, retrieval_multiplier=5)
+    with caplog.at_level("WARNING"):
+        assert retriever._hit_count(q, 20) == 20
+    assert not caplog.records
+
+
 def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
     # Fetch-by-id: ids passed as a terms filter with top_k=len(ids). size must
     # not be clamped to max_query_size (default 100) or ids beyond 100 are

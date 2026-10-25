@@ -11,6 +11,8 @@ OpenSearch / Neptune and fusion is stubbed to capture its input buckets.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
@@ -193,6 +195,40 @@ async def test_local_search_adds_bridge_section_for_expanded_entities(
     for call in bridge_calls:
         (ids,) = [v for k, v in call.filters.items() if k in ("source_id", "target_id")]
         assert set(ids) == {"vendor", "buyer"}
+
+
+async def test_a_failed_bridge_lookup_cancels_the_text_unit_lookup(
+    config: Config,
+) -> None:
+    # The two lookups after the expansion run together: a fatal error of one
+    # (a denied store) left the other's store requests running.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    strategy, _, _ = _make_strategy(config)
+    cancelled: list[str] = []
+
+    async def denied(*_args: object) -> list[RetrievalResult]:
+        await asyncio.sleep(0.01)
+        raise StoreAccessDeniedError("denied")
+
+    async def slow(*_args: object) -> list[str]:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append("text units")
+            raise
+        return []
+
+    strategy._retrieve_bridge_relationships = denied  # type: ignore[method-assign]
+    strategy._passing_ranked_units = slow  # type: ignore[method-assign]
+    with pytest.raises(StoreAccessDeniedError):
+        await asyncio.wait_for(
+            strategy._retrieve_entity_chain(
+                SearchQuery(query="q", entity_focus=["Vendor"])
+            ),
+            2,
+        )
+    assert cancelled == ["text units"]
 
 
 @pytest.mark.parametrize(
