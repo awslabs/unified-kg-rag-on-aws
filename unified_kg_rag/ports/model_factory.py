@@ -288,9 +288,13 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     bool``, the classifier of its errors worth a retry (the Bedrock factory
     names botocore's, the local ones network errors and HTTP 408/429/5xx). The
     ingestion stages' batch retries use it, and without it fall back to
-    ``adapters.llm.retry.looks_transient``. A factory that also defines
-    ``transient_retry`` (the Bedrock and Ollama ones) gets a chain-level retry of query
-    chains from ``setup_chain`` under that policy.
+    ``adapters.llm.retry.looks_transient``. It may also define
+    ``is_item_error(exc) -> bool``: whether an ingestion item's error is the
+    item's own (a request the model rejects for its content), which counts
+    against its document (``adapters.llm.retry.item_error_predicate``);
+    without it only unparseable or cut-off output counts. A factory that
+    also defines ``transient_retry`` (the Bedrock and Ollama ones) gets a
+    chain-level retry of query chains from ``setup_chain`` under that policy.
     """
 
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> ModelT: ...

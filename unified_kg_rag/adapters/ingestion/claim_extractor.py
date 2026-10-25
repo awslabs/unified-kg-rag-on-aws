@@ -10,7 +10,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    transient_error_predicate,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
@@ -67,6 +70,8 @@ class ClaimExtractionStats(BaseModel):
     num_successful_extractions: int = 0
     num_failed_extractions: int = 0
     failed_text_unit_ids: list[str] = []
+    # The failed units whose error was their own (item_error_predicate).
+    item_failed_text_unit_ids: list[str] = []
     total_claims_extracted: int = 0
     total_processing_time: float = 0.0
 
@@ -99,6 +104,7 @@ class ClaimExtractor(BaseProcessor):
             self.config.processing,
             is_transient_error=transient_error_predicate(self.factory),
         )
+        self.is_item_error = item_error_predicate(self.factory)
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,
@@ -161,6 +167,7 @@ class ClaimExtractor(BaseProcessor):
         ) -> list[dict[str, Any]]:
             return [unit_to_input[unit.id] for unit in chunk_items]
 
+        errors: dict[int, BaseException] = {}
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=units_to_process,
@@ -168,6 +175,7 @@ class ClaimExtractor(BaseProcessor):
                 sequential_func=self.claim_extractor.invoke,
                 task_name="Claim Extraction",
                 show_progress=self.show_progress,
+                errors=errors,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -179,6 +187,11 @@ class ClaimExtractor(BaseProcessor):
 
         per_unit = self._process_extraction_results(
             units_to_process, extraction_results
+        )
+        self.stats.item_failed_text_unit_ids.extend(
+            units_to_process[idx].id
+            for idx, error in sorted(errors.items())
+            if self.is_item_error(error)
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
         self.stats.total_processing_time = time.time() - start_time
@@ -226,6 +239,7 @@ class ClaimExtractor(BaseProcessor):
                     self.stats.num_successful_extractions += 1
                 except Exception as e:
                     self._record_failure(text_unit)
+                    self.stats.item_failed_text_unit_ids.append(text_unit.id)
                     logger.warning(
                         "Failed to parse extraction result for text unit '%s': %s",
                         text_unit.id,

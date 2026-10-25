@@ -520,10 +520,14 @@ unless noted.
    consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. A run that
    stops before this step at a stage that failed on all of its units still
-   records FAILED the documents whose units failed for an error of their own
-   (4xx, validation, unparseable output; a model outage, denied access or
-   an unknown model counts for none),
-   so a document that always fails cannot block every later run. Extraction
+   records FAILED the documents whose units failed for an error of their own,
+   so a document that always fails cannot block every later run. Only such
+   errors count, here and at this commit: unparseable or cut-off output, and
+   a request the model rejects for its content (the factory's
+   `is_item_error`: a Bedrock `ValidationException`, HTTP 400/413/422, minus
+   rejections of the model or a setting). Any other error (an outage,
+   credentials, a quota, a setting, a bug), or one error on every unit of
+   several documents, counts for none. Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted

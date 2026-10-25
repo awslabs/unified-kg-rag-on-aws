@@ -13,7 +13,6 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.shared.exceptions import (
-    PipelineExecutionError,
     StoreConnectionError,
 )
 
@@ -40,10 +39,9 @@ def test_an_unreachable_vector_store_fails_the_run_before_any_model_call(
 
     with (
         patch.object(OpenSearchIndexer, "check_index_creation", unreachable),
-        pytest.raises(PipelineExecutionError) as raised,
+        pytest.raises(StoreConnectionError),
     ):
         e2e._ingest(config, providers, source, tmp_path / "run")
-    assert isinstance(raised.value.__cause__, StoreConnectionError)
     assert server.chat_models == [] and server.embed_models == []
 
 

@@ -346,12 +346,24 @@ class PipelineContext(BaseModel):
     )
     item_failed_text_unit_ids: dict[str, list[str]] = Field(
         default_factory=dict,
-        description="The failed text units whose error was their own (a 4xx "
-        "or validation error, a response that does not parse), by stage name. "
-        "When such a stage fails the run, their documents are still recorded "
-        "FAILED, so a document that always fails reaches "
-        "indexing.max_document_failures; a model outage counts for none.",
+        description="The failed text units whose error was their own (a "
+        "request the model rejects for its content, a response that does not "
+        "parse or was cut off), by stage name: only their documents' failures "
+        "count toward indexing.max_document_failures, including when such a "
+        "stage fails the run. Any other error (an outage, credentials, a "
+        "quota, a setting) counts for none.",
     )
+
+    recorded_failed_doc_ids: list[str] = Field(
+        default_factory=list,
+        description="Registry ids of the documents this run recorded FAILED "
+        "(the indexing commit, or a stage that stopped the run on errors of "
+        "their own); the run's failed_documents count.",
+    )
+
+    def record_failed_documents(self, doc_ids: Iterable[str]) -> None:
+        """Add ``doc_ids`` to :attr:`recorded_failed_doc_ids`."""
+        self.recorded_failed_doc_ids = sorted({*self.recorded_failed_doc_ids, *doc_ids})
 
     def documents_of_units(self, unit_ids: Iterable[str]) -> "list[Document]":
         """The run's documents the text units ``unit_ids`` belong to."""

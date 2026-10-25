@@ -27,7 +27,7 @@ from typing import Any, ClassVar
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from unified_kg_rag.adapters.llm.retry import looks_transient
+from unified_kg_rag.adapters.llm.retry import looks_like_item_error, looks_transient
 from unified_kg_rag.domain.models import Config, ModelPurpose
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.provider_config import (
@@ -248,6 +248,13 @@ class _LocalLanguageModelFactory:
         (``transient_retry``).
         """
         return looks_transient(exc)
+
+    @staticmethod
+    def is_item_error(exc: BaseException) -> bool:
+        """Whether an ingestion item's error counts against its document:
+        HTTP 400/413/422 other than a rejected model or setting
+        (:func:`~unified_kg_rag.adapters.llm.retry.looks_like_item_error`)."""
+        return looks_like_item_error(exc)
 
     def get_model_info(self, model_id: str) -> LanguageModelInfo:
         """Capability record of every model on this server (from config)."""

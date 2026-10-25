@@ -1355,6 +1355,51 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a backend or configuration failure no longer
+  excludes documents. Any error the model clients did not call transient
+  counted toward `indexing.max_document_failures` as the document's own:
+  expired or missing credentials, a missing region, a quota
+  (`ServiceQuotaExceededException`), a setting the model rejects (a model
+  that needs an inference profile, an unsupported parameter), a stream error
+  or a bug, so three runs of an outage excluded a whole delta, and the run
+  after the fix completed with nothing indexed. On the indexing path, even a
+  connection error counted when other documents of the run succeeded. Only
+  an error of the document's own now counts: output that does not parse or
+  was cut off, or a request the model rejects for its content (a Bedrock
+  `ValidationException`, HTTP 400/413/422 from a local server) other than a
+  rejection of the model or a setting, and not one error that failed every
+  unit of several documents. The language-model factories name these
+  (`is_item_error`, next to `is_transient_error`); a custom factory without
+  one has only the output failures counted. Graph extraction, gleaning and
+  claim extraction are classified; any other failure (translation, a
+  report, a record not stored) is recorded `FAILED` without counting (#425).
+- Incremental indexing: the refusal to run a finished pipeline id again on
+  the restored failures of a stage not enabled in the rerun was skipped when
+  an enabled stage had failed too: the resume rewound to that stage and the
+  indexing stage recorded the other stage's documents `FAILED` once more
+  without retrying them. The refusal now also holds for the stage the resume
+  rewinds to (#425).
+- `run-ingestion --output-format json`: `failed_documents` counted the
+  documents a stage failed on, so a model outage that recorded every
+  document `PENDING` read as that many documents recorded `FAILED`. It now
+  counts the documents the run recorded `FAILED`, as does the summary's
+  "Documents Failed" row (#425).
+- `DataIngestionPipeline.run` raises a `StoreConnectionError` met outside a
+  stage (the store preflight before any model call) as it is, like
+  `ConfigurationError` and `NamespaceLeaseError`, instead of wrapping it in
+  `PipelineExecutionError`, so a caller can tell an unreachable store from
+  a crash with the exception the package root exports. `run-ingestion`
+  still exits 1 (#425).
+- Incremental indexing: a failed store write no longer counts toward
+  `indexing.max_document_failures`. The documents owning it are still
+  recorded `FAILED` and rewritten by the next run, but a store outage over
+  three runs no longer excludes them. The WARNING for documents recorded
+  `FAILED` after a partial extraction failure now names their files and how
+  many of them were counted (#425).
+- `run-ingestion --output-format json`: a run that a stage failed now has
+  the top-level `error` and `exit_code` that a run failing before it prints
+  has. A refused resume is reported once (`Pipeline resume failed: ...`),
+  not as `Failed to run pipeline: Pipeline resume failed: ...` (#425).
 - Incremental indexing: a finished pipeline id run again with only its later
   stages enabled (an indexing-only phase, say) on the restored output of a
   stage that failed on some documents recorded them `FAILED` once more each

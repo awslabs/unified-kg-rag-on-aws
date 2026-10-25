@@ -1592,8 +1592,8 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, e.g. a deletion-only incremental run into an index built with the registry off), a breached `--max-failure-rate`, a failed upload, nothing rendered |
-| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, or an incremental run's live indices were built for other embedding, language or registry settings) |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, or an unreachable store), a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, or an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -1605,7 +1605,7 @@ Flags must be spelled out in full: a prefix such as `--output` is rejected.
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
 `--metrics-sink cloudwatch`, which also writes to stdout): the answer or
 search results (`run-rag`), the pipeline id, status, the number of documents
-a stage failed on (`failed_documents`, recorded `FAILED`) and per-stage
+the run recorded `FAILED` (`failed_documents`; a model outage records none) and per-stage
 results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
@@ -1613,8 +1613,9 @@ path and profile (`run-prompt-tuning`), or the counts written
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-with (an argparse error included), so stdout is always JSON; `run-ingestion` adds the
-`pipeline_id` to resume with (once the run resolved it) and, when a stopped
+with (an argparse error included), so stdout is always JSON. A
+`run-ingestion` result whose run a stage failed carries the same `error` and
+`exit_code`; `run-ingestion` adds the `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in
 flight (this run's, or those of the run whose expired lease it took over),
 `next_run_writes_from` (UTC, ISO 8601).
@@ -1690,7 +1691,10 @@ finally:
   `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
   them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
   `NamespaceLeaseError`, `PipelineExecutionError` and `PipelineInterrupted`
-  (a `KeyboardInterrupt`); all but the last are `GraphRAGException`s. A
+  (a `KeyboardInterrupt`); all but the last are `GraphRAGException`s.
+  `DataIngestionPipeline.run` raises `ConfigurationError`,
+  `StoreConnectionError` and `NamespaceLeaseError` as they are, and wraps
+  any other crash outside a stage in `PipelineExecutionError`. A
   model client's own transport error (`httpx.ConnectError` from a local
   model server, say) is raised as is.
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,

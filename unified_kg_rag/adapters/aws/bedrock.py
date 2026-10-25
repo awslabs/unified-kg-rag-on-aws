@@ -30,7 +30,10 @@ from unified_kg_rag.adapters.aws.bedrock_models import (
     base_model_id,
     get_language_model_info,
 )
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
+from unified_kg_rag.adapters.aws.bedrock_retry import (
+    is_bedrock_item_error,
+    is_transient_bedrock_error,
+)
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
 from unified_kg_rag.domain.models import (
@@ -537,6 +540,8 @@ class BedrockLanguageModelFactory(
     # Whether an error is worth a retry: the ingestion batch retries and the
     # query-chain retry of ``setup_chain``.
     is_transient_error = staticmethod(is_transient_bedrock_error)
+    # Whether an ingestion item's error counts against its document.
+    is_item_error = staticmethod(is_bedrock_item_error)
 
     @property
     def transient_retry(self) -> TransientRetryConfig:

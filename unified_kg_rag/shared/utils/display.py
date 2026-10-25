@@ -47,8 +47,8 @@ _SUMMARY_METRICS_CONFIG = {
     "Documents Processed": ("documents", "Source documents loaded into the system"),
     "Text Units Created": ("text_units", "Text segments created through chunking"),
     "Documents Failed": (
-        "failed_documents",
-        "Documents a stage failed on (recorded FAILED, retried next run)",
+        "recorded_failed_doc_ids",
+        "Documents recorded FAILED (retried next run)",
     ),
     "Translated Units": (
         "translated_units",

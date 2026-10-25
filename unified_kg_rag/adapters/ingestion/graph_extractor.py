@@ -3,13 +3,18 @@
 import time
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
+from unified_kg_rag.adapters.llm.retry import (
+    error_signature,
+    item_error_predicate,
+    transient_error_predicate,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -28,6 +33,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils import ensure_list, entity_key
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
@@ -52,8 +58,9 @@ class ExtractionStats(BaseModel):
     item_failed_text_unit_ids: list[str] = Field(
         default_factory=list,
         description="The failed text units whose error was their own, not the "
-        "model's (BatchProcessor.is_item_error): a 4xx or validation error, or "
-        "a response that does not parse",
+        "model's (adapters.llm.retry.item_error_predicate): a request the "
+        "model rejects for its content, or a response that does not parse or "
+        "was cut off",
     )
     total_entities_extracted: int = Field(
         default=0, description="Total number of entities extracted from all text units"
@@ -136,6 +143,7 @@ class GraphExtractor(BaseProcessor):
             self.config.processing,
             is_transient_error=transient_error_predicate(self.factory),
         )
+        self.is_item_error = item_error_predicate(self.factory)
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,
@@ -193,11 +201,20 @@ class GraphExtractor(BaseProcessor):
             return [], self.stats
 
         records = self._process_extraction_results(text_units, extraction_results)
-        self.stats.item_failed_text_unit_ids.extend(
-            text_units[idx].id
-            for idx, error in sorted(errors.items())
-            if self.batch_processor.is_item_error(error)
-        )
+        if self._one_cause_failed_documents(text_units, errors):
+            logger.warning(
+                "Every text unit of %s documents failed with the same error "
+                "(%s): taken for a model or configuration failure, counted "
+                "against none of them",
+                len({d for unit in text_units for d in unit.document_ids or []}),
+                errors[0],
+            )
+        else:
+            self.stats.item_failed_text_unit_ids.extend(
+                text_units[idx].id
+                for idx, error in sorted(errors.items())
+                if self.is_item_error(error)
+            )
 
         self.stats.total_entities_extracted = sum(len(r.entities) for r in records)
         self.stats.total_relationships_extracted = sum(
@@ -208,6 +225,25 @@ class GraphExtractor(BaseProcessor):
         self._log_completion_summary(self.stats)
 
         return records, self.stats
+
+    @staticmethod
+    def _one_cause_failed_documents(
+        text_units: list[TextUnit], errors: dict[int, BaseException]
+    ) -> bool:
+        """Whether the model rejected every unit, of more than one document,
+        with the same error: one cause (a setting it rejects) rather than each
+        document's own, so none is counted against a document. A single
+        document that always fails, and output that does not parse or was cut
+        off, are still counted."""
+        documents = {d for unit in text_units for d in unit.document_ids or []}
+        return (
+            len(documents) > 1
+            and len(errors) == len(text_units)
+            and len({error_signature(error) for error in errors.values()}) == 1
+            and not isinstance(
+                errors[0], OutputParserException | LLMOutputTruncatedError
+            )
+        )
 
     @staticmethod
     def _format_entity_types(entity_types: list[str]) -> str:

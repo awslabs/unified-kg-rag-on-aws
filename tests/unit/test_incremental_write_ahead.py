@@ -273,7 +273,12 @@ def test_write_ahead_does_not_count_toward_max_document_failures() -> None:
     pending = harness.store.get(doc_id)
     assert pending is not None
     assert (pending.status, pending.failure_count) == (DocStatus.PENDING, 0)
-    inc.commit([lineage], fingerprints, failed_doc_ids={doc_id})
+    inc.commit(
+        [lineage],
+        fingerprints,
+        failed_doc_ids={doc_id},
+        counted_failed_doc_ids={doc_id},
+    )
     record = harness.store.get(doc_id)
     assert record is not None
     assert (record.status, record.failure_count) == (DocStatus.FAILED, 3)

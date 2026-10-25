@@ -929,6 +929,9 @@ class GleaningStage(PipelineStage):
 
         context.unit_extractions = records
         context.failed_text_unit_ids[self.name] = gleaning_stats.failed_text_unit_ids
+        context.item_failed_text_unit_ids[self.name] = (
+            gleaning_stats.item_failed_text_unit_ids
+        )
         final_entities, final_relationships = _distinct_counts(records)
 
         # Graph growth from gleaning: items it added per extracted item.
@@ -1149,6 +1152,7 @@ class ClaimExtractionStage(PipelineStage):
         )
         context.claims = claims
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
+        context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
 
         metrics = {
             "text_units_processed": len(text_units),
@@ -1872,7 +1876,11 @@ class IndexingStage(_RegistryStage):
                             *claims,
                         ],
                     ),
+                    counted_failed_doc_ids=documents_with_failed_units(
+                        context, text_units, own_errors=True
+                    ),
                 )
+                context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 if recorded:
                     # The records of documents the rebuild replaced go; a
                     # failed rebuild keeps them (their artifacts may remain).

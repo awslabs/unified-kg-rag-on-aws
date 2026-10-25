@@ -26,8 +26,9 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from botocore.exceptions import NoCredentialsError
 
-from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.fakes.model_servers import FakeOllama, ModelRejects
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_ingestion_stages import _source_text
 from tests.integration.test_name_variant_convergence import _Died, _dying, _respond
@@ -43,10 +44,13 @@ _EXTRACTION = "extraction expert"
 
 
 def _setup(
-    tmp: Path, fails: Callable[[str], bool]
+    tmp: Path,
+    fails: Callable[[str], bool],
+    error: Callable[[], Exception] = ModelRejects,
 ) -> tuple[Config, Any, dict[str, bool]]:
     """Embedded config + providers whose extraction fails on the units
-    ``fails`` matches while ``failing["on"]``."""
+    ``fails`` matches while ``failing["on"]`` (with ``error()``, by default
+    a request the model rejects for its content: the unit's own failure)."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     config.processing.document_parsing.source_scope = "rerun-corpus"
@@ -54,7 +58,7 @@ def _setup(
 
     def respond(system: str, human: str) -> str:
         if failing["on"] and _EXTRACTION in system and fails(_source_text(human)):
-            raise RuntimeError("model down")
+            raise error()
         return _respond(system, human)
 
     providers = e2e._providers(
@@ -197,10 +201,11 @@ def _failing_document_states(
     gleaning: bool,
     reset: bool = False,
     max_failures: int = 3,
+    error: Callable[[], Exception] = ModelRejects,
 ) -> list[tuple[str, int]]:
     """Run (pipeline id, extraction failing) steps; d5's (status, failure
     count) after each."""
-    config, providers, failing = _setup(tmp, lambda unit: "Acme Corp" in unit)
+    config, providers, failing = _setup(tmp, lambda unit: "Acme Corp" in unit, error)
     config.indexing.reset = reset
     config.indexing.max_document_failures = max_failures
     chunking = config.processing.chunking
@@ -265,6 +270,31 @@ def test_a_rerun_pipeline_id_stops_retrying_at_max_document_failures(
     assert seen == [("failed", 1), ("failed", 2), ("failed", 2), ("failed", 2)], seen
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        lambda: ConnectionError("connection reset"),
+        lambda: RuntimeError("model down"),
+        NoCredentialsError,
+    ],
+    ids=["connection", "runtime", "credentials"],
+)
+def test_a_unit_failing_for_no_error_of_its_own_counts_no_failure(
+    tmp_path: Path, error: Callable[[], Exception]
+) -> None:
+    # Another document of the run succeeds, so the run reaches the indexing
+    # stage, which counted d5's failure whatever its error: an outage over
+    # max_document_failures same-pid reruns excluded d5 for good.
+    seen = _failing_document_states(
+        tmp_path,
+        [("P1", True)] * 3 + [("P1", False)],
+        gleaning=False,
+        max_failures=2,
+        error=error,
+    )
+    assert seen == [("failed", 0)] * 3 + [("processed", 0)], seen
+
+
 def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
     tmp_path: Path,
 ) -> None:
@@ -276,7 +306,7 @@ def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
 
     def respond(system: str, human: str) -> str:
         if config.processing.gleaning.enabled and "refinement specialist" in system:
-            raise RuntimeError("rejected")
+            raise ModelRejects()
         return _respond(system, human)
 
     providers = e2e._providers(
@@ -350,10 +380,12 @@ def test_an_indexing_only_rerun_does_not_count_a_disabled_stage_again(
         providers=providers,
     )
     try:
-        with pytest.raises(PipelineExecutionError, match="graph_extraction"):
+        with pytest.raises(PipelineExecutionError, match="graph_extraction") as raised:
             pipeline.run(source, pipeline_id="P1")
     finally:
         pipeline.close()
+    # Said once ("Failed to run pipeline: Pipeline resume failed: ..." before).
+    assert str(raised.value).startswith("Pipeline resume failed: "), raised.value
     (record,) = [
         r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
     ]

@@ -232,8 +232,17 @@ def test_shared_artifacts_are_not_deleted(rig) -> None:
     assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
 
 
-def _fail(inc: IncrementalIndexer, fps: dict[str, str], path: str) -> None:
-    inc.commit([_lineage(path)], fps, failed_doc_ids={compute_doc_id(path)})
+def _fail(
+    inc: IncrementalIndexer, fps: dict[str, str], path: str, own: bool = True
+) -> None:
+    """Commit ``path`` failed, for an error of its own when ``own``."""
+    doc_id = compute_doc_id(path)
+    inc.commit(
+        [_lineage(path)],
+        fps,
+        failed_doc_ids={doc_id},
+        counted_failed_doc_ids={doc_id} if own else (),
+    )
 
 
 def test_a_document_failing_every_run_stops_being_retried(rig) -> None:
@@ -274,6 +283,20 @@ def test_failure_count_resets_on_success_and_on_new_content(rig) -> None:
     inc.commit([_lineage("/a.txt")], edited)
     record = store.get(doc_id)
     assert record is not None and record.failure_count == 0
+
+
+def test_a_failure_not_of_the_document_neither_counts_nor_resets(rig) -> None:
+    # An outage (or a failed write) on a run that indexed other documents
+    # counted one more failure, so three such runs excluded the document.
+    inc, store = rig.inc, rig.store
+    doc_id = compute_doc_id("/a.txt")
+    _, fps = detect_delta([_doc("/a.txt", "A")], inc.doc_status)
+    _fail(inc, fps, "/a.txt")
+    for _ in range(3):
+        _fail(inc, fps, "/a.txt", own=False)
+        record = store.get(doc_id)
+        assert record is not None
+        assert (record.status.value, record.failure_count) == ("failed", 1)
 
 
 def test_a_rebuild_writes_the_documents_it_drops_pending_and_leaves_them(
