@@ -218,7 +218,9 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 - **Embeddings.** A non-Bedrock provider needs `models.embedding.model_id`
   and `dimension`. The dimension is fixed into the vector mappings, so
   changing either needs a full re-index; another model than `bge-m3` needs its
-  own dimension.
+  own dimension. The local providers trust the configured dimension (it is
+  not checked against the model at start): a wrong value fails at the first
+  vector write or search.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on
   the first query. Without the `[local]` extra (or with `kind: none`) queries
   keep the fused order, logged once and reported as
@@ -765,7 +767,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 |---|---|---|
 | `mix` | General LightRAG use | Low-level keywords → entity index, high-level keywords → relationship index, one-hop expansion to incident relationships and endpoint entities (Neptune multi-hop is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | `mix` without the naive chunk blend. |
-| `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` reproduces upstream LightRAG's pure-vector baseline. |
+| `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` approximates upstream LightRAG's pure-vector baseline, and MS GraphRAG's `basic` search. |
 
 `mix` and `hybrid` read the relationships index ingestion builds; a short
 query that yields no keywords is used as a low-level keyword itself (up to

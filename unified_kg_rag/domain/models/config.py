@@ -1179,20 +1179,23 @@ class DescriptionSummarizationConfig(BaseModel):
 
     Without this, merging an entity that appears in many chunks simply
     concatenates every chunk's description, so a popular entity's description
-    grows unbounded — bloating prompts/embeddings and degrading quality. This
-    mirrors MS GraphRAG ``summarize_descriptions`` and LightRAG
-    ``_handle_entity_relation_summary``: after merge, any description over the
-    token budget is re-summarized by a cheap LLM into one coherent, deduplicated
-    text. Cheap items (below the threshold) skip the LLM entirely.
+    grows unbounded — bloating prompts/embeddings and degrading quality. After
+    merge, any description over the token budget is re-summarized by a cheap
+    LLM into one coherent, deduplicated text; items below the threshold skip
+    the LLM entirely. A cost variant of MS GraphRAG ``summarize_descriptions``
+    (every item with more than one description) and LightRAG
+    ``_handle_entity_relation_summary`` (also at ``force_llm_summary_on_merge``
+    fragments), not parity: only the token budget triggers it.
     """
 
     enabled: bool = Field(
         default=True,
         description=(
             "Re-summarize merged descriptions longer than "
-            "force_summary_threshold_tokens with an LLM (as MS GraphRAG and "
-            "LightRAG do). Off, descriptions are only concatenated and grow "
-            "without bound for frequently mentioned entities."
+            "force_summary_threshold_tokens with an LLM (a cost variant of MS "
+            "GraphRAG and LightRAG, which also summarize short merges). Off, "
+            "descriptions are only concatenated and grow without bound for "
+            "frequently mentioned entities."
         ),
     )
     force_summary_threshold_tokens: int = Field(
@@ -2473,8 +2476,8 @@ class GlobalSearchConfig(BaseModel):
             "At most indexing.opensearch.max_query_size - 1 (and the reports "
             "index's live max_result_window - 1): one store request returns at "
             "most that many hits and the cut asks for one more than the cap "
-            "(the default of 100 maps at most 99). Each report costs map-step "
-            "input tokens."
+            "(the default of 100 maps at most 99). MS GraphRAG has no cap: it "
+            "maps the whole cut. Each report costs map-step input tokens."
         ),
     )
     use_dynamic_selection: bool = Field(
@@ -2485,8 +2488,9 @@ class GlobalSearchConfig(BaseModel):
             "models.roles.community_relevance, descend into the children of "
             "the relevant ones down to the leaves (dropping a parent once a "
             "child is relevant), and rate the whole next depth when a depth "
-            "yields none, down to community_depth. One fast-model call per "
-            "rated report, "
+            "yields none, down to community_depth (MS GraphRAG's selection "
+            "stops at its community_level; this one follows relevant reports "
+            "to the leaves). One fast-model call per rated report, "
             "search.max_concurrency at a time; the relevant reports are "
             "then mapped. Off by default, as in MS GraphRAG."
         ),
@@ -2518,8 +2522,9 @@ class GlobalSearchConfig(BaseModel):
         ge=128,
         description=(
             "Report tokens packed into one map-step LLM call (MS GraphRAG's "
-            "data_max_tokens, 12000). Reports are packed in order until the "
-            "next one would exceed it; a longer report gets a call of its own. "
+            "data_max_tokens, 12000). Reports are packed in rank order (MS "
+            "GraphRAG shuffles them first) until the next one would exceed it; "
+            "a longer report gets a call of its own. "
             "Map calls run search.max_concurrency at a time."
         ),
     )
@@ -2535,7 +2540,8 @@ class GlobalSearchConfig(BaseModel):
         ge=128,
         description="Token budget for the ranked key points packed into the "
         "reduce step; the highest-scored points are taken until this budget is "
-        "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
+        "reached, so the reduce LLM synthesizes from focused, ranked evidence. "
+        "The reports the points cite follow them in the context.",
     )
     reduce_with_llm: bool = Field(
         default=False,
@@ -2640,6 +2646,11 @@ class DriftSearchConfig(BaseModel):
     queries as local searches, each answered by ``models.roles.drift_action`` with its
     own follow-up queries. The answer model reduces the ranked intermediate
     answers with the local evidence they came from, reranked once.
+
+    The action local searches pack their context by
+    ``search.token_manager.type_budgets`` (text 0.5), as every local search
+    does, not by MS GraphRAG's DRIFT-specific ``local_search_text_unit_prop``
+    0.9 / ``local_search_community_prop`` 0.1.
     """
 
     k_followups: int = Field(
@@ -2690,7 +2701,13 @@ class ContextTypeBudgetConfig(BaseModel):
     packs community / entity / text-unit sections against independent budgets
     (``community_prop`` 0.15, ``text_unit_prop`` 0.5 by default), and LightRAG's
     ``_apply_token_truncation`` trims entities / relations / chunks against
-    separate token limits (6000 / 8000 out of a 30000 window).
+    separate token limits (6000 / 8000 / the remainder, about 16000, of a
+    30000 window).
+
+    These are shares of ``max_context_tokens``, not upstream's numbers: at
+    30000, LightRAG mix/hybrid (text, entities, relationships) get text 18072,
+    entities 7228 and relationships 4698 tokens, against upstream's ~16000 /
+    6000 / 8000.
 
     Shares are relative weights, not fractions: they are renormalized over the
     section types actually present in a query's candidate set, so an absent type

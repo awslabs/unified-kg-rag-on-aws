@@ -207,7 +207,8 @@ Bedrock을 쓸 수 있습니다.
   `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `models.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 벡터 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시 인덱싱해야
-  하며, `bge-m3`가 아닌 모델은 그 모델의 차원도 지정해야 합니다.
+  하며, `bge-m3`가 아닌 모델은 그 모델의 차원도 지정해야 합니다. 로컬 공급자는 설정한 차원을
+  그대로 믿으므로(시작할 때 모델과 비교하지 않음) 값이 틀리면 첫 벡터 쓰기나 검색에서 실패합니다.
 - **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
   `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 쓰며, 로그에 한 번 남고
   `metadata.rerank.status`가 `unavailable`(`kind: none`이면 `disabled`)로 보고됩니다.
@@ -711,7 +712,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 |---|---|---|
 | `mix` | 일반적인 LightRAG 사용 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉은 `search.lightrag_search.enable_graph_expansion`으로 선택)에 **더해** naive 청크 검색 결과를 섞습니다. |
 | `hybrid` | 키워드 중심의 그래프 질문 | naive 청크 결과를 섞지 않는 `mix`입니다. |
-| `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, upstream LightRAG의 순수 벡터 기준선은 `--search-type vector`로 재현합니다. |
+| `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, `--search-type vector`는 upstream LightRAG의 순수 벡터 기준선과 MS GraphRAG의 `basic` 검색에 가깝습니다. |
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`

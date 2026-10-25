@@ -328,8 +328,10 @@ import는 순환이 됨).
   따로 둠). 유형 인식 union-find는 유형이 다른 두 이름을 한 그룹에 넣지 않으며, 증분 병합도
   같은 매처를 쓰므로 전체 빌드와 증분 빌드가 같은 이름을 묶습니다.
 - **병합한 설명**은 이어 붙이므로 `DescriptionSummarizer`가 토큰 예산을 넘는 설명을 저렴한
-  모델로 다시 요약합니다(MS GraphRAG `summarize_descriptions`, LightRAG와 동일. 한 호출의
-  입력보다 길면 map-reduce). 호출이 실패하면 이어 붙인 설명을 유지합니다.
+  모델로 다시 요약합니다(한 호출의 입력보다 길면 map-reduce). 호출이 실패하면 이어 붙인 설명을
+  유지합니다. 요약 조건은 원본과 같지 않은 비용 절감형 변형입니다. MS GraphRAG
+  `summarize_descriptions`는 설명이 둘 이상인 항목을 모두 요약하고 LightRAG는 조각이
+  `force_llm_summary_on_merge`(8)개에 이르러도 요약하지만, 여기서는 토큰 예산만 요약을 일으킵니다.
 
 ### 4.3 커뮤니티 (10-11단계)
 
@@ -691,6 +693,9 @@ import는 순환이 됨).
   하나로 씁니다.
   - 기본값 `k_followups` 10, `n_depth` 2: 질의마다 LLM 호출 최대 27번(MS GraphRAG의 20, 3은
     67번). 프라이머 호출과 액션은 `search.max_concurrency`개씩 동시에 실행합니다.
+  - 액션의 local 검색은 local 유형 몫(`search.token_manager.type_budgets`, 텍스트 0.5)으로
+    컨텍스트를 담으며, MS GraphRAG DRIFT의 `local_search_text_unit_prop` 0.9 /
+    `local_search_community_prop` 0.1을 쓰지 않습니다.
   - 프라이머는 MS GraphRAG처럼 `community_level` 하나가 아니라 모든 깊이의 리포트를
     검색합니다. 세분도는 유사도가 고릅니다(합성 6홉 코퍼스에서 깊이 2 단면은 하위 질문 21개 중
     16개, 모든 깊이는 21개에 답함).
@@ -713,19 +718,22 @@ import는 순환이 됨).
 번씩 덮는 MS GraphRAG의 roll-up이며, MS GraphRAG는 `community_level`을 루트에서 세므로
 깊이로 단면을 고릅니다.
 
-- **고정 단면(기본값)** — 단면을 순위순으로 훑되 상한(`max_reports_per_level`, 한 요청에
-  들도록 최대 `max_query_size` - 1, 살아 있는 `max_result_window` - 1)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
-  상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은 엔티티를 더 넓은
-  리포트로 덮습니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
+- **고정 단면(기본값)** — 단면의 리포트를 상한까지 모두 map합니다. 단면을 순위순으로 훑되
+  상한(`max_reports_per_level`, 한 요청에 들도록 최대 `max_query_size` - 1, 살아 있는
+  `max_result_window` - 1. 기본 99)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다.
+  더 큰 단면은 상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은
+  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
   곳은 여기뿐입니다. 상한은 리포트 수로 세며 이것이 map 호출 수를 제한합니다.
 - **동적 선택**(`use_dynamic_selection`) — MS GraphRAG의 `DynamicCommunitySelection`입니다.
   루트 리포트의 관련성을 평가하고, 관련 있는 리포트의 자식을 리프까지 따라가며, 어떤 깊이에서
   관련 리포트가 없으면 다음 깊이 전체를 `community_depth`까지 평가합니다(MS GraphRAG의
-  `max_level`처럼 이 대체 경로만 제한). 평가는 `search.max_concurrency`개씩 실행합니다.
+  `max_level`처럼 이 대체 경로만 제한). upstream처럼 루트에서 시작하지만, upstream은
+  `community_level`에서 멈추는 반면 여기서는 관련 리포트를 리프까지 따라갑니다. 평가는
+  `search.max_concurrency`개씩 실행합니다.
 
-**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 `map_context_tokens`(MS GraphRAG의
-`data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
+**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 순위순으로(MS GraphRAG는 섞음)
+`map_context_tokens`(MS GraphRAG의 `data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
 붙은 핵심 포인트를 뽑으며 포인트마다 근거 리포트의 `report_ids`를 적습니다(MS GraphRAG의
 `[Data: Reports (ids)]`. 프롬프트의 리포트 id는 배치 안의 순번이며 다시 리포트로 매핑합니다).
 `map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
@@ -747,12 +755,14 @@ import는 순환이 됨).
 레벨 키워드를 추출)을 합니다.
 
 - **naive** — 그래프 없이 청크만 요청의 `search_type`으로 검색합니다(기본값 `hybrid`는 BM25 +
-  벡터, `vector`는 upstream 기준선).
+  벡터, `vector`는 upstream 기준선과 MS GraphRAG `basic` 검색에 가까움).
 - **hybrid** — 하위 레벨 키워드 → 엔티티 인덱스, 상위 레벨 키워드 → 관계
   인덱스(LightRAG의 `relationships_vdb`), 한 홉 확장(엔티티 결과 → 붙은 관계, 관계 결과 →
   끝점 엔티티), 그리고 이 항목들이 인용하는 청크입니다.
 - **mix** — hybrid에 매칭된 엔티티와 관계가 인용하는 원본 청크(LightRAG의
-  `_find_related_text_unit_*`처럼 인용한 항목 수로 순위를 매김)와 naive 청크 검색을 더합니다.
+  `_find_related_text_unit_*`의 `WEIGHT` 방식: 가중 폴링으로 매칭된 항목마다 청크를 하나 이상
+  주며, 항목별 청크를 인용한 항목 수로 정렬하는 upstream 단계는 없음. upstream 기본값인 `VECTOR`
+  방식은 구현하지 않음)와 naive 청크 검색을 더합니다.
 
 서로 독립적인 질의를 먼저 동시에 실행하고, 그다음 확장을, 마지막으로 인용한 청크를
 가져옵니다. 키워드가 없는 짧은 질의는 원본 질의를 하위 레벨 키워드로
@@ -774,7 +784,9 @@ import는 순환이 됨).
   섹션을 점수순으로 담으며 처음 넘치는 섹션을 잘라 맞춥니다. 어떤 유형이 다 쓰지 못한 예산은
   아직 후보가 남은 유형에 넘깁니다(LightRAG가 그래프 섹션이 남긴 예산을 청크에 주듯 전략의
   `spare_context_budget_first` 유형이 먼저). 그래서 유형 간 점수 비교가 아니라 몫이 구성을
-  정합니다. 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
+  정합니다. 몫은 `max_context_tokens`에 대한 비율이며 upstream의 수치가 아닙니다. 30000에서
+  LightRAG mix/hybrid는 텍스트 18072, 엔티티 7228, 관계 4698 토큰을 받습니다(upstream은 약
+  16000 / 6000 / 8000). 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
   답변 모델이 본 것만 잘린 텍스트까지 그대로 담습니다.
 - **토큰 계산**(`adapters/aws/token_counter.py`, `adapters/local/token_counter.py`). Bedrock
   `count_tokens` API를 받는 언어 모델에는 그 API를, 그 밖에는 문자 체계를 고려한

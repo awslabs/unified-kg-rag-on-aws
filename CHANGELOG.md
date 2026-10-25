@@ -1357,6 +1357,16 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Documentation: the upstream-fidelity notes state where behaviour differs
+  from MS GraphRAG and LightRAG instead of claiming parity: the
+  description-summary trigger (a cost variant), global search's report cap
+  and rank-order batching, dynamic selection descending to the leaves,
+  DRIFT actions packing by the local type shares, LightRAG budgets as
+  shares of `max_context_tokens`, LightRAG chunk picking without the
+  per-hit occurrence sort (and no `VECTOR` method), `naive --search-type
+  vector` approximating upstream's baselines (MS GraphRAG `basic` included),
+  and the local providers trusting the configured embedding dimension
+  (#PR).
 - `run-rag --interactive --filters ...` checks the filters before the
   first question and exits 2 on a key no index of the search strategy
   declares, as a single `--query` does; the key failed every question of

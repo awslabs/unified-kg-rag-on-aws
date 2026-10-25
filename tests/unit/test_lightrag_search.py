@@ -121,7 +121,7 @@ async def test_mix_mode_blends_chunks(config: Config) -> None:
     } <= prefixes
 
 
-def test_collect_linked_chunk_ids_ranks_by_citation_count() -> None:
+def test_collect_linked_chunk_ids_keeps_each_hits_stored_order() -> None:
     cls = _chunk_selector()
 
     def _hit(unit_ids: list[str]) -> RetrievalResult:
@@ -133,10 +133,11 @@ def test_collect_linked_chunk_ids_ranks_by_citation_count() -> None:
             metadata={"id": "i", "text_unit_ids": unit_ids},
         )
 
-    entity_hits = [_hit(["t1", "t2"]), _hit(["t1"])]  # t1 cited twice
-    rel_hits = [_hit(["t2", "t3"])]  # t2 cited twice total, t3 once
+    entity_hits = [_hit(["t1", "t2"]), _hit(["t1"])]
+    rel_hits = [_hit(["t2", "t3"])]
     ranked = cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=10)
-    # t1 (2) and t2 (2) before t3 (1); ties keep first-seen order (t1 before t2).
+    # Each hit's chunks in stored order, a chunk kept on its earliest hit only
+    # (no sort by how many hits cite it); relationship chunks follow.
     assert ranked[:2] == ["t1", "t2"]
     assert ranked[-1] == "t3"
     # limit caps the list.

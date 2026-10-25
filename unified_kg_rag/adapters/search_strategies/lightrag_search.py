@@ -74,11 +74,14 @@ def _pick_by_weighted_polling(
 ) -> list[str]:
     """Allocate chunk slots per KG hit on a linear-decreasing gradient.
 
-    Port of upstream LightRAG's ``utils.pick_by_weighted_polling`` (the default
-    ``kg_chunk_pick_method = WEIGHT`` path used by
-    ``_find_related_text_unit_from_entities``/``_from_relations``). ``lineages``
-    is one chunk-id list per matched entity/relationship, already in retrieval
-    (importance) order.
+    Port of upstream LightRAG's ``utils.pick_by_weighted_polling`` (the
+    ``kg_chunk_pick_method = WEIGHT`` path of
+    ``_find_related_text_unit_from_entities``/``_from_relations``; upstream's
+    default, ``VECTOR``, which picks a hit's chunks by embedding similarity, is
+    not implemented). ``lineages`` is one chunk-id list per matched
+    entity/relationship, already in retrieval (importance) order; each list
+    keeps its stored order, without upstream's sort of a hit's chunks by how
+    many matched hits cite them.
 
     The point of the gradient is the ``min_related_chunks=1`` floor: the LAST
     matched KG item still gets one chunk. A global "rank all lineage chunks by
@@ -524,8 +527,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     ) -> list[str]:
         """Select the source chunks cited by the matched entities/relationships.
 
-        Mirrors upstream LightRAG's two-stage selection
-        (``_find_related_text_unit_from_entities`` then ``_from_relations``):
+        Follows upstream LightRAG's two-stage selection
+        (``_find_related_text_unit_from_entities`` then ``_from_relations``,
+        its ``WEIGHT`` method; the default ``VECTOR`` one is not implemented),
+        without its per-hit occurrence sort: a hit's chunks keep their stored
+        order (measured on dense graphs, the sort lowered hybrid recall):
 
         1. per-hit lineages are deduplicated keeping the EARLIEST (most
            important) citing hit, so a chunk occupies one item's quota, not many;

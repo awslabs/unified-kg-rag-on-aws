@@ -369,9 +369,12 @@ gets its models and stores from the run's `Providers` bundle.
   differently typed names; the incremental merge uses the same matcher, so
   full and incremental builds group the same names.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
-  re-summarizes those over a token budget with a cheap model (MS GraphRAG
-  `summarize_descriptions` / LightRAG parity; map-reduce when one exceeds a
-  call's input); a failed call keeps the concatenation.
+  re-summarizes those over a token budget with a cheap model (map-reduce when
+  one exceeds a call's input); a failed call keeps the concatenation. The
+  trigger is a cost variant of upstream, not parity: MS GraphRAG
+  `summarize_descriptions` summarizes every item with more than one
+  description and LightRAG also at `force_llm_summary_on_merge` (8)
+  fragments; here only the token budget triggers it.
 
 ### 4.3 Communities (stages 10-11)
 
@@ -829,6 +832,9 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
+  - The action local searches pack their context by the local type shares
+    (`search.token_manager.type_budgets`, text 0.5), not MS GraphRAG's DRIFT
+    `local_search_text_unit_prop` 0.9 / `local_search_community_prop` 0.1.
   - The primer searches reports of every depth, not MS GraphRAG's one
     `community_level`, so similarity picks the granularity (on a synthetic
     six-hop corpus a depth-2 cut answered 16 of 21 sub-questions, every depth
@@ -855,11 +861,13 @@ above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
 every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
-- **Fixed cut (default)** — the cut is browsed by rank, one report more than
-  the cap (`max_reports_per_level`, at most `max_query_size` - 1, and the
-  live `max_result_window` - 1, so the probe fits one request) so a cut of exactly the cap is complete. A larger cut
-  gives way to the deepest shallower cut that fits (`global_cut_depth`), covering the same entities in broader
-  reports. Only when even the root cut does not fit does a hybrid search,
+- **Fixed cut (default)** — every report of the cut is mapped, up to a cap:
+  the cut is browsed by rank, one report more than the cap
+  (`max_reports_per_level`, at most `max_query_size` - 1, and the live
+  `max_result_window` - 1, so the probe fits one request; 99 by default) so a
+  cut of exactly the cap is complete. A larger cut gives way to the deepest
+  shallower cut that fits (`global_cut_depth`), covering the same entities in
+  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
   The cap counts reports, which bounds the map calls.
@@ -867,11 +875,14 @@ depth selects the cut.
   `DynamicCommunitySelection`: rate the root reports for relevance, follow
   the children of the relevant ones to the leaves, and rate the whole next
   depth when a depth yields none, down to `community_depth` (MS GraphRAG's
-  `max_level`, which bounds only this fallback). Ratings run
+  `max_level`, which bounds only this fallback). The walk starts at the roots
+  as upstream's does but follows relevant reports to the leaves, where
+  upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time.
 
-**Map-reduce.** At least `map_reduce_min_results` reports are packed into
-batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`); each map
+**Map-reduce.** At least `map_reduce_min_results` reports are packed, in rank
+order (MS GraphRAG shuffles them), into batches of `map_context_tokens` (MS
+GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
@@ -897,14 +908,17 @@ Dual-level keyword retrieval (`KeywordsExtractionPrompt` extracts high- and
 low-level keywords) on the shared hybrid infrastructure:
 
 - **naive** — chunks only, no graph, under the request's `search_type`
-  (`hybrid`: BM25 + vector by default; `vector` is upstream's baseline).
+  (`hybrid`: BM25 + vector by default; `vector` approximates upstream's
+  baseline and MS GraphRAG's `basic` search).
 - **hybrid** — low-level keywords → entity index, high-level keywords →
   relationship index (LightRAG's `relationships_vdb`), one-hop expansion
   (entity hits → incident relationships, relationship hits → endpoint
   entities), and the chunks those items cite.
 - **mix** — hybrid plus the source chunks the matched entities and
-  relationships cite (ranked by how many matched items cite each, as
-  LightRAG's `_find_related_text_unit_*`) and a naive chunk retrieval.
+  relationships cite (LightRAG's `_find_related_text_unit_*` with its `WEIGHT`
+  method: weighted polling, every matched item at least one chunk, without
+  upstream's per-item sort by how many matched items cite a chunk; upstream's
+  default `VECTOR` method is not implemented) and a naive chunk retrieval.
 
 The independent queries run concurrently, then the expansions, then the cited
 chunks. Short queries without keywords use the raw query as low-level
@@ -931,7 +945,10 @@ traversal, hence graph expansion is opt-in.
   to the types that still have candidates (first to the strategy's
   `spare_context_budget_first` types, as LightRAG gives chunks what its graph
   sections leave), so shares, never cross-type score comparisons, decide the
-  mix. Synthesized global sections are seated first. `RAGOutput.sources` is
+  mix. The shares are of `max_context_tokens`, not upstream's numbers: at
+  30000, LightRAG mix/hybrid get text 18072, entities 7228 and relationships
+  4698 tokens (upstream: about 16000 / 6000 / 8000). Synthesized global
+  sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
   truncated text included.
 - **Token counting** (`adapters/aws/token_counter.py`,
