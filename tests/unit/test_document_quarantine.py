@@ -377,6 +377,43 @@ def test_a_resumed_delta_is_recomputed_when_another_scope_indexed_a_document_it_
     assert check()
     store.put(record.model_copy(update={"written_by": "P0"}))
     assert check()
+    # A record without a writer (a release before the field indexed B
+    # again) may be another pipeline id's too.
+    store.put(record.model_copy(update={"written_by": None}))
+    assert not check()
+
+
+def test_a_settings_change_recommitted_by_a_run_without_a_writer_is_stale() -> None:
+    # Upgrade window: P1 re-extracts a.txt for a settings change (its record
+    # is at the earlier settings, stamped P1); a run of a release before
+    # written_by then commits a.txt under yet other settings. Resumed, P1's
+    # delta would index its own output over that run's artifacts without
+    # removing them.
+    store = FakeDocStatusStore()
+    record = DocStatusRecord(
+        doc_id="default#a",
+        content_hash="ha",
+        status=DocStatus.PROCESSED,
+        extraction_fingerprint="earlier",
+        written_by="P1",
+    )
+    store.put(record)
+    delta = DocumentDelta(changed=[record.doc_id], settings_changed=[record.doc_id])
+    check = functools.partial(
+        delta_still_applies, store, delta, {record.doc_id: "ha"}, 3, "mine"
+    )
+    assert check(pipeline_id="P1")
+    store.put(
+        record.model_copy(
+            update={"extraction_fingerprint": "other", "written_by": None}
+        )
+    )
+    assert not check(pipeline_id="P1")
+    # Committed by the old release at this delta's settings: nothing to redo.
+    store.put(
+        record.model_copy(update={"extraction_fingerprint": "mine", "written_by": None})
+    )
+    assert check(pipeline_id="P1")
 
 
 def _resumable_delta() -> tuple[IncrementalRun, list, DocumentDelta, dict[str, str]]:

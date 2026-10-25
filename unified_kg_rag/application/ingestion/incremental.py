@@ -1494,17 +1494,18 @@ def delta_still_applies(
     ``fingerprints`` in ``scope`` that classifies a document outside the
     delta new, changed or deleted. A record without a writer (written
     before the field existed) counts as another pipeline id's unless it is
-    PROCESSED without an open attempt, which is left to the other checks.
-    A run resumed after its own kill passes them all: only it wrote these
-    records since.
+    PROCESSED without an open attempt, which is left to the other checks
+    (the settings check too, for a document the delta re-extracts for a
+    settings change). A run resumed after its own kill passes them all:
+    only it wrote these records since.
 
-    A document the delta deletes whose record another pipeline id wrote in
-    another scope than the delta's, and not in one of the ``retired``
-    values (``indexing.retire_source_scopes`` the delta applied), was
-    indexed there since: an interrupted reset of this scope moved that
-    scope's record here, a run of this scope deleted it, and a run of the
-    other scope indexed it again. Deleting it would remove that scope's
-    live document.
+    A document the delta deletes whose record another pipeline id (or a
+    release without writers) wrote in another scope than the delta's, and
+    not in one of the ``retired`` values (``indexing.retire_source_scopes``
+    the delta applied), was indexed there since: an interrupted reset of
+    this scope moved that scope's record here, a run of this scope deleted
+    it, and a run of the other scope indexed it again. Deleting it would
+    remove that scope's live document.
     """
     stored = store.get_many(delta.to_process)
     for doc_id in delta.to_process:
@@ -1528,11 +1529,16 @@ def delta_still_applies(
             return False
         # Committed at this content by a run with other extraction settings
         # (another pipeline id): its artifacts are not this delta's, and a
-        # document the delta has as new would be indexed over them.
+        # document the delta has as new would be indexed over them. One the
+        # delta re-extracts for a settings change is still at the earlier
+        # settings unless a run without a writer committed it since.
         if (
             record.status is DocStatus.PROCESSED
             and record.content_hash == content_hash
-            and doc_id not in delta.settings_changed
+            and (
+                doc_id not in delta.settings_changed
+                or (pipeline_id is not None and record.written_by is None)
+            )
             and settings_changed(record.extraction_fingerprint, extraction_fingerprint)
         ):
             return False
@@ -1558,11 +1564,9 @@ def delta_still_applies(
             if namespace is not None
         }
         for record in store.get_many(delta.deleted).values():
-            if (
-                record.scope not in expected
-                and record.written_by is not None
-                and record.written_by != pipeline_id
-            ):
+            # No writer (a release before the field) is unknown, not this
+            # pipeline id: the other scope's run may have indexed it.
+            if record.scope not in expected and record.written_by != pipeline_id:
                 return False
     # And every other document of the scope reads as the delta classified
     # it: another pipeline id may have indexed, deleted or re-extracted one
