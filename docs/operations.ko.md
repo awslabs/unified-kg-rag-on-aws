@@ -224,15 +224,21 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 그 밖의 단계 실패는 아무것도 기록하지 않고 인덱싱 전에 실행을 멈추므로 저장소와
 레지스트리는 이전 상태로 남으며, 다음 실행이 같은 델타를 다시 처리합니다. 예외로 그래프
 추출이 모든 단위에서 실패하면(`Critical stage 'graph_extraction' ... produced 0 outputs.
-It failed on N files: ...`) 단위 자체의 오류(4xx나 검증 오류, 파싱할 수 없는 응답)로 실패한
-문서를 `FAILED`로 기록해 아래 재시도 한도가 적용됩니다. 스로틀링, 5xx, 시간 초과, 연결
-오류는 세지 않으므로 모델 장애로 문서가 제외되지는 않습니다. 거부된 자격 증명이나 없는
-모델(HTTP 401/403/404, Bedrock `AccessDeniedException`, `ResourceNotFoundException`,
-`The provided model identifier is invalid`)도 세지 않습니다. 모든 문서가 똑같이 실패하므로
-설정을 고칠 때까지 문서는 세지 않은 채 `PENDING`으로 남습니다.
+It failed on N files: ...`) 단위 자체의 오류로 실패한 문서를 `FAILED`로 기록해 아래 재시도
+한도가 적용됩니다.
+
+이 경로에서도, 인덱싱 단계가 문서를 `FAILED`로 기록할 때도 재시도 한도에는 단위 자체의
+오류만 셉니다. 파싱할 수 없거나 잘린 응답, 그리고 모델이 내용 때문에 거부한 요청(Bedrock
+`ValidationException`, 로컬 서버의 HTTP 400/413/422)입니다. 단, 모델이나 설정을 거부한
+경우(잘못된 모델 ID, 추론 프로필이 필요한 모델, 지원하지 않는 파라미터)는 제외합니다. 그
+밖의 오류는 세지 않습니다. 스로틀링, 5xx, 시간 초과, 연결, 자격 증명(만료된 SSO 토큰,
+`NoCredentialsError`), 리전 누락, 할당량(`ServiceQuotaExceededException`), 스트림 오류와
+버그는 모든 문서를 똑같이 실패시킵니다. 여러 문서의 모든 단위를 같은 오류 하나로 실패시킨
+경우도 세지 않습니다. 이런 문서는 원인을 고칠 때까지 세지 않은 채 `PENDING`(또는 다음
+실행이 다시 시도하는 `FAILED`)으로 남으므로, 장애나 잘못된 설정 때문에 제외되지는 않습니다.
 
 - **재시도 한도.** 내용과 추출 설정이 그대로인 채 `indexing.max_document_failures`(기본값
-  `3`)번 연속으로 `FAILED`가 기록되면 문서는 `FAILED`로 남고 인덱싱한 내용을 유지한 채
+  `3`)번 연속으로 문서 자체의 오류(위 설명 참고)로 `FAILED`가 기록되면 문서는 `FAILED`로 남고 인덱싱한 내용을 유지한 채
   건너뜁니다. 실행마다 파일 이름을 밝힌 WARNING을 남기고 삭제를 포함한 나머지 델타를
   처리합니다. 원인(흔히 너무 크거나 잘못된 파일)을 고치거나, 파일을
   수정하거나, 한도를 올리세요.

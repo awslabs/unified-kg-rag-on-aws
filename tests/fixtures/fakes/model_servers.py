@@ -6,7 +6,8 @@ Pass it to ``httpx.MockTransport`` and the transport to the local factories
 (``OllamaLanguageModelFactory(config, transport=...)``): ``/api/chat`` answers
 with ``respond(system_prompt, user_prompt)`` (falling back to ``answer`` when
 the responder rejects the prompt with ``AssertionError``, i.e. the query's
-answer generation), ``/api/embed`` with hashing vectors of ``dimensions``.
+answer generation, and with HTTP ``status`` when it raises
+:class:`ModelRejects`), ``/api/embed`` with hashing vectors of ``dimensions``.
 No network and no model.
 """
 
@@ -20,6 +21,15 @@ import httpx
 from tests.fixtures.fakes.embeddings import HashingEmbeddings
 
 Responder = Callable[[str, str], str]
+
+
+class ModelRejects(Exception):
+    """Raised by a responder: the server rejects the request with HTTP
+    ``status`` (400: a request the model rejects for its content)."""
+
+    def __init__(self, message: str = "input rejected", status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class FakeOllama:
@@ -57,6 +67,8 @@ class FakeOllama:
         except AssertionError:
             self.answers += 1
             reply = self.answer
+        except ModelRejects as e:
+            return httpx.Response(e.status, json={"error": str(e)})
         chunk = {
             "model": body["model"],
             "created_at": "2026-01-01T00:00:00Z",

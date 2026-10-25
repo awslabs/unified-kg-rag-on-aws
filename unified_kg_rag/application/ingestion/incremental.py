@@ -523,6 +523,7 @@ class IncrementalIndexer:
         fingerprints: dict[str, str],
         *,
         failed_doc_ids: Collection[str] = (),
+        counted_failed_doc_ids: Collection[str] | None = None,
         text_units: list[TextUnit] | None = None,
         entities: list[Entity] | None = None,
         relationships: list[Relationship] | None = None,
@@ -538,7 +539,9 @@ class IncrementalIndexer:
         separately are the union actually written to the stores this run. Docs in ``failed_doc_ids`` (an
         extraction stage failed on some of their text units) are recorded
         FAILED with their lineage, so the next run re-extracts them and first
-        prunes what this run wrote.
+        prunes what this run wrote; only those in ``counted_failed_doc_ids``
+        (an error of their own; None: all) count toward
+        ``indexing.max_document_failures``.
 
         Entities and relationships are first merged with the stored graph state
         they touch; the communities and claims
@@ -609,7 +612,14 @@ class IncrementalIndexer:
                 *(claims or []),
             ],
         )
-        if self.record(lineages, fingerprints, results, failed_doc_ids, owners):
+        if self.record(
+            lineages,
+            fingerprints,
+            results,
+            failed_doc_ids,
+            owners,
+            counted_failed_doc_ids=counted_failed_doc_ids,
+        ):
             # After the delta's writes: a changed document's new text units
             # name the records its removed ones did.
             self.indexing_manager.collect_extraction_records()
@@ -672,6 +682,8 @@ class IncrementalIndexer:
         results: dict[str, IndexingStats],
         failed_doc_ids: Collection[str] = (),
         owners: Mapping[str, set[str]] | None = None,
+        *,
+        counted_failed_doc_ids: Collection[str] | None = None,
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -692,7 +704,13 @@ class IncrementalIndexer:
             write_failed = self._documents_with_failed_writes(
                 lineages, results, owners or {}
             )
-            self._record_processed(lineages, fingerprints, failed_doc_ids, write_failed)
+            self._record_processed(
+                lineages,
+                fingerprints,
+                failed_doc_ids,
+                write_failed,
+                counted_failed_doc_ids,
+            )
             if (
                 self.scope is not None
                 and self.extraction_fingerprint is not None
@@ -928,6 +946,7 @@ class IncrementalIndexer:
         fingerprints: dict[str, str],
         failed_doc_ids: Collection[str] = (),
         write_failed_doc_ids: Collection[str] = (),
+        counted_failed_doc_ids: Collection[str] | None = None,
     ) -> None:
         if failed_doc_ids:
             logger.warning(
@@ -956,9 +975,15 @@ class IncrementalIndexer:
                 lineage.doc_id, existing.content_hash if existing else ""
             )
             # Consecutive failures of this content; new content starts over.
+            # An extraction failure that is not the document's own (an
+            # outage, credentials, a setting) neither counts nor resets it.
             failure_count = 0
             if failed:
-                failure_count = 1
+                failure_count = int(
+                    error_info == _WRITE_FAILED
+                    or counted_failed_doc_ids is None
+                    or lineage.doc_id in counted_failed_doc_ids
+                )
                 if (
                     existing is not None
                     and existing.status is DocStatus.FAILED
@@ -1723,12 +1748,17 @@ def warn_about_unapplied_retired_scopes(
 
 
 def documents_with_failed_units(
-    context: PipelineContext, text_units: list[TextUnit]
+    context: PipelineContext, text_units: list[TextUnit], *, own_errors: bool = False
 ) -> set[str]:
-    """Registry ids of the documents an extraction stage failed on."""
-    failed_units = {
-        unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids
-    }
+    """Registry ids of the documents an extraction stage failed on; with
+    ``own_errors``, only for an error of their own
+    (``context.item_failed_text_unit_ids``)."""
+    failures = (
+        context.item_failed_text_unit_ids
+        if own_errors
+        else context.failed_text_unit_ids
+    )
+    failed_units = {unit_id for ids in failures.values() for unit_id in ids}
     run_document_ids = {
         document_id
         for unit in text_units
@@ -1920,6 +1950,9 @@ def index_delta(
         lineages=lineages,
         fingerprints=context.incremental_fingerprints,
         failed_doc_ids=documents_with_failed_units(context, text_units),
+        counted_failed_doc_ids=documents_with_failed_units(
+            context, text_units, own_errors=True
+        ),
         text_units=text_units,
         entities=entities,
         relationships=relationships,

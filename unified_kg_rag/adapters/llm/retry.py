@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from langchain_core.exceptions import OutputParserException
+
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 logger = get_logger(__name__)
 
@@ -32,6 +36,7 @@ _jitter_rng = random.SystemRandom()
 T = TypeVar("T")
 
 TransientErrorPredicate = Callable[[BaseException], bool]
+ItemErrorPredicate = Callable[[BaseException], bool]
 
 # HTTP statuses that resolve on their own: request timeout, rate limit, 5xx.
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
@@ -64,6 +69,56 @@ def looks_transient(exc: BaseException) -> bool:
     if status is not None:
         return status in _TRANSIENT_HTTP_STATUSES or 500 <= status < 600
     return any(cls.__name__ in _TRANSPORT_ERROR_NAMES for cls in type(exc).__mro__)
+
+
+# HTTP statuses of a request the server rejects for what it carries.
+_ITEM_HTTP_STATUSES = frozenset({400, 413, 422})
+# Rejections of the request's settings, not its text, by an OpenAI-compatible
+# server or Ollama: they fail every item alike.
+_CONFIGURATION_MESSAGE = re.compile(
+    r"invalid model|model\W.{0,80}not (found|exist)|model_not_found|not supported"
+    r"|unsupported|does not support|not permitted|unknown (parameter|field|argument)"
+    r"|unrecognized|extra (inputs|fields)|max_tokens.{0,3} is too large|api.?key"
+    r"|quota",
+    re.IGNORECASE,
+)
+
+
+def looks_like_item_error(exc: BaseException) -> bool:
+    """Whether the server rejected the item's own request: HTTP 400/413/422
+    (``status_code`` or ``response.status_code``) other than a rejection of
+    the model or its settings (an unknown model, an unsupported parameter),
+    which fails every item alike. The local factories' ``is_item_error``."""
+    return _http_status(exc) in _ITEM_HTTP_STATUSES and not (
+        _CONFIGURATION_MESSAGE.search(str(exc))
+    )
+
+
+def item_error_predicate(factory: object) -> ItemErrorPredicate:
+    """Whether a batch item's last error was the item's own failure, which
+    ``indexing.max_document_failures`` counts against its document.
+
+    Positive only: a response that does not parse (``OutputParserException``)
+    or was cut off (``LLMOutputTruncatedError``), or an error the factory's
+    ``is_item_error`` names (a request the model rejects for its content).
+    Any other error (throttling, 5xx, timeouts, connections, credentials,
+    quotas, a bug) says nothing about the item and counts for none; a factory
+    without ``is_item_error`` has only the two output failures counted.
+    """
+    hook: ItemErrorPredicate | None = getattr(factory, "is_item_error", None)
+
+    def is_item_error(exc: BaseException) -> bool:
+        if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
+            return True
+        return hook is not None and isinstance(exc, Exception) and hook(exc)
+
+    return is_item_error
+
+
+def error_signature(exc: BaseException) -> tuple[str, str, int | None, str]:
+    """The type, error code, HTTP status and message of ``exc``: errors alike
+    in all four are taken for one cause."""
+    return type(exc).__name__, _error_code(exc), _http_status(exc), str(exc)
 
 
 def transient_error_predicate(factory: object) -> TransientErrorPredicate:

@@ -10,7 +10,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    transient_error_predicate,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
@@ -128,6 +131,8 @@ class GleaningStats(BaseModel):
     num_failed_units: int = 0
     # Distinct ids of the units with at least one failed refinement.
     failed_text_unit_ids: list[str] = Field(default_factory=list)
+    # The failed units whose error was their own (item_error_predicate).
+    item_failed_text_unit_ids: list[str] = Field(default_factory=list)
     # Gleaned relationships dropped because an endpoint is an entity rejected
     # for the relationship's unit: dropped by extraction's grounding guard or
     # confidence threshold, or proposed by gleaning with evidence not found in
@@ -186,6 +191,8 @@ class GraphGleaner(BaseProcessor):
             self.config.processing,
             is_transient_error=transient_error_predicate(self.factory),
         )
+        self.is_item_error = item_error_predicate(self.factory)
+        self._item_failed_unit_ids: set[str] = set()
 
         self.max_entities_per_prompt = self.gleaning_config.max_entities_per_prompt
         self.max_relationships_per_prompt = (
@@ -232,6 +239,7 @@ class GraphGleaner(BaseProcessor):
         by_unit = {record.text_unit_id: record for record in records}
         stats = GleaningStats()
         self._failed_unit_ids = []
+        self._item_failed_unit_ids = set()
         self._dropped_rejected_endpoint = 0
         self._dropped_low_confidence_entities = 0
         self._dropped_ungrounded_endpoint_name = 0
@@ -279,6 +287,7 @@ class GraphGleaner(BaseProcessor):
         stats.total_rounds = len(stats.rounds)
         stats.num_failed_units = len(self._failed_unit_ids)
         stats.failed_text_unit_ids = sorted(failed)
+        stats.item_failed_text_unit_ids = sorted(self._item_failed_unit_ids)
         stats.relationships_dropped_rejected_endpoint = self._dropped_rejected_endpoint
         stats.entities_dropped_low_confidence = self._dropped_low_confidence_entities
         stats.relationships_dropped_ungrounded_endpoint_name = (
@@ -335,6 +344,7 @@ class GraphGleaner(BaseProcessor):
         )
 
         gained: set[str] = set()
+        errors: dict[int, BaseException] = {}
         try:
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=prepared_units,
@@ -342,6 +352,7 @@ class GraphGleaner(BaseProcessor):
                 sequential_func=self.graph_refiner.invoke,
                 task_name="Graph Refinement",
                 show_progress=self.show_progress,
+                errors=errors,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -349,6 +360,11 @@ class GraphGleaner(BaseProcessor):
             logger.error("Error during graph refinement: %s", e)
             self._failed_unit_ids.extend(u.id for u in prepared_units)
             results = [BATCH_ITEM_FAILED] * len(prepared_units)
+        self._item_failed_unit_ids.update(
+            prepared_units[idx].id
+            for idx, error in errors.items()
+            if self.is_item_error(error)
+        )
 
         for unit, result_data in zip(prepared_units, results, strict=True):
             if result_data is BATCH_ITEM_FAILED:

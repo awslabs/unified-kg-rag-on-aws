@@ -54,44 +54,6 @@ an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 """
 
 
-# Model errors that fail every item alike: credentials or permissions
-# refused (HTTP 401/403), or no such model (404). Matched on the status of
-# the local clients' errors (``status_code``, ``response.status_code``) and of
-# botocore's (``ResponseMetadata.HTTPStatusCode``), and on Bedrock's error
-# codes, so this module imports neither client.
-_MISCONFIGURATION_STATUSES = frozenset({401, 403, 404})
-_MISCONFIGURATION_CODES = frozenset(
-    {
-        "AccessDeniedException",
-        "ResourceNotFoundException",
-        "UnrecognizedClientException",
-        "ExpiredTokenException",
-    }
-)
-# Bedrock reports an unknown model id as a ValidationException.
-_INVALID_MODEL = re.compile(r"model identifier is invalid", re.IGNORECASE)
-
-
-def _is_misconfiguration(exc: BaseException) -> bool:
-    """Whether ``exc`` is a model error no item causes: access denied or an
-    unknown model, which fails every item until the configuration is fixed."""
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):  # botocore ClientError
-        error = response.get("Error") or {}
-        code = error.get("Code")
-        if code in _MISCONFIGURATION_CODES or (
-            code == "ValidationException"
-            and _INVALID_MODEL.search(str(error.get("Message", "")))
-        ):
-            return True
-        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-    else:
-        status = getattr(exc, "status_code", None)
-        if status is None:
-            status = getattr(response, "status_code", None)
-    return isinstance(status, int) and status in _MISCONFIGURATION_STATUSES
-
-
 class _BatchAbandoned(Exception):
     """An item's next attempt, not made: its batch was abandoned."""
 
@@ -275,7 +237,8 @@ class BatchProcessor(BaseModel):
         error is retried alone, in its slot (``max_attempts``). Results are
         1:1 with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`, and its last error is put in ``errors``
-        (when given) under its index (see :meth:`is_item_error`).
+        (when given) under its index (classified by
+        ``adapters.llm.retry.item_error_predicate``).
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -400,26 +363,6 @@ class BatchProcessor(BaseModel):
             sum(1 for result in results if result is BATCH_ITEM_FAILED),
         )
         return results
-
-    def is_item_error(self, exc: BaseException) -> bool:
-        """Whether ``exc``, an item's last error, is the item's own failure
-        rather than the backend's: a response that does not parse or was cut
-        off, or an error the backend's classifier (``is_transient_error``)
-        does not call transient (a 4xx such as a validation error). Throttling,
-        5xx, timeouts and lost connections are not, nor is any error without a
-        classifier: they say nothing about the item. Nor is a misconfiguration
-        that fails every item alike (:func:`_is_misconfiguration`: denied
-        credentials, an unknown model).
-        """
-        if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
-            return True
-        if (
-            not isinstance(exc, Exception)
-            or isinstance(exc, TimeoutError | _BatchAbandoned)
-            or _is_misconfiguration(exc)
-        ):
-            return False
-        return self.is_transient_error is not None and not self.is_transient_error(exc)
 
     def _is_retryable(self, exc: BaseException) -> bool:
         # A cancelled call (or Ctrl-C) is a stop, not a failure: retrying it

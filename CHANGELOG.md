@@ -1355,6 +1355,24 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a backend or configuration failure no longer
+  excludes documents. Any error the model clients did not call transient
+  counted toward `indexing.max_document_failures` as the document's own:
+  expired or missing credentials, a missing region, a quota
+  (`ServiceQuotaExceededException`), a setting the model rejects (a model
+  that needs an inference profile, an unsupported parameter), a stream error
+  or a bug, so three runs of an outage excluded a whole delta, and the run
+  after the fix completed with nothing indexed. On the indexing path, even a
+  connection error counted when other documents of the run succeeded. Only
+  an error of the document's own now counts: output that does not parse or
+  was cut off, or a request the model rejects for its content (a Bedrock
+  `ValidationException`, HTTP 400/413/422 from a local server) other than a
+  rejection of the model or a setting, and not one error that failed every
+  unit of several documents. The language-model factories name these
+  (`is_item_error`, next to `is_transient_error`); a custom factory without
+  one has only the output failures counted. Graph extraction, gleaning and
+  claim extraction are classified; any other failure (translation, a
+  report, a record not stored) is recorded `FAILED` without counting (#PR).
 - Incremental indexing: a finished pipeline id run again with only its later
   stages enabled (an indexing-only phase, say) on the restored output of a
   stage that failed on some documents recorded them `FAILED` once more each
