@@ -8,6 +8,8 @@ from collections.abc import Coroutine
 from itertools import zip_longest
 from typing import Any, ClassVar
 
+from structlog.contextvars import get_contextvars
+
 from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -165,6 +167,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._index_limits: dict[str, IndexLimits | asyncio.Future[Any]] = {}
         # Whether a denied settings read was logged.
         self._settings_denied_logged = False
+        # The (query id, top_k, window) last warned of as cut (_hit_count).
+        self._window_cut_warned: tuple[Any, int, int] | None = None
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
         # (OpenSearchIndexer), so their vectors are comparable.
@@ -832,8 +836,30 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 window,
             )
         elif size > window:
-            logger.warning("Search size %s cut to max_result_window %s", size, window)
+            self._log_window_cut(query.top_k, size, window)
         return min(max(size, wanted), window)
+
+    def _log_window_cut(self, top_k: int, size: int, window: int) -> None:
+        """Log a search ``size`` cut to the index's ``window``: a WARNING,
+        once per query (the log context's ``query_id``), when the cut leaves
+        fewer hits than ``top_k`` asks for; otherwise only the over-fetch
+        (``retrieval_multiplier``) is cut, at DEBUG."""
+        if top_k <= window:
+            logger.debug(
+                "Search over-fetch %s cut to max_result_window %s", size, window
+            )
+            return
+        key = (get_contextvars().get("query_id"), top_k, window)
+        if key == self._window_cut_warned:
+            return
+        self._window_cut_warned = key
+        logger.warning(
+            "top_k %s is above the max_result_window (%s) of the index searched: "
+            "a search returns at most %s hits",
+            top_k,
+            window,
+            window,
+        )
 
     def _build_search_bodies(
         self,

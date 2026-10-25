@@ -36,6 +36,7 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_settings_denied_logged", False)
+    object.__setattr__(inst, "_window_cut_warned", None)
     object.__setattr__(inst, "_configured_limits", IndexLimits())
     object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
@@ -517,7 +518,36 @@ def test_hit_count_warns_when_the_live_window_cuts_a_search(retriever, caplog) -
     q = SearchQuery(query="x", top_k=50, retrieval_multiplier=1)
     with caplog.at_level("WARNING"):
         assert retriever._hit_count(q, 20) == 20
-    assert "cut to max_result_window 20" in caplog.text
+    assert "top_k 50 is above the max_result_window (20)" in caplog.text
+
+
+def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
+    retriever, caplog
+) -> None:
+    # The warning named the over-fetch size (top_k x retrieval_multiplier),
+    # and came once per search of every index; a cut of the over-fetch
+    # alone still returns top_k hits.
+    from structlog.contextvars import bound_contextvars
+
+    over_fetch = SearchQuery(query="x", top_k=10, retrieval_multiplier=5)
+    too_many = SearchQuery(query="x", top_k=30, retrieval_multiplier=5)
+    with caplog.at_level("WARNING"):
+        with bound_contextvars(query_id="q1"):
+            assert retriever._hit_count(over_fetch, 20) == 20
+            assert not caplog.records
+            for _ in range(3):
+                assert retriever._hit_count(too_many, 20) == 20
+        with bound_contextvars(query_id="q2"):
+            retriever._hit_count(too_many, 20)
+    messages = [r.getMessage() for r in caplog.records]
+    assert (
+        messages
+        == [
+            "top_k 30 is above the max_result_window (20) of the index searched: "
+            "a search returns at most 20 hits"
+        ]
+        * 2
+    )
 
 
 def test_hit_count_floors_size_to_terms_filter(retriever) -> None:

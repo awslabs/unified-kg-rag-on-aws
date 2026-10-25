@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- The WARNING for a search the index's `max_result_window` cuts names the
+  `top_k` asked for, not the internal over-fetch (`top_k` x
+  `retrieval_multiplier`), comes once per query rather than once per search
+  of each index, and only when fewer than `top_k` hits can come back; a cut
+  of the over-fetch alone is logged at DEBUG (#PR).
 - An OpenSearch cluster that accepts connections but never answers fails
   the store preflight after about a minute instead of 18: the connection
   check that opens the indexing client waited the indexing request timeout
