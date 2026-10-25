@@ -52,7 +52,7 @@ _CONFIGURATION_VALIDATION = re.compile(
     r"model identifier is invalid|on-demand throughput|inference profile"
     r"|not permitted|not supported|isn't supported|unsupported"
     r"|does(n't| not) support|malformed|guardrail|end of (its )?life|legacy"
-    r"|access",
+    r"|access|maximum tokens|max_tokens\W{0,3}\d+ ?>|cannot both|extraneous key",
     re.IGNORECASE,
 )
 

@@ -222,3 +222,49 @@ def test_failed_documents_counts_the_documents_recorded_failed(
     runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
     result = runner._json_result(contexts[0])
     assert result["failed_documents"] == recorded, result
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "knowledge graph extraction expert",
+        "claim extraction specialist",
+        "graph refinement specialist",
+    ],
+    ids=["graph", "claims", "gleaning"],
+)
+def test_one_error_on_every_unit_of_a_delta_counts_for_no_document(
+    tmp_path: Path, stage: str
+) -> None:
+    # The model answers every request of one stage, for both documents, with
+    # one HTTP 400 no configuration pattern names: a setting it rejects, not
+    # each document's content. Counted in claim extraction or gleaning (as it
+    # was), three runs excluded both documents for good.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.indexing.max_document_failures = 2
+    config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.enabled = True
+    server = FakeOllama(e2e._respond, "x", e2e.DIM)
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            messages = json.loads(request.content)["messages"]
+            system = "".join(m["content"] for m in messages if m["role"] == "system")
+            if stage in system:
+                return httpx.Response(400, json={"error": "request rejected"})
+        return server(request)
+
+    providers = e2e._providers(
+        config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name, text in _FILES.items():
+        (source / name).write_text(text)
+    for run in range(3):
+        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        counts = {
+            r.file_path: r.failure_count
+            for r in providers.build_doc_status().list_all()
+        }
+        assert counts == dict.fromkeys(_FILES, 0), (run, counts)

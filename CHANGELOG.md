@@ -1355,6 +1355,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: one error on every unit of several documents counts
+  for none of them in claim extraction and gleaning too, as it did in graph
+  extraction (`adapters.llm.retry.item_failed_indices`), so a setting the
+  model rejects there no longer excludes a whole delta after
+  `indexing.max_document_failures` runs. The Bedrock and local
+  configuration patterns also name a requested maximum token count above
+  the model's limit (`maximum tokens ...`, `max_tokens: X > Y`),
+  `temperature` and `top_p` set together, and an extraneous request key
+  (#PR).
 - Upgrade window: a resumed or rerun pipeline id no longer deletes another
   source scope's live documents when a run of a release before
   `written_by` re-indexed them in that scope; a record naming no writer now

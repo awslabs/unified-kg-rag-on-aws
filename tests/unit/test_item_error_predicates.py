@@ -19,14 +19,20 @@ import pytest
 from botocore import exceptions as boto_exc
 from langchain_core.exceptions import OutputParserException
 
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
-from unified_kg_rag.adapters.llm.retry import item_error_predicate
+from unified_kg_rag.adapters.ingestion import claim_extractor as claim_module
+from unified_kg_rag.adapters.ingestion import gleaner as gleaner_module
+from unified_kg_rag.adapters.ingestion import graph_extractor as graph_module
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    item_failed_indices,
+)
 from unified_kg_rag.adapters.local.models import (
     OllamaLanguageModelFactory,
     OpenAICompatibleLanguageModelFactory,
 )
-from unified_kg_rag.domain.models import Config, TextUnit
+from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 openai = pytest.importorskip("openai")
@@ -72,6 +78,12 @@ _BEDROCK_ITEM = [
         400,
         "The model returned the following errors: prompt is too long: "
         "210000 tokens > 200000 maximum",
+    ),
+    _bedrock(
+        "ValidationException",
+        400,
+        "input length and `max_tokens` exceed context limit: 190000 + 20000 "
+        "> 200000, decrease input length or `max_tokens` and try again",
     ),
 ]
 _BEDROCK_NOT_ITEM = [
@@ -131,6 +143,12 @@ _BEDROCK_CONFIGURATION_MESSAGES = [
     "This model version has reached the end of its life.",
     "This model version is marked Legacy by the provider.",
     "You don't have access to the model with the specified model ID.",
+    "The maximum tokens you requested exceeds the model limit of 4096.",
+    "max_tokens: 64001 > 64000, which is the maximum allowed",
+    "temperature and top_p cannot both be specified for this model.",
+    "#: extraneous key [top_k]",
+    "Invocation of model ID vendor.model-v1 with on-demand throughput isn't "
+    "supported.",
 ]
 _LOCAL_CONFIGURATION_MESSAGES = [
     "Invalid model name",
@@ -146,6 +164,9 @@ _LOCAL_CONFIGURATION_MESSAGES = [
     "max_tokens is too large: 9000",
     "Invalid API key provided",
     "You exceeded your current quota",
+    "max_tokens: 9000 > 4096",
+    "temperature and top_p cannot both be specified",
+    "#: extraneous key [top_k]",
 ]
 
 
@@ -226,31 +247,83 @@ def test_a_factory_without_a_classifier_counts_output_errors_only() -> None:
     assert not any(predicate(e) for e in [*_BEDROCK_ITEM, *_LOCAL_ITEM])
 
 
-def _units(documents: list[str]) -> list[TextUnit]:
-    return [
-        TextUnit(id=f"u{i}", text="t", document_ids=[doc])
-        for i, doc in enumerate(documents)
-    ]
+def _documents(documents: list[str]) -> list[list[str]]:
+    return [[doc] for doc in documents]
+
+
+_ITEM = _BEDROCK_ITEM[0]
+_BEDROCK = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
 
 
 @pytest.mark.parametrize(
-    ("documents", "errors", "one_cause"),
+    ("documents", "errors", "counted"),
     [
         # Every unit of two documents, one error: a setting, counted for none.
-        (["a", "b"], {0: _BEDROCK_ITEM[0], 1: _BEDROCK_ITEM[0]}, True),
+        (["a", "b"], {0: _ITEM, 1: _ITEM}, []),
         # One document that always fails is still counted.
-        (["a", "a"], {0: _BEDROCK_ITEM[0], 1: _BEDROCK_ITEM[0]}, False),
+        (["a", "a"], {0: _ITEM, 1: _ITEM}, [0, 1]),
         # Not every unit failed, or not with the same error.
-        (["a", "b"], {0: _BEDROCK_ITEM[0]}, False),
-        (["a", "b"], {0: _BEDROCK_ITEM[0], 1: OutputParserException("bad")}, False),
+        (["a", "b"], {0: _ITEM}, [0]),
+        (["a", "b"], {0: _ITEM, 1: OutputParserException("bad")}, [0, 1]),
         # Output that does not parse is each unit's own, however alike.
-        (["a", "b"], {0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, False),
+        (["a", "b"], {0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, [0, 1]),
+        # Errors that are not the item's own count for none either way.
+        (["a", "b"], {0: TimeoutError(), 1: _ITEM}, [1]),
     ],
 )
 def test_one_error_on_every_unit_of_several_documents_counts_none(
-    documents: list[str], errors: dict[int, BaseException], one_cause: bool
+    documents: list[str], errors: dict[int, BaseException], counted: list[int]
 ) -> None:
-    assert (
-        GraphExtractor._one_cause_failed_documents(_units(documents), errors)
-        is one_cause
-    )
+    predicate = item_error_predicate(_BEDROCK)
+    assert item_failed_indices(errors, _documents(documents), predicate, "t") == counted
+
+
+class _Rejecting:
+    """A chain the model answers with one error for every request."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def invoke(self, *_: Any, **__: Any) -> Any:
+        raise self.error
+
+    def batch(self, *_: Any, **__: Any) -> Any:
+        raise self.error
+
+
+def _run(stage: str, config: Config, units: list[TextUnit]) -> list[str]:
+    """The ids of the units ``stage`` counts against their document when the
+    model rejects all of them with one error."""
+    config.processing.ignore_errors = True
+    module, cls = {
+        "graph": (graph_module, graph_module.GraphExtractor),
+        "claims": (claim_module, claim_module.ClaimExtractor),
+        "gleaning": (gleaner_module, gleaner_module.GraphGleaner),
+    }[stage]
+    # A message no configuration pattern names: only the rule tells it apart.
+    error = _bedrock("ValidationException", 400, "Input is too long.")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            bedrock_module, "BedrockLanguageModelFactory", lambda *_, **__: _BEDROCK
+        )
+        patch.setattr(module, "create_robust_xml_output_parser", lambda **_: None)
+        patch.setattr(module, "setup_chain", lambda **_: _Rejecting(error))
+        processor: Any = cls(config)
+    processor.show_progress = False
+    if stage == "gleaning":
+        records = [TextUnitExtraction(text_unit_id=u.id) for u in units]
+        return list(processor.glean(units, records)[1].item_failed_text_unit_ids)
+    return list(processor.extract_units(units)[1].item_failed_text_unit_ids)
+
+
+@pytest.mark.parametrize("stage", ["graph", "claims", "gleaning"])
+def test_every_extraction_stage_counts_one_cause_for_none(
+    stage: str, config: Config
+) -> None:
+    # One setting error on every unit of two documents is the configuration,
+    # in claim extraction and gleaning as in graph extraction; the same error
+    # on the units of one document is still that document's.
+    two = [TextUnit(id=f"u{i}", text="t", document_ids=[d]) for i, d in enumerate("ab")]
+    one = [TextUnit(id=f"u{i}", text="t", document_ids=["a"]) for i in range(2)]
+    assert _run(stage, config, two) == []
+    assert sorted(_run(stage, config, one)) == ["u0", "u1"]
