@@ -114,6 +114,30 @@ def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
     assert failed.text_unit_ids == ["t-a"]
 
 
+def test_the_commit_lists_the_documents_it_recorded_failed() -> None:
+    # failed_documents (the JSON result) and the summary count these: every
+    # document the commit records FAILED (a failed write's owner, an
+    # extraction failure), only those, the counted failures included.
+    store = FakeDocStatusStore()
+    indexer = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
+    lineages = _lineages()
+    indexer.record(
+        lineages,
+        _FINGERPRINTS,
+        {"neptune_relationships": _stats(10, ["r-a"])},
+        ["doc-c"],
+        artifact_owners(lineages, _ARTIFACTS),
+        counted_failed_doc_ids=["doc-c"],
+    )
+
+    assert sorted(indexer.recorded_failed_doc_ids) == ["doc-a", "doc-c"]
+    assert sorted((r.doc_id, r.failure_count) for r in store.list_all()) == [
+        ("doc-a", 0),
+        ("doc-b", 0),
+        ("doc-c", 1),
+    ]
+
+
 def test_a_failed_shared_artifact_fails_every_owner() -> None:
     store = FakeDocStatusStore()
     _record(store, {"opensearch_entities": _stats(10, ["e-shared"])})

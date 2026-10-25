@@ -264,8 +264,11 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     )
     runner.pipeline = MagicMock(executed_stages=frozenset())
     assert runner._json_result(context)["failed_documents"] == 1
-    context.record_failed_documents(["doc-c", "doc-a"])
+    # Each recording adds to the run's; a document recorded twice counts once.
+    context.record_failed_documents(["doc-c"])
     assert runner._json_result(context)["failed_documents"] == 2
+    context.record_failed_documents(["doc-a"])
+    assert context.recorded_failed_doc_ids == ["doc-a", "doc-c"]
 
 
 async def test_eval_json_output_is_the_only_stdout(

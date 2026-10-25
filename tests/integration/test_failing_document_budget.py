@@ -46,14 +46,19 @@ def _runs(
     pipeline_id: str | None = None,
     message: str = "rejected",
     contexts: list[PipelineContext] | None = None,
+    reset: bool = False,
+    beside: bool = False,
 ) -> list[tuple]:
     """Index d0, d1; add fz.txt, whose extraction the model answers with
     ``status`` (and ``message``), or fails with an exception ``status``, and
-    delete d1; run four times. Each run's (status, fz's
+    delete d1; run four times (``indexing.reset``: rebuilding the whole
+    corpus each time; ``beside``: a new document d2 added with fz, so the
+    stage completes on d2 and the commit records fz). Each run's (status, fz's
     record (status, failure count), d1 still recorded); the last run's
     graph_extraction error."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.indexing.max_document_failures = 2
+    config.indexing.reset = reset
     config.processing.document_parsing.source_scope = "budget-corpus"
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
 
@@ -76,6 +81,8 @@ def _runs(
         (source / name).write_text(text)
     e2e._ingest(config, providers, source, tmp / "seed")
     (source / "fz.txt").write_text(_FAILING)
+    if beside:
+        (source / "d2.txt").write_text("Carrier and Buyer trade parts.")
     (source / "d1.txt").unlink()
     seen = []
     for run in range(4):
@@ -107,7 +114,8 @@ def _runs(
 def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     tmp_path: Path, pipeline_id: str | None
 ) -> None:
-    *seen, errors = _runs(tmp_path, 400, pipeline_id)
+    contexts: list[PipelineContext] = []
+    *seen, errors = _runs(tmp_path, 400, pipeline_id, contexts=contexts)
     failed = PipelineStageStatus.FAILED.value
     done = PipelineStageStatus.COMPLETED.value
     assert seen[:2] == [
@@ -117,6 +125,9 @@ def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     # Skipped from the third run on: the run completes and deletes d1.
     assert seen[2:] == [(done, (DocStatus.FAILED.value, 2), False)] * 2, seen
     assert errors == []
+    # Each run lists the documents it recorded FAILED, not the ones a run
+    # before it did (a resumed pipeline id restores that run's context).
+    assert [len(c.recorded_failed_doc_ids) for c in contexts] == [1, 1, 0, 0]
 
 
 def test_a_factory_without_an_item_classifier_counts_http_rejections(
@@ -225,19 +236,41 @@ def test_a_whole_delta_outage_excludes_nothing_once_fixed(tmp_path: Path) -> Non
     assert entities
 
 
-@pytest.mark.parametrize(("status", "recorded"), [(503, 0), (400, 1)])
+@pytest.mark.parametrize(
+    ("status", "mode", "recorded", "counted"),
+    [
+        (503, "alone", 0, 0),
+        (400, "alone", 1, 1),
+        (503, "beside", 1, 0),
+        (400, "beside", 1, 1),
+        (503, "reset", 1, 0),
+        (400, "reset", 1, 1),
+    ],
+)
 def test_failed_documents_counts_the_documents_recorded_failed(
-    tmp_path: Path, status: int, recorded: int
+    tmp_path: Path, status: int, mode: str, recorded: int, counted: int
 ) -> None:
     # The JSON result counted the documents a stage failed on: a model
     # outage that recorded nothing (fz.txt stays PENDING) read as one
-    # document recorded FAILED.
+    # document recorded FAILED. Beside a new document, or in a reset
+    # rebuild, the run completes past fz.txt's failed units and its commit
+    # records fz.txt FAILED either way, counting the failure only when the
+    # error is fz.txt's own (the 400), not the outage's.
     contexts: list[PipelineContext] = []
-    _runs(tmp_path, status, contexts=contexts)
+    seen = _runs(
+        tmp_path,
+        status,
+        contexts=contexts,
+        reset=mode == "reset",
+        beside=mode == "beside",
+    )
     runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
     runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
     result = runner._json_result(contexts[0])
     assert result["failed_documents"] == recorded, result
+    assert seen[0][1][1] == counted, seen
+    if mode != "alone":
+        assert seen[0][0] == PipelineStageStatus.COMPLETED.value, seen
 
 
 @pytest.mark.parametrize(
