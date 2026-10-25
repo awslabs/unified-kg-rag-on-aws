@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A fatal error in one OpenSearch search of a query (one index's, or one
+  half of an index's lexical + kNN pair) cancels the searches running
+  beside it, which kept sending requests after the query had failed
+  (`gather_or_cancel`, as for the parts of a local or LightRAG search)
+  (#PR).
 - Incremental indexing: a custom language-model factory without an
   `is_item_error` hook counts a request its server rejects for its content
   (HTTP 400/413/422 in `status_code` or `response.status_code`, other than

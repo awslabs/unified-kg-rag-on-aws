@@ -1805,3 +1805,37 @@ async def test_a_failed_mapping_read_leaves_the_check_to_the_search(
     retriever = _mapping_read_failing_with(config, error)
 
     assert len(await retriever.aretrieve(_text_units_query(config))) == 1
+
+
+@pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.VECTOR])
+async def test_a_fatal_search_error_cancels_the_searches_beside_it(
+    config: Config, search_type: SearchType
+) -> None:
+    # The searches of the other indices, and the other half of an index's
+    # lexical + kNN pair, kept going to the store after the query had failed.
+    started: list[asyncio.Task] = []
+    cancelled: list[str] = []
+
+    async def _asearch(index: str, body: dict) -> dict:
+        if not started:
+            started.append(asyncio.current_task())  # type: ignore[arg-type]
+            await asyncio.sleep(0.05)
+            raise StoreConnectionError("refused")
+        started.append(asyncio.current_task())  # type: ignore[arg-type]
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.append(index)
+            raise
+        return {}
+
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(retriever, RuntimeError("unused"))
+    object.__setattr__(retriever, "_opensearch_client", _MockSearchClient(_asearch))
+    with pytest.raises(StoreConnectionError, match="refused"):
+        await asyncio.wait_for(
+            retriever.aretrieve(SearchQuery(query="hello", search_type=search_type)),
+            timeout=30,
+        )
+    assert len(started) > 1
+    assert len(cancelled) == len(started) - 1
