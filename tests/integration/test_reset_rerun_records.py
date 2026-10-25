@@ -13,6 +13,7 @@ units whose records are gone again and stores them.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,7 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_name_variant_convergence import _respond
 from tests.integration.test_pipeline_id_rerun import _EXTRACTION, _write_corpus
+from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -115,7 +117,7 @@ def _uncached_setup(
 
 
 def test_a_reset_rerun_whose_records_are_stored_runs_no_stage_again(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Nothing replaced the records: the rerun resumes at indexing from the
     # cached stages and, with the response cache off, calls no model.
@@ -124,8 +126,21 @@ def test_a_reset_rerun_whose_records_are_stored_runs_no_stage_again(
     e2e._ingest(config, providers, source, tmp_path / "P0")
     first = len(calls)
     assert first
+    records = config.indexing.opensearch.extraction_records_index_prefix
+    read: list[object] = []
+    search = SQLiteSearchEngine.search
+
+    def recording(engine: SQLiteSearchEngine, **kwargs: Any) -> dict[str, Any]:
+        if records in kwargs["index"]:
+            read.append(kwargs["body"].get("_source"))
+        return search(engine, **kwargs)
+
+    monkeypatch.setattr(SQLiteSearchEngine, "search", recording)
     context = e2e._ingest(config, providers, source, tmp_path / "P0")
     assert len(calls) == first
+    # The check that the records are still there (the first read, before
+    # any stage runs) reads their ids only.
+    assert read[0] is False, read
     assert context.stage_results[-1].stage_name == "indexing"
     assert context.stage_results[-1].status is PipelineStageStatus.COMPLETED
 

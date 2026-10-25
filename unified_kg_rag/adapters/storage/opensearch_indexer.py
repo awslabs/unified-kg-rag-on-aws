@@ -969,6 +969,21 @@ class OpenSearchIndexer(VectorIndexer):
             if isinstance(source.get("record"), dict)
         }
 
+    def stored_extraction_record_keys(
+        self, keys: list[str], suffix: str | None = None
+    ) -> set[str]:
+        """The keys among ``keys`` stored in ``suffix``'s record index, read
+        as ids only (see the port)."""
+        return {
+            source["id"]
+            for source in self._read_sources(
+                self.opensearch_config.extraction_records_index_prefix,
+                keys,
+                suffix,
+                fields=[],
+            )
+        }
+
     def write_extraction_records(
         self, records: dict[str, dict[str, Any]], suffix: str | None = None
     ) -> IndexingStats:

@@ -763,6 +763,10 @@ class TestOpenSearchExtractionRecords:
             "k2": {},
         }
         assert indexer.read_extraction_records(["k1"], suffix="y") == {}
+        assert indexer.stored_extraction_record_keys(
+            ["k1", "k2", "k3"], suffix="x"
+        ) == {"k1", "k2"}
+        assert indexer.stored_extraction_record_keys(["k1"], suffix="y") == set()
 
     def test_a_reset_leaves_the_records(self, tmp_path) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")

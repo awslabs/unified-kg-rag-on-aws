@@ -585,6 +585,16 @@ class VectorIndexer(BaseIndexer):
         """
         return {}
 
+    def stored_extraction_record_keys(
+        self, keys: list[str], suffix: str | None = None
+    ) -> set[str]:
+        """The keys among ``keys`` that ``suffix``'s extraction store holds,
+        without reading their records (a check that they are still there).
+        Default: the keys :meth:`read_extraction_records` returns. Adapters
+        that override it raise when the read fails.
+        """
+        return set(self.read_extraction_records(keys, suffix=suffix))
+
     def find_documents(
         self,
         alias_prefix: str,

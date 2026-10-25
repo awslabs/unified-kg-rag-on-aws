@@ -594,6 +594,11 @@ class FakeVectorStore(_Recorder):
             if (wanted, key) in self.extraction_records
         }
 
+    def stored_extraction_record_keys(
+        self, keys: list[str], suffix: str | None = None
+    ) -> set[str]:
+        return set(self.read_extraction_records(keys, suffix=suffix))
+
     def find_documents(
         self,
         alias_prefix: str,

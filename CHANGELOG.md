@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A reset pipeline id run again checks that the extraction records its
+  text units name are still stored by reading their ids only
+  (`VectorIndexer.stored_extraction_record_keys`); it read every record
+  in full, the whole extraction output of the corpus, before any stage
+  ran (#PR).
 - Incremental indexing: a backend or configuration failure no longer
   excludes documents. Any error the model clients did not call transient
   counted toward `indexing.max_document_failures` as the document's own:
