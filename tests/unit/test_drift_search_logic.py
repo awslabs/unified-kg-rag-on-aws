@@ -485,6 +485,30 @@ async def test_a_fatal_error_cancels_the_other_actions() -> None:
     assert finished == []
 
 
+async def test_a_fatal_primer_error_cancels_the_other_folds() -> None:
+    # The primer folds too: one fold's fatal error left the others' LLM
+    # calls running after the query had failed.
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"
+    )
+    finished: list[str] = []
+
+    class _Slow(_Chain):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            if inputs["community_reports"].startswith("report 0"):
+                raise denied
+            await asyncio.sleep(0.2)
+            finished.append(inputs["community_reports"])
+            return _primer()(inputs)
+
+    strat = _strategy(n_depth=1)
+    strat.primer = _Slow(None)
+    with pytest.raises(ClientError):
+        await strat.asearch(SearchQuery(query="question"))
+    await asyncio.sleep(0.3)
+    assert finished == []
+
+
 async def test_a_fatal_action_error_raises_even_under_ignore_errors() -> None:
     denied = ClientError(
         {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse"

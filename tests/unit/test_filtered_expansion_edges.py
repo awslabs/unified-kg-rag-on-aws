@@ -575,6 +575,55 @@ async def test_the_requests_on_their_own_run_max_concurrency_at_a_time(
     assert peak == 3
 
 
+async def test_a_fatal_error_on_its_own_cancels_the_rest_of_its_wave(
+    config: Config,
+) -> None:
+    # The requests of a wave run together: one's fatal error (a denied
+    # store) left the others going to the store after the query had failed.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    edges = [
+        (f"m{j:02d}-{i:03d}", f"M{j:02d}", f"V{j:02d}-{i:03d}", 100.0)
+        for j in range(20)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    o = config.indexing.opensearch
+    on_its_own: list[str] = []
+    cancelled: list[str] = []
+    ask = index.aretrieve
+
+    async def failing(query: SearchQuery) -> list[RetrievalResult]:
+        ends = (query.filters or {}).get("source_id") or []
+        if query.index_prefixes != [o.relationships_index_prefix] or len(ends) != 1:
+            return await ask(query)
+        on_its_own.append(ends[0])
+        if len(on_its_own) == 1:
+            await asyncio.sleep(0.01)
+            raise StoreAccessDeniedError("denied")
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(ends[0])
+            raise
+        return []
+
+    index.aretrieve = failing  # type: ignore[method-assign]
+    config.search.max_concurrency = 3
+    config.indexing.neptune.max_hops = 1
+    with pytest.raises(StoreAccessDeniedError):
+        await asyncio.wait_for(
+            _strategy(config, _Graph(), index)._expand_via_graph(
+                SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}),
+                [f"M{j:02d}" for j in range(20)],
+            ),
+            2,
+        )
+    # The first wave only; the two beside the failed request cancelled.
+    assert len(on_its_own) == 3
+    assert sorted(cancelled) == sorted(on_its_own[1:])
+
+
 async def test_a_live_window_below_the_page_is_judged_full(
     config: Config, caplog: pytest.LogCaptureFixture
 ) -> None:

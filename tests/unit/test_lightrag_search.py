@@ -1388,3 +1388,44 @@ async def test_a_failed_stream_cancels_the_streams_beside_it(config: Config) -> 
         )
     await asyncio.sleep(0)
     assert cancelled == ["chunks"]
+
+
+async def test_a_failed_expansion_cancels_the_one_beside_it(config: Config) -> None:
+    # The second round (incident relationships, endpoint entities) too: the
+    # other expansion kept going to the store after the query had failed.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    strategy, _, _ = _make_strategy(config)
+    cancelled: list[str] = []
+
+    def hit(kind: str) -> RetrievalResult:
+        return RetrievalResult(
+            content=kind, score=1.0, source=kind, retriever_type=kind, metadata={}
+        )
+
+    async def found(kind: str) -> dict[str, list[RetrievalResult]]:
+        return {f"lightrag_{kind}": [hit(kind)]}
+
+    async def denied(*_args: object, **_kw: object) -> dict[str, list[RetrievalResult]]:
+        await asyncio.sleep(0.01)
+        raise StoreAccessDeniedError("denied")
+
+    async def slow(*_args: object, **_kw: object) -> dict[str, list[RetrievalResult]]:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append("endpoints")
+            raise
+        return {}
+
+    strategy._retrieve_entities = lambda _q: found("entities")  # type: ignore[method-assign]
+    strategy._retrieve_relationships = lambda _q: found("relationships")  # type: ignore[method-assign]
+    strategy._retrieve_incident_relationships = denied  # type: ignore[method-assign]
+    strategy._retrieve_endpoint_entities = slow  # type: ignore[method-assign]
+    with pytest.raises(StoreAccessDeniedError):
+        await strategy._retrieve_kg_streams(
+            _query(SearchStrategy.HYBRID, ll_keywords=["x"], hl_keywords=["y"]),
+            SearchStrategy.HYBRID.value,
+        )
+    await asyncio.sleep(0)
+    assert cancelled == ["endpoints"]
