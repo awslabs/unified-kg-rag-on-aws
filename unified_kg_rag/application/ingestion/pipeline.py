@@ -7,7 +7,7 @@ import secrets
 import signal
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +177,20 @@ class DataIngestionPipeline:
         PipelineStageType.COMMUNITY_DETECTION: CommunityDetectionStage,
         PipelineStageType.INDEXING: IndexingStage,
     }
+
+    # Stage names in run order.
+    _ORDER: tuple[str, ...] = tuple(stage.value for stage in STAGE_CLASSES)
+
+    @classmethod
+    def _before(cls, stage_names: Iterable[str], stage: str) -> list[str]:
+        """The names in ``stage_names`` of the stages that run before
+        ``stage``, in their order (the completed stages a rewind keeps)."""
+        position = cls._ORDER.index(stage)
+        return [
+            name
+            for name in stage_names
+            if name in cls._ORDER and cls._ORDER.index(name) < position
+        ]
 
     # Stages switched off by a config section besides stages_enabled. Claim
     # extraction and resolution go together; community detection is optional
@@ -798,13 +812,12 @@ class DataIngestionPipeline:
     def _resumes_past_loading(self, start_stage_name: str | None) -> bool:
         """Whether a resume at ``start_stage_name`` reuses the restored delta
         and still runs a stage up to indexing."""
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order:
+        if start_stage_name not in self._ORDER:
             return False
-        position = canonical_order.index(start_stage_name)
-        return canonical_order.index(
+        position = self._ORDER.index(start_stage_name)
+        return self._ORDER.index(
             PipelineStageType.DOCUMENT_LOADING.value
-        ) < position <= canonical_order.index(
+        ) < position <= self._ORDER.index(
             PipelineStageType.INDEXING.value
         ) and self._start_index(
             start_stage_name
@@ -1167,6 +1180,36 @@ class DataIngestionPipeline:
     def _prepare_resume(
         self, pipeline_id: str, resume_from_stage: str | None
     ) -> tuple[PipelineContext, str | None]:
+        """Restore a pipeline id's context and the stage its resume starts at.
+
+        The recorded stages give the resume point (after the last completed
+        stage, or ``resume_from_stage``). These then move it back or refuse
+        it, in this order:
+
+        ================================  ================================  ==================
+        Step                              When                              Explicit point
+        ================================  ================================  ==================
+        ``_rewind_to_unrun_stage``        an enabled stage never completed  not applied
+        ``_rewind_on_extraction_change``  the extraction settings or the    not applied
+                                          registry changed since the delta
+                                          (to document_loading)
+        ``_check_upstream_complete``      the point is upstream of every    applied
+                                          enabled stage: refused
+        ``_rewind_to_failed_stage``       a completed, enabled stage        kept, with a
+                                          recorded failed units; a rerun    WARNING (for the
+                                          on a disabled stage's failures    refusal too)
+                                          is refused
+        ``_rewind_on_missing_records``    a reset's stored extraction       applied
+                                          records are gone
+        ``_delta_is_stale``               the registry no longer matches    applied
+                                          the restored delta (to
+                                          document_loading)
+        ================================  ================================  ==================
+
+        Each rewind restores the context again for the stages it keeps.
+        ``_drop_unrun_failures`` then forgets the failures of the stages the
+        run neither runs nor restores.
+        """
         logger.info(
             "Preparing pipeline resume for '%s' from stage: '%s'",
             pipeline_id,
@@ -1245,13 +1288,12 @@ class DataIngestionPipeline:
         The resume starts at the first such stage instead, and only the
         completed stages upstream of it are restored.
         """
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order:
+        if start_stage_name not in self._ORDER:
             return start_stage_name, completed_stages
-        start_position = canonical_order.index(start_stage_name)
+        start_position = self._ORDER.index(start_stage_name)
         completed = set(completed_stages)
         for stage in self.stages:
-            position = canonical_order.index(stage.name)
+            position = self._ORDER.index(stage.name)
             if position >= start_position:
                 break
             if stage.name not in completed:
@@ -1262,11 +1304,7 @@ class DataIngestionPipeline:
                     stage.name,
                     start_stage_name,
                 )
-                return stage.name, [
-                    name
-                    for name in completed_stages
-                    if canonical_order.index(name) < position
-                ]
+                return stage.name, self._before(completed_stages, stage.name)
         return start_stage_name, completed_stages
 
     def _rewind_to_failed_stage(
@@ -1292,10 +1330,9 @@ class DataIngestionPipeline:
         (``--resume-from-stage``) is kept, with a warning, as the other
         rewinds of an auto resume do.
         """
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order:
+        if start_stage_name not in self._ORDER:
             return None
-        start = canonical_order.index(start_stage_name)
+        start = self._ORDER.index(start_stage_name)
         enabled = {stage.name for stage in self.stages}
         failed = [
             name
@@ -1303,10 +1340,10 @@ class DataIngestionPipeline:
             if unit_ids
             and name in completed_stages
             and name in enabled
-            and name in canonical_order
-            and canonical_order.index(name) < start
+            and name in self._ORDER
+            and self._ORDER.index(name) < start
         ]
-        first = min(failed, key=canonical_order.index) if failed else None
+        first = min(failed, key=self._ORDER.index) if failed else None
         # Also when the resume rewinds to ``first``: a stage not enabled
         # that failed before it is not retried there either.
         self._refuse_rerun_of_unrun_failures(
@@ -1335,12 +1372,7 @@ class DataIngestionPipeline:
             len(context.failed_text_unit_ids[first]),
             start_stage_name,
         )
-        position = canonical_order.index(first)
-        return first, [
-            name
-            for name in completed_stages
-            if name in canonical_order and canonical_order.index(name) < position
-        ]
+        return first, self._before(completed_stages, first)
 
     def _rewind_on_missing_records(
         self,
@@ -1360,8 +1392,10 @@ class DataIngestionPipeline:
         units name records that are gone: the full build keeps none of them,
         and the next incremental run cannot derive the items those units
         cite. Run again, the stage extracts only the units whose records are
-        gone (the LLM response cache of the pipeline id answers them, unless
-        ``cache.llm_responses.enabled`` is off) and stores them. An
+        gone and stores them, and every later stage runs again: the LLM
+        response cache of the pipeline id answers their model calls, but with
+        ``cache.llm_responses.enabled`` off those units, every description
+        summary and every community report are generated (and billed) again. An
         incremental resume needs no check: another pipeline id's write makes
         its delta stale (``incremental.delta_still_applies``).
 
@@ -1369,10 +1403,9 @@ class DataIngestionPipeline:
             PipelineResumeError: Records are missing and the stage that
                 stores them is not enabled in this run.
         """
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if not self.config.indexing.reset or start_stage_name not in canonical_order:
+        if not self.config.indexing.reset or start_stage_name not in self._ORDER:
             return None
-        start = canonical_order.index(start_stage_name)
+        start = self._ORDER.index(start_stage_name)
         stores = {
             "graph": PipelineStageType.GRAPH_RESOLUTION.value,
             "claims": PipelineStageType.CLAIM_EXTRACTION.value,
@@ -1380,7 +1413,7 @@ class DataIngestionPipeline:
         checked = {
             kind: stage
             for kind, stage in stores.items()
-            if stage in completed_stages and canonical_order.index(stage) < start
+            if stage in completed_stages and self._ORDER.index(stage) < start
         }
         if not checked:
             return None
@@ -1425,7 +1458,7 @@ class DataIngestionPipeline:
                 )
                 for kind in missing
             ),
-            key=canonical_order.index,
+            key=self._ORDER.index,
         )
         if first not in {stage.name for stage in self.stages}:
             raise PipelineResumeError(
@@ -1439,12 +1472,7 @@ class DataIngestionPipeline:
             first,
             start_stage_name,
         )
-        position = canonical_order.index(first)
-        return first, [
-            name
-            for name in completed_stages
-            if name in canonical_order and canonical_order.index(name) < position
-        ]
+        return first, self._before(completed_stages, first)
 
     def _refuse_rerun_of_unrun_failures(
         self,
@@ -1472,20 +1500,19 @@ class DataIngestionPipeline:
         """
         if self._doc_status is None or start_stage_name not in completed_stages:
             return
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        start = canonical_order.index(resume_at or start_stage_name)
+        start = self._ORDER.index(resume_at or start_stage_name)
         enabled = {stage.name for stage in self.stages}
         unrun = [
             name
             for name, unit_ids in context.failed_text_unit_ids.items()
             if unit_ids
             and name not in enabled
-            and name in canonical_order
-            and canonical_order.index(name) < start
+            and name in self._ORDER
+            and self._ORDER.index(name) < start
         ]
         if not unrun:
             return
-        first = min(unrun, key=canonical_order.index)
+        first = min(unrun, key=self._ORDER.index)
         message = (
             f"Stage '{first}' failed on "
             f"{len(context.failed_text_unit_ids[first])} text units and is not "
@@ -1509,16 +1536,15 @@ class DataIngestionPipeline:
         their documents FAILED again. A stage before the start point keeps
         them: its restored output is the run's (a phased run's earlier
         window)."""
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order:
+        if start_stage_name not in self._ORDER:
             return
-        start = canonical_order.index(start_stage_name)
+        start = self._ORDER.index(start_stage_name)
         enabled = {stage.name for stage in self.stages}
         for name in list(context.failed_text_unit_ids):
             if (
-                name in canonical_order
+                name in self._ORDER
                 and name not in enabled
-                and canonical_order.index(name) >= start
+                and self._ORDER.index(name) >= start
             ):
                 logger.info(
                     "Stage '%s' is not enabled in this run: its failed text "
@@ -1546,10 +1572,9 @@ class DataIngestionPipeline:
         registry); document_parsing stays cached.
         """
         loading = PipelineStageType.DOCUMENT_LOADING.value
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
         if (
-            start_stage_name not in canonical_order
-            or canonical_order.index(start_stage_name) <= canonical_order.index(loading)
+            start_stage_name not in self._ORDER
+            or self._ORDER.index(start_stage_name) <= self._ORDER.index(loading)
             or loading not in {stage.name for stage in self.stages}
         ):
             return start_stage_name, completed_stages
@@ -1579,19 +1604,13 @@ class DataIngestionPipeline:
         """Resume from document_loading instead (it diffs the corpus again;
         document_parsing stays cached), logging ``reason``."""
         loading = PipelineStageType.DOCUMENT_LOADING.value
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
         logger.warning(
             "%s; resuming from '%s' instead of '%s'",
             reason[:1].upper() + reason[1:],
             loading,
             start_stage_name,
         )
-        position = canonical_order.index(loading)
-        return loading, [
-            name
-            for name in completed_stages
-            if name in canonical_order and canonical_order.index(name) < position
-        ]
+        return loading, self._before(completed_stages, loading)
 
     def _delta_is_stale(
         self, context: PipelineContext, start_stage_name: str | None
@@ -1636,13 +1655,12 @@ class DataIngestionPipeline:
         done, and the run skips them."""
         if not self.stages:
             return
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order or start_stage_name in {
+        if start_stage_name not in self._ORDER or start_stage_name in {
             stage.name for stage in self.stages
         }:
             return
-        first_enabled = canonical_order.index(self.stages[0].name)
-        if canonical_order.index(start_stage_name) > first_enabled:
+        first_enabled = self._ORDER.index(self.stages[0].name)
+        if self._ORDER.index(start_stage_name) > first_enabled:
             return
         metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         recorded = {r.get("stage_name") for r in metadata.get("stage_results", [])}
@@ -1663,9 +1681,8 @@ class DataIngestionPipeline:
         # upstream result?" against that subset would wrongly discard every
         # earlier phase's results — silently dropping resolved_relationships /
         # resolved_claims before indexing. The full order keeps them.
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
         try:
-            start_index = canonical_order.index(start_stage_name)
+            start_index = self._ORDER.index(start_stage_name)
         except ValueError:
             logger.warning(
                 "Start stage '%s' not in canonical pipeline order; "
@@ -1678,8 +1695,8 @@ class DataIngestionPipeline:
         valid_results = [
             res
             for res in context.stage_results
-            if res.stage_name in canonical_order
-            and canonical_order.index(res.stage_name) < start_index
+            if res.stage_name in self._ORDER
+            and self._ORDER.index(res.stage_name) < start_index
         ]
         context.stage_results = valid_results
         logger.info(
@@ -1833,16 +1850,15 @@ class DataIngestionPipeline:
             return 0
         if start_stage_name in stage_names:
             return stage_names.index(start_stage_name)
-        canonical_order = [st.value for st in self.STAGE_CLASSES]
-        if start_stage_name not in canonical_order:
+        if start_stage_name not in self._ORDER:
             logger.warning(
                 "Start stage '%s' not found, starting from beginning",
                 start_stage_name,
             )
             return 0
-        start_position = canonical_order.index(start_stage_name)
+        start_position = self._ORDER.index(start_stage_name)
         for index, name in enumerate(stage_names):
-            if canonical_order.index(name) >= start_position:
+            if self._ORDER.index(name) >= start_position:
                 logger.info(
                     "Start stage '%s' is not enabled in this run; starting "
                     "from '%s'",

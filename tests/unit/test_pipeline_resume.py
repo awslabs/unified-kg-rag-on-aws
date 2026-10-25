@@ -192,9 +192,9 @@ def test_prepare_context_for_resume_keeps_upstream_in_narrow_phase() -> None:
         ],
     )
 
-    # Stub self: only STAGE_CLASSES is consulted now (no self.stages).
+    # Stub self: only the stage order is consulted now (no self.stages).
     class _Stub:
-        STAGE_CLASSES = DataIngestionPipeline.STAGE_CLASSES
+        _ORDER = DataIngestionPipeline._ORDER
 
     DataIngestionPipeline._prepare_context_for_resume(_Stub(), ctx, "indexing")
 
@@ -220,7 +220,7 @@ def test_prepare_context_for_resume_drops_results_at_or_after_start() -> None:
     )
 
     class _Stub:
-        STAGE_CLASSES = DataIngestionPipeline.STAGE_CLASSES
+        _ORDER = DataIngestionPipeline._ORDER
 
     # Resuming at graph_extraction keeps only strictly-upstream results.
     DataIngestionPipeline._prepare_context_for_resume(_Stub(), ctx, "graph_extraction")
