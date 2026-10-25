@@ -1357,6 +1357,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A fatal store error in one of the index mapping or settings reads that
+  open an OpenSearch search (one per index searched; a cluster that never
+  answered) cancels the reads beside it, which kept waiting on the store
+  after the query had failed (`gather_or_cancel`, as for the searches
+  themselves) (#PR).
 - Documentation: the upstream-fidelity notes state where behaviour differs
   from MS GraphRAG and LightRAG instead of claiming parity: the
   description-summary trigger (a cost variant), global search's report cap

@@ -656,7 +656,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return
         for alias, mappings in zip(
             aliases,
-            await asyncio.gather(*(self._index_mappings(alias) for alias in aliases)),
+            await gather_or_cancel(self._index_mappings(alias) for alias in aliases),
             strict=True,
         ):
             if mappings is None:
@@ -685,8 +685,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     ) -> dict[str, IndexLimits]:
         """The limits in force on the index of each of ``index_prefixes``."""
         prefixes = [p for p in index_prefixes if p in self._field_mappings]
-        found = await asyncio.gather(
-            *(self._limits(self._get_name(p, suffix)) for p in prefixes)
+        found = await gather_or_cancel(
+            self._limits(self._get_name(p, suffix)) for p in prefixes
         )
         return dict(zip(prefixes, found, strict=True))
 
