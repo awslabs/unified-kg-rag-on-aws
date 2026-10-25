@@ -1003,11 +1003,10 @@ class DataIngestionPipeline:
         if stage_name is None:
             return None
         normalized = stage_name.strip().lower()
-        valid = [stage.value for stage in cls.STAGE_CLASSES]
-        if normalized not in valid:
+        if normalized not in cls._ORDER:
             raise ConfigurationError(
                 f"Unknown pipeline stage '{stage_name}'. Valid stages: "
-                f"{', '.join(valid)}"
+                f"{', '.join(cls._ORDER)}"
             )
         return normalized
 
@@ -1337,17 +1336,15 @@ class DataIngestionPipeline:
         """
         if start_stage_name not in self._ORDER:
             return None
-        start = self._ORDER.index(start_stage_name)
         enabled = {stage.name for stage in self.stages}
-        failed = [
-            name
-            for name, unit_ids in context.failed_text_unit_ids.items()
-            if unit_ids
-            and name in completed_stages
-            and name in enabled
-            and name in self._ORDER
-            and self._ORDER.index(name) < start
-        ]
+        failed = self._before(
+            (
+                name
+                for name, unit_ids in context.failed_text_unit_ids.items()
+                if unit_ids and name in completed_stages and name in enabled
+            ),
+            start_stage_name,
+        )
         first = min(failed, key=self._ORDER.index) if failed else None
         # Also when the resume rewinds to ``first``: a stage not enabled
         # that failed before it is not retried there either.
@@ -1410,16 +1407,12 @@ class DataIngestionPipeline:
         """
         if not self.config.indexing.reset or start_stage_name not in self._ORDER:
             return None
-        start = self._ORDER.index(start_stage_name)
         stores = {
             "graph": PipelineStageType.GRAPH_RESOLUTION.value,
             "claims": PipelineStageType.CLAIM_EXTRACTION.value,
         }
-        checked = {
-            kind: stage
-            for kind, stage in stores.items()
-            if stage in completed_stages and self._ORDER.index(stage) < start
-        }
+        restored = self._before(completed_stages, start_stage_name)
+        checked = {kind: stage for kind, stage in stores.items() if stage in restored}
         if not checked:
             return None
         units = _with_record_keys(
@@ -1507,16 +1500,15 @@ class DataIngestionPipeline:
         """
         if self._doc_status is None or start_stage_name not in completed_stages:
             return
-        start = self._ORDER.index(resume_at or start_stage_name)
         enabled = {stage.name for stage in self.stages}
-        unrun = [
-            name
-            for name, unit_ids in context.failed_text_unit_ids.items()
-            if unit_ids
-            and name not in enabled
-            and name in self._ORDER
-            and self._ORDER.index(name) < start
-        ]
+        unrun = self._before(
+            (
+                name
+                for name, unit_ids in context.failed_text_unit_ids.items()
+                if unit_ids and name not in enabled
+            ),
+            resume_at or start_stage_name,
+        )
         if not unrun:
             return
         first = min(unrun, key=self._ORDER.index)
@@ -1689,7 +1681,12 @@ class DataIngestionPipeline:
         # earlier phase's results — silently dropping resolved_relationships /
         # resolved_claims before indexing. The full order keeps them.
         try:
-            start_index = self._ORDER.index(start_stage_name)
+            kept = set(
+                self._before(
+                    (res.stage_name for res in context.stage_results),
+                    start_stage_name,
+                )
+            )
         except ValueError:
             logger.warning(
                 "Start stage '%s' not in canonical pipeline order; "
@@ -1699,12 +1696,7 @@ class DataIngestionPipeline:
             )
             return
 
-        valid_results = [
-            res
-            for res in context.stage_results
-            if res.stage_name in self._ORDER
-            and self._ORDER.index(res.stage_name) < start_index
-        ]
+        valid_results = [res for res in context.stage_results if res.stage_name in kept]
         context.stage_results = valid_results
         logger.info(
             "Context prepared for resume from '%s' - keeping %s previous stage results",

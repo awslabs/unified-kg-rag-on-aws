@@ -207,7 +207,8 @@ Bedrock을 쓸 수 있습니다.
   `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `models.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 벡터 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시 인덱싱해야
-  하며, `bge-m3`가 아닌 모델은 그 모델의 차원도 지정해야 합니다.
+  하며, `bge-m3`가 아닌 모델은 그 모델의 차원도 지정해야 합니다. 로컬 공급자는 설정한 차원을
+  그대로 믿으므로(시작할 때 모델과 비교하지 않음) 값이 틀리면 첫 벡터 쓰기나 검색에서 실패합니다.
 - **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
   `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 쓰며, 로그에 한 번 남고
   `metadata.rerank.status`가 `unavailable`(`kind: none`이면 `disabled`)로 보고됩니다.
@@ -711,7 +712,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 |---|---|---|
 | `mix` | 일반적인 LightRAG 사용 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉은 `search.lightrag_search.enable_graph_expansion`으로 선택)에 **더해** naive 청크 검색 결과를 섞습니다. |
 | `hybrid` | 키워드 중심의 그래프 질문 | naive 청크 결과를 섞지 않는 `mix`입니다. |
-| `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, upstream LightRAG의 순수 벡터 기준선은 `--search-type vector`로 재현합니다. |
+| `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, `--search-type vector`는 upstream LightRAG의 순수 벡터 기준선과 MS GraphRAG의 `basic` 검색에 가깝습니다. |
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
@@ -834,7 +835,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 대화형 모드에서는 메모리가 켜집니다. 명령: `help`, `new`(새 대화 ID),
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
-`set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다.
+`set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
+함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2).
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 
@@ -1448,8 +1450,9 @@ custom_prompts:
 `--output-format json`은 JSON 문서 하나를 표준 출력에 쓰고 배너·진행 상황·로그는 표준
 오류로 보내므로 출력을 `jq`로 바로 넘길 수 있습니다(표준 출력에 함께 쓰는
 `--metrics-sink cloudwatch`와는 같이 쓸 수 없음). 담기는 내용은 답변이나 검색
-결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모델
-장애는 아무것도 기록하지 않음), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
+결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모든
+단위를 실패시킨 모델 장애는 아무것도 기록하지 않고, 일부 단위만 실패시킨 장애는 그 문서들을 기록하며
+다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에

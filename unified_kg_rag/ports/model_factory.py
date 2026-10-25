@@ -292,7 +292,9 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``is_item_error(exc) -> bool``: whether an ingestion item's error is the
     item's own (a request the model rejects for its content), which counts
     against its document (``adapters.llm.retry.item_error_predicate``);
-    without it only unparseable or cut-off output counts. A factory that
+    without it ``adapters.llm.retry.looks_like_item_error`` (HTTP
+    400/413/422 read from ``status_code`` or ``response.status_code``) and
+    unparseable or cut-off output count. A factory that
     also defines ``transient_retry`` (the Bedrock and Ollama ones) gets a
     chain-level retry of query chains from ``setup_chain`` under that policy.
     """

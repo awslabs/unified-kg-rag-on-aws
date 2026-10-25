@@ -328,8 +328,10 @@ import는 순환이 됨).
   따로 둠). 유형 인식 union-find는 유형이 다른 두 이름을 한 그룹에 넣지 않으며, 증분 병합도
   같은 매처를 쓰므로 전체 빌드와 증분 빌드가 같은 이름을 묶습니다.
 - **병합한 설명**은 이어 붙이므로 `DescriptionSummarizer`가 토큰 예산을 넘는 설명을 저렴한
-  모델로 다시 요약합니다(MS GraphRAG `summarize_descriptions`, LightRAG와 동일. 한 호출의
-  입력보다 길면 map-reduce). 호출이 실패하면 이어 붙인 설명을 유지합니다.
+  모델로 다시 요약합니다(한 호출의 입력보다 길면 map-reduce). 호출이 실패하면 이어 붙인 설명을
+  유지합니다. 요약 조건은 원본과 같지 않은 비용 절감형 변형입니다. MS GraphRAG
+  `summarize_descriptions`는 설명이 둘 이상인 항목을 모두 요약하고 LightRAG는 조각이
+  `force_llm_summary_on_merge`(8)개에 이르러도 요약하지만, 여기서는 토큰 예산만 요약을 일으킵니다.
 
 ### 4.3 커뮤니티 (10-11단계)
 
@@ -520,8 +522,10 @@ import는 순환이 됨).
   다시 격리되고, 전체 재구축도 이 문서를 건너뜁니다.
 - **재개 검사**(`delta_still_applies`). 복원한 델타의 문서 가운데 레코드가 사라졌거나 다른
   내용을 담았거나 한도에 이르렀거나 그 뒤 다른 파이프라인 ID가 쓴 것(`written_by`. 이 필드가
-  생기기 전에 쓴 레코드에는 없으며, `PROCESSED`가 아니면 다른 ID가 쓴 것으로 봄)이 있거나,
-  델타가 지우는 문서를 그 뒤 다른 파이프라인 ID가 다른 범위에 기록했으면 document_loading부터
+  생기기 전에 쓴 레코드에는 없으며, 열린 시도 없는 `PROCESSED`가 아니면 다른 ID가 쓴 것으로 봄.
+  델타가 설정 변경으로 다시 추출하는 문서를 다른 추출 설정으로 커밋한 레코드는 `PROCESSED`여도
+  그렇게 봄)이 있거나, 델타가 지우는 문서를 그 뒤 다른 파이프라인 ID가(또는 쓴 ID 없는 레코드로)
+  다른 범위에 기록했으면 document_loading부터
   재개합니다. 실패한 텍스트 단위를 기록한 단계를 지나 재개하면 그 단계부터 시작하므로, 그
   단위를 다시 `FAILED`로 기록하지 않고 다시 시도합니다. 추출 레코드를 저장하는 단계를 지나
   재개하는 reset은 다른 실행이 레코드를 지운 첫 단계부터 시작합니다. 지표:
@@ -689,6 +693,9 @@ import는 순환이 됨).
   하나로 씁니다.
   - 기본값 `k_followups` 10, `n_depth` 2: 질의마다 LLM 호출 최대 27번(MS GraphRAG의 20, 3은
     67번). 프라이머 호출과 액션은 `search.max_concurrency`개씩 동시에 실행합니다.
+  - 액션의 local 검색은 local 유형 몫(`search.token_manager.type_budgets`, 텍스트 0.5)으로
+    컨텍스트를 담으며, MS GraphRAG DRIFT의 `local_search_text_unit_prop` 0.9 /
+    `local_search_community_prop` 0.1을 쓰지 않습니다.
   - 프라이머는 MS GraphRAG처럼 `community_level` 하나가 아니라 모든 깊이의 리포트를
     검색합니다. 세분도는 유사도가 고릅니다(합성 6홉 코퍼스에서 깊이 2 단면은 하위 질문 21개 중
     16개, 모든 깊이는 21개에 답함).
@@ -711,19 +718,22 @@ import는 순환이 됨).
 번씩 덮는 MS GraphRAG의 roll-up이며, MS GraphRAG는 `community_level`을 루트에서 세므로
 깊이로 단면을 고릅니다.
 
-- **고정 단면(기본값)** — 단면을 순위순으로 훑되 상한(`max_reports_per_level`, 한 요청에
-  들도록 최대 `max_query_size` - 1, 살아 있는 `max_result_window` - 1)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다. 더 큰 단면은
-  상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은 엔티티를 더 넓은
-  리포트로 덮습니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
+- **고정 단면(기본값)** — 단면의 리포트를 상한까지 모두 map합니다. 단면을 순위순으로 훑되
+  상한(`max_reports_per_level`, 한 요청에 들도록 최대 `max_query_size` - 1, 살아 있는
+  `max_result_window` - 1. 기본 99)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다.
+  더 큰 단면은 상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은
+  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
   곳은 여기뿐입니다. 상한은 리포트 수로 세며 이것이 map 호출 수를 제한합니다.
 - **동적 선택**(`use_dynamic_selection`) — MS GraphRAG의 `DynamicCommunitySelection`입니다.
   루트 리포트의 관련성을 평가하고, 관련 있는 리포트의 자식을 리프까지 따라가며, 어떤 깊이에서
   관련 리포트가 없으면 다음 깊이 전체를 `community_depth`까지 평가합니다(MS GraphRAG의
-  `max_level`처럼 이 대체 경로만 제한). 평가는 `search.max_concurrency`개씩 실행합니다.
+  `max_level`처럼 이 대체 경로만 제한). upstream처럼 루트에서 시작하지만, upstream은
+  `community_level`에서 멈추는 반면 여기서는 관련 리포트를 리프까지 따라갑니다. 평가는
+  `search.max_concurrency`개씩 실행합니다.
 
-**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 `map_context_tokens`(MS GraphRAG의
-`data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
+**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 순위순으로(MS GraphRAG는 섞음)
+`map_context_tokens`(MS GraphRAG의 `data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
 붙은 핵심 포인트를 뽑으며 포인트마다 근거 리포트의 `report_ids`를 적습니다(MS GraphRAG의
 `[Data: Reports (ids)]`. 프롬프트의 리포트 id는 배치 안의 순번이며 다시 리포트로 매핑합니다).
 `map_relevance_threshold` 이하인 포인트를 버리고 나머지를 순위대로
@@ -745,12 +755,14 @@ import는 순환이 됨).
 레벨 키워드를 추출)을 합니다.
 
 - **naive** — 그래프 없이 청크만 요청의 `search_type`으로 검색합니다(기본값 `hybrid`는 BM25 +
-  벡터, `vector`는 upstream 기준선).
+  벡터, `vector`는 upstream 기준선과 MS GraphRAG `basic` 검색에 가까움).
 - **hybrid** — 하위 레벨 키워드 → 엔티티 인덱스, 상위 레벨 키워드 → 관계
   인덱스(LightRAG의 `relationships_vdb`), 한 홉 확장(엔티티 결과 → 붙은 관계, 관계 결과 →
   끝점 엔티티), 그리고 이 항목들이 인용하는 청크입니다.
 - **mix** — hybrid에 매칭된 엔티티와 관계가 인용하는 원본 청크(LightRAG의
-  `_find_related_text_unit_*`처럼 인용한 항목 수로 순위를 매김)와 naive 청크 검색을 더합니다.
+  `_find_related_text_unit_*`의 `WEIGHT` 방식: 가중 폴링으로 매칭된 항목마다 청크를 하나 이상
+  주며, 항목별 청크를 인용한 항목 수로 정렬하는 upstream 단계는 없음. upstream 기본값인 `VECTOR`
+  방식은 구현하지 않음)와 naive 청크 검색을 더합니다.
 
 서로 독립적인 질의를 먼저 동시에 실행하고, 그다음 확장을, 마지막으로 인용한 청크를
 가져옵니다. 키워드가 없는 짧은 질의는 원본 질의를 하위 레벨 키워드로
@@ -772,7 +784,9 @@ import는 순환이 됨).
   섹션을 점수순으로 담으며 처음 넘치는 섹션을 잘라 맞춥니다. 어떤 유형이 다 쓰지 못한 예산은
   아직 후보가 남은 유형에 넘깁니다(LightRAG가 그래프 섹션이 남긴 예산을 청크에 주듯 전략의
   `spare_context_budget_first` 유형이 먼저). 그래서 유형 간 점수 비교가 아니라 몫이 구성을
-  정합니다. 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
+  정합니다. 몫은 `max_context_tokens`에 대한 비율이며 upstream의 수치가 아닙니다. 30000에서
+  LightRAG mix/hybrid는 텍스트 18072, 엔티티 7228, 관계 4698 토큰을 받습니다(upstream은 약
+  16000 / 6000 / 8000). 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
   답변 모델이 본 것만 잘린 텍스트까지 그대로 담습니다.
 - **토큰 계산**(`adapters/aws/token_counter.py`, `adapters/local/token_counter.py`). Bedrock
   `count_tokens` API를 받는 언어 모델에는 그 API를, 그 밖에는 문자 체계를 고려한
@@ -1009,9 +1023,9 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 
 | 포트 | 계약 | 기본 어댑터(로컬 어댑터) | 주입 방법 |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory`(`openai_compatible`, `ollama`. `cross_encoder`, `none`) | `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`의 `providers=`(아래). `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음 |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()`. LLM 팩토리의 선택 훅: `is_transient_error(exc)`(수집 배치가 재시도할 오류. 기본값 `adapters.llm.retry.looks_transient`: 네트워크 오류, HTTP 408/429/5xx), `is_item_error(exc)`(문서에 실패로 셀 오류, `indexing.max_document_failures`. 기본값 `looks_like_item_error`: 거부된 모델이나 설정이 아닌 HTTP 400/413/422, `status_code`나 `response.status_code`에서 읽음), `transient_retry`(`TransientRetryConfig`: `is_transient_error`와 함께 있으면 질의 체인을 이 정책으로 재시도) | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory`(`openai_compatible`, `ollama`. `cross_encoder`, `none`) | `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`의 `providers=`(아래). `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음 |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`. 증분 조회(`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`)의 기본 구현은 "알 수 없음"(`None`: 이를 통해 찾는 것이 없고 병합은 이름을 모두 읽음)과 아무것도 지우지 않음. `VectorIndexer.check_index_creation(suffix, rebuild=)`(실행마다 첫 모델 호출 전에 한 번, 실행이 만들 인덱스에 대해 호출됨: `rebuild`(전체 구축이나 초기화)면 전부, 아니면 없는 것만. 저장소가 거부하는 설정이면 `StoreRequestRejectedError`를 발생시킴)의 기본 구현은 모두 받아들임. `VectorIndexer.read_vector_copies`의 기본값은 `{}`(증분 실행이 건드리는 항목을 모두 통째로 씀). `GraphIndexer.read_entities` / `read_relationships`의 기본값은 `[]`이므로, 재정의하지 않으면 델타 병합이 저장된 설명, 계보(`text_unit_ids`), 가중치를 덮어씀. `GraphIndexer.begin_rebuild` / `end_rebuild`(제자리 전체 구축, §5.2)의 기본값은 `False`(전체 구축이 레이블마다 먼저 지움). `initialize()`(기본값은 아무 작업 없음) / `clear()`는 `None`을 반환하고 실패하면 타입이 있는 저장소 예외(`StoreConnectionError`, `StoreConfigurationError` 등)를 발생시킴. `False`를 반환해도 무시됨. `in_process = True` 속성(인덱서와 레지스트리)은 저장소가 이 프로세스에 내장되어 있다는 뜻이며, 셋 모두 그렇다고 할 때만 중지된 실행이 임대를 바로 반납함(속성이 없으면 원격) | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`(호출마다 새 인스턴스, 호출한 쪽이 닫음), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)`(빌려 씀: 파이프라인이 닫지 않음) 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)`(`IndexingManager.close()`가 닫음, §8.2) |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`. 증분 조회(`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`)의 기본 구현은 "알 수 없음"(`None`: 이를 통해 찾는 것이 없고 병합은 이름을 모두 읽음)과 아무것도 지우지 않음. 추출 레코드 저장소(`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, 레코드 키 기준)의 기본 구현은 아무것도 보관하지 않음(`{}`: 모든 텍스트 단위를 추출하고 아무것도 저장하지 않음)이며, `stored_extraction_record_keys`의 기본값은 `read_extraction_records`가 반환하는 키. `VectorIndexer.check_index_creation(suffix, rebuild=)`(실행마다 첫 모델 호출 전에 한 번, 실행이 만들 인덱스에 대해 호출됨: `rebuild`(전체 구축이나 초기화)면 전부, 아니면 없는 것만. 저장소가 거부하는 설정이면 `StoreRequestRejectedError`를 발생시킴)의 기본 구현은 모두 받아들임. `VectorIndexer.read_vector_copies`의 기본값은 `{}`(증분 실행이 건드리는 항목을 모두 통째로 씀). `GraphIndexer.read_entities` / `read_relationships`의 기본값은 `[]`이므로, 재정의하지 않으면 델타 병합이 저장된 설명, 계보(`text_unit_ids`), 가중치를 덮어씀. `GraphIndexer.begin_rebuild` / `end_rebuild`(제자리 전체 구축, §5.2)의 기본값은 `False`(전체 구축이 레이블마다 먼저 지움). `initialize()`(기본값은 아무 작업 없음) / `clear()`는 `None`을 반환하고 실패하면 타입이 있는 저장소 예외(`StoreConnectionError`, `StoreConfigurationError` 등)를 발생시킴. `False`를 반환해도 무시됨. `in_process = True` 속성(인덱서와 레지스트리)은 저장소가 이 프로세스에 내장되어 있다는 뜻이며, 셋 모두 그렇다고 할 때만 중지된 실행이 임대를 바로 반납함(속성이 없으면 원격) | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용. `sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchIndexer` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`(호출마다 새 인스턴스, 호출한 쪽이 닫음), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)`(빌려 씀: 파이프라인이 닫지 않음) 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)`(`IndexingManager.close()`가 닫음, §8.2) |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve`. 문서 리트리버는 `SearchQuery.exclude`를 지켜야 합니다(일치하는 것을 페이지를 자르기 전에 뺌: 필터 걷기의 관계 페이지가 이에 기댐). `aindex_limits(prefix, suffix)`(검색 한 번이 돌려주는 결과 수와 `terms` 절 하나가 받는 값 수)의 기본값은 설정된 `index_settings`이므로, 실제 인덱스의 한도가 더 작을 수 있는 백엔드는 이를 재정의합니다. 전략은 보내는 목록을 모두 이 한도에 맞춥니다(ID 조회는 `IndexLimits.id_batch_size`개씩, 걷기 프런티어와 제외 목록은 `max_terms_count`개 이하로, 배치는 한 번에 최대 `search.max_concurrency`개). 따라서 `aretrieve`는 검색을 한도에서 잘라도 되고 직접 배치로 나눌 필요가 없습니다 | `OpenSearchRetriever` / `NeptuneRetriever`(`sqlite`: `SQLiteSearchEngine` 위의 `OpenSearchRetriever` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)`가 `GuardVerdict`(`none` / `masked` / `blocked`, 이어서 쓸 텍스트)를 반환. 판정할 수 없으면 예외를 냄 | `BedrockGuardrail`(`aws.bedrock.guardrail.identifier`를 지정하면 생성) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff`(`extraction_fingerprint`를 받고 `DocumentDelta.quarantined_unchanged`를 채워야 함), `record_fits`, 쓰기 임대(`try_acquire_lease` / `lease_holder` / `release_lease`), 범위의 마지막 추출 설정(`get_extraction_settings` / `put_extraction_settings`). 모두 직접 호출합니다. 레코드의 네임스페이스는 `doc_id`의 `<namespace>#` 접두사이고(`doc_id_namespace`), 범위를 준 `diff`는 그 네임스페이스만 읽습니다. 상속하면 `get_many` / `put_many` / `record_fits` 기본 구현(호출마다 레코드 하나, 크기 한도 없음)을 물려받습니다 | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
@@ -1027,6 +1041,11 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 class MyLLMFactory:                       # structurally an LLMFactoryPort
     def get_model(self, model_id, **kwargs): ...   # returns a LangChain chat model
     def get_model_info(self, model_id): ...        # returns a LanguageModelInfo
+    # Optional hooks (defaults: adapters.llm.retry.looks_transient /
+    # looks_like_item_error; no query-chain retry without transient_retry):
+    def is_transient_error(self, exc): ...         # retry this error?
+    def is_item_error(self, exc): ...              # the document's own error?
+    transient_retry = TransientRetryConfig()       # query-chain retry policy
 
 chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```

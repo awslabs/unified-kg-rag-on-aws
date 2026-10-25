@@ -58,7 +58,11 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded
+from unified_kg_rag.shared.utils.concurrency import (
+    discard,
+    gather_bounded,
+    gather_or_cancel,
+)
 from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
@@ -318,7 +322,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     )
                     return []
                 try:
-                    found = await asyncio.gather(*search_tasks)
+                    found = await gather_or_cancel(search_tasks)
                 except ConfigurationError as e:
                     if attempt or not _beyond_index_limits(e):
                         raise
@@ -1080,7 +1084,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     alias,
                 )
                 return []
-        outcomes = await asyncio.gather(*searches)
+        outcomes = await gather_or_cancel(searches)
         responses: list[list[dict[str, Any]]] = []
         for outcome in outcomes:
             if isinstance(outcome, Exception):

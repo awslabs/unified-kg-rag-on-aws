@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
+    item_failed_indices,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -190,8 +191,12 @@ class ClaimExtractor(BaseProcessor):
         )
         self.stats.item_failed_text_unit_ids.extend(
             units_to_process[idx].id
-            for idx, error in sorted(errors.items())
-            if self.is_item_error(error)
+            for idx in item_failed_indices(
+                errors,
+                [unit.document_ids for unit in units_to_process],
+                self.is_item_error,
+                "Claim extraction",
+            )
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
         self.stats.total_processing_time = time.time() - start_time

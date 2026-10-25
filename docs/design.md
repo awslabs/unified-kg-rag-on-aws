@@ -369,9 +369,12 @@ gets its models and stores from the run's `Providers` bundle.
   differently typed names; the incremental merge uses the same matcher, so
   full and incremental builds group the same names.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
-  re-summarizes those over a token budget with a cheap model (MS GraphRAG
-  `summarize_descriptions` / LightRAG parity; map-reduce when one exceeds a
-  call's input); a failed call keeps the concatenation.
+  re-summarizes those over a token budget with a cheap model (map-reduce when
+  one exceeds a call's input); a failed call keeps the concatenation. The
+  trigger is a cost variant of upstream, not parity: MS GraphRAG
+  `summarize_descriptions` summarizes every item with more than one
+  description and LightRAG also at `force_llm_summary_on_merge` (8)
+  fragments; here only the token budget triggers it.
 
 ### 4.3 Communities (stages 10-11)
 
@@ -610,9 +613,12 @@ whose processing kills the task would stop every later run the same way.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
   delta names a document whose record is gone, holds other content, reached
   the limit or was written by another pipeline id since (`written_by`; a
-  record written before the field has none and counts unless it is
-  `PROCESSED`), or deletes a document another pipeline id has recorded in
-  another scope since, resumes from document_loading instead. A resume past
+  record written before the field has none and counts as another pipeline
+  id's unless it is `PROCESSED` without an open attempt, and even then when
+  it was committed under other extraction settings for a document the delta
+  re-extracts for a settings change), or deletes a document another
+  pipeline id (or a record without a writer) has recorded in another scope
+  since, resumes from document_loading instead. A resume past
   a stage that recorded failed text units starts at that stage, so the units
   are retried rather than recorded `FAILED` again; a reset resumed past the
   stages that store extraction records starts at the first whose records
@@ -826,6 +832,9 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
+  - The action local searches pack their context by the local type shares
+    (`search.token_manager.type_budgets`, text 0.5), not MS GraphRAG's DRIFT
+    `local_search_text_unit_prop` 0.9 / `local_search_community_prop` 0.1.
   - The primer searches reports of every depth, not MS GraphRAG's one
     `community_level`, so similarity picks the granularity (on a synthetic
     six-hop corpus a depth-2 cut answered 16 of 21 sub-questions, every depth
@@ -852,11 +861,13 @@ above it (`depth <= D <= max_cut_depth`), MS GraphRAG's roll-up that covers
 every entity once; MS GraphRAG counts `community_level` from the root, so the
 depth selects the cut.
 
-- **Fixed cut (default)** — the cut is browsed by rank, one report more than
-  the cap (`max_reports_per_level`, at most `max_query_size` - 1, and the
-  live `max_result_window` - 1, so the probe fits one request) so a cut of exactly the cap is complete. A larger cut
-  gives way to the deepest shallower cut that fits (`global_cut_depth`), covering the same entities in broader
-  reports. Only when even the root cut does not fit does a hybrid search,
+- **Fixed cut (default)** — every report of the cut is mapped, up to a cap:
+  the cut is browsed by rank, one report more than the cap
+  (`max_reports_per_level`, at most `max_query_size` - 1, and the live
+  `max_result_window` - 1, so the probe fits one request; 99 by default) so a
+  cut of exactly the cap is complete. A larger cut gives way to the deepest
+  shallower cut that fits (`global_cut_depth`), covering the same entities in
+  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
   The cap counts reports, which bounds the map calls.
@@ -864,11 +875,14 @@ depth selects the cut.
   `DynamicCommunitySelection`: rate the root reports for relevance, follow
   the children of the relevant ones to the leaves, and rate the whole next
   depth when a depth yields none, down to `community_depth` (MS GraphRAG's
-  `max_level`, which bounds only this fallback). Ratings run
+  `max_level`, which bounds only this fallback). The walk starts at the roots
+  as upstream's does but follows relevant reports to the leaves, where
+  upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time.
 
-**Map-reduce.** At least `map_reduce_min_results` reports are packed into
-batches of `map_context_tokens` (MS GraphRAG's `data_max_tokens`); each map
+**Map-reduce.** At least `map_reduce_min_results` reports are packed, in rank
+order (MS GraphRAG shuffles them), into batches of `map_context_tokens` (MS
+GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
@@ -894,14 +908,17 @@ Dual-level keyword retrieval (`KeywordsExtractionPrompt` extracts high- and
 low-level keywords) on the shared hybrid infrastructure:
 
 - **naive** — chunks only, no graph, under the request's `search_type`
-  (`hybrid`: BM25 + vector by default; `vector` is upstream's baseline).
+  (`hybrid`: BM25 + vector by default; `vector` approximates upstream's
+  baseline and MS GraphRAG's `basic` search).
 - **hybrid** — low-level keywords → entity index, high-level keywords →
   relationship index (LightRAG's `relationships_vdb`), one-hop expansion
   (entity hits → incident relationships, relationship hits → endpoint
   entities), and the chunks those items cite.
 - **mix** — hybrid plus the source chunks the matched entities and
-  relationships cite (ranked by how many matched items cite each, as
-  LightRAG's `_find_related_text_unit_*`) and a naive chunk retrieval.
+  relationships cite (LightRAG's `_find_related_text_unit_*` with its `WEIGHT`
+  method: weighted polling, every matched item at least one chunk, without
+  upstream's per-item sort by how many matched items cite a chunk; upstream's
+  default `VECTOR` method is not implemented) and a naive chunk retrieval.
 
 The independent queries run concurrently, then the expansions, then the cited
 chunks. Short queries without keywords use the raw query as low-level
@@ -928,7 +945,10 @@ traversal, hence graph expansion is opt-in.
   to the types that still have candidates (first to the strategy's
   `spare_context_budget_first` types, as LightRAG gives chunks what its graph
   sections leave), so shares, never cross-type score comparisons, decide the
-  mix. Synthesized global sections are seated first. `RAGOutput.sources` is
+  mix. The shares are of `max_context_tokens`, not upstream's numbers: at
+  30000, LightRAG mix/hybrid get text 18072, entities 7228 and relationships
+  4698 tokens (upstream: about 16000 / 6000 / 8000). Synthesized global
+  sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
   truncated text included.
 - **Token counting** (`adapters/aws/token_counter.py`,
@@ -1207,9 +1227,9 @@ dispatch edit. The ports, their default adapters and the local ones (the
 
 | Port | Contract | Default adapter (local adapters) | Inject via |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | `providers=` (below) on `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`; `GraphRAGChain(model_factory=...)` is an LLM-only bundle |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model; optional LLM-factory hooks: `is_transient_error(exc)` (which errors the ingestion batches retry; default `adapters.llm.retry.looks_transient`: network errors, HTTP 408/429/5xx), `is_item_error(exc)` (which errors count against a document, `indexing.max_document_failures`; default `looks_like_item_error`: HTTP 400/413/422 other than a rejected model or setting, read from `status_code` or `response.status_code`) and `transient_retry` (a `TransientRetryConfig`: with `is_transient_error`, query chains are retried under it) | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | `providers=` (below) on `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`; `GraphRAGChain(model_factory=...)` is an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; the extraction-record store (`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, by record key) defaults to keeping none (`{}`: every text unit is extracted, nothing is stored), and `stored_extraction_record_keys` to the keys `read_extraction_records` returns; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve`; a document retriever must honour `SearchQuery.exclude` (leave out what it matches before the page is cut: the filtered walk's edge pages rely on it); `aindex_limits(prefix, suffix)` (the hits one search returns, the values one `terms` clause takes) defaults to the configured `index_settings`, so a backend whose live limits can be smaller overrides it; the strategies size every list they send by it (fetches by id in batches of `IndexLimits.id_batch_size`, walk frontiers and exclusions by `max_terms_count`, at most `search.max_concurrency` batches at once), so `aretrieve` may cut a search to its limits and need not batch | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source)` returning a `GuardVerdict` (`none` / `masked` / `blocked`, the text to continue with); raises when it cannot decide | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) and a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
@@ -1227,6 +1247,11 @@ shapes:
 class MyLLMFactory:                       # structurally an LLMFactoryPort
     def get_model(self, model_id, **kwargs): ...   # returns a LangChain chat model
     def get_model_info(self, model_id): ...        # returns a LanguageModelInfo
+    # Optional hooks (defaults: adapters.llm.retry.looks_transient /
+    # looks_like_item_error; no query-chain retry without transient_retry):
+    def is_transient_error(self, exc): ...         # retry this error?
+    def is_item_error(self, exc): ...              # the document's own error?
+    transient_retry = TransientRetryConfig()       # query-chain retry policy
 
 chain = GraphRAGChain(config=cfg, model_factory=MyLLMFactory())
 ```

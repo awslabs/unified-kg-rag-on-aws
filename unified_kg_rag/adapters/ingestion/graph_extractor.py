@@ -3,7 +3,6 @@
 import time
 from typing import Any
 
-from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -11,8 +10,8 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     setup_chain,
 )
 from unified_kg_rag.adapters.llm.retry import (
-    error_signature,
     item_error_predicate,
+    item_failed_indices,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -33,7 +32,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils import ensure_list, entity_key
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
@@ -201,20 +199,15 @@ class GraphExtractor(BaseProcessor):
             return [], self.stats
 
         records = self._process_extraction_results(text_units, extraction_results)
-        if self._one_cause_failed_documents(text_units, errors):
-            logger.warning(
-                "Every text unit of %s documents failed with the same error "
-                "(%s): taken for a model or configuration failure, counted "
-                "against none of them",
-                len({d for unit in text_units for d in unit.document_ids or []}),
-                errors[0],
+        self.stats.item_failed_text_unit_ids.extend(
+            text_units[idx].id
+            for idx in item_failed_indices(
+                errors,
+                [unit.document_ids for unit in text_units],
+                self.is_item_error,
+                "Graph extraction",
             )
-        else:
-            self.stats.item_failed_text_unit_ids.extend(
-                text_units[idx].id
-                for idx, error in sorted(errors.items())
-                if self.is_item_error(error)
-            )
+        )
 
         self.stats.total_entities_extracted = sum(len(r.entities) for r in records)
         self.stats.total_relationships_extracted = sum(
@@ -225,25 +218,6 @@ class GraphExtractor(BaseProcessor):
         self._log_completion_summary(self.stats)
 
         return records, self.stats
-
-    @staticmethod
-    def _one_cause_failed_documents(
-        text_units: list[TextUnit], errors: dict[int, BaseException]
-    ) -> bool:
-        """Whether the model rejected every unit, of more than one document,
-        with the same error: one cause (a setting it rejects) rather than each
-        document's own, so none is counted against a document. A single
-        document that always fails, and output that does not parse or was cut
-        off, are still counted."""
-        documents = {d for unit in text_units for d in unit.document_ids or []}
-        return (
-            len(documents) > 1
-            and len(errors) == len(text_units)
-            and len({error_signature(error) for error in errors.values()}) == 1
-            and not isinstance(
-                errors[0], OutputParserException | LLMOutputTruncatedError
-            )
-        )
 
     @staticmethod
     def _format_entity_types(entity_types: list[str]) -> str:

@@ -218,7 +218,9 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 - **Embeddings.** A non-Bedrock provider needs `models.embedding.model_id`
   and `dimension`. The dimension is fixed into the vector mappings, so
   changing either needs a full re-index; another model than `bge-m3` needs its
-  own dimension.
+  own dimension. The local providers trust the configured dimension (it is
+  not checked against the model at start): a wrong value fails at the first
+  vector write or search.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on
   the first query. Without the `[local]` extra (or with `kind: none`) queries
   keep the fused order, logged once and reported as
@@ -765,7 +767,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 |---|---|---|
 | `mix` | General LightRAG use | Low-level keywords → entity index, high-level keywords → relationship index, one-hop expansion to incident relationships and endpoint entities (Neptune multi-hop is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | `mix` without the naive chunk blend. |
-| `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` reproduces upstream LightRAG's pure-vector baseline. |
+| `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` approximates upstream LightRAG's pure-vector baseline, and MS GraphRAG's `basic` search. |
 
 `mix` and `hybrid` read the relationships index ingestion builds; a short
 query that yields no keywords is used as a low-level keyword itself (up to
@@ -909,7 +911,8 @@ Interactive mode turns memory on. Commands: `help`, `new` (a fresh
 conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 `quit` / `exit`. A command is the whole line (only `set-filter` takes an
 argument): `help me find ...` is a question. `set-filter` refuses a key no
-index of the search strategy declares, as `--filters` does.
+index of the search strategy declares, as `--filters` does (with
+`--interactive`, before the first question: exit code 2).
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):
@@ -1606,7 +1609,10 @@ Flags must be spelled out in full: a prefix such as `--output` is rejected.
 banner, progress and logs to stderr, so the output pipes into `jq` (not with
 `--metrics-sink cloudwatch`, which also writes to stdout): the answer or
 search results (`run-rag`), the pipeline id, status, the number of documents
-the run recorded `FAILED` (`failed_documents`; a model outage records none) and per-stage
+the run recorded `FAILED` (`failed_documents`; a model outage that fails
+every unit records none, one that fails some units records their documents,
+retried by the next run without counting toward
+`indexing.max_document_failures`) and per-stage
 results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written

@@ -833,6 +833,8 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- CI: the dependency license check runs on Python 3.10 as well as 3.12,
+  so packages the lock installs on 3.10 only are checked too (#428).
 - `run-ingestion --output-format json` reports `failed_documents`, the
   number of documents a stage failed on (recorded `FAILED`), and the summary
   table a "Documents Failed" row (#420).
@@ -1355,6 +1357,43 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Documentation: the upstream-fidelity notes state where behaviour differs
+  from MS GraphRAG and LightRAG instead of claiming parity: the
+  description-summary trigger (a cost variant), global search's report cap
+  and rank-order batching, dynamic selection descending to the leaves,
+  DRIFT actions packing by the local type shares, LightRAG budgets as
+  shares of `max_context_tokens`, LightRAG chunk picking without the
+  per-hit occurrence sort (and no `VECTOR` method), `naive --search-type
+  vector` approximating upstream's baselines (MS GraphRAG `basic` included),
+  and the local providers trusting the configured embedding dimension
+  (#428).
+- `run-rag --interactive --filters ...` checks the filters before the
+  first question and exits 2 on a key no index of the search strategy
+  declares, as a single `--query` does; the key failed every question of
+  the session (#428).
+- A fatal error in one OpenSearch search of a query (one index's, or one
+  half of an index's lexical + kNN pair) cancels the searches running
+  beside it, which kept sending requests after the query had failed
+  (`gather_or_cancel`, as for the parts of a local or LightRAG search)
+  (#428).
+- Incremental indexing: a custom language-model factory without an
+  `is_item_error` hook counts a request its server rejects for its content
+  (HTTP 400/413/422 in `status_code` or `response.status_code`, other than
+  a rejected model or setting) against the document, as the local factories
+  do, instead of counting only unparseable or cut-off output; a document
+  such a model always rejects is excluded after
+  `indexing.max_document_failures` runs again, rather than failing every
+  run of its delta. The optional factory hooks (`is_transient_error`,
+  `is_item_error`, `transient_retry`) are documented in design §15 (#428).
+- Incremental indexing: one error on every unit of several documents counts
+  for none of them in claim extraction and gleaning too, as it did in graph
+  extraction (`adapters.llm.retry.item_failed_indices`), so a setting the
+  model rejects there no longer excludes a whole delta after
+  `indexing.max_document_failures` runs. The Bedrock and local
+  configuration patterns also name a requested maximum token count above
+  the model's limit (`maximum tokens ...`, `max_tokens: X > Y`),
+  `temperature` and `top_p` set together, and an extraneous request key
+  (#428).
 - Upgrade window: a resumed or rerun pipeline id no longer deletes another
   source scope's live documents when a run of a release before
   `written_by` re-indexed them in that scope; a record naming no writer now
@@ -1380,7 +1419,9 @@ changed once with the full-config keys (#332).
 - An OpenSearch cluster that accepts connections but never answers fails
   the store preflight after about a minute instead of 18: the connection
   check that opens the indexing client waited the indexing request timeout
-  (180 s) on each of its 6 attempts and now waits 10 s (#426).
+  (180 s) on each of its 6 attempts and now waits 10 s (#426). So does the
+  cluster-info request after it, for a cluster that answers the ping only
+  (#428).
 - A reset pipeline id run again checks that the extraction records its
   text units name are still stored by reading their ids only
   (`VectorIndexer.stored_extraction_record_keys`); it read every record
@@ -1400,8 +1441,7 @@ changed once with the full-config keys (#332).
   `ValidationException`, HTTP 400/413/422 from a local server) other than a
   rejection of the model or a setting, and not one error that failed every
   unit of several documents. The language-model factories name these
-  (`is_item_error`, next to `is_transient_error`); a custom factory without
-  one has only the output failures counted. Graph extraction, gleaning and
+  (`is_item_error`, next to `is_transient_error`). Graph extraction, gleaning and
   claim extraction are classified; any other failure (translation, a
   report, a record not stored) is recorded `FAILED` without counting (#425).
 - Incremental indexing: the refusal to run a finished pipeline id again on

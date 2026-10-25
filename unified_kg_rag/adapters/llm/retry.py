@@ -14,7 +14,7 @@ import asyncio
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TypeVar
 
 from langchain_core.exceptions import OutputParserException
@@ -78,8 +78,8 @@ _ITEM_HTTP_STATUSES = frozenset({400, 413, 422})
 _CONFIGURATION_MESSAGE = re.compile(
     r"invalid model|model\W.{0,80}not (found|exist)|model_not_found|not supported"
     r"|unsupported|does not support|not permitted|unknown (parameter|field|argument)"
-    r"|unrecognized|extra (inputs|fields)|max_tokens.{0,3} is too large|api.?key"
-    r"|quota",
+    r"|unrecognized|extra (inputs|fields)|extraneous key|cannot both"
+    r"|max_tokens.{0,3} is too large|max_tokens\W{0,3}\d+ ?>|api.?key|quota",
     re.IGNORECASE,
 )
 
@@ -88,7 +88,8 @@ def looks_like_item_error(exc: BaseException) -> bool:
     """Whether the server rejected the item's own request: HTTP 400/413/422
     (``status_code`` or ``response.status_code``) other than a rejection of
     the model or its settings (an unknown model, an unsupported parameter),
-    which fails every item alike. The local factories' ``is_item_error``."""
+    which fails every item alike. The local factories' ``is_item_error``, and
+    the classifier of a factory without one."""
     return _http_status(exc) in _ITEM_HTTP_STATUSES and not (
         _CONFIGURATION_MESSAGE.search(str(exc))
     )
@@ -100,17 +101,19 @@ def item_error_predicate(factory: object) -> ItemErrorPredicate:
 
     Positive only: a response that does not parse (``OutputParserException``)
     or was cut off (``LLMOutputTruncatedError``), or an error the factory's
-    ``is_item_error`` names (a request the model rejects for its content).
-    Any other error (throttling, 5xx, timeouts, connections, credentials,
-    quotas, a bug) says nothing about the item and counts for none; a factory
-    without ``is_item_error`` has only the two output failures counted.
+    ``is_item_error`` names (a request the model rejects for its content),
+    else :func:`looks_like_item_error`, so a custom backend's HTTP 400/413/422
+    counts without naming its error types. Any other error (throttling, 5xx,
+    timeouts, connections, credentials, quotas, a bug) says nothing about the
+    item and counts for none.
     """
     hook: ItemErrorPredicate | None = getattr(factory, "is_item_error", None)
+    named = hook if hook is not None else looks_like_item_error
 
     def is_item_error(exc: BaseException) -> bool:
         if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
             return True
-        return hook is not None and isinstance(exc, Exception) and hook(exc)
+        return isinstance(exc, Exception) and named(exc)
 
     return is_item_error
 
@@ -119,6 +122,41 @@ def error_signature(exc: BaseException) -> tuple[str, str, int | None, str]:
     """The type, error code, HTTP status and message of ``exc``: errors alike
     in all four are taken for one cause."""
     return type(exc).__name__, _error_code(exc), _http_status(exc), str(exc)
+
+
+def item_failed_indices(
+    errors: Mapping[int, BaseException],
+    document_ids: Sequence[Sequence[str] | None],
+    is_item_error: ItemErrorPredicate,
+    task: str,
+) -> list[int]:
+    """The indices, of a batch of items whose documents are ``document_ids``,
+    whose ``errors`` count against their document (``is_item_error``).
+
+    Empty when the model rejected every item, of more than one document, with
+    the same error (:func:`error_signature`): one cause, a setting it rejects,
+    rather than each document's own. A single document that always fails, and
+    output that does not parse or was cut off, are still counted.
+    """
+    documents = {d for ids in document_ids for d in ids or []}
+    signatures = {error_signature(error) for error in errors.values()}
+    first = next(iter(errors.values()), None)
+    if (
+        len(documents) > 1
+        and len(errors) == len(document_ids)
+        and len(signatures) == 1
+        and not isinstance(first, OutputParserException | LLMOutputTruncatedError)
+    ):
+        logger.warning(
+            "%s: every item of %s documents failed with the same error (%s): "
+            "taken for a model or configuration failure, counted against none "
+            "of them",
+            task,
+            len(documents),
+            first,
+        )
+        return []
+    return [idx for idx, error in sorted(errors.items()) if is_item_error(error)]
 
 
 def transient_error_predicate(factory: object) -> TransientErrorPredicate:

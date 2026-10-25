@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
+    item_failed_indices,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -362,8 +363,12 @@ class GraphGleaner(BaseProcessor):
             results = [BATCH_ITEM_FAILED] * len(prepared_units)
         self._item_failed_unit_ids.update(
             prepared_units[idx].id
-            for idx, error in errors.items()
-            if self.is_item_error(error)
+            for idx in item_failed_indices(
+                errors,
+                [unit.document_ids for unit in prepared_units],
+                self.is_item_error,
+                "Graph refinement",
+            )
         )
 
         for unit, result_data in zip(prepared_units, results, strict=True):

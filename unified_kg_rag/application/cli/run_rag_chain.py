@@ -292,9 +292,18 @@ class RAGChainRunner:
         )
         console.print("---")
 
+        filters = self._parse_filters(self.args.filters)
+        # An undeclared key failed every question of the session.
+        if filters and self.rag_chain is not None:
+            try:
+                self.rag_chain.check_filter_keys(
+                    filters, SearchStrategy(self.args.search_strategy)
+                )
+            except InvalidFilterError as e:
+                usage_error(f"--filters: {e}")
         state = {
             "conversation_id": self.args.conversation_id or str(uuid.uuid4()),
-            "filters": self._parse_filters(self.args.filters) or {},
+            "filters": filters or {},
         }
 
         while True:
