@@ -115,6 +115,40 @@ _LOCAL_NOT_ITEM = [
 ]
 
 
+# One message per phrase of the two configuration patterns, each matching
+# that phrase alone: a setting the request names, not the item's text.
+_BEDROCK_CONFIGURATION_MESSAGES = [
+    "The provided model identifier is invalid.",
+    "Invocation of model ID vendor.model-v1 with on-demand throughput is unavailable.",
+    "Retry your request with the ID or ARN of an inference profile.",
+    "temperature: Extra inputs are not permitted",
+    "The requested operation is not supported for this model.",
+    "Streaming isn't supported for this model.",
+    "Unsupported parameter: top_k",
+    "This model doesn't support tool use.",
+    "Malformed input request: #/messages: expected type: JSONArray",
+    "The guardrail identifier or version provided in the request does not exist.",
+    "This model version has reached the end of its life.",
+    "This model version is marked Legacy by the provider.",
+    "You don't have access to the model with the specified model ID.",
+]
+_LOCAL_CONFIGURATION_MESSAGES = [
+    "Invalid model name",
+    "model 'llama3:70b' not found, try pulling it first",
+    "{'code': 'model_not_found'}",
+    "logprobs are not supported with this backend",
+    "Unsupported parameter: 'top_k'",
+    "This model does not support image input",
+    "setting seed is not permitted on this server",
+    "unknown field: top_k",
+    "Unrecognized request argument supplied: functions",
+    "1 validation error: extra fields not allowed: 'seed'",
+    "max_tokens is too large: 9000",
+    "Invalid API key provided",
+    "You exceeded your current quota",
+]
+
+
 def _ids(errors: list[BaseException]) -> list[str]:
     return [f"{type(e).__name__}:{str(e)[:30]}" for e in errors]
 
@@ -147,6 +181,43 @@ def test_local_factories_count_their_item_errors_only(factory_cls: Any) -> None:
     assert all(predicate(e) for e in [*_OUTPUT_ERRORS, *_LOCAL_ITEM])
     counted = [e for e in [*_NOT_ITEM_ERRORS, *_LOCAL_NOT_ITEM] if predicate(e)]
     assert counted == []
+
+
+@pytest.mark.parametrize("message", _BEDROCK_CONFIGURATION_MESSAGES)
+def test_bedrock_counts_no_validation_error_of_a_setting(message: str) -> None:
+    factory = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
+    predicate = item_error_predicate(factory)
+    assert predicate(_bedrock("ValidationException", 400, "Input is too long."))
+    assert not predicate(_bedrock("ValidationException", 400, message))
+
+
+@pytest.mark.parametrize("message", _LOCAL_CONFIGURATION_MESSAGES)
+@pytest.mark.parametrize(
+    "factory_cls", [OllamaLanguageModelFactory, OpenAICompatibleLanguageModelFactory]
+)
+def test_local_factories_count_no_rejected_setting(
+    factory_cls: Any, message: str
+) -> None:
+    predicate = item_error_predicate(factory_cls(Config()))
+    assert predicate(_openai(openai.BadRequestError, 400, "input rejected"))
+    assert not predicate(_openai(openai.BadRequestError, 400, message))
+    assert not predicate(ollama.ResponseError(message, 400))
+
+
+@pytest.mark.parametrize(
+    ("status", "counted"), [(400, True), (413, True), (500, False)]
+)
+def test_local_factories_read_the_status_of_the_response(
+    status: int, counted: bool
+) -> None:
+    # httpx.HTTPStatusError carries no status_code of its own: the status is
+    # read from its response, as for the transient classification.
+    error = httpx.HTTPStatusError(
+        "rejected", request=_REQUEST, response=httpx.Response(status, request=_REQUEST)
+    )
+    assert not hasattr(error, "status_code")
+    predicate = item_error_predicate(OpenAICompatibleLanguageModelFactory(Config()))
+    assert predicate(error) is counted
 
 
 def test_a_factory_without_a_classifier_counts_output_errors_only() -> None:
