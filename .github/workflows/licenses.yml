@@ -19,8 +19,14 @@ jobs:
     # Fail on copyleft, source-available or unlabeled licenses among the
     # runtime dependencies of every extra (dev tools are not redistributed).
     # Reviewed exceptions are listed in .github/scripts/check_licenses.py.
+    # On the oldest and newest Python the lock resolves for: some packages
+    # (backports, older pins) are installed on 3.10 only.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -28,7 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.23"
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Sync every extra
         run: uv sync --locked --all-extras --no-dev --no-install-project

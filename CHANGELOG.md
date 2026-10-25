@@ -833,6 +833,8 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- CI: the dependency license check runs on Python 3.10 as well as 3.12,
+  so packages the lock installs on 3.10 only are checked too (#PR).
 - `run-ingestion --output-format json` reports `failed_documents`, the
   number of documents a stage failed on (recorded `FAILED`), and the summary
   table a "Documents Failed" row (#420).
