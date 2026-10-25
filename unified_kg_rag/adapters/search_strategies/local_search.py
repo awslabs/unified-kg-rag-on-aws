@@ -23,14 +23,9 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
-
-
-def _consume_outcome(future: asyncio.Future[Any]) -> None:
-    """Mark an abandoned future's exception as retrieved."""
-    if not future.cancelled():
-        future.exception()
 
 
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
@@ -59,22 +54,22 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # units (+ claims). The community-report, relationship and claim
         # sections are queried from the entity focus alone, so they run
         # concurrently with the entity -> graph -> text-unit chain below
-        # instead of waiting for it.
-        side_sections = asyncio.gather(
-            self._retrieve_community_reports(query),
-            self._retrieve_relationships(query),
-            self._retrieve_claims(query),
+        # instead of waiting for it; the first error cancels the others.
+        reports_task, relationships_task, claims_task = (
+            asyncio.ensure_future(section)
+            for section in (
+                self._retrieve_community_reports(query),
+                self._retrieve_relationships(query),
+                self._retrieve_claims(query),
+            )
         )
-        try:
-            all_results, chain_stats = await self._retrieve_entity_chain(query)
-        except BaseException:
-            side_sections.cancel()
-            # A side section may already have failed (a missing index fails
-            # them all): consume its outcome so it is not logged later as
-            # "exception was never retrieved"; the chain's error is raised.
-            side_sections.add_done_callback(_consume_outcome)
-            raise
-        community_reports, relationships, claims = await side_sections
+        chain_task = asyncio.ensure_future(self._retrieve_entity_chain(query))
+        tasks = [reports_task, relationships_task, claims_task, chain_task]
+        await gather_or_cancel(tasks)
+        all_results, chain_stats = chain_task.result()
+        community_reports = reports_task.result()
+        relationships = relationships_task.result()
+        claims = claims_task.result()
 
         # The community-report and relationship sections give a local query the
         # higher-level community synthesis and the relationship descriptions,
@@ -187,11 +182,16 @@ class LocalSearchStrategy(BaseSearchStrategy):
             )
 
         # Both lookups depend only on the expansion, so they run together.
-        text_units, bridge_relationships = await asyncio.gather(
-            text_units_of_quota(),
+        text_units_task = asyncio.ensure_future(text_units_of_quota())
+        bridges_task = asyncio.ensure_future(
             self._retrieve_bridge_relationships(
                 query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
-            ),
+            )
+        )
+        await gather_or_cancel([text_units_task, bridges_task])
+        text_units, bridge_relationships = (
+            text_units_task.result(),
+            bridges_task.result(),
         )
         all_results = {"graph_entities": filtered_entity_nodes, **text_units}
         if bridge_relationships:

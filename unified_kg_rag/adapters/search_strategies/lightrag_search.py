@@ -24,7 +24,6 @@ and caching as the GraphRAG strategies — only the retrieval algorithm differs.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -50,6 +49,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
 
@@ -357,7 +357,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             first_round.append(self._retrieve_relationships(query))
         if mode == SearchStrategy.MIX.value:
             first_round.append(self._retrieve_chunks(query))
-        for streams in await asyncio.gather(*first_round):
+        for streams in await gather_or_cancel(first_round):
             results.update(streams)
 
         entity_hits = results.get("lightrag_entities", [])
@@ -381,7 +381,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             second_round.append(
                 self._graph_expansion(query, entity_hits, relationship_hits)
             )
-        for streams in await asyncio.gather(*second_round):
+        for streams in await gather_or_cancel(second_round):
             results.update(streams)
 
         vector_chunk_ids = {

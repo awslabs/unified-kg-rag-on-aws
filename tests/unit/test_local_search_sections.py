@@ -436,3 +436,29 @@ async def test_failed_side_section_is_retrieved_when_the_entity_chain_fails(
     finally:
         loop.set_exception_handler(previous)
     assert unretrieved == []
+
+
+async def test_a_failed_section_cancels_the_entity_chain(config: Config) -> None:
+    # A side section's fatal error (a denied store) left the entity chain
+    # and its store requests running until the chain finished.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    strategy, _, _ = _make_strategy(config)
+    cancelled: list[str] = []
+
+    async def denied(*_args: object) -> list[RetrievalResult]:
+        raise StoreAccessDeniedError("denied")
+
+    async def slow_chain(*_args: object) -> object:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append("chain")
+            raise
+        return {}, {}
+
+    strategy._retrieve_claims = denied  # type: ignore[method-assign]
+    strategy._retrieve_entity_chain = slow_chain  # type: ignore[method-assign]
+    with pytest.raises(StoreAccessDeniedError):
+        await asyncio.wait_for(strategy.asearch(_query()), 2)
+    assert cancelled == ["chain"]

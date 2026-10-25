@@ -1355,6 +1355,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A fatal store error in one part of a local or LightRAG search (a section,
+  a stream, a wave of the relationship walk) cancels the parts running
+  beside it; they kept sending store requests until they finished, after
+  the query had already failed. DRIFT already did this; the helper is now
+  `shared.utils.concurrency.gather_or_cancel` (#PR).
 - `run-rag --interactive`: `set-filter` refuses a key no index of the
   search strategy declares (for `auto`, of any strategy it may route to)
   instead of keeping it, which failed every later question until

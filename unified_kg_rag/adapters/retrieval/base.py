@@ -41,7 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.common import compute_hash
-from unified_kg_rag.shared.utils.concurrency import gather_bounded
+from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -894,16 +894,14 @@ class BaseSearchStrategy(ABC):
                 for start in range(0, len(still_open), step):
                     wave = [v for v in still_open[start : start + step] if open_(v)]
                     room = sum(needed(v) for v in wave)
-                    pages = await asyncio.gather(
-                        *(
-                            passing(
-                                [v],
-                                # At most a page (_incident_relationships).
-                                max(dropped[e, v] for e in full) + room,
-                                full,
-                            )
-                            for v in wave
+                    pages = await gather_or_cancel(
+                        passing(
+                            [v],
+                            # At most a page (_incident_relationships).
+                            max(dropped[e, v] for e in full) + room,
+                            full,
                         )
+                        for v in wave
                     )
                     for vertex, (edges, _, _) in zip(wave, pages, strict=True):
                         take(edges, {vertex})

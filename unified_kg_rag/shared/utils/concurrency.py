@@ -56,6 +56,19 @@ async def cancel_on_exit(tasks: Sequence[asyncio.Future[Any]]) -> AsyncIterator[
         raise
 
 
+async def gather_or_cancel(aws: Iterable[Awaitable[_T]]) -> list[_T]:
+    """``asyncio.gather`` of ``aws`` (results in order) that cancels the
+    others, and waits for them, once one raises (or the caller is cancelled).
+
+    A plain gather raises the first error and leaves its siblings running:
+    their store requests and LLM calls kept spending after the query had
+    already failed.
+    """
+    tasks = [asyncio.ensure_future(aw) for aw in aws]
+    async with cancel_on_exit(tasks):
+        return list(await asyncio.gather(*tasks))
+
+
 async def gather_bounded(limit: int, aws: Iterable[Awaitable[_T]]) -> list[_T]:
     """``asyncio.gather`` of ``aws`` (results in order), at most ``limit``
     of them awaited at once: the batches of one search, so a long list does

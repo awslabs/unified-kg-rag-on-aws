@@ -1357,3 +1357,33 @@ async def test_linked_chunks_keep_their_selection_order(config: Config) -> None:
     chunks = linked["lightrag_linked_chunks"]
     assert [r.source for r in chunks] == ["t-c", "t-a", "t-b"]
     assert [r.score for r in chunks] == sorted((r.score for r in chunks), reverse=True)
+
+
+async def test_a_failed_stream_cancels_the_streams_beside_it(config: Config) -> None:
+    # A plain gather raised the first stream's fatal error and left the
+    # others (their store requests) running.
+    from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
+
+    strategy, _, _ = _make_strategy(config)
+    cancelled: list[str] = []
+
+    async def denied(*_args: object) -> dict[str, list[RetrievalResult]]:
+        await asyncio.sleep(0.01)
+        raise StoreAccessDeniedError("denied")
+
+    async def slow(*_args: object) -> dict[str, list[RetrievalResult]]:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append("chunks")
+            raise
+        return {}
+
+    strategy._retrieve_entities = denied  # type: ignore[method-assign]
+    strategy._retrieve_chunks = slow  # type: ignore[method-assign]
+    with pytest.raises(StoreAccessDeniedError):
+        await strategy._retrieve_kg_streams(
+            _query(SearchStrategy.MIX, ll_keywords=["x"]), SearchStrategy.MIX.value
+        )
+    await asyncio.sleep(0)
+    assert cancelled == ["chunks"]
