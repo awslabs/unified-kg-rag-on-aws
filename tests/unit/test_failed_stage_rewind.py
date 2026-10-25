@@ -102,3 +102,26 @@ def test_the_refusal_holds_when_an_enabled_stage_also_failed() -> None:
         "claim_extraction",
         DONE[: DONE.index("claim_extraction")],
     )
+
+
+def test_failures_of_stages_the_resume_neither_runs_nor_restores_are_dropped() -> None:
+    # A resume at graph_resolution with graph_resolution, the stage after
+    # claim_extraction and indexing enabled: graph_extraction is restored
+    # (before the start), so its failures stay; claim_extraction (after the
+    # start, not enabled) does not run, so its failures, own errors
+    # included, go; the enabled later stage keeps its own.
+    resolution, claims = "graph_resolution", "claim_extraction"
+    later = ORDER[ORDER.index(claims) + 1]
+    assert ORDER.index("graph_extraction") < ORDER.index(resolution)
+    assert ORDER.index(resolution) < ORDER.index(claims)
+    context = PipelineContext.model_construct(
+        failed_text_unit_ids={
+            "graph_extraction": ["u1"],
+            claims: ["u2"],
+            later: ["u3"],
+        },
+        item_failed_text_unit_ids={"graph_extraction": ["u1"], claims: ["u2"]},
+    )
+    _pipeline([resolution, later, "indexing"])._drop_unrun_failures(context, resolution)
+    assert context.failed_text_unit_ids == {"graph_extraction": ["u1"], later: ["u3"]}
+    assert context.item_failed_text_unit_ids == {"graph_extraction": ["u1"]}

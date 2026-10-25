@@ -14,6 +14,8 @@ and a run that stopped cleanly count nothing.
 from __future__ import annotations
 
 import functools
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -828,3 +830,69 @@ def test_a_quarantined_document_restored_after_an_interrupted_removal() -> None:
     assert (record.status, record.text_unit_ids) == (DocStatus.QUARANTINED, [])
     assert harness.extracted == []
     assert harness.state() == expected_state(_A)
+
+
+def _resumed_pipeline(store: FakeDocStatusStore) -> Any:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import Config
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
+    pipe._doc_status = store
+    pipe.stages = [  # type: ignore[misc]
+        SimpleNamespace(name=name) for name in DataIngestionPipeline._ORDER
+    ]
+    return pipe
+
+
+def test_a_resumed_run_opens_its_attempts_as_its_pipeline_id() -> None:
+    # The writer is what tells this pipeline id's records from another's
+    # (delta_still_applies): unstamped, a rerun reads its own as foreign.
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in _A.items()]
+    delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
+    context = SimpleNamespace(
+        incremental_delta=delta,
+        incremental_fingerprints=fingerprints,
+        incremental_scope=None,
+        pipeline_id="P1",
+    )
+    _resumed_pipeline(harness.store)._open_resumed_attempts(context, "graph_extraction")
+    records = harness.store.list_all()
+    assert records and {r.written_by for r in records} == {"P1"}
+    assert {r.attempt_batch is not None for r in records} == {True}
+
+
+def test_a_resume_checks_its_delta_under_the_runs_extraction_settings() -> None:
+    # A document of the delta another run committed under other settings:
+    # the resume computes the delta again rather than index over it.
+    harness = IncrementalRun()
+    docs = [document(path, content) for path, content in _A.items()]
+    delta, fingerprints = detect_delta(
+        docs, harness.store, max_attempts=3, extraction_fingerprint="mine"
+    )
+    open_attempts(harness.store, delta, fingerprints)
+    a_id = document_doc_id(docs[0])
+    record = harness.store.get(a_id)
+    assert record is not None
+    harness.store.put(
+        record.model_copy(
+            update={
+                "status": DocStatus.PROCESSED,
+                "content_hash": fingerprints[a_id],
+                "extraction_fingerprint": "other",
+            }
+        )
+    )
+    context = SimpleNamespace(
+        incremental_delta=delta,
+        incremental_fingerprints=fingerprints,
+        incremental_extraction_fingerprint="mine",
+        incremental_scope=None,
+        incremental_retired_scopes=None,
+        pipeline_id=None,
+    )
+    pipe = _resumed_pipeline(harness.store)
+    assert pipe._delta_is_stale(context, "graph_extraction")
+    context.incremental_extraction_fingerprint = "other"
+    assert not pipe._delta_is_stale(context, "graph_extraction")
