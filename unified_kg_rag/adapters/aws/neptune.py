@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import copy
 import threading
 from collections.abc import Callable
@@ -108,11 +107,7 @@ QUERY_TIMEOUT_SETTING = "search.store_timeout_seconds"
 
 def is_timeout(exc: BaseException) -> bool:
     """Whether ``exc`` (or a cause) is a request that got no answer in time."""
-    # asyncio.TimeoutError is not the builtin one before Python 3.11.
-    return any(
-        isinstance(current, TimeoutError | asyncio.TimeoutError)
-        for current in causes(exc)
-    )
+    return any(isinstance(current, TimeoutError) for current in causes(exc))
 
 
 def neptune_request_error(

@@ -19,14 +19,14 @@ jobs:
     # Fail on copyleft, source-available or unlabeled licenses among the
     # runtime dependencies of every extra (dev tools are not redistributed).
     # Reviewed exceptions are listed in .github/scripts/check_licenses.py.
-    # On the oldest and newest Python the lock resolves for: some packages
-    # (backports, older pins) are installed on 3.10 only.
+    # On every supported Python: environment markers can install a different
+    # package set per interpreter.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

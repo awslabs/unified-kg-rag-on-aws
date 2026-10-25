@@ -664,7 +664,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `... needs confirmation, but stdin is not a terminal` | 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없음 | `--yes`(그 단계를 다시 계산)나 새 `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | 앞 단계가 실패했거나 출력이 없음 | 앞 단계를 먼저 실행 |
 | `observability.enabled is true but OpenTelemetry is not installed` | `otel` extra가 없음 | `uv sync --extra otel`을 실행하거나 추적을 끔 |
-| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` extra가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
+| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` extra가 설치되지 않음 | 설치하거나 파일 형식을 변환 |
 
 ### 자격 증명과 모델
 

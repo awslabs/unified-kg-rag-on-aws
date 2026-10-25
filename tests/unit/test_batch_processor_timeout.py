@@ -43,7 +43,7 @@ def test_run_with_timeout_aborts_hung_call(release_hung_calls) -> None:
 
 
 def test_run_with_timeout_reraises_a_timeout_the_call_raised(caplog) -> None:
-    # TimeoutError is concurrent.futures.TimeoutError since Python 3.11, so a
+    # TimeoutError is concurrent.futures.TimeoutError, so a
     # call that raised one (a socket timeout, say) read as the call timeout:
     # a misleading warning and a new error naming the wrong limit.
     def times_out() -> None:

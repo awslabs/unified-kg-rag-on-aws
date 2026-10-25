@@ -728,7 +728,7 @@ model or credential error fails a query rather than answering from no context.
 | `... needs confirmation, but stdin is not a terminal` | Completed stages' outputs are no longer cached under the current inputs | `--yes` (recomputes them), or a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
 | `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
-| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
+| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it or convert the files |
 
 ### Credentials and models
 

@@ -21,9 +21,8 @@ section of the [user guide](docs/user-guide.md#what-the-logs-contain).
 ## Dependency advisories
 
 Use the committed lockfile for reproducible installations. The optional
-`unstructured` extra requires Python 3.11+ and a patched parser (`>=0.24.1`).
-Python 3.10 supports the core PDF/TXT/CSV/JSON formats; upgrade Python to use
-the Markdown/HTML extra. Do not install an older parser to bypass this limit.
+`unstructured` extra requires a patched parser (`>=0.24.1`). Do not install an
+older parser.
 
 The following upstream advisories currently have no patched release identified
 in the GitHub Advisory Database and remain open for tracking:
@@ -41,22 +40,16 @@ in the GitHub Advisory Database and remain open for tracking:
 The following advisories have a patched release that this project cannot use
 yet:
 
-- Pillow 12.3.0 advisories (for example
-  [GHSA-p4wg-p73j-c528](https://github.com/advisories/GHSA-p4wg-p73j-c528)):
-  the fix, Pillow 13.0.0, requires Python 3.11+, so Python 3.11 and 3.12
-  installs (and the container image) get 13.0.0 and Python 3.10 installs keep
-  12.3.0. The package does not import Pillow itself (Bokeh and Ragas do);
-  on Python 3.10, do not pass untrusted images to those libraries, or
-  upgrade Python.
 - [filelock ReadWriteLock (GHSA-v4x8-3wr5-3wq8)](https://github.com/advisories/GHSA-v4x8-3wr5-3wq8)
   and two Windows-only filelock advisories (GHSA-9vhv-jxww-xfm5,
-  GHSA-567q-5qvw-pf92): the fix, filelock 4.2.1, requires Python 3.11+, and
-  the optional `unstructured` extra (up to its latest release, 0.27.34) caps
-  filelock below 4, so the lock holds every install, including the container
-  image, at 3.29.4. The core path gets filelock through `datasets` and
-  `huggingface-hub`, which use `FileLock`/`SoftFileLock`, not the affected
-  SQLite-backed `ReadWriteLock`. The soft-lock advisory applies on Windows
-  only.
+  GHSA-567q-5qvw-pf92): the fix is filelock 4.2.1, but the optional
+  `unstructured` extra (every release from 0.24.1 up to the latest, 0.27.34)
+  caps filelock below 4. That cap is the only blocker; without the extra the
+  lock resolves filelock 4.x. The lock is shared by every install, so it holds
+  all of them, including the container image, at 3.29.4. The core path gets
+  filelock through `datasets` and `huggingface-hub`, which use
+  `FileLock`/`SoftFileLock`, not the affected SQLite-backed `ReadWriteLock`.
+  The soft-lock advisory applies on Windows only.
 
 These usage restrictions do not patch the upstream packages. Reassess them when
 changing evaluation or caching behavior and update when fixes become available.

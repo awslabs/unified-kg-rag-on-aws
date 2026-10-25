@@ -31,7 +31,7 @@ _UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
 # The formats the optional extra adds, and how to install it.
 UNSTRUCTURED_EXTENSIONS = frozenset({".htm", ".html", ".markdown", ".md"})
 UNSTRUCTURED_INSTALL_HINT = (
-    "install the optional 'unstructured' extra (Python 3.11+): "
+    "install the optional 'unstructured' extra: "
     "`uv sync --extra unstructured` or "
     "`pip install -e '.[unstructured]'` in a source checkout"
 )

@@ -49,7 +49,7 @@ Related pages: [CLI Reference](./cli.md) · [Configuration Reference](./configur
 
 ### Runtime
 
-- **Python 3.10 – 3.12**
+- **Python 3.11 – 3.12**
 - **[uv](https://docs.astral.sh/uv/)** (recommended package manager; `pip` works too)
 
 ### AWS services
@@ -109,10 +109,9 @@ uv sync              # or: pip install -e .
 ```
 
 **Markdown and HTML** need the `unstructured` extra
-(`uv sync --extra unstructured`, Python 3.11 or 3.12; it requires
-`unstructured>=0.24.1`, which fixes URL-partitioning SSRF and unescaped
-markup). Without it, or on Python 3.10, only `.pdf`, `.txt`, `.csv` and
-`.json` are parsed and ingestion skips `.md` / `.html` files with one warning
+(`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
+fixes URL-partitioning SSRF and unescaped markup). Without it, only `.pdf`,
+`.txt`, `.csv` and `.json` are parsed and ingestion skips `.md` / `.html` files with one warning
 per extension.
 
 The deployed image (`docker/Dockerfile`) leaves the extra out (it adds about
@@ -1774,7 +1773,7 @@ closes it.
 - **Isolating a document that kills the task takes runs** (*Quarantined
   documents*): about `log2(n) + 1` for one culprit among `n` documents that
   died together, while the deferred ones wait.
-- **Markdown and HTML** need the `unstructured` extra (Python 3.11+), which
+- **Markdown and HTML** need the `unstructured` extra, which
   the container image leaves out by default.
 - **Changing the embedding model** or dimension needs `indexing.reset: true`;
   an incremental run refuses to write into another model's indices

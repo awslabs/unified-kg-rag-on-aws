@@ -8,7 +8,7 @@ name = "unified-kg-rag-on-aws"
 dynamic = ["version"]
 description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch — GraphRAG and LightRAG over one hexagonal ingestion, indexing, and hybrid-search stack."
 readme = "README.md"
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.11, <3.13"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Amazon.com, Inc. or its affiliates"},
@@ -19,7 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -84,10 +83,8 @@ dependencies = [
     "numpy>=1.26.4",
     "opensearch-py>=3.0.0",
     "pandas>=2.3.1",
-    # 13.0.0 fixes the critical/high Pillow advisories but requires Python 3.11+;
-    # 3.10 keeps the 12.x line, which has no fixed release.
-    "pillow>=12.3.0; python_version < '3.11'",
-    "pillow>=13.0.0; python_version >= '3.11'",
+    # 13.0.0 fixes the critical/high Pillow advisories.
+    "pillow>=13.0.0",
     "pydantic>=2.11.7",
     "pypdf>=6.15.0",
     "python-dotenv>=1.1.1",
@@ -118,11 +115,8 @@ prepare-benchmark = "unified_kg_rag.application.cli.prepare_benchmark:main"
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
-#
-# Patched URL partitioning requires Python 3.11+. Keep the core package usable
-# on Python 3.10 without resolving an older, vulnerable optional parser.
 unstructured = [
-    "unstructured[md]>=0.24.1; python_version >= '3.11'",
+    "unstructured[md]>=0.24.1",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when
@@ -171,10 +165,8 @@ only-include = ["unified_kg_rag", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.black]
 line-length = 88
-# Match requires-python's floor. These were py311, which let ruff's pyupgrade
-# rewrite `timezone.utc` to the 3.11-only `datetime.UTC` and broke every install
-# on the declared minimum.
-target-version = ['py310', 'py311', 'py312']
+# Match requires-python's floor.
+target-version = ['py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -201,9 +193,8 @@ skip_gitignore = true
 [tool.ruff]
 line-length = 88
 # Must track requires-python's floor: pyupgrade (UP) rewrites code to the target
-# version's idioms, so py311 here actively introduced 3.11-only syntax into a
-# package that claims 3.10 support.
-target-version = "py310"
+# version's idioms, so a newer target would introduce syntax the floor lacks.
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -232,7 +223,7 @@ ignore = [
 [tool.mypy]
 # Type-check against the oldest supported interpreter, so stdlib symbols added
 # after it are reported here rather than at a user's import time.
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

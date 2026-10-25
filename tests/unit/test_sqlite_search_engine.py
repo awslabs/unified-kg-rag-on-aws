@@ -15,6 +15,7 @@ import gc
 import logging
 import math
 import sqlite3
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -1486,7 +1487,7 @@ def test_shapes_cover_every_search_type_and_filter_kind() -> None:
 def test_build_record_round_trip(tmp_path: Path) -> None:
     # Ingestion records which run built the index; run-eval reads it back
     # through the retriever for its manifest (embedding settings kept).
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from unified_kg_rag.domain.models import IndexBuildRecord
 
@@ -1505,7 +1506,7 @@ def test_build_record_round_trip(tmp_path: Path) -> None:
     record = IndexBuildRecord(
         pipeline_id="run-1",
         mode="full",
-        built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        built_at=datetime(2026, 1, 1, tzinfo=UTC),
         documents=2,
         extraction_fingerprint="abc",
         package_version="1.0",

@@ -1267,7 +1267,7 @@ class BaseSearchStrategy(ABC):
         tags, metadata). Pass it to every LLM call the strategy makes, so the
         caller's callbacks see those calls nested under its run, rather than
         relying on implicit contextvar propagation, which LangChain documents
-        only for async code on Python 3.11+.
+        only for async code.
         """
 
     @staticmethod

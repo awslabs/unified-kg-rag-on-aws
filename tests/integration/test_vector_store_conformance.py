@@ -11,7 +11,7 @@ container (``LOCAL_STORES=1``) and OpenSearch Service (``-m aws``); see
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1034,7 +1034,6 @@ def test_the_build_record_is_read_back_by_the_retriever(
     harness: StoreHarness,
 ) -> None:
     import asyncio
-    from datetime import timezone
 
     from unified_kg_rag.domain.models import IndexBuildRecord
     from unified_kg_rag.shared.utils.cache_keys import extraction_settings
@@ -1043,7 +1042,7 @@ def test_the_build_record_is_read_back_by_the_retriever(
     record = IndexBuildRecord(
         pipeline_id="run-1",
         mode="full",
-        built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        built_at=datetime(2026, 1, 1, tzinfo=UTC),
         documents=2,
         extraction_fingerprint="fp",
         extraction_settings=extraction_settings(harness.config),
