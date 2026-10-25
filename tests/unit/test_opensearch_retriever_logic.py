@@ -539,14 +539,13 @@ def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
                 assert retriever._hit_count(too_many, 20) == 20
         with bound_contextvars(query_id="q2"):
             retriever._hit_count(too_many, 20)
+    # One per query (the message may carry the structlog event dict).
     messages = [r.getMessage() for r in caplog.records]
-    assert (
-        messages
-        == [
-            "top_k 30 is above the max_result_window (20) of the index searched: "
-            "a search returns at most 20 hits"
-        ]
-        * 2
+    assert len(messages) == 2
+    assert all(
+        "top_k 30 is above the max_result_window (20) of the index searched: "
+        "a search returns at most 20 hits" in m
+        for m in messages
     )
 
 
