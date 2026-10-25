@@ -1361,7 +1361,7 @@ changed once with the full-config keys (#332).
   counts as another pipeline id's there. Nor does it index its delta over a
   document such a run committed under other extraction settings while the
   delta re-extracted it for a settings change. Either case now diffs the
-  corpus again (#PR).
+  corpus again (#427).
 - A fatal store error in one part of a local or LightRAG search (a section,
   a stream, a wave of the relationship walk) cancels the parts running
   beside it; they kept sending store requests until they finished, after
