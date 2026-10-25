@@ -909,7 +909,8 @@ Interactive mode turns memory on. Commands: `help`, `new` (a fresh
 conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 `quit` / `exit`. A command is the whole line (only `set-filter` takes an
 argument): `help me find ...` is a question. `set-filter` refuses a key no
-index of the search strategy declares, as `--filters` does.
+index of the search strategy declares, as `--filters` does (with
+`--interactive`, before the first question: exit code 2).
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):

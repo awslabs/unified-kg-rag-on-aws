@@ -1355,6 +1355,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag --interactive --filters ...` checks the filters before the
+  first question and exits 2 on a key no index of the search strategy
+  declares, as a single `--query` does; the key failed every question of
+  the session (#PR).
 - A fatal error in one OpenSearch search of a query (one index's, or one
   half of an index's lexical + kNN pair) cancels the searches running
   beside it, which kept sending requests after the query had failed

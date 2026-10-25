@@ -431,6 +431,36 @@ async def test_rag_interactive_set_filter_rejects_a_key_no_index_declares(
     )
 
 
+async def test_rag_interactive_rejects_initial_filters_no_index_declares(
+    config, mocker
+) -> None:
+    # --filters with --interactive was not checked: every question of the
+    # session failed on the key. It exits 2 before the first question, as
+    # set-filter refuses the key.
+    from unified_kg_rag.shared import InvalidFilterError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(
+            ["--interactive", "--search-strategy", "local", "--filters", "colour:red"]
+        )
+    )
+
+    def check_filter_keys(filters, strategy):
+        assert (filters, strategy) == (
+            {"colour": "red"},
+            run_rag_chain.SearchStrategy.LOCAL,
+        )
+        raise InvalidFilterError("Unknown filter key(s): colour.")
+
+    runner.rag_chain = mocker.Mock(check_filter_keys=check_filter_keys)
+    asked = mocker.patch.object(run_rag_chain.console, "input", return_value="quit")
+    with pytest.raises(SystemExit) as info:
+        await runner._interactive_mode()
+    assert info.value.code == 2
+    asked.assert_not_called()
+
+
 async def test_rag_interactive_a_line_starting_with_a_command_is_a_question(
     config, mocker
 ) -> None:
