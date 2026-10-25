@@ -4321,6 +4321,14 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Python 3.11 and 3.12 installs, including the container image, get Pillow
+  13.0.0, which fixes the critical and high Pillow 12.3.0 advisories (for
+  example GHSA-p4wg-p73j-c528). 13.0.0 requires Python 3.11+, so the Pillow
+  requirement is split by Python version and 3.10 keeps 12.3.0, which has no
+  fixed release; `SECURITY.md` lists this and the filelock residual
+  (GHSA-v4x8-3wr5-3wq8: `unstructured` caps filelock below 4, the fix needs
+  4.2.1, and no installed dependency uses the affected `ReadWriteLock`).
+  The lock also moves certifi to 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#PR).
 - Graph expansion under a document filter keeps an expanded entity only
   when a walk over relationships that pass the filter reaches it from a
   seed: the walk crossed every edge, so entities (and through them chunks)
