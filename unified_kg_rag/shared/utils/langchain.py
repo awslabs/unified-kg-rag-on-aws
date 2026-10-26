@@ -260,18 +260,23 @@ class BatchProcessor(BaseModel):
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
         sequential_func: Callable[[dict[str, Any]], Any],
         task_name: str,
+        *,
+        parsed: bool = False,
     ) -> bool:
         """Whether the model answered ``item``'s call, made as one of a batch
         (same timeout and retries): a response that does not parse or was
-        cut off is an answer too."""
+        cut off is an answer too, unless ``parsed``."""
         errors: dict[int, BaseException] = {}
         results = self.execute_with_fallback(
             [item], prepare_inputs_func, sequential_func, task_name, False, errors
         )
         return bool(results) and (
             results[0] is not BATCH_ITEM_FAILED
-            or isinstance(
-                errors.get(0), OutputParserException | LLMOutputTruncatedError
+            or (
+                not parsed
+                and isinstance(
+                    errors.get(0), OutputParserException | LLMOutputTruncatedError
+                )
             )
         )
 
@@ -573,6 +578,19 @@ class RobustXMLOutputParser(XMLOutputParser):
             # fixer skips it too, since it could only invent the structure.
             raise OutputParserException("The model returned no output", llm_output=text)
         original_sections = self._detect_xml_sections(text)
+        if unclosed := sorted(
+            tag
+            for tag in original_sections & set(self.tags or ())
+            if not re.search(rf"</{re.escape(tag)}\s*>|<{re.escape(tag)}\s*/>", text)
+        ):
+            # A response cut off with no stop reason (a server-side output
+            # cap reported as a normal stop) parses into the part before the
+            # cut; TruncationGuard catches only a reported cut.
+            logger.warning(
+                "XML output ends with %s unclosed: the response may have been "
+                "cut off; what parsed before the cut is kept",
+                ", ".join(f"<{tag}>" for tag in unclosed),
+            )
 
         try:
             result = self._parse_top_level_elements(

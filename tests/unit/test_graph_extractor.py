@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 
 import unified_kg_rag.adapters.ingestion.graph_extractor as ge_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -36,7 +37,6 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
     GraphExtractionPrompt,
     GraphRefinementPrompt,
 )
-from unified_kg_rag.shared import DataProcessingError
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -500,7 +500,7 @@ class TestFormatEntityTypes:
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
     def test_non_dict_is_malformed(self, extractor, text_unit) -> None:
-        with pytest.raises(DataProcessingError):
+        with pytest.raises(OutputParserException):
             _parsed(extractor, "nope", text_unit)
 
     @pytest.mark.parametrize(
@@ -514,8 +514,27 @@ class TestParseExtractionResult:
     def test_missing_or_mistyped_section_is_malformed(
         self, extractor, text_unit, result
     ) -> None:
-        with pytest.raises(DataProcessingError):
+        with pytest.raises(OutputParserException):
             _parsed(extractor, result, text_unit)
+
+    @pytest.mark.parametrize(
+        "entities",
+        [{"entity": {"name": {}}}, {"entity": [{"type": "ORG"}, {"name": " "}]}],
+    )
+    def test_entities_none_of_which_has_a_name_are_malformed(
+        self, extractor, text_unit, entities
+    ) -> None:
+        # Output cut off inside the first entity's name with no stop reason
+        # (a server-side output cap): the unit is a parse failure, not an
+        # empty success recorded PROCESSED.
+        with pytest.raises(OutputParserException, match="has a name"):
+            _parsed(extractor, {"entities": entities}, text_unit)
+
+    def test_a_cut_after_a_named_entity_keeps_it(self, extractor, text_unit) -> None:
+        # Cut later, the output keeps the entities before the cut.
+        result = {"entities": {"entity": [{"name": "Bob"}, {"name": {}}]}}
+        ents, _ = _parsed(extractor, result, text_unit)
+        assert [e.name for e in ents] == ["Bob"]
 
     @pytest.mark.parametrize(
         "result",
