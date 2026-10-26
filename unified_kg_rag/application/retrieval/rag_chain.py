@@ -917,7 +917,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if state.get("filters"):
             self._validate_filter_keys(
                 state["filters"],
-                list(strategy_instance.retrievers.values()),
+                strategy_instance.filtered_retrievers(state["resolved_strategy"]),
                 strategy_instance.filtered_index_prefixes(state["resolved_strategy"]),
             )
         processed: ProcessedQuery = state["processed_query"]
@@ -985,7 +985,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             instance = self._get_strategy_instance(strategy)
             self._validate_filter_keys(
                 filters,
-                list(instance.retrievers.values()),
+                instance.filtered_retrievers(strategy),
                 instance.filtered_index_prefixes(strategy),
             )
 

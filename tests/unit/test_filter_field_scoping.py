@@ -463,9 +463,10 @@ def test_neptune_strict_key_stays_strict() -> None:
 
 def test_neptune_filter_fields(config: Config) -> None:
     declared = _neptune(config).filter_fields()
-    for key in ("id", "type", "description", "size", "attr_role"):
+    for key in ("id", "type", "description", "attr_role"):
         assert declared.declares(key), key
-    for key in ("status", "entity_type", "attributes.source"):
+    # Community vertex fields: the traversal filters entity vertices only.
+    for key in ("status", "entity_type", "attributes.source", "size", "level"):
         assert not declared.declares(key), key
 
 
@@ -551,7 +552,8 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     chain.config = config
     # Strategies that declare no index set: their retrievers' every index.
     chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
-        retrievers=reads[s], filtered_index_prefixes=lambda _strategy: None
+        filtered_retrievers=lambda _strategy: list(reads[s].values()),
+        filtered_index_prefixes=lambda _strategy: None,
     )
     chain.check_filter_keys({"status": "open"}, SearchStrategy.NAIVE)
     with pytest.raises(InvalidFilterError, match="status"):
@@ -572,8 +574,6 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
 def _strategy_chain(config: Config) -> GraphRAGChain:
     """A chain over the built-in strategies (built without their models),
     reading through fake OpenSearch and Neptune retrievers."""
-    from types import SimpleNamespace
-
     from unified_kg_rag.adapters.search_strategies.drift_search import (
         DriftSearchStrategy,
     )
@@ -591,35 +591,42 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
     )
     from unified_kg_rag.domain.models import SearchStrategy
 
-    def built(cls: type, **attrs: Any) -> Any:
+    document = {"document": _retriever(config, _FakeOpenSearchClient())}
+    both = {**document, "graph": _neptune(config)}
+
+    def built(cls: type, retrievers: dict[str, Any], **attrs: Any) -> Any:
         inst = object.__new__(cls)
         inst.config = config
+        inst.retrievers = retrievers
         for name, value in attrs.items():
             setattr(inst, name, value)
         return inst
 
-    local = built(LocalSearchStrategy)
-    lightrag = built(LightRAGSearchStrategy, _os_config=config.indexing.opensearch)
+    def lightrag(retrievers: dict[str, Any]) -> Any:
+        return built(
+            LightRAGSearchStrategy,
+            retrievers,
+            _os_config=config.indexing.opensearch,
+            _lightrag_config=config.search.lightrag_search,
+        )
+
+    local = built(LocalSearchStrategy, both)
     strategies = {
         SearchStrategy.LOCAL: local,
-        SearchStrategy.DRIFT: built(DriftSearchStrategy, local_search=local),
+        SearchStrategy.DRIFT: built(DriftSearchStrategy, both, local_search=local),
         SearchStrategy.GLOBAL: built(
-            GlobalSearchStrategy, global_search_config=config.search.global_search
+            GlobalSearchStrategy,
+            document,
+            global_search_config=config.search.global_search,
         ),
-        SearchStrategy.MIX: lightrag,
-        SearchStrategy.HYBRID: lightrag,
-        SearchStrategy.NAIVE: lightrag,
-        SearchStrategy.SIMPLE: built(SimpleSearchStrategy),
+        SearchStrategy.MIX: lightrag(both),
+        SearchStrategy.HYBRID: lightrag(both),
+        SearchStrategy.NAIVE: lightrag(document),
+        SearchStrategy.SIMPLE: built(SimpleSearchStrategy, document),
     }
-    document = {"document": _retriever(config, _FakeOpenSearchClient())}
-    both = {**document, "graph": _neptune(config)}
-    graph_free = {SearchStrategy.GLOBAL, SearchStrategy.NAIVE, SearchStrategy.SIMPLE}
     chain = object.__new__(GraphRAGChain)
     chain.config = config
-    chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
-        retrievers=document if s in graph_free else both,
-        filtered_index_prefixes=strategies[s].filtered_index_prefixes,
-    )
+    chain._get_strategy_instance = strategies.__getitem__  # type: ignore[method-assign]
     return chain
 
 
@@ -645,6 +652,14 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
         # Text-unit fields reach global only through text_unit_slots.
         ("global", "n_tokens", False),
         ("naive", "n_tokens", True),
+        # Community vertex fields: the graph filters entity vertices only,
+        # and mix and hybrid read the graph only with graph expansion on.
+        ("mix", "level", False),
+        ("hybrid", "level", False),
+        ("local", "period", False),
+        ("drift", "children", False),
+        ("local", "size", False),
+        ("mix", "parent", False),
     ],
 )
 def test_filter_keys_are_checked_against_the_indexes_a_strategy_reads(
@@ -678,6 +693,34 @@ def test_a_claims_key_is_refused_when_no_claims_index_is_built(config: Config) -
         _strategy_chain(config).check_filter_keys(
             {"status": "open"}, SearchStrategy.LOCAL
         )
+
+
+@pytest.mark.parametrize("expansion", [False, True])
+def test_mix_checks_the_graph_only_with_graph_expansion(
+    config: Config, expansion: bool
+) -> None:
+    # mix and hybrid read the graph only through the opt-in graph expansion,
+    # so without it a schema-less graph backend accepted every key and the
+    # query ran unfiltered.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    class _SchemaLessGraph:
+        def filter_fields(self) -> None:
+            return None
+
+        def filter_fields_for(self, prefixes: Any) -> None:
+            return None
+
+    config.search.lightrag_search.enable_graph_expansion = expansion
+    chain = _strategy_chain(config)
+    chain._get_strategy_instance(SearchStrategy.MIX).retrievers[
+        "graph"
+    ] = _SchemaLessGraph()
+    if expansion:
+        chain.check_filter_keys({"anything": "x"}, SearchStrategy.MIX)
+        return
+    with pytest.raises(InvalidFilterError, match="anything"):
+        chain.check_filter_keys({"anything": "x"}, SearchStrategy.MIX)
 
 
 async def test_a_query_checks_the_indexes_its_strategy_reads(config: Config) -> None:
