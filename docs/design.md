@@ -530,8 +530,9 @@ unless noted.
    `is_item_error`: a Bedrock `ValidationException`, HTTP 400/413/422, minus
    rejections of the model or a setting). Any other error (an outage,
    credentials, a quota, a setting, a bug) counts for none. When every unit
-   sent fails with errors of one cause (alike in type, code and HTTP status,
-   not message; or all unparseable or cut-off output), the stage sends one
+   sent fails and its own errors are of one cause (alike in type, code and
+   HTTP status, not message; or all unparseable or cut-off output; a unit
+   that failed otherwise, throttled say, is left out), the stage sends one
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are

@@ -257,10 +257,11 @@ retried by the next run), uncounted, until the cause is fixed: an outage or a
 bad setting never excludes it. Its consecutive failed runs of the same
 content are kept (`retry_count`; new content, an interruption, a success or
 an error of its own starts it over): from the second, the run warns with the
-file and the count and reports it in `documents_retrying`. When every unit sent fails with
-errors of one cause (the same error type, code and HTTP status, whatever the
-message says; or all output that does not parse or was cut off, as under a
-server-side output cap), a known-good request decides (sent through the same
+file and the count and reports it in `documents_retrying`. When every unit sent fails and
+its errors of their own are of one cause (the same error type, code and HTTP
+status, whatever the message says; or all output that does not parse or was
+cut off, as under a server-side output cap; a unit throttled or timed out
+alongside is left out), a known-good request decides (sent through the same
 chain, never served from the LLM response cache): failed too (for output
 errors, an answer that does not parse is a failure), nothing counts;
 answered, the errors count, so a delta of bad documents alone is still

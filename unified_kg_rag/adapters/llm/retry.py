@@ -162,9 +162,11 @@ def item_failed_indices(
     """The indices, of a batch of ``count`` items, whose ``errors`` count
     against their document (``is_item_error``).
 
-    When every item failed with an item error of one cause (:func:`_cause`:
-    alike in type, error code and HTTP status, or all output that does not
-    parse or was cut off), that is either one cause, the model or a setting
+    When every item failed and its item errors are of one cause
+    (:func:`_cause`: alike in type, error code and HTTP status, or all output
+    that does not parse or was cut off; an error that is not an item's own,
+    a throttled or timed-out call, says nothing of the others and is left
+    out), that is either one cause, the model or a setting
     (a server-side output cap, say), or each document's own. One known-good
     request (:func:`known_good_unit`, made by ``prepare_inputs`` and
     ``invoke`` through ``batch_processor``, as the items were) then decides:
@@ -177,12 +179,12 @@ def item_failed_indices(
     would pass for a model that now rejects the setting, and the cache's
     segments stay what the documents' requests made them.
     """
-    first = next(iter(errors.values()), None)
+    own = {idx: error for idx, error in sorted(errors.items()) if is_item_error(error)}
+    first = next(iter(own.values()), None)
     if (
         first is not None
         and len(errors) == count
-        and len({_cause(error) for error in errors.values()}) == 1
-        and all(is_item_error(error) for error in errors.values())
+        and len({_cause(error) for error in own.values()}) == 1
     ):
         # Imported here: the cache module imports the chain factory, which
         # imports this one.
@@ -211,7 +213,7 @@ def item_failed_indices(
             task,
             first,
         )
-    return [idx for idx, error in sorted(errors.items()) if is_item_error(error)]
+    return list(own)
 
 
 def transient_error_predicate(factory: object) -> TransientErrorPredicate:

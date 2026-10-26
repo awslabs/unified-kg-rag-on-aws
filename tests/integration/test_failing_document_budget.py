@@ -326,7 +326,8 @@ def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
     """Embedded config (claims and gleaning on, max_document_failures 2) and
     providers whose model answers HTTP 400 "request rejected" to the requests
     of the stage whose system prompt contains ``rejects["stage"]`` and whose
-    text contains ``rejects["text"]`` (every one when that is ``""``)."""
+    text contains ``rejects["text"]`` (every one when that is ``""``), and
+    HTTP 503 instead when the text contains ``rejects["unavailable"]``."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.indexing.max_document_failures = 2
     config.processing.claim_extraction.enabled = True
@@ -339,6 +340,8 @@ def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
             system = "".join(m["content"] for m in messages if m["role"] == "system")
             human = "".join(m["content"] for m in messages if m["role"] == "user")
             if rejects["stage"] in system and rejects["text"] in human:
+                if rejects.get("unavailable", "\0") in human:
+                    return httpx.Response(503, json={"error": "unavailable"})
                 return httpx.Response(400, json={"error": "request rejected"})
         return server(request)
 
@@ -371,6 +374,31 @@ def test_one_error_on_every_unit_of_a_delta_counts_for_no_document(
     for run in range(3):
         e2e._ingest(config, providers, source, tmp_path / f"run{run}")
         assert _counts(providers) == dict.fromkeys(files, 0), run
+
+
+@_STAGES
+def test_one_unit_unavailable_does_not_count_a_rejected_setting(
+    tmp_path: Path, stage: str
+) -> None:
+    # The model rejects a setting (one HTTP 400, a known-good request too)
+    # on every request of a stage but one, which is unavailable (HTTP 503)
+    # instead. Two causes, so no known-good request was sent and the
+    # rejection counted against the other documents, excluding them after
+    # max_document_failures runs though nothing was wrong with them.
+    rejects = {"stage": "", "text": "", "unavailable": "Carrier"}
+    config, providers, source = _rejecting(tmp_path, rejects)
+    source.mkdir()
+    (source / "d0.txt").write_text(_FILES["d0.txt"])
+    e2e._ingest(config, providers, source, tmp_path / "seed")
+    (source / "z1.txt").write_text(_FAILING)
+    (source / "z2.txt").write_text("Zorbix and Depot trade parts.")
+    (source / "z3.txt").write_text("Depot and Carrier trade parts.")
+    rejects["stage"] = stage
+    for run in range(3):
+        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        assert _counts(providers) == dict.fromkeys(
+            ["d0.txt", "z1.txt", "z2.txt", "z3.txt"], 0
+        ), run
 
 
 @_STAGES

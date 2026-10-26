@@ -661,6 +661,37 @@ def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
     assert incremental == full
 
 
+def test_a_gleaned_edge_follows_a_part_split_off_two_stored_spellings(
+    tmp_path: Path,
+) -> None:
+    # No fault. Adding a7.txt splits "Acme LLC" off both stored "Acme" and
+    # "Acme Inc"; only the first was rewired, so the edge gleaning adds for
+    # "Acme Ltd" (r3.txt), stored on "Acme Inc", stayed there instead of
+    # following the part, and the ranks counted it on the wrong end.
+    base = {
+        "c3.txt": "Acme LLC and Acme LLC trade cash 1.",
+        "r3.txt": "Depot and Acme trade parts 1. Acme and Acme Inc and Acme Ltd "
+        "trade parts 3.",
+        "b0.txt": "Buyer and Acme and Acme Inc trade goods 3.",
+        "b7.txt": "Acme and Buyer and Depot trade goods 1. Buyer and Acme and "
+        "Acme Inc trade parts 1.",
+    }
+    runs = [
+        base,
+        {
+            **base,
+            "a7.txt": "Acme LLC and Acme trade cash 2. Acme Ltd and Acme LLC and "
+            "Depot trade goods 2.",
+        },
+    ]
+
+    full = _state(tmp_path / "full", [runs[-1]], gleaning=True, ranks=True)
+    incremental = _state(tmp_path / "inc", runs, gleaning=True, ranks=True)
+
+    assert ("Depot", "Acme LLC") in {e[:2] for e in full["edges"]}
+    assert incremental == full
+
+
 def test_a_hub_that_changes_its_name_extends_its_summary(tmp_path: Path) -> None:
     # Nine new documents call the hub "Acme Inc", one more than say "Acme":
     # the delta entity merges into the stored "Acme", which the derivation
@@ -1935,6 +1966,33 @@ def test_a_resumed_split_strip_ranks_and_keys_edges_as_a_full_build(
         ranks=True,
     )
 
+    assert incremental == full
+
+
+@pytest.mark.parametrize("rounds", [None, 4], ids=["converged", "out-of-rounds"])
+def test_a_removal_whose_re_key_cascades_ranks_as_a_full_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rounds: int | None
+) -> None:
+    # No fault. Removing d7.txt re-derives entities whose edges reach other
+    # spellings, whose edges reach others in turn: five rounds of reads. The
+    # derivation stopped after four and ranked "Acme" and "Buyer" 0, the
+    # edges it had not read uncounted. Out of rounds, an entity whose stored
+    # edges were not all read keeps its stored links in its rank.
+    import unified_kg_rag.application.storage.indexing_manager as manager
+
+    if rounds is not None:
+        monkeypatch.setattr(manager, "_DERIVE_ROUNDS", rounds)
+    kept = {
+        "r4.txt": "Buyer and Acme trade cash 2. Acme and Acme and Acme trade goods 1.",
+        "d1.txt": "Acme and Acme Inc trade parts 3.",
+        "r7.txt": "Initech Corp and Acme Ltd and Initech trade parts 3.",
+    }
+    runs = [{**kept, "d7.txt": "Initech and Buyer trade cash 2."}, kept]
+
+    full = _state(tmp_path / "full", [runs[-1]], ranks=True)
+    incremental = _state(tmp_path / "inc", runs, ranks=True)
+
+    assert ("Acme", 2) in full["ranks"]
     assert incremental == full
 
 

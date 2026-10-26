@@ -76,6 +76,10 @@ _PENDING_STRIP = "pending-strip"
 # incremental commit splits, re-keys or rewires, written before its first
 # write and deleted once the old ids are (see note_pending_commit).
 _PENDING_COMMIT = "pending-commit"
+# Rounds ``IndexingManager.derive`` reads more stored items in at most. Each
+# round that goes on adds an item, so the loop ends by itself; the cap
+# bounds the reads of a cascade over a large connected graph.
+_DERIVE_ROUNDS = 32
 
 
 def _note_ids(note: Mapping[str, Any] | None, field: str) -> set[str]:
@@ -1079,8 +1083,11 @@ class IndexingManager:
         # item keeps its id rather than overwrite another. The stored edges
         # of an entity that was re-keyed or split are derived with it
         # (``Derived.rewired``): they may become one with a derived edge, or
-        # belong to a part it split into.
-        for attempt in range(4):
+        # belong to a part it split into. Until nothing more is held or
+        # parted: a re-key can cascade (another spelling joins, its edges
+        # move, their other ends join), and a round less leaves a moved
+        # entity ranked without the edges not yet read.
+        for attempt in range(_DERIVE_ROUNDS):
             unit_ids = sorted(
                 {
                     u
@@ -1178,7 +1185,22 @@ class IndexingManager:
                 moved |= set(spellings.values())
                 parted = [r for r in parted if {r.source_id, r.target_id} & moved]
             rewired = sorted(moved)
-            if (not any(held) and not parted) or attempt == 3:
+            done = not any(held) and not parted
+            if not done and attempt == _DERIVE_ROUNDS - 1:
+                # Out of rounds: an entity some of whose stored edges were
+                # not read keeps its stored links in its rank (rewired, they
+                # would not count).
+                unread = {i for r in parted for i in (r.source_id, r.target_id)}
+                rewired = [i for i in rewired if i not in unread]
+                logger.warning(
+                    "Derivation of %d items still reached more stored items "
+                    "after %d rounds; %d entities keep their stored links",
+                    len(items[0]) + len(items[1]) + len(items[2]),
+                    _DERIVE_ROUNDS,
+                    len(moved & unread),
+                )
+                done = True
+            if done:
                 self.underived_items += len(set(derived.underived))
                 return derived.model_copy(
                     update={
