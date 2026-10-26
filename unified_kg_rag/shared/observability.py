@@ -69,8 +69,10 @@ USER_ID = "user.id"
 
 SpanKind = Literal["internal", "client"]
 
-_IDENTITY: ContextVar[Mapping[str, Any] | None] = ContextVar(
-    "kg_rag_trace_identity", default=None
+# The attributes bind_identity / bind_attributes put on every span opened
+# inside their block.
+_BOUND_ATTRIBUTES: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "kg_rag_bound_span_attributes", default=None
 )
 _NULL_SCOPE: AbstractContextManager[None] = contextlib.nullcontext()
 
@@ -226,21 +228,21 @@ def _merge(attributes: Mapping[str, Any] | None, kwargs: dict[str, Any]) -> dict
     return merged
 
 
-def _with_identity(attributes: dict[str, Any]) -> dict[str, Any]:
-    identity = _IDENTITY.get()
-    if identity:
-        return {**identity, **attributes}
+def _with_bound(attributes: dict[str, Any]) -> dict[str, Any]:
+    bound = _BOUND_ATTRIBUTES.get()
+    if bound:
+        return {**bound, **attributes}
     return attributes
 
 
 @contextlib.contextmanager
-def _identity_scope(identity: Mapping[str, Any]) -> Iterator[None]:
+def _bound_scope(attributes: Mapping[str, Any]) -> Iterator[None]:
     # Nested bindings add to the enclosing one.
-    token = _IDENTITY.set({**(_IDENTITY.get() or {}), **identity})
+    token = _BOUND_ATTRIBUTES.set({**(_BOUND_ATTRIBUTES.get() or {}), **attributes})
     try:
         yield
     finally:
-        _IDENTITY.reset(token)
+        _BOUND_ATTRIBUTES.reset(token)
 
 
 def bind_identity(
@@ -261,7 +263,7 @@ def bind_identity(
         identity[SESSION_ID] = session_id
     if user_id:
         identity[USER_ID] = user_id
-    return _identity_scope(identity)
+    return _bound_scope(identity)
 
 
 def bind_attributes(**kwargs: Any) -> AbstractContextManager[None]:
@@ -271,7 +273,7 @@ def bind_attributes(**kwargs: Any) -> AbstractContextManager[None]:
     own attribute of the same name wins. A no-op when tracing is off."""
     if _active_backend() is None or not kwargs:
         return _NULL_SCOPE
-    return _identity_scope(_merge(None, kwargs))
+    return _bound_scope(_merge(None, kwargs))
 
 
 def span(
@@ -293,7 +295,7 @@ def span(
     backend = _active_backend()
     if backend is None:
         return _NOOP_CONTEXT
-    return backend.use_span(name, _with_identity(_merge(attributes, kwargs)), kind)
+    return backend.use_span(name, _with_bound(_merge(attributes, kwargs)), kind)
 
 
 def start_span(
@@ -311,7 +313,7 @@ def start_span(
     backend = _active_backend()
     if backend is None:
         return NOOP_SPAN
-    return backend.start_span(name, _with_identity(_merge(attributes, kwargs)), kind)
+    return backend.start_span(name, _with_bound(_merge(attributes, kwargs)), kind)
 
 
 def current_trace_ids() -> tuple[str, str] | None:
