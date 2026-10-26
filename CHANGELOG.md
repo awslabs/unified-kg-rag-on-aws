@@ -1380,6 +1380,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a document whose content changed between two runs
+  failing for an error not its own starts `retry_count` over; opening the
+  attempt at the new content kept the old content's count, which the next
+  failure then continued (#PR).
 - Incremental indexing: the known-good request that tells a model or
   setting failure from the documents' own (#431) is sent when every unit
   fails with errors alike in type, error code and HTTP status, whatever

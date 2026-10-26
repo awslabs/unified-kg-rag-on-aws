@@ -254,9 +254,10 @@ throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 (`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
 fail every document alike. Such a document stays `PENDING` (or `FAILED`,
 retried by the next run), uncounted, until the cause is fixed: an outage or a
-bad setting never excludes it. Its consecutive failed runs are kept
-(`retry_count`): from the second, the run warns with the file and the count
-and reports it in `documents_retrying`. When every unit sent fails with
+bad setting never excludes it. Its consecutive failed runs of the same
+content are kept (`retry_count`; new content, an interruption, a success or
+an error of its own starts it over): from the second, the run warns with the
+file and the count and reports it in `documents_retrying`. When every unit sent fails with
 errors of one cause (the same error type, code and HTTP status, whatever the
 message says; or all output that does not parse or was cut off, as under a
 server-side output cap), a known-good request decides (sent through the same
