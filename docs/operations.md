@@ -196,9 +196,10 @@ restored meanwhile included, and removes what was written for one that is gone
 - **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
   `pending`): their text units are how the next run finds the interrupted
   writes.
-- An interruption is not a failure, but resets `failure_count` and
-  `retry_count`; deaths are counted in `attempt_count`
-  ([Quarantined documents](#quarantined-documents)).
+- An interruption is not a failure. A stop or death during extraction leaves
+  `failure_count` and `retry_count` as they were; one during indexing, once
+  the `PENDING` records are written, resets both. Deaths are counted in
+  `attempt_count` ([Quarantined documents](#quarantined-documents)).
 - A custom registry policy needs `dynamodb:BatchWriteItem` and
   `BatchGetItem` (the CDK grant covers both).
 
@@ -255,8 +256,9 @@ throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 fail every document alike. Such a document stays `PENDING` (or `FAILED`,
 retried by the next run), uncounted, until the cause is fixed: an outage or a
 bad setting never excludes it. Its consecutive failed runs of the same
-content are kept (`retry_count`; new content, an interruption, a success or
-an error of its own starts it over):
+content are kept (`retry_count`; new content, a success or an
+error of its own starts it over; a stop or death during extraction leaves
+it, one during indexing, once the `PENDING` records are written, resets it):
 from the second, the run warns with the file and the count and reports it in
 `documents_retrying`. When every unit sent fails and its errors of their own
 are of one cause (the same error type, code and HTTP status, whatever the

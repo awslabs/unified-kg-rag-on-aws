@@ -845,10 +845,12 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
-- Incremental indexing: an interruption resets a document's `retry_count`
-  (consecutive failed runs for an error not its own), as it resets
-  `failure_count`: the write-ahead `PENDING` record kept it, so the next
-  failure counted on across the interrupted run (#432).
+- Incremental indexing: an interruption during indexing, once the
+  write-ahead `PENDING` records are written, resets a document's
+  `retry_count` (consecutive failed runs for an error not its own), as it
+  resets `failure_count`: the `PENDING` record kept it, so the next failure
+  counted on across the interrupted run. A stop or death during extraction,
+  before those records, leaves both counts (#432).
 - **BREAKING:** Python 3.10 is no longer supported (`requires-python` is
   `>=3.11, <3.13`). 3.10 reached end of life on 2026-10-01, and no deployed
   runtime uses it (the container image and `iac/` run 3.12). Every install
@@ -1386,6 +1388,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Documentation: a stop or death during extraction leaves a document's
+  `failure_count` and `retry_count`; only one during indexing, once the
+  `PENDING` records are written, resets them. The runbook said every
+  interruption reset both (#PR).
 - Graph extraction: output listing entities none of which has a name (cut
   off with no stop reason) fails the unit as cut-off output
   (`LLMOutputTruncatedError`), counted the same way and not retried. As a
