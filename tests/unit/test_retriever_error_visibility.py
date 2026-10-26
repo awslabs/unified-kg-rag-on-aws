@@ -527,7 +527,13 @@ async def test_a_kept_search_error_is_logged_once(
     with pytest.raises(ConfigurationError, match="Rewrite first"):
         await _retrieve_rejecting_knn(config, {"rank": {"gte": 1}}, caplog)
 
-    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    # Only this package's records: another test's unclosed client session
+    # (asyncio's ERROR, under load) is no sign of a second log.
+    errors = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR and r.name.startswith("unified_kg_rag")
+    ]
     assert len(errors) == 1
     assert "Rewrite first" in errors[0].getMessage()
 

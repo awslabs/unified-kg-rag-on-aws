@@ -459,11 +459,14 @@ def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
     cli = SimpleNamespace(main=lambda: signal.getsignal(signal.SIGINT))
     monkeypatch.setattr(launch.importlib, "import_module", lambda _name: cli)
     previous = signal.getsignal(signal.SIGTERM)
+    interrupt = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        assert launch.run_rag() is signal.getsignal(signal.SIGINT)
-        assert signal.getsignal(signal.SIGINT) is not launch._stopped_while_loading
+        # The handler main starts with is the one the process had, not
+        # merely another than the launcher's.
+        assert launch.run_rag() is signal.default_int_handler
     finally:
         signal.signal(signal.SIGTERM, previous)
+        signal.signal(signal.SIGINT, interrupt)
 
 
 @pytest.mark.parametrize(
@@ -953,27 +956,48 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
 ) -> None:
     # A SIGTERM between the result and the end of pipeline.close() printed
     # an interrupted status after it, and told the user to resume a run
-    # that had finished.
-    from types import SimpleNamespace
-
+    # that had finished. The runner's own run() prints the result and
+    # notes it (reported); only the pipeline is stood in for, its close()
+    # stopped by the signal.
     from unified_kg_rag.shared import PipelineInterrupted
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setattr(
         run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
     )
-
-    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
-        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
-            pipeline_id="run-7", next_run_writes_from=0.0
-        )
-        print_json({"pipeline_id": "run-7", "status": "completed"})
-        self.reported = True
-        raise PipelineInterrupted(signal.SIGTERM)
-
-    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
     src = tmp_path / "src"
     src.mkdir()
+
+    class _Pipeline:
+        pipeline_id = "run-7"
+        next_run_writes_from = 0.0
+        executed_stages: frozenset[str] = frozenset()
+
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def request_stop(self, signum: int) -> None:
+            pass
+
+        def close(self) -> None:
+            raise PipelineInterrupted(signal.SIGTERM)
+
+    runner_class = run_ingestion_pipeline.IngestionPipelineRunner
+    monkeypatch.setattr(run_ingestion_pipeline, "DataIngestionPipeline", _Pipeline)
+    monkeypatch.setattr(runner_class, "_require_indexing_endpoints", lambda *_: None)
+    monkeypatch.setattr(runner_class, "_handle_metadata_operations", lambda _s: False)
+    monkeypatch.setattr(runner_class, "_validate_pipeline_integrity", lambda _s: True)
+    monkeypatch.setattr(
+        runner_class,
+        "_execute_pipeline",
+        lambda _s: PipelineContext(
+            pipeline_id="run-7",
+            config=PipelineConfig(),
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime.now(),
+            source_directory=src,
+        ),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -991,8 +1015,10 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
         run_ingestion_pipeline.main()
     assert exc.value.code == 143
     out, err = capsys.readouterr()
-    assert json.loads(out) == {"pipeline_id": "run-7", "status": "completed"}
+    result = json.loads(out)
+    assert (result["pipeline_id"], result["status"]) == ("run-7", "completed")
     assert "--pipeline-id" not in err
+    assert "after it finished" in err
 
 
 @pytest.mark.parametrize("value", ["0", "-3"])
