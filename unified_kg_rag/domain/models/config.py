@@ -2522,8 +2522,10 @@ class GlobalSearchConfig(BaseModel):
         ge=128,
         description=(
             "Report tokens packed into one map-step LLM call (MS GraphRAG's "
-            "data_max_tokens, 12000). Reports are packed in rank order (MS "
-            "GraphRAG shuffles them first) until the next one would exceed it; "
+            "data_max_tokens, 12000). Reports are packed in the order the "
+            "selection gives them (rank for the fixed cut, rating for dynamic "
+            "selection, similarity for the similarity fallback; MS GraphRAG "
+            "shuffles them first) until the next one would exceed it; "
             "a longer report gets a call of its own. "
             "Map calls run search.max_concurrency at a time."
         ),
@@ -2705,9 +2707,11 @@ class ContextTypeBudgetConfig(BaseModel):
     30000 window).
 
     These are shares of ``max_context_tokens``, not upstream's numbers: at
-    30000, LightRAG mix/hybrid (text, entities, relationships) get text 18072,
-    entities 7228 and relationships 4698 tokens, against upstream's ~16000 /
-    6000 / 8000.
+    30000, LightRAG mix/hybrid (text, entities, relationships) get shares of
+    18072, 7228 and 4698 tokens, against upstream's ~16000 / 6000 / 8000. The
+    512-token prompt buffer, the question and the section headers come off
+    them, so about 17700 / 7050 / 4600 are packed (17746 / 7050 / 4614
+    measured).
 
     Shares are relative weights, not fractions: they are renormalized over the
     section types actually present in a query's candidate set, so an absent type

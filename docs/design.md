@@ -838,7 +838,8 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
   - The action local searches pack their context by the local type shares
-    (`search.token_manager.type_budgets`, text 0.5), not MS GraphRAG's DRIFT
+    (`search.token_manager.type_budgets`, renormalized over the types
+    present: about 0.60 text, 0.24 entities, 0.16 relationships), not MS GraphRAG's DRIFT
     `local_search_text_unit_prop` 0.9 / `local_search_community_prop` 0.1.
   - The primer searches reports of every depth, not MS GraphRAG's one
     `community_level`, so similarity picks the granularity (on a synthetic
@@ -885,8 +886,10 @@ depth selects the cut.
   upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time.
 
-**Map-reduce.** At least `map_reduce_min_results` reports are packed, in rank
-order (MS GraphRAG shuffles them), into batches of `map_context_tokens` (MS
+**Map-reduce.** At least `map_reduce_min_results` reports are packed, in the
+order the selection gives them (rank for the fixed cut, rating for dynamic
+selection, similarity for the similarity fallback; MS GraphRAG shuffles
+them), into batches of `map_context_tokens` (MS
 GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
@@ -951,8 +954,10 @@ traversal, hence graph expansion is opt-in.
   `spare_context_budget_first` types, as LightRAG gives chunks what its graph
   sections leave), so shares, never cross-type score comparisons, decide the
   mix. The shares are of `max_context_tokens`, not upstream's numbers: at
-  30000, LightRAG mix/hybrid get text 18072, entities 7228 and relationships
-  4698 tokens (upstream: about 16000 / 6000 / 8000). Synthesized global
+  30000, LightRAG mix/hybrid get shares of text 18072, entities 7228 and
+  relationships 4698 tokens (upstream: about 16000 / 6000 / 8000); after the
+  512-token prompt buffer, the question and the section headers about 17700
+  / 7050 / 4600 are packed. Synthesized global
   sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
   truncated text included.

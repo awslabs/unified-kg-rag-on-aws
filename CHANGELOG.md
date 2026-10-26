@@ -1509,6 +1509,12 @@ changed once with the full-config keys (#332).
   2,000-chunk hub corpus such queries took 72-76 store requests instead
   of 693-697 in the runs that flipped, with identical results in 36 of
   36 query and filter pairs (#PR).
+- Docs: the context budgets state what is packed at 30000 tokens (about
+  17700 / 7050 / 4600 for LightRAG text, entities and relationships,
+  after the prompt buffer, the question and the headers), DRIFT's action
+  searches the renormalized shares (about 0.60 / 0.24 / 0.16), and the
+  map step's report order per selection path (rank only for the fixed
+  cut) (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
