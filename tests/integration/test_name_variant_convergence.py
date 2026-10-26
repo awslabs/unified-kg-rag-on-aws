@@ -1978,7 +1978,10 @@ def test_a_resumed_split_strip_ranks_and_keys_edges_as_a_full_build(
 
 @pytest.mark.parametrize("rounds", [None, 4], ids=["converged", "out-of-rounds"])
 def test_a_removal_whose_re_key_cascades_ranks_as_a_full_build(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rounds: int | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    rounds: int | None,
 ) -> None:
     # No fault. Removing d7.txt re-derives entities whose edges reach other
     # spellings, whose edges reach others in turn: five rounds of reads. The
@@ -1997,10 +2000,14 @@ def test_a_removal_whose_re_key_cascades_ranks_as_a_full_build(
     runs = [{**kept, "d7.txt": "Initech and Buyer trade cash 2."}, kept]
 
     full = _state(tmp_path / "full", [runs[-1]], ranks=True)
+    caplog.clear()
     incremental = _state(tmp_path / "inc", runs, ranks=True)
 
     assert ("Acme", 2) in full["ranks"]
     assert incremental == full
+    # Converged within the rounds, or out of them with a WARNING.
+    out_of_rounds = "still reached more stored items" in caplog.text
+    assert out_of_rounds is (rounds is not None)
 
 
 def test_a_cascading_derivation_reads_each_record_once(

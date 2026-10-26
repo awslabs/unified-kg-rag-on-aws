@@ -646,12 +646,14 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
         ("simple", "status", True),
         # A report field, and a document attribute every index carries.
         ("global", "community_id", True),
+        ("local", "community_id", True),
         ("naive", "community_id", False),
         ("naive", "attr_category", True),
         ("global", "attr_category", True),
         # Text-unit fields reach global only through text_unit_slots.
         ("global", "n_tokens", False),
         ("naive", "n_tokens", True),
+        ("local", "n_tokens", True),
         # Community vertex fields: the graph filters entity vertices only,
         # and mix and hybrid read the graph only with graph expansion on.
         ("mix", "level", False),
@@ -676,6 +678,23 @@ def test_filter_keys_are_checked_against_the_indexes_a_strategy_reads(
         return
     with pytest.raises(InvalidFilterError, match=f"Unknown filter key\\(s\\): {key}"):
         chain.check_filter_keys({key: "x"}, SearchStrategy(strategy))
+
+
+@pytest.mark.parametrize("built", [True, False])
+def test_mix_reads_relationship_fields_only_with_their_index_built(
+    config: Config, built: bool
+) -> None:
+    # A relationship field (weight) is in the relationship vector index
+    # alone: mix reads it when that index is built.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.indexing.opensearch.build_relationship_vector_index = built
+    chain = _strategy_chain(config)
+    if built:
+        chain.check_filter_keys({"weight": 1}, SearchStrategy.MIX)
+        return
+    with pytest.raises(InvalidFilterError, match="Unknown filter key\\(s\\): weight"):
+        chain.check_filter_keys({"weight": 1}, SearchStrategy.MIX)
 
 
 def test_global_reads_text_unit_fields_with_text_unit_slots(config: Config) -> None:
