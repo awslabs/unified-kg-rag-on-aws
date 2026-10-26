@@ -1451,17 +1451,17 @@ changed once with the full-config keys (#332).
   before the first question) refuses a key that any strategy `auto` may
   route to rejects, naming that strategy. It accepted a key any one of
   them declared, so a question routed to another (`global` for
-  `status`) then failed with `InvalidFilterError` (#PR).
+  `status`) then failed with `InvalidFilterError` (#433).
 - OpenSearch and the embedded engine: the warning that an index's
   `max_result_window` cuts a search names the index, once per query and
   index, and calls the number cut this search's width rather than
   `top_k`: a strategy scales the caller's `top_k` (`top_k 4/20/40` for
-  one `--top-k`), so the message read as a different setting (#PR).
+  one `--top-k`), so the message read as a different setting (#433).
 - `iac/`: the ingestion and query task containers run under an init
   process (`initProcessEnabled`). The image has no init, so the CLI ran
   as PID 1: the kernel dropped a stop signal that arrived before the CLI
   installed its handler, and nothing reaped the processes it left. A
-  redeploy of the compute stack picks this up (#PR).
+  redeploy of the compute stack picks this up (#433).
 - CLIs: a SIGTERM in the first seconds of a run, while the CLI imports
   its dependencies, exits 143 with `--output-format json`'s
   `{"status": "interrupted", "exit_code": 143}`; it ended the process
@@ -1469,7 +1469,7 @@ changed once with the full-config keys (#332).
   `unified_kg_rag.application.cli.launch`, which installs the handler
   before those imports (reinstall the package to regenerate the scripts).
   A SIGTERM after a run printed its result, while the process exits,
-  exits 143 too instead of -15 (#PR).
+  exits 143 too instead of -15 (#433).
 - `run-ingestion`: the JSON result and the summary count the documents a
   run leaves out because they failed `indexing.max_document_failures`
   consecutive runs unchanged (`documents_excluded`, and the loading
@@ -1479,18 +1479,18 @@ changed once with the full-config keys (#332).
   document is retried next run. A stage the output check fails reports
   the input count its error names (it reported 0 beside "processed N
   inputs"), and its error is logged once: the stage logged it before
-  raising, with the traceback, and the pipeline again (#PR).
+  raising, with the traceback, and the pipeline again (#433).
 - Tracing: the spans of a `run-eval` run, its `kg_rag.batch` and
   `kg_rag.evaluate` roots included, carry the run's
   `kg_rag.eval.strategy` and `kg_rag.eval.repeat`, so the runs of a
   strategy comparison or of `--repeats` tell apart; the roots named
   neither. `observability.bind_attributes` binds them, and a nested
   `bind_identity` now adds to the enclosing binding instead of replacing
-  it (#PR).
+  it (#433).
 - `run-eval`: a second `--search-strategy` is a usage error (exit 2), as
   a repeated `--filters` key is for `run-rag`; it replaced the first
   without a word, so `--search-strategy local --search-strategy mix`
-  ran `mix` alone. List the strategies in one flag (`local,mix`) (#PR).
+  ran `mix` alone. List the strategies in one flag (`local,mix`) (#433).
 - Search filters: a key is checked against the indexes the strategy
   reads with the caller's filters (`BaseSearchStrategy.filtered_index_prefixes`,
   `filter_fields_for` on the retriever), not every OpenSearch index. A key
@@ -1498,7 +1498,7 @@ changed once with the full-config keys (#332).
   with `--filters type:person` answered unfiltered; it is now a usage error
   (exit 2) naming the filterable keys, as the user guide says. A custom
   strategy that does not override `filtered_index_prefixes` keeps the
-  every-index check (#PR).
+  every-index check (#433).
 - LightRAG `mix`/`hybrid` under a filter on text units: the ids-only
   check of the linked chunks asks the unfiltered selection in its first
   round and stops there when the filter passes it, and a slot that moves
@@ -1508,13 +1508,13 @@ changed once with the full-config keys (#332).
   lineage depended on the stored (id-sorted) lineage order: on a
   2,000-chunk hub corpus such queries took 72-76 store requests instead
   of 693-697 in the runs that flipped, with identical results in 36 of
-  36 query and filter pairs (#PR).
+  36 query and filter pairs (#433).
 - Docs: the context budgets state what is packed at 30000 tokens (about
   17700 / 7050 / 4600 for LightRAG text, entities and relationships,
   after the prompt buffer, the question and the headers), DRIFT's action
   searches the renormalized shares (about 0.60 / 0.24 / 0.16), and the
   map step's report order per selection path (rank only for the fixed
-  cut) (#PR).
+  cut) (#433).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
