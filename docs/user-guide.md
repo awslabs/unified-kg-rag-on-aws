@@ -1353,7 +1353,8 @@ unattributable), `retrieved_source_types`, `retrieved_entities` and
 
 `run-eval --search-strategy local,mix,global --repeats 3` answers and scores
 the same queries with each strategy, `--repeats` times each (the listed
-strategy overrides a per-item `search_strategy`), saves every run's files and
+strategy overrides a per-item `search_strategy`; list them in one flag, as a
+second `--search-strategy` is a usage error), saves every run's files and
 adds `evaluation_comparison_<timestamp>.json`:
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: the mean over queries of the

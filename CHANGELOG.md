@@ -1487,6 +1487,10 @@ changed once with the full-config keys (#332).
   neither. `observability.bind_attributes` binds them, and a nested
   `bind_identity` now adds to the enclosing binding instead of replacing
   it (#PR).
+- `run-eval`: a second `--search-strategy` is a usage error (exit 2), as
+  a repeated `--filters` key is for `run-rag`; it replaced the first
+  without a word, so `--search-strategy local --search-strategy mix`
+  ran `mix` alone. List the strategies in one flag (`local,mix`) (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

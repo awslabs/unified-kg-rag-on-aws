@@ -1217,7 +1217,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 ### 전략 비교
 
 `run-eval --search-strategy local,mix,global --repeats 3`은 같은 질의를 전략마다
-`--repeats`번 답하고 채점하며(지정한 전략이 항목별 `search_strategy`보다 우선), 실행마다
+`--repeats`번 답하고 채점하며(지정한 전략이 항목별 `search_strategy`보다 우선. 전략은 플래그 하나에
+나열하며, `--search-strategy`를 두 번 주면 사용법 오류), 실행마다
 결과 파일을 저장하고 `evaluation_comparison_<timestamp>.json`을 추가로 씁니다.
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: 질의별 반복 평균을 질의 전체로 평균한

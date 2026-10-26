@@ -40,6 +40,26 @@ def _strategy_list(value: str) -> list[str]:
     return names
 
 
+class _StrategyListOnce(argparse.Action):
+    """Store a ``_strategy_list``, given once: a second ``--search-strategy``
+    replaced the first without a word, so a comparison ran one strategy."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        # Still the default list object until the flag is first given.
+        if getattr(namespace, self.dest) is not self.default:
+            parser.error(
+                f"{option_string} given more than once; list the strategies in "
+                "one, comma-separated (local,mix)"
+            )
+        setattr(namespace, self.dest, values)
+
+
 def add_query_arguments(
     parser: argparse.ArgumentParser, *, multiple_strategies: bool = False
 ) -> None:
@@ -69,10 +89,12 @@ def add_query_arguments(
             "--search-strategy",
             default=["auto"],
             type=_strategy_list,
+            action=_StrategyListOnce,
             help=(
                 "Search strategy, or a comma-separated list (e.g. local,mix,global) "
                 "to answer the same queries with each and compare them pairwise "
-                "against the first"
+                "against the first. Give the flag once: a second one is a usage "
+                "error"
             ),
         )
     else:
