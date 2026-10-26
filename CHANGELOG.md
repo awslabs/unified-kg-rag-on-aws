@@ -1380,6 +1380,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a unit throttled or timed out (an error not its
+  own) beside units that all failed of one cause no longer keeps the
+  known-good request from being sent: the one-cause rule now looks only at
+  the units' own errors. A model rejecting a setting on every request but
+  one that timed out counted the rejection against every other document,
+  excluding them after `indexing.max_document_failures` runs (#PR).
 - Incremental indexing: a document whose content changed between two runs
   failing for an error not its own starts `retry_count` over; opening the
   attempt at the new content kept the old content's count, which the next

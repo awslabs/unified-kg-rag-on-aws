@@ -311,8 +311,14 @@ _PARSE, _CUT = _OUTPUT_ERRORS
         # Not every unit failed, or not of one cause.
         ({0: _ITEM, 2: _ITEM}, False),
         ({0: _ITEM, 1: _PARSE}, False),
-        # Errors that are not the item's own count for none either way.
-        ({0: TimeoutError(), 1: _ITEM}, False),
+        # A unit timed out (or was throttled) and the others failed of one
+        # cause: the timeout says nothing of what the model did to the
+        # others, which the known-good request decides; it counts for none.
+        ({0: TimeoutError(), 1: _ITEM}, True),
+        ({0: TimeoutError(), 1: _ITEM, 2: _ITEM}, True),
+        ({0: TimeoutError(), 1: _PARSE, 2: _CUT}, True),
+        ({0: TimeoutError(), 1: _ITEM, 2: _PARSE}, False),
+        # No error of an item's own: none counts, nothing is sent.
         ({0: TimeoutError(), 1: TimeoutError()}, False),
     ],
 )
@@ -325,9 +331,9 @@ def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
     counted = _indices(errors, count, predicate, probe)
     own = [idx for idx, error in sorted(errors.items()) if predicate(error)]
     assert counted == ([] if alike and not answered else own)
-    # Sent only when every unit failed of one cause, a single unit's failure
-    # too; for output errors its answer must parse.
-    output = all(isinstance(e, type(_PARSE) | type(_CUT)) for e in errors.values())
+    # Sent only when every unit failed and its own errors are of one cause,
+    # a single unit's failure too; for output errors its answer must parse.
+    output = all(isinstance(errors[idx], type(_PARSE) | type(_CUT)) for idx in own)
     assert probe.sent == ([output] if alike else [])
 
 
