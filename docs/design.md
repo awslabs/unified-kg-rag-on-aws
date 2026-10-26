@@ -857,10 +857,13 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
     round whose actions all failed ends the rounds.
 - **auto** — an LLM router (`StrategySelectionPrompt`) picks among
   `search.auto_routable_strategies` minus those the pipeline cannot serve
-  (`global` and `drift` need community reports); the prompt describes
-  exactly the routable strategies, and unrecognized output falls back to
-  `local`. The default set is `local`, `mix`, `global` (`drift` costs
-  up to 27 LLM calls); with one routable strategy no router call is made. The
+  (`global` and `drift` need community reports) and, with filters, those
+  that do not apply every filter key (none left: `InvalidFilterError`,
+  before any LLM call, so a filter never fails by route); the prompt
+  describes exactly these candidates, and unrecognized output falls back to
+  `local` (else the first candidate). The default set is `local`, `mix`,
+  `global` (`drift` costs up to 27 LLM calls); with one candidate no router
+  call is made. The
   prompt sends questions that chain from a named entity to `local` (synthetic
   multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 

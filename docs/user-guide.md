@@ -852,9 +852,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   `drift` every index the pipeline builds and Neptune; `global` community
   reports (and text units with `search.global_search.text_unit_slots`,
   scoped to the selected reports' communities, which replace a caller
-  `community_ids`); `simple` every index the pipeline builds; `auto` must
-  suit every strategy it may route to, checked before routing. Neptune
-  filters entity vertices only.
+  `community_ids`); `simple` every index the pipeline builds. `auto` routes
+  only among the strategies it may route to that apply every key (with the
+  default set, `type:person` leaves `local` and `mix`) and refuses the
+  filters, before routing, only when none does. Neptune filters entity
+  vertices only.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
   claims and community reports carry the filter values of their text units'
@@ -920,8 +922,8 @@ conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 argument): `help me find ...` is a question. `set-filter` refuses a key no
 index of the search strategy declares, as `--filters` does (with
 `--interactive`, before the first question: exit code 2). With `auto` it
-refuses a key that any strategy `auto` may route to rejects, since a routed
-question would fail.
+refuses a key only when, with the filters already set, no strategy `auto`
+may route to applies them all.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):

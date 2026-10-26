@@ -538,8 +538,8 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     config: Config,
 ) -> None:
     # ``status`` exists only on the OpenSearch claims index: a strategy that
-    # reads only the graph rejects it, and so does auto whenever it may route
-    # a question to such a strategy (the routed query would raise).
+    # reads only the graph rejects it; auto rejects it only when no strategy
+    # it may route to applies it (it routes among those that do).
     from types import SimpleNamespace
 
     from unified_kg_rag.domain.models import SearchStrategy
@@ -565,8 +565,7 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
         SearchStrategy.NAIVE,
         SearchStrategy.LOCAL,
     ]
-    with pytest.raises(InvalidFilterError, match="auto may route to local"):
-        chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
+    chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
     config.search.auto_routable_strategies = [SearchStrategy.NAIVE]
     chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
 
@@ -742,9 +741,66 @@ def test_mix_checks_the_graph_only_with_graph_expansion(
         chain.check_filter_keys({"anything": "x"}, SearchStrategy.MIX)
 
 
-async def test_auto_checks_filter_keys_before_routing(config: Config) -> None:
-    # A single query under auto checked only the routed strategy, after the
-    # router call: the same filter answered or failed by route.
+class _Router:
+    """A router LLM answering ``reply``; records what it was offered."""
+
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+        self.offered: list[str] = []
+
+    async def ainvoke(self, inputs: dict, _config: object = None) -> str:
+        self.offered.append(inputs["strategies"])
+        return self.reply
+
+
+async def test_auto_refuses_only_filters_no_routable_strategy_applies(
+    config: Config,
+) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.auto_routable_strategies = [
+        SearchStrategy.NAIVE,
+        SearchStrategy.GLOBAL,
+    ]
+    chain = _strategy_chain(config)
+    chain.ignore_errors = False
+
+    def no_router(*_args: Any) -> Any:
+        raise AssertionError("routed before the filter check")
+
+    chain._get_chain_for_prompt = no_router  # type: ignore[method-assign]
+    # Neither naive nor global reads an index with entity types.
+    state = {"search_strategy": SearchStrategy.AUTO, "filters": {"type": "person"}}
+    with pytest.raises(InvalidFilterError, match="naive: .*global: "):
+        await chain._resolve_strategy(state)
+    with pytest.raises(InvalidFilterError, match="No strategy auto may route to"):
+        chain.check_filter_keys({"type": "person"}, SearchStrategy.AUTO)
+
+
+async def test_auto_routes_the_documented_filter_example(config: Config) -> None:
+    # Regression: auto refused a key any routable strategy rejected, so the
+    # user guide's `--filters attr_category:research type:person` exited 2
+    # under the default routable set (global has no `type`). auto now routes
+    # among the strategies that apply every key.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(config)
+    chain.ignore_errors = False
+    router = _Router("global")
+    chain._get_chain_for_prompt = lambda *_a, **_k: router  # type: ignore[method-assign]
+    filters = {"attr_category": "research", "type": "person"}
+    chain.check_filter_keys(filters, SearchStrategy.AUTO)
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "filters": filters, "query": "q"}
+    )
+    assert router.offered == ["local, mix"]
+    # The router's off-list "global" falls back among the candidates.
+    assert state["resolved_strategy"] is SearchStrategy.LOCAL
+
+
+async def test_auto_with_one_strategy_applying_the_filters_skips_the_router(
+    config: Config,
+) -> None:
     from unified_kg_rag.domain.models import SearchStrategy
 
     config.search.auto_routable_strategies = [
@@ -755,12 +811,83 @@ async def test_auto_checks_filter_keys_before_routing(config: Config) -> None:
     chain.ignore_errors = False
 
     def no_router(*_args: Any) -> Any:
-        raise AssertionError("routed before the filter check")
+        raise AssertionError("the router was called for one candidate")
 
     chain._get_chain_for_prompt = no_router  # type: ignore[method-assign]
-    state = {"search_strategy": SearchStrategy.AUTO, "filters": {"type": "person"}}
-    with pytest.raises(InvalidFilterError, match="auto may route to global"):
-        await chain._resolve_strategy(state)
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "filters": {"type": "person"}}
+    )
+    assert state["resolved_strategy"] is SearchStrategy.LOCAL
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"type": "person"},
+        {"status": "open"},
+        {"community_id": "c1"},
+        {"n_tokens": 3},
+        {"attr_category": "research", "type": "person"},
+        {"level": 0},
+    ],
+)
+@pytest.mark.parametrize(
+    "reply", ["local", "global", "mix", "drift", "naive", "simple", "nonsense"]
+)
+async def test_auto_filter_outcome_does_not_depend_on_the_route(
+    config: Config, filters: dict[str, Any], reply: str
+) -> None:
+    # Whatever the router answers, a filter auto accepts is accepted by the
+    # strategy it resolves to, and one it refuses is refused before routing.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.auto_routable_strategies = [
+        SearchStrategy.LOCAL,
+        SearchStrategy.GLOBAL,
+        SearchStrategy.MIX,
+        SearchStrategy.NAIVE,
+    ]
+    chain = _strategy_chain(config)
+    chain.ignore_errors = False
+    chain._get_chain_for_prompt = lambda *_a, **_k: _Router(reply)  # type: ignore[method-assign]
+    try:
+        chain.check_filter_keys(filters, SearchStrategy.AUTO)
+    except InvalidFilterError:
+        with pytest.raises(InvalidFilterError):
+            await chain._resolve_strategy(
+                {"search_strategy": SearchStrategy.AUTO, "filters": filters}
+            )
+        return
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "filters": filters, "query": "q"}
+    )
+    chain.check_filter_keys(filters, state["resolved_strategy"])
+
+
+async def test_set_filter_checks_the_key_with_the_filters_already_set(
+    config: Config, mocker
+) -> None:
+    # Regression: set-filter checked each key alone. Under auto, `type`
+    # (only mix applies it here) and `level` (only global) were each
+    # accepted, and every later question then failed on the pair.
+    import argparse
+
+    from unified_kg_rag.application.cli import run_rag_chain
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.auto_routable_strategies = [
+        SearchStrategy.GLOBAL,
+        SearchStrategy.MIX,
+    ]
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = argparse.Namespace(search_strategy="auto")
+    runner.rag_chain = _strategy_chain(config)  # type: ignore[assignment]
+    printed = mocker.patch.object(run_rag_chain.console, "print")
+    state: dict[str, Any] = {"filters": {}}
+    runner._handle_set_filter(state, ["type:person"])
+    runner._handle_set_filter(state, ["level:0"])
+    assert state["filters"] == {"type": "person"}
+    assert "Filter not set" in str(printed.call_args_list[-1].args[0])
 
 
 async def test_a_query_checks_the_indexes_its_strategy_reads(config: Config) -> None:

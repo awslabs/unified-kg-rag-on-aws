@@ -792,8 +792,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   Neptune도)를, `local`과 `drift`는 파이프라인이 만드는 모든 인덱스와 Neptune을, `global`은
   커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
   범위를 좁힌 텍스트 단위도. 이 범위가 호출자의 `community_ids`를 대신함)를, `simple`은
-  파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는 라우팅될 수 있는 모든 전략에 맞아야
-  하며 라우팅 전에 확인합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
+  파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
+  적용하는 전략 사이에서만 라우팅하고(기본 집합에서 `type:person`이면 `local`과 `mix`), 그런
+  전략이 없을 때만 라우팅 전에 필터를 거부합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
@@ -842,8 +843,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
 `set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
-함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 라우팅될 수 있는
-전략 중 하나라도 거부하는 키를 거부합니다. 그 전략으로 라우팅된 질문이 실패하기 때문입니다.
+함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 이미 설정한
+필터와 함께, 라우팅될 수 있는 어떤 전략도 모두 적용하지 못할 때만 키를 거부합니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 

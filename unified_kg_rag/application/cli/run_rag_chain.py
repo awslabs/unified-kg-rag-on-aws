@@ -597,10 +597,13 @@ class RAGChainRunner:
             return
         key, value = pair.split(":", 1)
         # Rejected now, not by every later question until clear-filters.
+        # Checked with the filters already set: under auto, together they
+        # may leave no strategy that applies them all.
         if self.rag_chain is not None:
             try:
                 self.rag_chain.check_filter_keys(
-                    {key: value}, SearchStrategy(self.args.search_strategy)
+                    {**state["filters"], key: value},
+                    SearchStrategy(self.args.search_strategy),
                 )
             except InvalidFilterError as e:
                 console.print(f"[red]Filter not set: {markup_safe(e)}[/red]")

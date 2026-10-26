@@ -1388,6 +1388,15 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Queries with `auto` (one `--query`, `run-eval`, the Python API, and
+  `run-rag --interactive` `--filters` and `set-filter`): filters are refused
+  only when no strategy `auto` may route to applies every key, and the
+  router then picks only among the strategies that do (no router call when
+  one is left). Since #439 a key any routable strategy rejected was
+  refused, so the user guide's `--filters attr_category:research
+  type:person` always exited 2 under the default set (`global` has no
+  `type`). `set-filter` checks the new key together with the filters
+  already set (#PR).
 - Incremental indexing: an attempt at new content starts `failure_count`
   over, as it starts `retry_count` over. A document that failed of its own
   and then changed and failed for an outage kept the old content's count
