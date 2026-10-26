@@ -174,8 +174,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Whether a denied settings read was logged.
         self._settings_denied_logged = False
         # The (query id, index, top_k, window) cuts warned of
-        # (_log_window_cut), of the queries in flight: a set, as concurrent
-        # queries interleave their searches.
+        # (_log_window_cut): a set, as concurrent queries interleave their
+        # searches, cleared once it holds _WINDOW_CUTS_REMEMBERED.
         self._window_cut_warned: set[tuple[Any, str, int, int]] = set()
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with

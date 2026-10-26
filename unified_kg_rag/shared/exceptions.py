@@ -74,7 +74,9 @@ class LanguageModelError(ModelError):
 
 
 class LLMOutputTruncatedError(LanguageModelError):
-    """A model response stopped at its output-token limit, cut mid-answer."""
+    """A model response stopped at its output-token limit, cut mid-answer, or
+    an extraction whose every entity lacks a name (cut off the same way). Not
+    retried: the same input meets the same limit."""
 
 
 class LanguageModelTimeoutError(LanguageModelError, TimeoutError):
