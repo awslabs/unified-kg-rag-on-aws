@@ -507,7 +507,9 @@ def test_hit_count_clamps_size_to_max(retriever) -> None:
     retriever_max = retriever._max_size
     q = SearchQuery(query="x", top_k=retriever_max * 10, retrieval_multiplier=1)
     assert (
-        retriever._hit_count(q, retriever._configured_limits.max_result_window)
+        retriever._hit_count(
+            q, retriever._configured_limits.max_result_window, "kg-entities"
+        )
         == retriever_max
     )
 
@@ -517,8 +519,8 @@ def test_hit_count_warns_when_the_live_window_cuts_a_search(retriever, caplog) -
     # top_k silently.
     q = SearchQuery(query="x", top_k=50, retrieval_multiplier=1)
     with caplog.at_level("WARNING"):
-        assert retriever._hit_count(q, 20) == 20
-    assert "top_k 50 is above the max_result_window (20)" in caplog.text
+        assert retriever._hit_count(q, 20, "kg-entities") == 20
+    assert "Index 'kg-entities' returns at most 20 hits" in caplog.text
 
 
 def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
@@ -533,20 +535,28 @@ def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
     too_many = SearchQuery(query="x", top_k=30, retrieval_multiplier=5)
     with caplog.at_level("WARNING"):
         with bound_contextvars(query_id="q1"):
-            assert retriever._hit_count(over_fetch, 20) == 20
+            assert retriever._hit_count(over_fetch, 20, "kg-entities") == 20
             assert not caplog.records
             for _ in range(3):
-                assert retriever._hit_count(too_many, 20) == 20
+                assert retriever._hit_count(too_many, 20, "kg-entities") == 20
         with bound_contextvars(query_id="q2"):
-            retriever._hit_count(too_many, 20)
-    # One per query (the message may carry the structlog event dict).
+            retriever._hit_count(too_many, 20, "kg-entities")
+        with bound_contextvars(query_id="q3"):
+            retriever._hit_count(too_many, 20, "kg-entities")
+            retriever._hit_count(too_many, 20, "kg-relationships")
+    # One per query and index (the message may carry the structlog event
+    # dict), naming the index and phrased as this search's width, not the
+    # caller's top_k a strategy may have scaled.
     messages = [r.getMessage() for r in caplog.records]
-    assert len(messages) == 2
+    assert len(messages) == 4
     assert all(
-        "top_k 30 is above the max_result_window (20) of the index searched: "
-        "a search returns at most 20 hits" in m
+        "returns at most 20 hits per search (its max_result_window), fewer "
+        "than the 30 this search asks for" in m
         for m in messages
     )
+    assert "Index 'kg-relationships'" in messages[-1]
+    assert "Index 'kg-entities'" in messages[0]
+    assert not any("top_k 30" in m for m in messages)
 
 
 def test_a_window_holding_top_k_exactly_cuts_only_the_over_fetch(
@@ -556,7 +566,7 @@ def test_a_window_holding_top_k_exactly_cuts_only_the_over_fetch(
     # for, so the cut of the over-fetch is no warning.
     q = SearchQuery(query="x", top_k=20, retrieval_multiplier=5)
     with caplog.at_level("WARNING"):
-        assert retriever._hit_count(q, 20) == 20
+        assert retriever._hit_count(q, 20, "kg-entities") == 20
     assert not caplog.records
 
 
@@ -568,7 +578,10 @@ def test_hit_count_floors_size_to_terms_filter(retriever) -> None:
     ids = [f"id-{i}" for i in range(n)]
     q = SearchQuery(query="", top_k=n, retrieval_multiplier=1, filters={"id": ids})
     assert (
-        retriever._hit_count(q, retriever._configured_limits.max_result_window) == n
+        retriever._hit_count(
+            q, retriever._configured_limits.max_result_window, "kg-entities"
+        )
+        == n
     )  # not clamped to _max_size
 
 
@@ -577,7 +590,12 @@ def test_hit_count_other_list_filters_do_not_raise_size(retriever) -> None:
     # raised size (and the kNN k of every vector field) to 3,000.
     types = [f"t{i}" for i in range(3000)]
     q = SearchQuery(query="x", top_k=10, filters={"type": types})
-    assert retriever._hit_count(q, retriever._configured_limits.max_result_window) == 10
+    assert (
+        retriever._hit_count(
+            q, retriever._configured_limits.max_result_window, "kg-entities"
+        )
+        == 10
+    )
 
 
 def test_hit_count_terms_floor_bounded_by_result_window(retriever) -> None:
@@ -586,7 +604,9 @@ def test_hit_count_terms_floor_bounded_by_result_window(retriever) -> None:
     ids = [f"id-{i}" for i in range(huge)]
     q = SearchQuery(query="", top_k=huge, retrieval_multiplier=1, filters={"id": ids})
     assert (
-        retriever._hit_count(q, retriever._configured_limits.max_result_window)
+        retriever._hit_count(
+            q, retriever._configured_limits.max_result_window, "kg-entities"
+        )
         == retriever._configured_limits.max_result_window
     )
 

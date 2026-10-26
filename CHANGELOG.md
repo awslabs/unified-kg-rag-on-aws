@@ -1452,6 +1452,11 @@ changed once with the full-config keys (#332).
   route to rejects, naming that strategy. It accepted a key any one of
   them declared, so a question routed to another (`global` for
   `status`) then failed with `InvalidFilterError` (#PR).
+- OpenSearch and the embedded engine: the warning that an index's
+  `max_result_window` cuts a search names the index, once per query and
+  index, and calls the number cut this search's width rather than
+  `top_k`: a strategy scales the caller's `top_k` (`top_k 4/20/40` for
+  one `--top-k`), so the message read as a different setting (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

@@ -171,8 +171,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._index_limits: dict[str, IndexLimits | asyncio.Future[Any]] = {}
         # Whether a denied settings read was logged.
         self._settings_denied_logged = False
-        # The (query id, top_k, window) last warned of as cut (_hit_count).
-        self._window_cut_warned: tuple[Any, int, int] | None = None
+        # The (query id, index, top_k, window) last warned of as cut
+        # (_hit_count).
+        self._window_cut_warned: tuple[Any, str, int, int] | None = None
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
         # (OpenSearchIndexer), so their vectors are comparable.
@@ -455,7 +456,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 )
 
             window = limits[prefix].max_result_window
-            size = self._hit_count(index_query, window)
+            target_alias = self._get_name(prefix, query.suffix)
+            size = self._hit_count(index_query, window, target_alias)
             bodies = self._build_search_bodies(
                 index_query,
                 search_type,
@@ -479,7 +481,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 if query_vector is not None and search_type != SearchType.LEXICAL
                 else None
             )
-            target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(
                 self._search_index(target_alias, bodies, size, query.suffix, probe)
             )
@@ -819,8 +820,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return bool(vector_fields)
         return bool(lexical_fields or vector_fields)
 
-    def _hit_count(self, query: SearchQuery, window: int) -> int:
-        """How many hits of one index a search returns: at most ``window``
+    def _hit_count(self, query: SearchQuery, window: int, index: str) -> int:
+        """How many hits of one ``index`` a search returns: at most ``window``
         (the index's ``max_result_window``)."""
         size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         # Fetch-by-id callers (local/mix expansion, source resolution) set
@@ -834,35 +835,45 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         wanted = len(ids) if isinstance(ids, list) else 0
         if wanted > window:
             logger.warning(
-                "A filter lists %s ids, more than the %s hits one search "
-                "returns (max_result_window); the rest are not fetched",
+                "A filter lists %s ids, more than the %s hits one search of "
+                "index '%s' returns (max_result_window); the rest are not fetched",
                 wanted,
                 window,
+                index,
             )
         elif size > window:
-            self._log_window_cut(query.top_k, size, window)
+            self._log_window_cut(query.top_k, size, window, index)
         return min(max(size, wanted), window)
 
-    def _log_window_cut(self, top_k: int, size: int, window: int) -> None:
-        """Log a search ``size`` cut to the index's ``window``: a WARNING,
-        once per query (the log context's ``query_id``), when the cut leaves
-        fewer hits than ``top_k`` asks for; otherwise only the over-fetch
-        (``retrieval_multiplier``) is cut, at DEBUG."""
+    def _log_window_cut(self, top_k: int, size: int, window: int, index: str) -> None:
+        """Log a search ``size`` cut to ``index``'s ``window``: a WARNING,
+        once per query (the log context's ``query_id``) and index, when the
+        cut leaves fewer hits than ``top_k`` asks for; otherwise only the
+        over-fetch (``retrieval_multiplier``) is cut, at DEBUG.
+
+        ``top_k`` is this search's width, which a strategy derives from the
+        caller's ``top_k`` (it may scale it), so the warning does not call it
+        the caller's."""
         if top_k <= window:
             logger.debug(
-                "Search over-fetch %s cut to max_result_window %s", size, window
+                "Search over-fetch %s of index '%s' cut to max_result_window %s",
+                size,
+                index,
+                window,
             )
             return
-        key = (get_contextvars().get("query_id"), top_k, window)
+        key = (get_contextvars().get("query_id"), index, top_k, window)
         if key == self._window_cut_warned:
             return
         self._window_cut_warned = key
         logger.warning(
-            "top_k %s is above the max_result_window (%s) of the index searched: "
-            "a search returns at most %s hits",
+            "Index '%s' returns at most %s hits per search (its "
+            "max_result_window), fewer than the %s this search asks for, so "
+            "the answer may draw on fewer results than requested; raise the "
+            "index's max_result_window or lower top_k",
+            index,
+            window,
             top_k,
-            window,
-            window,
         )
 
     def _build_search_bodies(
