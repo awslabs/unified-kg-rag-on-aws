@@ -155,6 +155,86 @@ def test_a_sigterm_cancels_the_running_main_task_instead_of_raising() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_ctrl_c_cancels_the_running_main_task_and_exits_130() -> None:
+    # Python's own SIGINT handler raises KeyboardInterrupt into the loop,
+    # as SIGTERM's SystemExit did: after the JSON 8 of 80 run-rag and 12 of
+    # 120 run-eval Ctrl-Cs hung. The CLI's handler cancels the task too.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import stoppable
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+            events.append("went on to the next await")
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            events.append("cancelled")
+            raise
+        finally:
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    previous = signal.getsignal(signal.SIGINT)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 130
+    assert events == ["went on to the next await", "cancelled", "closed"]
+    assert signal.getsignal(signal.SIGINT) is previous
+
+
+def test_a_ctrl_c_outside_the_loop_is_the_clis_keyboardinterrupt() -> None:
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible,
+        stoppable,
+    )
+
+    async def run() -> str:
+        try:
+            with interruptible():  # an interactive prompt
+                os.kill(os.getpid(), signal.SIGINT)
+        except KeyboardInterrupt:
+            return "conversation ended"
+        return "not raised"
+
+    @exits_on_sigterm
+    def main() -> str:
+        return asyncio.run(stoppable(run()))
+
+    assert main() == "conversation ended"
+
+
+def test_a_finished_cli_ends_its_process_with_its_exit_code_at_once() -> None:
+    # The interpreter's shutdown resets the signal handlers, so a SIGTERM
+    # in it ended a finished run with -15 (85 of 160 run-rag stops after
+    # the JSON). The process now ends once main and the exit handlers ran,
+    # without waiting through the shutdown (a thread left running here).
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        atexit.register(lambda: print("exit handlers ran", flush=True))
+
+        @exits_on_sigterm
+        def main():
+            threading.Thread(target=time.sleep, args=(30,)).start()
+            return 0
+
+        sys.exit(main())
+        """)
+    assert result.returncode == 0, result.stderr
+    assert time.time() - started < 20
+    assert "exit handlers ran" in result.stdout
+
+
 def test_a_sigterm_at_an_interruptible_prompt_raises_at_once() -> None:
     # An interactive session waits in a blocking prompt on the loop's
     # thread, so a cancel would wait for the next line (until the watchdog
@@ -229,6 +309,7 @@ def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    monkeypatch.setattr(conventions, "_exit_finished", lambda _code: None)
     events: list[object] = []
     monkeypatch.setattr(conventions, "_exit_stopped", events.append)
 
@@ -263,6 +344,7 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    monkeypatch.setattr(conventions, "_exit_finished", lambda _code: None)
     ended: list[int] = []
     monkeypatch.setattr(conventions, "_exit_stopped", ended.append)
     previous = signal.getsignal(signal.SIGTERM)

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import contextlib
 import functools
 import json
@@ -107,30 +108,38 @@ class ArgumentParser(argparse.ArgumentParser):
 
 def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     """Decorate a CLI ``main``: SIGTERM exits it with ``128 + SIGTERM`` (143),
-    running ``finally`` blocks on the way out.
+    running ``finally`` blocks on the way out, and Ctrl-C (SIGINT) with 130.
 
     In a container without an init process the CLI is PID 1 (the entrypoint
     execs it), and the kernel does not deliver a signal to PID 1 that it has
     no handler for, so without one a stopped task ran on until it was
-    killed. When ``main`` returns, a SIGTERM during the process's teardown
-    (thread joins, exit handlers) ends it at once with 143, after the
-    document it printed: restoring the default handler ended it with -15.
-    With the stop-at-once switch off (the test suite), the previous handler
-    is restored instead. Off the main thread, where Python cannot install a
-    handler, ``main`` runs unchanged. With JSON
-    output, a run stopped, or failed, before it printed its document prints a
-    status document, so a consumer parsing stdout gets JSON either way. A
-    run stopped by a signal (Ctrl-C included) then ends its process at once
-    (:func:`_exit_stopped`), without waiting for the threads it abandoned.
+    killed. Off the main thread, where Python cannot install a handler,
+    ``main`` runs unchanged. With JSON output, a run stopped, or failed,
+    before it printed its document prints a status document, so a consumer
+    parsing stdout gets JSON either way. A run stopped by a signal then ends
+    its process at once (:func:`_exit_stopped`), without waiting for the
+    threads it abandoned.
 
-    While an event loop runs the coroutine a CLI wrapped in :func:`stoppable`,
-    a SIGTERM cancels that task instead of raising into the loop; its
-    ``finally`` blocks run and ``main`` then exits 143. A watchdog thread ends
+    While an event loop runs the coroutine a CLI wrapped in :func:`stoppable`
+    (outside an :func:`interruptible` call), either signal cancels that task
+    instead of raising into the loop, where the ``SystemExit`` or
+    ``KeyboardInterrupt`` could land in the loop's own code and leave
+    nest_asyncio's ``run()`` waiting forever; its ``finally`` blocks run and
+    ``main`` then exits ``128 + signal``. Elsewhere SIGTERM raises
+    ``SystemExit`` and SIGINT ``KeyboardInterrupt``, as Python's own handler
+    does (a SIGINT the parent ignores stays ignored). A watchdog thread ends
     a stopped process still running :data:`_STOP_GRACE_SECONDS` later (with
     the status document, if none was printed), so no stop can hang.
+
+    When ``main`` ends, the process ends with its exit code at once
+    (:func:`_exit_finished`): the interpreter's shutdown resets the signal
+    handlers, so a stop during it ended the process with -15 or -2 after the
+    result. Until then a stop during the teardown ends it with
+    ``128 + signal``. With the stop-at-once switch off (the test suite),
+    ``main`` returns or raises and the previous handlers are restored.
     """
 
-    def _exit(signum: int, frame: object) -> None:
+    def _stop_signal(signum: int, frame: object) -> None:
         if _json["printed"]:
             # The result is out: end now. Raised into an event loop as its
             # coroutine returns, the SystemExit could leave nest_asyncio's
@@ -139,23 +148,26 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             raise SystemExit(128 + signum)
         if _stop["signum"] is not None:
             return  # already stopping
-        _stop["signum"] = signum
-        _stop_started.set()
         task = _stop["task"]
-        if (
+        in_loop = (
             task is not None
             and task.get_loop().is_running()
             and not _stop["interruptible"]
-        ):
-            # Raised into the running loop, the SystemExit can land in the
-            # loop's own code between two callbacks and leave nest_asyncio's
-            # run() waiting forever (about 1 stop in 70 mid-run). Cancel the
-            # main task on the loop instead; the wrapper exits 128 + signum
-            # once main returns or raises.
-            if not task.done():
-                task.get_loop().call_soon_threadsafe(task.cancel)
-            return
-        raise SystemExit(128 + signum)
+        )
+        if not in_loop and signum == signal.SIGINT:
+            # Ctrl-C outside the loop (an interactive prompt, the CLI's
+            # synchronous code): what the CLI handles.
+            raise KeyboardInterrupt
+        _stop["signum"] = signum
+        if _exit_at_once["enabled"]:
+            _stop_started.set()
+        if not in_loop:
+            raise SystemExit(128 + signum)
+        # Cancel the main task on the loop; the wrapper exits 128 + signum
+        # once main returns or raises.
+        assert task is not None
+        if not task.done():
+            task.get_loop().call_soon_threadsafe(task.cancel)
 
     @functools.wraps(main)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -169,7 +181,16 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
-        previous = signal.signal(signal.SIGTERM, _exit)
+        previous = {
+            signum: signal.getsignal(signum)
+            for signum in (signal.SIGTERM, signal.SIGINT)
+            if signum == signal.SIGTERM
+            or signal.getsignal(signum) is not signal.SIG_IGN
+        }
+        for signum in previous:
+            signal.signal(signum, _stop_signal)
+        code: int | str | None = 0
+        exited: SystemExit | None = None
         try:
             try:
                 result = main(*args, **kwargs)
@@ -181,7 +202,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                     raise SystemExit(128 + _stop["signum"])
             if isinstance(result, int) and result:  # mains that return the code
                 print_status(result)
-            return result
+            code = result if isinstance(result, int) else 0
         except KeyboardInterrupt:
             print_status(EXIT_INTERRUPTED)
             _exit_stopped(EXIT_INTERRUPTED)
@@ -192,12 +213,19 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                 print_status(e.code, e.__context__)
                 if e.code > 128:
                     _exit_stopped(e.code)
-            raise
+            if not _exit_at_once["enabled"]:
+                raise
+            code, exited = e.code, e  # a stop's code ended the process above
         finally:
-            signal.signal(
-                signal.SIGTERM,
-                _stopped_in_teardown if _exit_at_once["enabled"] else previous,
-            )
+            for signum, handler in previous.items():
+                signal.signal(
+                    signum,
+                    _stopped_in_teardown if _exit_at_once["enabled"] else handler,
+                )
+        _exit_finished(code)
+        if exited is not None:
+            raise exited
+        return result
 
     return wrapper
 
@@ -230,6 +258,8 @@ def _stop_watchdog() -> None:
     """
     _stop_started.wait()
     time.sleep(_STOP_GRACE_SECONDS)
+    if not _exit_at_once["enabled"]:  # the test suite
+        return
     exit_code = 128 + (_stop["signum"] or signal.SIGTERM)
     # Not waiting long on a main thread stuck writing to stdout.
     if _print_lock.acquire(timeout=1.0):
@@ -255,6 +285,29 @@ def _start_stop_watchdog() -> None:
     ):
         return
     threading.Thread(target=_stop_watchdog, name="stop-watchdog", daemon=True).start()
+
+
+def _exit_finished(code: int | str | None) -> None:
+    """End the process of a CLI whose ``main`` finished, with ``code``.
+
+    What the interpreter's exit would do first is done here: the tracing
+    backend is shut down (its spans flushed) and the exit handlers run
+    (``logging.shutdown`` among them); the threads left are not joined, as
+    the work is done. The interpreter's shutdown then resets the signal
+    handlers, so a SIGTERM during it ended the process with -15 after the
+    result (most stops in the half second after it): ending now keeps the
+    exit code. A no-op with the stop-at-once switch off.
+    """
+    if not _exit_at_once["enabled"]:
+        return
+    if isinstance(code, str):  # sys.exit("message"), as the interpreter does
+        print(code, file=sys.stderr)
+        code = EXIT_FAILURE
+    observability.uninstall()
+    atexit._run_exitfuncs()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code or 0)
 
 
 def _stopped_in_teardown(signum: int, _frame: object) -> None:

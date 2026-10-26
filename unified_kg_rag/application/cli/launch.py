@@ -8,9 +8,8 @@ that window ended the process with -15 (a Ctrl-C with a traceback) and, with
 ``--output-format json``, no JSON on stdout. Here it exits ``128 + signal``
 (143, or 130 for SIGINT) and prints the status document the CLI would have
 (:mod:`.conventions`). Standard library only, so the handlers are in place
-before anything heavy loads; the CLI's own SIGTERM handler
-(``exits_on_sigterm``) replaces the first once ``main`` runs, and the SIGINT
-handler is restored before it.
+before anything heavy loads; the SIGINT handler is restored before ``main``
+runs, and the CLI's own handlers (``exits_on_sigterm``) then replace both.
 """
 
 from __future__ import annotations

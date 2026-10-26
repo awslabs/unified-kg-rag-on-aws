@@ -1387,6 +1387,20 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a Ctrl-C (SIGINT) while
+  the event loop runs cancels the CLI's task as a SIGTERM does, and exits
+  130. Python's own handler raised `KeyboardInterrupt` into the loop,
+  which could leave nest_asyncio's `run()` waiting forever: after the JSON
+  8 of 80 `run-rag` and 12 of 120 `run-eval` Ctrl-Cs hung, as did 6 of 75
+  in text mode and 10 of 75 SIGTERMs right after a text-mode answer
+  (those took the raising path, the JSON-only teardown path not applying).
+  At the interactive prompt a Ctrl-C still ends the conversation (#PR).
+- Every CLI ends its process with its exit code once `main` finished and
+  the exit handlers ran (spans flushed, logging shut down), without the
+  interpreter's shutdown, which resets the signal handlers: a SIGTERM or
+  Ctrl-C right after the result ended the process with -15 or -2 (`run-rag`
+  85 of 160 SIGTERMs after the JSON, `run-ingestion` 29 of 40) instead of
+  143 or 130. Threads still running are not waited for (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning`: a SIGTERM while the event
   loop runs cancels the CLI's task at its next await instead of raising
   `SystemExit` into the loop, where it could land in the loop's own code
