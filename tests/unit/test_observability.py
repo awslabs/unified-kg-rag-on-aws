@@ -1268,15 +1268,7 @@ class _SlowChatModel(GenericFakeChatModel):
 
 @pytest.mark.parametrize(
     "deadline",
-    [
-        "wait_for",
-        pytest.param(
-            "timeout",
-            marks=pytest.mark.skipif(
-                sys.version_info < (3, 11), reason="asyncio.timeout is 3.11+"
-            ),
-        ),
-    ],
+    ["wait_for", "timeout"],
 )
 async def test_a_timed_out_model_call_ends_its_span(
     tracing: Tracing, deadline: str
@@ -1296,9 +1288,9 @@ async def test_a_timed_out_model_call_ends_its_span(
             if deadline == "wait_for":
                 await asyncio.wait_for(model.ainvoke(_PROMPT), 0.05)
             else:
-                async with asyncio.timeout(0.05):  # type: ignore[attr-defined]
+                async with asyncio.timeout(0.05):
                     await model.ainvoke(_PROMPT)
-        except asyncio.TimeoutError:  # an alias of TimeoutError from 3.11
+        except TimeoutError:
             return "timed out"
         return "answered"
 
@@ -1337,7 +1329,7 @@ async def test_a_timed_out_call_that_streams_internally_ends_its_span(
     async def judge() -> str:
         try:
             await asyncio.wait_for(model.ainvoke(_PROMPT), 0.05)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "timed out"
         return "answered"
 

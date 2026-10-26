@@ -12,7 +12,7 @@ import re
 import signal
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -502,7 +502,7 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     # Before, the status gave no id to rerun with --pipeline-id, nor (only
     # the console message did) when the next run may write.
     import time
-    from datetime import datetime, timezone
+    from datetime import datetime
     from types import SimpleNamespace
 
     from unified_kg_rag.shared import PipelineInterrupted
@@ -548,7 +548,7 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     }
     if waits:
         expected["next_run_writes_from"] = datetime.fromtimestamp(
-            until, tz=timezone.utc
+            until, tz=UTC
         ).isoformat()
     assert json.loads(capsys.readouterr().out) == expected
 

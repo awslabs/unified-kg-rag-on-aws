@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1962,7 +1962,7 @@ class IndexingStage(_RegistryStage):
         record = IndexBuildRecord(
             pipeline_id=context.pipeline_id,
             mode="incremental" if incremental else "full",
-            built_at=datetime.now(timezone.utc),
+            built_at=datetime.now(UTC),
             documents=len(documents),
             extraction_fingerprint=(
                 context.incremental_extraction_fingerprint or settings.fingerprint

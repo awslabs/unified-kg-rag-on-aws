@@ -6,7 +6,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -648,7 +648,7 @@ def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:
     until = pipeline.next_run_writes_from if pipeline is not None else 0.0
     if until <= time.time():
         return None
-    return datetime.fromtimestamp(until, tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(until, tz=UTC).isoformat(timespec="seconds")
 
 
 def _next_run_wait(runner: IngestionPipelineRunner | None) -> str:

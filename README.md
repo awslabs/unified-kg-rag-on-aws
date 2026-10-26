@@ -1,7 +1,7 @@
 # Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
 
 🇰🇷 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
 
@@ -61,7 +61,7 @@ local models extract weaker graphs.
 
 ### Prerequisites
 
-Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works). Local mode needs [Ollama](https://ollama.com) (and Docker with Compose 2.23.1+ only for the stores in containers); the AWS paths need credentials with Bedrock access and, for existing resources, a Neptune cluster and an OpenSearch domain (the framework connects to services and never creates them); the CDK stack needs what [`iac/README.md`](./iac/README.md#quick-start) lists.
+Python 3.11–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works). Local mode needs [Ollama](https://ollama.com) (and Docker with Compose 2.23.1+ only for the stores in containers); the AWS paths need credentials with Bedrock access and, for existing resources, a Neptune cluster and an OpenSearch domain (the framework connects to services and never creates them); the CDK stack needs what [`iac/README.md`](./iac/README.md#quick-start) lists.
 
 ### Install and configure
 
@@ -72,7 +72,7 @@ uv sync                                 # or: pip install -e .
 cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 
-If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (Python 3.11+: `uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
+If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
 
 ### Ingest, query, evaluate
 

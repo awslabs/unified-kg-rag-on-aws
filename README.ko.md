@@ -1,7 +1,7 @@
 # Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
 
 🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**
 
@@ -60,7 +60,7 @@ AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs
 
 ### 사전 요구사항
 
-Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/)(`pip`도 가능)가 필요합니다. 로컬 모드에는 [Ollama](https://ollama.com)(컨테이너 저장소를 쓸 때만 Compose 2.23.1 이상의 Docker)가, AWS 방식에는 Bedrock 접근 권한이 있는 자격 증명과, 기존 리소스를 쓸 때 Neptune 클러스터와 OpenSearch 도메인이 필요합니다(프레임워크는 서비스에 연결만 하고 만들지 않음). CDK 스택에 필요한 것은 [`iac/README.md`](./iac/README.md#quick-start)에 있습니다.
+Python 3.11–3.12와 [uv](https://docs.astral.sh/uv/)(`pip`도 가능)가 필요합니다. 로컬 모드에는 [Ollama](https://ollama.com)(컨테이너 저장소를 쓸 때만 Compose 2.23.1 이상의 Docker)가, AWS 방식에는 Bedrock 접근 권한이 있는 자격 증명과, 기존 리소스를 쓸 때 Neptune 클러스터와 OpenSearch 도메인이 필요합니다(프레임워크는 서비스에 연결만 하고 만들지 않음). CDK 스택에 필요한 것은 [`iac/README.md`](./iac/README.md#quick-start)에 있습니다.
 
 ### 설치와 설정
 
@@ -71,7 +71,7 @@ uv sync                                 # 또는: pip install -e .
 cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포인트 입력
 ```
 
-OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(Python 3.11 이상: `uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
+OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(`uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
 
 ### 수집, 질의, 평가
 

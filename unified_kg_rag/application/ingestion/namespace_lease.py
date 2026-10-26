@@ -59,7 +59,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextvars import Token
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import TYPE_CHECKING
 
@@ -102,7 +102,7 @@ def longest_write_request_seconds() -> float:
 
 
 def _when(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat(timespec="seconds")
 
 
 class NamespaceLease:

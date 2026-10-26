@@ -8,7 +8,7 @@ import subprocess
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
@@ -989,7 +989,7 @@ class EvaluationManager:
             )
         git_sha, git_dirty = self._git_state()
         return {
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "package_version": self._package_version("unified-kg-rag-on-aws"),
             "git_sha": git_sha,
             "git_dirty": git_dirty,

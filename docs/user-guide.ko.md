@@ -51,7 +51,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 
 ### 런타임
 
-- **Python 3.10 – 3.12**
+- **Python 3.11 – 3.12**
 - **[uv](https://docs.astral.sh/uv/)**(권장 패키지 관리자. `pip`도 사용 가능)
 
 ### AWS 서비스
@@ -108,9 +108,9 @@ uv sync              # or: pip install -e .
 ```
 
 **Markdown과 HTML**을 파싱하려면 `unstructured` extra가 필요합니다
-(`uv sync --extra unstructured`, Python 3.11 또는 3.12. URL 분할의 SSRF와 마크업
-미이스케이프 문제를 고친 `unstructured>=0.24.1`을 요구함). extra가 없거나 Python
-3.10이면 `.pdf`, `.txt`, `.csv`, `.json`만 파싱하며, 수집은 `.md` / `.html` 파일을
+(`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
+고친 `unstructured>=0.24.1`을 요구함). extra가 없으면 `.pdf`, `.txt`, `.csv`,
+`.json`만 파싱하며, 수집은 `.md` / `.html` 파일을
 건너뛰고 확장자마다 경고를 한 번 남깁니다.
 
 배포용 이미지(`docker/Dockerfile`)에는 이 extra가 빠져 있으므로(약 200MB 증가) Step
@@ -1596,7 +1596,7 @@ finally:
 - **태스크를 죽이는 문서를 가려내려면 여러 번 실행해야 합니다**(*격리된 문서*). 함께
   죽은 문서 `n`개 가운데 원인 문서 하나에 대략 `log2(n) + 1`번이 걸리고, 그동안 미룬
   문서는 기다립니다.
-- **Markdown과 HTML**에는 `unstructured` extra(Python 3.11 이상)가 필요하며, 컨테이너
+- **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너
   이미지에는 기본으로 빠져 있습니다.
 - **임베딩 모델(또는 차원)을 바꾸면** `indexing.reset: true`가 필요합니다. 증분 실행은
   다른 모델의 인덱스에 쓰지 않습니다([작업 흐름](#작업-흐름)).

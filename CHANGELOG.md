@@ -833,8 +833,15 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
-- CI: the dependency license check runs on Python 3.10 as well as 3.12,
-  so packages the lock installs on 3.10 only are checked too (#428).
+- **BREAKING:** Python 3.10 is no longer supported (`requires-python` is
+  `>=3.11, <3.13`). 3.10 reached end of life on 2026-10-01, and no deployed
+  runtime uses it (the container image and `iac/` run 3.12). Every install
+  now gets Pillow 13.0.0: the lock no longer keeps Pillow 12.3.0 and the
+  other 3.10-only pins, which replaces the Pillow split by Python version
+  from #426. Upgrade: install on Python 3.11 or 3.12 (#430).
+- CI: the dependency license check runs on every supported Python (3.11
+  and 3.12), so packages the lock installs on one of them only are checked
+  too (#428).
 - `run-ingestion --output-format json` reports `failed_documents`, the
   number of documents a stage failed on (recorded `FAILED`), and the summary
   table a "Documents Failed" row (#420).
