@@ -1457,6 +1457,11 @@ changed once with the full-config keys (#332).
   index, and calls the number cut this search's width rather than
   `top_k`: a strategy scales the caller's `top_k` (`top_k 4/20/40` for
   one `--top-k`), so the message read as a different setting (#PR).
+- `iac/`: the ingestion and query task containers run under an init
+  process (`initProcessEnabled`). The image has no init, so the CLI ran
+  as PID 1: the kernel dropped a stop signal that arrived before the CLI
+  installed its handler, and nothing reaped the processes it left. A
+  redeploy of the compute stack picks this up (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

@@ -514,6 +514,13 @@ class ComputeStack(Stack):
             # uploads its checkpoint and unwinds the in-flight model calls;
             # give it the Fargate maximum before the task is killed.
             stop_timeout=Duration.seconds(120),
+            # An init process as PID 1 forwards the stop signal to the CLI
+            # and reaps the processes it leaves (pool workers, the
+            # entrypoint's aws s3 sync); the CLI as PID 1 got no signal it
+            # had no handler for and reaped nothing.
+            linux_parameters=ecs.LinuxParameters(
+                task_def, "AppLinuxParameters", init_process_enabled=True
+            ),
         )
         if self.config.enable_cloudwatch_tracing:
             collector = self._add_trace_collector(task_def)
