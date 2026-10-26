@@ -213,7 +213,7 @@ jobs:
 
       - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
         working-directory: iac
-        run: uv run --no-sync cdk synth --all -c enable_cdk_nag=true -q
+        run: uv run --no-sync cdk synth -c enable_cdk_nag=true -q
 
       - name: cdk synth with cdk-nag, production-hardened flags
         # The README's zero-findings claim covers the hardened shape too: CMK,
@@ -221,7 +221,7 @@ jobs:
         # suppression applies when opensearch_count > 1), retained storage.
         working-directory: iac
         run: >-
-          uv run --no-sync cdk synth --all -q
+          uv run --no-sync cdk synth -q
           -c enable_cdk_nag=true
           -c use_cmk=true
           -c vpc_flow_logs=true
