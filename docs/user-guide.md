@@ -12,7 +12,8 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
   dependency rule), see [docs/design.md](./design.md).
 
-The six console entry points (defined as `pyproject` scripts) are:
+The six console entry points (defined as `pyproject` scripts) all start
+through `application.cli.launch`, which then loads the module below:
 
 | Script | Module | Purpose |
 |---|---|---|

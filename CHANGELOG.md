@@ -1495,7 +1495,7 @@ changed once with the full-config keys (#332).
   its deletions, while a one-document delta's rejected setting excluded
   that document. Trade-off: a content-specific rejection that later clears
   with no change to the document or settings can now exclude it after
-  `indexing.max_document_failures` runs (#431).
+  `indexing.max_document_failures` runs (one cause since #432) (#431).
 - `run-rag --interactive` with `auto`: `set-filter` (and `--filters`
   before the first question) refuses a key that any strategy `auto` may
   route to rejects, naming that strategy. It accepted a key any one of
