@@ -1364,6 +1364,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a claim re-derived while one of its endpoint
+  entities could not be derived (a text unit it cites has no extraction
+  record) keeps that stored entity as its endpoint; it took the entity its
+  own text unit resolves to alone, an id and name no stored entity has, so
+  the claim pointed at a nonexistent entity (#PR).
 - Incremental indexing: when every unit an extraction stage sends (graph
   extraction, claim extraction or gleaning) fails with one identical error
   the document could cause, the stage sends one known-good request through

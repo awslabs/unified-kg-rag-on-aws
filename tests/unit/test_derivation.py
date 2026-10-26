@@ -574,3 +574,45 @@ def test_a_tie_between_candidates_does_not_depend_on_their_order() -> None:
     }
 
     assert matches == {min(a.id, b.id)}
+
+
+def test_a_claim_keeps_an_underived_endpoint_the_resolved_one_is_not() -> None:
+    # Neither stored entity can be derived (u2, u3 have no record). u1 alone
+    # resolves "Acme" apart from "Acme LLC", so the claim's subject resolved
+    # to an "Acme" entity nothing stores or derives: a dangling endpoint. It
+    # keeps the stored entity it names.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1"),
+            _entity("Depot", "u1"),
+            _entity("Acme LLC", "u1"),
+            edges=[_edge("Acme", "Depot", "u1"), _edge("Acme LLC", "Depot", "u1")],
+        )
+    }
+    acme = _stored(
+        "Acme LLC",
+        ["u1", "u2"],
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme llc"]},
+    )
+    depot = _stored("Depot", ["u1", "u3"])
+    stored = _pays("Acme LLC", "Depot", ["u1"]).model_copy(
+        update={"subject_id": acme.id, "object_id": depot.id}
+    )
+    stored.id = resolved_claim_id(stored)
+
+    derived = derive(
+        Config(),
+        [acme, depot],
+        [],
+        [stored],
+        records,
+        {"u1": [_pays("Acme", "Depot", ["u1"])]},
+    )
+
+    assert sorted(derived.underived) == sorted([acme.id, depot.id])
+    (claim,) = derived.claims
+    assert (claim.subject_id, claim.subject_name) == (acme.id, "Acme LLC")
+    assert (claim.object_id, claim.object_name) == (depot.id, "Depot")
