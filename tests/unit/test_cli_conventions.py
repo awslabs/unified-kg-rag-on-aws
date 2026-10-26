@@ -46,6 +46,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
+def _ctrl_c_raises():
+    """Python's own SIGINT handler, whatever the suite inherited: under
+    ``nohup`` (or ``cmd &`` in a script) SIGINT starts ignored, and the CLIs
+    keep an inherited ignore (tested on its own)."""
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+@pytest.fixture(autouse=True)
 def _restore_console():
     # --output-format json moves the shared console to stderr.
     yield
@@ -187,6 +197,23 @@ def test_a_ctrl_c_cancels_the_running_main_task_and_exits_130() -> None:
     assert exc.value.code == 130
     assert events == ["went on to the next await", "cancelled", "closed"]
     assert signal.getsignal(signal.SIGINT) is previous
+
+
+def test_a_cli_keeps_an_inherited_ignored_ctrl_c() -> None:
+    # Started under nohup (or `cmd &` in a script), SIGINT is ignored: main
+    # runs with it ignored, and it is ignored again after main.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    seen: list[object] = []
+
+    @exits_on_sigterm
+    def main() -> int:
+        seen.append(signal.getsignal(signal.SIGINT))
+        os.kill(os.getpid(), signal.SIGINT)  # ignored
+        return 0
+
+    assert main() == 0
+    assert seen == [signal.SIG_IGN]
+    assert signal.getsignal(signal.SIGINT) is signal.SIG_IGN
 
 
 def test_a_ctrl_c_outside_the_loop_is_the_clis_keyboardinterrupt() -> None:
@@ -419,6 +446,8 @@ def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
         capture_output=True,
         text=True,
         timeout=60,
+        # SIGINT handled, whatever the suite inherited (nohup ignores it).
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
     )
     assert done.returncode == 130, done.stderr
     assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
