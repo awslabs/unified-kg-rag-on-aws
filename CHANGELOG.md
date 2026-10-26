@@ -41,6 +41,10 @@ details.
   Step Functions ingestion pipeline (#157, #211).
 
 ### Breaking changes
+Python. 3.11 or 3.12 is required (`requires-python` `>=3.11, <3.13`): 3.10
+reached end of life and is no longer supported. Upgrade: install on Python
+3.11 or 3.12 (#430).
+
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.
 - `indexing.opensearch.index_settings` refuses the `knn` keys (`knn`,
@@ -841,6 +845,10 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Incremental indexing: an interruption resets a document's `retry_count`
+  (consecutive failed runs for an error not its own), as it resets
+  `failure_count`: the write-ahead `PENDING` record kept it, so the next
+  failure counted on across the interrupted run (#PR).
 - **BREAKING:** Python 3.10 is no longer supported (`requires-python` is
   `>=3.11, <3.13`). 3.10 reached end of life on 2026-10-01, and no deployed
   runtime uses it (the container image and `iac/` run 3.12). Every install
@@ -1372,6 +1380,43 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: the known-good request that tells a model or
+  setting failure from the documents' own (#431) is sent when every unit
+  fails with errors alike in type, error code and HTTP status, whatever
+  their messages: an OpenAI-compatible server's 400s name each request's
+  token counts, so they were never alike, and every document counted until
+  the whole delta was excluded. It is also sent when every unit's output
+  does not parse or was cut off (a server-side output cap), which always
+  counted: the request's answer must then parse for the errors to count.
+  The local configuration patterns name the vLLM and OpenAI context-length
+  rejections that count the requested `max_tokens` ("you requested N
+  tokens", "'max_tokens' or 'max_completion_tokens' is too large"), which
+  count for none (#PR).
+- Graph extraction: output listing entities none of which has a name
+  (cut off with no stop reason, a server-side cap reported as a normal
+  stop) is a parse failure, retried and counted like one, instead of a
+  unit recorded `PROCESSED` with nothing extracted. Output cut later keeps
+  the entities before the cut; the XML parser warns of an unclosed section
+  (#PR).
+- Incremental indexing: an explicit `--resume-from-stage` that runs a
+  finished pipeline id's indexing stage again on the restored failures of a
+  stage the run does not enable warns, as documented, before the indexing
+  stage records those documents `FAILED` and counts them once more; the
+  check looked for the start stage among the stages restored before it, so
+  the count came with no word (#PR).
+- OpenSearch: a rejected bulk item's message adds the errors it was caused
+  by (`caused_by`, where "Vector dimension mismatch" is named), and leaves
+  out an immense-term rejection's term bytes and the values a cause quotes,
+  as it did the mapping error's value preview (#PR).
+- Documentation: with the doc-status registry on, text-unit ids derive
+  from the source scope, which defaults to the absolute source directory,
+  so the same corpus ingested from another directory gets other ids; the
+  identity docstrings and the user guide's determinism note said they do
+  not depend on where the corpus sits. Set
+  `processing.document_parsing.source_scope` for portable ids (#PR).
+- Documentation: a failed stage adds one to `retry_count` of the documents
+  it failed on for an error not their own; the operations guide said it
+  records nothing (#PR).
 - Incremental indexing: the documents a commit recorded FAILED are in the
   run's `failed_documents` even when the commit then fails or is stopped
   (its extraction-record cleanup); they were added only once the commit
@@ -1431,11 +1476,12 @@ changed once with the full-config keys (#332).
   `indexing.max_document_failures` runs again, rather than failing every
   run of its delta. The optional factory hooks (`is_transient_error`,
   `is_item_error`, `transient_retry`) are documented in design §15 (#428).
-- Incremental indexing: one error on every unit of several documents counts
-  for none of them in claim extraction and gleaning too, as it did in graph
-  extraction (`adapters.llm.retry.item_failed_indices`), so a setting the
-  model rejects there no longer excludes a whole delta after
-  `indexing.max_document_failures` runs. The Bedrock and local
+- Incremental indexing: the rule for one error on every unit applies in
+  claim extraction and gleaning too, as it did in graph extraction
+  (`adapters.llm.retry.item_failed_indices`), so a setting the model
+  rejects there no longer excludes a whole delta after
+  `indexing.max_document_failures` runs. (The rule asked for several
+  documents then; a known-good request decides since #431.) The Bedrock and local
   configuration patterns also name a requested maximum token count above
   the model's limit (`maximum tokens ...`, `max_tokens: X > Y`),
   `temperature` and `top_p` set together, and an extraneous request key
@@ -1486,7 +1532,8 @@ changed once with the full-config keys (#332).
   was cut off, or a request the model rejects for its content (a Bedrock
   `ValidationException`, HTTP 400/413/422 from a local server) other than a
   rejection of the model or a setting, and not one error that failed every
-  unit of several documents. The language-model factories name these
+  unit (then: of several documents; a known-good request decides since
+  #431). The language-model factories name these
   (`is_item_error`, next to `is_transient_error`). Graph extraction, gleaning and
   claim extraction are classified; any other failure (translation, a
   report, a record not stored) is recorded `FAILED` without counting (#425).
@@ -4364,6 +4411,9 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- `PipelineContext.failed_documents`: nothing read it since the run's
+  `failed_documents` count became the documents recorded `FAILED`
+  (`recorded_failed_doc_ids`, #425) (#PR).
 - Unused code: the uncurated-model warning's own once-per-id set and lock in
   `bedrock_models` (now `shared.logging.warn_once`) (#418).
 - Unused code: `OpenSearchRetriever`'s `top_k` override on a fetch by id's
@@ -4438,14 +4488,15 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
-- Python 3.11 and 3.12 installs, including the container image, get Pillow
-  13.0.0, which fixes the critical and high Pillow 12.3.0 advisories (for
-  example GHSA-p4wg-p73j-c528). 13.0.0 requires Python 3.11+, so the Pillow
-  requirement is split by Python version and 3.10 keeps 12.3.0, which has no
-  fixed release; `SECURITY.md` lists this and the filelock residual
+- Every install, including the container image, gets Pillow 13.0.0, which
+  fixes the critical and high Pillow 12.3.0 advisories (for example
+  GHSA-p4wg-p73j-c528). #426 split the Pillow requirement by Python version,
+  keeping 12.3.0 on 3.10; #430 dropped 3.10 and the split. `SECURITY.md`
+  lists the filelock residual
   (GHSA-v4x8-3wr5-3wq8: `unstructured` caps filelock below 4, the fix needs
   4.2.1, and no installed dependency uses the affected `ReadWriteLock`).
-  The lock also moves certifi to 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#426).
+  The lock also moves certifi to 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#426,
+  #430).
 - Graph expansion under a document filter keeps an expanded entity only
   when a walk over relationships that pass the filter reaches it from a
   seed: the walk crossed every edge, so entities (and through them chunks)
