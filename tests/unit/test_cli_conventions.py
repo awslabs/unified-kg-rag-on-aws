@@ -119,6 +119,40 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
+    capsys, monkeypatch
+) -> None:
+    # Raised into run-rag's event loop as its coroutine returned, the
+    # SystemExit could leave nest_asyncio's run() waiting forever (5 of 23
+    # stops right after the JSON hung until SIGKILL).
+    from unified_kg_rag.application.cli import conventions
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    events: list[object] = []
+    monkeypatch.setattr(conventions, "_exit_stopped", events.append)
+
+    @exits_on_sigterm
+    def main() -> int:
+        json_output(argparse.Namespace(output_format="json"))
+        print_json({"ok": True})
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            events.append("unwound")
+        return 0
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit):
+            main()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    # Ended from the handler, not after unwinding through the loop.
+    assert events[:2] == [143, "unwound"]
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
 def test_a_sigterm_after_main_returned_ends_the_process_with_143(
     capsys, monkeypatch
 ) -> None:
@@ -182,6 +216,46 @@ def test_a_sigterm_while_a_cli_loads_exits_143(
         assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 143}
     else:
         assert done.stdout == ""
+
+
+def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
+    # Only SIGTERM was handled: a Ctrl-C during the imports printed a
+    # traceback and, with --output-format json, no JSON.
+    import subprocess
+
+    script = (
+        "import os, signal\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "def loading(name):\n"
+        "    os.kill(os.getpid(), signal.SIGINT)\n"
+        "    signal.pause()\n"
+        "launch.importlib.import_module = loading\n"
+        "launch.run_rag()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 130, done.stderr
+    assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
+
+
+def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
+    # Once loaded, Ctrl-C raises KeyboardInterrupt in main as before.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli import launch
+
+    cli = SimpleNamespace(main=lambda: signal.getsignal(signal.SIGINT))
+    monkeypatch.setattr(launch.importlib, "import_module", lambda _name: cli)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        assert launch.run_rag() is signal.getsignal(signal.SIGINT)
+        assert signal.getsignal(signal.SIGINT) is not launch._stopped_while_loading
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def test_every_console_script_starts_through_the_launcher() -> None:
@@ -628,6 +702,55 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
             until, tz=UTC
         ).isoformat()
     assert json.loads(capsys.readouterr().out) == expected
+
+
+def test_ingestion_stopped_after_its_result_prints_one_document(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A SIGTERM between the result and the end of pipeline.close() printed
+    # an interrupted status after it, and told the user to resume a run
+    # that had finished.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(
+        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
+    )
+
+    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
+        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
+            pipeline_id="run-7", next_run_writes_from=0.0
+        )
+        print_json({"pipeline_id": "run-7", "status": "completed"})
+        self.reported = True
+        raise PipelineInterrupted(signal.SIGTERM)
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-ingestion",
+            "--source-directory",
+            str(src),
+            "--cache-directory",
+            str(tmp_path / "cache"),
+            "--output-format",
+            "json",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 143
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"pipeline_id": "run-7", "status": "completed"}
+    assert "--pipeline-id" not in err
 
 
 @pytest.mark.parametrize("value", ["0", "-3"])

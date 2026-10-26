@@ -462,6 +462,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             state["resolved_strategy"] = strategy
             return state
 
+        # Before routing, as an interactive session does: whether a filter
+        # key is refused must not depend on the route a question takes.
+        if state.get("filters"):
+            self.check_filter_keys(state["filters"], SearchStrategy.AUTO)
         routable = routable_strategies(self.config)
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -917,7 +921,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if state.get("filters"):
             self._validate_filter_keys(
                 state["filters"],
-                list(strategy_instance.retrievers.values()),
+                strategy_instance.filtered_retrievers(state["resolved_strategy"]),
                 strategy_instance.filtered_index_prefixes(state["resolved_strategy"]),
             )
         processed: ProcessedQuery = state["processed_query"]
@@ -985,7 +989,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             instance = self._get_strategy_instance(strategy)
             self._validate_filter_keys(
                 filters,
-                list(instance.retrievers.values()),
+                instance.filtered_retrievers(strategy),
                 instance.filtered_index_prefixes(strategy),
             )
 

@@ -34,7 +34,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_FILTER_FIELDS,
     FilterFields,
-    union_filter_fields,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
@@ -136,7 +135,8 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         return list(seed_ids) if isinstance(seed_ids, list) else []
 
     def filter_fields(self) -> FilterFields:
-        return union_filter_fields(NEPTUNE_FILTER_FIELDS.values())
+        # The traversal filters entity vertices only (_scope_filters_to_label).
+        return NEPTUNE_FILTER_FIELDS["entity"]
 
     @staticmethod
     def _scope_filters_to_label(

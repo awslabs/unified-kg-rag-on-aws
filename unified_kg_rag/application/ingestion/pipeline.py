@@ -2130,10 +2130,10 @@ class DataIngestionPipeline:
                 )
                 return False
             else:
-                logger.error(
-                    "Stopping pipeline due to failure in stage '%s': %s",
+                # The stage logged its error already, at ERROR.
+                logger.info(
+                    "Stopping pipeline due to failure in stage '%s'",
                     result.stage_name,
-                    result.error_message,
                 )
                 return True
         return False

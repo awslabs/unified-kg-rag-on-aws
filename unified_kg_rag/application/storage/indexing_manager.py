@@ -1322,7 +1322,8 @@ class IndexingManager:
         text_units: Sequence[TextUnit],
     ) -> tuple[dict[str, TextUnitExtraction], dict[str, list[Claim]]]:
         """The graph and claim records of ``unit_ids`` (those found)."""
-        units = {u.id: u for u in text_units if u.id in set(unit_ids)}
+        wanted = set(unit_ids)
+        units = {u.id: u for u in text_units if u.id in wanted}
         missing = [i for i in unit_ids if i not in units]
         if missing:
             for (

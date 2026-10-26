@@ -107,7 +107,12 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     (:func:`_exit_stopped`), without waiting for the threads it abandoned.
     """
 
-    def _exit(signum: int, _frame: object) -> None:
+    def _exit(signum: int, frame: object) -> None:
+        if _json["printed"]:
+            # The result is out: end now. Raised into an event loop as its
+            # coroutine returns, the SystemExit could leave nest_asyncio's
+            # run() waiting forever on a task it cancelled.
+            _stopped_in_teardown(signum, frame)
         raise SystemExit(128 + signum)
 
     @functools.wraps(main)

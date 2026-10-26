@@ -12,7 +12,8 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
   dependency rule), see [docs/design.md](./design.md).
 
-The six console entry points (defined as `pyproject` scripts) are:
+The six console entry points (defined as `pyproject` scripts) all start
+through `application.cli.launch`, which then loads the module below:
 
 | Script | Module | Purpose |
 |---|---|---|
@@ -832,7 +833,6 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
-| Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 
 - On OpenSearch, `attr_<key>` is entry `<key>` of a document's `filters`
   metadata (an item from several documents carries all their values); on
@@ -847,11 +847,14 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   selected strategy reads declares (e.g. `category`, or `type` with `naive`
   or `global`) raises `InvalidFilterError`, listing the filterable keys
   (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
-  units; `hybrid` and `mix` entities, relationships, text units and
-  Neptune; `local` and `drift` every index the pipeline builds and Neptune;
-  `global` community reports (and text units with
-  `search.global_search.text_unit_slots`); `simple` every index the
-  pipeline builds; `auto` must suit every strategy it may route to.
+  units; `hybrid` and `mix` entities, relationships and text units (and
+  Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
+  `drift` every index the pipeline builds and Neptune; `global` community
+  reports (and text units with `search.global_search.text_unit_slots`,
+  scoped to the selected reports' communities, which replace a caller
+  `community_ids`); `simple` every index the pipeline builds; `auto` must
+  suit every strategy it may route to, checked before routing. Neptune
+  filters entity vertices only.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
   claims and community reports carry the filter values of their text units'

@@ -645,3 +645,21 @@ def test_start_index_maps_a_disabled_start_stage(start, expected) -> None:
         for name in ("graph_extraction", "graph_resolution", "graph_analysis")
     ]
     assert pipe._start_index(start) == expected
+
+
+def test_a_stage_failure_is_logged_at_error_once(caplog) -> None:
+    # The stage logs its error; stopping the pipeline logged it again at
+    # ERROR ("Stopping pipeline due to failure in stage ...: <message>").
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.pipeline_config = SimpleNamespace(continue_on_error=False)
+    result = PipelineStageResult(
+        stage_name="graph_extraction",
+        status=PipelineStageStatus.FAILED,
+        start_time=datetime.now(),
+        end_time=datetime.now(),
+        error_message="boom",
+    )
+    with caplog.at_level("INFO"):
+        assert pipeline._should_stop_pipeline(result)
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "graph_extraction" in caplog.text

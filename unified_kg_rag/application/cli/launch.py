@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """The console-script entry points (``[project.scripts]``).
 
-Each installs a SIGTERM handler, then imports its CLI. The imports take
-seconds (LangChain, the model and store SDKs), and a SIGTERM in that window
-ended the process with -15 and, with ``--output-format json``, no JSON on
-stdout. Here it exits ``128 + SIGTERM`` (143) and prints the status document
-the CLI would have (:mod:`.conventions`). Standard library only, so the
-handler is in place before anything heavy loads; the CLI's own handler
-(``exits_on_sigterm``) replaces it once ``main`` runs.
+Each installs a SIGTERM and a SIGINT handler, then imports its CLI. The
+imports take seconds (LangChain, the model and store SDKs), and a SIGTERM in
+that window ended the process with -15 (a Ctrl-C with a traceback) and, with
+``--output-format json``, no JSON on stdout. Here it exits ``128 + signal``
+(143, or 130 for SIGINT) and prints the status document the CLI would have
+(:mod:`.conventions`). Standard library only, so the handlers are in place
+before anything heavy loads; the CLI's own SIGTERM handler
+(``exits_on_sigterm``) replaces the first once ``main`` runs, and the SIGINT
+handler is restored before it.
 """
 
 from __future__ import annotations
@@ -44,7 +46,11 @@ def _stopped_while_loading(signum: int, _frame: object) -> None:
 
 def _run(module: str) -> Any:
     signal.signal(signal.SIGTERM, _stopped_while_loading)
-    return importlib.import_module(f"unified_kg_rag.application.cli.{module}").main()
+    interrupt = signal.signal(signal.SIGINT, _stopped_while_loading)
+    cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
+    # Ctrl-C raises KeyboardInterrupt again once main runs.
+    signal.signal(signal.SIGINT, interrupt)
+    return cli.main()
 
 
 def run_ingestion() -> Any:

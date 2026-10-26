@@ -331,6 +331,14 @@ class BaseSearchStrategy(ABC):
         default): every index of the document retriever."""
         return None
 
+    def filtered_retrievers(
+        self, strategy: SearchStrategy
+    ) -> list[BaseGraphRAGRetriever]:
+        """The retrievers ``strategy``'s searches apply the caller's filters
+        to (``GraphRAGChain`` checks the keys against them). By default every
+        one the strategy holds."""
+        return list(self.retrievers.values())
+
     def _built_prefixes(self, *prefixes: str) -> list[str]:
         """The ``prefixes`` the configured pipeline builds."""
         return [p for p in configured_index_prefixes(self.config) if p in prefixes]

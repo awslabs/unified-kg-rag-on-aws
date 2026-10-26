@@ -225,6 +225,18 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             o.text_units_index_prefix,
         )
 
+    def filtered_retrievers(
+        self, strategy: SearchStrategy
+    ) -> list[BaseGraphRAGRetriever]:
+        # The graph is read only by the opt-in graph expansion.
+        if self._lightrag_config.enable_graph_expansion:
+            return super().filtered_retrievers(strategy)
+        return [
+            r
+            for role, r in self.retrievers.items()
+            if role != RetrieverRole.GRAPH.value
+        ]
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

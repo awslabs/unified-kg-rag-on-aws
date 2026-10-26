@@ -14,7 +14,8 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 - 내부 구조와 아키텍처(헥사고날 레이어, 포트와 어댑터, 의존성 규칙)는
   [설계 문서](./design.ko.md)를 참고하세요.
 
-콘솔 진입점 여섯 개(`pyproject` 스크립트로 정의)는 다음과 같습니다.
+콘솔 진입점 여섯 개(`pyproject` 스크립트로 정의)는 모두 `application.cli.launch`로
+시작해 아래 모듈을 불러옵니다.
 
 | 스크립트 | 모듈 | 용도 |
 |---|---|---|
@@ -775,7 +776,6 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 | 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
-| Neptune 커뮤니티 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
 
 - OpenSearch에서 `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목입니다(여러
   문서에서 나온 항목은 그 값을 모두 가짐). Neptune 엔티티 정점에서는 엔티티 자체의
@@ -788,10 +788,12 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
   `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
   (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive`는 텍스트 단위를, `hybrid`와
-  `mix`는 엔티티·관계·텍스트 단위와 Neptune을, `local`과 `drift`는 파이프라인이 만드는 모든
-  인덱스와 Neptune을, `global`은 커뮤니티 리포트(`search.global_search.text_unit_slots`를
-  쓰면 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는
-  라우팅될 수 있는 모든 전략에 맞아야 합니다.
+  `mix`는 엔티티·관계·텍스트 단위(`search.lightrag_search.enable_graph_expansion`을 켜면
+  Neptune도)를, `local`과 `drift`는 파이프라인이 만드는 모든 인덱스와 Neptune을, `global`은
+  커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
+  범위를 좁힌 텍스트 단위도. 이 범위가 호출자의 `community_ids`를 대신함)를, `simple`은
+  파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는 라우팅될 수 있는 모든 전략에 맞아야
+  하며 라우팅 전에 확인합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
