@@ -481,3 +481,33 @@ def test_a_delta_edge_takes_the_name_of_the_stored_entity_it_merged_into() -> No
     (edge,) = result.relationships
     assert (edge.source_id, edge.source_name) == ("e-old", "ACME, Inc.")
     assert delta_edge.source_name == "Acme Inc"
+
+
+def test_unit_records_reads_the_cited_ids_a_bounded_number_of_times() -> None:
+    # The cited-id set was rebuilt for every delta unit: quadratic in a large
+    # delta (seconds per derive round at 10k units citing 40k).
+    from collections.abc import Iterator
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import TextUnit
+
+    class _CountedIds(list[str]):
+        passes = 0
+
+        def __iter__(self) -> Iterator[str]:
+            type(self).passes += 1
+            return super().__iter__()
+
+    class _Store:
+        def read_text_unit_attributes(self, ids, suffix=None):
+            return {}
+
+        def read_extraction_records(self, keys, suffix=None):
+            return {}
+
+    units = [TextUnit(id=f"t{i}", text="t") for i in range(50)]
+    unit_ids = _CountedIds(f"t{i}" for i in range(100))
+    me = SimpleNamespace(opensearch_indexer=_Store())
+    IndexingManager._unit_records(me, "s", unit_ids, units)  # type: ignore[arg-type]
+    assert _CountedIds.passes <= 2

@@ -1397,6 +1397,9 @@ changed once with the full-config keys (#332).
   router runs, as an interactive session already did. Only the routed
   strategy was checked, after the router call, so one filter answered or
   exited 2 depending on the route (#PR).
+- Incremental indexing: reading the stored extraction records of a delta
+  no longer rebuilds the set of cited text units per delta unit, which
+  took seconds per derive round on a 10k-unit delta (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at
