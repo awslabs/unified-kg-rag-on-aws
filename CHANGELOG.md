@@ -848,7 +848,7 @@ changed once with the full-config keys (#332).
 - Incremental indexing: an interruption resets a document's `retry_count`
   (consecutive failed runs for an error not its own), as it resets
   `failure_count`: the write-ahead `PENDING` record kept it, so the next
-  failure counted on across the interrupted run (#PR).
+  failure counted on across the interrupted run (#432).
 - **BREAKING:** Python 3.10 is no longer supported (`requires-python` is
   `>=3.11, <3.13`). 3.10 reached end of life on 2026-10-01, and no deployed
   runtime uses it (the container image and `iac/` run 3.12). Every install
@@ -1383,7 +1383,7 @@ changed once with the full-config keys (#332).
 - Incremental indexing: a document whose content changed between two runs
   failing for an error not its own starts `retry_count` over; opening the
   attempt at the new content kept the old content's count, which the next
-  failure then continued (#PR).
+  failure then continued (#432).
 - Incremental indexing: the known-good request that tells a model or
   setting failure from the documents' own (#431) is sent when every unit
   fails with errors alike in type, error code and HTTP status, whatever
@@ -1395,32 +1395,32 @@ changed once with the full-config keys (#332).
   The local configuration patterns name the vLLM and OpenAI context-length
   rejections that count the requested `max_tokens` ("you requested N
   tokens", "'max_tokens' or 'max_completion_tokens' is too large"), which
-  count for none (#PR).
+  count for none (#432).
 - Graph extraction: output listing entities none of which has a name
   (cut off with no stop reason, a server-side cap reported as a normal
   stop) is a parse failure, retried and counted like one, instead of a
   unit recorded `PROCESSED` with nothing extracted. Output cut later keeps
   the entities before the cut; the XML parser warns of an unclosed section
-  (#PR).
+  (#432).
 - Incremental indexing: an explicit `--resume-from-stage` that runs a
   finished pipeline id's indexing stage again on the restored failures of a
   stage the run does not enable warns, as documented, before the indexing
   stage records those documents `FAILED` and counts them once more; the
   check looked for the start stage among the stages restored before it, so
-  the count came with no word (#PR).
+  the count came with no word (#432).
 - OpenSearch: a rejected bulk item's message adds the errors it was caused
   by (`caused_by`, where "Vector dimension mismatch" is named), and leaves
   out an immense-term rejection's term bytes and the values a cause quotes,
-  as it did the mapping error's value preview (#PR).
+  as it did the mapping error's value preview (#432).
 - Documentation: with the doc-status registry on, text-unit ids derive
   from the source scope, which defaults to the absolute source directory,
   so the same corpus ingested from another directory gets other ids; the
   identity docstrings and the user guide's determinism note said they do
   not depend on where the corpus sits. Set
-  `processing.document_parsing.source_scope` for portable ids (#PR).
+  `processing.document_parsing.source_scope` for portable ids (#432).
 - Documentation: a failed stage adds one to `retry_count` of the documents
   it failed on for an error not their own; the operations guide said it
-  records nothing (#PR).
+  records nothing (#432).
 - Incremental indexing: the documents a commit recorded FAILED are in the
   run's `failed_documents` even when the commit then fails or is stopped
   (its extraction-record cleanup); they were added only once the commit
@@ -4417,7 +4417,7 @@ changed once with the full-config keys (#332).
 ### Removed
 - `PipelineContext.failed_documents`: nothing read it since the run's
   `failed_documents` count became the documents recorded `FAILED`
-  (`recorded_failed_doc_ids`, #425) (#PR).
+  (`recorded_failed_doc_ids`, #425) (#432).
 - Unused code: the uncurated-model warning's own once-per-id set and lock in
   `bedrock_models` (now `shared.logging.warn_once`) (#418).
 - Unused code: `OpenSearchRetriever`'s `top_k` override on a fetch by id's
