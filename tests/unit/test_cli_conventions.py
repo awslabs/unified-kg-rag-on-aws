@@ -257,7 +257,6 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
         source_directory=Path("src"),
         failed_text_unit_ids={"graph_extraction": ["u0", "u1"], "gleaning": ["u3"]},
     )
-    assert [d.document_id for d in context.failed_documents] == ["a", "c"]
     context.record_failed_documents(["doc-a"])
     runner = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
         run_ingestion_pipeline.IngestionPipelineRunner

@@ -114,9 +114,9 @@ def _pick_by_weighted_polling(
         used.append(actual)
         total_remaining += expected - actual
 
-    # Re-distribute the quota that short lineages could not fill, one chunk per
-    # scan, so leftover slots still spread across items instead of piling onto
-    # the single richest one.
+    # Re-distribute the quota that short lineages could not fill, one chunk at
+    # a time, first-fit as upstream LightRAG does: each leftover slot goes to
+    # the first item, in rank order, with a chunk left.
     for _ in range(total_remaining):
         allocated = False
         for i, lineage in enumerate(lineages):
