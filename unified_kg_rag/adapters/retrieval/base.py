@@ -331,6 +331,12 @@ class BaseSearchStrategy(ABC):
         default): every index of the document retriever."""
         return None
 
+    def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
+        """The filter keys ``strategy`` sets itself on the searches it scopes
+        (a sub-query's scope replaces a caller value, ``_scoped_filters``),
+        which ``GraphRAGChain`` therefore refuses. None by default."""
+        return frozenset()
+
     def filtered_retrievers(
         self, strategy: SearchStrategy
     ) -> list[BaseGraphRAGRetriever]:

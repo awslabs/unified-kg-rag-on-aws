@@ -1406,6 +1406,11 @@ changed once with the full-config keys (#332).
   the entities index. The graph dropped the key, so neighbours failing it
   came back as entity results (9 of 10 under `name.keyword` with `local`,
   59 of 59 under `attributes.role` with `mix`; none now) (#PR).
+- `global` refuses a filter on a key it scopes its own searches by:
+  `depth` and `max_cut_depth` (with `use_dynamic_selection`, `depth` and
+  `community_id`), and `community_ids` with `text_unit_slots`. Its scope
+  replaced the caller's value without a word; `auto` now routes such a
+  filter to a strategy that applies it (#PR).
 - Queries with `auto` (one `--query`, `run-eval`, the Python API, and
   `run-rag --interactive` `--filters` and `set-filter`): filters are refused
   only when no strategy `auto` may route to applies every key, and the

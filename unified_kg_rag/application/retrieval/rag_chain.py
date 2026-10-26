@@ -918,10 +918,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # The instance itself is cached per loop and holds no per-query state.
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         if state.get("filters"):
-            self._validate_filter_keys(
-                state["filters"],
-                strategy_instance.filtered_retrievers(state["resolved_strategy"]),
-                strategy_instance.filtered_index_prefixes(state["resolved_strategy"]),
+            self._check_strategy_filter_keys(
+                state["filters"], state["resolved_strategy"]
             )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
@@ -992,6 +990,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
     ) -> None:
         instance = self._get_strategy_instance(strategy)
+        reserved = sorted(set(filters or {}) & instance.reserved_filter_keys(strategy))
+        if reserved:
+            raise InvalidFilterError(
+                f"Filter key(s) {', '.join(reserved)}: {strategy.value} search "
+                "sets them itself to scope what it reads, so the filter would "
+                "be replaced."
+            )
         self._validate_filter_keys(
             filters,
             instance.filtered_retrievers(strategy),

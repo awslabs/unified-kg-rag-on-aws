@@ -851,8 +851,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
   `drift` every index the pipeline builds and Neptune; `global` community
   reports (and text units with `search.global_search.text_unit_slots`,
-  scoped to the selected reports' communities, which replace a caller
-  `community_ids`); `simple` every index the pipeline builds. `auto` routes
+  scoped to the selected reports' communities); `simple` every index the
+  pipeline builds. `global` refuses the keys it scopes its own searches by:
+  `depth` and `max_cut_depth` (with
+  `search.global_search.use_dynamic_selection`, `depth` and
+  `community_id`), and `community_ids` with `text_unit_slots`. `auto` routes
   only among the strategies it may route to that apply every key (with the
   default set, `type:person` leaves `local` and `mix`) and refuses the
   filters, before routing, only when none does. Neptune filters entity

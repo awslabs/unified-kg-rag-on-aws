@@ -550,6 +550,7 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
         filtered_retrievers=lambda _strategy: list(reads[s].values()),
         filtered_index_prefixes=lambda _strategy: None,
+        reserved_filter_keys=lambda _strategy: frozenset(),
     )
     chain.check_filter_keys({"status": "open"}, SearchStrategy.NAIVE)
     with pytest.raises(InvalidFilterError, match="status"):
@@ -884,6 +885,57 @@ async def test_set_filter_checks_the_key_with_the_filters_already_set(
     runner._handle_set_filter(state, ["level:0"])
     assert state["filters"] == {"type": "person"}
     assert "Filter not set" in str(printed.call_args_list[-1].args[0])
+
+
+@pytest.mark.parametrize(
+    ("dynamic", "slots", "key", "refused"),
+    [
+        (False, 0, "depth", True),
+        (False, 0, "max_cut_depth", True),
+        (False, 0, "community_id", False),
+        (True, 0, "community_id", True),
+        (True, 0, "max_cut_depth", False),
+        (False, 4, "community_ids", True),
+        (False, 0, "level", False),
+    ],
+)
+async def test_global_refuses_the_keys_it_scopes_its_searches_by(
+    config: Config, dynamic: bool, slots: int, key: str, refused: bool
+) -> None:
+    # Regression: global's own scope (the cut's depth/max_cut_depth, the
+    # dynamic browse's depth/community_id, the text units' community_ids)
+    # replaced a caller's value without a word.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.global_search.use_dynamic_selection = dynamic
+    config.search.global_search.text_unit_slots = slots
+    chain = _strategy_chain(config)
+    if refused:
+        with pytest.raises(InvalidFilterError, match="global search sets them"):
+            chain.check_filter_keys({key: 1}, SearchStrategy.GLOBAL)
+        with pytest.raises(InvalidFilterError, match="global search sets them"):
+            await chain._search_step(
+                {"resolved_strategy": SearchStrategy.GLOBAL, "filters": {key: 1}}
+            )
+    else:
+        chain.check_filter_keys({key: 1}, SearchStrategy.GLOBAL)
+    # local reads the reports too, and applies the key.
+    chain.check_filter_keys({key: 1}, SearchStrategy.LOCAL)
+
+
+async def test_auto_routes_a_key_global_reserves_elsewhere(config: Config) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(config)
+
+    def no_router(*_args: Any) -> Any:
+        raise AssertionError("the router was called for one candidate")
+
+    chain._get_chain_for_prompt = no_router  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "filters": {"depth": 1}}
+    )
+    assert state["resolved_strategy"] is SearchStrategy.LOCAL
 
 
 async def test_a_query_checks_the_indexes_its_strategy_reads(config: Config) -> None:
