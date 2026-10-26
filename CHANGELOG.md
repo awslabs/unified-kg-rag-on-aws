@@ -1388,6 +1388,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: an attempt at new content starts `failure_count`
+  over, as it starts `retry_count` over. A document that failed of its own
+  and then changed and failed for an outage kept the old content's count
+  beside the new content's retry count. The count never excluded the new
+  content (exclusion reads it only for the content it was recorded at), but
+  content changed back now gets its full retries again (#PR).
 - OpenSearch: a rejected bulk item's error cuts its reason and each cause
   at 300 characters, not the whole message, so the cause after a long
   reason is kept: an immense-term rejection ended in `(caused by
