@@ -1363,6 +1363,12 @@ changed once with the full-config keys (#332).
   updates the CDK lock through `uv lock`, so a transitive bump the pinned
   aws-cdk-lib cannot admit no longer opens a pull request that fails to
   install (#251).
+- The CDK lock moves to aws-cdk-lib and aws-cdk.aws-neptune-alpha 2.274,
+  whose cloud assembly schema 55 needs AWS CDK CLI 2.1146.1 or later: an
+  older CLI stops with "Cloud assembly schema version mismatch". Upgrade with
+  `npm install -g aws-cdk@2.1146.1`. On the next deploy the Step Functions
+  role's trust policy gains `aws:SourceAccount`/`aws:SourceArn` conditions
+  (aws-cdk-lib's confused-deputy fix) (#PR).
 - `docker/Dockerfile` takes the base image from a `BASE_IMAGE` build
   argument whose default is the same pinned public.ecr.aws ref, so a plain
   `docker build` is unchanged. When public.ecr.aws rate-limits the CI
