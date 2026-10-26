@@ -1364,6 +1364,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: the documents a commit recorded FAILED are in the
+  run's `failed_documents` even when the commit then fails or is stopped
+  (its extraction-record cleanup); they were added only once the commit
+  returned, so the result read 0. A registry write that fails no longer
+  counts its documents as recorded (#PR).
 - OpenSearch: a bulk write the store rejects items of names the first
   item's error (`type: reason`, cut at 300 characters and without the
   field-value preview a mapping error quotes) after the count, which was

@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.local import models
 from unified_kg_rag.application.cli.run_ingestion_pipeline import (
     IngestionPipelineRunner,
 )
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import DocStatus, PipelineContext, PipelineStageStatus
 
 pytestmark = pytest.mark.integration
@@ -381,3 +382,25 @@ def test_a_cached_known_good_answer_does_not_hide_a_rejected_setting(
     rejects["text"] = ""
     e2e._ingest(config, providers, source, tmp_path / "P1")
     assert _counts(providers) == {"fz.txt": 1}
+
+
+def test_failed_documents_holds_a_commit_stopped_after_its_registry_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The commit recorded z1.txt FAILED, then its cleanup raised: the run's
+    # failed_documents read 0, the documents being added to the result only
+    # once the commit returned.
+    rejects = {"stage": "claim extraction specialist", "text": "Zorbix"}
+    config, providers, source = _rejecting(tmp_path, rejects)
+    source.mkdir()
+    (source / "d0.txt").write_text(_FILES["d0.txt"])
+    (source / "z1.txt").write_text(_FAILING)
+
+    def stopped(self: Any) -> None:
+        raise RuntimeError("cleanup stopped")
+
+    monkeypatch.setattr(IndexingManager, "collect_extraction_records", stopped)
+    context = e2e._ingest(config, providers, source, tmp_path / "run")
+    assert context.status == PipelineStageStatus.FAILED
+    assert _counts(providers)["z1.txt"] == 1
+    assert len(context.recorded_failed_doc_ids) == 1

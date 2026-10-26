@@ -1015,9 +1015,6 @@ class IncrementalIndexer:
                 text_unit_ids=lineage.text_unit_ids,
             )
             records.append(record)
-        self.recorded_failed_doc_ids = [
-            r.doc_id for r in records if r.status is DocStatus.FAILED
-        ]
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
         # Counted as an attempt of the document alone (unproductive_attempt),
         # so one that never produces a text unit is quarantined instead of
@@ -1030,6 +1027,9 @@ class IncrementalIndexer:
             for doc_id in unrecorded
         ]
         self._put(records + unproductive)
+        self.recorded_failed_doc_ids = [
+            r.doc_id for r in records if r.status is DocStatus.FAILED
+        ]
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1963,29 +1963,33 @@ def index_delta(
             "retries the removal"
         )
 
-    results = incremental.commit(
-        lineages=lineages,
-        fingerprints=context.incremental_fingerprints,
-        failed_doc_ids=documents_with_failed_units(context, text_units),
-        counted_failed_doc_ids=documents_with_failed_units(
-            context, text_units, own_errors=True
-        ),
-        text_units=text_units,
-        entities=entities,
-        relationships=relationships,
-        communities=communities,
-        community_reports=community_reports,
-        claims=claims,
-        unclustered_entities=next(
-            (
-                int(r.metrics.get("unclustered_stored_entities", 0))
-                for r in context.stage_results
-                if r.stage_name == PipelineStageType.COMMUNITY_DETECTION.value
+    # Whatever stops the commit after its registry write (a failed or stopped
+    # cleanup) leaves the documents it recorded FAILED in the result.
+    try:
+        results = incremental.commit(
+            lineages=lineages,
+            fingerprints=context.incremental_fingerprints,
+            failed_doc_ids=documents_with_failed_units(context, text_units),
+            counted_failed_doc_ids=documents_with_failed_units(
+                context, text_units, own_errors=True
             ),
-            0,
-        ),
-    )
-    context.record_failed_documents(incremental.recorded_failed_doc_ids)
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            community_reports=community_reports,
+            claims=claims,
+            unclustered_entities=next(
+                (
+                    int(r.metrics.get("unclustered_stored_entities", 0))
+                    for r in context.stage_results
+                    if r.stage_name == PipelineStageType.COMMUNITY_DETECTION.value
+                ),
+                0,
+            ),
+        )
+    finally:
+        context.record_failed_documents(incremental.recorded_failed_doc_ids)
     if not removed:
         raise PipelineStageError(
             "Removing the artifacts of deleted documents failed; their "
