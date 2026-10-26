@@ -462,6 +462,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             state["resolved_strategy"] = strategy
             return state
 
+        # Before routing, as an interactive session does: whether a filter
+        # key is refused must not depend on the route a question takes.
+        if state.get("filters"):
+            self.check_filter_keys(state["filters"], SearchStrategy.AUTO)
         routable = routable_strategies(self.config)
         if len(routable) == 1:
             # Nothing to choose between: no router call.

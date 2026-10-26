@@ -723,6 +723,27 @@ def test_mix_checks_the_graph_only_with_graph_expansion(
         chain.check_filter_keys({"anything": "x"}, SearchStrategy.MIX)
 
 
+async def test_auto_checks_filter_keys_before_routing(config: Config) -> None:
+    # A single query under auto checked only the routed strategy, after the
+    # router call: the same filter answered or failed by route.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.auto_routable_strategies = [
+        SearchStrategy.LOCAL,
+        SearchStrategy.GLOBAL,
+    ]
+    chain = _strategy_chain(config)
+    chain.ignore_errors = False
+
+    def no_router(*_args: Any) -> Any:
+        raise AssertionError("routed before the filter check")
+
+    chain._get_chain_for_prompt = no_router  # type: ignore[method-assign]
+    state = {"search_strategy": SearchStrategy.AUTO, "filters": {"type": "person"}}
+    with pytest.raises(InvalidFilterError, match="auto may route to global"):
+        await chain._resolve_strategy(state)
+
+
 async def test_a_query_checks_the_indexes_its_strategy_reads(config: Config) -> None:
     # The per-query check (each question, as with --filters) uses the same
     # index set as check_filter_keys.

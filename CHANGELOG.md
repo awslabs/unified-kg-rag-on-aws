@@ -1392,6 +1392,11 @@ changed once with the full-config keys (#332).
   only, so `mix --filters level:0` (or `period` with `local`) was accepted
   and ran unfiltered. `mix` and `hybrid` check their keys against the
   graph only with `search.lightrag_search.enable_graph_expansion` (#PR).
+- Queries with `auto` (one `--query`, `run-eval`, the Python API): filter
+  keys are checked against every strategy `auto` may route to before the
+  router runs, as an interactive session already did. Only the routed
+  strategy was checked, after the router call, so one filter answered or
+  exited 2 depending on the route (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at

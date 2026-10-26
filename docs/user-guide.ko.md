@@ -792,7 +792,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
   범위를 좁힌 텍스트 단위도. 이 범위가 호출자의 `community_ids`를 대신함)를, `simple`은
   파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는 라우팅될 수 있는 모든 전략에 맞아야
-  합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
+  하며 라우팅 전에 확인합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그

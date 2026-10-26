@@ -852,7 +852,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   reports (and text units with `search.global_search.text_unit_slots`,
   scoped to the selected reports' communities, which replace a caller
   `community_ids`); `simple` every index the pipeline builds; `auto` must
-  suit every strategy it may route to. Neptune
+  suit every strategy it may route to, checked before routing. Neptune
   filters entity vertices only.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
