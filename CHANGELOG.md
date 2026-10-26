@@ -1407,6 +1407,10 @@ changed once with the full-config keys (#332).
 - CLIs: a Ctrl-C while a CLI imports its dependencies exits 130 with
   `--output-format json`'s `{"status": "interrupted", "exit_code": 130}`
   instead of a traceback and no output (#PR).
+- CLIs: a SIGTERM after a run printed its JSON result ends the process at
+  once with 143. Raised into `run-rag`'s event loop as its coroutine
+  returned, it could leave the process waiting forever (until ECS's stop
+  timeout killed it) (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at

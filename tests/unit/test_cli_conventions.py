@@ -119,6 +119,40 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
+    capsys, monkeypatch
+) -> None:
+    # Raised into run-rag's event loop as its coroutine returned, the
+    # SystemExit could leave nest_asyncio's run() waiting forever (5 of 23
+    # stops right after the JSON hung until SIGKILL).
+    from unified_kg_rag.application.cli import conventions
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    events: list[object] = []
+    monkeypatch.setattr(conventions, "_exit_stopped", events.append)
+
+    @exits_on_sigterm
+    def main() -> int:
+        json_output(argparse.Namespace(output_format="json"))
+        print_json({"ok": True})
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            events.append("unwound")
+        return 0
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(SystemExit):
+            main()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    # Ended from the handler, not after unwinding through the loop.
+    assert events[:2] == [143, "unwound"]
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
 def test_a_sigterm_after_main_returned_ends_the_process_with_143(
     capsys, monkeypatch
 ) -> None:
