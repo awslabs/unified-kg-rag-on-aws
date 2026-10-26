@@ -239,6 +239,24 @@ def test_a_stored_entity_a_full_build_keeps_apart_is_split() -> None:
     assert (moved.id, moved.source_id) == (edge.id, _id("Acme Inc"))
 
 
+def test_a_part_split_off_under_an_underived_entitys_id_keeps_its_units() -> None:
+    # Regression: "Acme Inc" splits off the merged "Acme" under the id of a
+    # stored "Acme Inc" one of whose units has no record (a removal killed
+    # between the stores deleted it). That entity keeps its stored content,
+    # and the part was dropped with its unit: u1 no longer cited by any
+    # "Acme Inc", so a later derivation of it lost what u1 states.
+    stored, records = _merged_acme()
+    holder = _stored("Acme Inc", ["u9"], type="person")
+
+    derived = derive(Config(), [stored, holder], [], [], records)
+
+    by_id = {e.id: e for e in derived.entities}
+    assert by_id[holder.id].text_unit_ids == ["u9", "u1"]
+    assert by_id[holder.id].description == "stale text"
+    assert derived.underived == [holder.id]
+    assert by_id[stored.id].text_unit_ids == ["u1", "u0"]
+
+
 def test_a_split_keeps_the_stored_name_under_its_id() -> None:
     # Regression: the stored entity matched the part sharing most of its
     # units ("Acme Inc"), so the part under its own id ("Acme") was "held by
