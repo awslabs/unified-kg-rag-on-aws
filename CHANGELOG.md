@@ -1414,6 +1414,8 @@ changed once with the full-config keys (#332).
 - `run-ingestion`: a SIGTERM after a run printed its result, while it
   closed its connections, no longer prints an interrupted status after it
   (two JSON documents) or tells the user to resume a finished run (#PR).
+- Ingestion: a failed stage's error is logged at ERROR once; stopping the
+  pipeline for it repeated the message at ERROR and now logs at INFO (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at
