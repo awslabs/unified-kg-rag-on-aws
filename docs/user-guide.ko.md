@@ -836,7 +836,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
 `set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
-함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2).
+함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 라우팅될 수 있는
+전략 중 하나라도 거부하는 키를 거부합니다. 그 전략으로 라우팅된 질문이 실패하기 때문입니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 

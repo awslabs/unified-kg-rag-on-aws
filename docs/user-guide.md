@@ -911,7 +911,9 @@ conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 `quit` / `exit`. A command is the whole line (only `set-filter` takes an
 argument): `help me find ...` is a question. `set-filter` refuses a key no
 index of the search strategy declares, as `--filters` does (with
-`--interactive`, before the first question: exit code 2).
+`--interactive`, before the first question: exit code 2). With `auto` it
+refuses a key that any strategy `auto` may route to rejects, since a routed
+question would fail.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):

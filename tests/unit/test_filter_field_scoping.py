@@ -537,8 +537,8 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     config: Config,
 ) -> None:
     # ``status`` exists only on the OpenSearch claims index: a strategy that
-    # reads only the graph rejects it, auto accepts it when a strategy it may
-    # route to reads the claims index.
+    # reads only the graph rejects it, and so does auto whenever it may route
+    # a question to such a strategy (the routed query would raise).
     from types import SimpleNamespace
 
     from unified_kg_rag.domain.models import SearchStrategy
@@ -559,9 +559,12 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     with pytest.raises(InvalidFilterError, match="status"):
         chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
     config.search.auto_routable_strategies = [
-        SearchStrategy.LOCAL,
         SearchStrategy.NAIVE,
+        SearchStrategy.LOCAL,
     ]
+    with pytest.raises(InvalidFilterError, match="auto may route to local"):
+        chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
+    config.search.auto_routable_strategies = [SearchStrategy.NAIVE]
     chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
 
 

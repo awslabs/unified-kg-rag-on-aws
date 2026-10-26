@@ -975,21 +975,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> None:
         """Raise ``InvalidFilterError`` if ``filters`` names a key no index
         ``strategy`` reads declares, as each of its queries would (for
-        ``auto``: no index any routable strategy reads). For callers that
-        keep filters across queries (an interactive session)."""
-        strategies = (
-            routable_strategies(self.config)
-            if strategy is SearchStrategy.AUTO
-            else (strategy,)
-        )
-        self._validate_filter_keys(
-            filters,
-            [
-                retriever
-                for s in strategies
-                for retriever in self._get_strategy_instance(s).retrievers.values()
-            ],
-        )
+        ``auto``: a key some routable strategy rejects, since ``auto`` may
+        route any question there). For callers that keep filters across
+        queries (an interactive session)."""
+        if strategy is not SearchStrategy.AUTO:
+            self._validate_filter_keys(
+                filters, list(self._get_strategy_instance(strategy).retrievers.values())
+            )
+            return
+        for routed in routable_strategies(self.config):
+            try:
+                self._validate_filter_keys(
+                    filters,
+                    list(self._get_strategy_instance(routed).retrievers.values()),
+                )
+            except InvalidFilterError as e:
+                raise InvalidFilterError(
+                    f"auto may route to {routed.value}, which rejects it: {e}"
+                ) from e
 
     @staticmethod
     def _validate_filter_keys(
