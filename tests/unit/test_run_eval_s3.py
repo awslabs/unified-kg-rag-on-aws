@@ -10,6 +10,7 @@ exits non-zero while keeping the local results.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -322,16 +323,22 @@ def _stop_on_second_run(mocker, stop: BaseException) -> None:
     mocker.patch.object(run_evaluation.EvaluationManager, "evaluate_dataset", _evaluate)
 
 
+@pytest.mark.parametrize(
+    "stop",
+    [SystemExit(143), asyncio.CancelledError()],
+    ids=["outside-the-loop", "cancelled-on-the-loop"],
+)
 async def test_a_stopped_run_uploads_the_finished_runs(
-    s3, eval_config, mocker, tmp_path: Path
+    s3, eval_config, mocker, tmp_path: Path, stop: BaseException
 ) -> None:
     # Before, SIGTERM removed the local copy of the finished runs unuploaded.
+    # A SIGTERM while the loop runs reaches the run as a cancellation.
     data = tmp_path / "eval.json"
     data.write_text(json.dumps(DATASET))
     work_dir = tmp_path / "work"
     work_dir.mkdir()
     mocker.patch.object(run_evaluation.tempfile, "mkdtemp", return_value=str(work_dir))
-    _stop_on_second_run(mocker, SystemExit(143))
+    _stop_on_second_run(mocker, stop)
     args = _args(
         "--data-path",
         str(data),
@@ -340,7 +347,7 @@ async def test_a_stopped_run_uploads_the_finished_runs(
         "--output-directory",
         f"s3://{BUCKET}/out/",
     )
-    with pytest.raises(SystemExit):
+    with pytest.raises(type(stop)):
         await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
     assert any(k.startswith("out/evaluation_summary_") for k in _keys(s3, "out/"))
     assert not work_dir.exists()
