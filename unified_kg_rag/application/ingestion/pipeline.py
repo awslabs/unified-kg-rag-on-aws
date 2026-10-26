@@ -1378,7 +1378,9 @@ class DataIngestionPipeline:
             logger.warning(
                 "Stage '%s' failed on %d text units; resuming from '%s' as "
                 "asked records their documents FAILED again without retrying "
-                "them (resume from '%s' to retry them)",
+                "them, one more run toward indexing.max_document_failures "
+                "(resume from '%s' to retry them while they are under it: "
+                "past it they are excluded, not retried)",
                 first,
                 len(context.failed_text_unit_ids[first]),
                 start_stage_name,

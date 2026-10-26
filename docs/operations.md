@@ -227,7 +227,9 @@ this run that recorded failed text units and retries those units (WARNING
 `Stage '...' failed on N text units; resuming from it ...`); the extraction
 store keeps the units that succeeded. An explicit `--resume-from-stage` past
 it is kept, with a WARNING: the indexing stage records those documents
-`FAILED` again without retrying them. Failures of a stage that is not
+`FAILED` again without retrying them, one more run toward
+`indexing.max_document_failures` (past it, resuming from the failed stage
+excludes them instead of retrying them). Failures of a stage that is not
 enabled in the rerun are dropped from the restored state when the stage is
 at or after the resume point. Before it, a stage the run does not enable
 keeps them: an indexing-only phase records them once, and that phase run

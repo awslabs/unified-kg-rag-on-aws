@@ -55,6 +55,20 @@ def test_a_disabled_or_uncompleted_stage_is_not_a_rewind_target() -> None:
     assert rewind(_pipeline(ORDER), failed, "indexing", partial) is None
 
 
+def test_an_explicit_resume_past_a_failed_stage_warns_of_the_failure_limit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The advice to resume from the failed stage did not say that each such
+    # run counts the documents again: past indexing.max_document_failures
+    # that resume excludes them instead of retrying them.
+    failed = _context({"graph_extraction": ["u1"]})
+    rewind = DataIngestionPipeline._rewind_to_failed_stage
+    with caplog.at_level("WARNING"):
+        assert rewind(_pipeline(ORDER), failed, "indexing", DONE, explicit=True) is None
+    assert "one more run toward indexing.max_document_failures" in caplog.text
+    assert "resume from 'graph_extraction' to retry them while" in caplog.text
+
+
 def test_a_completed_stage_run_again_on_a_disabled_stages_failures_is_refused(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

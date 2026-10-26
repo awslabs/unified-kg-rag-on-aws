@@ -214,7 +214,9 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 켜진 완료 단계 중 실패한 텍스트 단위를 기록한 가장 앞선 단계부터 재개해 그 단위를 다시
 시도합니다(WARNING `Stage '...' failed on N text units; resuming from it ...`). 성공한
 단위는 추출 저장소에 남아 있습니다. 그보다 뒤를 가리키는 `--resume-from-stage`는 WARNING과
-함께 그대로 따르며, 인덱싱 단계는 그 문서를 다시 시도하지 않고 다시 `FAILED`로 기록합니다.
+함께 그대로 따르며, 인덱싱 단계는 그 문서를 다시 시도하지 않고 다시 `FAILED`로 기록합니다. 이 실행도
+`indexing.max_document_failures`에 한 번 더 세므로, 한도를 넘으면 실패한 단계부터 재개해도 다시
+시도하지 않고 제외합니다.
 재실행에서 켜지지 않은 단계의 실패는 그 단계가 재개 지점이나 그 뒤에 있으면 복원한 상태에서
 버립니다. 재개 지점 앞의 꺼진 단계는 실패를 유지합니다. 인덱싱만 실행하는 단계 묶음은 그
 실패를 한 번 기록하고, 이미 끝난 그 묶음을 다시 실행하면 거부합니다(`PipelineResumeError`:

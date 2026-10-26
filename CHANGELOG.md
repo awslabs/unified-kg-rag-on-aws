@@ -1407,6 +1407,11 @@ changed once with the full-config keys (#332).
   claims none of which is complete. It was recorded `PROCESSED` with no
   claims and never extracted again. An empty `<claims></claims>` is still
   a unit without claims (#PR).
+- `run-ingestion --resume-from-stage` past a stage that failed on text
+  units warns that the run counts their documents toward
+  `indexing.max_document_failures` once more, past which resuming from
+  the failed stage excludes them; the advice to resume from it said
+  nothing of the limit (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning`: a SIGTERM while the event
   loop runs cancels the CLI's task at its next await instead of raising
   `SystemExit` into the loop, where it could land in the loop's own code
