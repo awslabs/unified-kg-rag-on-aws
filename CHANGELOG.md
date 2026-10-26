@@ -1385,23 +1385,23 @@ changed once with the full-config keys (#332).
   known-good request from being sent: the one-cause rule now looks only at
   the units' own errors. A model rejecting a setting on every request but
   one that timed out counted the rejection against every other document,
-  excluding them after `indexing.max_document_failures` runs (#PR).
+  excluding them after `indexing.max_document_failures` runs (#437).
 - Incremental indexing: a deletion whose re-derivation cascades (the edges
   of a re-keyed or split entity reach other spellings, whose edges reach
   others) ranks as a full build. The derivation read stored items for at
   most four rounds and ranked the entities whose edges it had not read
   without them (0 where a full build gives 2); it now reads until nothing
   more is reached, capped at 32 rounds, where an entity whose edges were
-  not all read keeps its stored links in its rank (#PR).
+  not all read keeps its stored links in its rank (#437).
 - Incremental indexing: a removal killed after deleting its vector copies
   and before the graph delete, followed by another scope's run, no longer
   drops a text unit from an entity's lineage: a part split off under the id
   of a stored entity kept as it was stored (a unit of it has no record) was
-  dropped with its text units; that entity now keeps them (#PR).
+  dropped with its text units; that entity now keeps them (#437).
 - Incremental indexing: an entity split off several stored spellings
   re-derives the stored edges of each. Only the first was rewired, so an
   edge gleaning had added on another spelling stayed there, at the wrong
-  endpoint, and the ranks counted it on that end (#PR).
+  endpoint, and the ranks counted it on that end (#437).
 - Incremental indexing: a document whose content changed between two runs
   failing for an error not its own starts `retry_count` over; opening the
   attempt at the new content kept the old content's count, which the next
