@@ -32,7 +32,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
-    NEPTUNE_FILTER_FIELDS,
+    NEPTUNE_ENTITY_FILTER_FIELDS,
     FilterFields,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -136,25 +136,26 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
     def filter_fields(self) -> FilterFields:
         # The traversal filters entity vertices only (_scope_filters_to_label).
-        return NEPTUNE_FILTER_FIELDS["entity"]
+        return NEPTUNE_ENTITY_FILTER_FIELDS
 
     @staticmethod
     def _scope_filters_to_label(
-        label: str, kind: str, filters: dict[str, Any] | None
+        label: str, filters: dict[str, Any] | None
     ) -> dict[str, Any] | None:
-        """``filters`` without the keys ``label`` does not declare.
+        """``filters`` without the keys entity vertices (``label``) do not
+        declare.
 
-        ``kind`` is the label's ``NEPTUNE_FILTER_FIELDS`` kind. Mirrors the
-        OpenSearch per-index scoping: a filter on ``key`` drops every vertex
-        lacking ``key``, so a key the label does not declare is dropped
-        rather than emptying the traversal.
+        Mirrors the OpenSearch per-index scoping: a filter on ``key`` drops
+        every vertex lacking ``key``, so a key the label does not declare is
+        dropped rather than emptying the traversal (the strategy checks the
+        reached entities against the entities index for such a key,
+        ``BaseSearchStrategy._graph_unapplied_filters``).
         """
         if not filters:
             return filters
-        fields = NEPTUNE_FILTER_FIELDS[kind]
         kept: dict[str, Any] = {}
         for key, value in filters.items():
-            if not fields.declares(key):
+            if not NEPTUNE_ENTITY_FILTER_FIELDS.declares(key):
                 logger.debug(
                     "Dropped filter key '%s': no %s vertex declares it", key, label
                 )

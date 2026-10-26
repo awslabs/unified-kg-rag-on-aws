@@ -808,7 +808,11 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   built before
   relationships carried document filters passes no edge, so expansion keeps
   the seeds only until it is rebuilt; without the relationships index the
-  graph walk runs, checked against the entities index.
+  graph walk runs, checked against the entities index. So is a graph walk
+  under an entity key entity vertices do not store (`name.keyword`,
+  `attributes.<path>`): the graph drops it, the entities index applies it
+  (`_graph_unapplied_filters`), to the seeds too (LightRAG's relationship
+  endpoints were found under no entity key).
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set

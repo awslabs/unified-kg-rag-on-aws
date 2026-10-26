@@ -1398,6 +1398,14 @@ changed once with the full-config keys (#332).
   status if nothing was printed, so no stop can hang (#PR).
 - The console-script launcher keeps a SIGINT its parent ignores (`cmd &`
   in a script, `nohup`) ignored while the CLI loads; it exited 130 (#PR).
+- Graph expansion (`local`, `drift`, and `mix`/`hybrid` with graph
+  expansion): under an entity key entity vertices do not store
+  (`name.keyword`, an entity's own `attributes.<path>`), the graph walk's
+  entities, its seeds included (LightRAG seeds it with the endpoints of the
+  relationships it found, which hold no entity key), are checked against
+  the entities index. The graph dropped the key, so neighbours failing it
+  came back as entity results (9 of 10 under `name.keyword` with `local`,
+  59 of 59 under `attributes.role` with `mix`; none now) (#PR).
 - Queries with `auto` (one `--query`, `run-eval`, the Python API, and
   `run-rag --interactive` `--filters` and `set-filter`): filters are refused
   only when no strategy `auto` may route to applies every key, and the

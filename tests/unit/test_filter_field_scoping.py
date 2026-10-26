@@ -22,7 +22,7 @@ from gremlin_python.process.traversal import P
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
-    NEPTUNE_FILTER_FIELDS,
+    NEPTUNE_ENTITY_FILTER_FIELDS,
     IndexLimits,
     opensearch_filter_fields,
 )
@@ -380,9 +380,7 @@ def _neptune(config: Config) -> NeptuneRetriever:
 
 def test_neptune_drops_key_the_label_does_not_declare() -> None:
     filters = NeptuneRetriever._scope_filters_to_label(
-        "Entity-default",
-        "entity",
-        {"id": ["e1"], "type": "PERSON", "status": "open"},
+        "Entity-default", {"id": ["e1"], "type": "PERSON", "status": "open"}
     )
     assert filters == {"id": ["e1"], "type": "PERSON"}
 
@@ -436,9 +434,7 @@ _VERTICES = [
 
 
 def _kept(filters: dict[str, Any]) -> list[str]:
-    scoped = NeptuneRetriever._scope_filters_to_label(
-        "Entity-default", "entity", filters
-    )
+    scoped = NeptuneRetriever._scope_filters_to_label("Entity-default", filters)
     traversal = NeptuneRetriever._apply_filters(__.identity(), scoped)
     steps = traversal.bytecode.step_instructions
     return [v["id"] for v in _VERTICES if _matches(v, steps)]
@@ -498,7 +494,7 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
         },
     )
     assert "attr_region" in props
-    assert all(NEPTUNE_FILTER_FIELDS["entity"].declares(k) for k in props)
+    assert all(NEPTUNE_ENTITY_FILTER_FIELDS.declares(k) for k in props)
 
 
 # --------------------------------------------------------------------------- #

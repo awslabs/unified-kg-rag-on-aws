@@ -820,7 +820,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   없어 WARNING을 남김) 그래프를 걷고 엔티티 인덱스 확인만으로 정합니다. 텍스트 단위에 걸리는 필터가
   있으면 local과 mix는 상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로
   청크 할당량을 채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
-  적용됩니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
+  적용됩니다. 엔티티 정점에 없는 이 키와 `name.keyword`는 그래프 걷기가 닿은 엔티티를
+  시드까지 포함해 엔티티 인덱스로 확인합니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
   기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 엔티티 인덱스 확인도 적용되므로, 문서에
   `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
   모두 엄격하게 적용합니다.

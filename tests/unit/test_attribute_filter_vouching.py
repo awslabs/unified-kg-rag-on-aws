@@ -16,7 +16,12 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import (
+    NEPTUNE_ENTITY_FILTER_FIELDS,
+    FilterFields,
+    IndexLimits,
+    opensearch_filter_fields,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -61,7 +66,9 @@ class _Store:
         entities_suffix: str | None = None,
         passing_units: frozenset[str] = frozenset(),
         id_batch: int = 65536,
+        fields: FilterFields | None = None,
     ) -> None:
+        self.fields = fields
         self.id_batch = id_batch
         self.passing_units = passing_units
         self.entities_prefix = entities_prefix
@@ -73,6 +80,12 @@ class _Store:
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits(max_terms_count=self.id_batch)
+
+    def filter_fields(self) -> FilterFields | None:
+        return self.fields
+
+    def filter_fields_for(self, prefixes: list[str]) -> FilterFields | None:
+        return self.fields
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.queries.append(query)
@@ -143,8 +156,62 @@ async def test_the_check_searches_the_query_suffix(config: Config) -> None:
     assert [q.suffix for q in document.queries] == ["tenant-b"]
 
 
-async def test_an_entity_attribute_filter_is_not_vouched(config: Config) -> None:
-    # An entity's own attribute (attributes.role) is not a document filter.
+@pytest.mark.parametrize("key", ["attributes.role", "name.keyword"])
+async def test_an_entity_key_the_graph_does_not_store_is_vouched(
+    config: Config, key: str
+) -> None:
+    # Regression: the graph drops a key its entity vertices lack (an
+    # entity's own attributes.role, name.keyword), so its walk returned
+    # every neighbour, failing the key, as an entity result (59 of 59 under
+    # attributes.role with mix). The entities index holds the key.
+    prefix = config.indexing.opensearch.entities_index_prefix
+    entities = opensearch_filter_fields(
+        *config.processing.translation.translated_languages
+    )
+    document = _Store(
+        prefix, [], fields=entities["entities"], passing=frozenset({"near", "one"})
+    )
+    graph = _graph(prefix)
+    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    strategy = _strategy(config, document, graph)
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={key: "x", "type": "t"}), ["seed"]
+    )
+
+    # The seed is checked too: LightRAG seeds the walk with relationship
+    # endpoints, which no entity key selected (here it fails the key).
+    assert [r.source for r in kept] == ["near", "one"]
+    # The graph applied type; only the key it dropped is checked.
+    assert [q.filters for q in document.queries] == [
+        {key: "x", "id": ["near", "one", "far"]},
+        {key: "x", "id": ["seed"]},
+    ]
+
+
+async def test_a_key_the_graph_applies_is_not_vouched(config: Config) -> None:
+    prefix = config.indexing.opensearch.entities_index_prefix
+    entities = opensearch_filter_fields(
+        *config.processing.translation.translated_languages
+    )
+    document = _Store(prefix, [], fields=entities["entities"])
+    graph = _graph(prefix)
+    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    strategy = _strategy(config, document, graph)
+
+    kept = await strategy._expand_via_graph(
+        SearchQuery(query="q", filters={"type": "t", "name": "n"}), ["seed"]
+    )
+
+    assert len(kept) == 4
+    assert document.queries == []
+
+
+async def test_without_schemas_only_document_filters_are_vouched(
+    config: Config,
+) -> None:
+    # A backend that declares no filter keys (filter_fields() is None):
+    # which entity keys its graph stores is unknown.
     prefix = config.indexing.opensearch.entities_index_prefix
     document = _Store(prefix, [])
     strategy = _strategy(config, document, _graph(prefix))
