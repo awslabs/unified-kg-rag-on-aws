@@ -549,6 +549,8 @@ def derive(
                         update={"subject_id": subject, "object_id": obj}
                     )
                     by_id.setdefault(resolved_claim_id(stated), claim)
+        # The derived claim of each given one (None: dropped), in order.
+        kept_for: list[Claim | None] = []
         for claim in claims:
             match_claim = by_id.get(claim.id)
             endpoints = {
@@ -569,6 +571,7 @@ def derive(
                 ]
                 if not sharing:
                     dropped.append(claim.id)
+                    kept_for.append(None)
                     continue
                 match_claim = max(
                     sharing,
@@ -579,6 +582,7 @@ def derive(
                 )
             if match_claim is None:
                 derived_claims.append(claim.model_copy(deep=True, update=endpoints))
+                kept_for.append(derived_claims[-1])
                 continue
             match_claim = with_entity_ids(match_claim, derived_of)
             # An endpoint whose stored entity could not be derived (one of its
@@ -629,11 +633,16 @@ def derive(
                     },
                 )
             )
+            kept_for.append(derived_claims[-1])
 
         # Claims a full build keeps apart that a given claim merged (its
         # subject merged with another spelling): derived as claims of their own.
         given_units = {u for c in claims for u in c.text_unit_ids or []}
         emitted_ids = {c.id for c in derived_claims}
+        # Units stating a claim kept apart about an entity not derived (a
+        # spelling an underived stored entity holds): no claim of its own
+        # can be emitted yet, so the given claim keeps them.
+        unemitted: set[str] = set()
         for claim in resolved_claims:
             split = with_entity_ids(claim, derived_of)
             split_id = resolved_claim_id(split)
@@ -641,9 +650,12 @@ def derive(
                 split_id in emitted_ids
                 or split_id in blocked
                 or not given_units & set(claim.text_unit_ids or [])
-                or split.subject_id not in derived_ids
-                or (split.object_id and split.object_id not in derived_ids)
             ):
+                continue
+            if split.subject_id not in derived_ids or (
+                split.object_id and split.object_id not in derived_ids
+            ):
+                unemitted |= given_units & set(claim.text_unit_ids or [])
                 continue
             emitted_ids.add(split_id)
             derived_claims.append(
@@ -660,6 +672,21 @@ def derive(
                     },
                 )
             )
+        if unemitted:
+            cited = {u for c in derived_claims for u in c.text_unit_ids or []}
+            for given, derived_claim in zip(claims, kept_for, strict=True):
+                if derived_claim is None:
+                    continue
+                if extra := [
+                    u
+                    for u in given.text_unit_ids or []
+                    if u in unemitted and u not in cited
+                ]:
+                    derived_claim.text_unit_ids = [
+                        *(derived_claim.text_unit_ids or []),
+                        *extra,
+                    ]
+                    cited.update(extra)
         derived_claims = _merge_same_claims(derived_claims)
 
     if underived:

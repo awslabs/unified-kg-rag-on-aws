@@ -710,3 +710,48 @@ def test_a_derived_endpoint_wins_over_an_underived_stored_one() -> None:
     assert acme.id not in derived.underived
     (claim,) = derived.claims
     assert claim.subject_id == acme.id, (claim.subject_id, claim.subject_name)
+
+
+def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit() -> None:
+    # Regression: "Acme" (stored merged with "Acme Inc") cites u9, whose
+    # record a killed removal deleted, so it is underived. The stored claim
+    # "Depot pays Acme" cites u1, which states "Depot pays Acme Inc" (a claim
+    # a full build keeps apart, about a spelling only the underived entity
+    # holds), and u2. That claim could not be emitted and u1 left the given
+    # claim too: no claim cited u1, and its statement was lost.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u0": _record("u0", _entity("Acme", "u0", "LOCATION")),
+        "u1": _record(
+            "u1",
+            _entity("Depot", "u1", "PERSON"),
+            _entity("Acme Inc", "u1", "PERSON"),
+            _entity("Acme", "u1", "PERSON"),
+        ),
+        "u2": _record(
+            "u2", _entity("Depot", "u2", "PERSON"), _entity("Acme", "u2", "LOCATION")
+        ),
+    }
+    acme = _stored("Acme", ["u0", "u1", "u2", "u9"])
+    depot = _stored("Depot", ["u1", "u2"])
+    stored = _pays("Depot", "Acme", ["u1", "u2"]).model_copy(
+        update={"subject_id": depot.id, "object_id": acme.id}
+    )
+    stored.id = resolved_claim_id(stored)
+
+    derived = derive(
+        Config(),
+        [acme, depot],
+        [],
+        [stored],
+        records,
+        {
+            "u1": [_pays("Depot", "Acme Inc", ["u1"], "s1")],
+            "u2": [_pays("Depot", "Acme", ["u2"], "s2")],
+        },
+    )
+
+    assert acme.id in derived.underived
+    cited = {u for c in derived.claims for u in c.text_unit_ids or []}
+    assert cited == {"u1", "u2"}

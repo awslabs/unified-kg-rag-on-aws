@@ -42,7 +42,7 @@ from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.models import PipelineStageStatus
+from unified_kg_rag.domain.models import Config, PipelineStageStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -232,6 +232,13 @@ def _state(
         for _ in range(2 if run == repeat else 1):
             context = _ingest(config, providers, source, tmp / f"run-{run}")
             assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    return _read_state(config, providers, ranks)
+
+
+def _read_state(
+    config: Config, providers: Providers, ranks: bool = False
+) -> dict[str, list[tuple]]:
+    """The stored entities, edges and claims (see ``_state``)."""
     graph = providers.build_graph_indexer()
     try:
         assert isinstance(graph, SQLiteGraphIndexer)
@@ -2380,3 +2387,131 @@ def test_a_finished_pipeline_run_again_sees_another_runs_changes(
 
     registry = providers.build_doc_status().list_all()
     assert {r.file_path: r.status.value for r in registry} == {"d1.txt": "processed"}
+
+
+def _scoped_state(
+    tmp: Path,
+    corpora: dict[str, dict[str, str]],
+    steps: list[tuple[str, str, bool, tuple[Any, ...] | None, str | None]],
+) -> dict[str, list[tuple]]:
+    """The state after each ``(scope, pipeline_id, gleaning, die_at,
+    retired_scope)`` step indexes ``corpora[scope]`` under its own source
+    scope (``die_at`` as in ``_state``: that run is killed; ``retired_scope``
+    is retired by the run). The cache directory is the pipeline id's, as
+    for runs of one id over several scopes."""
+    config = _config(tmp / "stores", tmp / "viz")
+    config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.max_rounds = 1
+    providers = _providers(
+        config, FakeOllama(_respond, "x", DIM), FakeCrossEncoder("r")
+    )
+    for scope, pipeline_id, gleaning, die_at, retired in steps:
+        source = tmp / f"corpus-{scope}"
+        if source.exists():
+            shutil.rmtree(source)
+        source.mkdir(parents=True)
+        for name, text in corpora[scope].items():
+            (source / name).write_text(text)
+        config.processing.document_parsing.source_scope = scope
+        config.processing.gleaning.enabled = gleaning
+        config.indexing.retire_source_scopes = [retired] if retired else []
+        if die_at:
+            with (
+                patch.object(die_at[3], die_at[0], _dying(*die_at)),
+                pytest.raises(_Died),
+            ):
+                _ingest(config, providers, source, tmp / pipeline_id)
+            continue
+        context = _ingest(config, providers, source, tmp / pipeline_id)
+        assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    return _read_state(config, providers)
+
+
+@pytest.mark.parametrize(
+    ("corpora", "inc_steps", "gleaning"),
+    [
+        pytest.param(
+            {
+                "A": {
+                    "d0.txt": "ACME Inc and Acme Corp trade parts 3. Buyer and "
+                    "ACME trade parts 2."
+                },
+                "B": {
+                    "d6.txt": "Acme trade goods 2.",
+                    "r2.txt": "Acme Corp and Acme Ltd trade parts 3.",
+                },
+                "C": {
+                    "d1.txt": "Acme Inc and Buyer and Acme Ltd trade cash 2. "
+                    "Buyer and Depot trade parts 3.",
+                    "d6.txt": "Acme and Acme Corp trade parts 3.",
+                },
+            },
+            [
+                ("C", "P1", False, None, None),
+                ("B", "P1", False, None, None),
+                (
+                    "A",
+                    "P1",
+                    False,
+                    ("upsert_relationships", 1, True, SQLiteGraphIndexer),
+                    "B",
+                ),
+                ("A", "P0", False, None, None),
+                ("B", "P0", False, None, None),
+                ("C", "P1", False, None, None),
+            ],
+            False,
+            id="killed-after-the-graph-edges",
+        ),
+        pytest.param(
+            {
+                "A": {
+                    "d7.txt": "Acme LLC and Buyer trade goods 2. Buyer trade goods 1.",
+                    "d4.txt": "Depot and Acme Corp and Buyer trade cash 2. Acme "
+                    "trade goods 2.",
+                },
+                "B": {"d0.txt": "Acme trade goods 3. Acme Corp trade parts 3."},
+                "C": {
+                    "d6.txt": "Acme Corp and Acme Ltd and Depot trade parts 1.",
+                    "d7.txt": "Depot and Acme Inc and Acme trade parts 2.",
+                },
+            },
+            [
+                ("B", "P0", False, None, None),
+                ("C", "P1", False, None, None),
+                (
+                    "A",
+                    "P1",
+                    False,
+                    ("upsert_relationships", 1, False, SQLiteGraphIndexer),
+                    "B",
+                ),
+                ("C", "PC", True, None, None),
+                ("A", "P0", True, None, None),
+                ("B", "PC", True, None, None),
+                ("C", "PC", True, None, None),
+            ],
+            True,
+            id="killed-before-the-graph-edges",
+        ),
+    ],
+)
+def test_a_claim_about_an_underived_entitys_spelling_survives_a_killed_retire(
+    tmp_path: Path,
+    corpora: dict[str, dict[str, str]],
+    inc_steps: list[tuple[str, str, bool, tuple[Any, ...] | None, str | None]],
+    gleaning: bool,
+) -> None:
+    # A run of scope A retiring scope B is killed at its graph edges, after
+    # deleting B's extraction records: a stored entity citing B's units is
+    # left underived. The next run derived a claim of one of its spellings
+    # kept apart by a full build as nothing (its endpoint not derived) and
+    # took the unit off the given claim: no claim cited the statement.
+    full = _scoped_state(
+        tmp_path / "full",
+        corpora,
+        [(scope, f"F{scope}", gleaning, None, None) for scope in "ABC"],
+    )
+    incremental = _scoped_state(tmp_path / "inc", corpora, inc_steps)
+
+    assert incremental == full

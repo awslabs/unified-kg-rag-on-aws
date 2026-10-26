@@ -1386,6 +1386,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing (data loss): a claim's statement survives a run
+  killed or stopped while retiring a source scope. The retire left a stored
+  entity whose text units no longer all had extraction records (derived as
+  stored). A later run derived a claim a full build keeps apart about one of
+  its spellings as nothing, its endpoint not derived, and took the unit
+  stating it off the stored claim too, so no claim cited the statement. The
+  stored claim now keeps such units until the entity can be derived (#PR).
 - Queries: a filter key on a field only Neptune community vertices carry
   (`level`, `parent`, `size`, `period`, `children`) is refused unless an
   index the strategy reads declares it; the graph filters entity vertices
