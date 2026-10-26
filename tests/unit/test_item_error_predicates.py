@@ -283,10 +283,20 @@ class _Probe:
 
 
 def _indices(
-    errors: dict[int, BaseException], count: int, predicate: Any, probe: _Probe
+    errors: dict[int, BaseException],
+    count: int,
+    predicate: Any,
+    probe: _Probe,
+    documents: int = 1,
 ) -> list[int]:
+    """``item_failed_indices`` over ``count`` units, spread over
+    ``documents`` documents in turn."""
+    units = [
+        TextUnit(id=f"u{i}", text="t", document_ids=[f"d{i % documents}"])
+        for i in range(count)
+    ]
     return item_failed_indices(
-        errors, count, predicate, "t", probe, lambda units: [{}], lambda _: {}  # type: ignore[arg-type]
+        errors, units, predicate, "t", probe, lambda units: [{}], lambda _: {}  # type: ignore[arg-type]
     )
 
 
@@ -335,6 +345,37 @@ def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
     # a single unit's failure too; for output errors its answer must parse.
     output = all(isinstance(errors[idx], type(_PARSE) | type(_CUT)) for idx in own)
     assert probe.sent == ([output] if alike else [])
+
+
+@pytest.mark.parametrize("answered", [True, False])
+@pytest.mark.parametrize(
+    "errors",
+    [
+        {0: _PARSE, 1: _PARSE},
+        {0: _CUT, 1: _CUT},
+        {0: _PARSE, 1: _CUT},
+        {0: _CUT, 1: _CUT, 2: TimeoutError()},
+    ],
+)
+def test_one_output_cause_on_every_unit_of_several_documents_counts_none(
+    errors: dict[int, BaseException], answered: bool
+) -> None:
+    # A server-side output cap cuts every document's output, but not a
+    # known-good request's short answer: that answer cannot tell the cap
+    # from each document's own output, so output errors across documents
+    # count for none, and nothing is sent.
+    probe = _Probe(answered)
+    counted = _indices(errors, len(errors), item_error_predicate(_BEDROCK), probe, 2)
+    assert (counted, probe.sent) == ([], [])
+
+
+def test_one_output_cause_on_a_documents_units_and_its_timeout_asks() -> None:
+    # The own errors are of one document (the other's unit timed out): the
+    # known-good request still decides.
+    probe = _Probe(answered=True)
+    errors = {0: _CUT, 1: TimeoutError(), 2: _CUT}
+    assert _indices(errors, 3, item_error_predicate(_BEDROCK), probe, 2) == [0, 2]
+    assert probe.sent == [True]
 
 
 class _Coded(Exception):
@@ -596,12 +637,14 @@ def test_every_extraction_stage_asks_a_known_good_request_on_uniform_bad_output(
     stage: str, error: Exception, config: Config
 ) -> None:
     # Every unit's output cut off or unparseable (a server-side output cap):
-    # the known-good request's answer, cut too, makes it the model's, and no
-    # document counts; one that parses makes it the documents' own.
-    for units in (_two_documents(), _two_documents()[:1]):
-        assert _run(stage, config, units, error) == []
-        expected = [u.id for u in units]
-        assert _run(stage, config, units, error, known_good_answered=True) == expected
+    # across documents no document counts. For one document the known-good
+    # request's answer, cut too, makes it the model's; one that parses makes
+    # it the document's own.
+    for answered in (False, True):
+        assert _run(stage, config, _two_documents(), error, answered) == []
+    one = _two_documents()[:1]
+    assert _run(stage, config, one, error) == []
+    assert _run(stage, config, one, error, known_good_answered=True) == ["u0"]
 
 
 class _Cut:
@@ -611,27 +654,33 @@ class _Cut:
 
     def __init__(self, known_good_answered: bool) -> None:
         self.known_good_answered = known_good_answered
+        self.calls = 0
 
     def invoke(self, request: Any, *_: Any, **__: Any) -> Any:
         if self.known_good_answered and _KNOWN_GOOD in str(request):
             return _ANSWER
+        self.calls += 1
         return {"entities": {"entity": {"name": {}}}}
 
 
 @pytest.mark.parametrize("known_good_answered", [False, True])
-def test_graph_output_with_no_named_entity_is_a_parse_failure(
+def test_graph_output_with_no_named_entity_is_cut_off_output(
     known_good_answered: bool, config: Config
 ) -> None:
     # Output cut off without a stop reason parses into entities whose names
-    # never arrived: a parse failure (it recorded the unit PROCESSED with
+    # never arrived: cut-off output (it recorded the unit PROCESSED with
     # nothing extracted), which the known-good request rule then judges.
+    # Not retried: as a parse failure, each unit was asked max_attempts
+    # times with backoff, about 165 s a unit at the default 5.
     processor = _processor("graph", config, _TOO_LONG)
-    processor.graph_extractor = _Cut(known_good_answered)
-    records, stats = processor.extract_units(_two_documents())
+    processor.batch_processor.max_attempts = 3
+    processor.batch_processor.retry_multiplier = 0.001
+    cut = processor.graph_extractor = _Cut(known_good_answered)
+    records, stats = processor.extract_units(_two_documents()[:1])
+    assert cut.calls == 1 + (0 if known_good_answered else 1)
     assert records == []
-    assert sorted(stats.failed_text_unit_ids) == ["u0", "u1"]
-    expected = ["u0", "u1"] if known_good_answered else []
-    assert sorted(stats.item_failed_text_unit_ids) == expected
+    assert stats.failed_text_unit_ids == ["u0"]
+    assert stats.item_failed_text_unit_ids == (["u0"] if known_good_answered else [])
 
 
 def test_claims_count_an_answer_that_does_not_parse(

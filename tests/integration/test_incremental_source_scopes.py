@@ -603,8 +603,10 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
     # runs, under whichever pipeline ids, the new and changed documents are
     # diffed and processed again, and a changed document keeps its indexed
     # content and its old content hash. An error of the document's own (here
-    # a response that never parses) is counted instead: after
-    # indexing.max_document_failures runs it is skipped and the run goes on.
+    # a response that never parses, of one document: across documents such
+    # output counts for none, as under an output cap) is counted instead:
+    # after indexing.max_document_failures runs it is skipped and the run
+    # goes on.
     stack = ScopeStack(registry, tmp_path)
     if not own_error:
         extraction = stack.model._extraction
@@ -621,11 +623,12 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
     (indexed,) = registry.list_all()
 
     (source / "good.txt").write_text("UNREADABLE Vendor.", encoding="utf-8")
-    (source / "new.txt").write_text("UNREADABLE Buyer.", encoding="utf-8")
+    if not own_error:
+        (source / "new.txt").write_text("UNREADABLE Buyer.", encoding="utf-8")
     limit = stack.config.indexing.max_document_failures
     for run in range(limit + 1):
         if own_error and run == limit:
-            # Both skipped: nothing to extract, the run completes.
+            # Skipped: nothing to extract, the run completes.
             context = stack.run(source)
             assert context.incremental_delta.to_process == []
             assert not stack.model.extractions
@@ -635,20 +638,20 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         assert "graph_extraction" in failed
         delta = context.incremental_delta
         assert indexed.doc_id in delta.changed
-        assert len(delta.to_process) == 2
+        assert len(delta.to_process) == (1 if own_error else 2)
         assert stack.model.extractions
         records = {r.doc_id: r for r in registry.list_all()}
         kept = records.pop(indexed.doc_id)
+        if own_error:
+            # FAILED at the new content, the indexed text units kept.
+            assert records == {}
+            assert (kept.attempt_count, kept.attempt_batch) == (0, None)
+            assert (kept.status, kept.failure_count) == (DocStatus.FAILED, run + 1)
+            assert kept.text_unit_ids == indexed.text_unit_ids
+            continue
         (new,) = records.values()
         assert {r.attempt_count for r in (kept, new)} == {0}
         assert {r.attempt_batch for r in (kept, new)} == {None}
-        if own_error:
-            # FAILED at the new content, the indexed text units kept.
-            assert (kept.status, kept.failure_count) == (DocStatus.FAILED, run + 1)
-            assert kept.text_unit_ids == indexed.text_unit_ids
-            assert (new.status, new.failure_count) == (DocStatus.FAILED, run + 1)
-            assert new.text_unit_ids == []
-            continue
         # Only the attempt fields change (and the pipeline id writing them),
         # and the consecutive runs failed for an error not their own.
         attempt = {

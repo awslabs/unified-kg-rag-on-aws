@@ -532,7 +532,9 @@ unless noted.
    credentials, a quota, a setting, a bug) counts for none. When every unit
    sent fails and its own errors are of one cause (alike in type, code and
    HTTP status, not message; or all unparseable or cut-off output; a unit
-   that failed otherwise, throttled say, is left out), the stage sends one
+   that failed otherwise, throttled say, is left out), output errors on the
+   units of more than one document count for none (a server-side output cap
+   cuts them all; a short request cannot tell). Otherwise the stage sends one
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are

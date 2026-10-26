@@ -37,6 +37,7 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
     GraphExtractionPrompt,
     GraphRefinementPrompt,
 )
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -521,13 +522,13 @@ class TestParseExtractionResult:
         "entities",
         [{"entity": {"name": {}}}, {"entity": [{"type": "ORG"}, {"name": " "}]}],
     )
-    def test_entities_none_of_which_has_a_name_are_malformed(
+    def test_entities_none_of_which_has_a_name_are_cut_off(
         self, extractor, text_unit, entities
     ) -> None:
         # Output cut off inside the first entity's name with no stop reason
-        # (a server-side output cap): the unit is a parse failure, not an
-        # empty success recorded PROCESSED.
-        with pytest.raises(OutputParserException, match="has a name"):
+        # (a server-side output cap): the unit's output is cut off (failed,
+        # not retried), not an empty success recorded PROCESSED.
+        with pytest.raises(LLMOutputTruncatedError, match="has a name"):
             _parsed(extractor, {"entities": entities}, text_unit)
 
     def test_a_cut_after_a_named_entity_keeps_it(self, extractor, text_unit) -> None:

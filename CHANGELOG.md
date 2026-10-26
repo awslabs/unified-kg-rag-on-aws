@@ -1386,6 +1386,19 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Graph extraction: output listing entities none of which has a name (cut
+  off with no stop reason) fails the unit as cut-off output
+  (`LLMOutputTruncatedError`), counted the same way and not retried. As a
+  parse failure it was asked `processing.max_attempts` times with backoff,
+  about 165 s a unit at the default 5: some 3.4 hours for 3000 units under
+  a server-side output cap (#PR).
+- Incremental indexing: when every unit of more than one document fails
+  with output that does not parse or was cut off, no document counts toward
+  `indexing.max_document_failures`, whatever the known-good request gets. A
+  server-side output cap cuts every document's output but not that short
+  request's answer, so the cap counted against every document and excluded
+  the corpus after three runs. A single document's output errors are still
+  judged by the known-good request (#PR).
 - Incremental indexing: a derivation reads each text unit's extraction
   records once, and the stored edges of each entity once, instead of again
   every round. A cascading re-key beside a hub of 3000 text units read

@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils import clean_display_name, ensure_list, entity_key
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
@@ -207,7 +208,7 @@ class GraphExtractor(BaseProcessor):
             text_units[idx].id
             for idx in item_failed_indices(
                 errors,
-                len(text_units),
+                text_units,
                 self.is_item_error,
                 "Graph extraction",
                 self.batch_processor,
@@ -353,7 +354,8 @@ class GraphExtractor(BaseProcessor):
         text_unit: TextUnit,
     ) -> TextUnitExtraction:
         """Parse one chain output into the unit's record; raise
-        ``OutputParserException`` if malformed (:func:`_checked`).
+        ``OutputParserException`` if malformed, ``LLMOutputTruncatedError``
+        if cut off (:func:`_checked`).
 
         A name listed twice is one entity of the unit
         (and a relationship stated twice one relationship, its strengths
@@ -677,8 +679,10 @@ def _checked(result: Any) -> dict[str, Any]:
     entities, one at least must have a name: output cut off without a stop
     reason (a server-side output cap reported as a normal stop) parses into
     entities whose names never arrived, which would record the unit
-    PROCESSED with nothing extracted. Output cut later keeps the entities
-    before the cut; the parser warns of the unclosed section.
+    PROCESSED with nothing extracted. That raises ``LLMOutputTruncatedError``
+    instead, as output cut at the token limit does: counted the same way,
+    not retried. Output cut later keeps the entities before the cut; the
+    parser warns of the unclosed section.
     """
     if not isinstance(result, dict):
         raise OutputParserException(
@@ -699,7 +703,9 @@ def _checked(result: Any) -> dict[str, Any]:
         and clean_display_name(coerce_llm_text(entity.get("name")))
         for entity in listed
     ):
-        raise OutputParserException(
+        # Cut off, as at the output-token limit: not retried (the same
+        # input hits the same cap again).
+        raise LLMOutputTruncatedError(
             f"none of the {len(listed)} entities of the extraction output has "
             "a name (output cut off?)"
         )
