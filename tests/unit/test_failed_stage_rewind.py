@@ -72,6 +72,21 @@ def test_a_completed_stage_run_again_on_a_disabled_stages_failures_is_refused(
             is None
         )
     assert "'graph_extraction' failed on 1" in caplog.text
+    # An explicit resume restores only the stages before its start: whether
+    # indexing ran before comes from the recorded stages (rerun).
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        rewind(_pipeline(["indexing"]), failed, "indexing", DONE, explicit=True)
+        assert "'graph_extraction' failed on 1" not in caplog.text
+        rewind(
+            _pipeline(["indexing"]),
+            failed,
+            "indexing",
+            DONE,
+            explicit=True,
+            rerun=True,
+        )
+    assert "'graph_extraction' failed on 1" in caplog.text
     # Its first run (a phased run's indexing window) records them once.
     assert rewind(_pipeline(["indexing"]), failed, "indexing", DONE) is None
     # A stage at or after the start is not restored (_drop_unrun_failures).
