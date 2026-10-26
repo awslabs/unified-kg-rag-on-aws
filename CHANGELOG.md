@@ -1393,40 +1393,40 @@ changed once with the full-config keys (#332).
   and then changed and failed for an outage kept the old content's count
   beside the new content's retry count. The count never excluded the new
   content (exclusion reads it only for the content it was recorded at), but
-  content changed back now gets its full retries again (#PR).
+  content changed back now gets its full retries again (#440).
 - OpenSearch: a rejected bulk item's error cuts its reason and each cause
   at 300 characters, not the whole message, so the cause after a long
   reason is kept: an immense-term rejection ended in `(caused by
-  max_bytes_length_exceeded_exception: byte)` (#PR).
+  max_bytes_length_exceeded_exception: byte)` (#440).
 - Documentation: a stop or death during extraction leaves a document's
   `failure_count` and `retry_count`; only one during indexing, once the
   `PENDING` records are written, resets them. The runbook said every
-  interruption reset both (#PR).
+  interruption reset both (#440).
 - Graph extraction: output listing entities none of which has a name (cut
   off with no stop reason) fails the unit as cut-off output
   (`LLMOutputTruncatedError`), counted the same way and not retried. As a
   parse failure it was asked `processing.max_attempts` times with backoff,
   about 165 s a unit at the default 5: some 3.4 hours for 3000 units under
-  a server-side output cap (#PR).
+  a server-side output cap (#440).
 - Incremental indexing: when every unit of more than one document fails
   with output that does not parse or was cut off, no document counts toward
   `indexing.max_document_failures`, whatever the known-good request gets. A
   server-side output cap cuts every document's output but not that short
   request's answer, so the cap counted against every document and excluded
   the corpus after three runs. A single document's output errors are still
-  judged by the known-good request (#PR).
+  judged by the known-good request (#440).
 - Incremental indexing: a derivation reads each text unit's extraction
   records once, and the stored edges of each entity once, instead of again
   every round. A cascading re-key beside a hub of 3000 text units read
   199,656 record ids in 32 rounds (14 s of a 17 s run); it now reads
-  12,186 (4 s of 7 s), with the same result (#PR).
+  12,186 (4 s of 7 s), with the same result (#440).
 - Incremental indexing (data loss): a claim's statement survives a run
   killed or stopped while retiring a source scope. The retire left a stored
   entity whose text units no longer all had extraction records (derived as
   stored). A later run derived a claim a full build keeps apart about one of
   its spellings as nothing, its endpoint not derived, and took the unit
   stating it off the stored claim too, so no claim cited the statement. The
-  stored claim now keeps such units until the entity can be derived (#PR).
+  stored claim now keeps such units until the entity can be derived (#440).
 - Queries: a filter key on a field only Neptune community vertices carry
   (`level`, `parent`, `size`, `period`, `children`) is refused unless an
   index the strategy reads declares it; the graph filters entity vertices
