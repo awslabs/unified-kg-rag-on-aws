@@ -322,7 +322,11 @@ def test_opensearch_bulk_item_failures_name_the_cause_without_corpus_text() -> N
         }
     )
     assert "[83, 101" not in immense and "such terms." in immense
-    assert "max_bytes_length_exceeded_exception" in immense
+    # Each part is cut, not the whole: the cause after a long reason stays.
+    assert immense.endswith(
+        "(caused by max_bytes_length_exceeded_exception: bytes can be at most "
+        "32766 in length; got 40000))"
+    ), immense
     value = message(
         {
             "type": "mapper_parsing_exception",

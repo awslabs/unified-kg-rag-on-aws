@@ -1388,6 +1388,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- OpenSearch: a rejected bulk item's error cuts its reason and each cause
+  at 300 characters, not the whole message, so the cause after a long
+  reason is kept: an immense-term rejection ended in `(caused by
+  max_bytes_length_exceeded_exception: byte)` (#PR).
 - Documentation: a stop or death during extraction leaves a document's
   `failure_count` and `retry_count`; only one during indexing, once the
   `PENDING` records are written, resets them. The runbook said every

@@ -121,11 +121,13 @@ def _creation_refused(
     )
 
 
-# The reason of a rejected bulk item, cut short: a mapping error's reason
-# quotes the rejected field's value ("Preview of field's value: ..."), an
-# immense-term rejection the term's bytes ("The prefix of the first immense
-# term is: ..."), and a cause may quote the value it could not read ('For
-# input string: "..."'), none of which may reach the logs.
+# The reason of a rejected bulk item and of each of its causes, each cut
+# short (cut as a whole, a long reason left no room for the cause), and
+# without the corpus text: a mapping error's reason quotes the rejected
+# field's value ("Preview of field's value: ..."), an immense-term rejection
+# the term's bytes ("The prefix of the first immense term is: ..."), and a
+# cause may quote the value it could not read ('For input string: "..."'),
+# none of which may reach the logs.
 _BULK_REASON_LIMIT = 300
 _BULK_REASON_QUOTES = re.compile(
     r"\s*(Preview of field's value|The prefix of the first immense term)\b.*",
@@ -145,10 +147,9 @@ def _bulk_item_error(error: Any) -> str:
         reason = _BULK_REASON_QUOTES.sub("", str(error.get("reason", "")))
         if parts:
             reason = _QUOTED.sub('"..."', reason)
-        parts.append(f"{error.get('type', 'error')}: {reason}")
+        parts.append(f"{error.get('type', 'error')}: {reason}"[:_BULK_REASON_LIMIT])
         error = error.get("caused_by")
-    message = " (caused by ".join(parts) + ")" * (len(parts) - 1)
-    return message[:_BULK_REASON_LIMIT]
+    return " (caused by ".join(parts) + ")" * (len(parts) - 1)
 
 
 class OpenSearchIndexer(VectorIndexer):
