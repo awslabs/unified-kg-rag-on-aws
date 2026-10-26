@@ -1398,6 +1398,10 @@ changed once with the full-config keys (#332).
   drops a text unit from an entity's lineage: a part split off under the id
   of a stored entity kept as it was stored (a unit of it has no record) was
   dropped with its text units; that entity now keeps them (#PR).
+- Incremental indexing: an entity split off several stored spellings
+  re-derives the stored edges of each. Only the first was rewired, so an
+  edge gleaning had added on another spelling stayed there, at the wrong
+  endpoint, and the ranks counted it on that end (#PR).
 - Incremental indexing: a document whose content changed between two runs
   failing for an error not its own starts `retry_count` over; opening the
   attempt at the new content kept the old content's count, which the next

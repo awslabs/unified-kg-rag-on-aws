@@ -336,13 +336,20 @@ def derive(
             )
     names = {e.id: e.name for e in derived_entities}
     # Each part a stored entity lost (split off on its own, or into another
-    # derived entity) -> that stored entity.
-    parted_from = {
-        derived_of[resolved_id]: members[0].id
+    # derived entity) -> that stored entity (the first, when several did),
+    # and every stored entity a part split off: each may hold an edge the
+    # part states, so all are rewired.
+    split_parts = {
+        resolved_id: members
         for resolved_id, members in parts.items()
         if resolved_id in derived_of
         and derived_of[resolved_id] not in {m.id for m in members}
     }
+    parted_from = {
+        derived_of[resolved_id]: members[0].id
+        for resolved_id, members in split_parts.items()
+    }
+    split_members = {m.id for members in split_parts.values() for m in members}
 
     def entity_id(stored_id: str) -> str:
         return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
@@ -671,7 +678,7 @@ def derive(
         dropped=dropped,
         rewired=sorted(
             {
-                *parted_from.values(),
+                *split_members,
                 *(e.id for e in entities if e.id in id_remap),
                 # The entities another one merged into: their stored edges
                 # may now equal one the merge drew.
