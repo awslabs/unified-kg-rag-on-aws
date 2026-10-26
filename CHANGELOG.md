@@ -1387,6 +1387,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion`: a SIGTERM while the finished run saves its pipeline
+  metadata waits for the save and then stops the run (143). Raised inside
+  the metadata's serialization, the stop was wrapped as a failed save:
+  `PipelineStateError`, exit 1 (3 of 150 stops right after a text-mode
+  run) (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning`: a Ctrl-C (SIGINT) while
   the event loop runs cancels the CLI's task as a SIGTERM does, and exits
   130. Python's own handler raised `KeyboardInterrupt` into the loop,
