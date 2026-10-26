@@ -310,6 +310,32 @@ def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
     assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
 
 
+def test_a_ctrl_c_ignored_by_the_parent_stays_ignored_while_a_cli_loads() -> None:
+    # Started with SIGINT ignored (`cmd &` in a non-interactive shell,
+    # nohup), a CLI exited 130 on a SIGINT during its imports.
+    import subprocess
+
+    script = (
+        "import os, signal, types\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "def loading(name):\n"
+        "    os.kill(os.getpid(), signal.SIGINT)\n"
+        "    return types.SimpleNamespace(main=lambda: print("
+        "signal.getsignal(signal.SIGINT) is signal.SIG_IGN))\n"
+        "launch.importlib.import_module = loading\n"
+        "launch.run_rag()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN),
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "True\n"
+
+
 def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
     # Once loaded, Ctrl-C raises KeyboardInterrupt in main as before.
     from types import SimpleNamespace

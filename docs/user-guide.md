@@ -1639,8 +1639,9 @@ signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
 with (an argparse error included), so stdout is always JSON. That holds
 from the first moment: a SIGTERM while the CLI still loads, or after it
-printed its result while the process exits, exits `143` too (the status
-document only in the first case). A
+printed its result while the process exits, exits `143` too, and a Ctrl-C
+while it loads `130` (the status document only while loading; a SIGINT the
+parent ignores, as `nohup` does, stays ignored). A
 `run-ingestion` result whose run a stage failed carries the same `error` and
 `exit_code`; `run-ingestion` adds the `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in

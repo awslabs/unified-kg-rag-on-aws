@@ -1470,7 +1470,8 @@ custom_prompts:
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
 붙여 출력하므로 표준 출력은 항상 JSON입니다. 시작 직후에도 같습니다. CLI가 아직 로드 중일 때나 결과를
-출력한 뒤 프로세스가 끝나는 중에 받은 SIGTERM도 `143`으로 끝납니다(상태 문서는 앞의 경우에만 출력). 단계가 실패한 `run-ingestion` 실행의 결과에도
+출력한 뒤 프로세스가 끝나는 중에 받은 SIGTERM도 `143`으로, 로드 중의 Ctrl-C는 `130`으로 끝납니다(상태
+문서는 로드 중에만 출력. `nohup`처럼 부모가 무시하게 한 SIGINT는 계속 무시함). 단계가 실패한 `run-ingestion` 실행의 결과에도
 같은 `error`와 `exit_code`가 담깁니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
 (실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를

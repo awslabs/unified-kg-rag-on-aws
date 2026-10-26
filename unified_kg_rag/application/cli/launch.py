@@ -46,7 +46,10 @@ def _stopped_while_loading(signum: int, _frame: object) -> None:
 
 def _run(module: str) -> Any:
     signal.signal(signal.SIGTERM, _stopped_while_loading)
-    interrupt = signal.signal(signal.SIGINT, _stopped_while_loading)
+    interrupt = signal.getsignal(signal.SIGINT)
+    # A SIGINT the parent ignores (`cmd &` in a script, nohup) stays ignored.
+    if interrupt is not signal.SIG_IGN:
+        signal.signal(signal.SIGINT, _stopped_while_loading)
     cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
     # Ctrl-C raises KeyboardInterrupt again once main runs.
     signal.signal(signal.SIGINT, interrupt)

@@ -1396,6 +1396,8 @@ changed once with the full-config keys (#332).
   finished runs) still runs and the exit code stays 143. A watchdog ends a
   stopped CLI still running 10 seconds later, printing the interrupted
   status if nothing was printed, so no stop can hang (#PR).
+- The console-script launcher keeps a SIGINT its parent ignores (`cmd &`
+  in a script, `nohup`) ignored while the CLI loads; it exited 130 (#PR).
 - Queries with `auto` (one `--query`, `run-eval`, the Python API, and
   `run-rag --interactive` `--filters` and `set-filter`): filters are refused
   only when no strategy `auto` may route to applies every key, and the
