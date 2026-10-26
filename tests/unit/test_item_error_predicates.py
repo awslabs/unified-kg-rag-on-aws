@@ -12,6 +12,7 @@ types built without a network.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,15 +20,18 @@ import httpx
 import pytest
 from botocore import exceptions as boto_exc
 from langchain_core.exceptions import OutputParserException
+from langchain_core.outputs import Generation
 
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.ingestion import claim_extractor as claim_module
 from unified_kg_rag.adapters.ingestion import gleaner as gleaner_module
 from unified_kg_rag.adapters.ingestion import graph_extractor as graph_module
+from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
+    known_good_unit,
 )
 from unified_kg_rag.adapters.local.models import (
     OllamaLanguageModelFactory,
@@ -35,6 +39,7 @@ from unified_kg_rag.adapters.local.models import (
 )
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 openai = pytest.importorskip("openai")
 ollama = pytest.importorskip("ollama")
@@ -254,51 +259,96 @@ def test_a_factory_without_a_classifier_counts_http_item_rejections() -> None:
     assert counted == []
 
 
-def _documents(documents: list[str]) -> list[list[str]]:
-    return [[doc] for doc in documents]
-
-
 _ITEM = _BEDROCK_ITEM[0]
 _BEDROCK = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
 
 
+@pytest.mark.parametrize("answered", [True, False])
 @pytest.mark.parametrize(
-    ("documents", "errors", "counted"),
+    ("errors", "alike"),
     [
-        # Every unit of two documents, one error: a setting, counted for none.
-        (["a", "b"], {0: _ITEM, 1: _ITEM}, []),
-        # One document that always fails is still counted.
-        (["a", "a"], {0: _ITEM, 1: _ITEM}, [0, 1]),
+        # Every unit, one item error: the known-good request decides.
+        ({0: _ITEM, 1: _ITEM}, True),
+        ({0: _ITEM}, True),
         # Not every unit failed, or not with the same error.
-        (["a", "b"], {0: _ITEM}, [0]),
-        (["a", "b"], {0: _ITEM, 1: OutputParserException("bad")}, [0, 1]),
+        ({0: _ITEM, 2: _ITEM}, False),
+        ({0: _ITEM, 1: OutputParserException("bad")}, False),
+        # Alike in type, code and status but not in message: two causes.
+        ({0: _ITEM, 1: _bedrock("ValidationException", 400, "y")}, False),
         # Output that does not parse or was cut off is each unit's own,
         # however alike.
-        (["a", "b"], {0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, [0, 1]),
-        (["a", "b"], {0: _OUTPUT_ERRORS[1], 1: _OUTPUT_ERRORS[1]}, [0, 1]),
-        # Alike in type, code and status but not in message: two causes.
-        (["a", "b"], {0: _ITEM, 1: _bedrock("ValidationException", 400, "y")}, [0, 1]),
+        ({0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, False),
+        ({0: _OUTPUT_ERRORS[1], 1: _OUTPUT_ERRORS[1]}, False),
         # Errors that are not the item's own count for none either way.
-        (["a", "b"], {0: TimeoutError(), 1: _ITEM}, [1]),
+        ({0: TimeoutError(), 1: _ITEM}, False),
+        ({0: TimeoutError(), 1: TimeoutError()}, False),
     ],
 )
-def test_one_error_on_every_unit_of_several_documents_counts_none(
-    documents: list[str], errors: dict[int, BaseException], counted: list[int]
+def test_one_error_on_every_unit_counts_as_the_known_good_request_decides(
+    errors: dict[int, BaseException], alike: bool, answered: bool
 ) -> None:
     predicate = item_error_predicate(_BEDROCK)
-    assert item_failed_indices(errors, _documents(documents), predicate, "t") == counted
+    count = 1 if len(errors) == 1 else 3 if 2 in errors else 2
+    sent: list[bool] = []
+
+    def known_good() -> bool:
+        sent.append(True)
+        return answered
+
+    counted = item_failed_indices(errors, count, predicate, "t", known_good)
+    own = [idx for idx, error in sorted(errors.items()) if predicate(error)]
+    assert counted == ([] if alike and not answered else own)
+    # Sent only when every unit failed alike, a single unit's failure too.
+    assert sent == ([True] if alike else [])
+
+
+def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> None:
+    # A response an earlier run cached for the known-good request would pass
+    # for a model that now rejects the setting: it is neither served nor
+    # stored while the request is made.
+    cache = LLMResponseCache()
+    cache.open(tmp_path)
+    cache.update("prompt", "llm", [Generation(text="cached")])
+    cache.flush()
+    cache.open(tmp_path)
+    seen: list[object] = []
+
+    def known_good() -> bool:
+        seen.append(cache.lookup("prompt", "llm"))
+        cache.update("other", "llm", [Generation(text="new")])
+        return False
+
+    item_failed_indices({0: _ITEM}, 1, item_error_predicate(_BEDROCK), "t", known_good)
+    assert seen == [None]
+    cache.flush()
+    cache.open(tmp_path)
+    assert cache.lookup("other", "llm") is None
+    assert cache.lookup("prompt", "llm") is not None
+
+
+_KNOWN_GOOD = known_good_unit().text
 
 
 class _Rejecting:
     """A chain the model answers with an error for every request: ``error``,
-    or the error ``error`` maps the text of the request's unit to."""
+    or the error ``error`` maps the text of the request's unit to (a request
+    of no listed text, the known-good one, is answered). With
+    ``known_good_answered`` the known-good request is answered either way."""
 
-    def __init__(self, error: Exception | dict[str, Exception]) -> None:
+    def __init__(
+        self, error: Exception | dict[str, Exception], known_good_answered: bool
+    ) -> None:
         self.error = error
+        self.known_good_answered = known_good_answered
 
     def invoke(self, request: Any, *_: Any, **__: Any) -> Any:
+        if self.known_good_answered and _KNOWN_GOOD in str(request):
+            return {}
         if isinstance(self.error, dict):
-            raise next(e for text, e in self.error.items() if text in str(request))
+            for text, error in self.error.items():
+                if text in str(request):
+                    raise error
+            return {}
         raise self.error
 
     def batch(self, *_: Any, **__: Any) -> Any:
@@ -315,7 +365,10 @@ _TOO_LONG = _bedrock("ValidationException", 400, "Input is too long.")
 
 
 def _processor(
-    stage: str, config: Config, error: Exception | dict[str, Exception]
+    stage: str,
+    config: Config,
+    error: Exception | dict[str, Exception],
+    known_good_answered: bool = False,
 ) -> Any:
     """``stage``'s extractor, its model answering every request with
     ``error`` (see :class:`_Rejecting`)."""
@@ -326,7 +379,11 @@ def _processor(
             bedrock_module, "BedrockLanguageModelFactory", lambda *_, **__: _BEDROCK
         )
         patch.setattr(module, "create_robust_xml_output_parser", lambda **_: None)
-        patch.setattr(module, "setup_chain", lambda **_: _Rejecting(error))
+        patch.setattr(
+            module,
+            "setup_chain",
+            lambda **_: _Rejecting(error, known_good_answered),
+        )
         processor: Any = cls(config)
     processor.show_progress = False
     return processor
@@ -345,10 +402,12 @@ def _run(
     config: Config,
     units: list[TextUnit],
     error: Exception | dict[str, Exception] = _TOO_LONG,
+    known_good_answered: bool = False,
 ) -> list[str]:
     """The ids of the units ``stage`` counts against their document when the
     model rejects all of them with ``error``."""
-    return _counted(_processor(stage, config, error), stage, units)
+    processor = _processor(stage, config, error, known_good_answered)
+    return _counted(processor, stage, units)
 
 
 def _two_documents() -> list[TextUnit]:
@@ -359,16 +418,18 @@ def _two_documents() -> list[TextUnit]:
 
 
 @pytest.mark.parametrize("stage", list(_STAGES))
-def test_every_extraction_stage_counts_one_cause_for_none(
+def test_every_extraction_stage_asks_a_known_good_request_on_one_cause(
     stage: str, config: Config
 ) -> None:
-    # One setting error on every unit of two documents is the configuration,
-    # in claim extraction and gleaning as in graph extraction; the same error
-    # on the units of one document is still that document's.
+    # One error on every unit is the configuration when the model rejects a
+    # known-good request too, in every extraction stage, for two documents
+    # or one; when it answers that request, the documents' own (so a delta
+    # of bad documents alone is excluded in the end).
     two = [TextUnit(id=f"u{i}", text="t", document_ids=[d]) for i, d in enumerate("ab")]
     one = [TextUnit(id=f"u{i}", text="t", document_ids=["a"]) for i in range(2)]
-    assert _run(stage, config, two) == []
-    assert _run(stage, config, one) == ["u0", "u1"]
+    for units in (two, one):
+        assert _run(stage, config, units) == []
+        assert _run(stage, config, units, known_good_answered=True) == ["u0", "u1"]
 
 
 @pytest.mark.parametrize("stage", list(_STAGES))
@@ -426,3 +487,29 @@ def test_claims_count_an_answer_that_does_not_parse(
         lambda *_: (_ for _ in ()).throw(OutputParserException("bad")),
     )
     assert _counted(processor, "claims", _two_documents()[:1]) == ["u0"]
+
+
+@pytest.mark.parametrize(
+    ("error", "answered"),
+    [
+        (None, True),
+        # The model answered; its output did not parse or was cut off.
+        (OutputParserException("bad"), True),
+        (LLMOutputTruncatedError("cut"), True),
+        (_ITEM, False),
+        (TimeoutError(), False),
+    ],
+    ids=repr,
+)
+def test_a_known_good_request_is_answered_unless_the_call_fails(
+    error: Exception | None, answered: bool
+) -> None:
+    def call(_: dict[str, Any]) -> Any:
+        if error is not None:
+            raise error
+        return {}
+
+    processor = BatchProcessor(max_attempts=1, is_transient_error=lambda _: False)
+    assert (
+        processor.answered(known_good_unit(), lambda units: [{}], call, "t") is answered
+    )

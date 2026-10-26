@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
+    known_good_unit,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -203,9 +204,15 @@ class GraphExtractor(BaseProcessor):
             text_units[idx].id
             for idx in item_failed_indices(
                 errors,
-                [unit.document_ids for unit in text_units],
+                len(text_units),
                 self.is_item_error,
                 "Graph extraction",
+                lambda: self.batch_processor.answered(
+                    known_good_unit(),
+                    self._prepare_extraction_inputs,
+                    self.graph_extractor.invoke,
+                    "Graph Extraction (known-good request)",
+                ),
             )
         )
 

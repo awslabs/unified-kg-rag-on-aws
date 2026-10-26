@@ -465,6 +465,7 @@ def derive(
     # of the endpoints dropped their edge as a self-loop). Their text units
     # are all here: an edge cites only units its endpoints cite.
     derived_ids = set(derived_of.values())
+    incomplete = {e.id for e in entities if not entity_complete[e.id]}
     for (source, target, _), rel in resolved_edges.items():
         unstored = (
             source in created
@@ -557,6 +558,18 @@ def derive(
                 derived_claims.append(claim.model_copy(deep=True, update=endpoints))
                 continue
             match_claim = with_entity_ids(match_claim, derived_of)
+            # An endpoint whose stored entity could not be derived (one of its
+            # text units has no record) resolved from the claim's units alone
+            # to an entity no derived or stored item is: keep the stored one.
+            kept = {
+                key: endpoints[key]
+                for key in ("subject_id", "object_id")
+                if getattr(match_claim, key)
+                and getattr(match_claim, key) not in derived_ids
+                and endpoints[key] in incomplete
+            }
+            if kept:
+                match_claim = match_claim.model_copy(update=kept)
             new_claim_id = resolved_claim_id(match_claim)
             if new_claim_id in blocked:
                 new_claim_id = claim.id

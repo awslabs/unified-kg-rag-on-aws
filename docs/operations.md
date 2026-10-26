@@ -250,10 +250,16 @@ needs an inference profile, an unsupported parameter). Nothing else counts:
 throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 `NoCredentialsError`), a missing region, quotas
 (`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
-fail every document alike. Nor does one error that failed every unit of
-several documents. Such a document stays `PENDING` (or `FAILED`, retried by
-the next run), uncounted, until the cause is fixed: an outage or a bad
-setting never excludes it.
+fail every document alike. Such a document stays `PENDING` (or `FAILED`,
+retried by the next run), uncounted, until the cause is fixed: an outage or a
+bad setting never excludes it. Its consecutive failed runs are kept
+(`retry_count`): from the second, the run warns with the file and the count
+and reports it in `documents_retrying`. When every unit sent fails with one
+identical error, a known-good request decides (sent through the same chain,
+never served from the LLM response cache): rejected too, nothing counts;
+answered, the errors count, so a delta of bad documents alone is still
+excluded. A content error that later clears with no change can thus exclude a
+document.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of

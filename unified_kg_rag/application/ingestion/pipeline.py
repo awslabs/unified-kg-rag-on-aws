@@ -1269,6 +1269,7 @@ class DataIngestionPipeline:
             self._prepare_context_for_resume(context, start_stage_name)
             # What an earlier run recorded is not this run's.
             context.recorded_failed_doc_ids = []
+            context.retrying_doc_ids = []
 
             logger.info(
                 "Pipeline resume prepared successfully - will start from stage: '%s'",
@@ -1956,8 +1957,9 @@ class DataIngestionPipeline:
         timeouts, connections) count for none. Best effort: the run fails
         either way.
         """
-        unit_ids = context.item_failed_text_unit_ids.get(stage.name)
-        if not unit_ids or not self._incremental_delta(context):
+        unit_ids = context.item_failed_text_unit_ids.get(stage.name, [])
+        retried = context.failed_text_unit_ids.get(stage.name, [])
+        if not (unit_ids or retried) or not self._incremental_delta(context):
             return
         assert self._doc_status is not None
         try:
@@ -1966,6 +1968,7 @@ class DataIngestionPipeline:
                 context,
                 unit_ids,
                 self.config.indexing.max_document_failures,
+                retried_unit_ids=retried,
             )
         except Exception as e:  # noqa: BLE001 - the run fails either way
             logger.warning(

@@ -13,7 +13,8 @@ Entries live in immutable JSON segment files in the run's cache directory
 each at most once per run: a retry within the run (after a response failed to
 parse, say) calls the model again, and its response replaces the old one. A
 response cut off at the output-token limit is not stored, since its failure is
-not retried.
+not retried. A call made under ``uncached_responses`` is neither served nor
+stored: it always reaches the model.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +45,19 @@ logger = get_logger(__name__)
 # Object reprs in a non-serializable model's llm_string differ per process.
 _OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
 _SEGMENT_VERSION = 1
+# Set by uncached_responses for the calls made in its context.
+_UNCACHED: ContextVar[bool] = ContextVar("llm_response_cache_bypassed", default=False)
+
+
+@contextmanager
+def uncached_responses() -> Iterator[None]:
+    """Neither serve nor store a response for the model calls made in this
+    context (and the threads it hands its context to): they reach the model."""
+    token = _UNCACHED.set(True)
+    try:
+        yield
+    finally:
+        _UNCACHED.reset(token)
 
 
 def _cache_key(prompt: str, llm_string: str) -> str:
@@ -145,6 +161,8 @@ class LLMResponseCache(BaseCache):
             self._entries = {}
 
     def lookup(self, prompt: str, llm_string: str) -> RETURN_VAL_TYPE | None:
+        if _UNCACHED.get():
+            return None
         key = _cache_key(prompt, llm_string)
         with self._lock:
             if self._directory is None:
@@ -158,7 +176,7 @@ class LLMResponseCache(BaseCache):
         return [_load_generation(g) for g in cached]
 
     def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:
-        if any(
+        if _UNCACHED.get() or any(
             isinstance(g, ChatGeneration) and _truncation_reason(g.message)
             for g in return_val
         ):

@@ -121,6 +121,20 @@ def _creation_refused(
     )
 
 
+# The reason of a rejected bulk item, cut short: a mapping error's reason
+# quotes the rejected field's value ("Preview of field's value: ..."), which
+# must not reach the logs.
+_BULK_REASON_LIMIT = 300
+
+
+def _bulk_item_error(error: Any) -> str:
+    """``type: reason`` of a bulk item's ``error``, without a value preview."""
+    if not isinstance(error, dict):
+        return str(error)[:_BULK_REASON_LIMIT]
+    reason = str(error.get("reason", "")).split(" Preview of field's value", 1)[0]
+    return f"{error.get('type', 'error')}: {reason}"[:_BULK_REASON_LIMIT]
+
+
 class OpenSearchIndexer(VectorIndexer):
     # Recorded in the _meta of the indices a full build creates (None records
     # nothing); see set_doc_status_tracking.
@@ -1814,7 +1828,8 @@ class OpenSearchIndexer(VectorIndexer):
                     if "error" in next(iter(item.values()))
                 ]
                 stats.add_error(
-                    f"Bulk API errors: {len(failed)}",
+                    f"Bulk API errors: {len(failed)} "
+                    f"(first: {_bulk_item_error(failed[0]['error']) if failed else '?'})",
                     len(failed),
                     ids=[str(item["_id"]) for item in failed if "_id" in item],
                 )

@@ -649,15 +649,18 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
             assert (new.status, new.failure_count) == (DocStatus.FAILED, run + 1)
             assert new.text_unit_ids == []
             continue
-        # Only the attempt fields change (and the pipeline id writing them).
+        # Only the attempt fields change (and the pipeline id writing them),
+        # and the consecutive runs failed for an error not their own.
         attempt = {
             "attempted_hash",
             "attempt_count",
             "attempt_batch",
             "crash_batch",
             "written_by",
+            "retry_count",
         }
         assert kept.model_dump(exclude=attempt) == indexed.model_dump(exclude=attempt)
+        assert (kept.retry_count, new.retry_count) == (run + 1, run + 1)
         # The new document's attempt record: no text units, nothing counted.
         assert (new.status, new.text_unit_ids) == (DocStatus.PENDING, [])
     assert stack.texts() == {A_TEXT}

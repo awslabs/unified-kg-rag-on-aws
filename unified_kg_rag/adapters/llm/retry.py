@@ -14,12 +14,13 @@ import asyncio
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TypeVar
 
 from langchain_core.exceptions import OutputParserException
 
 from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
@@ -124,38 +125,71 @@ def error_signature(exc: BaseException) -> tuple[str, str, int | None, str]:
     return type(exc).__name__, _error_code(exc), _http_status(exc), str(exc)
 
 
+# The text of the known-good request (``known_good_unit``): short, neutral,
+# and naming two entities and a relationship, so every extraction prompt
+# has something to answer.
+_KNOWN_GOOD_TEXT = "Vendor Corp and Buyer Ltd signed a supply agreement in 2020."
+
+
+def known_good_unit() -> TextUnit:
+    """The text unit of the known-good request an extractor sends when every
+    item failed alike (the ``answered`` check of :func:`item_failed_indices`)."""
+    return TextUnit.model_validate(
+        {"id": "known-good-request", "text": _KNOWN_GOOD_TEXT, "document_ids": []}
+    )
+
+
 def item_failed_indices(
     errors: Mapping[int, BaseException],
-    document_ids: Sequence[Sequence[str] | None],
+    count: int,
     is_item_error: ItemErrorPredicate,
     task: str,
+    answered: Callable[[], bool],
 ) -> list[int]:
-    """The indices, of a batch of items whose documents are ``document_ids``,
-    whose ``errors`` count against their document (``is_item_error``).
+    """The indices, of a batch of ``count`` items, whose ``errors`` count
+    against their document (``is_item_error``).
 
-    Empty when the model rejected every item, of more than one document, with
-    the same error (:func:`error_signature`): one cause, a setting it rejects,
-    rather than each document's own. A single document that always fails, and
-    output that does not parse or was cut off, are still counted.
+    When the model rejected every item with the same item error
+    (:func:`error_signature`; not output that does not parse or was cut off),
+    that is either one cause, a setting it rejects, or each document's own.
+    ``answered`` then sends one known-good request (:func:`known_good_unit`)
+    through the same chain: rejected too, the cause is the model or its
+    settings and none is counted; answered, the errors are counted.
+
+    The request is neither served from nor stored in the run's LLM response
+    cache (``uncached_responses``): a response an earlier run cached for it
+    would pass for a model that now rejects the setting, and the cache's
+    segments stay what the documents' requests made them.
     """
-    documents = {d for ids in document_ids for d in ids or []}
-    signatures = {error_signature(error) for error in errors.values()}
     first = next(iter(errors.values()), None)
     if (
-        len(documents) > 1
-        and len(errors) == len(document_ids)
-        and len(signatures) == 1
+        first is not None
+        and len(errors) == count
+        and len({error_signature(error) for error in errors.values()}) == 1
         and not isinstance(first, OutputParserException | LLMOutputTruncatedError)
+        and is_item_error(first)
     ):
+        # Imported here: the cache module imports the chain factory, which
+        # imports this one.
+        from unified_kg_rag.adapters.llm.response_cache import uncached_responses
+
+        with uncached_responses():
+            passed = answered()
+        if not passed:
+            logger.warning(
+                "%s: every item and a known-good request failed with the same "
+                "error (%s): taken for a model or configuration failure, "
+                "counted against no document",
+                task,
+                first,
+            )
+            return []
         logger.warning(
-            "%s: every item of %s documents failed with the same error (%s): "
-            "taken for a model or configuration failure, counted against none "
-            "of them",
+            "%s: every item failed with the same error (%s) but a known-good "
+            "request was answered: counted against their documents",
             task,
-            len(documents),
             first,
         )
-        return []
     return [idx for idx, error in sorted(errors.items()) if is_item_error(error)]
 
 

@@ -645,6 +645,14 @@ changed once with the full-config keys (#332).
   document filters and dropped out of filtered retrieval) (#376).
 
 ### Added
+- Incremental indexing: a document failing consecutive runs for an error
+  that is not its own (an outage, credentials, a rejected setting, a failed
+  write; never counted toward `indexing.max_document_failures`) is no
+  longer retried silently. The registry keeps its consecutive failed runs
+  (`DocStatusRecord.retry_count`), and from the second the run warns with
+  each file and its count and reports them in `documents_retrying` of the
+  `run-ingestion --output-format json` result and the run summary.
+  Exclusion is unchanged: such a document is never excluded (#431).
 - The public API exports the errors it raises for callers to tell apart:
   `GraphRAGException`, `ConfigurationError`, `StoreRequestRejectedError`,
   `PipelineExecutionError` and `NamespaceLeaseError` (#416).
@@ -1364,6 +1372,32 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: the documents a commit recorded FAILED are in the
+  run's `failed_documents` even when the commit then fails or is stopped
+  (its extraction-record cleanup); they were added only once the commit
+  returned, so the result read 0. A registry write that fails no longer
+  counts its documents as recorded (#431).
+- OpenSearch: a bulk write the store rejects items of names the first
+  item's error (`type: reason`, cut at 300 characters and without the
+  field-value preview a mapping error quotes) after the count, which was
+  all it reported (#431).
+- Incremental indexing: a claim re-derived while one of its endpoint
+  entities could not be derived (a text unit it cites has no extraction
+  record) keeps that stored entity as its endpoint; it took the entity its
+  own text unit resolves to alone, an id and name no stored entity has, so
+  the claim pointed at a nonexistent entity (#431).
+- Incremental indexing: when every unit an extraction stage sends (graph
+  extraction, claim extraction or gleaning) fails with one identical error
+  the document could cause, the stage sends one known-good request through
+  the same chain, bypassing the LLM response cache: rejected too, the
+  error is taken for the model or a setting and counts against no
+  document; answered, it counts against each document. The rule asked for
+  more than one document instead, so a delta holding only documents the
+  model always rejects was never counted, failed every run and held back
+  its deletions, while a one-document delta's rejected setting excluded
+  that document. Trade-off: a content-specific rejection that later clears
+  with no change to the document or settings can now exclude it after
+  `indexing.max_document_failures` runs (#431).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

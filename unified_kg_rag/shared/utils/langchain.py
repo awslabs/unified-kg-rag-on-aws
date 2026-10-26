@@ -254,6 +254,27 @@ class BatchProcessor(BaseModel):
             span.set_attributes(_batch_outcome(items_to_process, results))
             return results
 
+    def answered(
+        self,
+        item: Any,
+        prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
+        sequential_func: Callable[[dict[str, Any]], Any],
+        task_name: str,
+    ) -> bool:
+        """Whether the model answered ``item``'s call, made as one of a batch
+        (same timeout and retries): a response that does not parse or was
+        cut off is an answer too."""
+        errors: dict[int, BaseException] = {}
+        results = self.execute_with_fallback(
+            [item], prepare_inputs_func, sequential_func, task_name, False, errors
+        )
+        return bool(results) and (
+            results[0] is not BATCH_ITEM_FAILED
+            or isinstance(
+                errors.get(0), OutputParserException | LLMOutputTruncatedError
+            )
+        )
+
     def _execute_with_fallback(
         self,
         items_to_process: list[Any],
