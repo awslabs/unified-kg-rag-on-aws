@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -40,7 +41,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
@@ -68,9 +69,10 @@ _CHILD_EXIT_SECONDS = 1.0
 # on any hang on the way out, well inside the 30 s ECS gives a stopped task
 # by default.
 _STOP_GRACE_SECONDS = 10.0
-# The task a SIGTERM cancels (see stoppable) and the signal that stopped the
-# run, once one did.
-_stop: dict[str, Any] = {"task": None, "signum": None}
+# The task a SIGTERM cancels (see stoppable), the signal that stopped the
+# run once one did, and whether the loop's thread waits in a blocking call
+# (see interruptible).
+_stop: dict[str, Any] = {"task": None, "signum": None, "interruptible": False}
 # Set when a stop starts the grace period of the watchdog thread.
 _stop_started = threading.Event()
 # Held while the one JSON document is printed: the watchdog may print the
@@ -140,7 +142,11 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         _stop["signum"] = signum
         _stop_started.set()
         task = _stop["task"]
-        if task is not None and task.get_loop().is_running():
+        if (
+            task is not None
+            and task.get_loop().is_running()
+            and not _stop["interruptible"]
+        ):
             # Raised into the running loop, the SystemExit can land in the
             # loop's own code between two callbacks and leave nest_asyncio's
             # run() waiting forever (about 1 stop in 70 mid-run). Cancel the
@@ -159,7 +165,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         # Set from the command line before it is parsed, so an argparse
         # error or a config that fails to load still prints a JSON status.
         _json.update(enabled=wants_json(argv), printed=False)
-        _stop.update(task=None, signum=None)
+        _stop.update(task=None, signum=None, interruptible=False)
         _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
@@ -201,6 +207,19 @@ async def stoppable(main: Awaitable[_R]) -> _R:
     it runs (``asyncio.run(stoppable(...))``) under :func:`exits_on_sigterm`."""
     _stop["task"] = asyncio.current_task()
     return await main
+
+
+@contextlib.contextmanager
+def interruptible() -> Iterator[None]:
+    """Mark a blocking call a coroutine makes on the loop's thread (an
+    interactive prompt): a SIGTERM during it raises ``SystemExit`` there, as
+    outside a loop, since it cannot land in the loop's code and a cancel
+    would wait for the call to return."""
+    _stop["interruptible"] = True
+    try:
+        yield
+    finally:
+        _stop["interruptible"] = False
 
 
 def _stop_watchdog() -> None:

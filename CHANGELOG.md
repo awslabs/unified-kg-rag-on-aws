@@ -1392,9 +1392,10 @@ changed once with the full-config keys (#332).
   `SystemExit` into the loop, where it could land in the loop's own code
   and leave nest_asyncio's `run()` waiting forever (2 of 150 mid-run stops
   hung until SIGKILL). Cleanup (`aclose`, `run-eval`'s upload of the
-  finished runs) still runs and the exit code stays 143. A watchdog ends a
-  stopped CLI still running 10 seconds later, printing the interrupted
-  status if nothing was printed, so no stop can hang (#PR).
+  finished runs) still runs and the exit code stays 143; at the
+  interactive prompt, which blocks the loop, it still raises at once. A
+  watchdog ends a stopped CLI still running 10 seconds later, printing the
+  interrupted status if nothing was printed, so no stop can hang (#PR).
 - The console-script launcher keeps a SIGINT its parent ignores (`cmd &`
   in a script, `nohup`) ignored while the CLI loads; it exited 130 (#PR).
 - Graph expansion (`local`, `drift`, and `mix`/`hybrid` with graph

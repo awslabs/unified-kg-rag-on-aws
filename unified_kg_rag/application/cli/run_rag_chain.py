@@ -24,6 +24,7 @@ from unified_kg_rag.application.cli.conventions import (
     add_output_format_argument,
     exits_on_sigterm,
     failed,
+    interruptible,
     json_output,
     print_json,
     stoppable,
@@ -309,7 +310,10 @@ class RAGChainRunner:
 
         while True:
             try:
-                raw_input = console.input("\n[bold cyan]Question:[/bold cyan] ").strip()
+                # A stop while the prompt waits ends the session at once.
+                with interruptible():
+                    question = console.input("\n[bold cyan]Question:[/bold cyan] ")
+                raw_input = question.strip()
                 if not raw_input:
                     continue
                 if raw_input.lower() in ["quit", "exit"]:

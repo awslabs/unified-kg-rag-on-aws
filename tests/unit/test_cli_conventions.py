@@ -155,6 +155,38 @@ def test_a_sigterm_cancels_the_running_main_task_instead_of_raising() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_at_an_interruptible_prompt_raises_at_once() -> None:
+    # An interactive session waits in a blocking prompt on the loop's
+    # thread, so a cancel would wait for the next line (until the watchdog
+    # ended it, 10 s later).
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible,
+        stoppable,
+    )
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            with interruptible():
+                os.kill(os.getpid(), signal.SIGTERM)
+                events.append("not raised")
+        finally:
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+    assert events == ["closed"]
+
+
 def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() -> None:
     # A run that swallowed the stop ran on until it was killed.
     import time
