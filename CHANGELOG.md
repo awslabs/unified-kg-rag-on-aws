@@ -1391,34 +1391,34 @@ changed once with the full-config keys (#332).
   index the strategy reads declares it; the graph filters entity vertices
   only, so `mix --filters level:0` (or `period` with `local`) was accepted
   and ran unfiltered. `mix` and `hybrid` check their keys against the
-  graph only with `search.lightrag_search.enable_graph_expansion` (#PR).
+  graph only with `search.lightrag_search.enable_graph_expansion` (#439).
 - Queries with `auto` (one `--query`, `run-eval`, the Python API): filter
   keys are checked against every strategy `auto` may route to before the
   router runs, as an interactive session already did. Only the routed
   strategy was checked, after the router call, so one filter answered or
-  exited 2 depending on the route (#PR).
+  exited 2 depending on the route (#439).
 - Incremental indexing: reading the stored extraction records of a delta
   no longer rebuilds the set of cited text units per delta unit, which
-  took seconds per derive round on a 10k-unit delta (#PR).
+  took seconds per derive round on a 10k-unit delta (#439).
 - OpenSearch and the embedded engine: the `max_result_window` cut warning
   is given once per query, index and search width even when searches
   alternate between indexes or concurrent queries; only the last cut was
-  remembered, so one drift query warned 61 times for 3 cuts (#PR).
+  remembered, so one drift query warned 61 times for 3 cuts (#439).
 - CLIs: a Ctrl-C while a CLI imports its dependencies exits 130 with
   `--output-format json`'s `{"status": "interrupted", "exit_code": 130}`
-  instead of a traceback and no output (#PR).
+  instead of a traceback and no output (#439).
 - CLIs: a SIGTERM after a run printed its JSON result ends the process at
   once with 143. Raised into `run-rag`'s event loop as its coroutine
   returned, it could leave the process waiting forever (until ECS's stop
-  timeout killed it) (#PR).
+  timeout killed it) (#439).
 - `run-ingestion`: a SIGTERM after a run printed its result, while it
   closed its connections, no longer prints an interrupted status after it
-  (two JSON documents) or tells the user to resume a finished run (#PR).
+  (two JSON documents) or tells the user to resume a finished run (#439).
 - Ingestion: a failed stage's error is logged at ERROR once; stopping the
-  pipeline for it repeated the message at ERROR and now logs at INFO (#PR).
+  pipeline for it repeated the message at ERROR and now logs at INFO (#439).
 - `run-eval --search-strategy`: an empty entry (`local,`, `local,,mix`) is a
   usage error (exit 2); it was dropped, so the run compared fewer
-  strategies than listed (#PR).
+  strategies than listed (#439).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at
