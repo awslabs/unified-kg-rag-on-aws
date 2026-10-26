@@ -616,3 +616,79 @@ def test_a_claim_keeps_an_underived_endpoint_the_resolved_one_is_not() -> None:
     (claim,) = derived.claims
     assert (claim.subject_id, claim.subject_name) == (acme.id, "Acme LLC")
     assert (claim.object_id, claim.object_name) == (depot.id, "Depot")
+
+
+def test_an_underived_stored_object_endpoint_is_kept() -> None:
+    # The subject case above, with the endpoint that cannot be derived (a
+    # unit it cites, u2, has no record) on the object side: the claim keeps
+    # the stored entity, not the id its own unit resolves to alone.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1"),
+            _entity("Depot", "u1"),
+            _entity("Acme LLC", "u1"),
+            edges=[_edge("Depot", "Acme", "u1"), _edge("Depot", "Acme LLC", "u1")],
+        )
+    }
+    acme = _stored(
+        "Acme LLC",
+        ["u1", "u2"],
+        attributes={ENTITY_KEYS_ATTRIBUTE: ["acme", "acme llc"]},
+    )
+    depot = _stored("Depot", ["u1", "u3"])
+    stored = _pays("Depot", "Acme LLC", ["u1"]).model_copy(
+        update={"subject_id": depot.id, "object_id": acme.id}
+    )
+    stored.id = resolved_claim_id(stored)
+    derived = derive(
+        Config(),
+        [acme, depot],
+        [],
+        [stored],
+        records,
+        {"u1": [_pays("Depot", "Acme", ["u1"])]},
+    )
+    (claim,) = derived.claims
+    assert (claim.object_id, claim.object_name) == (acme.id, "Acme LLC")
+    assert (claim.subject_id, claim.subject_name) == (depot.id, "Depot")
+
+
+def test_a_derived_endpoint_wins_over_an_underived_stored_one() -> None:
+    # The stored subject (Acme LLC) cannot be derived (u2 has no record),
+    # but the claim's subject resolves to a derived entity (Acme, every unit
+    # it cites recorded): the claim follows the derived one.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme", "u1"),
+            _entity("Depot", "u1"),
+            _entity("Acme LLC", "u1"),
+            edges=[_edge("Acme", "Depot", "u1"), _edge("Acme LLC", "Depot", "u1")],
+        )
+    }
+    acme_llc = _stored(
+        "Acme LLC", ["u1", "u2"], attributes={ENTITY_KEYS_ATTRIBUTE: ["acme llc"]}
+    )
+    acme = _stored("Acme", ["u1"])
+    depot = _stored("Depot", ["u1"])
+    stored = _pays("Acme LLC", "Depot", ["u1"]).model_copy(
+        update={"subject_id": acme_llc.id, "object_id": depot.id}
+    )
+    stored.id = resolved_claim_id(stored)
+    derived = derive(
+        Config(),
+        [acme_llc, acme, depot],
+        [],
+        [stored],
+        records,
+        {"u1": [_pays("Acme", "Depot", ["u1"])]},
+    )
+    assert acme_llc.id in derived.underived
+    assert acme.id not in derived.underived
+    (claim,) = derived.claims
+    assert claim.subject_id == acme.id, (claim.subject_id, claim.subject_name)

@@ -276,7 +276,7 @@ class IncrementalIndexer:
         # Community drift of the last commit (None without communities).
         self.community_drift: CommunityDrift | None = None
         # The documents the last commit recorded FAILED, and those of them
-        # failing again for an error not their own (retrying_records).
+        # failing again for an error not their own (warn_retrying).
         self.recorded_failed_doc_ids: list[str] = []
         self.retrying_doc_ids: list[str] = []
 
@@ -380,11 +380,11 @@ class IncrementalIndexer:
         raises :class:`DataProcessingError` here, before anything is written.
 
         :meth:`commit` replaces the records with the real ones. A PENDING
-        record has ``failure_count`` 0 and is never FAILED: an interruption is
-        not counted as a failure, but it resets the consecutive-failure count
-        of a document that had failed before (the next run counts from the
-        PENDING record). The count of a failure in this run continues from
-        the record stored before the PENDING one. The stored records are read
+        record has ``failure_count`` and ``retry_count`` 0 and is never
+        FAILED: an interruption is not counted as a failure, but it resets
+        both consecutive counts of a document that had failed before (the
+        next run counts from the PENDING record). The counts of a failure in
+        this run continue from the record stored before the PENDING one. The stored records are read
         once (batched) and kept for :meth:`commit`.
 
         The record's attempt fields are kept as stored: the run opened its
@@ -450,6 +450,7 @@ class IncrementalIndexer:
                 "status": DocStatus.PENDING,
                 "error_info": _WRITE_AHEAD_INFO,
                 "failure_count": 0,
+                "retry_count": 0,
                 # The stored suffix is kept: removal groups by it, and a
                 # changed document's old artifacts were written under it. A
                 # record without text units (a new document's attempt
@@ -886,6 +887,7 @@ class IncrementalIndexer:
                     "status": DocStatus.PENDING,
                     "error_info": _WRITE_AHEAD_INFO,
                     "failure_count": 0,
+                    "retry_count": 0,
                 }
             )
             for record in self.doc_status.get_many(delta.deleted).values()
@@ -1035,7 +1037,7 @@ class IncrementalIndexer:
         self.recorded_failed_doc_ids = [
             r.doc_id for r in records if r.status is DocStatus.FAILED
         ]
-        self.retrying_doc_ids = retrying_records(records)
+        self.retrying_doc_ids = warn_retrying(records)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1817,7 +1819,7 @@ def earlier_retries(record: DocStatusRecord | None, content_hash: str) -> int:
     return record.retry_count
 
 
-def retrying_records(records: Iterable[DocStatusRecord]) -> list[str]:
+def warn_retrying(records: Iterable[DocStatusRecord]) -> list[str]:
     """Warn of the ``records`` failing another consecutive run for an error
     not their own (``retry_count`` >= 2) and return their doc ids.
 
@@ -1916,7 +1918,7 @@ def record_item_failures(
     retrying = _written_by(retrying, context.pipeline_id)
     records = _written_by(records, context.pipeline_id)
     store.put_many([*records, *retrying])
-    context.record_retrying_documents(retrying_records(retrying))
+    context.record_retrying_documents(warn_retrying(retrying))
     if not records:
         return records
     context.record_failed_documents(record.doc_id for record in records)

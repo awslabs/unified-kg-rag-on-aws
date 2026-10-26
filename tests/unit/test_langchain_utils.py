@@ -546,6 +546,20 @@ class TestRobustXMLOutputParser:
         assert set(out) == {"entities", "relationships"}
         assert len(out["relationships"]["relationship"]) == 2
 
+    def test_an_unclosed_section_warns_of_a_cut(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Output cut off with no stop reason keeps what parsed before the
+        # cut, with a warning; closed and self-closed sections give none.
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        with caplog.at_level("WARNING"):
+            parser.parse("<entities><entity><name>A</name></entity></entities>")
+            parser.parse("<entities></entities><relationships/>")
+            assert "unclosed" not in caplog.text
+            out = parser.parse("<entities><entity><name>A</name></entity><entity><na")
+        assert "<entities> unclosed" in caplog.text
+        assert out["entities"]["entity"][0] == {"name": "A"}
+
     def test_sections_preserved_true_when_no_sections(self) -> None:
         assert RobustXMLOutputParser._sections_preserved(set(), {}) is True
 

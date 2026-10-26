@@ -390,15 +390,6 @@ class PipelineContext(BaseModel):
         }
         return [doc for doc in self.documents if doc.document_id in document_ids]
 
-    @property
-    def failed_documents(self) -> "list[Document]":
-        """The run's documents a stage failed on (some of their text units
-        are in ``failed_text_unit_ids``): an incremental run records them
-        FAILED."""
-        return self.documents_of_units(
-            unit_id for ids in self.failed_text_unit_ids.values() for unit_id in ids
-        )
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def add_stage_result(self, result: PipelineStageResult) -> None:

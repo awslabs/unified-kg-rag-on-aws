@@ -196,8 +196,9 @@ restored meanwhile included, and removes what was written for one that is gone
 - **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
   `pending`): their text units are how the next run finds the interrupted
   writes.
-- An interruption is not a failure, but resets `failure_count`; deaths are
-  counted in `attempt_count` ([Quarantined documents](#quarantined-documents)).
+- An interruption is not a failure, but resets `failure_count` and
+  `retry_count`; deaths are counted in `attempt_count`
+  ([Quarantined documents](#quarantined-documents)).
 - A custom registry policy needs `dynamodb:BatchWriteItem` and
   `BatchGetItem` (the CDK grant covers both).
 
@@ -231,12 +232,13 @@ at or after the resume point. Before it, a stage the run does not enable
 keeps them: an indexing-only phase records them once, and that phase run
 again after it finished is refused (`PipelineResumeError`: enable the named
 stage to retry them; an explicit `--resume-from-stage` is kept, with a
-WARNING). A document that
+WARNING, and counts them again). A document that
 reached the retry limit makes the rerun diff the corpus again, which skips it.
 
-A stage failure records nothing else and stops the run before indexing,
-leaving the stores and registry as they were; the next run processes the same
-delta again. The exception: when graph extraction fails on all of its units
+A stage failure stops the run before indexing and leaves the stores as they
+were; in the registry it only adds one to the `retry_count` of the documents
+whose units failed for an error not their own (see below), and the next run
+processes the same delta again. The exception: when graph extraction fails on all of its units
 (`Critical stage 'graph_extraction' ... produced 0 outputs. It failed on N
 files: ...`), the documents whose units failed with an error of their own
 are recorded `FAILED`, so the retry limit below applies.
@@ -252,14 +254,24 @@ throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 (`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
 fail every document alike. Such a document stays `PENDING` (or `FAILED`,
 retried by the next run), uncounted, until the cause is fixed: an outage or a
-bad setting never excludes it. Its consecutive failed runs are kept
-(`retry_count`): from the second, the run warns with the file and the count
-and reports it in `documents_retrying`. When every unit sent fails with one
-identical error, a known-good request decides (sent through the same chain,
-never served from the LLM response cache): rejected too, nothing counts;
+bad setting never excludes it. Its consecutive failed runs of the same
+content are kept (`retry_count`; new content, an interruption, a success or
+an error of its own starts it over): from the second, the run warns with the
+file and the count and reports it in `documents_retrying`. When every unit sent fails with
+errors of one cause (the same error type, code and HTTP status, whatever the
+message says; or all output that does not parse or was cut off, as under a
+server-side output cap), a known-good request decides (sent through the same
+chain, never served from the LLM response cache): failed too (for output
+errors, an answer that does not parse is a failure), nothing counts;
 answered, the errors count, so a delta of bad documents alone is still
 excluded. A content error that later clears with no change can thus exclude a
-document.
+document. Graph extraction output that lists entities but none with a name
+(cut off without a stop reason) is output that does not parse; output cut
+later keeps the entities before the cut, with a WARNING
+(`XML output ends with <entities> unclosed`). An OpenAI-compatible server's
+context-length rejection that counts the requested `max_tokens` ("you
+requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
+is a setting and counts for none.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of

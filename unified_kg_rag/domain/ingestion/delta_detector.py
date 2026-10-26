@@ -120,9 +120,11 @@ def assign_document_identity(
 
     Records the path relative to ``source_root`` and the registry namespace in
     the metadata, and sets ``document_id`` from that path plus the full-content
-    hash, so the id does not depend on where the corpus was synced or checked
-    out and two files with the same name in different folders never share an
-    id (or text-unit ids, which derive from it).
+    hash, so two files with the same name in different folders never share an
+    id (or text-unit ids, which derive from it). The id does not depend on
+    where the corpus was synced or checked out until an incremental run keys
+    it by the source scope too (:func:`assign_registry_source`; the scope
+    defaults to the resolved source directory).
 
     A document whose ``file_path`` lies outside the root (a pre-parsed JSON
     document records its original path) keeps the relative path the loader

@@ -15,7 +15,7 @@ import random
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
 
@@ -23,6 +23,9 @@ from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.text_unit import TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+
+if TYPE_CHECKING:
+    from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
 
@@ -75,12 +78,15 @@ def looks_transient(exc: BaseException) -> bool:
 # HTTP statuses of a request the server rejects for what it carries.
 _ITEM_HTTP_STATUSES = frozenset({400, 413, 422})
 # Rejections of the request's settings, not its text, by an OpenAI-compatible
-# server or Ollama: they fail every item alike.
+# server or Ollama: they fail every item alike. A context-length rejection
+# counts the requested completion (``max_tokens``) with the prompt ("you
+# requested N tokens"), not the prompt alone ("your messages resulted in").
 _CONFIGURATION_MESSAGE = re.compile(
     r"invalid model|model\W.{0,80}not (found|exist)|model_not_found|not supported"
     r"|unsupported|does not support|not permitted|unknown (parameter|field|argument)"
     r"|unrecognized|extra (inputs|fields)|extraneous key|cannot both"
-    r"|max_tokens.{0,3} is too large|max_tokens\W{0,3}\d+ ?>|api.?key|quota",
+    r"|max_(completion_)?tokens.{0,3} is too large|max_tokens\W{0,3}\d+ ?>"
+    r"|context length is \d+ tokens\W+however, you requested|api.?key|quota",
     re.IGNORECASE,
 )
 
@@ -119,10 +125,15 @@ def item_error_predicate(factory: object) -> ItemErrorPredicate:
     return is_item_error
 
 
-def error_signature(exc: BaseException) -> tuple[str, str, int | None, str]:
-    """The type, error code, HTTP status and message of ``exc``: errors alike
-    in all four are taken for one cause."""
-    return type(exc).__name__, _error_code(exc), _http_status(exc), str(exc)
+def _cause(exc: BaseException) -> tuple[str, str, int | None]:
+    """What tells one cause of a failed item from another: output that does
+    not parse or was cut off is one kind, any other error its type, error
+    code and HTTP status. Not the message: a server's message can carry
+    each request's own figures (an OpenAI-compatible context-length
+    rejection names the request's token counts)."""
+    if isinstance(exc, OutputParserException | LLMOutputTruncatedError):
+        return "output", "", None
+    return type(exc).__name__, _error_code(exc), _http_status(exc)
 
 
 # The text of the known-good request (``known_good_unit``): short, neutral,
@@ -132,8 +143,8 @@ _KNOWN_GOOD_TEXT = "Vendor Corp and Buyer Ltd signed a supply agreement in 2020.
 
 
 def known_good_unit() -> TextUnit:
-    """The text unit of the known-good request an extractor sends when every
-    item failed alike (the ``answered`` check of :func:`item_failed_indices`)."""
+    """The text unit of the known-good request :func:`item_failed_indices`
+    sends when every item failed alike."""
     return TextUnit.model_validate(
         {"id": "known-good-request", "text": _KNOWN_GOOD_TEXT, "document_ids": []}
     )
@@ -144,17 +155,22 @@ def item_failed_indices(
     count: int,
     is_item_error: ItemErrorPredicate,
     task: str,
-    answered: Callable[[], bool],
+    batch_processor: BatchProcessor,
+    prepare_inputs: Callable[[list[TextUnit]], list[dict[str, Any]]],
+    invoke: Callable[[dict[str, Any]], Any],
 ) -> list[int]:
     """The indices, of a batch of ``count`` items, whose ``errors`` count
     against their document (``is_item_error``).
 
-    When the model rejected every item with the same item error
-    (:func:`error_signature`; not output that does not parse or was cut off),
-    that is either one cause, a setting it rejects, or each document's own.
-    ``answered`` then sends one known-good request (:func:`known_good_unit`)
-    through the same chain: rejected too, the cause is the model or its
-    settings and none is counted; answered, the errors are counted.
+    When every item failed with an item error of one cause (:func:`_cause`:
+    alike in type, error code and HTTP status, or all output that does not
+    parse or was cut off), that is either one cause, the model or a setting
+    (a server-side output cap, say), or each document's own. One known-good
+    request (:func:`known_good_unit`, made by ``prepare_inputs`` and
+    ``invoke`` through ``batch_processor``, as the items were) then decides:
+    failed too, none is counted; answered, the errors are counted. For
+    output errors the answer must also parse; for a rejection, being
+    answered is enough.
 
     The request is neither served from nor stored in the run's LLM response
     cache (``uncached_responses``): a response an earlier run cached for it
@@ -165,28 +181,33 @@ def item_failed_indices(
     if (
         first is not None
         and len(errors) == count
-        and len({error_signature(error) for error in errors.values()}) == 1
-        and not isinstance(first, OutputParserException | LLMOutputTruncatedError)
-        and is_item_error(first)
+        and len({_cause(error) for error in errors.values()}) == 1
+        and all(is_item_error(error) for error in errors.values())
     ):
         # Imported here: the cache module imports the chain factory, which
         # imports this one.
         from unified_kg_rag.adapters.llm.response_cache import uncached_responses
 
         with uncached_responses():
-            passed = answered()
+            passed = batch_processor.answered(
+                known_good_unit(),
+                prepare_inputs,
+                invoke,
+                f"{task} (known-good request)",
+                parsed=_cause(first)[0] == "output",
+            )
         if not passed:
             logger.warning(
-                "%s: every item and a known-good request failed with the same "
-                "error (%s): taken for a model or configuration failure, "
-                "counted against no document",
+                "%s: every item and a known-good request failed alike (%s): "
+                "taken for a model or configuration failure, counted against "
+                "no document",
                 task,
                 first,
             )
             return []
         logger.warning(
-            "%s: every item failed with the same error (%s) but a known-good "
-            "request was answered: counted against their documents",
+            "%s: every item failed alike (%s) but a known-good request was "
+            "answered: counted against their documents",
             task,
             first,
         )

@@ -72,16 +72,21 @@ def opened_attempt(
     record: DocStatusRecord, content_hash: str, batch: int
 ) -> DocStatusRecord:
     """``record`` with an attempt at ``content_hash`` open, in a run that
-    processes ``batch`` documents (an earlier open one settled first)."""
+    processes ``batch`` documents (an earlier open one settled first).
+
+    An attempt at new content (neither the recorded nor the attempted one)
+    starts ``retry_count`` over: the failed runs it counts were of other
+    content."""
     deaths, crash_batch = settled_attempts(record, content_hash)
-    return record.model_copy(
-        update={
-            "attempt_count": deaths,
-            "crash_batch": crash_batch,
-            "attempted_hash": content_hash,
-            "attempt_batch": batch,
-        }
-    )
+    update: dict[str, object] = {
+        "attempt_count": deaths,
+        "crash_batch": crash_batch,
+        "attempted_hash": content_hash,
+        "attempt_batch": batch,
+    }
+    if content_hash not in (record.content_hash, record.attempted_hash):
+        update["retry_count"] = 0
+    return record.model_copy(update=update)
 
 
 def closed_attempt(record: DocStatusRecord) -> DocStatusRecord:

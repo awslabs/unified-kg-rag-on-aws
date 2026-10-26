@@ -277,6 +277,65 @@ def test_opensearch_bulk_item_failures_name_the_first_reason() -> None:
     assert len(message) < 350
 
 
+def test_opensearch_bulk_item_failures_name_the_cause_without_corpus_text() -> None:
+    # The cause was dropped: a vector of the wrong dimension read as a parse
+    # failure only, while its caused_by says "Vector dimension mismatch".
+    # An immense-term rejection quoted the term's bytes, and a cause the
+    # value it could not read: neither reaches the message.
+    def message(error: dict) -> str:
+        response = {
+            "errors": True,
+            "items": [{"index": {"_id": "e-2", "status": 400, "error": error}}],
+        }
+        indexer = _opensearch_indexer(_BulkClient(response))
+        (text,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
+        return text
+
+    dimension = message(
+        {
+            "type": "mapper_parsing_exception",
+            "reason": "failed to parse field [embedding] of type [knn_vector]",
+            "caused_by": {
+                "type": "illegal_argument_exception",
+                "reason": "Vector dimension mismatch. Expected: 1024, Given: 8",
+            },
+        }
+    )
+    assert dimension.endswith(
+        "(first: mapper_parsing_exception: failed to parse field [embedding] of "
+        "type [knn_vector] (caused by illegal_argument_exception: Vector "
+        "dimension mismatch. Expected: 1024, Given: 8))"
+    ), dimension
+    immense = message(
+        {
+            "type": "illegal_argument_exception",
+            "reason": 'Document contains at least one immense term in field="text" '
+            "(whose UTF8 encoding is longer than the max length 32766), all of "
+            "which were skipped.  Please correct the analyzer to not produce "
+            "such terms.  The prefix of the first immense term is: '[83, 101, "
+            "99, 114, 101, 116]...', original message: bytes can be at most "
+            "32766 in length; got 40000",
+            "caused_by": {
+                "type": "max_bytes_length_exceeded_exception",
+                "reason": "bytes can be at most 32766 in length; got 40000",
+            },
+        }
+    )
+    assert "[83, 101" not in immense and "such terms." in immense
+    assert "max_bytes_length_exceeded_exception" in immense
+    value = message(
+        {
+            "type": "mapper_parsing_exception",
+            "reason": "failed to parse field [rank] of type [long]",
+            "caused_by": {
+                "type": "number_format_exception",
+                "reason": 'For input string: "Secret Corp"',
+            },
+        }
+    )
+    assert "Secret" not in value and 'For input string: "..."' in value
+
+
 def test_opensearch_failed_bulk_request_fails_every_id() -> None:
     indexer = _opensearch_indexer(_BulkClient(None))
 

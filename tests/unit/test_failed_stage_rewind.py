@@ -72,6 +72,21 @@ def test_a_completed_stage_run_again_on_a_disabled_stages_failures_is_refused(
             is None
         )
     assert "'graph_extraction' failed on 1" in caplog.text
+    # An explicit resume restores only the stages before its start: whether
+    # indexing ran before comes from the recorded stages (rerun).
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        rewind(_pipeline(["indexing"]), failed, "indexing", DONE, explicit=True)
+        assert "'graph_extraction' failed on 1" not in caplog.text
+        rewind(
+            _pipeline(["indexing"]),
+            failed,
+            "indexing",
+            DONE,
+            explicit=True,
+            rerun=True,
+        )
+    assert "'graph_extraction' failed on 1" in caplog.text
     # Its first run (a phased run's indexing window) records them once.
     assert rewind(_pipeline(["indexing"]), failed, "indexing", DONE) is None
     # A stage at or after the start is not restored (_drop_unrun_failures).
@@ -125,3 +140,18 @@ def test_failures_of_stages_the_resume_neither_runs_nor_restores_are_dropped() -
     _pipeline([resolution, later, "indexing"])._drop_unrun_failures(context, resolution)
     assert context.failed_text_unit_ids == {"graph_extraction": ["u1"], later: ["u3"]}
     assert context.item_failed_text_unit_ids == {"graph_extraction": ["u1"]}
+
+
+def test_a_rewind_to_an_unrun_stage_restores_only_the_stages_before_it() -> None:
+    # Gleaning was off when the pipeline ran: claim extraction completed
+    # after it. Resumed from gleaning, the later stages run again and are
+    # not restored (their output would stand for a graph gleaning changes).
+    gleaning = "gleaning"
+    completed = [name for name in DONE if name != gleaning]
+    later = [n for n in completed if ORDER.index(n) > ORDER.index(gleaning)]
+    assert later, "a completed stage after gleaning"
+    start, restored = DataIngestionPipeline._rewind_to_unrun_stage(
+        _pipeline(ORDER), "indexing", completed
+    )
+    assert start == gleaning
+    assert restored == completed[: completed.index(later[0])]

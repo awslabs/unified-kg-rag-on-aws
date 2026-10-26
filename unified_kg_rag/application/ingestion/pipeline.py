@@ -1201,8 +1201,9 @@ class DataIngestionPipeline:
                                           enabled stage: refused
         ``_rewind_to_failed_stage``       a completed, enabled stage        kept, with a
                                           recorded failed units; a rerun    WARNING (for the
-                                          on a disabled stage's failures    refusal too)
-                                          is refused
+                                          on a disabled stage's failures    refusal too); the
+                                          is refused                        failures count
+                                                                            again
         ``_rewind_on_missing_records``    a reset's stored extraction       applied
                                           records are gone
         ``_delta_is_stale``               the registry no longer matches    applied
@@ -1243,6 +1244,8 @@ class DataIngestionPipeline:
                 start_stage_name,
                 completed_stages,
                 explicit=resume_from_stage is not None,
+                rerun=resume_from_stage is not None
+                and self._recorded_completed(pipeline_id, start_stage_name),
             )
             if rewound is not None:
                 start_stage_name, completed_stages = rewound
@@ -1282,6 +1285,17 @@ class DataIngestionPipeline:
             )
             raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
 
+    def _recorded_completed(self, pipeline_id: str, stage_name: str) -> bool:
+        """Whether ``pipeline_id`` recorded ``stage_name`` completed."""
+        stage_results = self.state_manager.load_pipeline_metadata(pipeline_id).get(
+            "stage_results", []
+        )
+        return any(
+            result.get("stage_name") == stage_name
+            and result.get("status") == "completed"
+            for result in stage_results
+        )
+
     def _rewind_to_unrun_stage(
         self, start_stage_name: str, completed_stages: list[str]
     ) -> tuple[str, list[str]]:
@@ -1319,6 +1333,7 @@ class DataIngestionPipeline:
         completed_stages: list[str],
         *,
         explicit: bool = False,
+        rerun: bool = False,
     ) -> tuple[str, list[str]] | None:
         """Move a resume back to the earliest completed, enabled stage that
         recorded failed text units (``context.failed_text_unit_ids``), or
@@ -1355,6 +1370,7 @@ class DataIngestionPipeline:
             completed_stages,
             explicit=explicit,
             resume_at=None if explicit else first,
+            rerun=rerun,
         )
         if first is None:
             return None
@@ -1483,6 +1499,7 @@ class DataIngestionPipeline:
         *,
         explicit: bool,
         resume_at: str | None = None,
+        rerun: bool = False,
     ) -> None:
         """Refuse to run a completed stage again on the restored output of a
         stage that failed on text units and is not enabled in this run (an
@@ -1493,13 +1510,18 @@ class DataIngestionPipeline:
         again, the indexing stage would record them FAILED once more
         without retrying them, until ``indexing.max_document_failures``
         excludes them. Only the failed stage can retry them. An ``explicit``
-        resume point is kept with a warning, like the rewind it replaces.
+        resume point is kept with a warning, like the rewind it replaces:
+        run as asked, the indexing stage counts those failures again.
+        ``rerun`` says the start stage completed in this pipeline id before
+        (an explicit resume's ``completed_stages`` stop before its start).
 
         Raises:
             PipelineResumeError: An auto resume would count those failures
                 again.
         """
-        if self._doc_status is None or start_stage_name not in completed_stages:
+        if self._doc_status is None or not (
+            rerun or start_stage_name in completed_stages
+        ):
             return
         enabled = {stage.name for stage in self.stages}
         unrun = self._before(

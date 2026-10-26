@@ -263,6 +263,36 @@ _ITEM = _BEDROCK_ITEM[0]
 _BEDROCK = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
 
 
+class _Probe:
+    """A batch processor whose known-good request is ``answered`` (or not);
+    ``sent`` lists the ``parsed`` flag of each request made."""
+
+    def __init__(self, answered: bool = False, call: Any = None) -> None:
+        self.result = answered
+        self.call = call
+        self.sent: list[bool] = []
+
+    def answered(
+        self, item: TextUnit, prepare: Any, invoke: Any, task: str, *, parsed: bool
+    ) -> bool:
+        assert item == known_good_unit() and task == "t (known-good request)"
+        self.sent.append(parsed)
+        if self.call is not None:
+            self.call()
+        return self.result
+
+
+def _indices(
+    errors: dict[int, BaseException], count: int, predicate: Any, probe: _Probe
+) -> list[int]:
+    return item_failed_indices(
+        errors, count, predicate, "t", probe, lambda units: [{}], lambda _: {}  # type: ignore[arg-type]
+    )
+
+
+_PARSE, _CUT = _OUTPUT_ERRORS
+
+
 @pytest.mark.parametrize("answered", [True, False])
 @pytest.mark.parametrize(
     ("errors", "alike"),
@@ -270,36 +300,110 @@ _BEDROCK = BedrockLanguageModelFactory.__new__(BedrockLanguageModelFactory)
         # Every unit, one item error: the known-good request decides.
         ({0: _ITEM, 1: _ITEM}, True),
         ({0: _ITEM}, True),
-        # Not every unit failed, or not with the same error.
+        # Alike in type, code and status, not in message: one cause too (a
+        # message can carry each request's own figures).
+        ({0: _ITEM, 1: _bedrock("ValidationException", 400, "y")}, True),
+        # Output that does not parse or was cut off on every unit: a
+        # server-side output cap, say, or each unit's own.
+        ({0: _PARSE, 1: _PARSE}, True),
+        ({0: _CUT, 1: _CUT}, True),
+        ({0: _PARSE, 1: _CUT}, True),
+        # Not every unit failed, or not of one cause.
         ({0: _ITEM, 2: _ITEM}, False),
-        ({0: _ITEM, 1: OutputParserException("bad")}, False),
-        # Alike in type, code and status but not in message: two causes.
-        ({0: _ITEM, 1: _bedrock("ValidationException", 400, "y")}, False),
-        # Output that does not parse or was cut off is each unit's own,
-        # however alike.
-        ({0: _OUTPUT_ERRORS[0], 1: _OUTPUT_ERRORS[0]}, False),
-        ({0: _OUTPUT_ERRORS[1], 1: _OUTPUT_ERRORS[1]}, False),
+        ({0: _ITEM, 1: _PARSE}, False),
         # Errors that are not the item's own count for none either way.
         ({0: TimeoutError(), 1: _ITEM}, False),
         ({0: TimeoutError(), 1: TimeoutError()}, False),
     ],
 )
-def test_one_error_on_every_unit_counts_as_the_known_good_request_decides(
+def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
     errors: dict[int, BaseException], alike: bool, answered: bool
 ) -> None:
     predicate = item_error_predicate(_BEDROCK)
     count = 1 if len(errors) == 1 else 3 if 2 in errors else 2
-    sent: list[bool] = []
-
-    def known_good() -> bool:
-        sent.append(True)
-        return answered
-
-    counted = item_failed_indices(errors, count, predicate, "t", known_good)
+    probe = _Probe(answered)
+    counted = _indices(errors, count, predicate, probe)
     own = [idx for idx, error in sorted(errors.items()) if predicate(error)]
     assert counted == ([] if alike and not answered else own)
-    # Sent only when every unit failed alike, a single unit's failure too.
-    assert sent == ([True] if alike else [])
+    # Sent only when every unit failed of one cause, a single unit's failure
+    # too; for output errors its answer must parse.
+    output = all(isinstance(e, type(_PARSE) | type(_CUT)) for e in errors.values())
+    assert probe.sent == ([output] if alike else [])
+
+
+class _Coded(Exception):
+    def __init__(self, message: str, code: str = "A", status: int = 400) -> None:
+        super().__init__(message)
+        self.response = {"Error": {"Code": code}}
+        self.status_code = status
+
+
+class _OtherType(_Coded):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        (_Coded("bad", "A"), _Coded("bad", "B")),
+        (_Coded("bad", "A"), _OtherType("bad", "A")),
+        (_Coded("bad", "A", 400), _Coded("bad", "A", 422)),
+    ],
+    ids=["code", "type", "status"],
+)
+def test_errors_differing_in_code_type_or_status_are_two_causes(
+    a: Exception, b: Exception
+) -> None:
+    # Each part of the cause tells two errors apart: no known-good request,
+    # both counted.
+    probe = _Probe()
+    assert _indices({0: a, 1: b}, 2, lambda _: True, probe) == [0, 1]
+    assert probe.sent == []
+
+
+def test_messages_differing_only_in_their_figures_are_one_cause() -> None:
+    probe = _Probe()
+    errors = {i: _Coded(f"request has {900 + i} tokens") for i in range(3)}
+    assert _indices(errors, 3, lambda _: True, probe) == []
+    assert probe.sent == [False]
+
+
+def test_per_request_token_counts_do_not_split_one_cause() -> None:
+    # An OpenAI-compatible server's 400s carry each request's own figures:
+    # every unit rejected so is still one cause, which the known-good
+    # request decides, whatever the configuration patterns name.
+    predicate = item_error_predicate(object())
+    rejected = {
+        i: _openai(openai.BadRequestError, 400, f"input has {900 + i} tokens, too many")
+        for i in range(3)
+    }
+    probe = _Probe(answered=False)
+    assert _indices(rejected, 3, predicate, probe) == []
+    assert probe.sent == [False]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "'max_tokens' or 'max_completion_tokens' is too large: 4000. This "
+        "model's maximum context length is 4096 tokens and your request has "
+        "{n} input tokens (4000 > 4096 - {n}).",
+        "This model's maximum context length is 4096 tokens. However, you "
+        "requested {n} tokens ({n} in the messages, 4000 in the completion).",
+    ],
+)
+def test_a_context_length_rejection_is_the_configuration(message: str) -> None:
+    # vLLM and OpenAI-compatible servers reject a request whose chunk and
+    # max_tokens together pass the model's context: the settings, not the
+    # document (chunk size bounds every unit).
+    predicate = item_error_predicate(OpenAICompatibleLanguageModelFactory(Config()))
+    rejected = {
+        i: _openai(openai.BadRequestError, 400, message.format(n=900 + i))
+        for i in range(3)
+    }
+    probe = _Probe(answered=True)
+    assert _indices(rejected, 3, predicate, probe) == []
+    assert probe.sent == []
 
 
 def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> None:
@@ -313,12 +417,11 @@ def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> N
     cache.open(tmp_path)
     seen: list[object] = []
 
-    def known_good() -> bool:
+    def known_good() -> None:
         seen.append(cache.lookup("prompt", "llm"))
         cache.update("other", "llm", [Generation(text="new")])
-        return False
 
-    item_failed_indices({0: _ITEM}, 1, item_error_predicate(_BEDROCK), "t", known_good)
+    _indices({0: _ITEM}, 1, item_error_predicate(_BEDROCK), _Probe(call=known_good))
     assert seen == [None]
     cache.flush()
     cache.open(tmp_path)
@@ -327,6 +430,9 @@ def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> N
 
 
 _KNOWN_GOOD = known_good_unit().text
+# An answer every stage parses: an entity for graph extraction, no claims,
+# no refinement plan.
+_ANSWER = {"entities": {"entity": {"name": "Vendor Corp"}}}
 
 
 class _Rejecting:
@@ -343,12 +449,12 @@ class _Rejecting:
 
     def invoke(self, request: Any, *_: Any, **__: Any) -> Any:
         if self.known_good_answered and _KNOWN_GOOD in str(request):
-            return {}
+            return _ANSWER
         if isinstance(self.error, dict):
             for text, error in self.error.items():
                 if text in str(request):
                     raise error
-            return {}
+            return _ANSWER
         raise self.error
 
     def batch(self, *_: Any, **__: Any) -> Any:
@@ -373,6 +479,8 @@ def _processor(
     """``stage``'s extractor, its model answering every request with
     ``error`` (see :class:`_Rejecting`)."""
     config.processing.ignore_errors = True
+    # Output errors are retried: one attempt keeps the backoff out.
+    config.processing.max_attempts = 1
     module, cls = _STAGES[stage]
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
@@ -449,8 +557,9 @@ def test_every_extraction_stage_counts_only_the_items_own_errors(
 def test_every_extraction_stage_counts_distinct_errors_of_several_documents(
     stage: str, config: Config
 ) -> None:
-    # Both units rejected for their content, each with its own message: two
-    # causes, each its document's, not one setting.
+    # Both units rejected for their content, each with its own message: one
+    # cause (type, code and status), but the model answers the known-good
+    # request, so each counts against its document.
     errors = {
         "alpha": _TOO_LONG,
         "beta": _bedrock("ValidationException", 400, "Input is too long (2)."),
@@ -473,6 +582,50 @@ def test_every_extraction_stage_counts_each_call_anew(
     assert _counted(processor, stage, one) == ["u0", "u1"]
     errors["alpha"] = errors["beta"] = _bedrock("AccessDeniedException", 403, "x")
     assert _counted(processor, stage, one) == []
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
+@pytest.mark.parametrize("error", _OUTPUT_ERRORS, ids=repr)
+def test_every_extraction_stage_asks_a_known_good_request_on_uniform_bad_output(
+    stage: str, error: Exception, config: Config
+) -> None:
+    # Every unit's output cut off or unparseable (a server-side output cap):
+    # the known-good request's answer, cut too, makes it the model's, and no
+    # document counts; one that parses makes it the documents' own.
+    for units in (_two_documents(), _two_documents()[:1]):
+        assert _run(stage, config, units, error) == []
+        expected = [u.id for u in units]
+        assert _run(stage, config, units, error, known_good_answered=True) == expected
+
+
+class _Cut:
+    """A graph-extraction chain whose output is cut inside the first entity's
+    name for every unit (no stop reason), and for the known-good request
+    unless ``known_good_answered``."""
+
+    def __init__(self, known_good_answered: bool) -> None:
+        self.known_good_answered = known_good_answered
+
+    def invoke(self, request: Any, *_: Any, **__: Any) -> Any:
+        if self.known_good_answered and _KNOWN_GOOD in str(request):
+            return _ANSWER
+        return {"entities": {"entity": {"name": {}}}}
+
+
+@pytest.mark.parametrize("known_good_answered", [False, True])
+def test_graph_output_with_no_named_entity_is_a_parse_failure(
+    known_good_answered: bool, config: Config
+) -> None:
+    # Output cut off without a stop reason parses into entities whose names
+    # never arrived: a parse failure (it recorded the unit PROCESSED with
+    # nothing extracted), which the known-good request rule then judges.
+    processor = _processor("graph", config, _TOO_LONG)
+    processor.graph_extractor = _Cut(known_good_answered)
+    records, stats = processor.extract_units(_two_documents())
+    assert records == []
+    assert sorted(stats.failed_text_unit_ids) == ["u0", "u1"]
+    expected = ["u0", "u1"] if known_good_answered else []
+    assert sorted(stats.item_failed_text_unit_ids) == expected
 
 
 def test_claims_count_an_answer_that_does_not_parse(

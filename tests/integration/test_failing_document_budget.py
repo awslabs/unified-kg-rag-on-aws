@@ -462,3 +462,134 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
         r for r in providers.build_doc_status().list_all() if r.file_path == "fz.txt"
     ]
     assert (fz.status, fz.retry_count) == (DocStatus.PROCESSED, 0)
+
+
+_STOPS_OR_COMMITS = pytest.mark.parametrize(
+    "stage",
+    ["knowledge graph extraction expert", "claim extraction specialist"],
+    # Graph extraction failing on fz alone stops the run before indexing
+    # (record_item_failures); claim extraction lets the commit record it.
+    ids=["stage-stops-the-run", "commit"],
+)
+
+
+def _outage(tmp: Path, stage: str, mode: dict[str, int]) -> tuple[Any, Any, Path]:
+    """Embedded config (claims on, max_document_failures 5) and providers
+    whose model answers HTTP ``mode["status"]`` to the requests of ``stage``
+    (a system-prompt phrase) for Zorbix's text; d0 is indexed."""
+    config = e2e._config(tmp / "stores", tmp / "viz")
+    config.processing.claim_extraction.enabled = True
+    config.indexing.max_document_failures = 5
+    server = FakeOllama(e2e._respond, "x", e2e.DIM)
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            messages = json.loads(request.content)["messages"]
+            system = "".join(m["content"] for m in messages if m["role"] == "system")
+            human = "".join(m["content"] for m in messages if m["role"] == "user")
+            if stage in system and "Zorbix" in human:
+                return httpx.Response(mode["status"], json={"error": "boom"})
+        return server(request)
+
+    providers = e2e._providers(
+        config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
+    )
+    source = tmp / "corpus"
+    source.mkdir()
+    (source / "d0.txt").write_text(_FILES["d0.txt"])
+    e2e._ingest(config, providers, source, tmp / "seed")
+    return config, providers, source
+
+
+def _fz(providers: Any) -> Any:
+    (fz,) = [
+        r for r in providers.build_doc_status().list_all() if r.file_path == "fz.txt"
+    ]
+    return fz
+
+
+@_STOPS_OR_COMMITS
+def test_an_own_error_after_an_outage_starts_retry_count_over(
+    tmp_path: Path, stage: str
+) -> None:
+    # Two runs of an outage, then an error of the document's own: it counts
+    # toward exclusion, and the failed runs for errors not its own end.
+    mode = {"status": 503}
+    config, providers, source = _outage(tmp_path, stage, mode)
+    (source / "fz.txt").write_text(_FAILING)
+    seen = []
+    for run in range(2):
+        e2e._ingest(config, providers, source, tmp_path / f"o{run}")
+        seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
+    mode["status"] = 400
+    e2e._ingest(config, providers, source, tmp_path / "own")
+    seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
+    assert seen == [(0, 1), (0, 2), (1, 0)], seen
+
+
+@_STOPS_OR_COMMITS
+def test_new_content_starts_retry_count_over(tmp_path: Path, stage: str) -> None:
+    # The document changed between two outage runs: the second run's
+    # failure is the new content's first (opening the attempt at the new
+    # content kept the old count, which earlier_retries then credited to it).
+    mode = {"status": 503}
+    config, providers, source = _outage(tmp_path, stage, mode)
+    seen = []
+    for run, text in enumerate([_FAILING, "Zorbix and Buyer trade bolts."]):
+        (source / "fz.txt").write_text(text)
+        e2e._ingest(config, providers, source, tmp_path / f"c{run}")
+        seen.append(_fz(providers).retry_count)
+    assert seen == [1, 1], seen
+
+
+def test_a_failed_registry_write_records_no_failed_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The commit's FAILED records are not written: the run's
+    # failed_documents must not count them as recorded.
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+
+    config, providers, source = _rejecting(
+        tmp_path, {"stage": "claim extraction specialist", "text": "Zorbix"}
+    )
+    source.mkdir()
+    (source / "d0.txt").write_text(_FILES["d0.txt"])
+    (source / "z1.txt").write_text(_FAILING)
+    put = IncrementalIndexer._put
+
+    def failing_put(self: IncrementalIndexer, records: list[Any]) -> Any:
+        if any(r.status is DocStatus.FAILED for r in records):
+            raise RuntimeError("registry down")
+        return put(self, records)
+
+    monkeypatch.setattr(IncrementalIndexer, "_put", failing_put)
+    context = e2e._ingest(config, providers, source, tmp_path / "run")
+    assert context.recorded_failed_doc_ids == []
+
+
+def test_a_same_pid_rerun_after_the_fix_reports_no_retrying(tmp_path: Path) -> None:
+    # documents_retrying is the run's own: the rerun of the pipeline id that
+    # reported fz indexes it and reports none.
+    mode = {"status": 503}
+    config, providers, source = _outage(tmp_path, "claim extraction specialist", mode)
+    (source / "fz.txt").write_text(_FAILING)
+    for _ in range(2):
+        context = e2e._ingest(config, providers, source, tmp_path / "P1")
+    assert context.retrying_doc_ids
+    fixed = e2e._providers(
+        config, FakeOllama(e2e._respond, "x", e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    context = e2e._ingest(config, fixed, source, tmp_path / "P1")
+    assert context.retrying_doc_ids == []
+
+
+def test_a_reset_rebuild_reports_a_document_retrying(tmp_path: Path) -> None:
+    mode = {"status": 503}
+    config, providers, source = _outage(tmp_path, "claim extraction specialist", mode)
+    config.indexing.reset = True
+    (source / "fz.txt").write_text(_FAILING)
+    seen = []
+    for run in range(2):
+        context = e2e._ingest(config, providers, source, tmp_path / f"r{run}")
+        seen.append((_fz(providers).retry_count, len(context.retrying_doc_ids)))
+    assert seen == [(1, 0), (2, 1)], seen

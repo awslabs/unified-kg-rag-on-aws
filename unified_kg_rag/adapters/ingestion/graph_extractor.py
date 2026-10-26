@@ -3,6 +3,7 @@
 import time
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -12,11 +13,13 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
-    known_good_unit,
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.base_processor import (
+    BaseProcessor,
+    coerce_llm_text,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     merge_entity_contributions,
     merge_relationship_contributions,
@@ -32,8 +35,8 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
-from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.utils import ensure_list, entity_key
+from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import clean_display_name, ensure_list, entity_key
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
@@ -186,7 +189,7 @@ class GraphExtractor(BaseProcessor):
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=text_units,
                 prepare_inputs_func=self._prepare_extraction_inputs,
-                sequential_func=self.graph_extractor.invoke,
+                sequential_func=self._extract,
                 task_name="Graph Extraction",
                 show_progress=self.show_progress,
                 errors=errors,
@@ -207,12 +210,9 @@ class GraphExtractor(BaseProcessor):
                 len(text_units),
                 self.is_item_error,
                 "Graph extraction",
-                lambda: self.batch_processor.answered(
-                    known_good_unit(),
-                    self._prepare_extraction_inputs,
-                    self.graph_extractor.invoke,
-                    "Graph Extraction (known-good request)",
-                ),
+                self.batch_processor,
+                self._prepare_extraction_inputs,
+                self._extract,
             )
         )
 
@@ -225,6 +225,10 @@ class GraphExtractor(BaseProcessor):
         self._log_completion_summary(self.stats)
 
         return records, self.stats
+
+    def _extract(self, request: dict[str, Any]) -> dict[str, Any]:
+        """The chain's output for ``request``, checked (:func:`_checked`)."""
+        return _checked(self.graph_extractor.invoke(request))
 
     @staticmethod
     def _format_entity_types(entity_types: list[str]) -> str:
@@ -349,30 +353,18 @@ class GraphExtractor(BaseProcessor):
         text_unit: TextUnit,
     ) -> TextUnitExtraction:
         """Parse one chain output into the unit's record; raise
-        ``DataProcessingError`` if malformed.
+        ``OutputParserException`` if malformed (:func:`_checked`).
 
-        The output must carry an ``entities`` section. ``relationships`` may be
-        absent: the XML parser drops an empty section, so a unit whose entities
-        are unrelated has none. A name listed twice is one entity of the unit
+        A name listed twice is one entity of the unit
         (and a relationship stated twice one relationship, its strengths
         summed), as in the merge across units.
         """
         entities: list[Entity] = []
         relationships: list[Relationship] = []
 
-        if not isinstance(result, dict):
-            raise DataProcessingError(
-                f"extraction output is {type(result).__name__}, not a mapping"
-            )
-        raw_entities = result.get("entities")
+        _checked(result)
+        raw_entities = result["entities"]
         raw_relationships = result.get("relationships", {})
-        if not isinstance(raw_entities, dict | list) or not isinstance(
-            raw_relationships, dict | list
-        ):
-            raise DataProcessingError(
-                "extraction output lacks well-formed entities/relationships "
-                f"sections (keys: {sorted(result)})"
-            )
 
         entities_data = ensure_list(raw_entities, inner_key="entity")
         for entity_data in entities_data:
@@ -673,3 +665,42 @@ class GraphExtractor(BaseProcessor):
             logger.warning(
                 "Failed to extract from %s text units", stats.num_failed_extractions
             )
+
+
+def _checked(result: Any) -> dict[str, Any]:
+    """``result`` if it is an extraction output, else raise
+    ``OutputParserException``, as for output that does not parse (retried,
+    and counted against the document as its own failure).
+
+    The output must carry an ``entities`` section (``relationships`` may be
+    absent: the XML parser drops an empty section), and when it lists
+    entities, one at least must have a name: output cut off without a stop
+    reason (a server-side output cap reported as a normal stop) parses into
+    entities whose names never arrived, which would record the unit
+    PROCESSED with nothing extracted. Output cut later keeps the entities
+    before the cut; the parser warns of the unclosed section.
+    """
+    if not isinstance(result, dict):
+        raise OutputParserException(
+            f"extraction output is {type(result).__name__}, not a mapping"
+        )
+    raw_entities = result.get("entities")
+    raw_relationships = result.get("relationships", {})
+    if not isinstance(raw_entities, dict | list) or not isinstance(
+        raw_relationships, dict | list
+    ):
+        raise OutputParserException(
+            "extraction output lacks well-formed entities/relationships "
+            f"sections (keys: {sorted(result)})"
+        )
+    listed = ensure_list(raw_entities, inner_key="entity")
+    if listed and not any(
+        isinstance(entity, dict)
+        and clean_display_name(coerce_llm_text(entity.get("name")))
+        for entity in listed
+    ):
+        raise OutputParserException(
+            f"none of the {len(listed)} entities of the extraction output has "
+            "a name (output cut off?)"
+        )
+    return result

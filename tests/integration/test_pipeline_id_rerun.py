@@ -396,3 +396,43 @@ def test_an_indexing_only_rerun_does_not_count_a_disabled_stage_again(
         r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
     ]
     assert (record.status.value, record.failure_count) == ("failed", 1)
+
+
+def test_an_explicit_indexing_only_rerun_warns_and_counts_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # --resume-from-stage indexing on a finished pipeline id, indexing alone
+    # enabled: the explicit point is kept, and the indexing stage records d5
+    # FAILED once more without retrying it. That count came with no word
+    # (the refusal looked for indexing in the stages restored before it).
+    config, providers, failing = _setup(tmp_path, lambda unit: "Acme Corp" in unit)
+    source = tmp_path / "corpus"
+    _write_corpus(source, {"d5.txt": _FAILING, "d4.txt": "Buyer and Acme LLC trade."})
+    failing["on"] = True
+    e2e._ingest(config, providers, source, tmp_path / "P1")
+    failing["on"] = False
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled={
+                stage: stage is PipelineStageType.INDEXING
+                for stage in PipelineStageType
+            },
+            local_directory=tmp_path / "P1",
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    try:
+        with caplog.at_level("WARNING"):
+            pipeline.run(source, pipeline_id="P1", resume_from_stage="indexing")
+    finally:
+        pipeline.close()
+    assert (
+        "'graph_extraction' failed on 1 text units and is not enabled in this run"
+        in caplog.text
+    )
+    (record,) = [
+        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+    ]
+    assert (record.status.value, record.failure_count) == ("failed", 2)
