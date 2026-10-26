@@ -652,7 +652,7 @@ changed once with the full-config keys (#332).
   (`DocStatusRecord.retry_count`), and from the second the run warns with
   each file and its count and reports them in `documents_retrying` of the
   `run-ingestion --output-format json` result and the run summary.
-  Exclusion is unchanged: such a document is never excluded (#PR).
+  Exclusion is unchanged: such a document is never excluded (#431).
 - The public API exports the errors it raises for callers to tell apart:
   `GraphRAGException`, `ConfigurationError`, `StoreRequestRejectedError`,
   `PipelineExecutionError` and `NamespaceLeaseError` (#416).
@@ -1376,16 +1376,16 @@ changed once with the full-config keys (#332).
   run's `failed_documents` even when the commit then fails or is stopped
   (its extraction-record cleanup); they were added only once the commit
   returned, so the result read 0. A registry write that fails no longer
-  counts its documents as recorded (#PR).
+  counts its documents as recorded (#431).
 - OpenSearch: a bulk write the store rejects items of names the first
   item's error (`type: reason`, cut at 300 characters and without the
   field-value preview a mapping error quotes) after the count, which was
-  all it reported (#PR).
+  all it reported (#431).
 - Incremental indexing: a claim re-derived while one of its endpoint
   entities could not be derived (a text unit it cites has no extraction
   record) keeps that stored entity as its endpoint; it took the entity its
   own text unit resolves to alone, an id and name no stored entity has, so
-  the claim pointed at a nonexistent entity (#PR).
+  the claim pointed at a nonexistent entity (#431).
 - Incremental indexing: when every unit an extraction stage sends (graph
   extraction, claim extraction or gleaning) fails with one identical error
   the document could cause, the stage sends one known-good request through
@@ -1397,7 +1397,7 @@ changed once with the full-config keys (#332).
   its deletions, while a one-document delta's rejected setting excluded
   that document. Trade-off: a content-specific rejection that later clears
   with no change to the document or settings can now exclude it after
-  `indexing.max_document_failures` runs (#PR).
+  `indexing.max_document_failures` runs (#431).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
