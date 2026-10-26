@@ -39,6 +39,7 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     json_output,
     print_json,
+    stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -727,7 +728,7 @@ def main() -> None:
                 await rag_chain.aclose()
 
         exit_code = event_loop.run(
-            _run_and_close(), io_workers=config.processing.io_workers
+            stoppable(_run_and_close()), io_workers=config.processing.io_workers
         )
         if exit_code:
             sys.exit(exit_code)

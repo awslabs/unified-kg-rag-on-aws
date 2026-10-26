@@ -119,6 +119,74 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_cancels_the_running_main_task_instead_of_raising() -> None:
+    # Raised into the event loop, the SystemExit could land in the loop's
+    # own code and leave nest_asyncio's run() waiting forever (2 of 150
+    # stops mid-run). The stop now cancels the task at its next await.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import stoppable
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            events.append("went on to the next await")
+            await asyncio.sleep(5)
+            events.append("not cancelled")
+        except asyncio.CancelledError:
+            events.append("cancelled")
+            raise
+        finally:
+            await asyncio.sleep(0)  # an async aclose() still runs
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    previous = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+    assert events == ["went on to the next await", "cancelled", "closed"]
+    assert signal.getsignal(signal.SIGTERM) is previous
+
+
+def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() -> None:
+    # A run that swallowed the stop ran on until it was killed.
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        import argparse, asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import json_output, stoppable
+
+        conventions._STOP_GRACE_SECONDS = 0.5
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            while True:
+                try:
+                    await asyncio.sleep(0.01)
+                except BaseException:
+                    pass
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert time.time() - started < 20
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
 def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
     capsys, monkeypatch
 ) -> None:

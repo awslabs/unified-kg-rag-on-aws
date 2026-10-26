@@ -1388,6 +1388,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a SIGTERM while the event
+  loop runs cancels the CLI's task at its next await instead of raising
+  `SystemExit` into the loop, where it could land in the loop's own code
+  and leave nest_asyncio's `run()` waiting forever (2 of 150 mid-run stops
+  hung until SIGKILL). Cleanup (`aclose`, `run-eval`'s upload of the
+  finished runs) still runs and the exit code stays 143. A watchdog ends a
+  stopped CLI still running 10 seconds later, printing the interrupted
+  status if nothing was printed, so no stop can hang (#PR).
 - Queries with `auto` (one `--query`, `run-eval`, the Python API, and
   `run-rag --interactive` `--filters` and `set-filter`): filters are refused
   only when no strategy `auto` may route to applies every key, and the

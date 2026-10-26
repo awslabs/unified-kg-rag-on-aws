@@ -30,6 +30,7 @@ resolved.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import functools
 import json
 import logging
@@ -39,7 +40,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
@@ -62,6 +63,20 @@ _json = {"enabled": False, "printed": False}
 _exit_at_once = {"enabled": True}
 # How long a stopped CLI waits for its terminated worker processes to end.
 _CHILD_EXIT_SECONDS = 1.0
+# How long a CLI stopped by SIGTERM may take to unwind (its finally blocks,
+# run-eval's upload of the finished runs) before it is ended anyway: a cap
+# on any hang on the way out, well inside the 30 s ECS gives a stopped task
+# by default.
+_STOP_GRACE_SECONDS = 10.0
+# The task a SIGTERM cancels (see stoppable) and the signal that stopped the
+# run, once one did.
+_stop: dict[str, Any] = {"task": None, "signum": None}
+# Set when a stop starts the grace period of the watchdog thread.
+_stop_started = threading.Event()
+# Held while the one JSON document is printed: the watchdog may print the
+# status from its own thread. Reentrant, as a signal handler may print the
+# status on the main thread in the middle of print_json.
+_print_lock = threading.RLock()
 
 
 def usage_error(message: str) -> NoReturn:
@@ -105,6 +120,12 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     status document, so a consumer parsing stdout gets JSON either way. A
     run stopped by a signal (Ctrl-C included) then ends its process at once
     (:func:`_exit_stopped`), without waiting for the threads it abandoned.
+
+    While an event loop runs the coroutine a CLI wrapped in :func:`stoppable`,
+    a SIGTERM cancels that task instead of raising into the loop; its
+    ``finally`` blocks run and ``main`` then exits 143. A watchdog thread ends
+    a stopped process still running :data:`_STOP_GRACE_SECONDS` later (with
+    the status document, if none was printed), so no stop can hang.
     """
 
     def _exit(signum: int, frame: object) -> None:
@@ -113,6 +134,21 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             # coroutine returns, the SystemExit could leave nest_asyncio's
             # run() waiting forever on a task it cancelled.
             _stopped_in_teardown(signum, frame)
+            raise SystemExit(128 + signum)
+        if _stop["signum"] is not None:
+            return  # already stopping
+        _stop["signum"] = signum
+        _stop_started.set()
+        task = _stop["task"]
+        if task is not None and task.get_loop().is_running():
+            # Raised into the running loop, the SystemExit can land in the
+            # loop's own code between two callbacks and leave nest_asyncio's
+            # run() waiting forever (about 1 stop in 70 mid-run). Cancel the
+            # main task on the loop instead; the wrapper exits 128 + signum
+            # once main returns or raises.
+            if not task.done():
+                task.get_loop().call_soon_threadsafe(task.cancel)
+            return
         raise SystemExit(128 + signum)
 
     @functools.wraps(main)
@@ -123,11 +159,20 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         # Set from the command line before it is parsed, so an argparse
         # error or a config that fails to load still prints a JSON status.
         _json.update(enabled=wants_json(argv), printed=False)
+        _stop.update(task=None, signum=None)
+        _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
         previous = signal.signal(signal.SIGTERM, _exit)
         try:
-            result = main(*args, **kwargs)
+            try:
+                result = main(*args, **kwargs)
+            finally:
+                if _stop["signum"] is not None:
+                    # A stop the event loop took as a cancellation (main
+                    # raised CancelledError) or one that came as main's
+                    # coroutine ended.
+                    raise SystemExit(128 + _stop["signum"])
             if isinstance(result, int) and result:  # mains that return the code
                 print_status(result)
             return result
@@ -149,6 +194,48 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             )
 
     return wrapper
+
+
+async def stoppable(main: Awaitable[_R]) -> _R:
+    """Await ``main`` as the task a SIGTERM cancels: a CLI wraps the coroutine
+    it runs (``asyncio.run(stoppable(...))``) under :func:`exits_on_sigterm`."""
+    _stop["task"] = asyncio.current_task()
+    return await main
+
+
+def _stop_watchdog() -> None:
+    """End the process a grace period after a stop, if it is still running.
+
+    Started before any stop (starting a thread in a signal handler could
+    wait forever on a lock the interrupted code holds) and waits for it.
+    """
+    _stop_started.wait()
+    time.sleep(_STOP_GRACE_SECONDS)
+    exit_code = 128 + (_stop["signum"] or signal.SIGTERM)
+    # Not waiting long on a main thread stuck writing to stdout.
+    if _print_lock.acquire(timeout=1.0):
+        try:
+            print_status(exit_code)
+        except Exception:  # noqa: BLE001, S110 - ending anyway
+            pass
+        finally:
+            _print_lock.release()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001, S110 - ending anyway
+            pass
+    os._exit(exit_code)
+
+
+def _start_stop_watchdog() -> None:
+    """Start the watchdog thread (once per process) and disarm it."""
+    _stop_started.clear()
+    if not _exit_at_once["enabled"] or any(
+        t.name == "stop-watchdog" for t in threading.enumerate()
+    ):
+        return
+    threading.Thread(target=_stop_watchdog, name="stop-watchdog", daemon=True).start()
 
 
 def _stopped_in_teardown(signum: int, _frame: object) -> None:
@@ -178,8 +265,9 @@ def json_output(args: argparse.Namespace) -> bool:
 
 def print_json(result: Any) -> None:
     """Print ``result`` as the run's one JSON document on stdout."""
-    _json["printed"] = True
-    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    with _print_lock:
+        _json["printed"] = True
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
 
 
 def print_status(
@@ -188,7 +276,9 @@ def print_status(
     """Print the status document of a run that exits ``exit_code`` without
     having printed its result (once, and only with JSON output): a failed
     one names its ``error``; ``fields`` (``pipeline_id``) are added."""
-    if _json["enabled"] and not _json["printed"]:
+    with _print_lock:
+        if not _json["enabled"] or _json["printed"]:
+            return
         stopped = exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED)
         status: dict[str, Any] = {
             "status": "interrupted" if stopped else "failed",

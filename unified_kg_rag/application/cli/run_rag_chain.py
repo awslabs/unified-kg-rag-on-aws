@@ -26,6 +26,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -668,7 +669,7 @@ def main() -> None:
     # loop starts.
     args = CommandLineInterface().parse_args()
     try:
-        code = asyncio.run(async_main(args))
+        code = asyncio.run(stoppable(async_main(args)))
     except KeyboardInterrupt:
         # Ctrl-C while the loop waits on I/O lands here, outside the task.
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
