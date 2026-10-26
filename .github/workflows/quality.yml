@@ -204,7 +204,7 @@ jobs:
           node-version: "24"
 
       - name: Install AWS CDK CLI
-        run: npm install -g aws-cdk@2.1143.0
+        run: npm install -g aws-cdk@2.1146.1
 
       - name: Install IaC dependencies
         # iac/ is its own uv project, outside the root lock; --locked fails if
