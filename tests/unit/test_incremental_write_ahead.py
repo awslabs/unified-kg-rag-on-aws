@@ -252,6 +252,27 @@ def test_scopeless_run_keeps_the_stored_scope() -> None:
     assert record is not None and record.scope == "ns|src"
 
 
+def test_an_interruption_resets_both_consecutive_counts() -> None:
+    # The PENDING record reset failure_count but kept retry_count: the next
+    # run warned of a document failing "again" across an interrupted run,
+    # one of the counts continuing over the interruption and the other not.
+    store = FakeDocStatusStore()
+    store.put(
+        DocStatusRecord(
+            doc_id="d",
+            content_hash="h",
+            status=DocStatus.FAILED,
+            failure_count=1,
+            retry_count=3,
+        )
+    )
+    inc = IncrementalIndexer(store, None)  # type: ignore[arg-type]
+    inc.write_ahead(DocumentDelta(changed=["d"]), [])
+    record = store.get("d")
+    assert record is not None and record.status is DocStatus.PENDING
+    assert (record.failure_count, record.retry_count) == (0, 0)
+
+
 def test_write_ahead_does_not_count_toward_max_document_failures() -> None:
     harness = IncrementalRun()
     harness.run(R0)
