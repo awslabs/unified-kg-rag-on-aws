@@ -578,6 +578,7 @@ def _stop_retrying_exhausted(
         return
     delta.changed = [doc_id for doc_id in delta.changed if doc_id not in exhausted]
     delta.unchanged.extend(exhausted)
+    delta.excluded = exhausted
     logger.warning(
         "Not retrying %d documents that failed %d consecutive runs with unchanged "
         "content (kept FAILED; edit the file or raise "

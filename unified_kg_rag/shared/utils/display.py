@@ -43,12 +43,23 @@ def markup_safe(text: object) -> str:
     return escape(terminal_safe(text))
 
 
+# Metric: (the context attribute, dotted, it counts; details).
 _SUMMARY_METRICS_CONFIG = {
-    "Documents Processed": ("documents", "Source documents loaded into the system"),
+    "Documents Loaded": (
+        "documents",
+        "Source documents this run loaded to index (incremental: the new and "
+        "changed ones)",
+    ),
     "Text Units Created": ("text_units", "Text segments created through chunking"),
     "Documents Failed": (
         "recorded_failed_doc_ids",
-        "Documents recorded FAILED (retried next run)",
+        "Documents this run recorded FAILED (retried by later runs until "
+        "indexing.max_document_failures)",
+    ),
+    "Documents Excluded": (
+        "incremental_delta.excluded",
+        "Documents not retried: they failed indexing.max_document_failures "
+        "consecutive runs unchanged",
     ),
     "Documents Retrying": (
         "retrying_doc_ids",
@@ -149,9 +160,11 @@ def display_pipeline_summary(context: PipelineContext) -> None:
     summary_table.add_column("Details", style="yellow")
 
     for metric, (context_attr, details) in _SUMMARY_METRICS_CONFIG.items():
-        data = getattr(context, context_attr, None)
-        count = len(data) if data else 0
-        if count > 0 or metric in ["Documents Processed", "Text Units Created"]:
+        data: object = context
+        for name in context_attr.split("."):
+            data = getattr(data, name, None)
+        count = len(data) if isinstance(data, Collection) else 0
+        if count > 0 or metric in ["Documents Loaded", "Text Units Created"]:
             summary_table.add_row(metric, str(count), details)
 
     console.print(summary_table)

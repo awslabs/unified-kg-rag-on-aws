@@ -1615,7 +1615,10 @@ every unit records none, one that fails some units records their documents,
 retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
-never excluded, also warned of with each file and its run count) and
+never excluded, also warned of with each file and its run count), the
+number of documents left out because they failed
+`indexing.max_document_failures` consecutive runs unchanged
+(`documents_excluded`, also in the summary) and
 per-stage results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written

@@ -1470,6 +1470,16 @@ changed once with the full-config keys (#332).
   before those imports (reinstall the package to regenerate the scripts).
   A SIGTERM after a run printed its result, while the process exits,
   exits 143 too instead of -15 (#PR).
+- `run-ingestion`: the JSON result and the summary count the documents a
+  run leaves out because they failed `indexing.max_document_failures`
+  consecutive runs unchanged (`documents_excluded`, and the loading
+  stage's metric of that name); only a WARNING named them. The summary's
+  "Documents Processed" row, a count of the documents loaded, reads
+  "Documents Loaded", and "Documents Failed" no longer says every such
+  document is retried next run. A stage the output check fails reports
+  the input count its error names (it reported 0 beside "processed N
+  inputs"), and its error is logged once: the stage logged it before
+  raising, with the traceback, and the pipeline again (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

@@ -292,6 +292,13 @@ class DocumentDelta(BaseModel):
         "that does not report them leaves it empty, and then only an edit "
         "retries a quarantined document",
     )
+    excluded: list[str] = Field(
+        default_factory=list,
+        description="Changed doc ids not retried: they failed "
+        "``indexing.max_document_failures`` consecutive runs with this "
+        "content and these extraction settings. Kept FAILED, and also in "
+        "``unchanged``",
+    )
     deferred: list[str] = Field(
         default_factory=list,
         description="New or changed doc ids left for a later run while runs "

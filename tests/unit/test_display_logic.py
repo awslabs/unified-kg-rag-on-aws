@@ -158,7 +158,9 @@ def test_pipeline_summary_shows_zero_baseline_rows_for_empty(cap) -> None:
     )
     out = cap(display.display_pipeline_summary, ctx)
     # Documents / Text Units rows are always shown even at zero.
-    assert "Documents Processed" in out
+    # The count is of the documents loaded, not of those processed.
+    assert "Documents Loaded" in out
+    assert "Documents Processed" not in out
     assert "Text Units Created" in out
 
 
@@ -360,3 +362,19 @@ def test_display_pipeline_results_runs_end_to_end(cap) -> None:
     assert "Pipeline Results Summary" in out
     assert "Sample Extracted Entities" in out
     assert "Detected Communities" in out
+
+
+def test_pipeline_summary_counts_the_documents_excluded(cap) -> None:
+    # A document that failed indexing.max_document_failures runs showed only
+    # in a WARNING, and "Documents Failed" said such documents are retried
+    # next run.
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    ctx = _context()
+    assert "Documents Excluded" not in cap(display.display_pipeline_summary, ctx)
+    ctx.incremental_delta = DocumentDelta(unchanged=["a", "b"], excluded=["a", "b"])
+    ctx.record_failed_documents(["c"])
+    out = cap(display.display_pipeline_summary, ctx)
+    (row,) = [line for line in out.splitlines() if "Documents Excluded" in line]
+    assert row.split("│")[2].strip() == "2", row
+    assert "retried next run" not in out
