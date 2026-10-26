@@ -149,6 +149,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     # ranking, depended on how many hits were asked for: the top 4 of a
     # 4-hit and a 40-hit query shared 75% of their hits.
     HYBRID_NORMALIZATION_WINDOW: ClassVar[int] = 50
+    # Window cuts remembered for the once-per-query warning (_log_window_cut).
+    _WINDOW_CUTS_REMEMBERED: ClassVar[int] = 1024
 
     def __init__(
         self,
@@ -171,9 +173,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._index_limits: dict[str, IndexLimits | asyncio.Future[Any]] = {}
         # Whether a denied settings read was logged.
         self._settings_denied_logged = False
-        # The (query id, index, top_k, window) last warned of as cut
-        # (_hit_count).
-        self._window_cut_warned: tuple[Any, str, int, int] | None = None
+        # The (query id, index, top_k, window) cuts warned of
+        # (_log_window_cut), of the queries in flight: a set, as concurrent
+        # queries interleave their searches.
+        self._window_cut_warned: set[tuple[Any, str, int, int]] = set()
         self._embedding_factory = embedding_factory
         # Queries embed with the model and dimension the indexer embeds with
         # (OpenSearchIndexer), so their vectors are comparable.
@@ -854,9 +857,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _log_window_cut(self, top_k: int, size: int, window: int, index: str) -> None:
         """Log a search ``size`` cut to ``index``'s ``window``: a WARNING,
-        once per query (the log context's ``query_id``) and index, when the
-        cut leaves fewer hits than ``top_k`` asks for; otherwise only the
-        over-fetch (``retrieval_multiplier``) is cut, at DEBUG.
+        once per query (the log context's ``query_id``), index and width,
+        when the cut leaves fewer hits than ``top_k`` asks for; otherwise only
+        the over-fetch (``retrieval_multiplier``) is cut, at DEBUG.
 
         ``top_k`` is this search's width, which a strategy derives from the
         caller's ``top_k`` (it may scale it), so the warning does not call it
@@ -870,9 +873,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
             return
         key = (get_contextvars().get("query_id"), index, top_k, window)
-        if key == self._window_cut_warned:
+        if key in self._window_cut_warned:
             return
-        self._window_cut_warned = key
+        if len(self._window_cut_warned) >= self._WINDOW_CUTS_REMEMBERED:
+            # Bounded: past queries' cuts are not needed.
+            self._window_cut_warned.clear()
+        self._window_cut_warned.add(key)
         logger.warning(
             "Index '%s' returns at most %s hits per search (its "
             "max_result_window), fewer than the %s this search asks for, so "

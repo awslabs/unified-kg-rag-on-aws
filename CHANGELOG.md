@@ -1400,6 +1400,10 @@ changed once with the full-config keys (#332).
 - Incremental indexing: reading the stored extraction records of a delta
   no longer rebuilds the set of cited text units per delta unit, which
   took seconds per derive round on a 10k-unit delta (#PR).
+- OpenSearch and the embedded engine: the `max_result_window` cut warning
+  is given once per query, index and search width even when searches
+  alternate between indexes or concurrent queries; only the last cut was
+  remembered, so one drift query warned 61 times for 3 cuts (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at

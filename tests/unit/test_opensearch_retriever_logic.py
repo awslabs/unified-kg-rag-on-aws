@@ -36,7 +36,7 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_settings_denied_logged", False)
-    object.__setattr__(inst, "_window_cut_warned", None)
+    object.__setattr__(inst, "_window_cut_warned", set())
     object.__setattr__(inst, "_configured_limits", IndexLimits())
     object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
@@ -557,6 +557,23 @@ def test_a_window_cut_is_warned_once_per_query_and_names_top_k(
     assert "Index 'kg-relationships'" in messages[-1]
     assert "Index 'kg-entities'" in messages[0]
     assert not any("top_k 30" in m for m in messages)
+
+
+def test_alternating_window_cuts_are_warned_once_per_query_and_index(
+    retriever, caplog
+) -> None:
+    # Only the last cut was remembered, so searches alternating between two
+    # indexes in one query (drift: 61 warnings for 3 cuts), or between
+    # concurrent queries, warned on every search.
+    from structlog.contextvars import bound_contextvars
+
+    q = SearchQuery(query="x", top_k=30, retrieval_multiplier=1)
+    with caplog.at_level("WARNING"):
+        for query_id in ("q1", "q2") * 2:
+            with bound_contextvars(query_id=query_id):
+                for index in ("kg-entities", "kg-relationships") * 2:
+                    retriever._hit_count(q, 20, index)
+    assert len(caplog.records) == 4
 
 
 def test_a_window_holding_top_k_exactly_cuts_only_the_over_fetch(

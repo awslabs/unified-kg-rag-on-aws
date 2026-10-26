@@ -771,7 +771,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
     object.__setattr__(inst, "_settings_denied_logged", False)
-    object.__setattr__(inst, "_window_cut_warned", None)
+    object.__setattr__(inst, "_window_cut_warned", set())
     object.__setattr__(inst, "_configured_limits", IndexLimits())
     object.__setattr__(inst, "_index_limits", {})
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
