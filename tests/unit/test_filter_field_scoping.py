@@ -549,8 +549,9 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
     }
     chain = object.__new__(GraphRAGChain)
     chain.config = config
+    # Strategies that declare no index set: their retrievers' every index.
     chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
-        retrievers=reads[s]
+        retrievers=reads[s], filtered_index_prefixes=lambda _strategy: None
     )
     chain.check_filter_keys({"status": "open"}, SearchStrategy.NAIVE)
     with pytest.raises(InvalidFilterError, match="status"):
@@ -566,6 +567,131 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
         chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
     config.search.auto_routable_strategies = [SearchStrategy.NAIVE]
     chain.check_filter_keys({"status": "open"}, SearchStrategy.AUTO)
+
+
+def _strategy_chain(config: Config) -> GraphRAGChain:
+    """A chain over the built-in strategies (built without their models),
+    reading through fake OpenSearch and Neptune retrievers."""
+    from types import SimpleNamespace
+
+    from unified_kg_rag.adapters.search_strategies.drift_search import (
+        DriftSearchStrategy,
+    )
+    from unified_kg_rag.adapters.search_strategies.global_search import (
+        GlobalSearchStrategy,
+    )
+    from unified_kg_rag.adapters.search_strategies.lightrag_search import (
+        LightRAGSearchStrategy,
+    )
+    from unified_kg_rag.adapters.search_strategies.local_search import (
+        LocalSearchStrategy,
+    )
+    from unified_kg_rag.adapters.search_strategies.simple_search import (
+        SimpleSearchStrategy,
+    )
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    def built(cls: type, **attrs: Any) -> Any:
+        inst = object.__new__(cls)
+        inst.config = config
+        for name, value in attrs.items():
+            setattr(inst, name, value)
+        return inst
+
+    local = built(LocalSearchStrategy)
+    lightrag = built(LightRAGSearchStrategy, _os_config=config.indexing.opensearch)
+    strategies = {
+        SearchStrategy.LOCAL: local,
+        SearchStrategy.DRIFT: built(DriftSearchStrategy, local_search=local),
+        SearchStrategy.GLOBAL: built(
+            GlobalSearchStrategy, global_search_config=config.search.global_search
+        ),
+        SearchStrategy.MIX: lightrag,
+        SearchStrategy.HYBRID: lightrag,
+        SearchStrategy.NAIVE: lightrag,
+        SearchStrategy.SIMPLE: built(SimpleSearchStrategy),
+    }
+    document = {"document": _retriever(config, _FakeOpenSearchClient())}
+    both = {**document, "graph": _neptune(config)}
+    graph_free = {SearchStrategy.GLOBAL, SearchStrategy.NAIVE, SearchStrategy.SIMPLE}
+    chain = object.__new__(GraphRAGChain)
+    chain.config = config
+    chain._get_strategy_instance = lambda s: SimpleNamespace(  # type: ignore[method-assign]
+        retrievers=document if s in graph_free else both,
+        filtered_index_prefixes=strategies[s].filtered_index_prefixes,
+    )
+    return chain
+
+
+@pytest.mark.parametrize(
+    ("strategy", "key", "accepted"),
+    [
+        # An entity type: no index naive or global reads has it.
+        ("naive", "type", False),
+        ("global", "type", False),
+        ("mix", "type", True),
+        ("local", "type", True),
+        # A claims field: only strategies that read the claims index.
+        ("naive", "status", False),
+        ("mix", "status", False),
+        ("local", "status", True),
+        ("drift", "status", True),
+        ("simple", "status", True),
+        # A report field, and a document attribute every index carries.
+        ("global", "community_id", True),
+        ("naive", "community_id", False),
+        ("naive", "attr_category", True),
+        ("global", "attr_category", True),
+        # Text-unit fields reach global only through text_unit_slots.
+        ("global", "n_tokens", False),
+        ("naive", "n_tokens", True),
+    ],
+)
+def test_filter_keys_are_checked_against_the_indexes_a_strategy_reads(
+    config: Config, strategy: str, key: str, accepted: bool
+) -> None:
+    # Checked against every index of the retriever, so naive or global with
+    # type: person ran unfiltered.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.processing.claim_extraction.enabled = True
+    chain = _strategy_chain(config)
+    if accepted:
+        chain.check_filter_keys({key: "x"}, SearchStrategy(strategy))
+        return
+    with pytest.raises(InvalidFilterError, match=f"Unknown filter key\\(s\\): {key}"):
+        chain.check_filter_keys({key: "x"}, SearchStrategy(strategy))
+
+
+def test_global_reads_text_unit_fields_with_text_unit_slots(config: Config) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.global_search.text_unit_slots = 2
+    _strategy_chain(config).check_filter_keys({"n_tokens": 3}, SearchStrategy.GLOBAL)
+
+
+def test_a_claims_key_is_refused_when_no_claims_index_is_built(config: Config) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.processing.claim_extraction.enabled = False
+    with pytest.raises(InvalidFilterError, match="status"):
+        _strategy_chain(config).check_filter_keys(
+            {"status": "open"}, SearchStrategy.LOCAL
+        )
+
+
+async def test_a_query_checks_the_indexes_its_strategy_reads(config: Config) -> None:
+    # The per-query check (each question, as with --filters) uses the same
+    # index set as check_filter_keys.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(config)
+    state = {
+        "resolved_strategy": SearchStrategy.NAIVE,
+        "filters": {"type": "person"},
+    }
+    with pytest.raises(InvalidFilterError, match="type"):
+        await chain._search_step(state)
 
 
 def test_chain_accepts_any_key_for_a_backend_without_schema(config: Config) -> None:

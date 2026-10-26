@@ -785,9 +785,13 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
-  거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`)는
-  필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
-  (`unified_kg_rag/adapters/storage/filter_schema.py`).
+  거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
+  `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
+  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive`는 텍스트 단위를, `hybrid`와
+  `mix`는 엔티티·관계·텍스트 단위와 Neptune을, `local`과 `drift`는 파이프라인이 만드는 모든
+  인덱스와 Neptune을, `global`은 커뮤니티 리포트(`search.global_search.text_unit_slots`를
+  쓰면 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는
+  라우팅될 수 있는 모든 전략에 맞아야 합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그

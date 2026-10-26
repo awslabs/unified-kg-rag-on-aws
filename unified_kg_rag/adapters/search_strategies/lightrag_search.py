@@ -213,6 +213,18 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
         return query
 
+    def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
+        # naive: the chunks; hybrid and mix: entities, relationships and the
+        # chunks they cite.
+        o = self._os_config
+        if strategy is SearchStrategy.NAIVE:
+            return [o.text_units_index_prefix]
+        return self._built_prefixes(
+            o.entities_index_prefix,
+            o.relationships_index_prefix,
+            o.text_units_index_prefix,
+        )
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

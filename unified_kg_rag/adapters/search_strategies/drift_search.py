@@ -147,6 +147,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self.local_search.token_manager = self.token_manager
         self.local_search.rerank_types = frozenset()
 
+    def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
+        # The primer's reports and the follow-ups' local searches.
+        return self.local_search.filtered_index_prefixes(SearchStrategy.LOCAL)
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

@@ -1491,6 +1491,14 @@ changed once with the full-config keys (#332).
   a repeated `--filters` key is for `run-rag`; it replaced the first
   without a word, so `--search-strategy local --search-strategy mix`
   ran `mix` alone. List the strategies in one flag (`local,mix`) (#PR).
+- Search filters: a key is checked against the indexes the strategy
+  reads with the caller's filters (`BaseSearchStrategy.filtered_index_prefixes`,
+  `filter_fields_for` on the retriever), not every OpenSearch index. A key
+  only an unread index declares was dropped there, so `naive` or `global`
+  with `--filters type:person` answered unfiltered; it is now a usage error
+  (exit 2) naming the filterable keys, as the user guide says. A custom
+  strategy that does not override `filtered_index_prefixes` keeps the
+  every-index check (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store

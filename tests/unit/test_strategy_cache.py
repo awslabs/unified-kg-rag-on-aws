@@ -74,6 +74,9 @@ class _EchoRetriever:
     def filter_fields(self) -> None:
         return None
 
+    def filter_fields_for(self, prefixes: Any) -> None:
+        return None
+
     def close(self) -> None:
         self.closed += 1
 

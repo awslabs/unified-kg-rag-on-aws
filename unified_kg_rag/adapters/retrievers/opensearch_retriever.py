@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from collections.abc import Coroutine
+from collections.abc import Collection, Coroutine
 from itertools import zip_longest
 from typing import Any, ClassVar
 
@@ -254,6 +254,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def filter_fields(self) -> FilterFields:
         return union_filter_fields(self._index_filter_fields.values())
+
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return union_filter_fields(
+            fields
+            for prefix, fields in self._index_filter_fields.items()
+            if prefix in prefixes
+        )
 
     def _filters_for_index(
         self, prefix: str, filters: dict[str, Any] | None

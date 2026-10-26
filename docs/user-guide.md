@@ -843,10 +843,15 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API.
 - A filter applies only to the stores that declare its field
-  (`type:person` leaves text units unfiltered). A key no store of the
-  selected strategy declares (e.g. `category`) raises `InvalidFilterError`,
-  listing the filterable keys
-  (`unified_kg_rag/adapters/storage/filter_schema.py`).
+  (`type:person` leaves text units unfiltered). A key no store the
+  selected strategy reads declares (e.g. `category`, or `type` with `naive`
+  or `global`) raises `InvalidFilterError`, listing the filterable keys
+  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
+  units; `hybrid` and `mix` entities, relationships, text units and
+  Neptune; `local` and `drift` every index the pipeline builds and Neptune;
+  `global` community reports (and text units with
+  `search.global_search.text_unit_slots`); `simple` every index the
+  pipeline builds; `auto` must suit every strategy it may route to.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
   claims and community reports carry the filter values of their text units'
