@@ -331,6 +331,43 @@ def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
     assert probe.sent == ([output] if alike else [])
 
 
+class _Coded(Exception):
+    def __init__(self, message: str, code: str = "A", status: int = 400) -> None:
+        super().__init__(message)
+        self.response = {"Error": {"Code": code}}
+        self.status_code = status
+
+
+class _OtherType(_Coded):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        (_Coded("bad", "A"), _Coded("bad", "B")),
+        (_Coded("bad", "A"), _OtherType("bad", "A")),
+        (_Coded("bad", "A", 400), _Coded("bad", "A", 422)),
+    ],
+    ids=["code", "type", "status"],
+)
+def test_errors_differing_in_code_type_or_status_are_two_causes(
+    a: Exception, b: Exception
+) -> None:
+    # Each part of the cause tells two errors apart: no known-good request,
+    # both counted.
+    probe = _Probe()
+    assert _indices({0: a, 1: b}, 2, lambda _: True, probe) == [0, 1]
+    assert probe.sent == []
+
+
+def test_messages_differing_only_in_their_figures_are_one_cause() -> None:
+    probe = _Probe()
+    errors = {i: _Coded(f"request has {900 + i} tokens") for i in range(3)}
+    assert _indices(errors, 3, lambda _: True, probe) == []
+    assert probe.sent == [False]
+
+
 def test_per_request_token_counts_do_not_split_one_cause() -> None:
     # An OpenAI-compatible server's 400s carry each request's own figures:
     # every unit rejected so is still one cause, which the known-good

@@ -118,6 +118,29 @@ def test_gone_graph_records_rewind_to_graph_extraction(monkeypatch) -> None:
     assert _rewind(monkeypatch, _Indexer(stored), _UNITS) == _to("graph_extraction")
 
 
+def test_a_start_before_the_gone_records_stage_is_not_moved_forward(
+    monkeypatch,
+) -> None:
+    # A resume at graph_resolution runs claim_extraction anyway: its gone
+    # records are not a reason to move the start, least of all forward to
+    # claim_extraction (the stages checked are those restored before it).
+    monkeypatch.setattr(pipeline_module, "_with_record_keys", lambda _c, _x, u: u)
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.stages = [SimpleNamespace(name=name) for name in _ORDER]  # type: ignore[misc]
+    pipeline.config = SimpleNamespace(indexing=SimpleNamespace(reset=True))  # type: ignore[assignment]
+    indexer = _Indexer({**_ALL, "y": {"g-u1"}})
+    pipeline.providers = SimpleNamespace(build_vector_indexer=lambda: indexer)  # type: ignore[assignment]
+    context = SimpleNamespace(translated_units=None, text_units=_UNITS)
+    start = "graph_resolution"
+    assert _ORDER.index(start) < _ORDER.index("claim_extraction")
+    assert (
+        pipeline._rewind_on_missing_records(
+            context, start, list(_DONE)  # type: ignore[arg-type]
+        )
+        is None
+    )
+
+
 def test_a_backend_keeping_no_records_keeps_the_start(monkeypatch) -> None:
     # It never stored any, so none is gone (asked, every record looks gone).
     assert _rewind(monkeypatch, _Keepless({}), _UNITS) is None
