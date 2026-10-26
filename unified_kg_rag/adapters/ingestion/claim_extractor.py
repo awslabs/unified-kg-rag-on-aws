@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils import (
     ensure_list,
     entity_key,
@@ -173,7 +174,7 @@ class ClaimExtractor(BaseProcessor):
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=units_to_process,
                 prepare_inputs_func=prepare_inputs_for_chunk,
-                sequential_func=self.claim_extractor.invoke,
+                sequential_func=self._extract,
                 task_name="Claim Extraction",
                 show_progress=self.show_progress,
                 errors=errors,
@@ -198,7 +199,7 @@ class ClaimExtractor(BaseProcessor):
                 "Claim extraction",
                 self.batch_processor,
                 lambda units: list(self._prepare_extraction_inputs(units, []).values()),
-                self.claim_extractor.invoke,
+                self._extract,
             )
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
@@ -260,6 +261,10 @@ class ClaimExtractor(BaseProcessor):
                 )
         return per_unit
 
+    def _extract(self, request: dict[str, Any]) -> dict[str, Any]:
+        """The chain's output for ``request``, checked (:func:`_checked`)."""
+        return _checked(self.claim_extractor.invoke(request))
+
     def _record_failure(self, text_unit: TextUnit) -> None:
         self.stats.num_failed_extractions += 1
         self.stats.failed_text_unit_ids.append(text_unit.id)
@@ -267,9 +272,9 @@ class ClaimExtractor(BaseProcessor):
     def _parse_extraction_result(
         self, result: dict[str, Any], text_unit: TextUnit
     ) -> list[Claim]:
-        if not isinstance(result, dict) or "claims" not in result:
-            return []
-
+        """The unit's claims; raise ``LLMOutputTruncatedError`` if the output
+        was cut off (:func:`_checked`)."""
+        _checked(result)
         claims_data = ensure_list(result.get("claims"), inner_key="claim")
         claims = []
         for claim_data in claims_data:
@@ -397,3 +402,36 @@ class ClaimExtractor(BaseProcessor):
             logger.warning(
                 "%s text units failed during extraction", stats.num_failed_extractions
             )
+
+
+def _complete(claim: Any) -> bool:
+    """Whether ``claim`` has the fields a claim needs (as ``_parse_claim_data``)."""
+    return isinstance(claim, dict) and all(
+        ClaimExtractor._get_string_value(claim.get(field))
+        for field in ("subject", "object", "claim_type")
+    )
+
+
+def _checked(result: Any) -> dict[str, Any]:
+    """``result`` if it is a whole claims output, else raise
+    ``LLMOutputTruncatedError``.
+
+    A response cut off without a stop reason (a server-side output cap
+    reported as a normal stop) lacks the ``claims`` section, or lists claims
+    none of which is complete, and was recorded PROCESSED with no claims, so
+    the unit was never extracted again. It is counted against the document
+    as output cut at the token limit is, and not retried (the same input
+    meets the same cap). An empty ``<claims></claims>``, the answer for a
+    unit that states none, is whole.
+    """
+    if not isinstance(result, dict) or "claims" not in result:
+        raise LLMOutputTruncatedError(
+            "the claim extraction output has no claims section (output cut off?)"
+        )
+    listed = ensure_list(result.get("claims"), inner_key="claim")
+    if listed and not any(_complete(claim) for claim in listed):
+        raise LLMOutputTruncatedError(
+            f"none of the {len(listed)} claims of the claim extraction output is "
+            "complete (output cut off?)"
+        )
+    return result

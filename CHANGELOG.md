@@ -1401,6 +1401,12 @@ changed once with the full-config keys (#332).
   Ctrl-C right after the result ended the process with -15 or -2 (`run-rag`
   85 of 160 SIGTERMs after the JSON, `run-ingestion` 29 of 40) instead of
   143 or 130. Threads still running are not waited for (#PR).
+- Claim extraction: a response cut off with a normal stop reason (a
+  server-side output cap) fails its unit with `LLMOutputTruncatedError`,
+  as graph extraction does, when it has no `claims` section or lists
+  claims none of which is complete. It was recorded `PROCESSED` with no
+  claims and never extracted again. An empty `<claims></claims>` is still
+  a unit without claims (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning`: a SIGTERM while the event
   loop runs cancels the CLI's task at its next await instead of raising
   `SystemExit` into the loop, where it could land in the loop's own code

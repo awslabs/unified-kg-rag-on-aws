@@ -477,9 +477,9 @@ def test_the_known_good_request_bypasses_the_response_cache(tmp_path: Path) -> N
 
 
 _KNOWN_GOOD = known_good_unit().text
-# An answer every stage parses: an entity for graph extraction, no claims,
-# no refinement plan.
-_ANSWER = {"entities": {"entity": {"name": "Vendor Corp"}}}
+# An answer every stage parses: an entity for graph extraction, an empty
+# claims section (no claims), no refinement plan.
+_ANSWER = {"entities": {"entity": {"name": "Vendor Corp"}}, "claims": {}}
 
 
 class _Rejecting:
@@ -688,7 +688,8 @@ def test_claims_count_an_answer_that_does_not_parse(
 ) -> None:
     # The model answered, but its answer does not parse: the unit's own.
     processor = _processor("claims", config, _TOO_LONG)
-    processor.claim_extractor = SimpleNamespace(invoke=lambda *_: {"claims": "x"})
+    # A whole claims section, so the call itself succeeds (_checked).
+    processor.claim_extractor = SimpleNamespace(invoke=lambda *_: {"claims": {}})
     monkeypatch.setattr(
         processor,
         "_parse_extraction_result",
