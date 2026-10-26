@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import heapq
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import cmp_to_key
 from typing import Any
@@ -447,7 +447,7 @@ def _top_k(ids: list[str], scores: np.ndarray, k: int) -> Scores:
     least the k-th best score are sorted."""
     if len(ids) > k and not np.isnan(scores).any():
         kth = np.partition(scores, len(scores) - k)[len(scores) - k]
-        candidates = np.flatnonzero(scores >= kth).tolist()
+        candidates: Iterable[int] = np.flatnonzero(scores >= kth).tolist()
     else:
         candidates = range(len(ids))
     ranked = sorted(
