@@ -196,9 +196,10 @@ restored meanwhile included, and removes what was written for one that is gone
 - **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
   `pending`): their text units are how the next run finds the interrupted
   writes.
-- An interruption is not a failure, but resets `failure_count` and
-  `retry_count`; deaths are counted in `attempt_count`
-  ([Quarantined documents](#quarantined-documents)).
+- An interruption is not a failure. A stop or death during extraction leaves
+  `failure_count` and `retry_count` as they were; one during indexing, once
+  the `PENDING` records are written, resets both. Deaths are counted in
+  `attempt_count` ([Quarantined documents](#quarantined-documents)).
 - A custom registry policy needs `dynamodb:BatchWriteItem` and
   `BatchGetItem` (the CDK grant covers both).
 
@@ -255,19 +256,24 @@ throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
 fail every document alike. Such a document stays `PENDING` (or `FAILED`,
 retried by the next run), uncounted, until the cause is fixed: an outage or a
 bad setting never excludes it. Its consecutive failed runs of the same
-content are kept (`retry_count`; new content, an interruption, a success or
-an error of its own starts it over): from the second, the run warns with the
-file and the count and reports it in `documents_retrying`. When every unit sent fails and
-its errors of their own are of one cause (the same error type, code and HTTP
-status, whatever the message says; or all output that does not parse or was
-cut off, as under a server-side output cap; a unit throttled or timed out
-alongside is left out), a known-good request decides (sent through the same
-chain, never served from the LLM response cache): failed too (for output
-errors, an answer that does not parse is a failure), nothing counts;
-answered, the errors count, so a delta of bad documents alone is still
-excluded. A content error that later clears with no change can thus exclude a
-document. Graph extraction output that lists entities but none with a name
-(cut off without a stop reason) is output that does not parse; output cut
+content are kept (`retry_count`; new content, a success or an
+error of its own starts it over; a stop or death during extraction leaves
+it, one during indexing, once the `PENDING` records are written, resets it):
+from the second, the run warns with the file and the count and reports it in
+`documents_retrying`. When every unit sent fails and its errors of their own
+are of one cause (the same error type, code and HTTP status, whatever the
+message says; or all output that does not parse or was cut off; a unit
+throttled or timed out alongside is left out), output errors on the units of
+more than one document count for none: a server-side output cap cuts them
+all, and a short known-good request cannot tell it from each document's own
+output. Otherwise a known-good request decides (sent through the same chain,
+never served from the LLM response cache): failed too (for output errors,
+an answer that does not parse is a failure), nothing counts; answered, the
+errors count, so a delta of documents the model rejects is still excluded,
+and so is a single document whose output never parses. A content error that
+later clears with no change can thus exclude a document. Graph extraction
+output that lists entities but none with a name (cut off without a stop
+reason) is output cut off (not retried, as at the token limit); output cut
 later keeps the entities before the cut, with a WARNING
 (`XML output ends with <entities> unclosed`). An OpenAI-compatible server's
 context-length rejection that counts the requested `max_tokens` ("you

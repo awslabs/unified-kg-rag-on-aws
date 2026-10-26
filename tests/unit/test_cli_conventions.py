@@ -190,18 +190,18 @@ def test_a_sigterm_while_a_cli_loads_exits_143(
     tmp_path: Path, output_format: str
 ) -> None:
     # A SIGTERM during a CLI's imports (seconds) ended it with -15 and no
-    # JSON: the console-script entry point installs a handler before them.
+    # JSON: the console-script entry point installs a handler before them
+    # (the real one, its import of the CLI stood in for).
     import subprocess
 
     script = (
         "import os, signal, sys\n"
         "from unified_kg_rag.application.cli import launch\n"
         "assert 'langchain_core' not in sys.modules and 'rich' not in sys.modules\n"
-        "launch._run = lambda module: (\n"
-        "    signal.signal(signal.SIGTERM, launch._stopped_while_loading),\n"
-        "    os.kill(os.getpid(), signal.SIGTERM),\n"
-        "    signal.pause(),\n"
-        ")\n"
+        "def loading(name):\n"
+        "    os.kill(os.getpid(), signal.SIGTERM)\n"
+        "    signal.pause()\n"
+        "launch.importlib.import_module = loading\n"
         "launch.run_rag()\n"
     )
     done = subprocess.run(
@@ -256,6 +256,40 @@ def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
         assert signal.getsignal(signal.SIGINT) is not launch._stopped_while_loading
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.parametrize(
+    ("entry", "module"),
+    [
+        ("run_ingestion", "run_ingestion_pipeline"),
+        ("run_rag", "run_rag_chain"),
+        ("run_eval", "run_evaluation"),
+        ("run_visualization", "run_visualization"),
+        ("run_prompt_tuning", "run_prompt_tuning"),
+        ("prepare_benchmark", "prepare_benchmark"),
+    ],
+)
+def test_each_launcher_entry_runs_its_own_cli(
+    monkeypatch: pytest.MonkeyPatch, entry: str, module: str
+) -> None:
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli import launch
+
+    loaded: list[str] = []
+
+    def load(name: str) -> SimpleNamespace:
+        loaded.append(name)
+        return SimpleNamespace(main=lambda: "ran")
+
+    monkeypatch.setattr(launch.importlib, "import_module", load)
+    previous = signal.getsignal(signal.SIGTERM), signal.getsignal(signal.SIGINT)
+    try:
+        assert getattr(launch, entry)() == "ran"
+    finally:
+        signal.signal(signal.SIGTERM, previous[0])
+        signal.signal(signal.SIGINT, previous[1])
+    assert loaded == [f"unified_kg_rag.application.cli.{module}"]
 
 
 def test_every_console_script_starts_through_the_launcher() -> None:

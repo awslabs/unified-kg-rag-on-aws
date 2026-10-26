@@ -365,7 +365,7 @@ class GraphGleaner(BaseProcessor):
             prepared_units[idx].id
             for idx in item_failed_indices(
                 errors,
-                len(prepared_units),
+                prepared_units,
                 self.is_item_error,
                 "Graph refinement",
                 self.batch_processor,

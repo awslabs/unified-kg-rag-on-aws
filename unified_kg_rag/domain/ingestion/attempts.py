@@ -75,8 +75,9 @@ def opened_attempt(
     processes ``batch`` documents (an earlier open one settled first).
 
     An attempt at new content (neither the recorded nor the attempted one)
-    starts ``retry_count`` over: the failed runs it counts were of other
-    content."""
+    starts ``retry_count`` and ``failure_count`` over: the failed runs they
+    count were of other content (no exclusion reads them for this content,
+    and a later failure of its own would not continue them)."""
     deaths, crash_batch = settled_attempts(record, content_hash)
     update: dict[str, object] = {
         "attempt_count": deaths,
@@ -85,7 +86,7 @@ def opened_attempt(
         "attempt_batch": batch,
     }
     if content_hash not in (record.content_hash, record.attempted_hash):
-        update["retry_count"] = 0
+        update["retry_count"] = update["failure_count"] = 0
     return record.model_copy(update=update)
 
 

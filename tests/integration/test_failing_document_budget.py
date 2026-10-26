@@ -606,6 +606,23 @@ def test_new_content_starts_retry_count_over(tmp_path: Path, stage: str) -> None
     assert seen == [1, 1], seen
 
 
+@_STOPS_OR_COMMITS
+def test_new_content_starts_failure_count_over(tmp_path: Path, stage: str) -> None:
+    # An error of its own, then new content failing for an outage: the
+    # record kept the old content's failure_count beside the new content's
+    # retry_count. The old count no longer applies: content that later
+    # failed again of its own would not continue it either.
+    mode = {"status": 400}
+    config, providers, source = _outage(tmp_path, stage, mode)
+    seen = []
+    for run, text in enumerate([_FAILING, "Zorbix and Buyer trade bolts."]):
+        (source / "fz.txt").write_text(text)
+        e2e._ingest(config, providers, source, tmp_path / f"c{run}")
+        seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
+        mode["status"] = 503
+    assert seen == [(1, 0), (0, 1)], seen
+
+
 def test_a_failed_registry_write_records_no_failed_documents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

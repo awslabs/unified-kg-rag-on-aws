@@ -1076,6 +1076,29 @@ class IndexingManager:
         vector store. A failed read raises (see merge_with_existing_graph)."""
         items = (list(entities), list(relationships), list(claims))
         blocked: set[str] = set()
+        # The records read so far: a record does not change during the
+        # derivation, so each round reads only the units it adds.
+        records: dict[str, TextUnitExtraction] = {}
+        claim_records: dict[str, list[Claim]] = {}
+        read_units: set[str] = set()
+        # Nor do the stored edges: a query over a superset of the ids a call
+        # site asked last reads only the ids it adds.
+        incident_reads: dict[str, tuple[set[str], set[str]]] = {}
+
+        def incident(site: str, ids: Collection[str]) -> set[str]:
+            asked, found = incident_reads.get(site, (set(), set()))
+            wanted = set(ids)
+            if not asked <= wanted:
+                asked, found = set(), set()
+            if new := sorted(wanted - asked):
+                found = found | set(
+                    self.neptune_indexer.find_incident_relationship_ids(
+                        new, suffix=suffix
+                    )
+                )
+            incident_reads[site] = (wanted, found)
+            return found
+
         # A new id another stored item holds: that item is a copy an
         # interrupted re-key left, or another spelling a full build merges
         # with this one, so it is derived with them (and merged when it is
@@ -1096,13 +1119,17 @@ class IndexingManager:
                     for u in item.text_unit_ids or []
                 }
             )
-            records, claim_records = self._unit_records(suffix, unit_ids, text_units)
+            if new_units := [u for u in unit_ids if u not in read_units]:
+                read, read_claims = self._unit_records(suffix, new_units, text_units)
+                records.update(read)
+                claim_records.update(read_claims)
+                read_units.update(new_units)
             stored_edges = (
                 None
                 if claims or not items[0]
-                else self.neptune_indexer.find_incident_relationship_ids(
-                    sorted(_with_old_ids([e.id for e in items[0]], rekeyed or {})),
-                    suffix=suffix,
+                else incident(
+                    "given",
+                    _with_old_ids([e.id for e in items[0]], rekeyed or {}),
                 )
             )
             derived = derive(
@@ -1169,14 +1196,10 @@ class IndexingManager:
             candidates = sorted({*moved, *spellings.values()})
             parted: list[Relationship] = []
             if candidates and not claims:
-                incident = set(
-                    self.neptune_indexer.find_incident_relationship_ids(
-                        candidates, suffix=suffix
-                    )
-                )
-                if incident - given:
+                incident_ids = incident("moved", candidates)
+                if incident_ids - given:
                     parted = self.neptune_indexer.read_relationships(
-                        sorted(incident - given), suffix=suffix
+                        sorted(incident_ids - given), suffix=suffix
                     )
             if spellings:
                 spellings = self._leftover_spellings(

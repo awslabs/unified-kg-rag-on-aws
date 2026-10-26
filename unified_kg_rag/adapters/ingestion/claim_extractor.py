@@ -193,7 +193,7 @@ class ClaimExtractor(BaseProcessor):
             units_to_process[idx].id
             for idx in item_failed_indices(
                 errors,
-                len(units_to_process),
+                units_to_process,
                 self.is_item_error,
                 "Claim extraction",
                 self.batch_processor,

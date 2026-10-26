@@ -14,7 +14,7 @@ import asyncio
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
@@ -152,14 +152,14 @@ def known_good_unit() -> TextUnit:
 
 def item_failed_indices(
     errors: Mapping[int, BaseException],
-    count: int,
+    units: Sequence[TextUnit],
     is_item_error: ItemErrorPredicate,
     task: str,
     batch_processor: BatchProcessor,
     prepare_inputs: Callable[[list[TextUnit]], list[dict[str, Any]]],
     invoke: Callable[[dict[str, Any]], Any],
 ) -> list[int]:
-    """The indices, of a batch of ``count`` items, whose ``errors`` count
+    """The indices, of the batch of ``units``, whose ``errors`` count
     against their document (``is_item_error``).
 
     When every item failed and its item errors are of one cause
@@ -167,12 +167,14 @@ def item_failed_indices(
     that does not parse or was cut off; an error that is not an item's own,
     a throttled or timed-out call, says nothing of the others and is left
     out), that is either one cause, the model or a setting
-    (a server-side output cap, say), or each document's own. One known-good
-    request (:func:`known_good_unit`, made by ``prepare_inputs`` and
-    ``invoke`` through ``batch_processor``, as the items were) then decides:
-    failed too, none is counted; answered, the errors are counted. For
-    output errors the answer must also parse; for a rejection, being
-    answered is enough.
+    (a server-side output cap, say), or each document's own. Output errors
+    on the units of more than one document count for none: a known-good
+    request is short, so it cannot tell a server-side output cap from
+    output of each document's own. Otherwise one known-good request
+    (:func:`known_good_unit`, made by ``prepare_inputs`` and ``invoke``
+    through ``batch_processor``, as the items were) decides: failed too,
+    none is counted; answered, the errors are counted. For output errors
+    the answer must also parse; for a rejection, being answered is enough.
 
     The request is neither served from nor stored in the run's LLM response
     cache (``uncached_responses``): a response an earlier run cached for it
@@ -183,9 +185,20 @@ def item_failed_indices(
     first = next(iter(own.values()), None)
     if (
         first is not None
-        and len(errors) == count
+        and len(errors) == len(units)
         and len({_cause(error) for error in own.values()}) == 1
     ):
+        documents = {d for idx in own for d in units[idx].document_ids or []}
+        if _cause(first)[0] == "output" and len(documents) > 1:
+            logger.warning(
+                "%s: the output of every item of %d documents failed alike "
+                "(%s): taken for a model or server output cap, counted "
+                "against no document",
+                task,
+                len(documents),
+                first,
+            )
+            return []
         # Imported here: the cache module imports the chain factory, which
         # imports this one.
         from unified_kg_rag.adapters.llm.response_cache import uncached_responses
