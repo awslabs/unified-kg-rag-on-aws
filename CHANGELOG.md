@@ -1404,6 +1404,9 @@ changed once with the full-config keys (#332).
   is given once per query, index and search width even when searches
   alternate between indexes or concurrent queries; only the last cut was
   remembered, so one drift query warned 61 times for 3 cuts (#PR).
+- CLIs: a Ctrl-C while a CLI imports its dependencies exits 130 with
+  `--output-format json`'s `{"status": "interrupted", "exit_code": 130}`
+  instead of a traceback and no output (#PR).
 - Incremental indexing: a unit throttled or timed out (an error not its
   own) beside units that all failed of one cause no longer keeps the
   known-good request from being sent: the one-cause rule now looks only at

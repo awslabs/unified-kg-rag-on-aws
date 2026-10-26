@@ -184,6 +184,46 @@ def test_a_sigterm_while_a_cli_loads_exits_143(
         assert done.stdout == ""
 
 
+def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
+    # Only SIGTERM was handled: a Ctrl-C during the imports printed a
+    # traceback and, with --output-format json, no JSON.
+    import subprocess
+
+    script = (
+        "import os, signal\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "def loading(name):\n"
+        "    os.kill(os.getpid(), signal.SIGINT)\n"
+        "    signal.pause()\n"
+        "launch.importlib.import_module = loading\n"
+        "launch.run_rag()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 130, done.stderr
+    assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
+
+
+def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
+    # Once loaded, Ctrl-C raises KeyboardInterrupt in main as before.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli import launch
+
+    cli = SimpleNamespace(main=lambda: signal.getsignal(signal.SIGINT))
+    monkeypatch.setattr(launch.importlib, "import_module", lambda _name: cli)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        assert launch.run_rag() is signal.getsignal(signal.SIGINT)
+        assert signal.getsignal(signal.SIGINT) is not launch._stopped_while_loading
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def test_every_console_script_starts_through_the_launcher() -> None:
     import tomllib
 
