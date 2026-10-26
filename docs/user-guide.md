@@ -1743,8 +1743,13 @@ closes it.
   drops or down-weights items whose quoted `source_text` is not in the chunk.
 - **Runs are not reproducible**: LLM outputs (extraction, reports, the
   `auto` router, answers) vary, so compare configurations over several runs.
-  Given the same model responses, everything else is deterministic in any
-  process, whatever its `PYTHONHASHSEED`.
+  Given the same model responses and the same source scope, everything else
+  is deterministic in any process, whatever its `PYTHONHASHSEED`. With the
+  doc-status registry on, text-unit ids derive from the source scope, which
+  defaults to the absolute source directory: the same corpus ingested from
+  another directory gets other ids. Set
+  `processing.document_parsing.source_scope` for ids that do not depend on
+  where the corpus sits.
 - **Reranking is regional** ([Required models](#required-models)); without it
   results keep the fusion order, as `metadata.rerank` shows
   ([Rerank status](#rerank-status)).

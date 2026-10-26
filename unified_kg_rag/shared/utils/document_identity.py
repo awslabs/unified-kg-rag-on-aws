@@ -3,15 +3,18 @@
 """One identity rule for source documents.
 
 A document is identified by its path *relative to the corpus root*, and a
-document *version* by that path plus a hash of its full text. The version id
-does not depend on where the corpus sits (the same corpus synced to
-``/tmp/graphrag-source`` on one machine and checked out under ``~/corpus`` on
-another yields the same ``document_id`` and text-unit ids). The registry key
-does: it also holds the corpus source scope, which defaults to the resolved
-source directory, so a corpus keeps its registry records across runs only
-from the same directory or with a fixed ``document_parsing.source_scope``
-(the records of a corpus that moved stay under the old scope until a run
-retires it, see ``indexing.retire_source_scopes``):
+document *version* by that path plus a hash of its full text. Without the
+doc-status registry the version id does not depend on where the corpus sits
+(the same corpus synced to ``/tmp/graphrag-source`` on one machine and
+checked out under ``~/corpus`` on another yields the same ``document_id`` and
+text-unit ids). The registry key does: it also holds the corpus source
+scope, which defaults to the resolved source directory, and an incremental
+run keys ``document_id`` (so the text-unit ids) by it
+(``assign_registry_source``). So with the registry on, a corpus keeps its
+records and its text-unit ids across runs only from the same directory or
+with a fixed ``document_parsing.source_scope`` (the records of a corpus that
+moved stay under the old scope until a run retires it, see
+``indexing.retire_source_scopes``):
 
 * ``compute_doc_id(relative_path, namespace, source_scope)`` -- the registry
   key of a document across runs: the index namespace (suffix, plus any
