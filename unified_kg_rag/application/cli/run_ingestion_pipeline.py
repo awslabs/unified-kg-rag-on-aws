@@ -602,6 +602,7 @@ class IngestionPipelineRunner:
             **({"error": error, "exit_code": EXIT_FAILURE} if error else {}),
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
+            "documents_retrying": len(context.retrying_doc_ids),
             "stages": [
                 {
                     **result.model_dump(

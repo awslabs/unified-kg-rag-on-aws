@@ -404,3 +404,61 @@ def test_failed_documents_holds_a_commit_stopped_after_its_registry_write(
     assert context.status == PipelineStageStatus.FAILED
     assert _counts(providers)["z1.txt"] == 1
     assert len(context.recorded_failed_doc_ids) == 1
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["knowledge graph extraction expert", "claim extraction specialist"],
+    ids=["stage-stops-the-run", "commit"],
+)
+def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
+    tmp_path: Path, stage: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The model is down for fz.txt's requests (HTTP 503) run after run: it
+    # is never counted toward exclusion, so nothing said it kept failing.
+    # Its consecutive failed runs are kept (retry_count) and, from the second
+    # on, warned of with the file and counted in documents_retrying.
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.claim_extraction.enabled = True
+    server = FakeOllama(e2e._respond, "x", e2e.DIM)
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            messages = json.loads(request.content)["messages"]
+            system = "".join(m["content"] for m in messages if m["role"] == "system")
+            human = "".join(m["content"] for m in messages if m["role"] == "user")
+            if stage in system and "Zorbix" in human:
+                return httpx.Response(503, json={"error": "unavailable"})
+        return server(request)
+
+    providers = e2e._providers(
+        config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "d0.txt").write_text(_FILES["d0.txt"])
+    e2e._ingest(config, providers, source, tmp_path / "seed")
+    (source / "fz.txt").write_text(_FAILING)
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
+    seen = []
+    for run in range(3):
+        caplog.clear()
+        context = e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        (fz,) = [
+            r
+            for r in providers.build_doc_status().list_all()
+            if r.file_path == "fz.txt"
+        ]
+        result = runner._json_result(context)
+        seen.append((fz.failure_count, fz.retry_count, result["documents_retrying"]))
+    assert seen == [(0, 1, 0), (0, 2, 1), (0, 3, 1)], seen
+    assert "fz.txt (3)" in caplog.text
+    # Indexed once the model is back: the count starts over.
+    server_ok = FakeOllama(e2e._respond, "x", e2e.DIM)
+    providers = e2e._providers(config, server_ok, e2e.FakeCrossEncoder("r"))
+    e2e._ingest(config, providers, source, tmp_path / "fixed")
+    (fz,) = [
+        r for r in providers.build_doc_status().list_all() if r.file_path == "fz.txt"
+    ]
+    assert (fz.status, fz.retry_count) == (DocStatus.PROCESSED, 0)

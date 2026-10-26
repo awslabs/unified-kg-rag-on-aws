@@ -50,6 +50,10 @@ _SUMMARY_METRICS_CONFIG = {
         "recorded_failed_doc_ids",
         "Documents recorded FAILED (retried next run)",
     ),
+    "Documents Retrying": (
+        "retrying_doc_ids",
+        "Documents failing consecutive runs for an error not their own",
+    ),
     "Translated Units": (
         "translated_units",
         "Text segments processed through translation",

@@ -275,8 +275,10 @@ class IncrementalIndexer:
         self._in_flight: set[str] = set()
         # Community drift of the last commit (None without communities).
         self.community_drift: CommunityDrift | None = None
-        # The documents the last commit recorded FAILED.
+        # The documents the last commit recorded FAILED, and those of them
+        # failing again for an error not their own (retrying_records).
         self.recorded_failed_doc_ids: list[str] = []
+        self.retrying_doc_ids: list[str] = []
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -989,7 +991,7 @@ class IncrementalIndexer:
             # A failure that is not the document's own (an outage,
             # credentials, a setting, a failed write) neither counts nor
             # resets it.
-            failure_count = 0
+            failure_count = retry_count = 0
             if failed:
                 failure_count = int(lineage.doc_id in counted_failed_doc_ids)
                 if (
@@ -998,12 +1000,15 @@ class IncrementalIndexer:
                     and existing.content_hash == content_hash
                 ):
                     failure_count += existing.failure_count
+                if lineage.doc_id not in counted_failed_doc_ids:
+                    retry_count = earlier_retries(existing, content_hash) + 1
             record = DocStatusRecord(
                 doc_id=lineage.doc_id,
                 content_hash=content_hash,
                 status=DocStatus.FAILED if failed else DocStatus.PROCESSED,
                 error_info=error_info,
                 failure_count=failure_count,
+                retry_count=retry_count,
                 extraction_fingerprint=self.extraction_fingerprint,
                 suffix=lineage.suffix,
                 scope=(
@@ -1030,6 +1035,7 @@ class IncrementalIndexer:
         self.recorded_failed_doc_ids = [
             r.doc_id for r in records if r.status is DocStatus.FAILED
         ]
+        self.retrying_doc_ids = retrying_records(records)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1800,15 +1806,53 @@ def unit_source_files(context: PipelineContext, unit_ids: Collection[str]) -> li
     )
 
 
+def earlier_retries(record: DocStatusRecord | None, content_hash: str) -> int:
+    """``record``'s ``retry_count`` when it is of ``content_hash`` (its
+    recorded or its attempted content), else 0: new content starts over."""
+    if record is None or content_hash not in (
+        record.content_hash,
+        record.attempted_hash,
+    ):
+        return 0
+    return record.retry_count
+
+
+def retrying_records(records: Iterable[DocStatusRecord]) -> list[str]:
+    """Warn of the ``records`` failing another consecutive run for an error
+    not their own (``retry_count`` >= 2) and return their doc ids.
+
+    Such an error (an outage, credentials, a setting) never excludes a
+    document: the warning is how one that keeps failing gets noticed.
+    """
+    retrying = sorted(
+        (r for r in records if r.retry_count >= 2), key=lambda r: r.doc_id
+    )
+    if retrying:
+        logger.warning(
+            "%d documents failed again for an error that is not their own "
+            "(never counted toward indexing.max_document_failures); fix the "
+            "cause to index them (consecutive failed runs in parentheses): %s",
+            len(retrying),
+            ", ".join(
+                f"{r.file_path or r.doc_id} ({r.retry_count})" for r in retrying[:10]
+            )
+            + (", ..." if len(retrying) > 10 else ""),
+        )
+    return [r.doc_id for r in retrying]
+
+
 def record_item_failures(
     store: DocStatusPort,
     context: PipelineContext,
     unit_ids: Collection[str],
     max_failures: int,
+    retried_unit_ids: Collection[str] = (),
 ) -> list[DocStatusRecord]:
     """Record FAILED the run's documents ``unit_ids`` belong to, after a
     stage failed on those units for an error of their own and stopped the
-    run before the indexing stage could record them.
+    run before the indexing stage could record them. The other documents
+    of ``retried_unit_ids`` (failed for an error not their own) keep their
+    record but one more consecutive ``retry_count``.
 
     Counted like a FAILED commit (``_record_processed``): one more
     consecutive failure of the content, its attempt closed, so a document
@@ -1819,13 +1863,31 @@ def record_item_failures(
     removal. Returns the records written.
     """
     doc_ids = {document_doc_id(d) for d in context.documents_of_units(unit_ids)}
-    if not doc_ids:
+    retried = {
+        document_doc_id(d) for d in context.documents_of_units(retried_unit_ids)
+    } - doc_ids
+    if not doc_ids and not retried:
         return []
     check_write_fence()
     fingerprints = context.incremental_fingerprints
     error_info = f"{_EXTRACTION_FAILED} (an error a retry does not fix)"
     records = []
-    for doc_id, record in store.get_many(sorted(doc_ids)).items():
+    stored = store.get_many(sorted(doc_ids | retried))
+    retrying = [
+        record.model_copy(
+            update={
+                "retry_count": earlier_retries(
+                    record, fingerprints.get(doc_id, record.content_hash)
+                )
+                + 1
+            }
+        )
+        for doc_id, record in stored.items()
+        if doc_id in retried
+    ]
+    for doc_id, record in stored.items():
+        if doc_id not in doc_ids:
+            continue
         content_hash = fingerprints.get(doc_id, record.content_hash)
         earlier = (
             record.failure_count
@@ -1839,6 +1901,7 @@ def record_item_failures(
                     "content_hash": content_hash,
                     "error_info": error_info,
                     "failure_count": earlier + 1,
+                    "retry_count": 0,
                     "extraction_fingerprint": (
                         context.incremental_extraction_fingerprint
                         or record.extraction_fingerprint
@@ -1850,8 +1913,12 @@ def record_item_failures(
                 }
             )
         )
+    retrying = _written_by(retrying, context.pipeline_id)
     records = _written_by(records, context.pipeline_id)
-    store.put_many(records)
+    store.put_many([*records, *retrying])
+    context.record_retrying_documents(retrying_records(retrying))
+    if not records:
+        return records
     context.record_failed_documents(record.doc_id for record in records)
     logger.warning(
         "Recorded %d documents FAILED for extraction errors a retry does not "
@@ -1990,6 +2057,7 @@ def index_delta(
         )
     finally:
         context.record_failed_documents(incremental.recorded_failed_doc_ids)
+        context.record_retrying_documents(incremental.retrying_doc_ids)
     if not removed:
         raise PipelineStageError(
             "Removing the artifacts of deleted documents failed; their "

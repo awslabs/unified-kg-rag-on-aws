@@ -645,6 +645,14 @@ changed once with the full-config keys (#332).
   document filters and dropped out of filtered retrieval) (#376).
 
 ### Added
+- Incremental indexing: a document failing consecutive runs for an error
+  that is not its own (an outage, credentials, a rejected setting, a failed
+  write; never counted toward `indexing.max_document_failures`) is no
+  longer retried silently. The registry keeps its consecutive failed runs
+  (`DocStatusRecord.retry_count`), and from the second the run warns with
+  each file and its count and reports them in `documents_retrying` of the
+  `run-ingestion --output-format json` result and the run summary.
+  Exclusion is unchanged: such a document is never excluded (#PR).
 - The public API exports the errors it raises for callers to tell apart:
   `GraphRAGException`, `ConfigurationError`, `StoreRequestRejectedError`,
   `PipelineExecutionError` and `NamespaceLeaseError` (#416).

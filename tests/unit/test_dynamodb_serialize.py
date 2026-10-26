@@ -88,6 +88,14 @@ def test_failure_count_round_trips_and_defaults_to_zero() -> None:
     assert DynamoDBDocStatusStore._deserialize(item).failure_count == 0
 
 
+def test_retry_count_round_trips_and_defaults_to_zero() -> None:
+    record = _full_record().model_copy(update={"retry_count": 3})
+    item = DynamoDBDocStatusStore._serialize(record)
+    assert DynamoDBDocStatusStore._deserialize(item).retry_count == 3
+    del item["retry_count"]
+    assert DynamoDBDocStatusStore._deserialize(item).retry_count == 0
+
+
 def test_record_with_removed_content_attributes_still_loads() -> None:
     # Records written while DocStatusRecord had content_summary/content_length.
     item = DynamoDBDocStatusStore._serialize(_full_record())

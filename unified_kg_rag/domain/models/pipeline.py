@@ -361,9 +361,21 @@ class PipelineContext(BaseModel):
         "their own); the run's failed_documents count.",
     )
 
+    retrying_doc_ids: list[str] = Field(
+        default_factory=list,
+        description="Registry ids of the documents this run failed for an "
+        "error not their own (never counted toward exclusion) that had failed "
+        "so the run before too (DocStatusRecord.retry_count >= 2); the run's "
+        "documents_retrying count.",
+    )
+
     def record_failed_documents(self, doc_ids: Iterable[str]) -> None:
         """Add ``doc_ids`` to :attr:`recorded_failed_doc_ids`."""
         self.recorded_failed_doc_ids = sorted({*self.recorded_failed_doc_ids, *doc_ids})
+
+    def record_retrying_documents(self, doc_ids: Iterable[str]) -> None:
+        """Add ``doc_ids`` to :attr:`retrying_doc_ids`."""
+        self.retrying_doc_ids = sorted({*self.retrying_doc_ids, *doc_ids})
 
     def documents_of_units(self, unit_ids: Iterable[str]) -> "list[Document]":
         """The run's documents the text units ``unit_ids`` belong to."""

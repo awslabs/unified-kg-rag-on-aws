@@ -615,6 +615,7 @@ class DynamoDBDocStatusStore:
             value = getattr(record, attr)
             item[attr] = {"S": value} if value is not None else {"NULL": True}
         item["failure_count"] = {"N": str(record.failure_count)}
+        item["retry_count"] = {"N": str(record.retry_count)}
         item["attempt_count"] = {"N": str(record.attempt_count)}
         item["crash_batch"] = {"N": str(record.crash_batch)}
         item["attempt_batch"] = (
@@ -651,6 +652,7 @@ class DynamoDBDocStatusStore:
             error_info=_str("error_info"),
             extraction_fingerprint=_str("extraction_fingerprint"),
             failure_count=_int("failure_count"),
+            retry_count=_int("retry_count"),
             attempt_count=_int("attempt_count"),
             attempted_hash=_str("attempted_hash"),
             crash_batch=_int("crash_batch"),
