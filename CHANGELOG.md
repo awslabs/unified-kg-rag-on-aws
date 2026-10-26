@@ -1368,7 +1368,7 @@ changed once with the full-config keys (#332).
   older CLI stops with "Cloud assembly schema version mismatch". Upgrade with
   `npm install -g aws-cdk@2.1146.1`. On the next deploy the Step Functions
   role's trust policy gains `aws:SourceAccount`/`aws:SourceArn` conditions
-  (aws-cdk-lib's confused-deputy fix) (#PR).
+  (aws-cdk-lib's confused-deputy fix) (#438).
 - `docker/Dockerfile` takes the base image from a `BASE_IMAGE` build
   argument whose default is the same pinned public.ecr.aws ref, so a plain
   `docker build` is unchanged. When public.ecr.aws rate-limits the CI
