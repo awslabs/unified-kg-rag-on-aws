@@ -1386,6 +1386,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental indexing: a derivation reads each text unit's extraction
+  records once, and the stored edges of each entity once, instead of again
+  every round. A cascading re-key beside a hub of 3000 text units read
+  199,656 record ids in 32 rounds (14 s of a 17 s run); it now reads
+  12,186 (4 s of 7 s), with the same result (#PR).
 - Incremental indexing (data loss): a claim's statement survives a run
   killed or stopped while retiring a source scope. The retire left a stored
   entity whose text units no longer all had extraction records (derived as

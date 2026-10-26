@@ -2003,6 +2003,40 @@ def test_a_removal_whose_re_key_cascades_ranks_as_a_full_build(
     assert incremental == full
 
 
+def test_a_cascading_derivation_reads_each_record_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cascade above takes several rounds. Each re-read the extraction
+    # records of every unit read in the rounds before: quadratic beside a
+    # hub of many units.
+    kept = {
+        "r4.txt": "Buyer and Acme trade cash 2. Acme and Acme and Acme trade goods 1.",
+        "d1.txt": "Acme and Acme Inc trade parts 3.",
+        "r7.txt": "Initech Corp and Acme Ltd and Initech trade parts 3.",
+    }
+    reads: list[list[str]] = []
+    derive = IndexingManager.derive
+    read_records = OpenSearchIndexer.read_extraction_records
+
+    def counted_derive(self: Any, *args: Any, **kwargs: Any) -> Any:
+        reads.append([])
+        return derive(self, *args, **kwargs)
+
+    def counted_records(self: Any, keys: list[str], *args: Any, **kwargs: Any) -> Any:
+        if reads:
+            reads[-1].extend(keys)
+        return read_records(self, keys, *args, **kwargs)
+
+    monkeypatch.setattr(IndexingManager, "derive", counted_derive)
+    monkeypatch.setattr(OpenSearchIndexer, "read_extraction_records", counted_records)
+
+    _state(tmp_path, [{**kept, "d7.txt": "Initech and Buyer trade cash 2."}, kept])
+
+    assert reads
+    for read in reads:
+        assert len(read) == len(set(read))
+
+
 def test_an_edit_leaves_no_interim_claim(tmp_path: Path) -> None:
     # No fault. The edit makes the removal derive a claim of a kept unit
     # under an interim id (its subject resolved without the edited
