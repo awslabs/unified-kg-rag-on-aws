@@ -19,7 +19,8 @@ kind for model spans), ``"internal"`` otherwise.
 
 Session and user: inside :func:`bind_identity` every span opened here also
 carries ``session.id`` / ``user.id``, the names Langfuse and Phoenix
-(OpenInference) group traces by.
+(OpenInference) group traces by; :func:`bind_attributes` does the same for
+other attributes (a ``run-eval`` run's strategy and repeat).
 
 Spans carry counts, ids and timings only. Text content (prompts, completions,
 retrieved passages) is recorded only through :func:`content_policy`, which is
@@ -47,6 +48,7 @@ __all__ = [
     "SESSION_ID",
     "USER_ID",
     "TracerBackend",
+    "bind_attributes",
     "bind_identity",
     "content_policy",
     "current_trace_ids",
@@ -67,7 +69,7 @@ USER_ID = "user.id"
 
 SpanKind = Literal["internal", "client"]
 
-_IDENTITY: ContextVar[Mapping[str, str] | None] = ContextVar(
+_IDENTITY: ContextVar[Mapping[str, Any] | None] = ContextVar(
     "kg_rag_trace_identity", default=None
 )
 _NULL_SCOPE: AbstractContextManager[None] = contextlib.nullcontext()
@@ -232,8 +234,9 @@ def _with_identity(attributes: dict[str, Any]) -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def _identity_scope(identity: Mapping[str, str]) -> Iterator[None]:
-    token = _IDENTITY.set(identity)
+def _identity_scope(identity: Mapping[str, Any]) -> Iterator[None]:
+    # Nested bindings add to the enclosing one.
+    token = _IDENTITY.set({**(_IDENTITY.get() or {}), **identity})
     try:
         yield
     finally:
@@ -259,6 +262,16 @@ def bind_identity(
     if user_id:
         identity[USER_ID] = user_id
     return _identity_scope(identity)
+
+
+def bind_attributes(**kwargs: Any) -> AbstractContextManager[None]:
+    """Tag every span opened inside the block with ``kwargs`` (as
+    ``kg_rag.<key>``), as :func:`bind_identity` does the ids: a run's
+    settings on spans opened deep inside it, root spans included. A span's
+    own attribute of the same name wins. A no-op when tracing is off."""
+    if _active_backend() is None or not kwargs:
+        return _NULL_SCOPE
+    return _identity_scope(_merge(None, kwargs))
 
 
 def span(

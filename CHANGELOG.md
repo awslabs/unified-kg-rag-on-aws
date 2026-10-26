@@ -1480,6 +1480,13 @@ changed once with the full-config keys (#332).
   the input count its error names (it reported 0 beside "processed N
   inputs"), and its error is logged once: the stage logged it before
   raising, with the traceback, and the pipeline again (#PR).
+- Tracing: the spans of a `run-eval` run, its `kg_rag.batch` and
+  `kg_rag.evaluate` roots included, carry the run's
+  `kg_rag.eval.strategy` and `kg_rag.eval.repeat`, so the runs of a
+  strategy comparison or of `--repeats` tell apart; the roots named
+  neither. `observability.bind_attributes` binds them, and a nested
+  `bind_identity` now adds to the enclosing binding instead of replacing
+  it (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
