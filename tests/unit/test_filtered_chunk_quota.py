@@ -292,8 +292,8 @@ async def test_mix_fills_the_slots_a_subset_index_fills(case: str) -> None:
 async def test_slots_on_unchecked_chunks_cost_a_request_a_round(config: Config) -> None:
     # Regression: a slot moved past the checked chunks (e1's first five are
     # e0's, so its slots go to the rest) was checked chunk by chunk: 400
-    # failing chunks cost about 80 rounds. The whole unchecked rest of that
-    # hit's lineage is now asked at once.
+    # failing chunks cost about 80 rounds. Each round asks twice as far
+    # past the deepest unchecked chunk as the one before.
     config.search.lightrag_search.chunk_stream_top_k = 20
     config.search.lightrag_search.related_chunk_number = 5
     store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
@@ -309,4 +309,51 @@ async def test_slots_on_unchecked_chunks_cost_a_request_a_round(config: Config) 
     assert sorted(r.source for r in out["lightrag_linked_chunks"]) == sorted(
         [*shared, "u811"]
     )
-    assert len(store.checks) <= 3
+    assert len(store.checks) <= 10
+    assert sum(len(ids) for ids in store.checks) <= 2 * (len(shared) + 401)
+
+
+async def test_a_slot_on_an_unchecked_chunk_checks_a_hub_lineage_only_near_it(
+    config: Config,
+) -> None:
+    # A slot that moved onto one unchecked chunk had the whole unchecked rest
+    # of the hit's lineage checked: a hub's 1000 more chunks for one slot.
+    config.search.lightrag_search.chunk_stream_top_k = 20
+    config.search.lightrag_search.related_chunk_number = 5
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
+    hub = [*shared, "u10", *(f"u{i}" for i in range(11, 2011, 2))]
+    hits = [_entity("e0", shared), _entity("e1", hub)]
+    out = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
+    )
+    assert sorted(r.source for r in out["lightrag_linked_chunks"]) == sorted(
+        [*shared, "u11"]  # e1's slot: u10 fails
+    )
+    assert sum(len(ids) for ids in store.checks) < 30, store.checks
+
+
+async def test_a_filter_passing_the_unfiltered_selection_costs_one_check(
+    config: Config,
+) -> None:
+    # The first round asks the unfiltered selection with each hit's first
+    # chunks: when the filter passes it, no second round asks the rest of a
+    # lineage whose first chunks another hit holds.
+    config.search.lightrag_search.chunk_stream_top_k = 20
+    config.search.lightrag_search.related_chunk_number = 5
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
+    hits = [
+        _entity("e0", shared),
+        _entity("e1", [*shared, *(f"u{i}" for i in range(11, 211, 2))]),
+    ]
+    await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
+    )
+    assert len(store.checks) == 1, store.checks

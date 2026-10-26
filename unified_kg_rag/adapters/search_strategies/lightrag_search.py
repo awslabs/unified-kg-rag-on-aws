@@ -641,18 +641,24 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         Each hit gets at most ``related_chunk_number`` chunks. The first
         round checks (ids only) each hit's first ``related_chunk_number``
-        chunks, all hits in one request; the hits still short of their slots
-        then have their whole remaining lineage checked, again in one
-        request. So a hub hit's long lineage does not stop the check before
-        the other hits' are asked, and a selective filter costs two requests,
-        not one per round of a few ids. The selection then keeps a chunk on
-        its first citing hit only and polling hands a short hit's slots to
-        the others, so a slot can still land on a chunk neither round asked:
-        the whole unchecked rest of the lineage of each hit holding such a
-        chunk is checked (one request per round, not per chunk) and the chunks
-        selected again, until every selected chunk is known. A failed check counts what it asked as failing
-        (fail-closed) and ends the checks; the slots then go to the next
-        chunks, fetched under the filter (which the fetch applies too).
+        chunks and the unfiltered selection, all in one request, and ends the
+        checks when the selection is then all checked (a filter that passes
+        it). Otherwise the hits still short of their slots have their whole
+        remaining lineage checked, again in one request. So a hub hit's long
+        lineage does not stop the check before the other hits' are asked, and
+        a selective filter costs two requests, not one per round of a few
+        ids. The selection then keeps a chunk on its first citing hit only
+        and polling hands a short hit's slots to the others, so a slot can
+        still land on a chunk neither round asked: each hit holding such a
+        chunk has its lineage checked past the deepest one, by
+        ``related_chunk_number`` + 1 chunks and twice as far each round (one
+        request per round, not per chunk, and a run of failing chunks costs
+        a few rounds; the whole rest of a hub's lineage cost a request per
+        few ids), and the chunks selected again, until every selected chunk
+        is known. A failed
+        check counts what it asked as failing (fail-closed) and ends the
+        checks; the slots then go to the next chunks, fetched under the
+        filter (which the fetch applies too).
         """
         cap = self._lightrag_config.related_chunk_number
         lineages = [
@@ -688,7 +694,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                     if sum(1 for u in lineage[:cap] if u in passed) < cap
                 ]
             else:
-                parts = [lineage[:cap] for lineage in lineages]
+                # The unfiltered selection too: the slots land there unless
+                # the filter fails some of it, which the order of a lineage
+                # (stored sorted by id) decides otherwise.
+                parts = [select(), *(lineage[:cap] for lineage in lineages)]
             ask = [
                 u
                 for u in dict.fromkeys(u for part in parts for u in part)
@@ -696,22 +705,32 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             ]
             if ask and not await check(ask):
                 return select()
+            if not second and all(u in checked for u in select()):
+                return select()
         selected = select()
+        # How far past the deepest unknown chunk a round asks; doubled each
+        # round. Asking only the selected chunks cost a request per failing
+        # chunk, a hub's whole rest a request per few ids (max_terms_count).
+        reach = cap + 1
+
+        def ahead(lineage: list[str], unknown: set[str]) -> list[str]:
+            deepest = max(i for i, u in enumerate(lineage) if u in unknown)
+            return lineage[: deepest + reach]
+
         while unknown := {u for u in selected if u not in checked}:
-            # The whole unchecked rest of each hit a slot moved onto: asking
-            # only the selected chunks cost a request per failing chunk.
             ok = await check(
                 list(
                     dict.fromkeys(
                         u
                         for lineage in lineages
                         if unknown.intersection(lineage)
-                        for u in lineage
+                        for u in ahead(lineage, unknown)
                         if u not in checked
                     )
                 )
             )
             selected = select()
+            reach *= 2
             if not ok:
                 break
         return selected

@@ -1499,6 +1499,16 @@ changed once with the full-config keys (#332).
   (exit 2) naming the filterable keys, as the user guide says. A custom
   strategy that does not override `filtered_index_prefixes` keeps the
   every-index check (#PR).
+- LightRAG `mix`/`hybrid` under a filter on text units: the ids-only
+  check of the linked chunks asks the unfiltered selection in its first
+  round and stops there when the filter passes it, and a slot that moves
+  onto an unchecked chunk checks its hit's lineage a little past that
+  chunk (twice as far each round) instead of the whole rest. Whether a
+  filter that passes everything cost one request or a check of every
+  lineage depended on the stored (id-sorted) lineage order: on a
+  2,000-chunk hub corpus such queries took 72-76 store requests instead
+  of 693-697 in the runs that flipped, with identical results in 36 of
+  36 query and filter pairs (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
