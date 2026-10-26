@@ -27,10 +27,10 @@ def _suffix(value: str) -> str:
 
 def _strategy_list(value: str) -> list[str]:
     """A comma-separated list of distinct search strategies (``local,mix``)."""
-    names = [name.strip() for name in value.split(",") if name.strip()]
+    names = [name.strip() for name in value.split(",")]
     valid = [s.value for s in SearchStrategy]
-    unknown = [name for name in names if name not in valid]
-    if not names or unknown:
+    unknown = [name for name in names if name and name not in valid]
+    if "" in names or unknown:
         raise argparse.ArgumentTypeError(
             f"invalid strategy {', '.join(unknown) or repr(value)} "
             f"(choose from {', '.join(valid)})"

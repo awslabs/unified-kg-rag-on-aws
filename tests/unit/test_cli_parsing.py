@@ -700,7 +700,8 @@ def test_eval_parser_takes_a_strategy_list() -> None:
         ["--data-path", "d", "--search-strategy", "local, mix,global"]
     )
     assert args.search_strategy == ["local", "mix", "global"]
-    for bad in ("local,nope", "local,local", ","):
+    # An empty entry ("local,") was dropped, so a comparison ran one strategy.
+    for bad in ("local,nope", "local,local", ",", "local,", "local,,mix", ""):
         with pytest.raises(SystemExit):
             _eval_parser().parse_args(["--data-path", "d", "--search-strategy", bad])
     assert _eval_parser().parse_args(["--data-path", "d"]).search_strategy == ["auto"]
