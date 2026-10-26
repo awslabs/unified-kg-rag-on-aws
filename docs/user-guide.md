@@ -1623,7 +1623,10 @@ path and profile (`run-prompt-tuning`), or the counts written
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-with (an argparse error included), so stdout is always JSON. A
+with (an argparse error included), so stdout is always JSON. That holds
+from the first moment: a SIGTERM while the CLI still loads, or after it
+printed its result while the process exits, exits `143` too (the status
+document only in the first case). A
 `run-ingestion` result whose run a stage failed carries the same `error` and
 `exit_code`; `run-ingestion` adds the `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in

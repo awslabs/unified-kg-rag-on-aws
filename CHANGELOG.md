@@ -1462,6 +1462,14 @@ changed once with the full-config keys (#332).
   as PID 1: the kernel dropped a stop signal that arrived before the CLI
   installed its handler, and nothing reaped the processes it left. A
   redeploy of the compute stack picks this up (#PR).
+- CLIs: a SIGTERM in the first seconds of a run, while the CLI imports
+  its dependencies, exits 143 with `--output-format json`'s
+  `{"status": "interrupted", "exit_code": 143}`; it ended the process
+  with -15 and no output. The console scripts start through
+  `unified_kg_rag.application.cli.launch`, which installs the handler
+  before those imports (reinstall the package to regenerate the scripts).
+  A SIGTERM after a run printed its result, while the process exits,
+  exits 143 too instead of -15 (#PR).
 - A fatal store error in one of the index mapping or settings reads that
   open an OpenSearch search (one per index searched; a cluster that never
   answered) cancels the reads beside it, which kept waiting on the store
