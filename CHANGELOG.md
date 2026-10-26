@@ -1364,6 +1364,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- OpenSearch: a bulk write the store rejects items of names the first
+  item's error (`type: reason`, cut at 300 characters and without the
+  field-value preview a mapping error quotes) after the count, which was
+  all it reported (#PR).
 - Incremental indexing: a claim re-derived while one of its endpoint
   entities could not be derived (a text unit it cites has no extraction
   record) keeps that stored entity as its endpoint; it took the entity its

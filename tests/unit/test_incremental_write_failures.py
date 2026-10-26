@@ -251,6 +251,32 @@ def test_opensearch_bulk_item_failures_carry_their_ids() -> None:
     assert stats.failed_ids == ["e-2"]
 
 
+def test_opensearch_bulk_item_failures_name_the_first_reason() -> None:
+    # Only the count was reported: the reason the store rejected the items
+    # (a mapping conflict, a vector of the wrong dimension) was dropped. It
+    # is named, without the rejected value the reason previews.
+    reason = (
+        "failed to parse field [embedding] of type [knn_vector] in document "
+        "with id 'e-2'. Preview of field's value: '[0.1, 0.2]'"
+    )
+    error = {"type": "mapper_parsing_exception", "reason": reason}
+    response = {
+        "errors": True,
+        "items": [{"index": {"_id": "e-2", "status": 400, "error": error}}],
+    }
+    indexer = _opensearch_indexer(_BulkClient(response))
+
+    (message,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
+
+    assert message == (
+        "Bulk API errors: 1 (first: mapper_parsing_exception: failed to parse "
+        "field [embedding] of type [knn_vector] in document with id 'e-2'.)"
+    )
+    error["reason"] = "x" * 1000
+    (message,) = indexer._perform_indexing("idx", [{"id": "e-2"}]).errors
+    assert len(message) < 350
+
+
 def test_opensearch_failed_bulk_request_fails_every_id() -> None:
     indexer = _opensearch_indexer(_BulkClient(None))
 
