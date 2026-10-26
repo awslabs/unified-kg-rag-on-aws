@@ -838,7 +838,7 @@ changed once with the full-config keys (#332).
   runtime uses it (the container image and `iac/` run 3.12). Every install
   now gets Pillow 13.0.0: the lock no longer keeps Pillow 12.3.0 and the
   other 3.10-only pins, which replaces the Pillow split by Python version
-  from #426. Upgrade: install on Python 3.11 or 3.12 (#PR).
+  from #426. Upgrade: install on Python 3.11 or 3.12 (#430).
 - CI: the dependency license check runs on every supported Python (3.11
   and 3.12), so packages the lock installs on one of them only are checked
   too (#428).
