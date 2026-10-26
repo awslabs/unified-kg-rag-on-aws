@@ -5,7 +5,7 @@ import json
 import math
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, ClassVar
@@ -37,8 +37,10 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
@@ -254,6 +256,13 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         """
         return None
 
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields | None:
+        """:meth:`filter_fields` of the indexes ``prefixes`` names only (the
+        ones a strategy applies the caller's filters to). By default every
+        index's: a backend without per-index schemas, or one ``prefixes``
+        do not name (a graph store)."""
+        return self.filter_fields()
+
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         """The limits in force on ``prefix``'s index for ``suffix``: the hits
         one search returns and the values one ``terms`` clause takes. By
@@ -313,6 +322,18 @@ class BaseSearchStrategy(ABC):
         self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
+
+    def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str] | None:
+        """The document indexes ``strategy``'s searches apply the caller's
+        filters to, which a filter key must be declared on
+        (``GraphRAGChain`` checks it): a key on an index the strategy never
+        reads is dropped there, and the query ran unfiltered. ``None`` (the
+        default): every index of the document retriever."""
+        return None
+
+    def _built_prefixes(self, *prefixes: str) -> list[str]:
+        """The ``prefixes`` the configured pipeline builds."""
+        return [p for p in configured_index_prefixes(self.config) if p in prefixes]
 
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:

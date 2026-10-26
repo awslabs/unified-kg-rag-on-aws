@@ -785,9 +785,13 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
-  거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`)는
-  필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
-  (`unified_kg_rag/adapters/storage/filter_schema.py`).
+  거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
+  `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
+  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive`는 텍스트 단위를, `hybrid`와
+  `mix`는 엔티티·관계·텍스트 단위와 Neptune을, `local`과 `drift`는 파이프라인이 만드는 모든
+  인덱스와 Neptune을, `global`은 커뮤니티 리포트(`search.global_search.text_unit_slots`를
+  쓰면 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는
+  라우팅될 수 있는 모든 전략에 맞아야 합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
@@ -836,7 +840,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
 `set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
-함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2).
+함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 라우팅될 수 있는
+전략 중 하나라도 거부하는 키를 거부합니다. 그 전략으로 라우팅된 질문이 실패하기 때문입니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 
@@ -1216,7 +1221,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 ### 전략 비교
 
 `run-eval --search-strategy local,mix,global --repeats 3`은 같은 질의를 전략마다
-`--repeats`번 답하고 채점하며(지정한 전략이 항목별 `search_strategy`보다 우선), 실행마다
+`--repeats`번 답하고 채점하며(지정한 전략이 항목별 `search_strategy`보다 우선. 전략은 플래그 하나에
+나열하며, `--search-strategy`를 두 번 주면 사용법 오류), 실행마다
 결과 파일을 저장하고 `evaluation_comparison_<timestamp>.json`을 추가로 씁니다.
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: 질의별 반복 평균을 질의 전체로 평균한
@@ -1453,12 +1459,15 @@ custom_prompts:
 결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모든
 단위를 실패시킨 모델 장애는 아무것도 기록하지 않고, 일부 단위만 실패시킨 장애는 그 문서들을 기록하며
 다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 문서 자체의 것이 아닌 오류로 연속 실행에서
-또 실패한 문서 수(`documents_retrying`. 제외되지 않으며, 파일과 실행 횟수를 경고로도 알림), 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
+또 실패한 문서 수(`documents_retrying`. 제외되지 않으며, 파일과 실행 횟수를 경고로도 알림), 내용이 그대로인 채
+`indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 요약에도 표시),
+단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
-붙여 출력하므로 표준 출력은 항상 JSON입니다. 단계가 실패한 `run-ingestion` 실행의 결과에도
+붙여 출력하므로 표준 출력은 항상 JSON입니다. 시작 직후에도 같습니다. CLI가 아직 로드 중일 때나 결과를
+출력한 뒤 프로세스가 끝나는 중에 받은 SIGTERM도 `143`으로 끝납니다(상태 문서는 앞의 경우에만 출력). 단계가 실패한 `run-ingestion` 실행의 결과에도
 같은 `error`와 `exit_code`가 담깁니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
 (실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를

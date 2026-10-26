@@ -224,6 +224,9 @@ class PipelineStage(ABC):
         tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
+        # Counted when the output check fails the stage, so the failed
+        # result agrees with the error naming them.
+        input_count = output_count = 0
 
         try:
             input_count, output_count, metrics = self._execute_core(context)
@@ -264,7 +267,12 @@ class PipelineStage(ABC):
             end_time = datetime.now()
 
             return self._create_result(
-                PipelineStageStatus.FAILED, start_time, end_time, error_message=str(e)
+                PipelineStageStatus.FAILED,
+                start_time,
+                end_time,
+                input_count,
+                output_count,
+                error_message=str(e),
             )
         finally:
             reset_contextvars(**tokens)
@@ -312,7 +320,8 @@ class PipelineStage(ABC):
     ) -> None:
         """Raise when a stage that must have input got none, or a critical
         stage produced nothing; the message names ``failed_files``, the source
-        files of the units the stage failed on."""
+        files of the units the stage failed on. Not logged here: the stage
+        logs the error it fails with (``_execute_logged``)."""
         is_critical = self.stage_type not in self.OPTIONAL_OUTPUT_STAGES
         must_have_input = self.stage_type in self.MUST_HAVE_INPUT_STAGES
 
@@ -322,7 +331,6 @@ class PipelineStage(ABC):
                     f"Stage '{self.name}' received 0 inputs but requires input "
                     f"to function. {self._empty_input_hint()}"
                 )
-                logger.error("%s", error_msg)
                 raise PipelineStageError(error_msg)
             logger.info("Stage '%s' had no input to process", self.name)
             return
@@ -339,7 +347,6 @@ class PipelineStage(ABC):
                     + ", ".join(failed_files[:10])
                     + (" ..." if len(failed_files) > 10 else "")
                 )
-            logger.error("%s", error_msg)
             raise PipelineStageError(error_msg)
 
         if output_count == 0:
@@ -498,6 +505,11 @@ class DocumentLoadingStage(_RegistryStage):
             ),
             "documents_deferred": (
                 len(context.incremental_delta.deferred)
+                if context.incremental_delta is not None
+                else 0
+            ),
+            "documents_excluded": (
+                len(context.incremental_delta.excluded)
                 if context.incremental_delta is not None
                 else 0
             ),

@@ -838,7 +838,8 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
     GraphRAG's 20 and 3: 67). Primer calls and actions run
     `search.max_concurrency` at a time.
   - The action local searches pack their context by the local type shares
-    (`search.token_manager.type_budgets`, text 0.5), not MS GraphRAG's DRIFT
+    (`search.token_manager.type_budgets`, renormalized over the types
+    present: about 0.60 text, 0.24 entities, 0.16 relationships), not MS GraphRAG's DRIFT
     `local_search_text_unit_prop` 0.9 / `local_search_community_prop` 0.1.
   - The primer searches reports of every depth, not MS GraphRAG's one
     `community_level`, so similarity picks the granularity (on a synthetic
@@ -885,8 +886,10 @@ depth selects the cut.
   upstream's stops at `community_level`. Ratings run
   `search.max_concurrency` at a time.
 
-**Map-reduce.** At least `map_reduce_min_results` reports are packed, in rank
-order (MS GraphRAG shuffles them), into batches of `map_context_tokens` (MS
+**Map-reduce.** At least `map_reduce_min_results` reports are packed, in the
+order the selection gives them (rank for the fixed cut, rating for dynamic
+selection, similarity for the similarity fallback; MS GraphRAG shuffles
+them), into batches of `map_context_tokens` (MS
 GraphRAG's `data_max_tokens`); each map
 call (`search.max_concurrency` at a time) extracts key points scored 0-100,
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
@@ -951,8 +954,10 @@ traversal, hence graph expansion is opt-in.
   `spare_context_budget_first` types, as LightRAG gives chunks what its graph
   sections leave), so shares, never cross-type score comparisons, decide the
   mix. The shares are of `max_context_tokens`, not upstream's numbers: at
-  30000, LightRAG mix/hybrid get text 18072, entities 7228 and relationships
-  4698 tokens (upstream: about 16000 / 6000 / 8000). Synthesized global
+  30000, LightRAG mix/hybrid get shares of text 18072, entities 7228 and
+  relationships 4698 tokens (upstream: about 16000 / 6000 / 8000); after the
+  512-token prompt buffer, the question and the section headers about 17700
+  / 7050 / 4600 are packed. Synthesized global
   sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
   truncated text included.
@@ -1213,7 +1218,7 @@ by default**.
 
 This section is the single reference for extending the framework. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
 
-- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index). No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.

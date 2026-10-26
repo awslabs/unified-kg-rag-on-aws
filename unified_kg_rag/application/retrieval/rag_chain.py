@@ -916,7 +916,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         if state.get("filters"):
             self._validate_filter_keys(
-                state["filters"], list(strategy_instance.retrievers.values())
+                state["filters"],
+                list(strategy_instance.retrievers.values()),
+                strategy_instance.filtered_index_prefixes(state["resolved_strategy"]),
             )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
@@ -975,27 +977,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> None:
         """Raise ``InvalidFilterError`` if ``filters`` names a key no index
         ``strategy`` reads declares, as each of its queries would (for
-        ``auto``: no index any routable strategy reads). For callers that
-        keep filters across queries (an interactive session)."""
-        strategies = (
-            routable_strategies(self.config)
-            if strategy is SearchStrategy.AUTO
-            else (strategy,)
-        )
-        self._validate_filter_keys(
-            filters,
-            [
-                retriever
-                for s in strategies
-                for retriever in self._get_strategy_instance(s).retrievers.values()
-            ],
-        )
+        ``auto``: a key some routable strategy rejects, since ``auto`` may
+        route any question there). For callers that keep filters across
+        queries (an interactive session)."""
+
+        def check(strategy: SearchStrategy) -> None:
+            instance = self._get_strategy_instance(strategy)
+            self._validate_filter_keys(
+                filters,
+                list(instance.retrievers.values()),
+                instance.filtered_index_prefixes(strategy),
+            )
+
+        if strategy is not SearchStrategy.AUTO:
+            check(strategy)
+            return
+        for routed in routable_strategies(self.config):
+            try:
+                check(routed)
+            except InvalidFilterError as e:
+                raise InvalidFilterError(
+                    f"auto may route to {routed.value}, which rejects it: {e}"
+                ) from e
 
     @staticmethod
     def _validate_filter_keys(
-        filters: dict[str, Any] | None, retrievers: list[BaseGraphRAGRetriever]
+        filters: dict[str, Any] | None,
+        retrievers: list[BaseGraphRAGRetriever],
+        prefixes: list[str] | None = None,
     ) -> None:
-        """Reject caller filter keys that no retriever of the strategy declares.
+        """Reject caller filter keys that no retriever of the strategy declares
+        (on a document retriever, on the indexes ``prefixes`` the strategy
+        reads with the caller's filters, when given).
 
         Each retriever applies a key only to the indexes / labels that declare
         it, so an undeclared key would be dropped everywhere and the query would
@@ -1004,7 +1017,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """
         if not filters:
             return
-        schemas = [r.filter_fields() for r in retrievers]
+        schemas = [
+            r.filter_fields() if prefixes is None else r.filter_fields_for(prefixes)
+            for r in retrievers
+        ]
         if any(schema is None for schema in schemas):
             return
         declared = union_filter_fields(s for s in schemas if s is not None)

@@ -2026,9 +2026,7 @@ class DataIngestionPipeline:
                 self.state_manager.update_stage_result(context, result)
                 if result.status == PipelineStageStatus.COMPLETED:
                     self._save_stage_outputs_to_cache(context, stage.name)
-            if result.status == PipelineStageStatus.FAILED:
-                logger.error("Stage '%s' failed: %s", stage.name, result.error_message)
-
+            # A failed stage logged its error (PipelineStage._execute_logged).
             return result
 
         except Exception as e:

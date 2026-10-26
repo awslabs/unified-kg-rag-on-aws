@@ -281,6 +281,17 @@ def test_app_container_gets_the_longest_stop_timeout() -> None:
     assert container["StopTimeout"] == 120
 
 
+@pytest.mark.parametrize("task", ["IngestionTask", "QueryTask"])
+def test_app_container_runs_under_an_init_process(task: str) -> None:
+    # The image has no init, so the CLI ran as PID 1: the kernel drops a
+    # signal PID 1 has no handler for (one during its imports) and nothing
+    # reaped its orphaned children.
+    task_defs = _compute_template().find_resources("AWS::ECS::TaskDefinition")
+    task_def = next(v for k, v in task_defs.items() if k.startswith(task))
+    (container,) = task_def["Properties"]["ContainerDefinitions"]
+    assert container["LinuxParameters"]["InitProcessEnabled"] is True
+
+
 def test_query_role_cannot_write_or_delete_any_store() -> None:
     statements = _role_statements(
         _compute_template(guardrail_identifier="gr-1"), "QueryTaskRole"

@@ -119,6 +119,84 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_after_main_returned_ends_the_process_with_143(
+    capsys, monkeypatch
+) -> None:
+    # The default handler was restored as main returned, so a SIGTERM
+    # while the process tore down (thread joins, exit handlers) ended it
+    # with -15 after the success document.
+    from unified_kg_rag.application.cli import conventions
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    ended: list[int] = []
+    monkeypatch.setattr(conventions, "_exit_stopped", ended.append)
+    previous = signal.getsignal(signal.SIGTERM)
+
+    @exits_on_sigterm
+    def main() -> int:
+        json_output(argparse.Namespace(output_format="json"))
+        print_json({"ok": True})
+        return 0
+
+    try:
+        assert main() == 0
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler) and handler is not previous
+        handler(signal.SIGTERM, None)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert ended == [143]
+    # One document: the result, not a status after it.
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
+@pytest.mark.parametrize("output_format", ["json", "text"])
+def test_a_sigterm_while_a_cli_loads_exits_143(
+    tmp_path: Path, output_format: str
+) -> None:
+    # A SIGTERM during a CLI's imports (seconds) ended it with -15 and no
+    # JSON: the console-script entry point installs a handler before them.
+    import subprocess
+
+    script = (
+        "import os, signal, sys\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "assert 'langchain_core' not in sys.modules and 'rich' not in sys.modules\n"
+        "launch._run = lambda module: (\n"
+        "    signal.signal(signal.SIGTERM, launch._stopped_while_loading),\n"
+        "    os.kill(os.getpid(), signal.SIGTERM),\n"
+        "    signal.pause(),\n"
+        ")\n"
+        "launch.run_rag()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, "--output-format", output_format],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+    )
+    assert done.returncode == 143, done.stderr
+    if output_format == "json":
+        assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 143}
+    else:
+        assert done.stdout == ""
+
+
+def test_every_console_script_starts_through_the_launcher() -> None:
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    scripts = tomllib.loads(pyproject.read_text())["project"]["scripts"]
+    from unified_kg_rag.application.cli import launch
+
+    for name, target in scripts.items():
+        module, _, function = target.partition(":")
+        assert module == "unified_kg_rag.application.cli.launch", name
+        assert callable(getattr(launch, function)), name
+
+
 @pytest.mark.parametrize(
     ("stop", "code"),
     [(lambda: os.kill(os.getpid(), signal.SIGTERM), 143), (KeyboardInterrupt, 130)],

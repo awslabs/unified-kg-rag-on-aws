@@ -703,6 +703,25 @@ def test_eval_parser_takes_a_strategy_list() -> None:
     for bad in ("local,nope", "local,local", ","):
         with pytest.raises(SystemExit):
             _eval_parser().parse_args(["--data-path", "d", "--search-strategy", bad])
+    assert _eval_parser().parse_args(["--data-path", "d"]).search_strategy == ["auto"]
+
+
+def test_eval_search_strategy_given_twice_is_a_usage_error(capsys) -> None:
+    # The second flag replaced the first silently: a comparison of local and
+    # mix ran mix alone.
+    with pytest.raises(SystemExit) as exc:
+        _eval_parser().parse_args(
+            [
+                "--data-path",
+                "d",
+                "--search-strategy",
+                "local",
+                "--search-strategy",
+                "mix",
+            ]
+        )
+    assert exc.value.code == 2
+    assert "--search-strategy given more than once" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         _eval_parser().parse_args(["--data-path", "d", "--repeats", "0"])
 

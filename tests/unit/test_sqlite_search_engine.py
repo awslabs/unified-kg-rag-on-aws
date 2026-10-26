@@ -1373,7 +1373,9 @@ def test_every_retriever_request_shape_runs_on_the_engine(
             fields["lexical"],
             fields["vector"],
             vector,
-            size=retriever._hit_count(index_query, window),
+            size=retriever._hit_count(
+                index_query, window, retriever._get_name(prefix, None)
+            ),
             window=window,
         )
         alias = retriever._get_name(prefix, None)

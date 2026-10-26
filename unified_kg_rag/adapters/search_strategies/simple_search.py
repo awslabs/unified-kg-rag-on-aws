@@ -27,6 +27,10 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))
 class SimpleSearchStrategy(BaseSearchStrategy):
+    def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
+        # Every index the pipeline builds (_apply_claim_gate).
+        return configured_index_prefixes(self.config)
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

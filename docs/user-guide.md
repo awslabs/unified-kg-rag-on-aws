@@ -843,10 +843,15 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API.
 - A filter applies only to the stores that declare its field
-  (`type:person` leaves text units unfiltered). A key no store of the
-  selected strategy declares (e.g. `category`) raises `InvalidFilterError`,
-  listing the filterable keys
-  (`unified_kg_rag/adapters/storage/filter_schema.py`).
+  (`type:person` leaves text units unfiltered). A key no store the
+  selected strategy reads declares (e.g. `category`, or `type` with `naive`
+  or `global`) raises `InvalidFilterError`, listing the filterable keys
+  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
+  units; `hybrid` and `mix` entities, relationships, text units and
+  Neptune; `local` and `drift` every index the pipeline builds and Neptune;
+  `global` community reports (and text units with
+  `search.global_search.text_unit_slots`); `simple` every index the
+  pipeline builds; `auto` must suit every strategy it may route to.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
   claims and community reports carry the filter values of their text units'
@@ -911,7 +916,9 @@ conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 `quit` / `exit`. A command is the whole line (only `set-filter` takes an
 argument): `help me find ...` is a question. `set-filter` refuses a key no
 index of the search strategy declares, as `--filters` does (with
-`--interactive`, before the first question: exit code 2).
+`--interactive`, before the first question: exit code 2). With `auto` it
+refuses a key that any strategy `auto` may route to rejects, since a routed
+question would fail.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):
@@ -1351,7 +1358,8 @@ unattributable), `retrieved_source_types`, `retrieved_entities` and
 
 `run-eval --search-strategy local,mix,global --repeats 3` answers and scores
 the same queries with each strategy, `--repeats` times each (the listed
-strategy overrides a per-item `search_strategy`), saves every run's files and
+strategy overrides a per-item `search_strategy`; list them in one flag, as a
+second `--search-strategy` is a usage error), saves every run's files and
 adds `evaluation_comparison_<timestamp>.json`:
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: the mean over queries of the
@@ -1613,7 +1621,10 @@ every unit records none, one that fails some units records their documents,
 retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
-never excluded, also warned of with each file and its run count) and
+never excluded, also warned of with each file and its run count), the
+number of documents left out because they failed
+`indexing.max_document_failures` consecutive runs unchanged
+(`documents_excluded`, also in the summary) and
 per-stage results (`run-ingestion`), each run's summary, the comparison and the failure-budget
 breaches (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
@@ -1621,7 +1632,10 @@ path and profile (`run-prompt-tuning`), or the counts written
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 (`130` for Ctrl-C), and one that fails before it printed prints
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-with (an argparse error included), so stdout is always JSON. A
+with (an argparse error included), so stdout is always JSON. That holds
+from the first moment: a SIGTERM while the CLI still loads, or after it
+printed its result while the process exits, exits `143` too (the status
+document only in the first case). A
 `run-ingestion` result whose run a stage failed carries the same `error` and
 `exit_code`; `run-ingestion` adds the `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in

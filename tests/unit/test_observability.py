@@ -1427,3 +1427,70 @@ async def test_judge_calls_nest_under_an_evaluate_span(
     assert _attrs(evaluate)["kg_rag.items"] == 1
     calls = _by_name(exporter)["chat judge"]
     assert len(calls) == 2 and all(_is_child(c, evaluate) for c in calls)
+
+
+def test_bound_attributes_tag_every_span_and_nest(tracing) -> None:
+    exporter = tracing()
+    with observability.bind_attributes(**{"eval.strategy": "mix"}):
+        with observability.bind_identity(session_id="s1"):
+            with observability.span("inner", strategy="local"):
+                pass
+        with observability.span("outer"):
+            pass
+    with observability.span("after"):
+        pass
+    inner, outer, after = (
+        _attrs(_one(exporter, n)) for n in ("inner", "outer", "after")
+    )
+    assert inner["kg_rag.eval.strategy"] == "mix" and inner["session.id"] == "s1"
+    assert inner["kg_rag.strategy"] == "local"
+    assert outer["kg_rag.eval.strategy"] == "mix" and "session.id" not in outer
+    assert "kg_rag.eval.strategy" not in after
+
+
+async def test_run_eval_root_spans_name_the_run_strategy_and_repeat(
+    tracing, mocker, tmp_path
+) -> None:
+    # The kg_rag.batch and kg_rag.evaluate roots of a comparison's runs had
+    # no strategy or repeat, so the runs' traces could not be told apart.
+    import json
+
+    from unified_kg_rag.application.cli import run_evaluation
+    from unified_kg_rag.domain.models import EvaluatorType
+
+    exporter = tracing()
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+
+    class _Chain:
+        async def ainvoke(self, inputs, config=None):
+            meta = {"search_strategy": inputs["search_strategy"]}
+            return {"answer": "Vendor", "sources": [], "metadata": meta}
+
+    args = run_evaluation.CommandLineInterface._setup_arguments().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--repeats",
+            "2",
+        ]
+    )
+    assert await run_evaluation.EvaluationRunner(args, _Chain(), config).run() == 0
+    runs = [("local", 1), ("local", 2), ("mix", 1), ("mix", 2)]
+    spans = _by_name(exporter)
+    for name in ("kg_rag.batch", "kg_rag.evaluate"):
+        assert all(s.parent is None for s in spans[name]), name
+        assert (
+            sorted(
+                (_attrs(s)["kg_rag.eval.strategy"], _attrs(s)["kg_rag.eval.repeat"])
+                for s in spans[name]
+            )
+            == runs
+        ), name

@@ -697,7 +697,8 @@ import는 순환이 됨).
   하나로 씁니다.
   - 기본값 `k_followups` 10, `n_depth` 2: 질의마다 LLM 호출 최대 27번(MS GraphRAG의 20, 3은
     67번). 프라이머 호출과 액션은 `search.max_concurrency`개씩 동시에 실행합니다.
-  - 액션의 local 검색은 local 유형 몫(`search.token_manager.type_budgets`, 텍스트 0.5)으로
+  - 액션의 local 검색은 local 유형 몫(`search.token_manager.type_budgets`. 있는 유형으로 다시 정규화해
+    텍스트 약 0.60, 엔티티 0.24, 관계 0.16)으로
     컨텍스트를 담으며, MS GraphRAG DRIFT의 `local_search_text_unit_prop` 0.9 /
     `local_search_community_prop` 0.1을 쓰지 않습니다.
   - 프라이머는 MS GraphRAG처럼 `community_level` 하나가 아니라 모든 깊이의 리포트를
@@ -736,7 +737,8 @@ import는 순환이 됨).
   `community_level`에서 멈추는 반면 여기서는 관련 리포트를 리프까지 따라갑니다. 평가는
   `search.max_concurrency`개씩 실행합니다.
 
-**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 순위순으로(MS GraphRAG는 섞음)
+**map-reduce.** 리포트가 `map_reduce_min_results`개 이상이면 선택이 정한 순서로(고정 단면은 순위,
+동적 선택은 평점, 유사도 대체 경로는 유사도 순. MS GraphRAG는 섞음)
 `map_context_tokens`(MS GraphRAG의 `data_max_tokens`) 크기의 배치로 담고, 배치마다 map 호출(`search.max_concurrency`개씩)이 0-100점이
 붙은 핵심 포인트를 뽑으며 포인트마다 근거 리포트의 `report_ids`를 적습니다(MS GraphRAG의
 `[Data: Reports (ids)]`. 프롬프트의 리포트 id는 배치 안의 순번이며 다시 리포트로 매핑합니다).
@@ -789,8 +791,8 @@ import는 순환이 됨).
   아직 후보가 남은 유형에 넘깁니다(LightRAG가 그래프 섹션이 남긴 예산을 청크에 주듯 전략의
   `spare_context_budget_first` 유형이 먼저). 그래서 유형 간 점수 비교가 아니라 몫이 구성을
   정합니다. 몫은 `max_context_tokens`에 대한 비율이며 upstream의 수치가 아닙니다. 30000에서
-  LightRAG mix/hybrid는 텍스트 18072, 엔티티 7228, 관계 4698 토큰을 받습니다(upstream은 약
-  16000 / 6000 / 8000). 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
+  LightRAG mix/hybrid의 몫은 텍스트 18072, 엔티티 7228, 관계 4698 토큰입니다(upstream은 약
+  16000 / 6000 / 8000). 512토큰 프롬프트 여유분, 질문, 섹션 머리글을 빼면 약 17700 / 7050 / 4600을 담습니다. 합성된 global 섹션을 먼저 앉힙니다. `RAGOutput.sources`는 이 선택으로 만들므로
   답변 모델이 본 것만 잘린 텍스트까지 그대로 담습니다.
 - **토큰 계산**(`adapters/aws/token_counter.py`, `adapters/local/token_counter.py`). Bedrock
   `count_tokens` API를 받는 언어 모델에는 그 API를, 그 밖에는 문자 체계를 고려한
@@ -1010,7 +1012,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 
 프레임워크 확장 방법은 이 절 한 곳에 모았습니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다. 포트, `Providers`, 레지스트리는 `unified_kg_rag`에서 내보냅니다(§2.5).
 
-- **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export + `STRATEGY_ROUTING_GUIDE`(`domain/prompts/retrieval.py`)에 항목 추가(단위 테스트가 `auto`를 뺀 모든 전략에 항목을 요구). `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트가 없는 구성에서 `auto`가 고르지 않게 합니다. id 조회는 `BaseSearchStrategy._fetch_by_ids`(실제 인덱스 한도로 배치)로 하고, 그 밖의 목록 필터(`terms`)는 읽는 인덱스의 `aindex_limits`가 알려 주는 실제 `max_terms_count`에 맞춰 자르거나 배치로 나눕니다. 더 긴 목록은 거부됩니다(`InvalidFilterError`). `rag_chain`은 고치지 않습니다. `auto`가 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
+- **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export + `STRATEGY_ROUTING_GUIDE`(`domain/prompts/retrieval.py`)에 항목 추가(단위 테스트가 `auto`를 뺀 모든 전략에 항목을 요구). `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트가 없는 구성에서 `auto`가 고르지 않게 합니다. id 조회는 `BaseSearchStrategy._fetch_by_ids`(실제 인덱스 한도로 배치)로 하고, 그 밖의 목록 필터(`terms`)는 읽는 인덱스의 `aindex_limits`가 알려 주는 실제 `max_terms_count`에 맞춰 자르거나 배치로 나눕니다. 더 긴 목록은 거부됩니다(`InvalidFilterError`). 호출자 필터를 적용해 검색하는 인덱스를 `filtered_index_prefixes`로 재정의하면, 그 어디에도 선언되지 않은 필터 키는 무시되지 않고 거부됩니다(기본값은 모든 인덱스로 검사). `rag_chain`은 고치지 않습니다. `auto`가 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.

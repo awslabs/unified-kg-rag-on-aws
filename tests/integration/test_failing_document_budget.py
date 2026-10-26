@@ -114,10 +114,18 @@ def _runs(
 
 @pytest.mark.parametrize("pipeline_id", [None, "P1"])
 def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
-    tmp_path: Path, pipeline_id: str | None
+    tmp_path: Path, pipeline_id: str | None, caplog: pytest.LogCaptureFixture
 ) -> None:
     contexts: list[PipelineContext] = []
-    *seen, errors = _runs(tmp_path, 400, pipeline_id, contexts=contexts)
+    with caplog.at_level("ERROR"):
+        *seen, errors = _runs(tmp_path, 400, pipeline_id, contexts=contexts)
+    # Each failed stage logs its error once: the stage logged it before
+    # raising and again with the traceback, and the pipeline a third time.
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("Stage 'graph_extraction' failed" in m for m in messages) == 2, messages
+    assert (
+        sum(m.startswith("Critical stage 'graph_extraction'") for m in messages) == 0
+    ), messages
     failed = PipelineStageStatus.FAILED.value
     done = PipelineStageStatus.COMPLETED.value
     assert seen[:2] == [
@@ -130,6 +138,34 @@ def test_a_document_failing_for_its_own_error_is_excluded_and_deletions_apply(
     # Each run lists the documents it recorded FAILED, not the ones a run
     # before it did (a resumed pipeline id restores that run's context).
     assert [len(c.recorded_failed_doc_ids) for c in contexts] == [1, 1, 0, 0]
+    # The JSON result and the loading stage count the document excluded
+    # from the third run on; only a WARNING named it.
+    runner = IngestionPipelineRunner.__new__(IngestionPipelineRunner)
+    runner.pipeline = SimpleNamespace(executed_stages=frozenset())  # type: ignore[assignment]
+    assert [runner._json_result(c)["documents_excluded"] for c in contexts] == [
+        0,
+        0,
+        1,
+        1,
+    ]
+    assert [
+        r.metrics["documents_excluded"]
+        for c in contexts
+        for r in c.stage_results
+        if r.stage_name == "document_loading"
+    ] == [0, 0, 1, 1]
+    # The failed extraction stage counts the inputs its error names; it
+    # reported 0 next to "processed 1 inputs".
+    failed_extractions = [
+        r
+        for c in contexts[:2]
+        for r in c.stage_results
+        if r.stage_name == "graph_extraction" and r.status == PipelineStageStatus.FAILED
+    ]
+    assert len(failed_extractions) == 2
+    for r in failed_extractions:
+        assert r.input_count > 0, r
+        assert f"processed {r.input_count} " in (r.error_message or ""), r
 
 
 def test_a_factory_without_an_item_classifier_counts_http_rejections(

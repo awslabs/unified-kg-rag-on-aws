@@ -147,6 +147,15 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             max_concurrency=config.search.max_concurrency, max_attempts=1
         )
 
+    def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
+        # The reports, and with text_unit_slots their communities' text units.
+        o = self.config.indexing.opensearch
+        return [o.community_reports_index_prefix] + (
+            [o.text_units_index_prefix]
+            if self.global_search_config.text_unit_slots
+            else []
+        )
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

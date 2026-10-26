@@ -590,7 +590,7 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 |---|---|---|
 | `kg_rag.ingestion.run` | 루트 | 실행이 실패하면 상태 `ERROR` |
 | `kg_rag.ingestion.stage` | run | 단계마다 하나. 입력·출력 수, 상태, 단계의 수치 지표(`kg_rag.stage.<metric>`), 예외로 끝나면 `error.type`과 예외 |
-| `kg_rag.batch` | stage, `run-eval` 답변 생성에서는 루트 | 항목 수와 실패 수 |
+| `kg_rag.batch` | stage, `run-eval` 답변 생성에서는 루트 | 항목 수와 실패 수. `run-eval`에서는 실행의 `kg_rag.eval.strategy`와 `kg_rag.eval.repeat`(1부터)도 담으며, 실행의 모든 스팬에 같이 붙음 |
 | `kg_rag.query` | 루트 또는 `run-eval` 배치 | `session.id`, `user.id`, `kg_rag.blocked`. `capture_content`이면 마스킹한 질의를 `input.value`로, (`stream` / `astream`이 아니면) 답변을 `output.value`로 기록 |
 | `kg_rag.strategy` | query | 질의 전체의 `kg_rag.rerank_status` |
 | `kg_rag.retrieve` | strategy | 결과 유형별 적중 수, 최대 50개의 소스 ID |
@@ -600,7 +600,7 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 | `kg_rag.global.select`, `kg_rag.global.map` | strategy(`global`) | select는 질의마다 하나: `kg_rag.depth`(설정한 깊이), `kg_rag.cut`(더 얕은 단면으로 내려간 뒤 실제로 map한 단면), `kg_rag.reports`, `kg_rag.dynamic`. map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy(`drift`) | primer: `kg_rag.reports`, `kg_rag.answers`. 라운드마다 actions 스팬 하나(`kg_rag.depth`, `kg_rag.actions`)이며 그 라운드의 로컬 검색이 아래에 들어감 |
 | `kg_rag.guardrail` | query | 검사한 질의나 답변마다 하나: `aws.bedrock.guardrail.id`, `.source`(`input`, `output`), `.action`(`none`, `masked`, `blocked`), `.intervened`, `.policies` |
-| `kg_rag.evaluate` | 루트 | 평가기마다 하나: `kg_rag.evaluator`, `kg_rag.items`. 심사 모델의 스팬이 아래에 들어감 |
+| `kg_rag.evaluate` | 루트 | 평가기마다 하나: `kg_rag.evaluator`, `kg_rag.items`, `kg_rag.eval.strategy`, `kg_rag.eval.repeat`. 심사 모델의 스팬이 아래에 들어감 |
 | `chat <model>`, `embeddings <model>` | 호출한 스팬 | OpenTelemetry GenAI 규약, 스팬 종류 `CLIENT`(Bedrock 재순위화 스팬도 같음): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이 프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens`, 종료 사유, `error.type`. 비용은 기록하지 않음 |
 
 `capture_content`이면 답변 모델의 `chat <model>` 스팬에는 가드레일이 나중에 차단하거나

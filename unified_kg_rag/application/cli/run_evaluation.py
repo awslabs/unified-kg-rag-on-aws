@@ -70,6 +70,7 @@ from unified_kg_rag.shared import (
     DataProcessingError,
     EvaluationException,
     get_logger,
+    observability,
     setup_logging,
 )
 from unified_kg_rag.shared.config import load_cli_dotenv
@@ -563,15 +564,20 @@ class EvaluationRunner:
                     style="blue",
                 )
                 run_start = time.time()
-                results, reports, summary = (
-                    await self.evaluation_manager.evaluate_dataset(
-                        queries=run_queries,
-                        ground_truths=ground_truths,
-                        show_progress=True,
-                        dataset_path=eval_data_path,
-                        cli_args=vars(self.args),
+                # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
+                # the runs of a comparison tell apart.
+                with observability.bind_attributes(
+                    **{"eval.strategy": strategy, "eval.repeat": repeat}
+                ):
+                    results, reports, summary = (
+                        await self.evaluation_manager.evaluate_dataset(
+                            queries=run_queries,
+                            ground_truths=ground_truths,
+                            show_progress=True,
+                            dataset_path=eval_data_path,
+                            cli_args=vars(self.args),
+                        )
                     )
-                )
                 if is_s3_uri(eval_data_uri) and summary.run_manifest:
                     # Record where the dataset came from, not the temporary copy.
                     summary.run_manifest.get("dataset", {})["path"] = eval_data_uri

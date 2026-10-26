@@ -43,6 +43,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
+from unified_kg_rag.application.cli.launch import wants_json
 from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.utils.display import console
 
@@ -91,11 +92,15 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     """Decorate a CLI ``main``: SIGTERM exits it with ``128 + SIGTERM`` (143),
     running ``finally`` blocks on the way out.
 
-    In the container the CLI is PID 1 (the entrypoint execs it), and the
-    kernel does not deliver a signal to PID 1 that it has no handler for, so
-    without one a stopped task ran on until it was killed. The previous
-    handler is restored when ``main`` returns; off the main thread, where
-    Python cannot install a handler, ``main`` runs unchanged. With JSON
+    In a container without an init process the CLI is PID 1 (the entrypoint
+    execs it), and the kernel does not deliver a signal to PID 1 that it has
+    no handler for, so without one a stopped task ran on until it was
+    killed. When ``main`` returns, a SIGTERM during the process's teardown
+    (thread joins, exit handlers) ends it at once with 143, after the
+    document it printed: restoring the default handler ended it with -15.
+    With the stop-at-once switch off (the test suite), the previous handler
+    is restored instead. Off the main thread, where Python cannot install a
+    handler, ``main`` runs unchanged. With JSON
     output, a run stopped, or failed, before it printed its document prints a
     status document, so a consumer parsing stdout gets JSON either way. A
     run stopped by a signal (Ctrl-C included) then ends its process at once
@@ -112,7 +117,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         argv = next((a for a in args if isinstance(a, list)), sys.argv[1:])
         # Set from the command line before it is parsed, so an argparse
         # error or a config that fails to load still prints a JSON status.
-        _json.update(enabled=_wants_json(argv), printed=False)
+        _json.update(enabled=wants_json(argv), printed=False)
         if _json["enabled"]:
             console.stderr = True
         previous = signal.signal(signal.SIGTERM, _exit)
@@ -133,19 +138,18 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                     _exit_stopped(e.code)
             raise
         finally:
-            signal.signal(signal.SIGTERM, previous)
+            signal.signal(
+                signal.SIGTERM,
+                _stopped_in_teardown if _exit_at_once["enabled"] else previous,
+            )
 
     return wrapper
 
 
-def _wants_json(argv: list[str]) -> bool:
-    """Whether ``argv`` asks for ``--output-format json`` (read before the
-    command line is parsed; :func:`json_output` then decides)."""
-    return any(
-        arg == "--output-format=json"
-        or (arg == "--output-format" and argv[i + 1 : i + 2] == ["json"])
-        for i, arg in enumerate(argv)
-    )
+def _stopped_in_teardown(signum: int, _frame: object) -> None:
+    """End a CLI whose ``main`` has returned, stopped while it tears down."""
+    print_status(128 + signum)
+    _exit_stopped(128 + signum)
 
 
 def add_output_format_argument(parser: argparse.ArgumentParser) -> None:

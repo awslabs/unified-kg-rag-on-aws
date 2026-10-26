@@ -93,7 +93,7 @@ Guide: [User Guide](./user-guide.md#6-evaluation-run-eval). Also takes the [prov
 | `--output-directory` | — | Directory to save evaluation results (default: evaluation.outputs_directory). Accepts a local path or an s3://bucket/prefix/ URI (results are uploaded after the run; a failed upload exits non-zero). |
 | `--suffix` | — | Index suffix to query (default: 'default'); must match the corpus's processing.document_parsing.index_value. |
 | `--enable-thinking` | off | Enable thinking mode for language model reasoning and step-by-step problem solving. No-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
-| `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. |
+| `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
 | `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
