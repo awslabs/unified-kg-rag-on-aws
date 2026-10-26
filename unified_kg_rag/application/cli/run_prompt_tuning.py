@@ -31,6 +31,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -143,7 +144,7 @@ def main() -> int:
 
         tuner = PromptTuner(config)
         result = event_loop.run(
-            tuner.tune(texts), io_workers=config.processing.io_workers
+            stoppable(tuner.tune(texts)), io_workers=config.processing.io_workers
         )
 
         args.output_path.write_text(

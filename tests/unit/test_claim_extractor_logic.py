@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.ingestion.claim_extractor import (
     prepare_claim_input,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity, TextUnit
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 pytestmark = pytest.mark.unit
 
@@ -169,11 +170,29 @@ class TestParseClaimData:
 # _parse_extraction_result
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
-    def test_non_dict_returns_empty(self, extractor, text_unit) -> None:
-        assert extractor._parse_extraction_result("not a dict", text_unit) == []
+    @pytest.mark.parametrize("result", ["not a dict", {"other": 1}])
+    def test_output_without_a_claims_section_is_cut_off(
+        self, extractor, text_unit, result
+    ) -> None:
+        # Regression: recorded PROCESSED with no claims, never re-extracted.
+        with pytest.raises(LLMOutputTruncatedError, match="no claims section"):
+            extractor._parse_extraction_result(result, text_unit)
 
-    def test_missing_claims_key_returns_empty(self, extractor, text_unit) -> None:
-        assert extractor._parse_extraction_result({"other": 1}, text_unit) == []
+    @pytest.mark.parametrize("empty", [{}, None, ""])
+    def test_an_empty_claims_section_is_no_claims(
+        self, extractor, text_unit, empty
+    ) -> None:
+        # <claims></claims>: the unit states none.
+        assert extractor._parse_extraction_result({"claims": empty}, text_unit) == []
+
+    def test_claims_none_of_which_is_complete_are_cut_off(
+        self, extractor, text_unit
+    ) -> None:
+        # "<claims><claim><subject>A</subject><obj" with a normal stop reason.
+        with pytest.raises(LLMOutputTruncatedError, match="none of the 1 claims"):
+            extractor._parse_extraction_result(
+                {"claims": {"claim": {"subject": "A"}}}, text_unit
+            )
 
     def test_single_claim_wrapped(self, extractor, text_unit) -> None:
         result = {
@@ -434,6 +453,26 @@ class TestExtractUnits:
         assert claims[0].subject_name == "Acme"
         assert stats.total_claims_extracted == 1
         assert stats.num_total_units == 1
+
+    def test_a_cut_off_response_fails_the_unit_and_is_not_retried(
+        self, extractor, mocker
+    ) -> None:
+        # Regression: the unit was recorded PROCESSED with zero claims. Now
+        # it fails after one call, counted as its own error once the
+        # known-good request is answered.
+        units = [TextUnit(id="t1", text="Acme acquired Beta.")]
+        whole = {
+            "claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}
+        }
+        invoke = mocker.Mock(
+            side_effect=[{"claims": {"claim": {"subject": "Acme"}}}, whole]
+        )
+        extractor.claim_extractor.invoke = invoke
+        per_unit, stats = extractor.extract_units(units)
+        assert per_unit == {}
+        assert stats.failed_text_unit_ids == ["t1"]
+        assert stats.item_failed_text_unit_ids == ["t1"]
+        assert invoke.call_count == 2  # the unit, then the known-good request
 
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker

@@ -8,9 +8,8 @@ that window ended the process with -15 (a Ctrl-C with a traceback) and, with
 ``--output-format json``, no JSON on stdout. Here it exits ``128 + signal``
 (143, or 130 for SIGINT) and prints the status document the CLI would have
 (:mod:`.conventions`). Standard library only, so the handlers are in place
-before anything heavy loads; the CLI's own SIGTERM handler
-(``exits_on_sigterm``) replaces the first once ``main`` runs, and the SIGINT
-handler is restored before it.
+before anything heavy loads; the SIGINT handler is restored before ``main``
+runs, and the CLI's own handlers (``exits_on_sigterm``) then replace both.
 """
 
 from __future__ import annotations
@@ -46,7 +45,10 @@ def _stopped_while_loading(signum: int, _frame: object) -> None:
 
 def _run(module: str) -> Any:
     signal.signal(signal.SIGTERM, _stopped_while_loading)
-    interrupt = signal.signal(signal.SIGINT, _stopped_while_loading)
+    interrupt = signal.getsignal(signal.SIGINT)
+    # A SIGINT the parent ignores (`cmd &` in a script, nohup) stays ignored.
+    if interrupt is not signal.SIG_IGN:
+        signal.signal(signal.SIGINT, _stopped_while_loading)
     cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
     # Ctrl-C raises KeyboardInterrupt again once main runs.
     signal.signal(signal.SIGINT, interrupt)

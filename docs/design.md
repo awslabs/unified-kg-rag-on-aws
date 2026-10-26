@@ -808,7 +808,11 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   built before
   relationships carried document filters passes no edge, so expansion keeps
   the seeds only until it is rebuilt; without the relationships index the
-  graph walk runs, checked against the entities index.
+  graph walk runs, checked against the entities index. So is a graph walk
+  under an entity key entity vertices do not store (`name.keyword`,
+  `attributes.<path>`): the graph drops it, the entities index applies it
+  (`_graph_unapplied_filters`), to the seeds too (LightRAG's relationship
+  endpoints were found under no entity key).
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set
@@ -857,10 +861,13 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
     round whose actions all failed ends the rounds.
 - **auto** — an LLM router (`StrategySelectionPrompt`) picks among
   `search.auto_routable_strategies` minus those the pipeline cannot serve
-  (`global` and `drift` need community reports); the prompt describes
-  exactly the routable strategies, and unrecognized output falls back to
-  `local`. The default set is `local`, `mix`, `global` (`drift` costs
-  up to 27 LLM calls); with one routable strategy no router call is made. The
+  (`global` and `drift` need community reports) and, with filters, those
+  that do not apply every filter key (none left: `InvalidFilterError`,
+  before any LLM call, so a filter never fails by route); the prompt
+  describes exactly these candidates, and unrecognized output falls back to
+  `local` (else the first candidate). The default set is `local`, `mix`,
+  `global` (`drift` costs up to 27 LLM calls); with one candidate no router
+  call is made. The
   prompt sends questions that chain from a named entity to `local` (synthetic
   multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 
@@ -1224,7 +1231,7 @@ by default**.
 
 This section is the single reference for extending the framework. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
 
-- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index). No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); `reserved_filter_keys` names the keys it sets itself on its searches (`global`: its cut or browse scope), which the chain refuses rather than letting the scope replace a caller value. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.

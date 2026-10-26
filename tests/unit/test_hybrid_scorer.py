@@ -697,8 +697,10 @@ class TestDiversityFilteringScaling:
     def test_scales_quadratically_not_cubically(self) -> None:
         # Mix-shaped candidate counts used to take 2-19 s with the cubic loop.
         # Compare 4x the candidates against the same machine instead of a
-        # wall-clock bound: quadratic work grows ~16x, cubic ~64x. Best of three
-        # runs each keeps scheduler noise out of the ratio.
+        # wall-clock bound: quadratic work grows ~16x, cubic ~64x. CPU time
+        # (not wall-clock time, which counts the time other processes hold
+        # the CPU: the ratio failed on a loaded host) and the best of five
+        # runs each keep scheduler noise out of the ratio.
         import time
 
         scorer = self._scorer_at(0.5)
@@ -706,10 +708,10 @@ class TestDiversityFilteringScaling:
         def best_time(n: int) -> float:
             results = self._candidates(n, seed=7, words=60)
             times = []
-            for _ in range(3):
-                start = time.perf_counter()
+            for _ in range(5):
+                start = time.process_time()
                 out = scorer._apply_diversity_filtering(list(results), top_k=n - 1)
-                times.append(time.perf_counter() - start)
+                times.append(time.process_time() - start)
                 assert len(out) == n - 1
             return min(times)
 

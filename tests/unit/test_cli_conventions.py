@@ -46,6 +46,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
+def _ctrl_c_raises():
+    """Python's own SIGINT handler, whatever the suite inherited: under
+    ``nohup`` (or ``cmd &`` in a script) SIGINT starts ignored, and the CLIs
+    keep an inherited ignore (tested on its own)."""
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+@pytest.fixture(autouse=True)
 def _restore_console():
     # --output-format json moves the shared console to stderr.
     yield
@@ -119,6 +129,203 @@ def test_sigterm_exits_143_through_finally_blocks() -> None:
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
+def test_a_sigterm_cancels_the_running_main_task_instead_of_raising() -> None:
+    # Raised into the event loop, the SystemExit could land in the loop's
+    # own code and leave nest_asyncio's run() waiting forever (2 of 150
+    # stops mid-run). The stop now cancels the task at its next await.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import stoppable
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            events.append("went on to the next await")
+            await asyncio.sleep(5)
+            events.append("not cancelled")
+        except asyncio.CancelledError:
+            events.append("cancelled")
+            raise
+        finally:
+            await asyncio.sleep(0)  # an async aclose() still runs
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    previous = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+    assert events == ["went on to the next await", "cancelled", "closed"]
+    assert signal.getsignal(signal.SIGTERM) is previous
+
+
+def test_a_ctrl_c_cancels_the_running_main_task_and_exits_130() -> None:
+    # Python's own SIGINT handler raises KeyboardInterrupt into the loop,
+    # as SIGTERM's SystemExit did: after the JSON 8 of 80 run-rag and 12 of
+    # 120 run-eval Ctrl-Cs hung. The CLI's handler cancels the task too.
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import stoppable
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+            events.append("went on to the next await")
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            events.append("cancelled")
+            raise
+        finally:
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    previous = signal.getsignal(signal.SIGINT)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 130
+    assert events == ["went on to the next await", "cancelled", "closed"]
+    assert signal.getsignal(signal.SIGINT) is previous
+
+
+def test_a_cli_keeps_an_inherited_ignored_ctrl_c() -> None:
+    # Started under nohup (or `cmd &` in a script), SIGINT is ignored: main
+    # runs with it ignored, and it is ignored again after main.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    seen: list[object] = []
+
+    @exits_on_sigterm
+    def main() -> int:
+        seen.append(signal.getsignal(signal.SIGINT))
+        os.kill(os.getpid(), signal.SIGINT)  # ignored
+        return 0
+
+    assert main() == 0
+    assert seen == [signal.SIG_IGN]
+    assert signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+
+
+def test_a_ctrl_c_outside_the_loop_is_the_clis_keyboardinterrupt() -> None:
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible,
+        stoppable,
+    )
+
+    async def run() -> str:
+        try:
+            with interruptible():  # an interactive prompt
+                os.kill(os.getpid(), signal.SIGINT)
+        except KeyboardInterrupt:
+            return "conversation ended"
+        return "not raised"
+
+    @exits_on_sigterm
+    def main() -> str:
+        return asyncio.run(stoppable(run()))
+
+    assert main() == "conversation ended"
+
+
+def test_a_finished_cli_ends_its_process_with_its_exit_code_at_once() -> None:
+    # The interpreter's shutdown resets the signal handlers, so a SIGTERM
+    # in it ended a finished run with -15 (85 of 160 run-rag stops after
+    # the JSON). The process now ends once main and the exit handlers ran,
+    # without waiting through the shutdown (a thread left running here).
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        atexit.register(lambda: print("exit handlers ran", flush=True))
+
+        @exits_on_sigterm
+        def main():
+            threading.Thread(target=time.sleep, args=(30,)).start()
+            return 0
+
+        sys.exit(main())
+        """)
+    assert result.returncode == 0, result.stderr
+    assert time.time() - started < 20
+    assert "exit handlers ran" in result.stdout
+
+
+def test_a_sigterm_at_an_interruptible_prompt_raises_at_once() -> None:
+    # An interactive session waits in a blocking prompt on the loop's
+    # thread, so a cancel would wait for the next line (until the watchdog
+    # ended it, 10 s later).
+    import asyncio
+
+    from unified_kg_rag.application.cli.conventions import (
+        interruptible,
+        stoppable,
+    )
+
+    events: list[str] = []
+
+    async def run() -> int:
+        try:
+            with interruptible():
+                os.kill(os.getpid(), signal.SIGTERM)
+                events.append("not raised")
+        finally:
+            events.append("closed")
+        return 0
+
+    @exits_on_sigterm
+    def main() -> int:
+        return asyncio.run(stoppable(run()))
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 143
+    assert events == ["closed"]
+
+
+def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() -> None:
+    # A run that swallowed the stop ran on until it was killed.
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        import argparse, asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import json_output, stoppable
+
+        conventions._STOP_GRACE_SECONDS = 0.5
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            while True:
+                try:
+                    await asyncio.sleep(0.01)
+                except BaseException:
+                    pass
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert time.time() - started < 20
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
 def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
     capsys, monkeypatch
 ) -> None:
@@ -129,6 +336,7 @@ def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    monkeypatch.setattr(conventions, "_exit_finished", lambda _code: None)
     events: list[object] = []
     monkeypatch.setattr(conventions, "_exit_stopped", events.append)
 
@@ -163,6 +371,7 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setitem(conventions._exit_at_once, "enabled", True)
+    monkeypatch.setattr(conventions, "_exit_finished", lambda _code: None)
     ended: list[int] = []
     monkeypatch.setattr(conventions, "_exit_stopped", ended.append)
     previous = signal.getsignal(signal.SIGTERM)
@@ -237,9 +446,37 @@ def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
         capture_output=True,
         text=True,
         timeout=60,
+        # SIGINT handled, whatever the suite inherited (nohup ignores it).
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
     )
     assert done.returncode == 130, done.stderr
     assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
+
+
+def test_a_ctrl_c_ignored_by_the_parent_stays_ignored_while_a_cli_loads() -> None:
+    # Started with SIGINT ignored (`cmd &` in a non-interactive shell,
+    # nohup), a CLI exited 130 on a SIGINT during its imports.
+    import subprocess
+
+    script = (
+        "import os, signal, types\n"
+        "from unified_kg_rag.application.cli import launch\n"
+        "def loading(name):\n"
+        "    os.kill(os.getpid(), signal.SIGINT)\n"
+        "    return types.SimpleNamespace(main=lambda: print("
+        "signal.getsignal(signal.SIGINT) is signal.SIG_IGN))\n"
+        "launch.importlib.import_module = loading\n"
+        "launch.run_rag()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script, "--output-format", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN),
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "True\n"
 
 
 def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
@@ -251,11 +488,14 @@ def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
     cli = SimpleNamespace(main=lambda: signal.getsignal(signal.SIGINT))
     monkeypatch.setattr(launch.importlib, "import_module", lambda _name: cli)
     previous = signal.getsignal(signal.SIGTERM)
+    interrupt = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        assert launch.run_rag() is signal.getsignal(signal.SIGINT)
-        assert signal.getsignal(signal.SIGINT) is not launch._stopped_while_loading
+        # The handler main starts with is the one the process had, not
+        # merely another than the launcher's.
+        assert launch.run_rag() is signal.default_int_handler
     finally:
         signal.signal(signal.SIGTERM, previous)
+        signal.signal(signal.SIGINT, interrupt)
 
 
 @pytest.mark.parametrize(
@@ -745,27 +985,48 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
 ) -> None:
     # A SIGTERM between the result and the end of pipeline.close() printed
     # an interrupted status after it, and told the user to resume a run
-    # that had finished.
-    from types import SimpleNamespace
-
+    # that had finished. The runner's own run() prints the result and
+    # notes it (reported); only the pipeline is stood in for, its close()
+    # stopped by the signal.
     from unified_kg_rag.shared import PipelineInterrupted
 
     monkeypatch.setattr(console, "stderr", console.stderr)
     monkeypatch.setattr(
         run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
     )
-
-    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
-        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
-            pipeline_id="run-7", next_run_writes_from=0.0
-        )
-        print_json({"pipeline_id": "run-7", "status": "completed"})
-        self.reported = True
-        raise PipelineInterrupted(signal.SIGTERM)
-
-    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
     src = tmp_path / "src"
     src.mkdir()
+
+    class _Pipeline:
+        pipeline_id = "run-7"
+        next_run_writes_from = 0.0
+        executed_stages: frozenset[str] = frozenset()
+
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def request_stop(self, signum: int) -> None:
+            pass
+
+        def close(self) -> None:
+            raise PipelineInterrupted(signal.SIGTERM)
+
+    runner_class = run_ingestion_pipeline.IngestionPipelineRunner
+    monkeypatch.setattr(run_ingestion_pipeline, "DataIngestionPipeline", _Pipeline)
+    monkeypatch.setattr(runner_class, "_require_indexing_endpoints", lambda *_: None)
+    monkeypatch.setattr(runner_class, "_handle_metadata_operations", lambda _s: False)
+    monkeypatch.setattr(runner_class, "_validate_pipeline_integrity", lambda _s: True)
+    monkeypatch.setattr(
+        runner_class,
+        "_execute_pipeline",
+        lambda _s: PipelineContext(
+            pipeline_id="run-7",
+            config=PipelineConfig(),
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime.now(),
+            source_directory=src,
+        ),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -783,8 +1044,10 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
         run_ingestion_pipeline.main()
     assert exc.value.code == 143
     out, err = capsys.readouterr()
-    assert json.loads(out) == {"pipeline_id": "run-7", "status": "completed"}
+    result = json.loads(out)
+    assert (result["pipeline_id"], result["status"]) == ("run-7", "completed")
     assert "--pipeline-id" not in err
+    assert "after it finished" in err
 
 
 @pytest.mark.parametrize("value", ["0", "-3"])

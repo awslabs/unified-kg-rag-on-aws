@@ -156,6 +156,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             else []
         )
 
+    def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
+        # The report selection's scope (the cut, or the dynamic browse's
+        # depths and children) and the text units' communities.
+        c = self.global_search_config
+        keys = (
+            {"depth", "community_id"}
+            if c.use_dynamic_selection
+            else {"depth", "max_cut_depth"}
+        )
+        if c.text_unit_slots:
+            keys.add("community_ids")
+        return frozenset(keys)
+
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:

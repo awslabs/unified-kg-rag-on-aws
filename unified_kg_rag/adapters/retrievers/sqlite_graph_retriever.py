@@ -129,7 +129,7 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             len(seed_ids),
             self._max_hops,
         )
-        filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
+        filters = self._scope_filters_to_label(entity_label, query.filters)
         return await asyncio.to_thread(
             self._store.traverse,
             entity_label,

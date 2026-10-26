@@ -24,8 +24,10 @@ from unified_kg_rag.application.cli.conventions import (
     add_output_format_argument,
     exits_on_sigterm,
     failed,
+    interruptible,
     json_output,
     print_json,
+    stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -308,7 +310,10 @@ class RAGChainRunner:
 
         while True:
             try:
-                raw_input = console.input("\n[bold cyan]Question:[/bold cyan] ").strip()
+                # A stop while the prompt waits ends the session at once.
+                with interruptible():
+                    question = console.input("\n[bold cyan]Question:[/bold cyan] ")
+                raw_input = question.strip()
                 if not raw_input:
                     continue
                 if raw_input.lower() in ["quit", "exit"]:
@@ -597,10 +602,13 @@ class RAGChainRunner:
             return
         key, value = pair.split(":", 1)
         # Rejected now, not by every later question until clear-filters.
+        # Checked with the filters already set: under auto, together they
+        # may leave no strategy that applies them all.
         if self.rag_chain is not None:
             try:
                 self.rag_chain.check_filter_keys(
-                    {key: value}, SearchStrategy(self.args.search_strategy)
+                    {**state["filters"], key: value},
+                    SearchStrategy(self.args.search_strategy),
                 )
             except InvalidFilterError as e:
                 console.print(f"[red]Filter not set: {markup_safe(e)}[/red]")
@@ -665,7 +673,7 @@ def main() -> None:
     # loop starts.
     args = CommandLineInterface().parse_args()
     try:
-        code = asyncio.run(async_main(args))
+        code = asyncio.run(stoppable(async_main(args)))
     except KeyboardInterrupt:
         # Ctrl-C while the loop waits on I/O lands here, outside the task.
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")

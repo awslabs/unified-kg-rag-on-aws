@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     register_strategy,
@@ -38,15 +39,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         # Entities, their reports, relationships and claims, and the text
-        # units they cite (each index the pipeline builds).
-        o = self.config.indexing.opensearch
-        return self._built_prefixes(
-            o.entities_index_prefix,
-            o.community_reports_index_prefix,
-            o.relationships_index_prefix,
-            o.claims_index_prefix,
-            o.text_units_index_prefix,
-        )
+        # units they cite: each index the pipeline builds.
+        return configured_index_prefixes(self.config)
 
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None

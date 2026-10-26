@@ -52,6 +52,9 @@ class _Graph:
     def __init__(self) -> None:
         self.walks = 0
 
+    def filter_fields(self) -> None:
+        return None  # no declared schema: the document filters are checked
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.walks += 1
         return [_entity(v) for v in ("S", "A", "B", "D", "C")]

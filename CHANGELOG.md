@@ -1356,9 +1356,8 @@ changed once with the full-config keys (#332).
 - Dependencies: pydantic 2.14, langchain-core 1.6.10, langchain-aws 1.8.1,
   langchain-openai 1.7, langsmith 0.14, datasets 5.1, tiktoken 0.14,
   pypdf 6.20, tenacity 9.2 and boto3 1.43.112 in `uv.lock`; aws-cdk-lib and
-  aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3
-  and aws-cdk-cloud-assembly-schema below 55, the versions jsii and
-  aws-cdk-lib pin (#241, #251).
+  aws-cdk.aws-neptune-alpha 2.273 in the CDK lock. typeguard stays at 2.13.3,
+  the version jsii pins (#241, #251).
 - `iac/` is a uv project of its own (`iac/pyproject.toml`, `iac/uv.lock`,
   outside the root lock): install it with `cd iac && uv sync`.
   `iac/requirements.txt` and `iac/requirements-lock.txt` are gone. Dependabot
@@ -1388,6 +1387,69 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion`: a SIGTERM while the finished run saves its pipeline
+  metadata waits for the save and then stops the run (143). Raised inside
+  the metadata's serialization, the stop was wrapped as a failed save:
+  `PipelineStateError`, exit 1 (3 of 150 stops right after a text-mode
+  run) (#441).
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a Ctrl-C (SIGINT) while
+  the event loop runs cancels the CLI's task as a SIGTERM does, and exits
+  130. Python's own handler raised `KeyboardInterrupt` into the loop,
+  which could leave nest_asyncio's `run()` waiting forever: after the JSON
+  8 of 80 `run-rag` and 12 of 120 `run-eval` Ctrl-Cs hung, as did 6 of 75
+  in text mode and 10 of 75 SIGTERMs right after a text-mode answer
+  (those took the raising path, the JSON-only teardown path not applying).
+  At the interactive prompt a Ctrl-C still ends the conversation (#441).
+- Every CLI ends its process with its exit code once `main` finished and
+  the exit handlers ran (spans flushed, logging shut down), without the
+  interpreter's shutdown, which resets the signal handlers: a SIGTERM or
+  Ctrl-C right after the result ended the process with -15 or -2 (`run-rag`
+  85 of 160 SIGTERMs after the JSON, `run-ingestion` 29 of 40) instead of
+  143 or 130. Threads still running are not waited for (#441).
+- Claim extraction: a response cut off with a normal stop reason (a
+  server-side output cap) fails its unit with `LLMOutputTruncatedError`,
+  as graph extraction does, when it has no `claims` section or lists
+  claims none of which is complete. It was recorded `PROCESSED` with no
+  claims and never extracted again. An empty `<claims></claims>` is still
+  a unit without claims (#441).
+- `run-ingestion --resume-from-stage` past a stage that failed on text
+  units warns that the run counts their documents toward
+  `indexing.max_document_failures` once more, past which resuming from
+  the failed stage excludes them; the advice to resume from it said
+  nothing of the limit (#441).
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a SIGTERM while the event
+  loop runs cancels the CLI's task at its next await instead of raising
+  `SystemExit` into the loop, where it could land in the loop's own code
+  and leave nest_asyncio's `run()` waiting forever (2 of 150 mid-run stops
+  hung until SIGKILL). Cleanup (`aclose`, `run-eval`'s upload of the
+  finished runs) still runs and the exit code stays 143; at the
+  interactive prompt, which blocks the loop, it still raises at once. A
+  watchdog ends a stopped CLI still running 10 seconds later, printing the
+  interrupted status if nothing was printed, so no stop can hang (#441).
+- The console-script launcher keeps a SIGINT its parent ignores (`cmd &`
+  in a script, `nohup`) ignored while the CLI loads; it exited 130 (#441).
+- Graph expansion (`local`, `drift`, and `mix`/`hybrid` with graph
+  expansion): under an entity key entity vertices do not store
+  (`name.keyword`, an entity's own `attributes.<path>`), the graph walk's
+  entities, its seeds included (LightRAG seeds it with the endpoints of the
+  relationships it found, which hold no entity key), are checked against
+  the entities index. The graph dropped the key, so neighbours failing it
+  came back as entity results (9 of 10 under `name.keyword` with `local`,
+  59 of 59 under `attributes.role` with `mix`; none now) (#441).
+- `global` refuses a filter on a key it scopes its own searches by:
+  `depth` and `max_cut_depth` (with `use_dynamic_selection`, `depth` and
+  `community_id`), and `community_ids` with `text_unit_slots`. Its scope
+  replaced the caller's value without a word; `auto` now routes such a
+  filter to a strategy that applies it (#441).
+- Queries with `auto` (one `--query`, `run-eval`, the Python API, and
+  `run-rag --interactive` `--filters` and `set-filter`): filters are refused
+  only when no strategy `auto` may route to applies every key, and the
+  router then picks only among the strategies that do (no router call when
+  one is left). Since #439 a key any routable strategy rejected was
+  refused, so the user guide's `--filters attr_category:research
+  type:person` always exited 2 under the default set (`global` has no
+  `type`). `set-filter` checks the new key together with the filters
+  already set (#441).
 - Incremental indexing: an attempt at new content starts `failure_count`
   over, as it starts `retry_count` over. A document that failed of its own
   and then changed and failed for an outage kept the old content's count

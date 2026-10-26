@@ -462,11 +462,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             state["resolved_strategy"] = strategy
             return state
 
-        # Before routing, as an interactive session does: whether a filter
-        # key is refused must not depend on the route a question takes.
-        if state.get("filters"):
-            self.check_filter_keys(state["filters"], SearchStrategy.AUTO)
-        routable = routable_strategies(self.config)
+        # Before routing, as an interactive session does: the router picks
+        # only among the strategies that apply every filter key, so whether
+        # a key is refused never depends on the route a question takes.
+        routable = self._auto_candidates(state.get("filters"))
         if len(routable) == 1:
             # Nothing to choose between: no router call.
             state["resolved_strategy"] = routable[0]
@@ -919,10 +918,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # The instance itself is cached per loop and holds no per-query state.
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         if state.get("filters"):
-            self._validate_filter_keys(
-                state["filters"],
-                strategy_instance.filtered_retrievers(state["resolved_strategy"]),
-                strategy_instance.filtered_index_prefixes(state["resolved_strategy"]),
+            self._check_strategy_filter_keys(
+                state["filters"], state["resolved_strategy"]
             )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
@@ -981,28 +978,58 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> None:
         """Raise ``InvalidFilterError`` if ``filters`` names a key no index
         ``strategy`` reads declares, as each of its queries would (for
-        ``auto``: a key some routable strategy rejects, since ``auto`` may
-        route any question there). For callers that keep filters across
-        queries (an interactive session)."""
+        ``auto``: if no routable strategy applies every key, since ``auto``
+        routes only among those that do). For callers that keep filters
+        across queries (an interactive session)."""
+        if strategy is SearchStrategy.AUTO:
+            self._auto_candidates(filters)
+        else:
+            self._check_strategy_filter_keys(filters, strategy)
 
-        def check(strategy: SearchStrategy) -> None:
-            instance = self._get_strategy_instance(strategy)
-            self._validate_filter_keys(
-                filters,
-                instance.filtered_retrievers(strategy),
-                instance.filtered_index_prefixes(strategy),
+    def _check_strategy_filter_keys(
+        self, filters: dict[str, Any] | None, strategy: SearchStrategy
+    ) -> None:
+        instance = self._get_strategy_instance(strategy)
+        reserved = sorted(set(filters or {}) & instance.reserved_filter_keys(strategy))
+        if reserved:
+            raise InvalidFilterError(
+                f"Filter key(s) {', '.join(reserved)}: {strategy.value} search "
+                "sets them itself to scope what it reads, so the filter would "
+                "be replaced."
             )
+        self._validate_filter_keys(
+            filters,
+            instance.filtered_retrievers(strategy),
+            instance.filtered_index_prefixes(strategy),
+        )
 
-        if strategy is not SearchStrategy.AUTO:
-            check(strategy)
-            return
-        for routed in routable_strategies(self.config):
+    def _auto_candidates(
+        self, filters: dict[str, Any] | None
+    ) -> tuple[SearchStrategy, ...]:
+        """The routable strategies that apply every key of ``filters``.
+
+        ``auto`` routes only among these, so a filter that one of them
+        applies never fails by route. Raises ``InvalidFilterError`` when
+        none applies them all.
+        """
+        routable = routable_strategies(self.config)
+        if not filters:
+            return routable
+        candidates: list[SearchStrategy] = []
+        refusals: list[str] = []
+        for routed in routable:
             try:
-                check(routed)
+                self._check_strategy_filter_keys(filters, routed)
             except InvalidFilterError as e:
-                raise InvalidFilterError(
-                    f"auto may route to {routed.value}, which rejects it: {e}"
-                ) from e
+                refusals.append(f"{routed.value}: {e}")
+            else:
+                candidates.append(routed)
+        if not candidates:
+            raise InvalidFilterError(
+                "No strategy auto may route to applies every filter key. "
+                + " ".join(refusals)
+            )
+        return tuple(candidates)
 
     @staticmethod
     def _validate_filter_keys(

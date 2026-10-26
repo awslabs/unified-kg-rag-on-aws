@@ -851,10 +851,15 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
   `drift` every index the pipeline builds and Neptune; `global` community
   reports (and text units with `search.global_search.text_unit_slots`,
-  scoped to the selected reports' communities, which replace a caller
-  `community_ids`); `simple` every index the pipeline builds; `auto` must
-  suit every strategy it may route to, checked before routing. Neptune
-  filters entity vertices only.
+  scoped to the selected reports' communities); `simple` every index the
+  pipeline builds. `global` refuses the keys it scopes its own searches by:
+  `depth` and `max_cut_depth` (with
+  `search.global_search.use_dynamic_selection`, `depth` and
+  `community_id`), and `community_ids` with `text_unit_slots`. `auto` routes
+  only among the strategies it may route to that apply every key (with the
+  default set, `type:person` leaves `local` and `mix`) and refuses the
+  filters, before routing, only when none does. Neptune filters entity
+  vertices only.
 - OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
   (fail-closed): an item without the attribute is excluded. Relationships,
   claims and community reports carry the filter values of their text units'
@@ -891,7 +896,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   with the entity-linked chunks that pass, not the top-ranked ones only.
   Other
   `attributes.<path>` keys name an item's own attributes and apply to the
-  entities index only. On Neptune, `attr_<key>` is also an entity vertex
+  entities index only; a graph walk's entities, its seeds included, are
+  checked against that index for them and for `name.keyword`, which entity
+  vertices do not store. On Neptune, `attr_<key>` is also an entity vertex
   property (`attr_role`), applied where present (a vertex without it passes),
   but the entities-index check above still applies: `attr_role:buyer` selects
   nothing unless documents carry a `role` filter. Every other key is strict
@@ -920,8 +927,8 @@ conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
 argument): `help me find ...` is a question. `set-filter` refuses a key no
 index of the search strategy declares, as `--filters` does (with
 `--interactive`, before the first question: exit code 2). With `auto` it
-refuses a key that any strategy `auto` may route to rejects, since a routed
-question would fail.
+refuses a key only when, with the filters already set, no strategy `auto`
+may route to applies them all.
 
 Conversation memory lives in the process (`MemoryManager`, limits in the
 `memory` section):
@@ -1611,7 +1618,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
-A run stopped with `130` or `143` ends its process at once: model calls in flight are abandoned rather than waited for, the logs, tracing and stdout are flushed first, and a process pool's workers are ended with it.
+A run stopped with `130` or `143` ends its process at once: model calls in flight are abandoned rather than waited for, the logs, tracing and stdout are flushed first, and a process pool's workers are ended with it. A SIGTERM or Ctrl-C cancels a query CLI's work at its next await, so its cleanup (closing store connections, `run-eval`'s upload) runs (at the interactive prompt a SIGTERM ends the session at once and a Ctrl-C the conversation, as before); a stopped process still running 10 seconds later is ended then, with the status document if none was printed. A CLI that finished ends its process with its exit code as soon as its exit handlers ran, so a signal while it exits cannot turn `0`, `1` or `2` into `-15` or `-2`.
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
 
@@ -1637,8 +1644,9 @@ signal before it printed prints `{"status": "interrupted", "exit_code": 143}`
 `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
 with (an argparse error included), so stdout is always JSON. That holds
 from the first moment: a SIGTERM while the CLI still loads, or after it
-printed its result while the process exits, exits `143` too (the status
-document only in the first case). A
+printed its result while the process exits, exits `143` too, and a Ctrl-C
+while it loads `130` (the status document only while loading; a SIGINT the
+parent ignores, as `nohup` does, stays ignored). A
 `run-ingestion` result whose run a stage failed carries the same `error` and
 `exit_code`; `run-ingestion` adds the `pipeline_id` to resume with (once the run resolved it) and, when a stopped
 run's next run on the namespace must wait for writes possibly still in

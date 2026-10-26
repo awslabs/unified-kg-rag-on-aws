@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Filterable fields of the OpenSearch indexes and Neptune vertex labels.
+"""Filterable fields of the OpenSearch indexes and Neptune entity vertices.
 
 The declared schema for ``SearchQuery.filters`` keys: the fields the indexers
 write on each index / vertex label (``OpenSearchIndexer._get_*_mapping`` and
@@ -291,25 +291,21 @@ def opensearch_filter_fields(
     }
 
 
-# Vertex label kind -> filterable properties. ``attr_*`` keys on Neptune apply
-# where present (see the module docstring).
-NEPTUNE_FILTER_FIELDS: dict[str, FilterFields] = {
-    "entity": FilterFields(
-        frozenset(
-            {
-                "id",
-                "name",
-                "type",
-                "description",
-                "rank",
-                "confidence",
-                "text_unit_ids",
-                "community_ids",
-            }
-        ),
-        frozenset({ATTRIBUTE_KEY_PREFIX}),
+# The filterable properties of entity vertices, the only ones the graph
+# filters. ``attr_*`` keys on Neptune apply where present (see the module
+# docstring).
+NEPTUNE_ENTITY_FILTER_FIELDS = FilterFields(
+    frozenset(
+        {
+            "id",
+            "name",
+            "type",
+            "description",
+            "rank",
+            "confidence",
+            "text_unit_ids",
+            "community_ids",
+        }
     ),
-    "community": FilterFields(
-        frozenset({"id", "name", "level", "parent", "size", "period", "children"})
-    ),
-}
+    frozenset({ATTRIBUTE_KEY_PREFIX}),
+)

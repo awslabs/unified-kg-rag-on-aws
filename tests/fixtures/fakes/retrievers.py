@@ -22,6 +22,14 @@ class FakeRetriever:
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits()
 
+    def filter_fields(self) -> None:
+        """No declared schema: every filter key is accepted (the
+        ``BaseGraphRAGRetriever`` default)."""
+        return None
+
+    def filter_fields_for(self, prefixes: object) -> None:
+        return None
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         prefix = query.index_prefixes[0] if query.index_prefixes else self.tag

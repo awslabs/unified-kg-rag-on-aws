@@ -331,6 +331,12 @@ class BaseSearchStrategy(ABC):
         default): every index of the document retriever."""
         return None
 
+    def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
+        """The filter keys ``strategy`` sets itself on the searches it scopes
+        (a sub-query's scope replaces a caller value, ``_scoped_filters``),
+        which ``GraphRAGChain`` therefore refuses. None by default."""
+        return frozenset()
+
     def filtered_retrievers(
         self, strategy: SearchStrategy
     ) -> list[BaseGraphRAGRetriever]:
@@ -579,32 +585,61 @@ class BaseSearchStrategy(ABC):
         )
         return [unit for unit in ranked if unit in passed][:quota]
 
+    def _graph_unapplied_filters(self, query: SearchQuery) -> dict[str, Any]:
+        """The caller filters a graph walk cannot apply to the entities it
+        reaches but the entities index can: the document filters (vertices
+        hold none, ``document_filters``) and the entity keys the graph does
+        not store (``name.keyword``, ``attributes.<path>``), which the graph
+        drops (``_scope_filters_to_label``). Without schemas to compare (a
+        custom backend's ``filter_fields`` is ``None``), the document
+        filters only."""
+        unapplied = document_filters(query.filters)
+        graph, documents = self.graph_retriever, self.document_retriever
+        if not query.filters or graph is None or documents is None:
+            return unapplied
+        if (graph_fields := graph.filter_fields()) is None:
+            return unapplied
+        entity_fields = documents.filter_fields_for(
+            [self.config.indexing.opensearch.entities_index_prefix]
+        )
+        if entity_fields is None:
+            return unapplied
+        for key, value in query.filters.items():
+            if entity_fields.declares(key) and not graph_fields.declares(key):
+                unapplied[key] = value
+        return unapplied
+
     async def _vouch_by_entities_index(
-        self, query: SearchQuery, results: list[RetrievalResult], seeds: set[str]
+        self,
+        query: SearchQuery,
+        results: list[RetrievalResult],
+        seeds: set[str],
+        filters: dict[str, Any],
     ) -> list[RetrievalResult]:
         """Graph-expansion ``results`` without the vertices that do not pass
-        the document filters.
+        ``filters`` (``_graph_unapplied_filters``) on the entities index.
 
         Graph vertices hold no document attribute (``document_filters``), so
-        a graph store cannot apply one. The entities index does: an entity
-        document carries the filters of every document it comes from, so it
-        passes when one of them does, and each vertex other than the
-        ``seeds`` is checked there by id (``_ids_passing``). Those values are
-        unioned per key, though, so under two or more keys an entity of two
+        a graph store cannot apply one, nor an entity key it does not store.
+        The entities index does: an entity document carries the filters of
+        every document it comes from, so it passes when one of them does,
+        and each vertex other than the ``seeds`` is checked there by id
+        (``_ids_passing``). Those document values are unioned per key,
+        though, so under two or more document keys an entity of two
         documents that each pass one key would pass while none passes both:
         its survivors are then also checked by their text units, each of
         which belongs to one document. Seeds, relationships and reports
-        match each key independently (see the user guide).
+        match each document key independently (see the user guide). The
+        seeds are checked for the entity keys: a seed need not have been
+        found under them (LightRAG seeds the walk with the endpoints of the
+        relationships it found, which hold no entity key).
         """
-        filters = document_filters(query.filters)
-        if not filters:
-            return results
         o = self.config.indexing.opensearch
         others = [r for r in results if r.source not in seeds]
         passed = await self._ids_passing(
             query, o.entities_index_prefix, (str(r.source) for r in others), filters
         )
-        if len(filters) > 1:
+        if len(documents := document_filters(filters)) > 1:
             passed = await self._one_text_unit_passes(
                 query,
                 {
@@ -612,12 +647,21 @@ class BaseSearchStrategy(ABC):
                     for r in others
                     if str(r.source) in passed
                 },
-                filters,
+                documents,
             )
-        kept = [r for r in results if r.source in seeds or str(r.source) in passed]
+        if own := {k: v for k, v in filters.items() if k not in documents}:
+            passed |= await self._ids_passing(
+                query,
+                o.entities_index_prefix,
+                (str(r.source) for r in results if r.source in seeds),
+                own,
+            )
+            kept = [r for r in results if str(r.source) in passed]
+        else:
+            kept = [r for r in results if r.source in seeds or str(r.source) in passed]
         if len(kept) < len(results):
             logger.debug(
-                "Document filters dropped %s of %s expanded entities",
+                "Filters the graph cannot apply dropped %s of %s expanded entities",
                 len(results) - len(kept),
                 len(results),
             )
@@ -743,7 +787,9 @@ class BaseSearchStrategy(ABC):
         graph cannot tell which edges a passing document states, so the walk
         runs over the relationships index instead
         (``_expand_over_passing_relationships``); without that index the
-        graph walk stands, its entities checked against the entities index.
+        graph walk stands, its entities checked against the entities index,
+        as they are under an entity key the graph does not store
+        (``name.keyword``, ``attributes.<path>``).
         """
         graph = self.graph_retriever
         if graph is None or not seed_entity_ids:
@@ -764,8 +810,10 @@ class BaseSearchStrategy(ABC):
         search_query.filters = (search_query.filters or {}).copy()
         search_query.filters["id"] = seed_entity_ids
         expanded = await self._safe_aretrieve(graph, search_query, "graph expansion")
-        if filtered:
-            expanded = await self._vouch_by_entities_index(query, expanded, seeds)
+        if unapplied := self._graph_unapplied_filters(query):
+            expanded = await self._vouch_by_entities_index(
+                query, expanded, seeds, unapplied
+            )
         return expanded
 
     async def _expand_over_passing_relationships(

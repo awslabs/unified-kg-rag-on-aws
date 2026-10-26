@@ -1378,7 +1378,9 @@ class DataIngestionPipeline:
             logger.warning(
                 "Stage '%s' failed on %d text units; resuming from '%s' as "
                 "asked records their documents FAILED again without retrying "
-                "them (resume from '%s' to retry them)",
+                "them, one more run toward indexing.max_document_failures "
+                "(resume from '%s' to retry them while they are under it: "
+                "past it they are excluded, not retried)",
                 first,
                 len(context.failed_text_unit_ids[first]),
                 start_stage_name,
@@ -2164,7 +2166,10 @@ class DataIngestionPipeline:
             context.status = PipelineStageStatus.COMPLETED
             logger.info("Pipeline completed successfully with all stages passed")
 
-        self.state_manager.save_pipeline_metadata(context)
+        # A stop landing inside the metadata's serialization surfaced as a
+        # failed save (pydantic wraps the PipelineInterrupted it raised).
+        with self._checkpoint_write():
+            self.state_manager.save_pipeline_metadata(context)
 
         if self.pipeline_config.s3_sync_enabled:
             try:

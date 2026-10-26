@@ -791,9 +791,11 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   `mix`는 엔티티·관계·텍스트 단위(`search.lightrag_search.enable_graph_expansion`을 켜면
   Neptune도)를, `local`과 `drift`는 파이프라인이 만드는 모든 인덱스와 Neptune을, `global`은
   커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
-  범위를 좁힌 텍스트 단위도. 이 범위가 호출자의 `community_ids`를 대신함)를, `simple`은
-  파이프라인이 만드는 모든 인덱스를 읽습니다. `auto`는 라우팅될 수 있는 모든 전략에 맞아야
-  하며 라우팅 전에 확인합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
+  범위를 좁힌 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `global`은
+  자기 검색 범위를 정하는 키를 거부합니다. `depth`와 `max_cut_depth`(`search.global_search.use_dynamic_selection`을
+  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
+  적용하는 전략 사이에서만 라우팅하고(기본 집합에서 `type:person`이면 `local`과 `mix`), 그런
+  전략이 없을 때만 라우팅 전에 필터를 거부합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
   속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
   문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
@@ -819,7 +821,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   없어 WARNING을 남김) 그래프를 걷고 엔티티 인덱스 확인만으로 정합니다. 텍스트 단위에 걸리는 필터가
   있으면 local과 mix는 상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로
   청크 할당량을 채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
-  적용됩니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
+  적용됩니다. 엔티티 정점에 없는 이 키와 `name.keyword`는 그래프 걷기가 닿은 엔티티를
+  시드까지 포함해 엔티티 인덱스로 확인합니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
   기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 엔티티 인덱스 확인도 적용되므로, 문서에
   `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
   모두 엄격하게 적용합니다.
@@ -842,8 +845,8 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 `set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
 하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
 `set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
-함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 라우팅될 수 있는
-전략 중 하나라도 거부하는 키를 거부합니다. 그 전략으로 라우팅된 질문이 실패하기 때문입니다.
+함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 이미 설정한
+필터와 함께, 라우팅될 수 있는 어떤 전략도 모두 적용하지 못할 때만 키를 거부합니다.
 
 대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
 
@@ -1451,7 +1454,7 @@ custom_prompts:
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
-`130`이나 `143`으로 중지된 실행은 프로세스를 바로 끝냅니다. 진행 중인 모델 호출은 기다리지 않고 버리며, 그 전에 로그, 추적 데이터, 표준 출력을 비우고 프로세스 풀의 작업자도 함께 끝냅니다.
+`130`이나 `143`으로 중지된 실행은 프로세스를 바로 끝냅니다. 진행 중인 모델 호출은 기다리지 않고 버리며, 그 전에 로그, 추적 데이터, 표준 출력을 비우고 프로세스 풀의 작업자도 함께 끝냅니다. SIGTERM과 Ctrl-C는 질의 CLI의 작업을 다음 await 지점에서 취소하므로 정리 작업(저장소 연결 닫기, `run-eval`의 업로드)은 실행됩니다(대화형 프롬프트에서 기다리는 중이면 SIGTERM은 세션을, Ctrl-C는 이전처럼 대화를 바로 끝냄). 중지된 프로세스가 10초 뒤에도 남아 있으면 그때 끝내며, 출력한 문서가 없으면 상태 문서를 출력합니다. 끝난 CLI는 종료 처리기를 실행한 즉시 자기 종료 코드로 프로세스를 끝내므로, 종료 중에 받은 신호가 `0`, `1`, `2`를 `-15`나 `-2`로 바꾸지 못합니다.
 
 플래그는 전체 이름으로 써야 하며, `--output`처럼 앞부분만 쓰면 거부합니다.
 
@@ -1469,7 +1472,8 @@ custom_prompts:
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
 붙여 출력하므로 표준 출력은 항상 JSON입니다. 시작 직후에도 같습니다. CLI가 아직 로드 중일 때나 결과를
-출력한 뒤 프로세스가 끝나는 중에 받은 SIGTERM도 `143`으로 끝납니다(상태 문서는 앞의 경우에만 출력). 단계가 실패한 `run-ingestion` 실행의 결과에도
+출력한 뒤 프로세스가 끝나는 중에 받은 SIGTERM도 `143`으로, 로드 중의 Ctrl-C는 `130`으로 끝납니다(상태
+문서는 로드 중에만 출력. `nohup`처럼 부모가 무시하게 한 SIGINT는 계속 무시함). 단계가 실패한 `run-ingestion` 실행의 결과에도
 같은 `error`와 `exit_code`가 담깁니다. `run-ingestion`은 재개할 때 쓸 `pipeline_id`를
 (실행이 정한 뒤라면) 덧붙이고, 중지된 실행 다음에 같은 네임스페이스의 다음 실행이 아직 진행
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를

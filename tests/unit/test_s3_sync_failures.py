@@ -292,6 +292,36 @@ def test_a_stop_during_a_checkpoint_write_waits_for_it(tmp_path, mocker) -> None
     assert pipe._checkpointing is False
 
 
+def test_a_stop_while_the_final_metadata_is_saved_waits_for_it(
+    tmp_path, mocker
+) -> None:
+    # Regression: the stop raised inside the metadata's JSON serialization,
+    # which pydantic wraps, so the run failed with PipelineStateError (exit
+    # 1, 3 of 150 stops right after the run) instead of stopping (143).
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.pipeline_config.s3_sync_enabled = False
+    pipe.state_manager = mocker.MagicMock()
+    mocker.patch.object(pipe, "_create_pipeline_metrics")
+    mocker.patch.object(pipe, "_emit_metrics")
+    saved: list[str] = []
+
+    def save(context):  # type: ignore[no-untyped-def]
+        pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+        saved.append(context.pipeline_id)
+
+    pipe.state_manager.save_pipeline_metadata.side_effect = save
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+    with pytest.raises(PipelineInterrupted):
+        pipe._finalize_pipeline_execution(context, time.time())
+    assert saved == ["pid"]
+
+
 def test_a_stop_request_does_no_io(tmp_path, mocker) -> None:
     # The signal handler runs wherever the main thread was, possibly inside
     # ThreadPoolExecutor.submit holding its global lock, which an S3 upload

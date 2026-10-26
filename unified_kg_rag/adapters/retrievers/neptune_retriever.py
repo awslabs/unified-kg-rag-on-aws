@@ -181,7 +181,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         per_seed_limit = seed_share(
             query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
         )
-        filters = self._scope_filters_to_label(entity_label, "entity", query.filters)
+        filters = self._scope_filters_to_label(entity_label, query.filters)
         with_degree = self._neptune_config.entity_importance_source == "degree"
 
         def build(g: GraphTraversalSource) -> Traversal:
