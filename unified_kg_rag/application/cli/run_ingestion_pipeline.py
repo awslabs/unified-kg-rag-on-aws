@@ -268,6 +268,9 @@ class IngestionPipelineRunner:
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
         self.pipeline: DataIngestionPipeline | None = None
+        # Whether the run reported its result (a stop after it came while
+        # the run closed its connections: nothing is left to resume).
+        self.reported = False
         self._validate_args()
 
     def _validate_args(self) -> None:
@@ -555,6 +558,7 @@ class IngestionPipelineRunner:
                 )
                 if self.json_output:
                     print_json(self._json_result(context))
+                self.reported = True
                 # A soft stage failure stops the run but does NOT raise — the
                 # pipeline returns a context with status=FAILED. Without this
                 # check the CLI would print success and exit 0, so Step Functions
@@ -672,7 +676,7 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
     """The JSON status of a stopped run, with the pipeline id to resume with
     and, when the next run must wait, from when it may write."""
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
-    if runner and runner.json_output and pipeline_id:
+    if runner and runner.json_output and pipeline_id and not runner.reported:
         status: dict[str, Any] = {
             "status": "interrupted",
             "exit_code": exit_code,
@@ -704,11 +708,17 @@ def main() -> None:
         runner = IngestionPipelineRunner(args)
         runner.run()
     except PipelineInterrupted as e:
-        console.print(
-            f"\n[yellow]Pipeline stopped by signal {e.signum}; its finished "
-            "stages are checkpointed, rerun with the same --pipeline-id to "
-            f"resume.{_next_run_wait(runner)}[/yellow]"
-        )
+        if runner and runner.reported:
+            console.print(
+                f"\n[yellow]Pipeline stopped by signal {e.signum} after it "
+                "finished, while it closed its connections.[/yellow]"
+            )
+        else:
+            console.print(
+                f"\n[yellow]Pipeline stopped by signal {e.signum}; its finished "
+                "stages are checkpointed, rerun with the same --pipeline-id to "
+                f"resume.{_next_run_wait(runner)}[/yellow]"
+            )
         _print_interrupted(runner, 128 + e.signum)
         sys.exit(128 + e.signum)
     except KeyboardInterrupt:

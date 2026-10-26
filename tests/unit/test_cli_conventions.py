@@ -704,6 +704,55 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     assert json.loads(capsys.readouterr().out) == expected
 
 
+def test_ingestion_stopped_after_its_result_prints_one_document(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A SIGTERM between the result and the end of pipeline.close() printed
+    # an interrupted status after it, and told the user to resume a run
+    # that had finished.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(
+        run_ingestion_pipeline, "load_cli_config", lambda _args: Config()
+    )
+
+    def _run(self: run_ingestion_pipeline.IngestionPipelineRunner) -> None:
+        self.pipeline = SimpleNamespace(  # type: ignore[assignment]
+            pipeline_id="run-7", next_run_writes_from=0.0
+        )
+        print_json({"pipeline_id": "run-7", "status": "completed"})
+        self.reported = True
+        raise PipelineInterrupted(signal.SIGTERM)
+
+    monkeypatch.setattr(run_ingestion_pipeline.IngestionPipelineRunner, "run", _run)
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-ingestion",
+            "--source-directory",
+            str(src),
+            "--cache-directory",
+            str(tmp_path / "cache"),
+            "--output-format",
+            "json",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 143
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"pipeline_id": "run-7", "status": "completed"}
+    assert "--pipeline-id" not in err
+
+
 @pytest.mark.parametrize("value", ["0", "-3"])
 def test_prompt_tuning_rejects_a_non_positive_max_docs(value: str) -> None:
     # Before, --max-docs 0 was accepted and then sampled nothing.
