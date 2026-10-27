@@ -372,7 +372,10 @@ class BaseSearchStrategy(ABC):
     def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
         """The filter keys ``strategy`` scopes its searches by with values a
         caller value cannot be intersected with (a range, a browse from the
-        roots), which ``GraphRAGChain`` therefore refuses. None by default:
+        roots, or a list on a multi-valued field such as ``community_ids``,
+        where a unit in a caller's community and a scope's one passes both
+        filters but the intersection of the two lists may be empty), which
+        ``GraphRAGChain`` therefore refuses. None by default:
         the id keys a strategy scopes (``SCOPED_FILTER_KEYS``) are
         intersected with the caller's values instead (``scope_filters``)."""
         return frozenset()

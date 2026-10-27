@@ -997,8 +997,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if reserved:
             raise InvalidFilterError(
                 f"Filter key(s) {', '.join(reserved)}: {strategy.value} search "
-                "sets them itself to scope what it reads, so the filter would "
-                "be replaced."
+                "scopes what it reads by them itself, with values a filter "
+                "cannot be intersected with (a range, a browse from the "
+                "roots, a list on a multi-valued field), so it refuses them."
             )
         # Under every strategy, those that never scope these keys (naive,
         # global) too: a filter is valid or not whatever the strategy, and

@@ -973,9 +973,13 @@ async def test_global_refuses_the_keys_it_scopes_its_searches_by(
     config.search.global_search.text_unit_slots = slots
     chain = _strategy_chain(config)
     if refused:
-        with pytest.raises(InvalidFilterError, match="global search sets them"):
+        with pytest.raises(
+            InvalidFilterError, match="global search scopes what it reads"
+        ):
             chain.check_filter_keys({key: 1}, SearchStrategy.GLOBAL)
-        with pytest.raises(InvalidFilterError, match="global search sets them"):
+        with pytest.raises(
+            InvalidFilterError, match="global search scopes what it reads"
+        ):
             await chain._search_step(
                 {"resolved_strategy": SearchStrategy.GLOBAL, "filters": {key: 1}}
             )
