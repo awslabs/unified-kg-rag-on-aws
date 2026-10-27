@@ -647,12 +647,22 @@ changed once with the full-config keys (#332).
   matches no filter) (#372), or between #370 and #376 with a removal that
   pruned a community (the kept text units of that community lost their
   document filters and dropped out of filtered retrieval) (#376).
-- Claims: claims indexed before #PR have no `start_date` / `end_date` in
+- Claims: claims indexed before #444 have no `start_date` / `end_date` in
   the claims index (their ids already cover them): they are shown without
   dates, and read back for a merge without them, until they are derived
-  again or the suffix is rebuilt with `indexing.reset: true`. The fields
-  are added to a live index on the first write (no mapping change to
-  apply) (#444).
+  again or the suffix is rebuilt with `indexing.reset: true` (#444). An
+  incremental run maps the two fields as keywords on the live claims index
+  before its first write (#PR). An incremental run of #444 itself left
+  them to the first dated claim, which OpenSearch's date detection mapped
+  as dates, so every later claim with an unknown date failed to write:
+  such an index is refused before any model call, and needs one rebuild
+  with `indexing.reset: true` (#PR).
+- Document filters: an index built before #PR maps an `attr_<key>` or
+  `attributes.filters.<key>` field as a date when its first value looked
+  like one (OpenSearch date detection), and every later value of another
+  form fails to write. An incremental run turns date detection off on the
+  live indices, so a field not mapped yet stays a keyword; one already
+  mapped as a date needs a rebuild with `indexing.reset: true` (#PR).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1429,6 +1439,13 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- Claims and document filters: a date-like value (a claim date, an
+  `attr_<key>` value such as `2024-01-15`) no longer maps its field as a
+  date on the first write (`date_detection: false` on every index), which
+  made every later value of another form, such as an unknown claim date,
+  fail to write. An incremental run adds the fields this release maps
+  that a live index lacks, and turns date detection off on it, in one
+  additive mapping update before any write (#PR).
 - Incremental runs: the claims a derivation drops (their subject is not an
   entity their own text units state) are no longer warned of on every run
   (`Failed to resolve N out of M claims` repeated with each re-derivation);

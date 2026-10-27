@@ -267,7 +267,8 @@ class OpenSearchIndexer(VectorIndexer):
         """The analyzed text fields of ``expected`` that ``live`` maps otherwise.
 
         A field the live index does not map yet would be mapped as a keyword
-        by the ``strings_as_keywords`` dynamic template on the first write.
+        by the ``strings_as_keywords`` dynamic template on the first write (or
+        as a date, on an index built before date detection was turned off).
         """
         mismatches = []
         for name, field in expected.items():
@@ -301,10 +302,16 @@ class OpenSearchIndexer(VectorIndexer):
           languages and ``language_analyzers`` and cannot change on a live
           index (a newly translated language would be mapped as a keyword);
         - the doc-status registry: an index built by a run with the registry
-          off holds documents the registry does not describe.
+          off holds documents the registry does not describe;
+        - its keyword fields: one a dynamic mapping made a date (date
+          detection, on an index built before it was turned off) refuses
+          every value that is not a date, such as an unknown claim date.
 
         An index that records no embedding settings was built by an earlier
         release, whose indices this one does not read: it is rejected too.
+        An index that passes gets, in one additive mapping update, the fields
+        this release maps that it lacks (the claim dates of an index built
+        before #444) and date detection turned off, before any write.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -338,9 +345,8 @@ class OpenSearchIndexer(VectorIndexer):
                     "Re-run once with indexing.reset: true to re-embed the whole "
                     "corpus, or restore the previous embedding model and dimension."
                 )
-            mismatches = self._text_field_mismatches(
-                mapping_funcs[prefix]()["mappings"]["properties"], properties
-            )
+            expected_properties = mapping_funcs[prefix]()["mappings"]["properties"]
+            mismatches = self._text_field_mismatches(expected_properties, properties)
             if META_MODEL not in meta and META_DIMENSION not in meta:
                 raise ConfigurationError(
                     f"The OpenSearch index '{index_name}' records no embedding "
@@ -369,6 +375,43 @@ class OpenSearchIndexer(VectorIndexer):
                     "(registry on) to rebuild the stores and the registry, or "
                     "keep the registry off for this suffix."
                 )
+            self._add_missing_fields(index_name, mappings, expected_properties)
+
+    def _add_missing_fields(
+        self,
+        index_name: str,
+        mappings: dict[str, Any],
+        expected: dict[str, Any],
+    ) -> None:
+        """Map on ``index_name`` the ``expected`` fields it lacks and turn its
+        date detection off, or raise when a keyword field is mapped otherwise.
+
+        Raises:
+            ConfigurationError: A keyword field of ``expected`` is mapped as
+                another type (a date, by date detection).
+        """
+        live = mappings.get("properties") or {}
+        retyped = [
+            f"'{name}' is mapped as {live[name].get('type')}"
+            for name, field in expected.items()
+            if field.get("type") == "keyword"
+            and isinstance(live.get(name), dict)
+            and live[name].get("type") != "keyword"
+        ]
+        if retyped:
+            raise ConfigurationError(
+                f"The OpenSearch index '{index_name}' maps keyword fields "
+                f"otherwise: {'; '.join(retyped)} (needs keyword). A dynamic "
+                "mapping typed them on a first write, and every later value "
+                "of another form fails to write; a live index's field types "
+                "cannot change. Re-run once with indexing.reset: true to "
+                "rebuild the indices."
+            )
+        missing = {name: field for name, field in expected.items() if name not in live}
+        if missing or mappings.get("date_detection") is not False:
+            self.opensearch_client.put_index_mapping(
+                index_name, {"date_detection": False, "properties": missing}
+            )
 
     def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
         """Write ``record`` into the ``_meta`` of each live index of ``suffix``.
@@ -1897,6 +1940,10 @@ class OpenSearchIndexer(VectorIndexer):
             "mappings": {
                 # Read back by check_index_settings.
                 "_meta": self._index_meta(),
+                # A date-like string (a claim date, an attr_* value) would
+                # otherwise map its field as a date on the first write, and
+                # every later value of another form would fail to write.
+                "date_detection": False,
                 "dynamic_templates": [
                     {
                         "strings_as_keywords": {

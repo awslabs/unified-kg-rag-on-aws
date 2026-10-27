@@ -529,6 +529,93 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
         indexer.check_index_settings("default")
 
 
+def _dated_claim(claim_id: str, date: str | None, **filters: str) -> Claim:
+    return _claims()[0].model_copy(
+        update={
+            "id": claim_id,
+            "start_date": date,
+            "end_date": date,
+            "attributes": {"filters": filters} if filters else None,
+        }
+    )
+
+
+def _earlier_claims_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, str]:
+    """A claims index as built before the claim dates were mapped (and date
+    detection turned off): its search engine client and index name."""
+    indexer = harness.vector_indexer
+    current = indexer._get_claims_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        mapping["mappings"].pop("date_detection", None)
+        for name in ("start_date", "end_date"):
+            del mapping["mappings"]["properties"][name]
+        return mapping
+
+    def earlier_doc(claim: Claim, embeddings: tuple[list[float], ...]) -> Any:
+        doc = prepare(claim, embeddings)
+        del doc["start_date"], doc["end_date"]
+        return doc
+
+    prepare = indexer._prepare_claim_doc
+    monkeypatch.setattr(indexer, "_get_claims_mapping", earlier)
+    monkeypatch.setattr(indexer, "_prepare_claim_doc", earlier_doc)
+    _write(harness, "claims", "index", [_dated_claim("cl0", None)])
+    monkeypatch.undo()
+    client = indexer.opensearch_client
+    index_name = client.get_index_name_by_alias(
+        indexer._get_name(harness.config.indexing.opensearch.claims_index_prefix, None)
+    )
+    assert index_name
+    return client, index_name
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_maps_the_claim_dates_of_an_earlier_claims_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Unmapped, the claim dates would be mapped as dates on the first dated
+    # claim, and every claim with an unknown date would then fail to write.
+    client, index_name = _earlier_claims_index(harness, monkeypatch)
+    harness.vector_indexer.check_index_settings("default")  # the run's preflight
+    _write(harness, "claims", "upsert", [_dated_claim("cl1", "2024-01-15")])
+    _write(harness, "claims", "upsert", [_dated_claim("cl2", None)])
+    assert harness.stored_ids("claims") == {"cl0", "cl1", "cl2"}
+    mappings = client.get_index_mappings(index_name)
+    assert mappings["date_detection"] is False
+    assert mappings["properties"]["start_date"] == {"type": "keyword"}
+    harness.vector_indexer.check_index_settings("default")  # nothing left to add
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_refuses_claim_dates_mapped_as_dates(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As a run without the preflight's mapping update left them: a live
+    # index's field types cannot change, so only a reset recovers.
+    client, index_name = _earlier_claims_index(harness, monkeypatch)
+    client.put_index_mapping(
+        index_name, {"properties": {"start_date": {"type": "date"}}}
+    )
+    with pytest.raises(ConfigurationError, match="'start_date' is mapped as date"):
+        harness.vector_indexer.check_index_settings("default")
+
+
+def test_a_date_like_filter_value_does_not_type_its_field(
+    harness: StoreHarness,
+) -> None:
+    # Date detection would map attr_signed as a date on the first value, and
+    # the next value of another form would fail to write.
+    _write(
+        harness, "claims", "upsert", [_dated_claim("cl1", None, signed="2024-01-15")]
+    )
+    _write(harness, "claims", "upsert", [_dated_claim("cl2", None, signed="pending")])
+    assert harness.stored_ids("claims") == {"cl1", "cl2"}
+
+
 def test_find_documents_matches_a_keyword_field_in_a_suffix(
     harness: StoreHarness,
 ) -> None:

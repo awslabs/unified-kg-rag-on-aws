@@ -67,6 +67,11 @@ class _FakeOpenSearchClient:
     def put_index_meta(self, index_name: str, meta: dict[str, Any]) -> None:
         self.mappings[index_name]["_meta"] = copy.deepcopy(meta)
 
+    def put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
+        body = copy.deepcopy(body)
+        self.mappings[index_name]["properties"].update(body.pop("properties"))
+        self.mappings[index_name].update(body)
+
     def update_alias(
         self, alias_name: str, new_index_name: str, remove_pattern: str | None = None
     ) -> None:

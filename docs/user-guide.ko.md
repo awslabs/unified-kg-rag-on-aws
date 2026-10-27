@@ -784,6 +784,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   하므로 `type:PERSON`이 아니라 `type:person`으로 필터링하세요. keyword나 숫자 필드를
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
+  `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
+  범위 필터는 문자열로 비교하며, ISO 날짜(`YYYY-MM-DD`)는 이 비교로도 올바르게 정렬됩니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
   `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다

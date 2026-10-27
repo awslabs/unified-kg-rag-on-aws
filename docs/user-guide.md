@@ -841,7 +841,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   matches exactly: filter `type:person`, not `type:PERSON`. Prefer keyword or
   numeric fields; a `term` on an analyzed field such as `description` matches
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
-  through the Python API.
+  through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
+  claim dates are keywords, a date-like value too, so a range on them
+  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly.
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the
   selected strategy reads declares (e.g. `category`, or `type` with `naive`
