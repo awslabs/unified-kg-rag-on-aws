@@ -1402,6 +1402,9 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`: a repeated `--filters` adds its pairs to the earlier ones
+  (a key given twice is still exit 2). The later `--filters` silently
+  replaced the earlier one (#PR).
 - `run-ingestion`: a Ctrl-C stops the run as a SIGTERM does
   (`request_stop`), after the checkpoint or metadata write in progress,
   and exits 130. Raised as `KeyboardInterrupt` wherever the run was, a

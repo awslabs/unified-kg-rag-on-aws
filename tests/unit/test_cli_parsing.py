@@ -97,6 +97,26 @@ def test_rag_parser_filters_nargs() -> None:
     assert args.filters == ["a:1", "b:2"]
 
 
+def test_rag_parser_a_repeated_filters_adds_its_pairs() -> None:
+    # The later --filters silently replaced the earlier one.
+    args = _rag_parser().parse_args(
+        ["-q", "q", "--filters", "a:1", "--filters", "b:2", "c:3"]
+    )
+    assert args.filters == ["a:1", "b:2", "c:3"]
+
+
+def test_rag_a_filter_key_repeated_across_filters_flags_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["run-rag", "--query", "q", "--filters", "k:a", "--filters", "k:b"]
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert "--filters gives k more than once" in capsys.readouterr().err
+
+
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
 
 

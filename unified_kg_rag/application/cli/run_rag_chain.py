@@ -153,8 +153,10 @@ class CommandLineInterface:
         parser.add_argument(
             "--filters",
             nargs="*",
+            action="extend",
             type=_filter_pair,
-            help="Attribute filters as space-separated 'key:value' pairs",
+            help="Attribute filters as space-separated 'key:value' pairs (a "
+            "repeated --filters adds its pairs)",
         )
         add_output_format_argument(parser)
         parser.add_argument(

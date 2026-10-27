@@ -75,7 +75,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--disable-query-processing` | off | Skip query translation and entity extraction. |
-| `--filters` | — | Attribute filters as space-separated 'key:value' pairs. |
+| `--filters` | — | Attribute filters as space-separated 'key:value' pairs (a repeated --filters adds its pairs). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
