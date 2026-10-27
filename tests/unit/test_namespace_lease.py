@@ -505,24 +505,51 @@ def test_a_stop_raised_while_the_lease_exits_still_gives_it_up(
         pass
 
 
+def _ctrl_c() -> None:
+    import os
+    import signal
+
+    os.kill(os.getpid(), signal.SIGINT)
+    time.sleep(0.05)  # the handler runs at the next bytecode boundary
+
+
 class _SignalledGiveUp(FakeDocStatusStore):
     """Receives SIGINT (Ctrl-C) while the lease is being given up."""
 
     def release_lease(self, namespace: str, owner: str) -> None:
-        import os
-        import signal
-
-        os.kill(os.getpid(), signal.SIGINT)
-        time.sleep(0.05)  # the handler runs at the next bytecode boundary
+        _ctrl_c()
         super().release_lease(namespace, owner)
 
 
-def test_a_stop_landing_in_the_give_up_still_gives_it_up() -> None:
-    # Regression: a Ctrl-C raised inside the release itself left the lease
-    # held for lease_seconds. Now the stop is held until it is given up, and
-    # then raised.
-    store = _SignalledGiveUp()
+@pytest.mark.parametrize("at", ["fence removal", "heartbeat join", "give-up"])
+def test_a_stop_landing_anywhere_in_the_lease_exit_still_gives_it_up(
+    monkeypatch: pytest.MonkeyPatch, at: str
+) -> None:
+    # Regression: a Ctrl-C whose handler raised before the give-up's
+    # try (at the fence's removal) or inside the give-up request itself left
+    # the lease held for lease_seconds. Now the stop is held until the lease
+    # is given up, and then raised.
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+
+    store = _SignalledGiveUp() if at == "give-up" else FakeDocStatusStore()
+    if at == "fence removal":
+        remove = lease_mod.remove_write_fence
+
+        def signalled_removal(token: object) -> None:
+            remove(token)  # type: ignore[arg-type]
+            _ctrl_c()
+
+        monkeypatch.setattr(lease_mod, "remove_write_fence", signalled_removal)
     with pytest.raises(KeyboardInterrupt):
-        with NamespaceLease(store, "ns", 600.0):
-            pass
+        with NamespaceLease(store, "ns", 600.0) as lease:
+            if at == "heartbeat join":
+                thread = lease._thread
+                assert thread is not None
+                join = thread.join
+
+                def signalled_join(timeout: float | None = None) -> None:
+                    _ctrl_c()
+                    join(timeout)
+
+                thread.join = signalled_join  # type: ignore[method-assign]
     assert store.lease_holder("ns") is None

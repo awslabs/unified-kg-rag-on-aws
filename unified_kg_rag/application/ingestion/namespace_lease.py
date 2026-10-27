@@ -111,10 +111,9 @@ def _when(epoch: float) -> str:
 def _stops_deferred() -> Iterator[None]:
     """Run the block with SIGINT and SIGTERM held, then deliver them.
 
-    A stop raised in the give-up itself left the lease held. The Python
-    handlers are swapped, not the thread's signal mask: a handler runs in
-    the main thread whichever thread the signal reached. Off the main
-    thread no handler can interrupt the block.
+    The Python handlers are swapped, not the thread's signal mask: a handler
+    runs in the main thread whichever thread the signal reached. Off the
+    main thread no handler can interrupt the block.
     """
     if threading.current_thread() is not threading.main_thread():
         yield
@@ -223,6 +222,15 @@ class NamespaceLease:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # A stop's handler runs wherever the main thread is: raised in here
+        # (the heartbeat join most often, the give-up request, the fence's
+        # removal), it left the lease held for lease_seconds and the next
+        # run failed with "being written by". It is held until the lease is
+        # given up, then raised.
+        with _stops_deferred():
+            self._exit(exc_type)
+
+    def _exit(self, exc_type: type[BaseException] | None) -> None:
         if self._token is not None:
             remove_write_fence(self._token)
             self._token = None
@@ -242,9 +250,6 @@ class NamespaceLease:
         # A run that ends during its takeover wait (stopped, or failed before
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
-        # A stop raised in here (its handler runs wherever the main thread
-        # is, the heartbeat join most often) still gives the lease up: left
-        # held, it blocked the next run for indexing.lease_seconds.
         try:
             now = time.time()
             handed_on = self.writes_from > now
@@ -278,8 +283,7 @@ class NamespaceLease:
         finally:
             self._stop.set()
             if held:
-                with _stops_deferred():
-                    self._give_up()
+                self._give_up()
 
     def _late_write_seconds(self) -> float:
         """How long after the lease expired a write of its holder may land,
