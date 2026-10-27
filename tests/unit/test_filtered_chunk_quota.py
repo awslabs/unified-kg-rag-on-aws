@@ -139,6 +139,45 @@ async def test_mix_fills_the_linked_chunk_stream_with_chunks_that_pass(
     assert store.checks == ([_UNITS[:3], _UNITS[3:]] if filtered else [])
 
 
+_ALLOWED = ["u2", "u5", "u7", "u9", "u11"]
+
+
+async def test_local_spends_no_slot_on_a_chunk_a_caller_id_filter_removes(
+    config: Config,
+) -> None:
+    # Regression: the quota took the top-ranked chunks, and the fetch then
+    # intersected them with the caller's ids (1 chunk of 4).
+    config.search.local_search.type_quota.text_multiplier = 0.0
+    config.search.local_search.type_quota.text_floor = 4
+    config.search.local_search.entity_frequency_threshold = 100
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, _entities())
+    strategy = get_strategy_spec(SearchStrategy.LOCAL).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    sections, _ = await strategy._retrieve_entity_chain(
+        SearchQuery(query="q", entity_focus=["e0"], filters={"id": _ALLOWED})
+    )
+    assert [r.source for r in sections["text_units"]] == _ALLOWED[:4]
+    assert store.checks == []  # applied without a request
+
+
+async def test_mix_spends_no_slot_on_a_chunk_a_caller_id_filter_removes(
+    config: Config,
+) -> None:
+    config.search.lightrag_search.chunk_stream_top_k = 3
+    config.search.lightrag_search.related_chunk_number = 3
+    store = _Store(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=3, filters={"id": _ALLOWED}),
+        [_entity("e0", _UNITS)],
+        [],
+    )
+    assert [r.source for r in linked["lightrag_linked_chunks"]] == _ALLOWED[:3]
+
+
 async def test_mix_checks_every_hits_lineage_not_only_the_first(
     config: Config,
 ) -> None:

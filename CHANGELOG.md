@@ -1439,6 +1439,11 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- `local`, `drift` and `mix` under a caller `id` filter: the entity-linked
+  chunks' quota took the top-ranked chunks, which the fetch then
+  intersected with the caller's ids, so the slots of the removed ones
+  stayed empty (1 chunk of a quota of 4). The caller's ids now narrow the
+  ranked chunks before the quota is taken (#PR).
 - Claims and document filters: a date-like value (a claim date, an
   `attr_<key>` value such as `2024-01-15`) no longer maps its field as a
   date on the first write (`date_detection: false` on every index), which
