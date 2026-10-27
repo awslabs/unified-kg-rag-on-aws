@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -40,7 +41,11 @@ from unified_kg_rag.shared.utils import (
     entity_key,
     generate_stable_id,
 )
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.shared.utils.langchain import (
+    BATCH_ITEM_FAILED,
+    BatchProcessor,
+    RobustXMLOutputParser,
+)
 
 logger = get_logger(__name__)
 
@@ -118,6 +123,7 @@ class ClaimExtractor(BaseProcessor):
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             min_output_tokens=ClaimExtractionPrompt.output_floor(self.config),
             output_tags=["claims"],
+            parser_class=ClaimsOutputParser,
         )
         self.claim_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -410,6 +416,30 @@ class ClaimExtractor(BaseProcessor):
             logger.warning(
                 "%s text units failed during extraction", stats.num_failed_extractions
             )
+
+
+_CLAIM_OPENED = re.compile(r"<claim[\s>]")
+_CLAIM_CLOSED = re.compile(r"</claim\s*>")
+
+
+class ClaimsOutputParser(RobustXMLOutputParser):
+    """The claims parser: a claim the response was cut off inside (its
+    ``<claim>`` never closed, as under a server-side output cap reported as
+    a normal stop) parses as an empty claim, so it is dropped (and an output
+    of only that claim is cut-off output, :func:`_checked`) instead of
+    stored with the fields before the cut: a description or source text cut
+    short, or none at all."""
+
+    def parse(self, text: str) -> dict[str, Any]:
+        result = super().parse(text)
+        opened = [m.start() for m in _CLAIM_OPENED.finditer(text)]
+        closed = [m.start() for m in _CLAIM_CLOSED.finditer(text)]
+        section = result.get("claims") if isinstance(result, dict) else None
+        if opened and (not closed or closed[-1] < opened[-1]) and section:
+            listed = ensure_list(section, inner_key="claim")
+            if isinstance(section, dict) and listed:
+                section["claim"] = [*listed[:-1], {}]
+        return result
 
 
 def _complete(claim: Any) -> bool:

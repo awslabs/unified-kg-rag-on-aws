@@ -419,8 +419,10 @@ def create_robust_xml_output_parser(
     output_tags: list[str],
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int = 0,
+    parser_class: type[RobustXMLOutputParser] = RobustXMLOutputParser,
 ) -> BaseOutputParser:
-    """Build the XML parser, optionally wrapped in an LLM output fixer.
+    """Build the XML parser (a ``parser_class``), optionally wrapped in an
+    LLM output fixer.
 
     ``output_tags`` are the top-level elements the prompt asks for; the fixer
     is told them, so it repairs toward the prompt's structure. ``model_purpose``
@@ -428,7 +430,7 @@ def create_robust_xml_output_parser(
     response cache, the ingestion effort) as the chain it repairs, and ``min_output_tokens`` (the
     repaired prompt's output floor) so a long output can be re-emitted in full.
     """
-    base_parser = RobustXMLOutputParser(tags=output_tags)
+    base_parser = parser_class(tags=output_tags)
     if not enable_output_fixing:
         return base_parser
 

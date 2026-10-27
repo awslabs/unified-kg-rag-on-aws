@@ -1398,6 +1398,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Claim extraction: a claim the response was cut off inside without a
+  stop reason (its `<claim>` never closed, as under a server-side output
+  cap) is dropped; when it was the only claim, the unit fails with
+  `LLMOutputTruncatedError`, as other cut-off output does. It was stored
+  with the fields before the cut (a claim type, description or source text
+  cut short, or no description at all), and its unit recorded `PROCESSED`
+  (#PR).
 - Incremental runs: a document's consecutive failures
   (`failure_count`) start over when the extraction settings change, as
   they do for new content. The failures at the earlier settings were added

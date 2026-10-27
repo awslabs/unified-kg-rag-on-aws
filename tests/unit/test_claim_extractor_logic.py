@@ -20,6 +20,7 @@ from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.claim_extractor import (
     ClaimExtractionStats,
     ClaimExtractor,
+    ClaimsOutputParser,
     format_entities_with_limit_task,
     prepare_claim_input,
 )
@@ -218,6 +219,50 @@ class TestParseExtractionResult:
 # --------------------------------------------------------------------------- #
 # merge_claims
 # --------------------------------------------------------------------------- #
+_TWO_CLAIMS = (
+    "<claims><claim><subject>A</subject><object>B</object>"
+    "<claim_type>OBLIGATION</claim_type><description>A owes B</description>"
+    "<source_text>A owes B.</source_text></claim>"
+    "<claim><subject>C</subject><object>D</object>"
+    "<claim_type>OBLIGATION</claim_type><description>C owes D money</description>"
+    "<source_text>C owes D.</source_text></claim></claims>"
+)
+
+
+class TestClaimsOutputParser:
+    """A claim the response was cut off inside (no stop reason) is dropped,
+    not stored with the fields before the cut."""
+
+    @pytest.mark.parametrize(
+        "cut_after", ["<claim_type>OBLIG", "C owes D mo", "<source_text>C o"]
+    )
+    def test_a_claim_cut_off_inside_is_dropped(
+        self, extractor, text_unit, cut_after: str
+    ) -> None:
+        text = _TWO_CLAIMS[: _TWO_CLAIMS.rindex(cut_after) + len(cut_after)]
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        claims = extractor._parse_extraction_result(result, text_unit)
+        assert [(c.subject_name, c.description) for c in claims] == [("A", "A owes B")]
+
+    def test_a_cut_after_the_last_claim_keeps_every_claim(
+        self, extractor, text_unit
+    ) -> None:
+        text = _TWO_CLAIMS.removesuffix("</claims>")
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        claims = extractor._parse_extraction_result(result, text_unit)
+        assert [c.subject_name for c in claims] == ["A", "C"]
+
+    def test_an_output_of_only_a_cut_off_claim_is_cut_off(
+        self, extractor, text_unit
+    ) -> None:
+        # It parsed into one complete-looking claim, "C owes D mo".
+        text = _TWO_CLAIMS[_TWO_CLAIMS.index("<claim><subject>C") :]
+        text = "<claims>" + text[: text.index("money")]
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        with pytest.raises(LLMOutputTruncatedError, match="none of the 1 claims"):
+            extractor._parse_extraction_result(result, text_unit)
+
+
 class TestMergeClaims:
     def _claim(self, id_, **kw) -> Claim:
         base = {
