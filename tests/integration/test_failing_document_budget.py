@@ -481,21 +481,35 @@ def _cut_alike(tmp: Path, stage: str, n: int = 2) -> tuple[Any, Any, Path, dict]
 
 
 def _cut_runs(
-    tmp: Path, stage: str, n: int, modes: list[str], change: int | None = None
+    tmp: Path,
+    stage: str,
+    n: int,
+    modes: list[str],
+    change: int | None = None,
+    reset: bool = False,
 ) -> list[tuple]:
-    """Run ``_cut_alike`` once per mode; before run ``change``, change an
-    extraction setting. Each run's z1 (failure_count, retry_count) and
-    whether d1 is still recorded."""
+    """Run ``_cut_alike`` once per mode (``indexing.reset`` on every run with
+    ``reset``); before run ``change``, change an extraction setting. Each
+    run's z1 (failure_count, retry_count), whether d1 is still recorded and
+    the run's documents_retrying."""
     config, providers, source, mode = _cut_alike(tmp, stage, n)
+    config.indexing.reset = reset
     seen = []
     for run, m in enumerate(modes):
         mode["m"] = m
         if run == change:
             config.processing.graph_extraction.max_entities_per_chunk += 1
-        e2e._ingest(config, providers, source, tmp / f"run{run}")
+        context = e2e._ingest(config, providers, source, tmp / f"run{run}")
         records = {r.file_path: r for r in providers.build_doc_status().list_all()}
         z1 = records["z1.txt"]
-        seen.append((z1.failure_count, z1.retry_count, "d1.txt" in records))
+        seen.append(
+            (
+                z1.failure_count,
+                z1.retry_count,
+                "d1.txt" in records,
+                len(context.retrying_doc_ids),
+            )
+        )
     return seen
 
 
@@ -530,6 +544,8 @@ def test_outage_runs_neither_count_nor_end_an_output_cut_streak(
         (2, 1),
         (3, 0),
     ], seen
+    # A counted run ends the outage streak: never reported retrying.
+    assert [run[3] for run in seen] == [0, 0, 0, 0, 0], seen
     # Two outage runs before one cut run excluded them at once too.
     seen = _cut_runs(tmp_path / "o", stage, 3, ["503", "503", "cut"])
     assert seen[-1][:2] == (1, 0), seen
@@ -544,6 +560,15 @@ def test_other_extraction_settings_start_an_output_cut_streak_over(
     # toward the new ones and excluded the documents.
     seen = _cut_runs(tmp_path, stage, 2, ["cut", "cut"], change=1)
     assert [run[:2] for run in seen] == [(1, 0), (1, 0)], seen
+
+
+def test_a_reset_rebuild_counts_output_cut_alike(tmp_path: Path) -> None:
+    # The rebuild records the documents itself (IncrementalIndexer.record):
+    # gleaning output cut alike on both documents counts there too.
+    seen = _cut_runs(
+        tmp_path, "graph refinement specialist", 3, ["cut", "cut"], reset=True
+    )
+    assert [run[:2] for run in seen] == [(1, 0), (2, 0)], seen
 
 
 @_COUNTED_STAGES

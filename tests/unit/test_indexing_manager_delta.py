@@ -576,3 +576,74 @@ def test_claim_records_of_every_round_are_derived_with(manager) -> None:
     assert asked == [["u1"], ["u2"]]
     (claim,) = [c for c in derived.claims if c.id == held.id]
     assert sorted(claim.text_unit_ids or []) == ["u1", "u2"]
+
+
+def _deriving(mgr) -> list[list]:
+    """Replace ``mgr.derive`` with one recording the entities it is given."""
+    from types import SimpleNamespace
+
+    given: list[list] = []
+
+    def derive(suffix, entities, relationships, claims, *args, **kwargs):
+        given.append(list(entities))
+        return SimpleNamespace(claims=list(claims), id_remap={}, dropped=[])
+
+    mgr.derive = derive
+    return given
+
+
+def _stated_claim():
+    from unified_kg_rag.domain.models import Claim
+
+    return Claim(
+        id="c1",
+        subject_id="e-acme",
+        subject_name="Acme",
+        object_id="",
+        object_name="Globex",
+        type="PAYS",
+        text_unit_ids=["u1"],
+    )
+
+
+def test_a_strip_reads_the_stored_spellings_of_a_claims_stated_names(
+    manager,
+) -> None:
+    # The claim's subject entity is gone (stated only in removed units), so
+    # no read entity names "Acme": the claim's own subject and object names
+    # must find their other stored spellings for its statement to resolve.
+    from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+
+    mgr, _, neptune = manager
+    neptune.read_entities.return_value = []
+    neptune.find_entity_ids_by_name_key.return_value = []
+    _deriving(mgr)
+
+    mgr._derive_claims("default", [_stated_claim()], removed=["u9"])
+
+    (keys, _), _ = neptune.find_entity_ids_by_name_key.call_args
+    assert {compact_name_key("Acme"), compact_name_key("Globex")} <= set(keys)
+
+
+def test_a_claim_is_derived_with_the_spellings_of_its_stated_names_this_run_derived(
+    manager,
+) -> None:
+    # This run derived "Globex" (not stored yet), the claim's literal object:
+    # its record decides whether the object resolves to it. Only the
+    # spellings of names the claim or its endpoints state are added.
+    from unified_kg_rag.domain.models import Entity
+
+    mgr, _, neptune = manager
+    neptune.read_entities.return_value = [
+        Entity(id="e-acme", name="Acme", text_unit_ids=["u1"])
+    ]
+    mgr._derived_entities["default"] = {
+        "x-globex": Entity(id="x-globex", name="Globex", text_unit_ids=["u2"]),
+        "x-other": Entity(id="x-other", name="Depot", text_unit_ids=["u3"]),
+    }
+    given = _deriving(mgr)
+
+    mgr._derive_claims("default", [_stated_claim()])
+
+    assert len(given) == 1
+    assert {e.id for e in given[0]} == {"e-acme", "x-globex"}
