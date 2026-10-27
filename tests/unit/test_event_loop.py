@@ -46,3 +46,30 @@ def test_chain_loop_runner_uses_the_configured_size() -> None:
         assert len(runner.run(_fill_executor())) == _WORKERS
     finally:
         runner.stop()
+
+
+def test_a_cancelled_run_does_not_wait_for_the_executors_calls() -> None:
+    # asyncio.run joined the executor on the way out: a stopped
+    # run-prompt-tuning waited for its model call (or the stop watchdog).
+    import time
+
+    release = threading.Event()
+    ran: list[int] = []
+
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        assert task is not None
+        loop.call_later(0.2, task.cancel)
+        calls = [loop.run_in_executor(None, release.wait, 30) for _ in range(2)]
+        calls.append(loop.run_in_executor(None, ran.append, 1))  # queued
+        await asyncio.gather(*calls)
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            event_loop.run(main(), io_workers=2)
+        assert time.monotonic() - started < 5
+        assert ran == []  # the queued call was dropped
+    finally:
+        release.set()

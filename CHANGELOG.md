@@ -1398,6 +1398,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-prompt-tuning`: a SIGTERM or Ctrl-C during a model call ends the run
+  at once (with its logs and spans flushed). The event loop waited for the
+  call's thread on the way out, so the stop took until the call returned or
+  the watchdog ended the process without the flush (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning`: a stopped CLI gets 100
   seconds to unwind before the watchdog ends it, not 10, inside the 120 s
   StopTimeout of the app container, and a second SIGTERM or Ctrl-C ends it
