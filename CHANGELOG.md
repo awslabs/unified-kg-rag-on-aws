@@ -849,6 +849,9 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Queries with `auto` and filters: an INFO line names the strategies the
+  filters leave out of the route (`auto routes only among local, mix: the
+  filters leave out global`) (#PR).
 - Claim resolution: a claim's subject and object resolve only against the
   entities its own text units stated, in a full build as in an incremental
   run. A claim whose subject its units' entity extraction did not list is

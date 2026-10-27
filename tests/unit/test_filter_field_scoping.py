@@ -795,6 +795,18 @@ async def test_auto_routes_the_documented_filter_example(config: Config) -> None
     assert state["resolved_strategy"] is SearchStrategy.LOCAL
 
 
+def test_auto_logs_the_strategies_the_filters_leave_out(config: Config, mocker) -> None:
+    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(config)
+    info = mocker.spy(rag_chain.logger, "info")
+    chain.check_filter_keys({"type": "person"}, SearchStrategy.AUTO)
+    assert any(
+        call.args[1:] == ("local, mix", "global") for call in info.call_args_list
+    )
+
+
 async def test_auto_with_one_strategy_applying_the_filters_skips_the_router(
     config: Config,
 ) -> None:

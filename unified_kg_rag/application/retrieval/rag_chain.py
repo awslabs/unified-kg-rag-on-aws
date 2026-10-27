@@ -1041,6 +1041,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "No strategy auto may route to applies every filter key. "
                 + " ".join(refusals)
             )
+        if refusals:
+            logger.info(
+                "auto routes only among %s: the filters leave out %s",
+                ", ".join(s.value for s in candidates),
+                ", ".join(s.value for s in routable if s not in candidates),
+            )
         return tuple(candidates)
 
     @staticmethod
