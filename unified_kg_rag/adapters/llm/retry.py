@@ -158,6 +158,7 @@ def item_failed_indices(
     batch_processor: BatchProcessor,
     prepare_inputs: Callable[[list[TextUnit]], list[dict[str, Any]]],
     invoke: Callable[[dict[str, Any]], Any],
+    capped: list[int] | None = None,
 ) -> list[int]:
     """The indices, of the batch of ``units``, whose ``errors`` count
     against their document (``is_item_error``).
@@ -168,9 +169,13 @@ def item_failed_indices(
     a throttled or timed-out call, says nothing of the others and is left
     out), that is either one cause, the model or a setting
     (a server-side output cap, say), or each document's own. Output errors
-    on the units of more than one document count for none: a known-good
+    on the units of more than one document count for none now: a known-good
     request is short, so it cannot tell a server-side output cap from
-    output of each document's own. Otherwise one known-good request
+    output of each document's own. Their indices go to ``capped``, and the
+    registry counts their documents once they failed so for
+    ``indexing.max_document_failures`` consecutive runs
+    (``record_item_failures``), so a batch that always fails does not stop
+    every run with its deletions. Otherwise one known-good request
     (:func:`known_good_unit`, made by ``prepare_inputs`` and ``invoke``
     through ``batch_processor``, as the items were) decides: failed too,
     none is counted; answered, the errors are counted. For output errors
@@ -193,11 +198,14 @@ def item_failed_indices(
             logger.warning(
                 "%s: the output of every item of %d documents failed alike "
                 "(%s): taken for a model or server output cap, counted "
-                "against no document",
+                "against their documents only once they failed so for "
+                "indexing.max_document_failures consecutive runs",
                 task,
                 len(documents),
                 first,
             )
+            if capped is not None:
+                capped.extend(own)
             return []
         # Imported here: the cache module imports the chain factory, which
         # imports this one.

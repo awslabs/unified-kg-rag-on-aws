@@ -1398,6 +1398,17 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: documents whose output fails alike on every unit of
+  several documents (cut off or unparseable, as under a server-side output
+  cap) in graph extraction, claim extraction or gleaning are counted once
+  they failed so for `indexing.max_document_failures` consecutive runs, and
+  are then recorded `FAILED` at the limit and excluded, so the next run
+  applies the delta's deletions. Counted for none since #440, such a batch
+  was extracted again on every run, and in graph extraction stopped every
+  run before indexing, so a deleted document was never removed. The
+  trade-off: a server-side output cap that persists for that many runs
+  excludes those documents too, until their content or the extraction
+  settings change. Outages and rejected settings still never count (#PR).
 - Incremental claims: a stored claim whose subject or object entity a
   removal deletes (only the removed documents stated its spelling) is
   derived against the other stored spellings of the names the claim states,

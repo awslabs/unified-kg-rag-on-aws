@@ -288,6 +288,7 @@ def _indices(
     predicate: Any,
     probe: _Probe,
     documents: int = 1,
+    capped: list[int] | None = None,
 ) -> list[int]:
     """``item_failed_indices`` over ``count`` units, spread over
     ``documents`` documents in turn."""
@@ -296,7 +297,7 @@ def _indices(
         for i in range(count)
     ]
     return item_failed_indices(
-        errors, units, predicate, "t", probe, lambda units: [{}], lambda _: {}  # type: ignore[arg-type]
+        errors, units, predicate, "t", probe, lambda units: [{}], lambda _: {}, capped  # type: ignore[arg-type]
     )
 
 
@@ -363,10 +364,17 @@ def test_one_output_cause_on_every_unit_of_several_documents_counts_none(
     # A server-side output cap cuts every document's output, but not a
     # known-good request's short answer: that answer cannot tell the cap
     # from each document's own output, so output errors across documents
-    # count for none, and nothing is sent.
+    # count for none now, and nothing is sent. They are handed back as
+    # capped: the registry counts them after max_document_failures runs.
     probe = _Probe(answered)
-    counted = _indices(errors, len(errors), item_error_predicate(_BEDROCK), probe, 2)
+    capped: list[int] = []
+    counted = _indices(
+        errors, len(errors), item_error_predicate(_BEDROCK), probe, 2, capped
+    )
     assert (counted, probe.sent) == ([], [])
+    assert capped == [
+        idx for idx, error in sorted(errors.items()) if error in _OUTPUT_ERRORS
+    ]
 
 
 def test_one_output_cause_on_a_documents_units_and_its_timeout_asks() -> None:

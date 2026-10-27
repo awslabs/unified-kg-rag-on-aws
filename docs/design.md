@@ -538,8 +538,13 @@ unless noted.
    sent fails and its own errors are of one cause (alike in type, code and
    HTTP status, not message; or all unparseable or cut-off output; a unit
    that failed otherwise, throttled say, is left out), output errors on the
-   units of more than one document count for none (a server-side output cap
-   cuts them all; a short request cannot tell). Otherwise the stage sends one
+   units of more than one document count only once those documents failed
+   so for `indexing.max_document_failures` consecutive runs (`retry_count`),
+   then at the limit, excluding them: a server-side output cap cuts them all
+   and a short request cannot tell, but a batch that always fails must not
+   stop every run with its deletions (the trade-off: a cap that persists that
+   many runs excludes them, until their content or the extraction settings
+   change). Otherwise the stage sends one
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are
