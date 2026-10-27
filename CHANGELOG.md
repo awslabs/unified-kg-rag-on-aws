@@ -1439,6 +1439,10 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- Claim resolution: each subject or object spelling is fuzzy-matched
+  (MinHash + LSH) once per resolution instead of once per claim statement,
+  as #444's per-statement resolution did (100k statements with spelling
+  variants: 43.9 s before, 6.9 s now, same output) (#PR).
 - Incremental runs with `processing.deduplicate`: a document indexed
   without the claims of some units (recorded `FAILED` only so the next run
   extracts them again) gave way to a new near-copy, which deleted it from
