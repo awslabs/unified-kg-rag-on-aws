@@ -1411,6 +1411,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `local`, `drift`, `mix` and `hybrid` under a document filter and a
+  caller `id`, `source_id` or `target_id`: the walk over the relationships
+  index asked its edges under those keys too, so an `id` (entity ids)
+  matched no edge and a `source_id` kept only the edges from the listed
+  vertices, and the walk reached no or fewer neighbours. The edges are now
+  asked without them, as the graph walk crosses its edges; the reached
+  entities are still read under them (#PR).
 - Incremental runs: the claims a derivation drops (their subject is not an
   entity their own text units state) are no longer warned of on every run
   (`Failed to resolve N out of M claims` repeated with each re-derivation);
