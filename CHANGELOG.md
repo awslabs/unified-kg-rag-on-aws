@@ -1402,6 +1402,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Queries: a claim in the context names its subject, type, object and
+  status (`Claim: Vendor -[breach of contract]-> Buyer (FALSE)`) before its
+  description. Shown as the description alone, a `FALSE` or `SUSPECTED`
+  claim read as a plain statement (#PR).
 - `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
   its namespace lease (most often while it waits for the heartbeat thread)
   still gives the lease up. It stayed held for `indexing.lease_seconds`
