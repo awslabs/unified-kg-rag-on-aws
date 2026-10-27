@@ -2274,8 +2274,10 @@ class IndexingConfig(BaseModel):
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised. Output that fails alike on several "
         "documents (a server-side output cap) counts so too, once a run; "
-        "changed extraction settings start the count over. Claim extraction "
-        "errors never count: the document is indexed without those claims.",
+        "changed extraction settings start the count over. A unit's own "
+        "claim extraction error never counts: the document is indexed "
+        "without those claims. A claim extraction outage fails the document "
+        "uncounted, as any outage does.",
     )
     max_document_attempts: int = Field(
         default=3,
@@ -2473,8 +2475,10 @@ class GlobalSearchConfig(BaseModel):
             "Upper bound on the reports one cut (or one step of the dynamic "
             "selection) contributes. A cut with more reports gives way to the "
             "deepest shallower cut that fits (global_cut_depth in the search "
-            "metadata); when even the root cut does not fit, or under a filter "
-            "on a report key (community_id, level, rating), to the reports "
+            "metadata); when even the root cut does not fit, or under any "
+            "filter but a document filter (attr_<key>, "
+            "attributes.filters.<key>), such as community_id, level or "
+            "rating, to the reports "
             "of the cut most similar to the query (a hybrid search restricted "
             "to the cut, global_level_capped). "
             "At most indexing.opensearch.max_query_size - 1 (and the reports "

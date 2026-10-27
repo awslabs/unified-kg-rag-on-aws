@@ -924,7 +924,8 @@ class DataIngestionPipeline:
 
         Meant for a signal handler in the main thread; ``run-ingestion``
         installs one for SIGTERM, which ECS sends on StopTask and when a Step
-        Functions execution times out, before it kills the task. Every stage
+        Functions execution times out, before it kills the task, and for
+        Ctrl-C (SIGINT) unless the parent ignores it. Every stage
         the run finished is in the checkpoint, so a re-run with the same
         pipeline id resumes at the stage that was running. A request made while
         a checkpoint is being written takes effect once it is written, so the

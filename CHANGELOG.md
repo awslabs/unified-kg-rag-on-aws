@@ -1462,8 +1462,8 @@ changed once with the full-config keys (#332).
 - Incremental claims: a derived claim takes the dates of the claim it now
   is, with that claim's id. It kept the given claim's dates (none, for a
   stored claim read back), so its dates and its id disagreed and differed
-  from a full build's (cl59 with dated claims: 59 of 2680 corpus walks
-  before, 0 now) (#444).
+  from a full build's (on a corpus with dated claims: 59 of 2680 corpus
+  walks before, 0 now) (#444).
 - Claim extraction: a response whose `</claims>` closes keeps its last
   claim when text after the section names a `<claim>` tag (a note, a code
   fence's trailer). Taken for a claim cut off inside, it was dropped, and
@@ -1522,8 +1522,9 @@ changed once with the full-config keys (#332).
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a
   request per expansion (#443).
-- `global` under a filter on a report key (`community_id`, `level`,
-  `parent_community_id`, `rating`): a cut over `max_reports_per_level`
+- `global` under any filter but a document filter (`attr_<key>`,
+  `attributes.filters.<key>`), such as `community_id`, `level`,
+  `parent_community_id` or `rating`: a cut over `max_reports_per_level`
   maps the cut's reports most similar to the query instead of giving way
   to a shallower cut, whose reports pass the filter on their own. A
   `community_id` filter naming all 101 leaves mapped 0 reports as a
@@ -1572,7 +1573,7 @@ changed once with the full-config keys (#332).
   trade-off: a server-side output cap that persists for that many runs
   excludes those documents too, until their content or the extraction
   settings change. Outages and rejected settings still never count (#442).
-  Superseded by #PR: each such run counts once.
+  Superseded by #444: each such run counts once.
 - Incremental claims: a stored claim whose subject or object entity a
   removal deletes (only the removed documents stated its spelling) is
   derived against the other stored spellings of the names the claim states,

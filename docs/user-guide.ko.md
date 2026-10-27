@@ -703,7 +703,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 |---|---|---|
 | `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
 | `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
+| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 문서 필터(`attr_<key>`, `attributes.filters.<key>`)가 아닌 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. |
 

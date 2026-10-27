@@ -685,8 +685,8 @@ import는 순환이 됨).
   (다른 쪽 끝점에 `must_not`) 페이지를 채우지 못합니다. 다만 `max_terms_count`를 넘으면 제외 목록은 마지막에 닿은 정점만 남기므로 나머지 정점으로 돌아가는 관계가 페이지를 채울 수 있습니다. 관계가 문서 필터를 갖기 전에 만든 인덱스에서는 통과하는
   관계가 없어 다시 빌드할 때까지 시드만 남습니다. 관계 인덱스가 없으면 그래프를 걷고 엔티티
   인덱스로 확인합니다. 엔티티 정점에 없는 엔티티 키(`name.keyword`, `attributes.<path>`)가 있을 때의
-  그래프 걷기도 같습니다. 그래프는 그 키를 버리고 엔티티 인덱스가 시드에도 적용합니다(`_graph_unapplied_filters`. LightRAG의
-  관계 끝점 시드는 엔티티 키로 찾은 것이 아님).
+  그래프 걷기도 같습니다. 그래프는 그 키를 버리고 엔티티 인덱스가 LightRAG의 시드에도 적용합니다(`_graph_unapplied_filters`. LightRAG의
+  관계 끝점 시드는 엔티티 키로 찾은 것이 아니고, `local`과 `drift`의 시드는 필터로 찾은 것임).
 - **인덱스 하나, 두 방법론(의도적 확장).** 수집은 두 방법론에 필요한 것의 합집합을 만듭니다
   (MS GraphRAG는 관계 벡터 인덱스를, LightRAG는 커뮤니티를 만들지 않음). LightRAG만 쓰는
   배포는 `graph.community_detection.enabled: false`로 Leiden과 모든 리포트 호출을 건너뛸 수
@@ -746,7 +746,7 @@ import는 순환이 됨).
   상한(`max_reports_per_level`, 한 요청에 들도록 최대 `max_query_size` - 1, 살아 있는
   `max_result_window` - 1. 기본 99)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다.
   더 큰 단면은 상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은
-  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만, 또는 리포트 키(`community_id`, `level`, `rating`) 필터가 있으면 곧바로(더 얕은 리포트는 구성원을 통해서가 아니라 스스로 그 필터를 통과하므로) 설정한 단면으로 제한한 하이브리드 검색이
+  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만, 또는 문서 필터(`attr_<key>`, `attributes.filters.<key>`)가 아닌 필터(`community_id`, `level`, `rating` 등)가 있으면 곧바로(더 얕은 리포트는 구성원을 통해서가 아니라 스스로 그 필터를 통과하므로) 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
   곳은 여기뿐입니다. 상한은 리포트 수로 세며 이것이 map 호출 수를 제한합니다.
 - **동적 선택**(`use_dynamic_selection`) — MS GraphRAG의 `DynamicCommunitySelection`입니다.

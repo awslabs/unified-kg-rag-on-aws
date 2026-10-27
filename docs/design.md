@@ -826,8 +826,9 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   graph walk runs, checked against the entities index. So is a graph walk
   under an entity key entity vertices do not store (`name.keyword`,
   `attributes.<path>`): the graph drops it, the entities index applies it
-  (`_graph_unapplied_filters`), to the seeds too (LightRAG's relationship
-  endpoints were found under no entity key).
+  (`_graph_unapplied_filters`), to LightRAG's seeds too (its relationship
+  endpoints were found under no entity key; `local`'s and `drift`'s seeds
+  were found under the filters).
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set
@@ -901,7 +902,7 @@ depth selects the cut.
   `max_result_window` - 1, so the probe fits one request; 99 by default) so a
   cut of exactly the cap is complete. A larger cut gives way to the deepest
   shallower cut that fits (`global_cut_depth`), covering the same entities in
-  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
+  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under any filter but a document filter (`attr_<key>`, `attributes.filters.<key>`), such as `community_id`, `level` or `rating` (a shallower report passes it on its own, not through its members), does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
   The cap counts reports, which bounds the map calls.
