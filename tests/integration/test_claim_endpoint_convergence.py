@@ -221,3 +221,35 @@ def test_a_claim_added_about_an_entity_another_document_states(
     )
     assert not dangling, dangling
     assert incremental == full
+
+
+def _claim_cut_inside_its_element(system: str, human: str) -> str:
+    if "knowledge graph extraction expert" in system:
+        text = stages._source_text(human).strip()
+        return _entities(_names_in(text), "ORGANIZATION", text)
+    if "claim extraction specialist" in system:
+        text = stages._source_text(human).strip()
+        return (
+            "<claims><claim><subject>Buyer</subject><object>Depot</object>"
+            "<claim_type>OBLIGATION</claim_type>"
+            "<claim_status>SUSPECTED</claim_status>"
+            "<description>Buyer owes Depot</description>"
+            f"<source_text>{text}</source_text></claim>"
+            "<claim><subject>Depot</subject><object>Buyer</object>"
+            "<claim_type>OBLIGATION</claim_type><description>Depot ow"
+        )
+    return stages._respond(system, human)
+
+
+def test_the_pipelines_claim_chain_drops_a_claim_cut_inside_its_element(
+    tmp_path: Path,
+) -> None:
+    # The claim chain the pipeline builds parses with ClaimsOutputParser
+    # (claim_extractor -> chain_factory): a claim whose element never closed
+    # was stored with the fields before the cut.
+    claims, _ = _claims_after(
+        tmp_path,
+        _claim_cut_inside_its_element,
+        [{"d.txt": "Buyer and Depot trade goods 1."}],
+    )
+    assert claims == [("Buyer", "Depot", False)], claims

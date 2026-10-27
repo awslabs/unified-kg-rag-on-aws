@@ -795,6 +795,54 @@ async def test_auto_routes_the_documented_filter_example(config: Config) -> None
     assert state["resolved_strategy"] is SearchStrategy.LOCAL
 
 
+@pytest.mark.parametrize("reply", ["global", RuntimeError("router down")])
+async def test_auto_falls_back_among_the_filtered_candidates_only(
+    config: Config, reply: Any
+) -> None:
+    # Off-list or failed routing falls back to the first candidate the
+    # filters left (mix), not to the first routable strategy (global),
+    # which would ignore the type key.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config.search.auto_routable_strategies = [
+        SearchStrategy.GLOBAL,
+        SearchStrategy.MIX,
+        SearchStrategy.HYBRID,
+    ]
+    chain = _strategy_chain(config)
+    chain.ignore_errors = True
+
+    class _Failing(_Router):
+        async def ainvoke(self, inputs: dict, _config: object = None) -> str:
+            self.offered.append(inputs["strategies"])
+            raise reply
+
+    router = _Failing("") if isinstance(reply, Exception) else _Router(reply)
+    chain._get_chain_for_prompt = lambda *_a, **_k: router  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {
+            "search_strategy": SearchStrategy.AUTO,
+            "filters": {"type": "person"},
+            "query": "q",
+        }
+    )
+    assert router.offered == ["mix, hybrid"]
+    assert state["resolved_strategy"] is SearchStrategy.MIX
+
+
+def test_global_reserves_community_ids_only_with_text_unit_slots(
+    config: Config,
+) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(config)
+    instance = chain._get_strategy_instance(SearchStrategy.GLOBAL)
+    config.search.global_search.text_unit_slots = 0
+    assert "community_ids" not in instance.reserved_filter_keys(SearchStrategy.GLOBAL)
+    config.search.global_search.text_unit_slots = 3
+    assert "community_ids" in instance.reserved_filter_keys(SearchStrategy.GLOBAL)
+
+
 def test_auto_logs_the_strategies_the_filters_leave_out(config: Config, mocker) -> None:
     from unified_kg_rag.application.retrieval import rag_chain
     from unified_kg_rag.domain.models import SearchStrategy
