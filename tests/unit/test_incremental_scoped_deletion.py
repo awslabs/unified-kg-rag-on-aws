@@ -210,6 +210,54 @@ def test_dedup_drops_a_failed_original_for_its_new_copy(
     assert [d.file_name for d in context.documents] == [copy_name]
 
 
+@pytest.mark.parametrize("copy_name", ["a_copy.txt", "z_copy.txt"])
+def test_dedup_keeps_an_original_indexed_without_some_claims(
+    tmp_path, mocker, copy_name
+) -> None:
+    # Recorded FAILED only so the next run extracts its missing claims, the
+    # original is indexed: giving way to its new copy deleted it from the
+    # stores and indexed the copy instead.
+    from unified_kg_rag.application.ingestion import incremental
+
+    root = tmp_path / "corpus"
+    store = FakeDocStatusStore()
+    config = _config()
+    config.processing.deduplicate = True
+    text = "Vendor A supplies parts to Buyer under the yearly framework agreement."
+    _write(root, {"original.txt": text})
+    first = _run(root, store, config, mocker)
+    original_id = _doc_id(first, "original.txt")
+    record = store.get(original_id)
+    assert record is not None
+    store.put(
+        record.model_copy(
+            update={
+                "status": DocStatus.FAILED,
+                "error_info": incremental._CLAIMS_MISSING,
+            }
+        )
+    )
+
+    _write(root, {copy_name: text})
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    context.add_stage_result(
+        DocumentParsingStage(config, source_directory=root).execute(context)
+    )
+    DocumentLoadingStage(config, source_directory=root, doc_status=store).execute(
+        context
+    )
+
+    delta = context.incremental_delta
+    assert delta.new == [] and delta.deleted == []
+    assert [d.file_name for d in context.documents] == ["original.txt"]
+
+
 def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
     root = _write(
         tmp_path / "corpus",

@@ -1439,6 +1439,10 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- Incremental runs with `processing.deduplicate`: a document indexed
+  without the claims of some units (recorded `FAILED` only so the next run
+  extracts them again) gave way to a new near-copy, which deleted it from
+  the stores and indexed the copy instead; it is now kept as indexed (#PR).
 - `local`, `drift` and `mix` under a caller `id` filter: the entity-linked
   chunks' quota took the top-ranked chunks, which the fetch then
   intersected with the caller's ids, so the slots of the removed ones

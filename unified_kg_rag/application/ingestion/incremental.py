@@ -1191,8 +1191,9 @@ def dedup_preferences(
     therefore kept over one it does not, and one
     it holds as FAILED gives way to any other: a FAILED document may have used
     up its retries (``indexing.max_document_failures``), so keeping it over
-    its copy would leave neither indexed. A PENDING record (an interrupted
-    run) is neither.
+    its copy would leave neither indexed. A FAILED record of a document
+    indexed without some claims (``_CLAIMS_MISSING``) counts as indexed: its
+    graph is in the stores. A PENDING record (an interrupted run) is neither.
     """
     _, _, source_scope, _ = run_registry_scope(
         config, source_directory, context.failed_source_files
@@ -1209,16 +1210,21 @@ def dedup_preferences(
             f"corpus ({type(e).__name__}: {e})"
         ) from e
 
-    def has_status(status: DocStatus) -> Callable[[Document], bool]:
-        def check(document: Document) -> bool:
-            record = stored.get(keys[id(document)])
-            return record is not None and record.status is status
+    def status(document: Document) -> DocStatus | None:
+        record = stored.get(keys[id(document)])
+        if record is None:
+            return None
+        if record.status is DocStatus.FAILED and record.error_info == _CLAIMS_MISSING:
+            return DocStatus.PROCESSED
+        return record.status
 
-        return check
+    def indexed(document: Document) -> bool:
+        return status(document) is DocStatus.PROCESSED
 
-    indexed = has_status(DocStatus.PROCESSED)
-    failed = has_status(DocStatus.FAILED)
-    return indexed, lambda document: failed(document) and not indexed(document)
+    def failed(document: Document) -> bool:
+        return status(document) is DocStatus.FAILED
+
+    return indexed, failed
 
 
 def run_extraction_fingerprint(
