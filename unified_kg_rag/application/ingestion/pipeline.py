@@ -630,10 +630,26 @@ class DataIngestionPipeline:
             # The lease covers the checkpoint too: it is downloaded only once
             # no other run writes the namespace, and uploaded before the
             # lease is released.
-            with self._namespace_lease() as lease:
-                context = self._run_leased(
-                    source_path, resolved_pipeline_id, resolved_resume_stage, lease
-                )
+            try:
+                with self._namespace_lease() as lease:
+                    try:
+                        context = self._run_leased(
+                            source_path,
+                            resolved_pipeline_id,
+                            resolved_resume_stage,
+                            lease,
+                        )
+                    finally:
+                        # A stop (request_stop) from here on waits until the
+                        # lease is given up: raised in its exit, it left the
+                        # lease held for indexing.lease_seconds.
+                        self._checkpointing = True
+            finally:
+                self._checkpointing = False
+            # Stopped as the finished run gave the lease up: its last
+            # checkpoint is uploaded.
+            self._checkpoint_id = None
+            self._raise_if_stopping()
 
             if context.status == PipelineStageStatus.FAILED:
                 logger.warning(

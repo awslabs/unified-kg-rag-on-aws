@@ -1547,7 +1547,12 @@ changed once with the full-config keys (#332).
   anywhere in the lease's exit (the write fence's removal, the heartbeat
   join, the release or expiry request itself) is held until the lease is
   given up, then raised. Landing before the give-up's `try` or inside its
-  request, it left the lease held for `indexing.lease_seconds` (#PR).
+  request, it left the lease held for `indexing.lease_seconds` (3 of 580
+  end-of-run signals). `run-ingestion` defers a stop (`request_stop`) from
+  the end of the run until the lease is given up (0 of 600 signals aimed
+  at the lease's exit). An API caller's default Ctrl-C handler is held over
+  the exit, which covers the give-up request (most of the window with a
+  remote registry) but not the few bytecodes entering it (#PR).
 - `local` and `drift` under an entity key graph vertices do not store
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a

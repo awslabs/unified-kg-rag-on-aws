@@ -243,3 +243,44 @@ def test_a_stopped_run_with_a_remote_store_leaves_its_lease_expired(
     holder = pipeline._doc_status.lease_holder("default")
     assert holder is not None and holder[1] <= time.time()
     assert pipeline.next_run_writes_from > time.time() + 60
+
+
+def test_a_stop_requested_as_the_run_gives_its_lease_up_waits_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: run-ingestion's handler (request_stop) raised wherever the
+    # lease's exit was, before its give-up's try (the write fence's
+    # removal) too, and the lease stayed held for indexing.lease_seconds.
+    # Now the stop waits for the give-up and then ends the run.
+    import signal
+
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.shared import PipelineInterrupted
+
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(e2e._respond, ANSWER, DIM), FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "a.txt").write_text("Vendor supplies Buyer.")
+    registry = providers.build_doc_status()
+    pipelines: list[DataIngestionPipeline] = []
+    run = DataIngestionPipeline.run
+
+    def tracked(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        pipelines.append(self)
+        return run(self, *args, **kwargs)
+
+    remove = lease_mod.remove_write_fence
+
+    def stop_at_removal(token: object) -> None:
+        remove(token)  # type: ignore[arg-type]
+        pipelines[-1].request_stop(signal.SIGTERM)  # as its handler would
+
+    monkeypatch.setattr(DataIngestionPipeline, "run", tracked)
+    monkeypatch.setattr(lease_mod, "remove_write_fence", stop_at_removal)
+    with pytest.raises(PipelineInterrupted):
+        _ingest(config, providers, source, tmp_path / "run-1")
+    assert registry.lease_holder("default") is None
