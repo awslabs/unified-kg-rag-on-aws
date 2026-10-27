@@ -1411,6 +1411,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: the claims a derivation drops (their subject is not an
+  entity their own text units state) are no longer warned of on every run
+  (`Failed to resolve N out of M claims` repeated with each re-derivation);
+  the claim resolution stage warns once per run, with the reason (#PR).
 - Claims: the claims index stores a claim's `start_date` and `end_date`
   (filterable like `status`), `read_claims` reads them back, and a claim in
   the query context shows its known dates beside its status (`Claim:

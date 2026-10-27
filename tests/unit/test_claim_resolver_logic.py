@@ -456,3 +456,29 @@ class TestResolvedClaimId:
             "index": "default",
             "filters": {"tenant": ["a", "b"]},
         }
+
+
+def test_unresolved_claims_are_not_warned_of_on_every_resolution(caplog) -> None:
+    # A derivation resolves the stored statements again on every incremental
+    # run, so the resolver's WARNING repeated run after run; the claim
+    # resolution stage warns once, with the reason.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, PipelineContext
+
+    claims = [_claim("c1", "Ghost", "Buyer")]
+    entities = [Entity(id="e-buyer", name="Buyer", text_unit_ids=["u1"])]
+    caplog.set_level("WARNING")
+    resolved, stats = _resolver().resolve(claims, entities)
+    assert (resolved, stats.unresolved_claims) == ([], 1)
+    assert caplog.records == []
+
+    context = PipelineContext.model_construct(
+        claims=claims, resolved_entities=entities, resolved_claims=[]
+    )
+    ps.ClaimResolutionStage(Config())._execute_core(context)
+    # (Rendered by the structured formatter once a test configured it.)
+    (record,) = caplog.records
+    assert (
+        "Dropped 1 of 1 claim statements: their subject is not an entity "
+        "their own text units state" in record.getMessage()
+    )

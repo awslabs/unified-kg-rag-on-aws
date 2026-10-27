@@ -1199,6 +1199,13 @@ class ClaimResolutionStage(PipelineStage):
         original_claims_count = len(context.claims)
         resolved_claims, stats = self.resolver.resolve(context.claims, entities)
         context.resolved_claims = resolved_claims
+        if stats.unresolved_claims:
+            logger.warning(
+                "Dropped %d of %d claim statements: their subject is not an "
+                "entity their own text units state",
+                stats.unresolved_claims,
+                stats.original_claims,
+            )
 
         resolved_count = len(resolved_claims)
         removed_count = original_claims_count - resolved_count
