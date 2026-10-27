@@ -1090,6 +1090,9 @@ the extraction record of one of its text units could not be stored. The next
 run processes it again, even if the file did not change, until
 `indexing.max_document_failures` (default `3`) consecutive failures of the
 same content; editing the file or raising the limit retries it after that.
+Claims are optional: when only claim extraction failed, for an error of the
+unit's own, the document is indexed without those claims, counted for none,
+and the next run extracts them once more.
 See [Operator Runbook: Failed documents](./operations.md#failed-documents).
 
 ### Quarantined documents

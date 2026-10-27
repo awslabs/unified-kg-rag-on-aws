@@ -547,7 +547,11 @@ unless noted.
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are
-   the documents' own. Extraction
+   the documents' own. Claim extraction's errors of a unit's own count for
+   none: claims are optional, so a document whose other stages succeeded is
+   indexed without those claims and recorded `FAILED` once, for the next run
+   to extract them again from the stored records, then `PROCESSED` without
+   them (`incremental.run_failures`). Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted

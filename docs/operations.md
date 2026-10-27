@@ -208,7 +208,8 @@ restored meanwhile included, and removes what was written for one that is gone
 A document is recorded `FAILED` in five cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
-  of its text units;
+  of its text units (claim extraction for an error of the unit's own: see
+  below);
 - a base-level community covering one of its text units got no report (a
   failed parent-level report only logs a WARNING and counts in
   `reports_failed`; above `indexing.max_failure_rate` of communities without
@@ -289,6 +290,21 @@ context-length rejection that counts the requested `max_tokens` ("you
 requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
 is a setting and counts for none.
 
+- **Claims are optional.** When only claim extraction failed on some of a
+  document's units, for an error of their own (a request rejected for its
+  content, output cut off or unparseable, alike across documents too), the
+  document is indexed without those units' claims and counted for none. It
+  is recorded `FAILED` once (`error_info`: `indexed without the claims of
+  some text units ...`, not in `failed_documents`) so the next run extracts
+  the missing claims again, reusing the stored graph and claim records;
+  failing so again, it is recorded `PROCESSED` without them, and they are
+  not extracted again until its content or the extraction settings change.
+  A server-side output cap on claims thus re-indexes such documents once and
+  excludes none. Both runs warn with the files. Any other claim extraction
+  failure (an outage, a record not stored) fails the document, uncounted, as
+  in the other stages. Gleaning is not treated so: a unit whose gleaning
+  failed has no final graph record to store, so its document must be
+  extracted again.
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
   its own, output that failed alike on several documents included (see

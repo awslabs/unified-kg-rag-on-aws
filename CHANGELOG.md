@@ -1405,6 +1405,17 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: claims are optional. When only claim extraction failed
+  on some of a document's units for an error of their own (a request
+  rejected for its content, output cut off or unparseable, alike across
+  documents too), the document is indexed without those claims and not
+  counted toward `indexing.max_document_failures`. It is recorded `FAILED`
+  once (not in `failed_documents`), so the next run extracts the missing
+  claims again from the stored records, then `PROCESSED` without them if
+  they fail again; both runs warn with the files. Counted like a graph
+  error, a server-side output cap on claims excluded every document after
+  three runs though its graph was extracted; it now re-indexes each once.
+  Claim extraction outages still fail the document uncounted (#PR).
 - Incremental runs: output that fails alike on every unit of several
   documents (cut off or unparseable, as under a server-side output cap)
   counts once a run against each document, as an error of its own does:

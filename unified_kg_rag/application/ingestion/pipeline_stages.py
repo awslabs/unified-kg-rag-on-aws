@@ -44,10 +44,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     clear_registry_namespaces,
     context_lineages,
     dedup_preferences,
-    documents_with_failed_units,
     filter_to_delta,
     index_delta,
     reset_namespaces,
+    run_failures,
     run_incremental_indexer,
     unit_source_files,
     warn_about_unapplied_retired_scopes,
@@ -1872,11 +1872,12 @@ class IndexingStage(_RegistryStage):
             )
             if rebuild is not None:
                 incremental, lineages = rebuild
+                failures = run_failures(context, text_units)
                 recorded = incremental.record(
                     lineages,
                     context.incremental_fingerprints,
                     indexing_results,
-                    documents_with_failed_units(context, text_units),
+                    failures.failed,
                     artifact_owners(
                         lineages,
                         [
@@ -1888,9 +1889,8 @@ class IndexingStage(_RegistryStage):
                             *claims,
                         ],
                     ),
-                    counted_failed_doc_ids=documents_with_failed_units(
-                        context, text_units, context.item_failed_text_unit_ids
-                    ),
+                    counted_failed_doc_ids=failures.counted,
+                    claims_missing_doc_ids=failures.claims_missing,
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 context.record_retrying_documents(incremental.retrying_doc_ids)

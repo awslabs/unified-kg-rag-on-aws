@@ -320,6 +320,13 @@ _STAGES = pytest.mark.parametrize(
     ],
     ids=["graph", "claims", "gleaning"],
 )
+# The stages whose errors of a unit's own count against its document; claim
+# extraction's leave it indexed without the unit's claims.
+_COUNTED_STAGES = pytest.mark.parametrize(
+    "stage",
+    ["knowledge graph extraction expert", "graph refinement specialist"],
+    ids=["graph", "gleaning"],
+)
 
 
 def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
@@ -401,7 +408,7 @@ def test_one_unit_unavailable_does_not_count_a_rejected_setting(
         ), run
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
     tmp_path: Path, stage: str
 ) -> None:
@@ -492,7 +499,7 @@ def _cut_runs(
     return seen
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
     tmp_path: Path, stage: str
 ) -> None:
@@ -508,7 +515,7 @@ def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
     assert seen[-1][2] is False, seen
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_outage_runs_neither_count_nor_end_an_output_cut_streak(
     tmp_path: Path, stage: str
 ) -> None:
@@ -528,7 +535,7 @@ def test_outage_runs_neither_count_nor_end_an_output_cut_streak(
     assert seen[-1][:2] == (1, 0), seen
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_other_extraction_settings_start_an_output_cut_streak_over(
     tmp_path: Path, stage: str
 ) -> None:
@@ -539,7 +546,7 @@ def test_other_extraction_settings_start_an_output_cut_streak_over(
     assert [run[:2] for run in seen] == [(1, 0), (1, 0)], seen
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_a_success_between_output_cut_runs_starts_the_streak_over(
     tmp_path: Path, stage: str
 ) -> None:
@@ -572,7 +579,7 @@ def test_failed_documents_holds_a_commit_stopped_after_its_registry_write(
     # The commit recorded z1.txt FAILED, then its cleanup raised: the run's
     # failed_documents read 0, the documents being added to the result only
     # once the commit returned.
-    rejects = {"stage": "claim extraction specialist", "text": "Zorbix"}
+    rejects = {"stage": "graph refinement specialist", "text": "Zorbix"}
     config, providers, source = _rejecting(tmp_path, rejects)
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])
@@ -648,19 +655,20 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
 
 _STOPS_OR_COMMITS = pytest.mark.parametrize(
     "stage",
-    ["knowledge graph extraction expert", "claim extraction specialist"],
+    ["knowledge graph extraction expert", "graph refinement specialist"],
     # Graph extraction failing on fz alone stops the run before indexing
-    # (record_item_failures); claim extraction lets the commit record it.
+    # (record_item_failures); gleaning lets the commit record it.
     ids=["stage-stops-the-run", "commit"],
 )
 
 
 def _outage(tmp: Path, stage: str, mode: dict[str, int]) -> tuple[Any, Any, Path]:
-    """Embedded config (claims on, max_document_failures 5) and providers
+    """Embedded config (claims and gleaning on, max_document_failures 5) and providers
     whose model answers HTTP ``mode["status"]`` to the requests of ``stage``
     (a system-prompt phrase) for Zorbix's text; d0 is indexed."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.enabled = True
     config.indexing.max_document_failures = 5
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
 
@@ -755,8 +763,8 @@ def test_other_extraction_settings_start_failure_count_over(
     (source / "d0.txt").unlink()
     (source / "fz.txt").write_text(_FAILING)
     seen = []
-    for run, gleaning in enumerate([False, True]):
-        config.processing.gleaning.enabled = gleaning
+    for run in range(2):
+        config.processing.graph_extraction.max_entities_per_chunk += run
         e2e._ingest(config, providers, source, tmp_path / f"s{run}")
         seen.append(_fz(providers).failure_count)
     assert seen == [1, 1], seen
@@ -770,7 +778,7 @@ def test_a_failed_registry_write_records_no_failed_documents(
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 
     config, providers, source = _rejecting(
-        tmp_path, {"stage": "claim extraction specialist", "text": "Zorbix"}
+        tmp_path, {"stage": "graph refinement specialist", "text": "Zorbix"}
     )
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])
