@@ -326,6 +326,46 @@ def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() ->
     assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
 
 
+def test_the_stop_grace_leaves_cleanup_time_inside_the_stop_timeout() -> None:
+    # 10 s cut run-eval's upload of the finished runs, which the 120 s
+    # StopTimeout of the app container (iac compute stack) leaves time for.
+    from unified_kg_rag.application.cli import conventions
+
+    assert 60 <= conventions._STOP_GRACE_SECONDS < 120
+
+
+def test_a_second_signal_ends_a_stopping_cli_at_once() -> None:
+    # Ignored, it left the process to the full grace period.
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        import argparse, asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import json_output, stoppable
+
+        conventions._STOP_GRACE_SECONDS = 40.0
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            try:
+                await asyncio.sleep(30)
+            finally:
+                threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT)).start()
+                time.sleep(30)  # a cleanup that hangs
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert time.time() - started < 20
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
 def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
     capsys, monkeypatch
 ) -> None:

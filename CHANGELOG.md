@@ -1398,6 +1398,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a stopped CLI gets 100
+  seconds to unwind before the watchdog ends it, not 10, inside the 120 s
+  StopTimeout of the app container, and a second SIGTERM or Ctrl-C ends it
+  at once (with the interrupted status if nothing was printed). The 10 s
+  cut `run-eval`'s upload of the finished runs: a 15 s upload never
+  finished (#PR).
 - Queries with `local`, `drift`, `mix` and `hybrid`: a filter on `id`,
   `source_id` or `target_id` narrows what the strategy fetches by id or
   walks to, instead of being replaced by its scope. `--filters
