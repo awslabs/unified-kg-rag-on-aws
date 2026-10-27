@@ -1402,6 +1402,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
+  its namespace lease (most often while it waits for the heartbeat thread)
+  still gives the lease up. It stayed held for `indexing.lease_seconds`
+  (600 s by default), so the rerun failed with `... is being written by`
+  (14 of 250 signals at the end of a run) (#PR).
 - `local` and `drift` under an entity key graph vertices do not store
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a
