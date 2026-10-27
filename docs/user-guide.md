@@ -1637,9 +1637,7 @@ every unit records none, one that fails some units records their documents,
 retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
-an outage or a setting never excludes them, output that failed alike on
-several documents, as under a server-side output cap, does after
-`indexing.max_document_failures` such runs; also warned of with each file
+an outage or a setting never excludes them; also warned of with each file
 and its run count), the number of documents left out because they failed
 `indexing.max_document_failures` consecutive runs unchanged, at the same
 extraction settings (a settings change starts the count over)

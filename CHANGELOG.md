@@ -1405,6 +1405,14 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: output that fails alike on every unit of several
+  documents (cut off or unparseable, as under a server-side output cap)
+  counts once a run against each document, as an error of its own does:
+  the documents show `FAILED` at `1/N` from the first such run and are
+  excluded after `indexing.max_document_failures` of them. The streak was
+  their `retry_count`, which outage runs raise too and a settings change
+  kept, so one cut run after two outage runs excluded them at a limit of
+  3, as did one cut run at new settings after one at the old (#PR).
 - `run-eval`: a stopped run names the local copy of the finished runs'
   results before it uploads them (a WARNING). It was named only after a
   failed upload, so one the stop watchdog cut short left the files
@@ -1480,6 +1488,7 @@ changed once with the full-config keys (#332).
   trade-off: a server-side output cap that persists for that many runs
   excludes those documents too, until their content or the extraction
   settings change. Outages and rejected settings still never count (#442).
+  Superseded by #PR: each such run counts once.
 - Incremental claims: a stored claim whose subject or object entity a
   removal deletes (only the removed documents stated its spelling) is
   derived against the other stored spellings of the names the claim states,

@@ -904,7 +904,6 @@ class GraphExtractionStage(PipelineStage):
         ]
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
-        context.capped_text_unit_ids[self.name] = stats.capped_text_unit_ids
 
         entities_count, relationships_count = _distinct_counts(context.unit_extractions)
         metrics = {
@@ -945,7 +944,6 @@ class GleaningStage(PipelineStage):
         context.item_failed_text_unit_ids[self.name] = (
             gleaning_stats.item_failed_text_unit_ids
         )
-        context.capped_text_unit_ids[self.name] = gleaning_stats.capped_text_unit_ids
         final_entities, final_relationships = _distinct_counts(records)
 
         # Graph growth from gleaning: items it added per extracted item.
@@ -1167,7 +1165,6 @@ class ClaimExtractionStage(PipelineStage):
         context.claims = claims
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
-        context.capped_text_unit_ids[self.name] = stats.capped_text_unit_ids
 
         metrics = {
             "text_units_processed": len(text_units),
@@ -1893,9 +1890,6 @@ class IndexingStage(_RegistryStage):
                     ),
                     counted_failed_doc_ids=documents_with_failed_units(
                         context, text_units, context.item_failed_text_unit_ids
-                    ),
-                    capped_doc_ids=documents_with_failed_units(
-                        context, text_units, context.capped_text_unit_ids
                     ),
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)

@@ -529,7 +529,6 @@ class IncrementalIndexer:
         *,
         failed_doc_ids: Collection[str] = (),
         counted_failed_doc_ids: Collection[str] = (),
-        capped_doc_ids: Collection[str] = (),
         text_units: list[TextUnit] | None = None,
         entities: list[Entity] | None = None,
         relationships: list[Relationship] | None = None,
@@ -546,11 +545,9 @@ class IncrementalIndexer:
         extraction stage failed on some of their text units) are recorded
         FAILED with their lineage, so the next run re-extracts them and first
         prunes what this run wrote. Only those in ``counted_failed_doc_ids``
-        (an error of their own) count toward
-        ``indexing.max_document_failures``; a failed write counts for none.
-        Those in ``capped_doc_ids`` (output that failed alike across
-        documents) count once this run is the max_document_failures-th
-        consecutive one they failed, and are then excluded.
+        (an error of their own, output that failed alike across documents
+        included) count toward ``indexing.max_document_failures``; a failed
+        write counts for none.
 
         Entities and relationships are first merged with the stored graph state
         they touch; the communities and claims
@@ -628,7 +625,6 @@ class IncrementalIndexer:
             failed_doc_ids,
             owners,
             counted_failed_doc_ids=counted_failed_doc_ids,
-            capped_doc_ids=capped_doc_ids,
         ):
             # After the delta's writes: a changed document's new text units
             # name the records its removed ones did.
@@ -694,7 +690,6 @@ class IncrementalIndexer:
         owners: Mapping[str, set[str]] | None = None,
         *,
         counted_failed_doc_ids: Collection[str] = (),
-        capped_doc_ids: Collection[str] = (),
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -721,7 +716,6 @@ class IncrementalIndexer:
                 failed_doc_ids,
                 write_failed,
                 counted_failed_doc_ids,
-                capped_doc_ids,
             )
             if (
                 self.scope is not None
@@ -960,7 +954,6 @@ class IncrementalIndexer:
         failed_doc_ids: Collection[str] = (),
         write_failed_doc_ids: Collection[str] = (),
         counted_failed_doc_ids: Collection[str] = (),
-        capped_doc_ids: Collection[str] = (),
     ) -> None:
         if failed_doc_ids:
             files = sorted(
@@ -977,7 +970,6 @@ class IncrementalIndexer:
                 len(set(failed_doc_ids) & set(counted_failed_doc_ids)),
                 ", ".join(files[:10]) + (", ..." if len(files) > 10 else ""),
             )
-        max_failures = self.indexing_manager.config.indexing.max_document_failures
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
         prior = {
@@ -1004,16 +996,7 @@ class IncrementalIndexer:
             # setting, a failed write) neither counts nor resets it.
             failure_count = retry_count = 0
             if failed:
-                retries = earlier_retries(existing, content_hash) + 1
-                # Output that failed alike across documents counts once it
-                # failed so for max_document_failures consecutive runs, and
-                # then excludes the document (record_item_failures).
-                capped = (
-                    lineage.doc_id in capped_doc_ids
-                    and lineage.doc_id not in counted_failed_doc_ids
-                    and retries >= max_failures
-                )
-                counted = capped or lineage.doc_id in counted_failed_doc_ids
+                counted = lineage.doc_id in counted_failed_doc_ids
                 failure_count = int(counted)
                 if (
                     existing is not None
@@ -1024,10 +1007,8 @@ class IncrementalIndexer:
                     )
                 ):
                     failure_count += existing.failure_count
-                if capped:
-                    failure_count = max(failure_count, max_failures)
                 if not counted:
-                    retry_count = retries
+                    retry_count = earlier_retries(existing, content_hash) + 1
             record = DocStatusRecord(
                 doc_id=lineage.doc_id,
                 content_hash=content_hash,
@@ -1802,7 +1783,7 @@ def documents_with_failed_units(
     """Registry ids of the documents an extraction stage failed on
     (``context.failed_text_unit_ids``), or whose units are in ``failures``
     (by stage name: ``context.item_failed_text_unit_ids`` for an error of
-    their own, ``context.capped_text_unit_ids``)."""
+    their own)."""
     if failures is None:
         failures = context.failed_text_unit_ids
     failed_units = {unit_id for ids in failures.values() for unit_id in ids}
@@ -1848,9 +1829,7 @@ def warn_retrying(records: Iterable[DocStatusRecord]) -> list[str]:
     not their own (``retry_count`` >= 2) and return their doc ids.
 
     Such an error (an outage, credentials, a setting) never excludes a
-    document: the warning is how one that keeps failing gets noticed. Output
-    that failed alike on several documents excludes them after
-    ``indexing.max_document_failures`` runs (``record_item_failures``).
+    document: the warning is how one that keeps failing gets noticed.
     """
     retrying = sorted(
         (r for r in records if r.retry_count >= 2), key=lambda r: r.doc_id
@@ -1859,10 +1838,8 @@ def warn_retrying(records: Iterable[DocStatusRecord]) -> list[str]:
         logger.warning(
             "%d documents failed again for an error that is not their own "
             "(an outage or a setting never counts toward "
-            "indexing.max_document_failures; output that failed alike on "
-            "several documents counts once it failed so for that many "
-            "consecutive runs); fix the cause to index them (consecutive "
-            "failed runs in parentheses): %s",
+            "indexing.max_document_failures); fix the cause to index them "
+            "(consecutive failed runs in parentheses): %s",
             len(retrying),
             ", ".join(
                 f"{r.file_path or r.doc_id} ({r.retry_count})" for r in retrying[:10]
@@ -1878,22 +1855,12 @@ def record_item_failures(
     unit_ids: Collection[str],
     max_failures: int,
     retried_unit_ids: Collection[str] = (),
-    capped_unit_ids: Collection[str] = (),
 ) -> list[DocStatusRecord]:
     """Record FAILED the run's documents ``unit_ids`` belong to, after a
     stage failed on those units for an error of their own and stopped the
     run before the indexing stage could record them. The other documents
     of ``retried_unit_ids`` (failed for an error not their own) keep their
     record but one more consecutive ``retry_count``.
-
-    The documents of ``capped_unit_ids`` (output that failed alike on every
-    unit of several documents, taken for a server-side output cap:
-    ``retry.item_failed_indices``) are retried so too, until this run is
-    the ``max_failures``-th consecutive one they failed: then they are
-    recorded FAILED at ``max_failures`` and the next diff skips them, so a
-    batch that always fails does not stop every run with its deletions.
-    An output cap that persists for that many runs excludes them so too,
-    until their content or the extraction settings change.
 
     Counted like a FAILED commit (``_record_processed``): one more
     consecutive failure of the content, its attempt closed, so a document
@@ -1914,19 +1881,6 @@ def record_item_failures(
     error_info = f"{_EXTRACTION_FAILED} (an error a retry does not fix)"
     records = []
     stored = store.get_many(sorted(doc_ids | retried))
-    # Failed alike so for the max_failures-th consecutive run: counted now.
-    capped = {
-        doc_id
-        for doc_id in retried
-        & {document_doc_id(d) for d in context.documents_of_units(capped_unit_ids)}
-        if doc_id in stored
-        and earlier_retries(
-            stored[doc_id], fingerprints.get(doc_id, stored[doc_id].content_hash)
-        )
-        >= max_failures - 1
-    }
-    doc_ids |= capped
-    retried -= capped
     retrying = [
         record.model_copy(
             update={
@@ -1959,11 +1913,7 @@ def record_item_failures(
                     "status": DocStatus.FAILED,
                     "content_hash": content_hash,
                     "error_info": error_info,
-                    "failure_count": (
-                        max(earlier + 1, max_failures)
-                        if doc_id in capped
-                        else earlier + 1
-                    ),
+                    "failure_count": earlier + 1,
                     "retry_count": 0,
                     "extraction_fingerprint": (
                         context.incremental_extraction_fingerprint
@@ -2102,9 +2052,6 @@ def index_delta(
             failed_doc_ids=documents_with_failed_units(context, text_units),
             counted_failed_doc_ids=documents_with_failed_units(
                 context, text_units, context.item_failed_text_unit_ids
-            ),
-            capped_doc_ids=documents_with_failed_units(
-                context, text_units, context.capped_text_unit_ids
             ),
             text_units=text_units,
             entities=entities,

@@ -79,9 +79,6 @@ class ClaimExtractionStats(BaseModel):
     failed_text_unit_ids: list[str] = []
     # The failed units whose error was their own (item_error_predicate).
     item_failed_text_unit_ids: list[str] = []
-    # The failed units whose output failed alike across documents (counted
-    # after max_document_failures runs, see retry.item_failed_indices).
-    capped_text_unit_ids: list[str] = []
     total_claims_extracted: int = 0
     total_processing_time: float = 0.0
 
@@ -199,7 +196,6 @@ class ClaimExtractor(BaseProcessor):
         per_unit = self._process_extraction_results(
             units_to_process, extraction_results
         )
-        capped: list[int] = []
         self.stats.item_failed_text_unit_ids.extend(
             units_to_process[idx].id
             for idx in item_failed_indices(
@@ -210,11 +206,7 @@ class ClaimExtractor(BaseProcessor):
                 self.batch_processor,
                 lambda units: list(self._prepare_extraction_inputs(units, []).values()),
                 self._extract,
-                capped=capped,
             )
-        )
-        self.stats.capped_text_unit_ids.extend(
-            units_to_process[idx].id for idx in capped
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
         self.stats.total_processing_time = time.time() - start_time

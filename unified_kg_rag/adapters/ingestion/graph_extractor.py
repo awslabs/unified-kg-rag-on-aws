@@ -65,13 +65,6 @@ class ExtractionStats(BaseModel):
         "model rejects for its content, or a response that does not parse or "
         "was cut off",
     )
-    capped_text_unit_ids: list[str] = Field(
-        default_factory=list,
-        description="The failed text units whose output failed alike on every "
-        "unit of several documents (a server-side output cap, say): counted "
-        "only once their documents failed so for "
-        "indexing.max_document_failures consecutive runs",
-    )
     total_entities_extracted: int = Field(
         default=0, description="Total number of entities extracted from all text units"
     )
@@ -211,7 +204,6 @@ class GraphExtractor(BaseProcessor):
             return [], self.stats
 
         records = self._process_extraction_results(text_units, extraction_results)
-        capped: list[int] = []
         self.stats.item_failed_text_unit_ids.extend(
             text_units[idx].id
             for idx in item_failed_indices(
@@ -222,10 +214,8 @@ class GraphExtractor(BaseProcessor):
                 self.batch_processor,
                 self._prepare_extraction_inputs,
                 self._extract,
-                capped=capped,
             )
         )
-        self.stats.capped_text_unit_ids.extend(text_units[idx].id for idx in capped)
 
         self.stats.total_entities_extracted = sum(len(r.entities) for r in records)
         self.stats.total_relationships_extracted = sum(

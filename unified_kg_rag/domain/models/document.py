@@ -146,10 +146,9 @@ class DocStatusRecord(BaseModel):
         ge=0,
         description="Consecutive runs that failed this content for an error "
         "not its own (an outage, credentials, a rejected setting, a failed "
-        "write, output failing alike on several documents): reported as "
-        "retrying; only the output failures count toward "
-        "indexing.max_document_failures, once this reaches it; 0 once "
-        "processed or failed for an error of its own",
+        "write): reported as retrying, never counted toward "
+        "indexing.max_document_failures; 0 once processed or failed for an "
+        "error of its own",
     )
     attempt_count: int = Field(
         default=0,
