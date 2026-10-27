@@ -1402,6 +1402,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `global` under a filter on a report key (`community_id`, `level`,
+  `parent_community_id`, `rating`): a cut over `max_reports_per_level`
+  maps the cut's reports most similar to the query instead of giving way
+  to a shallower cut, whose reports pass the filter on their own. A
+  `community_id` filter naming all 101 leaves mapped 0 reports as a
+  complete cut (50 leaves mapped 50) (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a SIGTERM, or
   a Ctrl-C while the event loop runs, prints `Stopped by SIGTERM.` (or
   `SIGINT`) once. Since #441 cancelled the CLI's task, the run exited 130

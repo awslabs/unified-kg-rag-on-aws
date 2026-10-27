@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.storage.filter_schema import document_filters
 from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
@@ -400,16 +401,22 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         A cut with more reports than the cap gives way to the deepest
         shallower cut that fits, which still covers every entity, in fewer,
         broader reports. Only when even the root cut does not fit are the
-        reports of the configured cut most similar to the query mapped.
+        reports of the configured cut most similar to the query mapped, and
+        at once under a filter on a report key (``community_id``, ``level``,
+        ``rating``): a shallower cut's reports pass it or not on their own,
+        not by covering the configured cut's (document filters pass a report
+        through any member's documents, so they still do).
         """
         depth = self.global_search_config.community_depth
         label = "Community report cut"
+        filters = query.filters or {}
+        step_down = len(document_filters(filters)) == len(filters)
         with observability.span("kg_rag.global.select", depth=depth) as span:
             first, complete = await self._browse_reports(
                 query, cut_filter(depth), label
             )
             reports, used = first, depth
-            while not complete and used > 0:
+            while not complete and step_down and used > 0:
                 used -= 1
                 reports, complete = await self._browse_reports(
                     query, cut_filter(used), label

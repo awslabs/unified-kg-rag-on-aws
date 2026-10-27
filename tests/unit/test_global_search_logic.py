@@ -284,6 +284,33 @@ async def test_a_cut_no_depth_fits_maps_the_most_similar_reports() -> None:
     assert similar.filters == store.calls[0].filters
 
 
+async def test_a_report_key_filter_over_the_cap_maps_the_most_similar() -> None:
+    # Regression: the cut stepped down to depth 1, where the leaves the
+    # filter names are only B, and mapped B alone as the complete cut.
+    store = _ReportStore(_documents())
+    strat = _strategy(store, max_reports_per_level=3)
+    leaves = ["A1", "A2", "B", "C1", "C2"]
+    result = await strat.asearch(
+        SearchQuery(query="C1 C2 themes", filters={"community_id": leaves})
+    )
+
+    mapped = _mapped(strat)
+    assert {"C1", "C2"} <= mapped <= set(leaves)
+    assert len(mapped) == 3
+    assert result.metadata["global_level_capped"] is True
+    assert result.metadata["global_cut_depth"] == 2
+    assert [c.filters["depth"] for c in store.calls if not c.query] == [{"lte": 2}]
+
+
+async def test_a_document_filter_over_the_cap_still_steps_down() -> None:
+    store = _ReportStore([{**d, "attr_x": "y"} for d in _documents()])
+    strat = _strategy(store, max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"attr_x": "y"}))
+
+    assert _mapped(strat) == {"A", "B", "C"}
+    assert result.metadata["global_cut_depth"] == 1
+
+
 async def test_a_live_window_below_the_cap_bounds_it() -> None:
     # Regression: the cap followed max_query_size only. Under a reports
     # index created with max_result_window 4, the probe for 100 got 4 of the

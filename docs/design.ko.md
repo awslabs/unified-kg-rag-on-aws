@@ -742,7 +742,7 @@ import는 순환이 됨).
   상한(`max_reports_per_level`, 한 요청에 들도록 최대 `max_query_size` - 1, 살아 있는
   `max_result_window` - 1. 기본 99)보다 하나 더 요청하므로 상한과 정확히 같은 단면도 완전합니다.
   더 큰 단면은 상한 안에 드는 가장 깊은 얕은 단면에 자리를 내주며(`global_cut_depth`), 같은
-  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만 설정한 단면으로 제한한 하이브리드 검색이
+  엔티티를 더 넓은 리포트로 덮습니다. MS GraphRAG에는 상한이 없어 단면 전체를 map합니다. 루트 단면조차 들지 않을 때만, 또는 리포트 키(`community_id`, `level`, `rating`) 필터가 있으면 곧바로(더 얕은 리포트는 구성원을 통해서가 아니라 스스로 그 필터를 통과하므로) 설정한 단면으로 제한한 하이브리드 검색이
   가장 비슷한 리포트를 그만큼 고릅니다(`global_level_capped`). global 검색에서 유사도가 쓰이는
   곳은 여기뿐입니다. 상한은 리포트 수로 세며 이것이 map 호출 수를 제한합니다.
 - **동적 선택**(`use_dynamic_selection`) — MS GraphRAG의 `DynamicCommunitySelection`입니다.
