@@ -675,7 +675,8 @@ def main() -> None:
     try:
         code = asyncio.run(stoppable(async_main(args)))
     except KeyboardInterrupt:
-        # Ctrl-C while the loop waits on I/O lands here, outside the task.
+        # A Ctrl-C while the loop runs cancels the task (exits_on_sigterm);
+        # one raises KeyboardInterrupt here only outside it, defensively kept.
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
         code = EXIT_INTERRUPTED
     sys.exit(code)

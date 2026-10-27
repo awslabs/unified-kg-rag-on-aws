@@ -366,6 +366,35 @@ def test_a_second_signal_ends_a_stopping_cli_at_once() -> None:
     assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
 
 
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_a_text_mode_stop_in_the_loop_says_so_once(signum: int) -> None:
+    # The cancelled task exited 130 or 143 without a word.
+    result = _run_cli_script(f"""
+        import asyncio
+        from unified_kg_rag.application.cli.conventions import stoppable
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+        async def run():
+            os.kill(os.getpid(), {int(signum)})
+            await asyncio.sleep(30)
+
+        @exits_on_sigterm
+        def main():
+            try:
+                asyncio.run(stoppable(run()))
+            except KeyboardInterrupt:
+                print("interrupted by user")
+
+        main()
+        """)
+    name = signal.Signals(signum).name
+    assert result.returncode == 128 + signum, result.stderr
+    assert result.stdout.count("Stopped by") == 1, result.stdout
+    assert f"Stopped by {name}." in result.stdout
+    assert "interrupted by user" not in result.stdout
+
+
 def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
     capsys, monkeypatch
 ) -> None:

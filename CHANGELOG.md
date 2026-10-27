@@ -1398,6 +1398,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a SIGTERM, or
+  a Ctrl-C while the event loop runs, prints `Stopped by SIGTERM.` (or
+  `SIGINT`) once. Since #441 cancelled the CLI's task, the run exited 130
+  or 143 without a word (#PR).
 - `run-prompt-tuning`: a SIGTERM or Ctrl-C during a model call ends the run
   at once (with its logs and spans flushed). The event loop waited for the
   call's thread on the way out, so the stop took until the call returned or

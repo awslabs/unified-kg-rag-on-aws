@@ -206,7 +206,14 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                 if _stop["signum"] is not None:
                     # A stop the event loop took as a cancellation (main
                     # raised CancelledError) or one that came as main's
-                    # coroutine ended.
+                    # coroutine ended. The JSON status says so; in text mode,
+                    # this line (the CLI's own KeyboardInterrupt messages
+                    # are for a Ctrl-C outside the loop, which sets no stop).
+                    if not _json["enabled"]:
+                        console.print(
+                            "\n[yellow]Stopped by "
+                            f"{signal.Signals(_stop['signum']).name}.[/yellow]"
+                        )
                     raise SystemExit(128 + _stop["signum"])
             if isinstance(result, int) and result:  # mains that return the code
                 print_status(result)
