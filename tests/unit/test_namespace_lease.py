@@ -513,6 +513,17 @@ def _ctrl_c() -> None:
     time.sleep(0.05)  # the handler runs at the next bytecode boundary
 
 
+@pytest.fixture
+def default_ctrl_c():  # type: ignore[no-untyped-def]
+    """Python's own SIGINT handler (an earlier test may have left another)."""
+    import signal
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    if previous is not None:
+        signal.signal(signal.SIGINT, previous)
+
+
 class _SignalledGiveUp(FakeDocStatusStore):
     """Receives SIGINT (Ctrl-C) while the lease is being given up."""
 
@@ -521,6 +532,7 @@ class _SignalledGiveUp(FakeDocStatusStore):
         super().release_lease(namespace, owner)
 
 
+@pytest.mark.usefixtures("default_ctrl_c")
 @pytest.mark.parametrize("at", ["fence removal", "heartbeat join", "give-up"])
 def test_a_stop_landing_anywhere_in_the_lease_exit_still_gives_it_up(
     monkeypatch: pytest.MonkeyPatch, at: str

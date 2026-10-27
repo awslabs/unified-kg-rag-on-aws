@@ -224,7 +224,9 @@ def test_every_artifact_type_round_trips(tmp_path: Path) -> None:
             "Vendor sells gears"
         )
         assert _source(engine, alias["relationships"], "r-supplies")["weight"] == 2.0
-        assert _source(engine, alias["claims"], "cl1")["status"] == "TRUE"
+        assert (
+            _source(engine, alias["claims"], "cl1")["status"] == "true"
+        )  # stored lowercase
         assert _source(engine, alias["reports"], "cr1")["summary"] == (
             "Gears and widgets."
         )
