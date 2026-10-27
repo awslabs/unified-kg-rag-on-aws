@@ -1411,6 +1411,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
+  refused (`InvalidFilterError`) before the search. OpenSearch refused
+  every search with query text under one, while the embedded engine
+  returned nothing (#PR).
 - `global` with `search.global_search.text_unit_slots` under a filter only
   the text units declare (`n_tokens`, `text`): a cut over
   `max_reports_per_level` mapped its reports most similar to the query, as

@@ -980,8 +980,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Raise ``InvalidFilterError`` if ``filters`` names a key no index
         ``strategy`` reads declares, as each of its queries would (for
         ``auto``: if no routable strategy applies every key, since ``auto``
-        routes only among those that do). For callers that keep filters
-        across queries (an interactive session)."""
+        routes only among those that do), or a value is malformed
+        (``check_filter_values``). For callers that keep filters across
+        queries (an interactive session)."""
+        check_filter_values(filters, allow_empty_lists=False)
         if strategy is SearchStrategy.AUTO:
             self._auto_candidates(filters)
         else:
@@ -1771,7 +1773,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         # Malformed filter values fail now, before any model call.
-        check_filter_values(rag_input.filters)
+        check_filter_values(rag_input.filters, allow_empty_lists=False)
         if rag_input.use_memory and not rag_input.conversation_id:
             rag_input.conversation_id = str(uuid.uuid4())
 

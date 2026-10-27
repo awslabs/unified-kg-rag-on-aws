@@ -116,7 +116,9 @@ _SCALARS = (str, int, float, bool)
 _RANGE_BOUNDS = frozenset({"gt", "gte", "lt", "lte"})
 
 
-def check_filter_values(filters: dict[str, Any] | None) -> None:
+def check_filter_values(
+    filters: dict[str, Any] | None, *, allow_empty_lists: bool = True
+) -> None:
     """Reject filter values a search engine would refuse or misread.
 
     A value is a scalar (a ``term``), a list of scalars (``terms``) or a
@@ -125,7 +127,11 @@ def check_filter_values(filters: dict[str, Any] | None) -> None:
     mapping, and an empty range are rejected: OpenSearch answers them with a
     400 and the embedded engine would match them instead (a null field,
     say). Checked when a query is given, before any model call, and again by
-    the retriever.
+    the retriever. Without ``allow_empty_lists`` (a caller's filters) an
+    empty list is rejected too: OpenSearch refuses a search with query text
+    under one, the embedded engine returns nothing. A strategy's own scope
+    may be one (``scope_filters``: nothing the caller allows), which only a
+    text-less fetch by id carries.
 
     Raises:
         InvalidFilterError: A value is malformed.
@@ -145,9 +151,12 @@ def check_filter_values(filters: dict[str, Any] | None) -> None:
         if value is None:
             reason = "has no value (None); give the value to match"
         elif isinstance(value, list):
-            reason = next(
-                (f"lists a value that {r}" for r in map(bad, value) if r), None
-            )
+            if not value and not allow_empty_lists:
+                reason = "is an empty list; give at least one value"
+            else:
+                reason = next(
+                    (f"lists a value that {r}" for r in map(bad, value) if r), None
+                )
         elif isinstance(value, dict):
             if not value:
                 reason = "is an empty range; give gt, gte, lt or lte"
