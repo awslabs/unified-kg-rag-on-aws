@@ -902,7 +902,7 @@ depth selects the cut.
   `max_result_window` - 1, so the probe fits one request; 99 by default) so a
   cut of exactly the cap is complete. A larger cut gives way to the deepest
   shallower cut that fits (`global_cut_depth`), covering the same entities in
-  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under any filter but a document filter (`attr_<key>`, `attributes.filters.<key>`), such as `community_id`, `level` or `rating` (a shallower report passes it on its own, not through its members), does a hybrid search,
+  broader reports; MS GraphRAG has no cap and maps the whole cut. Only when even the root cut does not fit, or at once under a filter on a report key (`community_id`, `level`, `rating`: a shallower report passes it on its own, not through its members), does a hybrid search,
   restricted to the configured cut, pick that many most similar reports
   (`global_level_capped`): the only place similarity enters global search.
   The cap counts reports, which bounds the map calls.

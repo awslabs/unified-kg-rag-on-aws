@@ -1572,9 +1572,8 @@ changed once with the full-config keys (#332).
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a
   request per expansion (#443).
-- `global` under any filter but a document filter (`attr_<key>`,
-  `attributes.filters.<key>`), such as `community_id`, `level`,
-  `parent_community_id` or `rating`: a cut over `max_reports_per_level`
+- `global` under a filter on a report key (`community_id`, `level`,
+  `parent_community_id`, `rating`): a cut over `max_reports_per_level`
   maps the cut's reports most similar to the query instead of giving way
   to a shallower cut, whose reports pass the filter on their own. A
   `community_id` filter naming all 101 leaves mapped 0 reports as a
