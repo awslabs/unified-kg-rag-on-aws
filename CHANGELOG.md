@@ -1439,6 +1439,10 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a run the
+  stop watchdog ends (after the 100 s grace, or at a second signal) prints
+  `Stopped by SIGTERM.` / `SIGINT.` as a run that unwinds does; it exited
+  143 or 130 without a word (#PR).
 - Claim resolution: each subject or object spelling is fuzzy-matched
   (MinHash + LSH) once per resolution instead of once per claim statement,
   as #444's per-statement resolution did (100k statements with spelling
