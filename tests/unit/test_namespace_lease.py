@@ -565,3 +565,22 @@ def test_a_stop_landing_anywhere_in_the_lease_exit_still_gives_it_up(
 
                 thread.join = signalled_join  # type: ignore[method-assign]
     assert store.lease_holder("ns") is None
+
+
+def test_a_stop_raised_before_the_give_up_still_stops_the_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Raised while the exit picks how to give the lease up, a stop must
+    # still end the heartbeat, which would otherwise renew the lease on.
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+
+    lease = NamespaceLease(FakeDocStatusStore(), "ns", 600.0)
+    lease.__enter__()
+
+    def stopped(*_args: object) -> bool:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(lease_mod, "is_stop", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        lease.__exit__(KeyboardInterrupt, KeyboardInterrupt(), None)
+    assert lease._stop.is_set()

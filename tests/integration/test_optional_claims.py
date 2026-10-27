@@ -42,7 +42,8 @@ def _setup(tmp: Path, mode: dict[str, str]) -> tuple[Any, Any, Path, Counter]:
     the claim extraction output of Globex's units is cut at the output token
     limit (alike across both documents); while it is "rejected", z1's claim
     request is rejected for its content (HTTP 400; a known-good request is
-    answered). Returns the model calls by kind, cleared after the setup."""
+    answered); while it is "graph", z1's graph extraction request is.
+    Returns the model calls by kind, cleared after the setup."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
     server = FakeOllama(convergence._respond, "x", e2e.DIM)
@@ -63,6 +64,8 @@ def _setup(tmp: Path, mode: dict[str, str]) -> tuple[Any, Any, Path, Counter]:
                     "done_reason": "length",
                 }
                 return httpx.Response(200, content=(json.dumps(chunk) + "\n").encode())
+            if kind == "graph" and "Depot" in text and mode["m"] == "graph":
+                return httpx.Response(400, json={"error": "request rejected"})
             if kind == "claims" and "Depot" in text and mode["m"] == "rejected":
                 return httpx.Response(400, json={"error": "request rejected"})
         return server(request)
@@ -199,3 +202,26 @@ def test_a_claims_outage_still_fails_the_document_uncounted(tmp_path: Path) -> N
         context = e2e._ingest(config, providers, source, tmp_path / f"o{run}")
     assert _state(providers)["z1.txt"] == (DocStatus.FAILED, 0, 2)
     assert set(context.recorded_failed_doc_ids) == set(context.retrying_doc_ids)
+
+
+def test_claims_failing_after_a_graph_failure_are_retried_once(tmp_path: Path) -> None:
+    # A document recorded FAILED for its graph, whose claims then fail for
+    # the first time, is retried for them once: only a claims-missing record
+    # at the same content and settings is the claims' second failure
+    # (_same_failure's error_info).
+    mode = {"m": "graph"}
+    config, providers, source, _ = _setup(tmp_path, mode)
+    e2e._ingest(config, providers, source, tmp_path / "run0")
+    status, error_info, failures = _records(providers)["z1.txt"]
+    assert status is DocStatus.FAILED and failures == 1, (status, error_info)
+    mode["m"] = "rejected"
+    e2e._ingest(config, providers, source, tmp_path / "run1")
+    status, error_info, _ = _records(providers)["z1.txt"]
+    assert status is DocStatus.FAILED and "claims" in (error_info or "")
+
+
+def _records(providers: Any) -> dict[str, tuple]:
+    return {
+        r.file_path: (r.status, r.error_info, r.failure_count)
+        for r in providers.build_doc_status().list_all()
+    }

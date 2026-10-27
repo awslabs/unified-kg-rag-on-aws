@@ -1798,7 +1798,8 @@ class TestStopsInTheLoop:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 143
-        assert time.monotonic() - started < 2.5
+        # Under load a prompt cancel took 3.65 s; waiting out the sleep, 5 s.
+        assert time.monotonic() - started < 4.5
 
     def test_a_second_stop_does_not_cancel_the_cleanup(self) -> None:
         # In the process, a second Ctrl-C leaves the task's finally awaits
