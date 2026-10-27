@@ -161,9 +161,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # depths and children) and the text units' communities.
         c = self.global_search_config
         keys = (
-            {"depth", "community_id"}
-            if c.use_dynamic_selection
-            else {"depth", "max_cut_depth"}
+            {"depth", "community_id"} if c.use_dynamic_selection else set(cut_filter(0))
         )
         if c.text_unit_slots:
             keys.add("community_ids")
