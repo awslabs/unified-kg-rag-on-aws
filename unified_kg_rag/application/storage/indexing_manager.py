@@ -2324,6 +2324,16 @@ class IndexingManager:
         entities = self.neptune_indexer.read_entities(
             sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
+        # The claims' stored subject and object names too: an endpoint a
+        # removal deleted (its spelling was stated only in removed text
+        # units) is read back as nothing, and the claim's statement now
+        # resolves to another spelling of its name.
+        stated_keys = {
+            compact_name_key(name)
+            for c in claims
+            for name in (c.subject_name, c.object_name)
+            if name
+        }
         if removed:
             # And the stored entities of the other spellings of their names:
             # a retried strip re-derives the claims it noted about a split's
@@ -2331,11 +2341,15 @@ class IndexingManager:
             # spelling resolves to the part only when the part is among
             # them. Only a strip reads them (a commit's merge reads its
             # names' spellings already, see merge_with_existing_graph).
-            keys = {compact_name_key(e.name) for e in entities} | {
-                compact_name_key(derived_entities[i].name)
-                for i in entity_ids
-                if i in derived_entities
-            }
+            keys = (
+                {compact_name_key(e.name) for e in entities}
+                | {
+                    compact_name_key(derived_entities[i].name)
+                    for i in entity_ids
+                    if i in derived_entities
+                }
+                | stated_keys
+            )
             family = set(
                 self.neptune_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
                 or []
@@ -2352,7 +2366,7 @@ class IndexingManager:
         # The other spellings of their names this run derived (not stored
         # yet): their text units' records decide, with the claims' own,
         # which spelling a claim's subject and object resolve to.
-        keys = {compact_name_key(e.name) for e in entities}
+        keys = {compact_name_key(e.name) for e in entities} | stated_keys
         given = {e.id for e in entities}
         entities += [
             e

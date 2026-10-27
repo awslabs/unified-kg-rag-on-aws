@@ -1387,6 +1387,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental claims: a stored claim whose subject or object entity a
+  removal deletes (only the removed documents stated its spelling) is
+  derived against the other stored spellings of the names the claim states,
+  as a full build of the remaining corpus resolves it. It kept pointing at
+  the deleted entity's id, which no stored entity has (#PR).
 - `run-ingestion`: a SIGTERM while the finished run saves its pipeline
   metadata waits for the save and then stops the run (143). Raised inside
   the metadata's serialization, the stop was wrapped as a failed save:
