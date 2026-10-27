@@ -630,10 +630,26 @@ class DataIngestionPipeline:
             # The lease covers the checkpoint too: it is downloaded only once
             # no other run writes the namespace, and uploaded before the
             # lease is released.
-            with self._namespace_lease() as lease:
-                context = self._run_leased(
-                    source_path, resolved_pipeline_id, resolved_resume_stage, lease
-                )
+            try:
+                with self._namespace_lease() as lease:
+                    try:
+                        context = self._run_leased(
+                            source_path,
+                            resolved_pipeline_id,
+                            resolved_resume_stage,
+                            lease,
+                        )
+                    finally:
+                        # A stop (request_stop) from here on waits until the
+                        # lease is given up: raised in its exit, it left the
+                        # lease held for indexing.lease_seconds.
+                        self._checkpointing = True
+            finally:
+                self._checkpointing = False
+            # Stopped as the finished run gave the lease up: its last
+            # checkpoint is uploaded.
+            self._checkpoint_id = None
+            self._raise_if_stopping()
 
             if context.status == PipelineStageStatus.FAILED:
                 logger.warning(
@@ -924,7 +940,8 @@ class DataIngestionPipeline:
 
         Meant for a signal handler in the main thread; ``run-ingestion``
         installs one for SIGTERM, which ECS sends on StopTask and when a Step
-        Functions execution times out, before it kills the task. Every stage
+        Functions execution times out, before it kills the task, and for
+        Ctrl-C (SIGINT) unless the parent ignores it. Every stage
         the run finished is in the checkpoint, so a re-run with the same
         pipeline id resumes at the stage that was running. A request made while
         a checkpoint is being written takes effect once it is written, so the
@@ -2407,6 +2424,11 @@ class DataIngestionPipeline:
             f"{total_entities} entities, {total_relationships} relationships, "
             f"{total_claims} claims -> {total_communities} communities"
         )
+        if context.claims_missing_doc_ids:
+            summary += (
+                f"\nIndexed without some of their claims: "
+                f"{len(context.claims_missing_doc_ids)} documents"
+            )
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
         logger.info("=" * 60)

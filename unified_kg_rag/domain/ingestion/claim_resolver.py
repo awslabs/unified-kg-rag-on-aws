@@ -25,10 +25,46 @@ logger = get_logger(__name__)
 _UNKNOWN_DATE_VALUES = frozenset({"", "unknown", "none", "n/a", "na", "null"})
 
 
+# Written-out dates read as calendar dates besides ISO 8601 (which the claim
+# prompt asks for); an all-numeric day/month order is ambiguous and stays
+# as written.
+_DATE_FORMATS = (
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+    "%Y/%m/%d",
+    "%Y.%m.%d",
+)
+
+
+def claim_date_value(value: str | None) -> str | None:
+    """A claim date as stored: None when absent or a placeholder such as
+    UNKNOWN, ``YYYY-MM-DD`` when it reads as a calendar date (ISO 8601, a
+    time dropped, or a written-out date such as "January 15, 2024"), else
+    as written (whitespace collapsed). Applied to its own result it returns
+    it unchanged."""
+    text = " ".join((value or "").split())
+    if text.casefold() in _UNKNOWN_DATE_VALUES:
+        return None
+    try:
+        return datetime.fromisoformat(text).date().isoformat()
+    except ValueError:
+        pass
+    for date_format in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, date_format).date().isoformat()
+        except ValueError:
+            continue
+    return text
+
+
 def claim_date_key(value: str | None) -> str:
-    """Normalize a claim date for identity ("" when absent or a placeholder)."""
-    key = " ".join((value or "").split()).casefold()
-    return "" if key in _UNKNOWN_DATE_VALUES else key
+    """A claim date for identity: its stored value (``claim_date_value``)
+    casefolded, "" when unknown. A stored date keys as the date it was."""
+    return (claim_date_value(value) or "").casefold()
 
 
 def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
@@ -66,6 +102,7 @@ def resolve_entity_reference(
     names_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
     stated_in: Callable[[str], bool],
+    matches_memo: dict[str, list[tuple[str, float]]] | None = None,
 ) -> str | None:
     """Return the name of the entity ``entity_reference`` denotes, else None.
 
@@ -81,17 +118,25 @@ def resolve_entity_reference(
     winning, then the smallest name. The guards matter as much here as in
     entity grouping: "PO 1003" must not become "PO 1002", and a literal
     value must stay a literal value.
+
+    ``matches_memo`` keeps the fuzzy matches of each reference across the
+    calls of one resolution: they depend on the reference alone
+    (``stated_in`` is applied after), and the same names recur in every
+    statement.
     """
     key = entity_key(entity_reference)
     if not key:
         return None
     if key in names_by_key and stated_in(names_by_key[key]):
         return names_by_key[key]
-    matches = [
-        match
-        for match in fuzzy_matcher.find_all_matches(entity_reference)
-        if stated_in(match[0])
-    ]
+    candidates = (
+        matches_memo.get(entity_reference) if matches_memo is not None else None
+    )
+    if candidates is None:
+        candidates = fuzzy_matcher.find_all_matches(entity_reference)
+        if matches_memo is not None:
+            matches_memo[entity_reference] = candidates
+    matches = [match for match in candidates if stated_in(match[0])]
     if not matches:
         return None
     # Equal scores break on the name: the choice does not depend on the order
@@ -105,6 +150,7 @@ def resolve_single_claim(
     ids_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
     units_by_name: Mapping[str, Collection[str]],
+    matches_memo: dict[str, list[tuple[str, float]]] | None = None,
 ) -> Claim | None:
     """Point a claim's subject (required) and object (optional) at entities.
 
@@ -114,7 +160,8 @@ def resolve_single_claim(
     stated in one of the claim's text units is a candidate
     (:func:`resolve_entity_reference`). A subject that resolves to none
     drops the claim; an object that resolves to none is kept as the
-    literal value the claim states.
+    literal value the claim states. ``matches_memo``: see
+    :func:`resolve_entity_reference`.
     """
     claim_units = set(claim.text_unit_ids or [])
 
@@ -122,7 +169,7 @@ def resolve_single_claim(
         return bool(claim_units.intersection(units_by_name.get(name, ())))
 
     resolved_subject_name = resolve_entity_reference(
-        claim.subject_name, names_by_key, fuzzy_matcher, stated_in
+        claim.subject_name, names_by_key, fuzzy_matcher, stated_in, matches_memo
     )
 
     # A claim is anchored to its SUBJECT entity. The object may legitimately be a
@@ -137,7 +184,7 @@ def resolve_single_claim(
         return None
 
     object_name = resolve_entity_reference(
-        claim.object_name, names_by_key, fuzzy_matcher, stated_in
+        claim.object_name, names_by_key, fuzzy_matcher, stated_in, matches_memo
     )
     return claim.model_copy(
         update={
@@ -145,6 +192,10 @@ def resolve_single_claim(
             "subject_name": resolved_subject_name,
             "object_id": ids_by_key[entity_key(object_name)] if object_name else None,
             "object_name": object_name or claim.object_name,
+            # Lowercase, as stored and as entity types are: a merge counts
+            # "TRUE" and "true" as one status.
+            "type": claim.type.lower(),
+            "status": claim.status.lower() if claim.status else claim.status,
         }
     )
 
@@ -250,12 +301,19 @@ class ClaimResolver(BaseResolver):
         merge's primary.
         """
         resolved_claims = []
+        # Per call: the matcher is this call's.
+        matches_memo: dict[str, list[tuple[str, float]]] = {}
         total = len(claims)
         for done, claim in enumerate(claims, start=1):
             if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
                 logger.info("  ...resolved %s/%s claims", done, total)
             resolved_claim = resolve_single_claim(
-                claim, names_by_key, ids_by_key, fuzzy_matcher, units_by_name
+                claim,
+                names_by_key,
+                ids_by_key,
+                fuzzy_matcher,
+                units_by_name,
+                matches_memo,
             )
             if resolved_claim:
                 resolved_claims.append(resolved_claim)

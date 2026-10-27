@@ -729,6 +729,30 @@ class SQLiteSearchEngine:
             )
             self._bump(connection, index_name)
 
+    def put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
+        """Update the mapping of ``index_name`` as OpenSearch does: new fields
+        are added and root parameters (``date_detection``) replaced; changing
+        a mapped field is rejected. This engine maps no field dynamically (an
+        unmapped string is a keyword), so ``date_detection`` changes nothing."""
+        properties = body.get("properties") or {}
+        with self._transaction("update an index mapping") as connection:
+            mappings = self._mappings_of(connection, index_name)
+            live = mappings.setdefault("properties", {})
+            for name, spec in properties.items():
+                if name in live and live[name] != spec:
+                    raise rejected(
+                        f"mapper [{name}] cannot be changed from "
+                        f"{live[name]} to {spec}"
+                    )
+            _validate_mappings({"mappings": {"properties": properties}})
+            live.update(properties)
+            mappings.update({k: v for k, v in body.items() if k != "properties"})
+            connection.execute(
+                "UPDATE indices SET mappings = ? WHERE name = ?",
+                (_dumps(mappings), index_name),
+            )
+            self._bump(connection, index_name)
+
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
         indices = self.get_indices_by_alias(alias_name)
         return indices[0] if indices else None

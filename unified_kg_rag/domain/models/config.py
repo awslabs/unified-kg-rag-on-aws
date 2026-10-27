@@ -2274,8 +2274,10 @@ class IndexingConfig(BaseModel):
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised. Output that fails alike on several "
         "documents (a server-side output cap) counts so too, once a run; "
-        "changed extraction settings start the count over. Claim extraction "
-        "errors never count: the document is indexed without those claims.",
+        "changed extraction settings start the count over. A unit's own "
+        "claim extraction error never counts: the document is indexed "
+        "without those claims. A claim extraction outage fails the document "
+        "uncounted, as any outage does.",
     )
     max_document_attempts: int = Field(
         default=3,

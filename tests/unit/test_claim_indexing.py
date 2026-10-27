@@ -47,8 +47,9 @@ def test_prepare_claim_doc_embeds_description(indexer) -> None:
     assert doc["id"] == "c1"
     assert doc["subject_name"] == "Alice"
     assert doc["object_name"] == "Acme"
-    assert doc["type"] == "EMPLOYMENT"
-    assert doc["status"] == "TRUE"
+    # Lowercase, so the documented filters (status:true) match.
+    assert doc["type"] == "employment"
+    assert doc["status"] == "true"
     assert doc["description"] == "Alice is employed by Acme"
     assert doc["description_embedding"] == [0.1, 0.2]
 

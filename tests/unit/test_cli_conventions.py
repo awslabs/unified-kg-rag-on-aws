@@ -328,6 +328,34 @@ def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() ->
     assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
 
 
+def test_a_text_mode_cli_ended_after_the_grace_period_says_it_was_stopped() -> None:
+    # Regression: ended by the watchdog, a text-mode run exited 143 without
+    # the "Stopped by" line its own exit prints.
+    result = _run_cli_script("""
+        import asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import stoppable
+
+        conventions._STOP_GRACE_SECONDS = 0.5
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            while True:
+                try:
+                    await asyncio.sleep(0.01)
+                except BaseException:
+                    pass
+
+        @exits_on_sigterm
+        def main():
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert "Stopped by SIGTERM." in result.stdout + result.stderr
+
+
 def test_the_stop_grace_leaves_cleanup_time_inside_the_stop_timeout() -> None:
     # 10 s cut run-eval's upload of the finished runs, which the 120 s
     # StopTimeout of the app container (iac compute stack) leaves time for.
@@ -765,6 +793,11 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert runner._json_result(context)["failed_documents"] == 2
     context.record_failed_documents(["doc-a"])
     assert context.recorded_failed_doc_ids == ["doc-a", "doc-c"]
+    # Indexed without some claims: not failed, counted apart.
+    assert runner._json_result(context)["documents_without_claims"] == 0
+    context.record_claims_missing_documents(["doc-b", "doc-b"])
+    result = runner._json_result(context)
+    assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
 
 
 async def test_eval_json_output_is_the_only_stdout(
@@ -1765,7 +1798,8 @@ class TestStopsInTheLoop:
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 143
-        assert time.monotonic() - started < 2.5
+        # Under load a prompt cancel took 3.65 s; waiting out the sleep, 5 s.
+        assert time.monotonic() - started < 4.5
 
     def test_a_second_stop_does_not_cancel_the_cleanup(self) -> None:
         # In the process, a second Ctrl-C leaves the task's finally awaits

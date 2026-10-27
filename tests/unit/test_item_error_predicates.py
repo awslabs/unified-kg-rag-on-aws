@@ -12,6 +12,7 @@ types built without a network.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -729,3 +730,21 @@ def test_a_known_good_request_is_answered_unless_the_call_fails(
     assert (
         processor.answered(known_good_unit(), lambda units: [{}], call, "t") is answered
     )
+
+
+@pytest.mark.parametrize("stage", list(_STAGES))
+def test_the_known_good_warning_says_whether_the_errors_count(
+    stage: str, config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: the claims warning said "counted against their documents",
+    # but a document whose claims alone failed is indexed without them and
+    # counted for none.
+    with caplog.at_level(logging.WARNING):
+        _run(stage, config, _two_documents(), known_good_answered=True)
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "known-good" in r.getMessage()
+    ]
+    if stage == "claims":
+        assert "indexed without them, counted for none" in warning
+    else:
+        assert "counted against their documents" in warning

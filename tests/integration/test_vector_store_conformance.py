@@ -363,7 +363,7 @@ def test_claims_read_from_a_suffix_are_tagged_and_written_back_there(
     assert (read.subject_id, read.object_name, read.status) == (
         "e-vendor",
         "Buyer",
-        "TRUE",
+        "true",  # stored lowercase
     )
     stats = indexer.update_claim_lineage(
         [read.model_copy(update={"text_unit_ids": ["t2"]})]
@@ -527,6 +527,149 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
     client.put_index_meta(index_name, {})
     with pytest.raises(ConfigurationError, match="earlier release"):
         indexer.check_index_settings("default")
+
+
+def _dated_claim(claim_id: str, date: str | None, **filters: str) -> Claim:
+    return _claims()[0].model_copy(
+        update={
+            "id": claim_id,
+            "start_date": date,
+            "end_date": date,
+            "attributes": {"filters": filters} if filters else None,
+        }
+    )
+
+
+def _earlier_claims_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, str]:
+    """A claims index as built before the claim dates were mapped (and date
+    detection turned off): its search engine client and index name."""
+    indexer = harness.vector_indexer
+    current = indexer._get_claims_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        mapping["mappings"].pop("date_detection", None)
+        for name in ("start_date", "end_date"):
+            del mapping["mappings"]["properties"][name]
+        return mapping
+
+    def earlier_doc(claim: Claim, embeddings: tuple[list[float], ...]) -> Any:
+        doc = prepare(claim, embeddings)
+        doc.pop("start_date", None), doc.pop("end_date", None)
+        return doc
+
+    prepare = indexer._prepare_claim_doc
+    monkeypatch.setattr(indexer, "_get_claims_mapping", earlier)
+    monkeypatch.setattr(indexer, "_prepare_claim_doc", earlier_doc)
+    _write(harness, "claims", "index", [_dated_claim("cl0", None)])
+    monkeypatch.undo()
+    client = indexer.opensearch_client
+    index_name = client.get_index_name_by_alias(
+        indexer._get_name(harness.config.indexing.opensearch.claims_index_prefix, None)
+    )
+    assert index_name
+    return client, index_name
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_maps_the_claim_dates_of_an_earlier_claims_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Unmapped, the claim dates would be mapped as dates on the first dated
+    # claim, and every claim with an unknown date would then fail to write.
+    client, index_name = _earlier_claims_index(harness, monkeypatch)
+    harness.vector_indexer.check_index_settings("default")  # the run's preflight
+    _write(harness, "claims", "upsert", [_dated_claim("cl1", "2024-01-15")])
+    _write(harness, "claims", "upsert", [_dated_claim("cl2", None)])
+    assert harness.stored_ids("claims") == {"cl0", "cl1", "cl2"}
+    mappings = client.get_index_mappings(index_name)
+    assert mappings["date_detection"] is False
+    assert mappings["properties"]["start_date"] == {"type": "keyword"}
+    harness.vector_indexer.check_index_settings("default")  # nothing left to add
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_refuses_claim_dates_mapped_as_dates(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As a run without the preflight's mapping update left them: a live
+    # index's field types cannot change, so only a reset recovers.
+    client, index_name = _earlier_claims_index(harness, monkeypatch)
+    client.put_index_mapping(
+        index_name, {"properties": {"start_date": {"type": "date"}}}
+    )
+    with pytest.raises(ConfigurationError, match="'start_date' is mapped as date"):
+        harness.vector_indexer.check_index_settings("default")
+
+
+def test_a_date_like_filter_value_does_not_type_its_field(
+    harness: StoreHarness,
+) -> None:
+    # Date detection would map attr_signed as a date on the first value, and
+    # the next value of another form would fail to write.
+    _write(
+        harness, "claims", "upsert", [_dated_claim("cl1", None, signed="2024-01-15")]
+    )
+    _write(harness, "claims", "upsert", [_dated_claim("cl2", None, signed="pending")])
+    assert harness.stored_ids("claims") == {"cl1", "cl2"}
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> None:
+    # Regression: type and status were stored as the model wrote them, so
+    # status:true matched nothing; an unknown date was stored as "", which
+    # every "lte" range matched; a written-out date compared as a string.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    (claim,) = _claims(None)
+    dated = {
+        "cl-iso": "2024-01-15",
+        "cl-written": "January 20, 2024",
+        "cl-unknown": "UNKNOWN",
+        "cl-none": None,
+        "cl-quarter": "Q1 2024",
+    }
+    _write(
+        harness,
+        "claims",
+        "upsert",
+        [
+            claim.model_copy(update={"id": i, "status": "TRUE", "end_date": d})
+            for i, d in dated.items()
+        ],
+    )
+    assert harness.vector_retriever is not None
+    prefix = harness.config.indexing.opensearch.claims_index_prefix
+
+    async def matching(filters: dict[str, Any]) -> set[str]:
+        retriever = harness.vector_retriever()
+        try:
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=10,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    filters=filters,
+                    source_fields=[],
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return {str(hit.source) for hit in hits}
+
+    assert asyncio.run(matching({"status": "true"})) == set(dated)
+    assert asyncio.run(matching({"type": "obligation"})) == set(dated)
+    assert asyncio.run(matching({"end_date": {"lte": "2024-01-31"}})) == {
+        "cl-iso",
+        "cl-written",
+    }
+    assert asyncio.run(matching({"end_date": "Q1 2024"})) == {"cl-quarter"}
 
 
 def test_find_documents_matches_a_keyword_field_in_a_suffix(

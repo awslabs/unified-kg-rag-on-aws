@@ -979,6 +979,20 @@ def test_meta_round_trip(engine) -> None:
     assert engine.get_index_mappings(ALIAS) == {}  # as OpenSearchClient's lookup
 
 
+def test_mapping_update_adds_fields_and_refuses_a_retype(engine) -> None:
+    # As OpenSearch's PUT _mapping: additive, root parameters replaced.
+    engine.put_index_mapping(
+        INDEX, {"date_detection": False, "properties": {"day": {"type": "keyword"}}}
+    )
+    mappings = engine.get_index_mappings(INDEX)
+    assert mappings["date_detection"] is False
+    assert mappings["properties"]["day"] == {"type": "keyword"}
+    assert "vec" in mappings["properties"]
+    engine.put_index_mapping(INDEX, {"properties": {"day": {"type": "keyword"}}})
+    with pytest.raises(StoreRequestRejectedError, match="cannot be changed"):
+        engine.put_index_mapping(INDEX, {"properties": {"day": {"type": "date"}}})
+
+
 def test_async_surface(engine) -> None:
     async def run() -> tuple:
         return (

@@ -53,11 +53,13 @@ from __future__ import annotations
 
 import functools
 import os
+import signal
 import socket
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import Token
 from datetime import UTC, datetime
 from types import TracebackType
@@ -103,6 +105,33 @@ def longest_write_request_seconds() -> float:
 
 def _when(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat(timespec="seconds")
+
+
+@contextmanager
+def _stops_deferred() -> Iterator[None]:
+    """Run the block with SIGINT and SIGTERM held, then deliver them.
+
+    The Python handlers are swapped, not the thread's signal mask: a handler
+    runs in the main thread whichever thread the signal reached. Off the
+    main thread no handler can interrupt the block.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    received: list[int] = []
+    previous = {
+        signum: signal.signal(signum, lambda signum, _: received.append(signum))
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            # None: a handler not installed from Python, which the default
+            # stands in for.
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
+        for pending in dict.fromkeys(received):
+            signal.raise_signal(pending)
 
 
 class NamespaceLease:
@@ -193,6 +222,15 @@ class NamespaceLease:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # A stop's handler runs wherever the main thread is: raised in here
+        # (the heartbeat join most often, the give-up request, the fence's
+        # removal), it left the lease held for lease_seconds and the next
+        # run failed with "being written by". It is held until the lease is
+        # given up, then raised.
+        with _stops_deferred():
+            self._exit(exc_type)
+
+    def _exit(self, exc_type: type[BaseException] | None) -> None:
         if self._token is not None:
             remove_write_fence(self._token)
             self._token = None
@@ -212,9 +250,6 @@ class NamespaceLease:
         # A run that ends during its takeover wait (stopped, or failed before
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
-        # A stop raised in here (its handler runs wherever the main thread
-        # is, the heartbeat join most often) still gives the lease up: left
-        # held, it blocked the next run for indexing.lease_seconds.
         try:
             now = time.time()
             handed_on = self.writes_from > now

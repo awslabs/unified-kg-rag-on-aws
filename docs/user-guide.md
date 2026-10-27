@@ -841,7 +841,13 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   matches exactly: filter `type:person`, not `type:PERSON`. Prefer keyword or
   numeric fields; a `term` on an analyzed field such as `description` matches
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
-  through the Python API.
+  through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
+  claim dates are keywords, a date-like value too, so a range on them
+  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly. A claim
+  date that reads as a calendar date (`2024-01-15`, `January 15, 2024`) is
+  stored as `YYYY-MM-DD`; any other value (`Q1 2024`) as written, which only
+  an exact filter matches meaningfully; an unknown date is not stored, so it
+  matches no filter, a range included.
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the
   selected strategy reads declares (e.g. `category`, or `type` with `naive`
@@ -1643,7 +1649,10 @@ retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
 an outage or a setting never excludes them; also warned of with each file
-and its run count), the number of documents left out because they failed
+and its run count), the number of documents indexed without the claims of
+some text units, whose claim extraction failed for an error of their own
+(`documents_without_claims`: counted for none, also in the summary), the
+number of documents left out because they failed
 `indexing.max_document_failures` consecutive runs unchanged, at the same
 extraction settings (a settings change starts the count over)
 (`documents_excluded`, also in the summary) and

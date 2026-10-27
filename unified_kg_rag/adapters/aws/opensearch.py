@@ -912,6 +912,13 @@ class OpenSearchClient:
         self.client.indices.put_mapping(index=index_name, body={"_meta": meta})
 
     @_handle_opensearch_errors
+    def put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
+        """Update the mapping of ``index_name`` with ``body``: additive (new
+        fields, root parameters such as ``date_detection``); a mapped field's
+        type cannot change (HTTP 400)."""
+        self.client.indices.put_mapping(index=index_name, body=body)
+
+    @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
         indices = self.get_indices_by_alias(alias_name)
         return indices[0] if indices else None

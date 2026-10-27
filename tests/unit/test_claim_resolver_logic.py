@@ -482,3 +482,36 @@ def test_unresolved_claims_are_not_warned_of_on_every_resolution(caplog) -> None
         "Dropped 1 of 1 claim statements: their subject is not an entity "
         "their own text units state" in record.getMessage()
     )
+
+
+def test_each_reference_is_fuzzy_matched_once_per_resolution(mocker) -> None:
+    # Regression: per-statement resolution ran the MinHash/LSH query for every
+    # statement, though its result depends on the reference alone (100k
+    # statements: 39.6 s against 6.3 s before per-statement resolution).
+    resolver = _resolver()
+    create = resolver._create_fuzzy_matcher
+    calls: list[str] = []
+
+    def counting(*args: object, **kwargs: object):
+        matcher = create(*args, **kwargs)  # type: ignore[arg-type]
+        find = matcher.find_all_matches
+
+        def counted(query: str) -> list[tuple[str, float]]:
+            calls.append(query)
+            return find(query)
+
+        matcher.find_all_matches = counted  # type: ignore[method-assign]
+        return matcher
+
+    mocker.patch.object(resolver, "_create_fuzzy_matcher", side_effect=counting)
+    claims = [
+        _claim(f"c{i}", "Vendor Inc.", "Buyer Ltd", text_unit_ids=[f"u{i}"])
+        for i in range(5)
+    ]
+    entities = [
+        _entity("e1", "Vendor", tuple(f"u{i}" for i in range(5))),
+        _entity("e2", "Buyer", tuple(f"u{i}" for i in range(5))),
+    ]
+    resolved, _ = resolver.resolve(claims, entities)
+    assert {c.subject_id for c in resolved} == {"e1"}
+    assert sorted(calls) == ["Buyer Ltd", "Vendor Inc."]

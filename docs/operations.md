@@ -295,7 +295,8 @@ is a setting and counts for none.
   content, output cut off or unparseable, alike across documents too), the
   document is indexed without those units' claims and counted for none. It
   is recorded `FAILED` once (`error_info`: `indexed without the claims of
-  some text units ...`, not in `failed_documents`) so the next run extracts
+  some text units ...`, counted in `documents_without_claims`, not in
+  `failed_documents`) so the next run extracts
   the missing claims again, reusing the stored graph and claim records;
   failing so again, it is recorded `PROCESSED` without them, and they are
   not extracted again until its content or the extraction settings change.

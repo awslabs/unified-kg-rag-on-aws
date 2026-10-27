@@ -372,7 +372,10 @@ class BaseSearchStrategy(ABC):
     def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
         """The filter keys ``strategy`` scopes its searches by with values a
         caller value cannot be intersected with (a range, a browse from the
-        roots), which ``GraphRAGChain`` therefore refuses. None by default:
+        roots, or a list on a multi-valued field such as ``community_ids``,
+        where a unit in a caller's community and a scope's one passes both
+        filters but the intersection of the two lists may be empty), which
+        ``GraphRAGChain`` therefore refuses. None by default:
         the id keys a strategy scopes (``SCOPED_FILTER_KEYS``) are
         intersected with the caller's values instead (``scope_filters``)."""
         return frozenset()
@@ -590,8 +593,8 @@ class BaseSearchStrategy(ABC):
 
     def _text_unit_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
         """The keys of ``filters`` that narrow the text units (every key the
-        text-units index declares but ``id``): document filters, ``n_tokens``
-        ranges and the like."""
+        text-units index declares but ``id``, which ``_ids_allowed`` applies):
+        document filters, ``n_tokens`` ranges and the like."""
         declared = opensearch_filter_fields(
             *self.config.processing.translation.translated_languages
         )["text_units"]
@@ -600,6 +603,15 @@ class BaseSearchStrategy(ABC):
             for k, v in (filters or {}).items()
             if k != "id" and declared.declares(k)
         }
+
+    @staticmethod
+    def _ids_allowed(filters: dict[str, Any] | None, ids: list[str]) -> list[str]:
+        """``ids`` (in order) a caller ``id`` filter allows, as the fetch by
+        id intersects them (``scope_filters``); all of them without one."""
+        if not filters or "id" not in filters:
+            return ids
+        allowed: list[str] = (scope_filters({"id": filters["id"]}, id=ids) or {})["id"]
+        return allowed
 
     async def _passing_ranked_units(
         self, query: SearchQuery, ranked: list[str], quota: int
@@ -613,6 +625,8 @@ class BaseSearchStrategy(ABC):
         units, an ids-only check walks the ranked ids until ``quota`` pass,
         and only those are fetched with their content.
         """
+        # Not in the quota: ids the fetch removes.
+        ranked = self._ids_allowed(query.filters, ranked)
         filters = self._text_unit_filters(query.filters)
         if not filters:
             return ranked[:quota]

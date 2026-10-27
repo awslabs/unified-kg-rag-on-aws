@@ -277,11 +277,16 @@ def _stop_watchdog() -> None:
     _stop_now.wait(_STOP_GRACE_SECONDS)
     if not _exit_at_once["enabled"]:  # the test suite
         return
-    exit_code = 128 + (_stop["signum"] or signal.SIGTERM)
+    signum = _stop["signum"] or signal.SIGTERM
+    exit_code = 128 + signum
     # Not waiting long on a main thread stuck writing to stdout.
     if _print_lock.acquire(timeout=1.0):
         try:
             print_status(exit_code)
+            if not _json["enabled"]:  # the line main's own exit prints
+                console.print(
+                    f"\n[yellow]Stopped by {signal.Signals(signum).name}.[/yellow]"
+                )
         except Exception:  # noqa: BLE001, S110 - ending anyway
             pass
         finally:

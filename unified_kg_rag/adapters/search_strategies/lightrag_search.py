@@ -614,6 +614,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # pool is far larger than a flat top_k=10 before the final cut.
         limit = self._chunk_stream_top_k(query.top_k)
         exclude = set(exclude or ())
+        # The caller's id filter: no slot for a chunk the fetch removes.
+        linked = [
+            unit
+            for lineage in self._lineages([*entity_results, *relationship_results])
+            for unit in lineage
+        ]
+        exclude.update(set(linked) - set(self._ids_allowed(query.filters, linked)))
         if filters := self._text_unit_filters(query.filters):
             chunk_ids = await self._passing_linked_chunk_ids(
                 query, entity_results, relationship_results, filters, limit, exclude

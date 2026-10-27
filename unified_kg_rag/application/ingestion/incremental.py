@@ -286,6 +286,8 @@ class IncrementalIndexer:
         # failing again for an error not their own (warn_retrying).
         self.recorded_failed_doc_ids: list[str] = []
         self.retrying_doc_ids: list[str] = []
+        # The documents the last commit indexed without some of their claims.
+        self.claims_missing_doc_ids: list[str] = []
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -961,24 +963,6 @@ class IncrementalIndexer:
             )
         self._put(records)
 
-    def _same_failure(
-        self,
-        existing: DocStatusRecord | None,
-        content_hash: str,
-        error_info: str | None = None,
-    ) -> bool:
-        """Whether ``existing`` recorded this content FAILED (for
-        ``error_info``, if given) at this run's extraction settings."""
-        return (
-            existing is not None
-            and existing.status is DocStatus.FAILED
-            and existing.content_hash == content_hash
-            and (error_info is None or existing.error_info == error_info)
-            and not settings_changed(
-                existing.extraction_fingerprint, self.extraction_fingerprint
-            )
-        )
-
     def _record_processed(
         self,
         lineages: list[DocumentLineage],
@@ -1024,6 +1008,7 @@ class IncrementalIndexer:
         }
         records: list[DocStatusRecord] = []
         claims_given_up: list[str] = []
+        claims_missing: set[str] = set()
         for lineage in lineages:
             existing = prior.get(lineage.doc_id)
             content_hash = fingerprints.get(
@@ -1035,7 +1020,10 @@ class IncrementalIndexer:
             elif lineage.doc_id in write_failed_doc_ids:
                 error_info = _WRITE_FAILED
             elif lineage.doc_id in claims_missing_doc_ids:
-                if self._same_failure(existing, content_hash, _CLAIMS_MISSING):
+                claims_missing.add(lineage.doc_id)
+                if _same_failure(
+                    existing, content_hash, self.extraction_fingerprint, _CLAIMS_MISSING
+                ):
                     claims_given_up.append(lineage.file_path or lineage.doc_id)
                 else:
                     error_info = _CLAIMS_MISSING
@@ -1048,7 +1036,7 @@ class IncrementalIndexer:
             if failed:
                 counted = lineage.doc_id in counted_failed_doc_ids
                 failure_count = int(counted)
-                if self._same_failure(existing, content_hash):
+                if _same_failure(existing, content_hash, self.extraction_fingerprint):
                     assert existing is not None
                     failure_count += existing.failure_count
                 if not counted:
@@ -1099,6 +1087,7 @@ class IncrementalIndexer:
             claims_given_up,
         )
         self.retrying_doc_ids = warn_retrying(records)
+        self.claims_missing_doc_ids = sorted(claims_missing)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -1176,6 +1165,25 @@ def run_registry_scope(
     )
 
 
+def _same_failure(
+    existing: DocStatusRecord | None,
+    content_hash: str,
+    extraction_fingerprint: str | None,
+    error_info: str | None = None,
+) -> bool:
+    """Whether ``existing`` recorded this content FAILED (for ``error_info``,
+    if given) at the extraction settings of ``extraction_fingerprint``."""
+    return (
+        existing is not None
+        and existing.status is DocStatus.FAILED
+        and existing.content_hash == content_hash
+        and (error_info is None or existing.error_info == error_info)
+        and not settings_changed(
+            existing.extraction_fingerprint, extraction_fingerprint
+        )
+    )
+
+
 def dedup_preferences(
     documents: list[Document],
     context: PipelineContext,
@@ -1191,8 +1199,9 @@ def dedup_preferences(
     therefore kept over one it does not, and one
     it holds as FAILED gives way to any other: a FAILED document may have used
     up its retries (``indexing.max_document_failures``), so keeping it over
-    its copy would leave neither indexed. A PENDING record (an interrupted
-    run) is neither.
+    its copy would leave neither indexed. A FAILED record of a document
+    indexed without some claims (``_CLAIMS_MISSING``) counts as indexed: its
+    graph is in the stores. A PENDING record (an interrupted run) is neither.
     """
     _, _, source_scope, _ = run_registry_scope(
         config, source_directory, context.failed_source_files
@@ -1209,16 +1218,21 @@ def dedup_preferences(
             f"corpus ({type(e).__name__}: {e})"
         ) from e
 
-    def has_status(status: DocStatus) -> Callable[[Document], bool]:
-        def check(document: Document) -> bool:
-            record = stored.get(keys[id(document)])
-            return record is not None and record.status is status
+    def status(document: Document) -> DocStatus | None:
+        record = stored.get(keys[id(document)])
+        if record is None:
+            return None
+        if record.status is DocStatus.FAILED and record.error_info == _CLAIMS_MISSING:
+            return DocStatus.PROCESSED
+        return record.status
 
-        return check
+    def indexed(document: Document) -> bool:
+        return status(document) is DocStatus.PROCESSED
 
-    indexed = has_status(DocStatus.PROCESSED)
-    failed = has_status(DocStatus.FAILED)
-    return indexed, lambda document: failed(document) and not indexed(document)
+    def failed(document: Document) -> bool:
+        return status(document) is DocStatus.FAILED
+
+    return indexed, failed
 
 
 def run_extraction_fingerprint(
@@ -2027,11 +2041,8 @@ def record_item_failures(
         content_hash = fingerprints.get(doc_id, record.content_hash)
         earlier = (
             record.failure_count
-            if record.status is DocStatus.FAILED
-            and record.content_hash == content_hash
-            and not settings_changed(
-                record.extraction_fingerprint,
-                context.incremental_extraction_fingerprint,
+            if _same_failure(
+                record, content_hash, context.incremental_extraction_fingerprint
             )
             else 0
         )
@@ -2199,6 +2210,7 @@ def index_delta(
     finally:
         context.record_failed_documents(incremental.recorded_failed_doc_ids)
         context.record_retrying_documents(incremental.retrying_doc_ids)
+        context.record_claims_missing_documents(incremental.claims_missing_doc_ids)
     if not removed:
         raise PipelineStageError(
             "Removing the artifacts of deleted documents failed; their "
