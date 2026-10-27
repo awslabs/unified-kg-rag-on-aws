@@ -511,3 +511,68 @@ def test_unit_records_reads_the_cited_ids_a_bounded_number_of_times() -> None:
     me = SimpleNamespace(opensearch_indexer=_Store())
     IndexingManager._unit_records(me, "s", unit_ids, units)  # type: ignore[arg-type]
     assert _CountedIds.passes <= 2
+
+
+def test_incident_edges_are_read_once_per_site_until_its_ids_shrink() -> None:
+    # The stored edges do not change during a derivation: a site asking a
+    # superset of its last ids reads only the ones it adds (all of them, in
+    # each of up to 32 rounds, before). Asked other ids, it reads them all
+    # again: the edges of ids it no longer asks must not come back.
+    from unified_kg_rag.application.storage.indexing_manager import _IncidentEdges
+
+    edges = {"a": {"r-a"}, "b": {"r-b"}, "c": {"r-c", "r-a"}}
+    reads: list[list[str]] = []
+
+    def read(ids: list[str]) -> list[str]:
+        reads.append(ids)
+        return sorted({r for i in ids for r in edges[i]})
+
+    incident = _IncidentEdges(read)
+    assert incident("given", ["a", "b"]) == {"r-a", "r-b"}
+    assert incident("given", ["b", "a", "c"]) == {"r-a", "r-b", "r-c"}
+    assert incident("moved", ["a"]) == {"r-a"}
+    assert incident("given", ["c"]) == {"r-c", "r-a"}
+    assert reads == [["a", "b"], ["c"], ["a"], ["c"]]
+
+
+def test_claim_records_of_every_round_are_derived_with(manager) -> None:
+    # The given claim (a stale id, citing u1) derives to the id a stored
+    # claim citing u2 holds: the second round reads only u2's records, and
+    # the claim is derived from u1's statement and u2's together. Had the
+    # round's read replaced the first's, u1's statement was lost.
+    from tests.unit.test_derivation import _entity, _pays, _record, _stored
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    mgr, _, _ = manager
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    records = {
+        u: _record(u, _entity("Acme", u), _entity("Buyer", u)) for u in ("u1", "u2")
+    }
+    statements = {u: [_pays("Acme", "Buyer", [u], f"s-{u}")] for u in ("u1", "u2")}
+    given = _pays("Acme", "Buyer", ["u1"], "stale").model_copy(
+        update={"subject_id": acme.id, "object_id": buyer.id}
+    )
+    held = given.model_copy(
+        update={"id": resolved_claim_id(given), "text_unit_ids": ["u2"]}
+    )
+    asked: list[list[str]] = []
+
+    def unit_records(suffix, unit_ids, text_units):
+        asked.append(list(unit_ids))
+        return (
+            {u: records[u] for u in unit_ids},
+            {u: statements[u] for u in unit_ids},
+        )
+
+    mgr._unit_records = unit_records
+    mgr._read_held = lambda suffix, ids: (
+        [],
+        [],
+        [held] if held.id in ids else [],
+    )
+
+    derived = mgr.derive("default", [acme, buyer], [], [given])
+
+    assert asked == [["u1"], ["u2"]]
+    (claim,) = [c for c in derived.claims if c.id == held.id]
+    assert sorted(claim.text_unit_ids or []) == ["u1", "u2"]

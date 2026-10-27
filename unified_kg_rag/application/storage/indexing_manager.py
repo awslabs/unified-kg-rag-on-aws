@@ -170,6 +170,28 @@ def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
+class _IncidentEdges:
+    """The stored edges incident to entity ids, by call site, for one
+    derivation: the stored edges do not change during it, so a query over a
+    superset of the ids its site asked last reads only the ids it adds. A
+    query over other ids reads them all again (the edges found for ids no
+    longer asked must not be returned)."""
+
+    def __init__(self, read: Callable[[list[str]], Iterable[str]]) -> None:
+        self._read = read
+        self._by_site: dict[str, tuple[set[str], set[str]]] = {}
+
+    def __call__(self, site: str, ids: Collection[str]) -> set[str]:
+        asked, found = self._by_site.get(site, (set(), set()))
+        wanted = set(ids)
+        if not asked <= wanted:
+            asked, found = set(), set()
+        if new := sorted(wanted - asked):
+            found = found | set(self._read(new))
+        self._by_site[site] = (wanted, found)
+        return found
+
+
 def _edges_of_written_entities(
     relationships: list[Relationship] | None, entity_stats: IndexingStats | None
 ) -> tuple[list[Relationship] | None, IndexingStats | None]:
@@ -1081,23 +1103,12 @@ class IndexingManager:
         records: dict[str, TextUnitExtraction] = {}
         claim_records: dict[str, list[Claim]] = {}
         read_units: set[str] = set()
-        # Nor do the stored edges: a query over a superset of the ids a call
-        # site asked last reads only the ids it adds.
-        incident_reads: dict[str, tuple[set[str], set[str]]] = {}
-
-        def incident(site: str, ids: Collection[str]) -> set[str]:
-            asked, found = incident_reads.get(site, (set(), set()))
-            wanted = set(ids)
-            if not asked <= wanted:
-                asked, found = set(), set()
-            if new := sorted(wanted - asked):
-                found = found | set(
-                    self.neptune_indexer.find_incident_relationship_ids(
-                        new, suffix=suffix
-                    )
-                )
-            incident_reads[site] = (wanted, found)
-            return found
+        # Nor do the stored edges (read once per call site, _IncidentEdges).
+        incident = _IncidentEdges(
+            lambda ids: self.neptune_indexer.find_incident_relationship_ids(
+                ids, suffix=suffix
+            )
+        )
 
         # A new id another stored item holds: that item is a copy an
         # interrupted re-key left, or another spelling a full build merges

@@ -712,13 +712,18 @@ def test_a_derived_endpoint_wins_over_an_underived_stored_one() -> None:
     assert claim.subject_id == acme.id, (claim.subject_id, claim.subject_name)
 
 
-def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit() -> None:
+@pytest.mark.parametrize("side", ["object", "subject"])
+def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit(
+    side: str,
+) -> None:
     # Regression: "Acme" (stored merged with "Acme Inc") cites u9, whose
     # record a killed removal deleted, so it is underived. The stored claim
     # "Depot pays Acme" cites u1, which states "Depot pays Acme Inc" (a claim
     # a full build keeps apart, about a spelling only the underived entity
     # holds), and u2. That claim could not be emitted and u1 left the given
-    # claim too: no claim cited u1, and its statement was lost.
+    # claim too: no claim cited u1, and its statement was lost. Emitted, it
+    # would point at an entity no derived or stored item is. Alike with
+    # Acme the subject.
     from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 
     records = {
@@ -735,8 +740,12 @@ def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit() -> None:
     }
     acme = _stored("Acme", ["u0", "u1", "u2", "u9"])
     depot = _stored("Depot", ["u1", "u2"])
-    stored = _pays("Depot", "Acme", ["u1", "u2"]).model_copy(
-        update={"subject_id": depot.id, "object_id": acme.id}
+    pair, split = (("Depot", "Acme"), ("Depot", "Acme Inc"))
+    ids = (depot.id, acme.id)
+    if side == "subject":
+        pair, split, ids = pair[::-1], split[::-1], ids[::-1]
+    stored = _pays(*pair, ["u1", "u2"]).model_copy(
+        update={"subject_id": ids[0], "object_id": ids[1]}
     )
     stored.id = resolved_claim_id(stored)
 
@@ -747,11 +756,15 @@ def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit() -> None:
         [stored],
         records,
         {
-            "u1": [_pays("Depot", "Acme Inc", ["u1"], "s1")],
-            "u2": [_pays("Depot", "Acme", ["u2"], "s2")],
+            "u1": [_pays(*split, ["u1"], "s1")],
+            "u2": [_pays(*pair, ["u2"], "s2")],
         },
     )
 
     assert acme.id in derived.underived
-    cited = {u for c in derived.claims for u in c.text_unit_ids or []}
-    assert cited == {"u1", "u2"}
+    known = {e.id for e in derived.entities} | {acme.id, depot.id}
+    for claim in derived.claims:
+        assert claim.subject_id in known, claim.subject_name
+        assert claim.object_id is None or claim.object_id in known, claim.object_name
+    cited = [u for c in derived.claims for u in c.text_unit_ids or []]
+    assert sorted(cited) == ["u1", "u2"]
