@@ -961,24 +961,6 @@ class IncrementalIndexer:
             )
         self._put(records)
 
-    def _same_failure(
-        self,
-        existing: DocStatusRecord | None,
-        content_hash: str,
-        error_info: str | None = None,
-    ) -> bool:
-        """Whether ``existing`` recorded this content FAILED (for
-        ``error_info``, if given) at this run's extraction settings."""
-        return (
-            existing is not None
-            and existing.status is DocStatus.FAILED
-            and existing.content_hash == content_hash
-            and (error_info is None or existing.error_info == error_info)
-            and not settings_changed(
-                existing.extraction_fingerprint, self.extraction_fingerprint
-            )
-        )
-
     def _record_processed(
         self,
         lineages: list[DocumentLineage],
@@ -1035,7 +1017,9 @@ class IncrementalIndexer:
             elif lineage.doc_id in write_failed_doc_ids:
                 error_info = _WRITE_FAILED
             elif lineage.doc_id in claims_missing_doc_ids:
-                if self._same_failure(existing, content_hash, _CLAIMS_MISSING):
+                if _same_failure(
+                    existing, content_hash, self.extraction_fingerprint, _CLAIMS_MISSING
+                ):
                     claims_given_up.append(lineage.file_path or lineage.doc_id)
                 else:
                     error_info = _CLAIMS_MISSING
@@ -1048,7 +1032,7 @@ class IncrementalIndexer:
             if failed:
                 counted = lineage.doc_id in counted_failed_doc_ids
                 failure_count = int(counted)
-                if self._same_failure(existing, content_hash):
+                if _same_failure(existing, content_hash, self.extraction_fingerprint):
                     assert existing is not None
                     failure_count += existing.failure_count
                 if not counted:
@@ -1173,6 +1157,25 @@ def run_registry_scope(
         namespace,
         source_scope,
         failed_doc_ids,
+    )
+
+
+def _same_failure(
+    existing: DocStatusRecord | None,
+    content_hash: str,
+    extraction_fingerprint: str | None,
+    error_info: str | None = None,
+) -> bool:
+    """Whether ``existing`` recorded this content FAILED (for ``error_info``,
+    if given) at the extraction settings of ``extraction_fingerprint``."""
+    return (
+        existing is not None
+        and existing.status is DocStatus.FAILED
+        and existing.content_hash == content_hash
+        and (error_info is None or existing.error_info == error_info)
+        and not settings_changed(
+            existing.extraction_fingerprint, extraction_fingerprint
+        )
     )
 
 
@@ -2033,11 +2036,8 @@ def record_item_failures(
         content_hash = fingerprints.get(doc_id, record.content_hash)
         earlier = (
             record.failure_count
-            if record.status is DocStatus.FAILED
-            and record.content_hash == content_hash
-            and not settings_changed(
-                record.extraction_fingerprint,
-                context.incremental_extraction_fingerprint,
+            if _same_failure(
+                record, content_hash, context.incremental_extraction_fingerprint
             )
             else 0
         )
