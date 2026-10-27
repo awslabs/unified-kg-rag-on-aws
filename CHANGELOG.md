@@ -1411,6 +1411,24 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
+  refused (`InvalidFilterError`) before the search. OpenSearch refused
+  every search with query text under one, while the embedded engine
+  returned nothing (#445).
+- `global` with `search.global_search.text_unit_slots` under a filter only
+  the text units declare (`n_tokens`, `text`): a cut over
+  `max_reports_per_level` mapped its reports most similar to the query, as
+  under a report key, instead of giving way to a shallower cut that fits
+  (the reports index drops such a key, so the shallower cut's reports
+  pass it). Only a key the reports index declares, other than a document
+  filter, now keeps the configured cut (#445).
+- `local`, `drift`, `mix` and `hybrid` under a document filter and a
+  caller `id`, `source_id` or `target_id`: the walk over the relationships
+  index asked its edges under those keys too, so an `id` (entity ids)
+  matched no edge and a `source_id` kept only the edges from the listed
+  vertices, and the walk reached no or fewer neighbours. The edges are now
+  asked without them, as the graph walk crosses its edges; the reached
+  entities are still read under them (#445).
 - Incremental runs: the claims a derivation drops (their subject is not an
   entity their own text units state) are no longer warned of on every run
   (`Failed to resolve N out of M claims` repeated with each re-derivation);

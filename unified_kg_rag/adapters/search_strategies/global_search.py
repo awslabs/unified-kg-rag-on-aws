@@ -26,7 +26,10 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import document_filters
+from unified_kg_rag.adapters.storage.filter_schema import (
+    document_filters,
+    opensearch_filter_fields,
+)
 from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
@@ -403,14 +406,24 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         broader reports. Only when even the root cut does not fit are the
         reports of the configured cut most similar to the query mapped, and
         at once under a filter on a report key (``community_id``, ``level``,
-        ``rating``): a shallower cut's reports pass it or not on their own,
-        not by covering the configured cut's (document filters pass a report
-        through any member's documents, so they still do).
+        ``rating``; a key the reports index declares, not a document filter
+        or a text-unit key such as ``n_tokens``): a shallower cut's reports
+        pass it or not on their own, not by covering the configured cut's
+        (document filters pass a report through any member's documents, so
+        they still do).
         """
         depth = self.global_search_config.community_depth
         label = "Community report cut"
+        # A key only the text units declare (text_unit_slots) leaves the
+        # reports alone.
+        declared = opensearch_filter_fields(
+            *self.config.processing.translation.translated_languages
+        )["community_reports"]
         filters = query.filters or {}
-        step_down = len(document_filters(filters)) == len(filters)
+        step_down = not any(
+            declared.declares(key)
+            for key in set(filters) - set(document_filters(filters))
+        )
         with observability.span("kg_rag.global.select", depth=depth) as span:
             first, complete = await self._browse_reports(
                 query, cut_filter(depth), label

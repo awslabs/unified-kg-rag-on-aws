@@ -858,7 +858,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   `community_id`), and `community_ids` with `text_unit_slots`. `id`,
   `source_id` and `target_id` narrow what `local`, `drift`, `mix` and
   `hybrid` fetch by id or walk to (only artifacts with a listed value come
-  back); a range on them is refused with every strategy. `auto` routes
+  back); a range on them is refused with every strategy (`naive` and
+  `global` too, which do not scope them, so a filter is valid whatever the
+  strategy), as is an empty list of values on any key. `auto` routes
   only among the strategies it may route to that apply every key (with the
   default set, `type:person` leaves `local` and `mix`) and refuses the
   filters, before routing, only when none does. Neptune filters entity

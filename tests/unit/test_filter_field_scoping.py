@@ -19,11 +19,13 @@ import pytest
 from gremlin_python.process.graph_traversal import __
 from gremlin_python.process.traversal import P
 
+from unified_kg_rag.adapters.retrieval.base import scope_filters
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
     IndexLimits,
+    check_filter_values,
     opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
@@ -1069,3 +1071,39 @@ def test_a_malformed_filter_fails_before_any_model_call() -> None:
     # entity extraction had been paid for.
     with pytest.raises(InvalidFilterError, match="empty range"):
         GraphRAGChain._prepare_invoke({"query": "q", "filters": {"n_tokens": {}}})
+
+
+@pytest.mark.parametrize("key", ["id", "source_id", "attr_category"])
+def test_an_empty_filter_list_is_refused_before_the_search(
+    config: Config, key: str
+) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    # Regression: OpenSearch refused every search with query text under an
+    # empty terms list ("must be rewritten first"); the embedded engine
+    # returned nothing.
+    with pytest.raises(InvalidFilterError, match="empty list"):
+        GraphRAGChain._prepare_invoke({"query": "q", "filters": {key: []}})
+    with pytest.raises(InvalidFilterError, match="empty list"):
+        _strategy_chain(config).check_filter_keys({key: []}, SearchStrategy.LOCAL)
+
+
+def test_a_scope_that_allows_nothing_still_reaches_the_store() -> None:
+    # A strategy's own fetch by id may intersect to an empty list: the
+    # retriever's check keeps accepting it (it matches nothing).
+    check_filter_values(scope_filters({"id": ["a"]}, id=["b"]))
+
+
+@pytest.mark.parametrize("strategy", ["local", "mix", "naive", "global", "auto"])
+@pytest.mark.parametrize("key", ["id", "source_id", "target_id"])
+async def test_a_range_on_a_scoped_key_is_refused_by_every_strategy(
+    config: Config, strategy: str, key: str
+) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    # Uniform by choice: naive and global never scope these keys, but a
+    # filter that one strategy refuses is refused by all, so auto routes
+    # the same way whatever it picks.
+    chain = _strategy_chain(config)
+    with pytest.raises(InvalidFilterError, match=f"{key}: a range cannot be"):
+        chain.check_filter_keys({key: {"gte": "a"}}, SearchStrategy(strategy))

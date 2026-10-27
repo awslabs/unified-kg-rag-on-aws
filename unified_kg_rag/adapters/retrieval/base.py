@@ -903,9 +903,11 @@ class BaseSearchStrategy(ABC):
         vertex still open when the next is full too). The reached
         entities are read from the entities index under the caller's
         filters (a vertex filter such as ``type`` keeps only its entities,
-        the walk goes through the others), scored by distance and importance
-        as the graph walk does (``degree`` reads as ``rank``: the index holds
-        no degree), and cut to ``top_k * retrieval_multiplier``; ``Path:``
+        the walk goes through the others; so does a caller ``id``, and the
+        edges are asked without the caller's ``id``/``source_id``/
+        ``target_id``, as the graph walk crosses them), scored by distance
+        and importance as the graph walk does (``degree`` reads as
+        ``rank``: the index holds no degree), and cut to ``top_k * retrieval_multiplier``; ``Path:``
         follows the walk.
 
         ``None`` when the relationships index is missing at query time: the
@@ -922,6 +924,18 @@ class BaseSearchStrategy(ABC):
         fields = [
             f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
         ]
+        # The edges walked through: not under the caller's id keys, which
+        # the graph walk applies to what it reached only (the entity read
+        # below keeps them).
+        through = query.model_copy(
+            update={
+                "filters": {
+                    k: v
+                    for k, v in (query.filters or {}).items()
+                    if k not in SCOPED_FILTER_KEYS
+                }
+            }
+        )
         parent: dict[str, str | None] = dict.fromkeys(seeds)
         root = {seed: seed for seed in seeds}
         taken = dict.fromkeys(seeds, 0)
@@ -970,7 +984,7 @@ class BaseSearchStrategy(ABC):
             # An edge back to a vertex already reached adds nothing: left out
             # by the store, so such edges cannot fill a page.
             edges, full = await self._incident_relationships(
-                query, vertices, fields, size, ends, away_from=list(parent)
+                through, vertices, fields, size, ends, away_from=list(parent)
             )
             dropped: Counter[tuple[str, str]] = Counter()
             if len(filters) > 1 and edges:

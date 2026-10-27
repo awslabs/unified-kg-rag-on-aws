@@ -1466,3 +1466,34 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
         got = [r.source for r in found["lightrag_linked_chunks"]]
     assert store.asked == [["e1", "e2"], ["e3", "e4"]]
     assert got == ranked
+
+
+@pytest.mark.parametrize(
+    ("scoped", "expected"),
+    [
+        # Regression: the edges were asked under the caller's id (edge ids
+        # that are entity ids: none), so the walk reached no neighbour.
+        ({"id": ["S", "D"]}, {"S": "S", "D": "S -> B -> D"}),
+        # ... and under its source_id, intersected with the frontier.
+        ({"source_id": ["X"]}, {"S": "S", "B": "S -> B", "D": "S -> B -> D"}),
+    ],
+)
+async def test_the_walk_crosses_edges_without_the_callers_id_keys(
+    config: Config, scoped: dict[str, list[str]], expected: dict[str, str]
+) -> None:
+    # The graph walk applies a caller id to what it reached only; so does
+    # the walk over the relationships index, its entity read keeps it.
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", **scoped})
+    assert _paths(kept) == expected
+    edge_calls = [
+        f for prefix, f in index.calls if prefix == index.o.relationships_index_prefix
+    ]
+    assert edge_calls and all("id" not in f for f in edge_calls)
+    assert all(
+        "X" not in f.get(end, []) and f.get(end) != []
+        for f in edge_calls
+        for end in ("source_id", "target_id")
+    )
+    reads = [f for prefix, f in index.calls if prefix == index.o.entities_index_prefix]
+    assert reads and all(f.get(k) is not None for f in reads for k in scoped)

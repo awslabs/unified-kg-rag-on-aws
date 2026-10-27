@@ -311,6 +311,30 @@ async def test_a_document_filter_over_the_cap_still_steps_down() -> None:
     assert result.metadata["global_cut_depth"] == 1
 
 
+@pytest.mark.parametrize("key", ["n_tokens", "text"])
+async def test_a_text_unit_filter_over_the_cap_still_steps_down(key: str) -> None:
+    # Regression: every key but a document filter was taken for a report
+    # key, so a filter only the text units declare (text_unit_slots) mapped
+    # the 3 most similar reports of the depth-2 cut instead of the depth-1
+    # cut, which covers every entity.
+    class _Dropping(_ReportStore):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            # As the retriever does: the reports index lacks the key.
+            filters = {k: v for k, v in (query.filters or {}).items() if k != key}
+            return await super().aretrieve(
+                query.model_copy(update={"filters": filters})
+            )
+
+    store = _Dropping(_documents())
+    strat = _strategy(store, max_reports_per_level=3, text_unit_slots=2)
+    value: Any = {"gte": 1} if key == "n_tokens" else "partners"
+    result = await strat.asearch(SearchQuery(query="themes", filters={key: value}))
+
+    assert _mapped(strat) == {"A", "B", "C"}
+    assert result.metadata["global_cut_depth"] == 1
+    assert result.metadata["global_level_capped"] is False
+
+
 async def test_a_live_window_below_the_cap_bounds_it() -> None:
     # Regression: the cap followed max_query_size only. Under a reports
     # index created with max_result_window 4, the probe for 100 got 4 of the
