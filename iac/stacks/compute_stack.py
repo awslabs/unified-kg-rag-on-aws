@@ -512,7 +512,9 @@ class ComputeStack(Stack):
             environment=environment,
             # On SIGTERM (StopTask, a Step Functions timeout) run-ingestion
             # uploads its checkpoint and unwinds the in-flight model calls;
-            # give it the Fargate maximum before the task is killed.
+            # give it the Fargate maximum before the task is killed. The
+            # QueryTask's run-rag / run-eval rely on it too: their 100 s stop
+            # grace (cli.conventions._STOP_GRACE_SECONDS) must end inside it.
             stop_timeout=Duration.seconds(120),
             # An init process as PID 1 forwards the stop signal to the CLI
             # and reaps the processes it leaves (pool workers, the
