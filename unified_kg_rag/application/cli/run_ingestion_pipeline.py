@@ -542,7 +542,7 @@ class IngestionPipelineRunner:
             metrics_sink=self._build_metrics_sink(),
         )
 
-        previous_handler = self._stop_on_sigterm(self.pipeline)
+        previous_handlers = self._stop_on_signals(self.pipeline)
         try:
             if self._handle_metadata_operations():
                 return
@@ -579,8 +579,8 @@ class IngestionPipelineRunner:
             # ingest run does not leak websockets/HTTP pools until interpreter
             # exit. Best-effort: pipeline.close() never raises.
             self.pipeline.close()
-            if previous_handler is not None:
-                signal.signal(signal.SIGTERM, previous_handler)
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
 
     @staticmethod
     def _stage_failure(context: PipelineContext) -> str | None:
@@ -632,10 +632,13 @@ class IngestionPipelineRunner:
         }
 
     @staticmethod
-    def _stop_on_sigterm(pipeline: DataIngestionPipeline) -> Any:
-        """Turn SIGTERM into a checkpointed stop (``request_stop``); returns
-        the handler it replaced (``None`` off the main thread, where Python
-        cannot install one).
+    def _stop_on_signals(pipeline: DataIngestionPipeline) -> dict[int, Any]:
+        """Turn SIGTERM and Ctrl-C (SIGINT) into a checkpointed stop
+        (``request_stop``, which defers one during a checkpoint or metadata
+        write); returns the handlers it replaced (none off the main thread,
+        where Python cannot install one). A SIGINT the parent ignores stays
+        ignored. Raised as ``KeyboardInterrupt``, a Ctrl-C during the
+        metadata save failed it (exit 1).
 
         ECS sends SIGTERM on StopTask and when a Step Functions execution times
         out, then kills the task once the container's stop timeout has passed.
@@ -644,10 +647,15 @@ class IngestionPipelineRunner:
         for, so without one the task ran on until it was killed.
         """
         if threading.current_thread() is not threading.main_thread():
-            return None
-        return signal.signal(
-            signal.SIGTERM, lambda signum, _: pipeline.request_stop(signum)
-        )
+            return {}
+        return {
+            signum: signal.signal(
+                signum, lambda signum, _: pipeline.request_stop(signum)
+            )
+            for signum in (signal.SIGTERM, signal.SIGINT)
+            if signum == signal.SIGTERM
+            or signal.getsignal(signum) is not signal.SIG_IGN
+        }
 
 
 def _next_run_writes_from(runner: IngestionPipelineRunner | None) -> str | None:

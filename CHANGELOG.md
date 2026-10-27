@@ -1402,6 +1402,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-ingestion`: a Ctrl-C stops the run as a SIGTERM does
+  (`request_stop`), after the checkpoint or metadata write in progress,
+  and exits 130. Raised as `KeyboardInterrupt` wherever the run was, a
+  Ctrl-C during the metadata save failed it (exit 1). A SIGINT the parent
+  ignores stays ignored (#PR).
 - Queries: a claim in the context names its subject, type, object and
   status (`Claim: Vendor -[breach of contract]-> Buyer (FALSE)`) before its
   description. Shown as the description alone, a `FALSE` or `SUSPECTED`

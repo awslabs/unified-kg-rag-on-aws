@@ -1119,6 +1119,37 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
     assert "after it finished" in err
 
 
+@pytest.mark.parametrize("inherited", [signal.default_int_handler, signal.SIG_IGN])
+def test_ingestion_stops_on_ctrl_c_as_on_sigterm(inherited: Any) -> None:
+    # A Ctrl-C raised KeyboardInterrupt wherever the run was: during the
+    # metadata save it failed the save (exit 1) instead of waiting for it,
+    # as request_stop does. A SIGINT the parent ignores stays ignored.
+    stops: list[int] = []
+
+    class _Pipeline:
+        def request_stop(self, signum: int) -> None:
+            stops.append(signum)
+
+    runner_class = run_ingestion_pipeline.IngestionPipelineRunner
+    previous = {
+        signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGINT)
+    }
+    signal.signal(signal.SIGINT, inherited)
+    try:
+        replaced = runner_class._stop_on_signals(_Pipeline())  # type: ignore[arg-type]
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGINT)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if inherited is signal.SIG_IGN:
+        assert set(replaced) == {signal.SIGTERM}
+        assert stops == [signal.SIGTERM]
+    else:
+        assert set(replaced) == {signal.SIGTERM, signal.SIGINT}
+        assert stops == [signal.SIGTERM, signal.SIGINT]
+
+
 @pytest.mark.parametrize("value", ["0", "-3"])
 def test_prompt_tuning_rejects_a_non_positive_max_docs(value: str) -> None:
     # Before, --max-docs 0 was accepted and then sampled nothing.
