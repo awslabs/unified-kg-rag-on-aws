@@ -1577,7 +1577,6 @@ class DataIngestionPipeline:
                 )
                 del context.failed_text_unit_ids[name]
                 context.item_failed_text_unit_ids.pop(name, None)
-                context.capped_text_unit_ids.pop(name, None)
 
     def _rewind_on_extraction_change(
         self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]
@@ -1907,7 +1906,6 @@ class DataIngestionPipeline:
         # by what this execution reports.
         context.failed_text_unit_ids.pop(stage.name, None)
         context.item_failed_text_unit_ids.pop(stage.name, None)
-        context.capped_text_unit_ids.pop(stage.name, None)
         blocked_by = self._failed_corpus_stage(stage, context)
         if blocked_by is not None:
             result = PipelineStageResult(
@@ -1995,7 +1993,6 @@ class DataIngestionPipeline:
                 unit_ids,
                 self.config.indexing.max_document_failures,
                 retried_unit_ids=retried,
-                capped_unit_ids=context.capped_text_unit_ids.get(stage.name, []),
             )
         except Exception as e:  # noqa: BLE001 - the run fails either way
             logger.warning(

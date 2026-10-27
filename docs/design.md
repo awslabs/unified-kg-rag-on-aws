@@ -310,7 +310,9 @@ gets its models and stores from the run's `Providers` bundle.
   a full build as incrementally): a claim whose subject its units' entity
   extraction did not list is dropped, and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity.
+  another document states that entity. Each unit's statement is resolved
+  on its own, and resolution merges the statements that resolve to one
+  claim id.
 - **The extraction store** keeps each record, keyed by
   `<fingerprint>:<SHA-256 of the processed text>`, in the vector store's
   extraction-records index. The fingerprint
@@ -538,17 +540,20 @@ unless noted.
    sent fails and its own errors are of one cause (alike in type, code and
    HTTP status, not message; or all unparseable or cut-off output; a unit
    that failed otherwise, throttled say, is left out), output errors on the
-   units of more than one document count only once those documents failed
-   so for `indexing.max_document_failures` consecutive runs (`retry_count`),
-   then at the limit, excluding them: a server-side output cap cuts them all
+   units of more than one document count as each document's own, once a
+   run, with no known-good request: a server-side output cap cuts them all
    and a short request cannot tell, but a batch that always fails must not
-   stop every run with its deletions (the trade-off: a cap that persists that
-   many runs excludes them, until their content or the extraction settings
-   change). Otherwise the stage sends one
+   stop every run with its deletions (the trade-off: a cap that persists
+   `indexing.max_document_failures` runs excludes them, until their content
+   or the extraction settings change). Otherwise the stage sends one
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are
-   the documents' own. Extraction
+   the documents' own. Claim extraction's errors of a unit's own count for
+   none: claims are optional, so a document whose other stages succeeded is
+   indexed without those claims and recorded `FAILED` once, for the next run
+   to extract them again from the stored records, then `PROCESSED` without
+   them (`incremental.run_failures`). Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted

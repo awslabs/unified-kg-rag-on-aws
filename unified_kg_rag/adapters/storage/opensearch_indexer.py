@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.models import (
@@ -658,6 +659,13 @@ class OpenSearchIndexer(VectorIndexer):
             "object_name": claim.object_name or "",
             "type": claim.type or "",
             "status": claim.status or "",
+            # Part of the claim's identity (resolved_claim_id), so stored as
+            # the identity reads them ("" for none or a placeholder such as
+            # UNKNOWN): statements of one claim may spell them apart. Read
+            # back by read_claims, shown with the claim (``Claim: ...
+            # (STATUS, start–end)``).
+            "start_date": claim_date_key(claim.start_date),
+            "end_date": claim_date_key(claim.end_date),
             "description": claim.description or "",
             "description_embedding": embeddings[0],
             "source_text": claim.source_text or "",
@@ -748,8 +756,8 @@ class OpenSearchIndexer(VectorIndexer):
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Claim]:
         """Read stored claims by id from ``suffix``'s live claims index.
 
-        A claim indexed before claims stored their ``text_unit_ids`` reads
-        back without them. The stored document holds only the document
+        A claim indexed before claims stored their ``text_unit_ids`` (or
+        their dates) reads back without them. The stored document holds only the document
         filters of the claim's ``attributes`` (``_document_filter_properties``):
         they are read back, and each claim is tagged with ``suffix`` (the
         index it was read from), so a write of the claim, e.g. the
@@ -774,6 +782,8 @@ class OpenSearchIndexer(VectorIndexer):
                     "object_name": source.get("object_name") or "",
                     "type": source.get("type") or "",
                     "status": source.get("status") or None,
+                    "start_date": source.get("start_date") or None,
+                    "end_date": source.get("end_date") or None,
                     "description": source.get("description") or None,
                     "source_text": source.get("source_text") or None,
                     "text_unit_ids": list(source.get("text_unit_ids") or []),
@@ -2012,6 +2022,8 @@ class OpenSearchIndexer(VectorIndexer):
                 "object_name": {"type": "text", "analyzer": self.analyzer},
                 "type": {"type": "keyword"},
                 "status": {"type": "keyword"},
+                "start_date": {"type": "keyword"},
+                "end_date": {"type": "keyword"},
                 "description": {"type": "text", "analyzer": self.analyzer},
                 "description_embedding": self._get_knn_vector_mapping(),
                 "source_text": {"type": "text", "analyzer": self.analyzer},

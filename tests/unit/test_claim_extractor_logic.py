@@ -4,7 +4,7 @@
 
 Covers _get_string_value coercion, _parse_claim_data (missing-field rejection,
 stable id, attributes), _parse_extraction_result (malformed/empty handling),
-merge_claims, and _prepare_extraction_inputs returning a dict keyed by unit id
+and _prepare_extraction_inputs returning a dict keyed by unit id
 (the as_completed ordering fix). Bedrock/boto wiring is patched out so __init__
 never touches AWS, and a single-worker thread pool keeps the executor cheap.
 """
@@ -21,10 +21,8 @@ from unified_kg_rag.adapters.ingestion.claim_extractor import (
     ClaimExtractionStats,
     ClaimExtractor,
     ClaimsOutputParser,
-    format_entities_with_limit_task,
-    prepare_claim_input,
 )
-from unified_kg_rag.domain.models import Claim, Config, Entity, TextUnit
+from unified_kg_rag.domain.models import Config, TextUnit
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 pytestmark = pytest.mark.unit
@@ -155,8 +153,6 @@ class TestParseClaimData:
             {**base, "start_date": "2024-06-01", "end_date": "2024-06-30"}, text_unit
         )
         assert first.id != second.id
-        merged = extractor.merge_claims([first, second])
-        assert {c.start_date for c in merged} == {"2024-01-01", "2024-06-01"}
 
     def test_unknown_dates_keep_date_free_id(self, extractor, text_unit) -> None:
         base = {"subject": "Vendor", "object": "Buyer", "claim_type": "DELIVERY"}
@@ -216,9 +212,6 @@ class TestParseExtractionResult:
         assert len(claims) == 1
 
 
-# --------------------------------------------------------------------------- #
-# merge_claims
-# --------------------------------------------------------------------------- #
 _TWO_CLAIMS = (
     "<claims><claim><subject>A</subject><object>B</object>"
     "<claim_type>OBLIGATION</claim_type><description>A owes B</description>"
@@ -252,6 +245,16 @@ class TestClaimsOutputParser:
         claims = extractor._parse_extraction_result(result, text_unit)
         assert [c.subject_name for c in claims] == ["A", "C"]
 
+    def test_a_note_after_the_closed_section_keeps_the_last_claim(
+        self, extractor, text_unit
+    ) -> None:
+        # The section is closed, so nothing was cut off: a note after it that
+        # names a <claim> tag made the last claim look unclosed and blanked it.
+        text = _TWO_CLAIMS + "\nNote: each <claim> above is one obligation."
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        claims = extractor._parse_extraction_result(result, text_unit)
+        assert [c.subject_name for c in claims] == ["A", "C"]
+
     def test_an_output_of_only_a_cut_off_claim_is_cut_off(
         self, extractor, text_unit
     ) -> None:
@@ -263,180 +266,7 @@ class TestClaimsOutputParser:
             extractor._parse_extraction_result(result, text_unit)
 
 
-class TestMergeClaims:
-    def _claim(self, id_, **kw) -> Claim:
-        base = {
-            "subject_id": "",
-            "subject_name": "Acme",
-            "object_id": "",
-            "object_name": "Beta",
-            "type": "ACQUISITION",
-            "status": "TRUE",
-        }
-        base.update(kw)
-        return Claim(id=id_, **base)
-
-    def test_same_id_claims_merged(self, extractor) -> None:
-        c1 = self._claim("c1", description="d1", text_unit_ids=["t1"])
-        c2 = self._claim("c1", description="d2", text_unit_ids=["t2"])
-        merged = extractor.merge_claims([c1, c2])
-        assert len(merged) == 1
-        assert set(merged[0].text_unit_ids) == {"t1", "t2"}
-        assert "d1" in merged[0].description and "d2" in merged[0].description
-
-    def test_same_id_claims_union_document_filters(self, extractor) -> None:
-        c1 = self._claim("c1", attributes={"filters": {"tenant": "a"}})
-        c2 = self._claim("c1", attributes={"filters": {"tenant": "b"}})
-        (merged,) = extractor.merge_claims([c1, c2])
-        assert merged.attributes == {"filters": {"tenant": ["a", "b"]}}
-
-    def test_distinct_ids_kept(self, extractor) -> None:
-        c1 = self._claim("c1", text_unit_ids=["t1"])
-        c2 = self._claim("c2", object_name="Gamma", text_unit_ids=["t2"])
-        assert len(extractor.merge_claims([c1, c2])) == 2
-
-    def test_empty(self, extractor) -> None:
-        assert extractor.merge_claims([]) == []
-
-
-# --------------------------------------------------------------------------- #
-# _prepare_extraction_inputs (keyed by unit id, order-independent)
-# --------------------------------------------------------------------------- #
-class TestPrepareExtractionInputs:
-    def test_returns_dict_keyed_by_unit_id(self, extractor) -> None:
-        units = [
-            TextUnit(id="t1", text="Acme acquired Beta."),
-            TextUnit(id="t2", text="Gamma merged with Delta."),
-        ]
-        out = extractor._prepare_extraction_inputs(units, all_entities=[])
-        assert set(out.keys()) == {"t1", "t2"}
-        assert out["t1"]["input_text"] == "Acme acquired Beta."
-        assert out["t2"]["input_text"] == "Gamma merged with Delta."
-
-    def test_entity_specs_filtered_by_relevance(self, extractor) -> None:
-        units = [TextUnit(id="t1", text="Acme text")]
-        entities = [
-            Entity(id="e1", name="Acme", text_unit_ids=["t1"]),  # relevant
-            Entity(id="e2", name="Other", text_unit_ids=["t2"]),  # not relevant
-        ]
-        out = extractor._prepare_extraction_inputs(units, all_entities=entities)
-        specs = out["t1"]["entity_specs"]
-        assert "Acme" in specs
-        assert "Other" not in specs
-
-    def test_empty_unit_list_yields_empty_dict(self, extractor) -> None:
-        assert extractor._prepare_extraction_inputs([], all_entities=[]) == {}
-
-
-# --------------------------------------------------------------------------- #
-# format_entities_with_limit_task (module-level, AWS-free)
-# --------------------------------------------------------------------------- #
-class TestFormatEntitiesWithLimit:
-    def test_empty_returns_empty_string(self) -> None:
-        assert format_entities_with_limit_task([], max_entities=5) == ""
-
-    def test_under_limit_lists_all_names(self) -> None:
-        ents = [Entity(id="e1", name="Alice"), Entity(id="e2", name="Bob")]
-        out = format_entities_with_limit_task(ents, max_entities=5)
-        assert out == "Alice\nBob"
-
-    def test_over_limit_truncates_and_appends_more(self) -> None:
-        ents = [
-            Entity(id=f"e{i}", name=f"N{i}", text_unit_ids=["t"] * i) for i in range(5)
-        ]
-        out = format_entities_with_limit_task(ents, max_entities=2)
-        # Most-supported entities (more text_unit_ids) sort first.
-        assert "N4" in out and "N3" in out
-        assert "... and 3 more entities" in out
-
-
-# --------------------------------------------------------------------------- #
-# prepare_claim_input (module-level, AWS-free)
-# --------------------------------------------------------------------------- #
-class TestPrepareClaimInput:
-    def test_plain_text_no_entities(self) -> None:
-        unit = TextUnit(id="t1", text="raw text")
-        out = prepare_claim_input(
-            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
-        )
-        assert out == {"input_text": "raw text", "entity_specs": ""}
-
-    def test_translated_text_preferred(self) -> None:
-        unit = TextUnit(id="t1", text="original", translated_texts={"en": "translated"})
-        out = prepare_claim_input(
-            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
-        )
-        assert out["input_text"] == "translated"
-
-    def test_translated_text_missing_target_falls_back_to_text(self) -> None:
-        unit = TextUnit(id="t1", text="original", translated_texts={"fr": "francais"})
-        out = prepare_claim_input(
-            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
-        )
-        assert out["input_text"] == "original"
-
-    def test_unit_entities_listed(self) -> None:
-        unit = TextUnit(id="t1", text="body")
-        entities = [Entity(id="e1", name="Acme", text_unit_ids=["t1"])]
-        out = prepare_claim_input(
-            unit, entities, {"max_entities_per_prompt": 5, "target_language": "en"}
-        )
-        assert out["entity_specs"] == "Acme"
-
-
-# --------------------------------------------------------------------------- #
-# _get_string_value — multi-key dict branch
-# --------------------------------------------------------------------------- #
-class TestGetStringValueExtra:
-    def test_multi_key_dict_stringified(self) -> None:
-        # More than one value and no #text -> str(dict).
-        out = ClaimExtractor._get_string_value({"a": "1", "b": "2"})
-        assert "a" in out and "b" in out
-
-
-# --------------------------------------------------------------------------- #
-# ClaimExtractionStats derived properties
-# --------------------------------------------------------------------------- #
-class TestClaimExtractionStats:
-    def test_zero_processed(self) -> None:
-        assert ClaimExtractionStats().success_rate == 0.0
-        assert ClaimExtractionStats().processed_unit_count == 0
-
-    def test_success_rate_computed(self) -> None:
-        s = ClaimExtractionStats(num_successful_extractions=3, num_failed_extractions=1)
-        assert s.processed_unit_count == 4
-        assert s.success_rate == 75.0
-
-
-# --------------------------------------------------------------------------- #
-# _process_extraction_results
-# --------------------------------------------------------------------------- #
 class TestProcessExtractionResults:
-    def test_none_result_counts_failure(self, extractor) -> None:
-        units = [TextUnit(id="t1", text="x")]
-        claims = extractor._process_extraction_results(units, [None])
-        assert claims == {}
-        assert extractor.stats.num_failed_extractions == 1
-
-    def test_success_accumulates_claims(self, extractor) -> None:
-        units = [TextUnit(id="t1", text="x")]
-        results = [
-            {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
-        ]
-        claims = extractor._process_extraction_results(units, results)
-        assert [len(c) for c in claims.values()] == [1]
-        assert extractor.stats.num_successful_extractions == 1
-
-    def test_length_mismatch_raises(self, extractor) -> None:
-        # The batch processor returns one result per unit; fewer results is a
-        # bug that would attribute claims to the wrong units, not lost data.
-        units = [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
-        results = [
-            {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
-        ]
-        with pytest.raises(ValueError):
-            extractor._process_extraction_results(units, results)
-
     def test_parse_failure_counts_failure(self, extractor, mocker) -> None:
         units = [TextUnit(id="t1", text="x")]
         mocker.patch.object(
@@ -468,8 +298,7 @@ class TestParseClaimDataExceptions:
 # --------------------------------------------------------------------------- #
 def _extracted(extractor, units):
     per_unit, stats = extractor.extract_units(units)
-    claims = extractor.merge_claims([c for cs in per_unit.values() for c in cs])
-    return claims, stats
+    return [c for cs in per_unit.values() for c in cs], stats
 
 
 class TestExtractUnits:

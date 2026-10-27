@@ -773,7 +773,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
 | 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
 
@@ -976,6 +976,8 @@ aws:
 못한 문서는 `FAILED`로 기록됩니다. 다음 실행은 파일이 바뀌지 않았더라도 이 문서를 다시
 처리하며, 같은 내용으로 `indexing.max_document_failures`(기본값 `3`)번 연속 실패하면 더
 재시도하지 않습니다. 그 뒤에는 파일을 수정하거나 한도를 올리면 다시 시도합니다.
+주장은 선택 사항이라, 주장 추출만 단위 자체의 오류로 실패하면 문서는 그 주장 없이 인덱싱되고
+실패로 세지 않으며 다음 실행이 그 주장을 한 번 더 추출합니다.
 [운영 런북: 실패한 문서](./operations.ko.md#실패한-문서)를 참고하세요.
 
 ### 격리된 문서
@@ -1468,8 +1470,7 @@ custom_prompts:
 결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모든
 단위를 실패시킨 모델 장애는 아무것도 기록하지 않고, 일부 단위만 실패시킨 장애는 그 문서들을 기록하며
 다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 문서 자체의 것이 아닌 오류로 연속 실행에서
-또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않고, 서버 측 출력 상한처럼 여러 문서의 응답이 똑같이 실패했으면
-그런 실행이 `indexing.max_document_failures`번 이어진 뒤 제외됨. 파일과 실행 횟수를 경고로도 알림), 내용과 추출 설정이 그대로인 채
+또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않음. 파일과 실행 횟수를 경고로도 알림), 내용과 추출 설정이 그대로인 채
 `indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 설정을 바꾸면 다시 셈. 요약에도 표시),
 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필

@@ -44,10 +44,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     clear_registry_namespaces,
     context_lineages,
     dedup_preferences,
-    documents_with_failed_units,
     filter_to_delta,
     index_delta,
     reset_namespaces,
+    run_failures,
     run_incremental_indexer,
     unit_source_files,
     warn_about_unapplied_retired_scopes,
@@ -904,7 +904,6 @@ class GraphExtractionStage(PipelineStage):
         ]
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
-        context.capped_text_unit_ids[self.name] = stats.capped_text_unit_ids
 
         entities_count, relationships_count = _distinct_counts(context.unit_extractions)
         metrics = {
@@ -945,7 +944,6 @@ class GleaningStage(PipelineStage):
         context.item_failed_text_unit_ids[self.name] = (
             gleaning_stats.item_failed_text_unit_ids
         )
-        context.capped_text_unit_ids[self.name] = gleaning_stats.capped_text_unit_ids
         final_entities, final_relationships = _distinct_counts(records)
 
         # Graph growth from gleaning: items it added per extracted item.
@@ -1153,21 +1151,19 @@ class ClaimExtractionStage(PipelineStage):
                 stats.failed_text_unit_ids = sorted(
                     {*stats.failed_text_unit_ids, *unsaved}
                 )
-        # Merged in text-unit id order, as derivation merges the stored
-        # claims' units (``derivation.derive``): where the merge keeps the
-        # first statement (description line order, a status tie) a full
-        # build and an incremental run choose alike.
-        claims = self.extractor.merge_claims(
-            [
-                claim.model_copy(deep=True)
-                for unit_id in sorted(per_unit)
-                for claim in per_unit[unit_id]
-            ]
-        )
+        # Each unit's statements, in text-unit id order, not merged by the
+        # names they state: each resolves against the entities its own unit
+        # states (ClaimResolver), as derivation resolves the stored claims'
+        # units (``derivation.derive``), and the resolver merges those that
+        # resolve to one claim.
+        claims = [
+            claim.model_copy(deep=True)
+            for unit_id in sorted(per_unit)
+            for claim in per_unit[unit_id]
+        ]
         context.claims = claims
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
-        context.capped_text_unit_ids[self.name] = stats.capped_text_unit_ids
 
         metrics = {
             "text_units_processed": len(text_units),
@@ -1203,6 +1199,13 @@ class ClaimResolutionStage(PipelineStage):
         original_claims_count = len(context.claims)
         resolved_claims, stats = self.resolver.resolve(context.claims, entities)
         context.resolved_claims = resolved_claims
+        if stats.unresolved_claims:
+            logger.warning(
+                "Dropped %d of %d claim statements: their subject is not an "
+                "entity their own text units state",
+                stats.unresolved_claims,
+                stats.original_claims,
+            )
 
         resolved_count = len(resolved_claims)
         removed_count = original_claims_count - resolved_count
@@ -1875,11 +1878,12 @@ class IndexingStage(_RegistryStage):
             )
             if rebuild is not None:
                 incremental, lineages = rebuild
+                failures = run_failures(context, text_units)
                 recorded = incremental.record(
                     lineages,
                     context.incremental_fingerprints,
                     indexing_results,
-                    documents_with_failed_units(context, text_units),
+                    failures.failed,
                     artifact_owners(
                         lineages,
                         [
@@ -1891,12 +1895,8 @@ class IndexingStage(_RegistryStage):
                             *claims,
                         ],
                     ),
-                    counted_failed_doc_ids=documents_with_failed_units(
-                        context, text_units, context.item_failed_text_unit_ids
-                    ),
-                    capped_doc_ids=documents_with_failed_units(
-                        context, text_units, context.capped_text_unit_ids
-                    ),
+                    counted_failed_doc_ids=failures.counted,
+                    claims_missing_doc_ids=failures.claims_missing,
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 context.record_retrying_documents(incremental.retrying_doc_ids)

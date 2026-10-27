@@ -2273,9 +2273,9 @@ class IndexingConfig(BaseModel):
         "the same extraction settings, is no longer retried. It stays "
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised. Output that fails alike on several "
-        "documents (a server-side output cap) counts once it failed so this "
-        "many consecutive runs; changed extraction settings start the count "
-        "over.",
+        "documents (a server-side output cap) counts so too, once a run; "
+        "changed extraction settings start the count over. Claim extraction "
+        "errors never count: the document is indexed without those claims.",
     )
     max_document_attempts: int = Field(
         default=3,

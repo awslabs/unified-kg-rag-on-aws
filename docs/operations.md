@@ -208,7 +208,8 @@ restored meanwhile included, and removes what was written for one that is gone
 A document is recorded `FAILED` in five cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
-  of its text units;
+  of its text units (claim extraction for an error of the unit's own: see
+  below);
 - a base-level community covering one of its text units got no report (a
   failed parent-level report only logs a WARNING and counts in
   `reports_failed`; above `indexing.max_failure_rate` of communities without
@@ -266,15 +267,16 @@ from the second, the run warns with the file and the count and reports it in
 are of one cause (the same error type, code and HTTP status, whatever the
 message says; or all output that does not parse or was cut off; a unit
 throttled or timed out alongside is left out), output errors on the units of
-more than one document are not counted at first: a server-side output cap
-cuts them all, and a short known-good request cannot tell it from each
-document's own output. They are retried (`retry_count`), and the run that is
-the `indexing.max_document_failures`-th consecutive one they failed records
-them `FAILED` at the limit, so the next runs skip them and apply the delta's
-deletions: a batch that always fails cannot stop every run. The trade-off: a
-server-side output cap that persists for that many runs excludes those
-documents too, until their content or the extraction settings change (fix
-the cap, then edit the files or change a setting). Otherwise a known-good request decides (sent through the same chain,
+more than one document count as each document's own, without a known-good
+request: a server-side output cap cuts them all, and a short known-good
+request cannot tell it from each document's own output. Each run they fail
+counts once (`FAILED`, `1/N` from the first run; an outage run in between
+neither counts nor ends the streak), so a batch that always fails is
+excluded after `indexing.max_document_failures` runs and cannot stop every
+run with the delta's deletions. The trade-off: a server-side output cap that
+persists for that many runs excludes those documents too, until their
+content or the extraction settings change (fix the cap, then edit the files
+or change a setting). Otherwise a known-good request decides (sent through the same chain,
 never served from the LLM response cache): failed too (for output errors,
 an answer that does not parse is a failure), nothing counts; answered, the
 errors count, so a delta of documents the model rejects is still excluded,
@@ -288,11 +290,26 @@ context-length rejection that counts the requested `max_tokens` ("you
 requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
 is a setting and counts for none.
 
+- **Claims are optional.** When only claim extraction failed on some of a
+  document's units, for an error of their own (a request rejected for its
+  content, output cut off or unparseable, alike across documents too), the
+  document is indexed without those units' claims and counted for none. It
+  is recorded `FAILED` once (`error_info`: `indexed without the claims of
+  some text units ...`, not in `failed_documents`) so the next run extracts
+  the missing claims again, reusing the stored graph and claim records;
+  failing so again, it is recorded `PROCESSED` without them, and they are
+  not extracted again until its content or the extraction settings change.
+  A server-side output cap on claims thus re-indexes such documents once and
+  excludes none. Both runs warn with the files. Any other claim extraction
+  failure (an outage, a record not stored) fails the document, uncounted, as
+  in the other stages. Gleaning is not treated so: a unit whose gleaning
+  failed has no final graph record to store, so its document must be
+  extracted again.
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
-  its own, or output that failed alike on several documents (see above;
-  with the same extraction settings: a settings change starts the count
-  over) the document stays
+  its own, output that failed alike on several documents included (see
+  above; with the same extraction settings: a settings change starts the
+  count over) the document stays
   `FAILED`, keeps what it indexed, and is skipped: each run logs a WARNING
   naming the file and goes on with the rest of the delta, deletions included.
   Fix the cause (often an oversized or malformed file), edit the file, or

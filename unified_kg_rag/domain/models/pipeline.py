@@ -350,32 +350,28 @@ class PipelineContext(BaseModel):
         "request the model rejects for its content, a response that does not "
         "parse or was cut off), by stage name: only their documents' failures "
         "count toward indexing.max_document_failures, including when such a "
-        "stage fails the run. Any other error (an outage, credentials, a "
-        "quota, a setting) counts for none.",
-    )
-    capped_text_unit_ids: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description="The failed text units whose output failed alike on every "
-        "unit of several documents (a server-side output cap, say), by stage "
-        "name: their documents count toward indexing.max_document_failures "
-        "only once they failed so for that many consecutive runs.",
+        "stage fails the run, except claim extraction's: such a document "
+        "whose other stages succeeded is indexed without those claims "
+        "(incremental.run_failures). Any other error (an outage, "
+        "credentials, a quota, a setting) counts for none.",
     )
 
     recorded_failed_doc_ids: list[str] = Field(
         default_factory=list,
         description="Registry ids of the documents this run recorded FAILED "
         "(the indexing commit, or a stage that stopped the run on errors of "
-        "their own); the run's failed_documents count.",
+        "their own), not those indexed without some of their claims (recorded "
+        "FAILED once so the next run extracts them again); the run's "
+        "failed_documents count.",
     )
 
     retrying_doc_ids: list[str] = Field(
         default_factory=list,
         description="Registry ids of the documents this run failed for an "
         "error not their own (an outage or a setting, never counted toward "
-        "exclusion, or output failing alike on several documents, counted "
-        "after indexing.max_document_failures such runs) that had failed so "
-        "the run before too (DocStatusRecord.retry_count >= 2); the run's "
-        "documents_retrying count.",
+        "exclusion) that had failed so the run before too "
+        "(DocStatusRecord.retry_count >= 2); the run's documents_retrying "
+        "count.",
     )
 
     def record_failed_documents(self, doc_ids: Iterable[str]) -> None:

@@ -260,6 +260,8 @@ def opensearch_filter_fields(
                     "object_name",
                     "type",
                     "status",
+                    "start_date",
+                    "end_date",
                     "description",
                     "source_text",
                     "text_unit_ids",

@@ -139,3 +139,61 @@ def test_deleting_a_document_drops_its_text_unit_from_the_claim(
 
     assert full == [("Acme", "Buyer", 1)]
     assert incremental == full
+
+
+def _dated(system: str, human: str) -> str:
+    """``_respond`` with the claim dated."""
+    answer = _respond(system, human)
+    return answer.replace(
+        "<claim_status>", "<start_date>2024-01-01</start_date><claim_status>"
+    )
+
+
+def test_a_dated_claim_keeps_its_dates_through_incremental_runs(
+    tmp_path: Path,
+) -> None:
+    # The claims index did not store a claim's dates, which are part of its
+    # id (resolved_claim_id): a stored claim read back for a merge or a
+    # re-key lost them, and shown it read like an undated one.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+    from unified_kg_rag.domain.models import Claim
+
+    def stored(tmp: Path, corpora: list[dict[str, str]]) -> list[tuple]:
+        config = _config(tmp / "stores", tmp / "viz")
+        config.processing.claim_extraction.enabled = True
+        providers = _providers(
+            config, FakeOllama(_dated, "x", DIM), FakeCrossEncoder("r")
+        )
+        source = tmp / "corpus"
+        for run, corpus in enumerate(corpora):
+            if source.exists():
+                shutil.rmtree(source)
+            source.mkdir(parents=True)
+            for name, text in corpus.items():
+                (source / name).write_text(text)
+            _ingest(config, providers, source, tmp / f"run-{run}")
+        hits = _stored(
+            config, providers, config.indexing.opensearch.claims_index_prefix
+        )
+        for hit in hits:
+            # The id is the one the claim's stored fields give.
+            fields = {
+                k: hit["_source"].get(k)
+                for k in ("subject_id", "object_id", "object_name", "type")
+            }
+            claim = Claim(
+                id=hit["_id"],
+                subject_name="",
+                start_date=hit["_source"].get("start_date"),
+                end_date=hit["_source"].get("end_date"),
+                **{k: v or "" for k, v in fields.items()},
+            )
+            assert resolved_claim_id(claim) == hit["_id"], hit["_source"]
+        return sorted(
+            (h["_source"]["start_date"], len(h["_source"]["text_unit_ids"]))
+            for h in hits
+        )
+
+    full = stored(tmp_path / "full", [FINAL])
+    assert full == [("2024-01-01", 2)]
+    assert stored(tmp_path / "inc", [FIRST, FINAL]) == full

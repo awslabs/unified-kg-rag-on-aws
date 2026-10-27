@@ -233,6 +233,24 @@ def test_prepare_claim_doc_shape(indexer) -> None:
     assert doc["source_text"] == "Alice works at Acme."
 
 
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [("2020-01-01", "2020-01-01"), (" 2020-01-01 ", "2020-01-01"), ("UNKNOWN", "")],
+)
+def test_prepare_claim_doc_stores_dates_as_the_claims_identity_reads_them(
+    indexer, given: str, stored: str
+) -> None:
+    # Statements of one claim (one id) may spell its dates apart, and a full
+    # build and an incremental run may keep another statement's spelling.
+    claim = Claim(
+        id="cl1", subject_id="e1", subject_name="A", object_name="B", type="t"
+    )
+    doc = OpenSearchIndexer._prepare_claim_doc(
+        claim.model_copy(update={"start_date": given, "end_date": given}), ([0.0],)
+    )
+    assert (doc["start_date"], doc["end_date"]) == (stored, stored)
+
+
 def test_prepare_claim_doc_degrades_none(indexer) -> None:
     claim = Claim(
         id="cl1",

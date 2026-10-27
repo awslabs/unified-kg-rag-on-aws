@@ -262,7 +262,9 @@ class ClaimResolver(BaseResolver):
 
         unresolved_count = total - len(resolved_claims)
         if unresolved_count > 0:
-            logger.warning(
+            # DEBUG: a derivation resolves the same statements again on every
+            # incremental run; the claim resolution stage warns once.
+            logger.debug(
                 "Failed to resolve %s out of %s claims", unresolved_count, total
             )
         return resolved_claims

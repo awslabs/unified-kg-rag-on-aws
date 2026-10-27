@@ -36,6 +36,8 @@ _STORED_CLAIM_FIELDS = {
     "object_name",
     "type",
     "status",
+    "start_date",
+    "end_date",
     "description",
     "source_text",
     "text_unit_ids",

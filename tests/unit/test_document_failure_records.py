@@ -22,6 +22,7 @@ from tests.fixtures.incremental_runs import document
 from unified_kg_rag.application.ingestion.incremental import (
     delta_still_applies,
     record_item_failures,
+    run_failures,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.models import (
@@ -125,3 +126,60 @@ def test_the_failure_budget_counts_failures_of_this_content_and_settings_only() 
     assert applies(content_hash="h-old")  # failed at an older version
     assert applies(status=DocStatus.PENDING)
     assert applies(extraction_fingerprint="fp-other")  # settings changed since
+
+
+_GRAPH, _CLAIMS = "graph_extraction", "claim_extraction"
+
+
+@pytest.mark.parametrize(
+    ("failed", "own", "expected"),
+    [
+        # Only claims failed, for an error of their own: indexed without them.
+        ({_CLAIMS: ["a1"]}, {_CLAIMS: ["a1"]}, ((), (), ("a",))),
+        # A claims outage on one unit: failed, uncounted, as in any stage.
+        ({_CLAIMS: ["a1", "a2"]}, {_CLAIMS: ["a1"]}, (("a",), (), ())),
+        # The graph failed too: counted for the graph's error alone.
+        (
+            {_GRAPH: ["a2"], _CLAIMS: ["a1"]},
+            {_GRAPH: ["a2"], _CLAIMS: ["a1"]},
+            (("a",), ("a",), ()),
+        ),
+        ({_GRAPH: ["a2"], _CLAIMS: ["a1"]}, {_CLAIMS: ["a1"]}, (("a",), (), ())),
+        # Another document's units fail apart.
+        (
+            {_GRAPH: ["b1"], _CLAIMS: ["a1"]},
+            {_GRAPH: ["b1"], _CLAIMS: ["a1"]},
+            (("b",), ("b",), ("a",)),
+        ),
+    ],
+)
+def test_run_failures_leave_claims_optional(
+    failed: dict[str, list[str]],
+    own: dict[str, list[str]],
+    expected: tuple[tuple[str, ...], ...],
+) -> None:
+    docs = {
+        name: document(f"/c/{name}.txt", [[("Vendor", "Depot", 1)]])
+        for name in ("a", "b")
+    }
+    units = [
+        TextUnit(id=f"{name}{i}", text="t", document_ids=[doc.document_id])
+        for name, doc in docs.items()
+        for i in (1, 2)
+    ]
+    context = PipelineContext.model_construct(
+        documents=list(docs.values()),
+        text_units=units,
+        translated_units=None,
+        failed_text_unit_ids=failed,
+        item_failed_text_unit_ids=own,
+    )
+    ids = {document_doc_id(doc): name for name, doc in docs.items()}
+    result = run_failures(context, units)
+    assert (
+        tuple(
+            tuple(sorted(ids[d] for d in group))
+            for group in (result.failed, result.counted, result.claims_missing)
+        )
+        == expected
+    )

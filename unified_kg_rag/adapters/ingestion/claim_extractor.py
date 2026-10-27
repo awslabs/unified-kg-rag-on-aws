@@ -24,7 +24,6 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
-from unified_kg_rag.domain.ingestion.contributions import merge_claim_contributions
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
@@ -79,9 +78,6 @@ class ClaimExtractionStats(BaseModel):
     failed_text_unit_ids: list[str] = []
     # The failed units whose error was their own (item_error_predicate).
     item_failed_text_unit_ids: list[str] = []
-    # The failed units whose output failed alike across documents (counted
-    # after max_document_failures runs, see retry.item_failed_indices).
-    capped_text_unit_ids: list[str] = []
     total_claims_extracted: int = 0
     total_processing_time: float = 0.0
 
@@ -199,7 +195,6 @@ class ClaimExtractor(BaseProcessor):
         per_unit = self._process_extraction_results(
             units_to_process, extraction_results
         )
-        capped: list[int] = []
         self.stats.item_failed_text_unit_ids.extend(
             units_to_process[idx].id
             for idx in item_failed_indices(
@@ -210,11 +205,7 @@ class ClaimExtractor(BaseProcessor):
                 self.batch_processor,
                 lambda units: list(self._prepare_extraction_inputs(units, []).values()),
                 self._extract,
-                capped=capped,
             )
-        )
-        self.stats.capped_text_unit_ids.extend(
-            units_to_process[idx].id for idx in capped
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())
         self.stats.total_processing_time = time.time() - start_time
@@ -393,11 +384,6 @@ class ClaimExtractor(BaseProcessor):
         return generate_stable_id(claim_id_content)
 
     @staticmethod
-    def merge_claims(claims: list[Claim]) -> list[Claim]:
-        """Merge claim statements by id (see ``merge_claim_contributions``)."""
-        return merge_claim_contributions(claims)
-
-    @staticmethod
     def _log_completion_summary(stats: ClaimExtractionStats) -> None:
         if not stats:
             return
@@ -420,6 +406,7 @@ class ClaimExtractor(BaseProcessor):
 
 _CLAIM_OPENED = re.compile(r"<claim[\s>]")
 _CLAIM_CLOSED = re.compile(r"</claim\s*>")
+_SECTION_CLOSED = re.compile(r"</claims\s*>")
 
 
 class ClaimsOutputParser(RobustXMLOutputParser):
@@ -432,6 +419,10 @@ class ClaimsOutputParser(RobustXMLOutputParser):
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
+        # Only a response without its closing </claims> was cut off: text
+        # after the section (a note naming a <claim> tag) is not a claim.
+        if _SECTION_CLOSED.search(text):
+            return result
         opened = [m.start() for m in _CLAIM_OPENED.finditer(text)]
         closed = [m.start() for m in _CLAIM_CLOSED.finditer(text)]
         section = result.get("claims") if isinstance(result, dict) else None

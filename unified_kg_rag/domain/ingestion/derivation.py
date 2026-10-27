@@ -42,7 +42,6 @@ from unified_kg_rag.domain.ingestion.claim_resolver import (
     resolved_claim_id,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
-    merge_claim_contributions,
     merge_contributions,
 )
 from unified_kg_rag.domain.ingestion.graph_resolver import (
@@ -520,13 +519,11 @@ def derive(
     derived_claims: list[Claim] = []
     if claims:
         claim_records = claim_records or {}
-        statements = merge_claim_contributions(
-            [
-                claim.model_copy(deep=True)
-                for unit_id in sorted(unit_ids)
-                for claim in claim_records.get(unit_id, [])
-            ]
-        )
+        statements = [
+            claim.model_copy(deep=True)
+            for unit_id in sorted(unit_ids)
+            for claim in claim_records.get(unit_id, [])
+        ]
         resolved_claims, _ = ClaimResolver(
             config, max_workers=1, use_process_pool=False
         ).resolve(statements, resolved["entities"])
@@ -611,6 +608,11 @@ def derive(
                         "object_id": match_claim.object_id,
                         "type": match_claim.type,
                         "status": match_claim.status,
+                        # Part of its new id (resolved_claim_id): a given
+                        # claim of other dates kept them under the matched
+                        # claim's id.
+                        "start_date": match_claim.start_date,
+                        "end_date": match_claim.end_date,
                         "description": match_claim.description,
                         "source_text": match_claim.source_text,
                         # The units its statements are in now: a given claim

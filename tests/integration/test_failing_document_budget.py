@@ -320,6 +320,13 @@ _STAGES = pytest.mark.parametrize(
     ],
     ids=["graph", "claims", "gleaning"],
 )
+# The stages whose errors of a unit's own count against its document; claim
+# extraction's leave it indexed without the unit's claims.
+_COUNTED_STAGES = pytest.mark.parametrize(
+    "stage",
+    ["knowledge graph extraction expert", "graph refinement specialist"],
+    ids=["graph", "gleaning"],
+)
 
 
 def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
@@ -401,7 +408,7 @@ def test_one_unit_unavailable_does_not_count_a_rejected_setting(
         ), run
 
 
-@_STAGES
+@_COUNTED_STAGES
 def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
     tmp_path: Path, stage: str
 ) -> None:
@@ -431,25 +438,25 @@ def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
     assert seen[-1][2] is False, seen
 
 
-@_STAGES
-def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
-    tmp_path: Path, stage: str
-) -> None:
-    # Two documents whose every response of one stage is cut at the output
-    # token limit (a server-side output cap, say), alone in a delta with a
-    # deletion: taken for one cause across documents, counted for none, so
-    # they were extracted again on every run, and with graph extraction
-    # every run failed and the deletion never applied. They count once
-    # they failed so for max_document_failures (2) consecutive runs, and
-    # are then excluded.
-    config, providers, source = _rejecting(tmp_path, {"stage": ""})
+def _cut_alike(tmp: Path, stage: str, n: int = 2) -> tuple[Any, Any, Path, dict]:
+    """Embedded config (claims and gleaning on, max_document_failures ``n``)
+    and providers whose model, while ``mode["m"]`` is "cut", cuts every
+    response of ``stage`` (a system-prompt phrase) for Zorbix's text at the
+    output token limit (a server-side output cap, say), and answers HTTP
+    503 while it is "503"; d0 and d1 are indexed, then d1 is deleted and z1,
+    z2 (Zorbix's) are added."""
+    config, _, source = _rejecting(tmp, {"stage": ""})
+    config.indexing.max_document_failures = n
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
+    mode = {"m": "ok"}
 
     def transport(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/chat":
             body = json.loads(request.content)
             text = "".join(m["content"] for m in body["messages"])
-            if stage in text and "Zorbix" in text:
+            if stage in text and "Zorbix" in text and mode["m"] == "503":
+                return httpx.Response(503, json={"error": "unavailable"})
+            if stage in text and "Zorbix" in text and mode["m"] == "cut":
                 chunk = {
                     "model": body["model"],
                     "created_at": "2026-01-01T00:00:00Z",
@@ -463,20 +470,115 @@ def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
     providers = e2e._providers(
         config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
     )
-    source.mkdir()
+    source.mkdir(parents=True)
     for name, text in _FILES.items():
         (source / name).write_text(text)
-    e2e._ingest(config, providers, source, tmp_path / "seed")
+    e2e._ingest(config, providers, source, tmp / "seed")
     (source / "d1.txt").unlink()
     (source / "z1.txt").write_text(_FAILING)
     (source / "z2.txt").write_text("Zorbix and Depot trade parts.")
+    return config, providers, source, mode
+
+
+def _cut_runs(
+    tmp: Path,
+    stage: str,
+    n: int,
+    modes: list[str],
+    change: int | None = None,
+    reset: bool = False,
+) -> list[tuple]:
+    """Run ``_cut_alike`` once per mode (``indexing.reset`` on every run with
+    ``reset``); before run ``change``, change an extraction setting. Each
+    run's z1 (failure_count, retry_count), whether d1 is still recorded and
+    the run's documents_retrying."""
+    config, providers, source, mode = _cut_alike(tmp, stage, n)
+    config.indexing.reset = reset
     seen = []
-    for run in range(3):
-        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
-        counts = _counts(providers)
-        seen.append((counts["z1.txt"], counts["z2.txt"], "d1.txt" in counts))
-    assert [run[:2] for run in seen] == [(0, 0), (2, 2), (2, 2)], seen
+    for run, m in enumerate(modes):
+        mode["m"] = m
+        if run == change:
+            config.processing.graph_extraction.max_entities_per_chunk += 1
+        context = e2e._ingest(config, providers, source, tmp / f"run{run}")
+        records = {r.file_path: r for r in providers.build_doc_status().list_all()}
+        z1 = records["z1.txt"]
+        seen.append(
+            (
+                z1.failure_count,
+                z1.retry_count,
+                "d1.txt" in records,
+                len(context.retrying_doc_ids),
+            )
+        )
+    return seen
+
+
+@_COUNTED_STAGES
+def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
+    tmp_path: Path, stage: str
+) -> None:
+    # Two documents whose every response of one stage is cut at the output
+    # token limit (a server-side output cap, say), alone in a delta with a
+    # deletion: taken for one cause across documents, counted for none, so
+    # they were extracted again on every run, and with graph extraction
+    # every run failed and the deletion never applied. Each run counts once
+    # against each, as an error of its own: excluded after
+    # max_document_failures (2) runs.
+    seen = _cut_runs(tmp_path, stage, 2, ["cut", "cut", "cut"])
+    assert [run[:2] for run in seen] == [(1, 0), (2, 0), (2, 0)], seen
     assert seen[-1][2] is False, seen
+
+
+@_COUNTED_STAGES
+def test_outage_runs_neither_count_nor_end_an_output_cut_streak(
+    tmp_path: Path, stage: str
+) -> None:
+    # Cut, outage, cut, outage, cut (limit 3): the streak was retry_count,
+    # which the outage runs raised too, so two cut runs excluded the
+    # documents. Outages neither count nor reset failure_count.
+    seen = _cut_runs(tmp_path, stage, 3, ["cut", "503", "cut", "503", "cut"])
+    assert [run[:2] for run in seen] == [
+        (1, 0),
+        (1, 1),
+        (2, 0),
+        (2, 1),
+        (3, 0),
+    ], seen
+    # A counted run ends the outage streak: never reported retrying.
+    assert [run[3] for run in seen] == [0, 0, 0, 0, 0], seen
+    # Two outage runs before one cut run excluded them at once too.
+    seen = _cut_runs(tmp_path / "o", stage, 3, ["503", "503", "cut"])
+    assert seen[-1][:2] == (1, 0), seen
+
+
+@_COUNTED_STAGES
+def test_other_extraction_settings_start_an_output_cut_streak_over(
+    tmp_path: Path, stage: str
+) -> None:
+    # A cut run, then a cut run under other extraction settings (a setting
+    # changed to work around the cap): the earlier settings' run counted
+    # toward the new ones and excluded the documents.
+    seen = _cut_runs(tmp_path, stage, 2, ["cut", "cut"], change=1)
+    assert [run[:2] for run in seen] == [(1, 0), (1, 0)], seen
+
+
+def test_a_reset_rebuild_counts_output_cut_alike(tmp_path: Path) -> None:
+    # The rebuild records the documents itself (IncrementalIndexer.record):
+    # gleaning output cut alike on both documents counts there too.
+    seen = _cut_runs(
+        tmp_path, "graph refinement specialist", 3, ["cut", "cut"], reset=True
+    )
+    assert [run[:2] for run in seen] == [(1, 0), (2, 0)], seen
+
+
+@_COUNTED_STAGES
+def test_a_success_between_output_cut_runs_starts_the_streak_over(
+    tmp_path: Path, stage: str
+) -> None:
+    # Cut, indexed, cut again (limit 2): the indexed run ends the streak, and
+    # the documents read unchanged after it.
+    seen = _cut_runs(tmp_path, stage, 2, ["cut", "ok", "cut"])
+    assert [run[:2] for run in seen] == [(1, 0), (0, 0), (0, 0)], seen
 
 
 def test_a_cached_known_good_answer_does_not_hide_a_rejected_setting(
@@ -502,7 +604,7 @@ def test_failed_documents_holds_a_commit_stopped_after_its_registry_write(
     # The commit recorded z1.txt FAILED, then its cleanup raised: the run's
     # failed_documents read 0, the documents being added to the result only
     # once the commit returned.
-    rejects = {"stage": "claim extraction specialist", "text": "Zorbix"}
+    rejects = {"stage": "graph refinement specialist", "text": "Zorbix"}
     config, providers, source = _rejecting(tmp_path, rejects)
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])
@@ -578,19 +680,20 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
 
 _STOPS_OR_COMMITS = pytest.mark.parametrize(
     "stage",
-    ["knowledge graph extraction expert", "claim extraction specialist"],
+    ["knowledge graph extraction expert", "graph refinement specialist"],
     # Graph extraction failing on fz alone stops the run before indexing
-    # (record_item_failures); claim extraction lets the commit record it.
+    # (record_item_failures); gleaning lets the commit record it.
     ids=["stage-stops-the-run", "commit"],
 )
 
 
 def _outage(tmp: Path, stage: str, mode: dict[str, int]) -> tuple[Any, Any, Path]:
-    """Embedded config (claims on, max_document_failures 5) and providers
+    """Embedded config (claims and gleaning on, max_document_failures 5) and providers
     whose model answers HTTP ``mode["status"]`` to the requests of ``stage``
     (a system-prompt phrase) for Zorbix's text; d0 is indexed."""
     config = e2e._config(tmp / "stores", tmp / "viz")
     config.processing.claim_extraction.enabled = True
+    config.processing.gleaning.enabled = True
     config.indexing.max_document_failures = 5
     server = FakeOllama(e2e._respond, "x", e2e.DIM)
 
@@ -685,8 +788,8 @@ def test_other_extraction_settings_start_failure_count_over(
     (source / "d0.txt").unlink()
     (source / "fz.txt").write_text(_FAILING)
     seen = []
-    for run, gleaning in enumerate([False, True]):
-        config.processing.gleaning.enabled = gleaning
+    for run in range(2):
+        config.processing.graph_extraction.max_entities_per_chunk += run
         e2e._ingest(config, providers, source, tmp_path / f"s{run}")
         seen.append(_fz(providers).failure_count)
     assert seen == [1, 1], seen
@@ -700,7 +803,7 @@ def test_a_failed_registry_write_records_no_failed_documents(
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 
     config, providers, source = _rejecting(
-        tmp_path, {"stage": "claim extraction specialist", "text": "Zorbix"}
+        tmp_path, {"stage": "graph refinement specialist", "text": "Zorbix"}
     )
     source.mkdir()
     (source / "d0.txt").write_text(_FILES["d0.txt"])

@@ -830,7 +830,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
 | Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
 | Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
 
@@ -1090,6 +1090,9 @@ the extraction record of one of its text units could not be stored. The next
 run processes it again, even if the file did not change, until
 `indexing.max_document_failures` (default `3`) consecutive failures of the
 same content; editing the file or raising the limit retries it after that.
+Claims are optional: when only claim extraction failed, for an error of the
+unit's own, the document is indexed without those claims, counted for none,
+and the next run extracts them once more.
 See [Operator Runbook: Failed documents](./operations.md#failed-documents).
 
 ### Quarantined documents
@@ -1637,9 +1640,7 @@ every unit records none, one that fails some units records their documents,
 retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
-an outage or a setting never excludes them, output that failed alike on
-several documents, as under a server-side output cap, does after
-`indexing.max_document_failures` such runs; also warned of with each file
+an outage or a setting never excludes them; also warned of with each file
 and its run count), the number of documents left out because they failed
 `indexing.max_document_failures` consecutive runs unchanged, at the same
 extraction settings (a settings change starts the count over)

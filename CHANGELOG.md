@@ -647,6 +647,12 @@ changed once with the full-config keys (#332).
   matches no filter) (#372), or between #370 and #376 with a removal that
   pruned a community (the kept text units of that community lost their
   document filters and dropped out of filtered retrieval) (#376).
+- Claims: claims indexed before #PR have no `start_date` / `end_date` in
+  the claims index (their ids already cover them): they are shown without
+  dates, and read back for a merge without them, until they are derived
+  again or the suffix is rebuilt with `indexing.reset: true`. The fields
+  are added to a live index on the first write (no mapping change to
+  apply) (#444).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1405,6 +1411,57 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: the claims a derivation drops (their subject is not an
+  entity their own text units state) are no longer warned of on every run
+  (`Failed to resolve N out of M claims` repeated with each re-derivation);
+  the claim resolution stage warns once per run, with the reason (#444).
+- Claims: the claims index stores a claim's `start_date` and `end_date`
+  as its id reads them (whitespace collapsed, lower case, `UNKNOWN` and
+  other placeholders empty; filterable like `status`), `read_claims` reads
+  them back, and a claim in the query context shows its known dates beside
+  its status (`Claim: Vendor -[delivery]-> Buyer (TRUE,
+  2024-01-01–2024-01-31)`). The dates are part of a claim's id, but were
+  dropped on indexing: two claims of one subject, object and type with
+  other dates read alike, and a stored claim read back for a merge lost
+  them (#444).
+- Incremental claims: a derived claim takes the dates of the claim it now
+  is, with that claim's id. It kept the given claim's dates (none, for a
+  stored claim read back), so its dates and its id disagreed and differed
+  from a full build's (cl59 with dated claims: 59 of 2680 corpus walks
+  before, 0 now) (#444).
+- Claim extraction: a response whose `</claims>` closes keeps its last
+  claim when text after the section names a `<claim>` tag (a note, a code
+  fence's trailer). Taken for a claim cut off inside, it was dropped, and
+  an output of that one claim failed its unit as cut off (#444).
+- Claim resolution: each text unit's claim statement resolves against the
+  entities its own unit states, and only the statements that resolve to
+  one claim merge. A full build (and a derivation) first merged the
+  statements that name the same subject, object and type across units, so
+  a statement whose unit does not state the subject was kept through the
+  other unit's, and an object one unit states as an entity another states
+  as a literal name took one of the two; the stored claims then depended
+  on whether the documents were indexed together or one run after another
+  (18 of 2680 random corpus walks differed from a full build, 0 now).
+  Existing claims change on their next re-derivation or a rebuild (#444).
+- Incremental runs: claims are optional. When only claim extraction failed
+  on some of a document's units for an error of their own (a request
+  rejected for its content, output cut off or unparseable, alike across
+  documents too), the document is indexed without those claims and not
+  counted toward `indexing.max_document_failures`. It is recorded `FAILED`
+  once (not in `failed_documents`), so the next run extracts the missing
+  claims again from the stored records, then `PROCESSED` without them if
+  they fail again; both runs warn with the files. Counted like a graph
+  error, a server-side output cap on claims excluded every document after
+  three runs though its graph was extracted; it now re-indexes each once.
+  Claim extraction outages still fail the document uncounted (#444).
+- Incremental runs: output that fails alike on every unit of several
+  documents (cut off or unparseable, as under a server-side output cap)
+  counts once a run against each document, as an error of its own does:
+  the documents show `FAILED` at `1/N` from the first such run and are
+  excluded after `indexing.max_document_failures` of them. The streak was
+  their `retry_count`, which outage runs raise too and a settings change
+  kept, so one cut run after two outage runs excluded them at a limit of
+  3, as did one cut run at new settings after one at the old (#444).
 - `run-eval`: a stopped run names the local copy of the finished runs'
   results before it uploads them (a WARNING). It was named only after a
   failed upload, so one the stop watchdog cut short left the files
@@ -1480,6 +1537,7 @@ changed once with the full-config keys (#332).
   trade-off: a server-side output cap that persists for that many runs
   excludes those documents too, until their content or the extraction
   settings change. Outages and rejected settings still never count (#442).
+  Superseded by #PR: each such run counts once.
 - Incremental claims: a stored claim whose subject or object entity a
   removal deletes (only the removed documents stated its spelling) is
   derived against the other stored spellings of the names the claim states,
@@ -4749,6 +4807,13 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: `ClaimExtractor.merge_claims` and
+  `contributions.merge_claim_contributions` (claim statements are no
+  longer merged before resolution), and the capped-unit bookkeeping of the
+  extraction stages (`capped_text_unit_ids` on the stage stats and
+  `PipelineContext`, the `capped_doc_ids` / `capped_unit_ids` parameters):
+  output failing alike across documents now counts as each document's own
+  (#444).
 - `PipelineContext.failed_documents`: nothing read it since the run's
   `failed_documents` count became the documents recorded `FAILED`
   (`recorded_failed_doc_ids`, #425) (#432).

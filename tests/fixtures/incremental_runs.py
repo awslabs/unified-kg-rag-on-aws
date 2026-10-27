@@ -38,7 +38,6 @@ from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     claims_payload,
-    merge_claim_contributions,
     merge_contributions,
     merge_entity_contributions,
     merge_relationship_contributions,
@@ -173,7 +172,7 @@ def _unit_records(
         relationships=merge_relationship_contributions(relationships),
         gleaned=True,
     )
-    return text_unit, record, merge_claim_contributions(claims)
+    return text_unit, record, claims
 
 
 def extract(corpus: Corpus) -> Extraction:
@@ -193,13 +192,11 @@ def extract(corpus: Corpus) -> Extraction:
     resolved, _ = GraphResolver(
         config, max_workers=1, use_process_pool=False
     ).resolve_graph(entities, relationships)
-    statements = merge_claim_contributions(
-        [
-            claim.model_copy(deep=True)
-            for unit in sorted(claim_records)
-            for claim in claim_records[unit]
-        ]
-    )
+    statements = [
+        claim.model_copy(deep=True)
+        for unit in sorted(claim_records)
+        for claim in claim_records[unit]
+    ]
     claims, _ = ClaimResolver(config, max_workers=1, use_process_pool=False).resolve(
         statements, resolved["entities"]
     )

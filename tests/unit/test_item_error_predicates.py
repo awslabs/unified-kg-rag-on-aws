@@ -288,7 +288,6 @@ def _indices(
     predicate: Any,
     probe: _Probe,
     documents: int = 1,
-    capped: list[int] | None = None,
 ) -> list[int]:
     """``item_failed_indices`` over ``count`` units, spread over
     ``documents`` documents in turn."""
@@ -297,7 +296,7 @@ def _indices(
         for i in range(count)
     ]
     return item_failed_indices(
-        errors, units, predicate, "t", probe, lambda units: [{}], lambda _: {}, capped  # type: ignore[arg-type]
+        errors, units, predicate, "t", probe, lambda units: [{}], lambda _: {}  # type: ignore[arg-type]
     )
 
 
@@ -358,21 +357,18 @@ def test_one_cause_on_every_unit_counts_as_the_known_good_request_decides(
         {0: _CUT, 1: _CUT, 2: TimeoutError()},
     ],
 )
-def test_one_output_cause_on_every_unit_of_several_documents_counts_none(
+def test_one_output_cause_on_every_unit_of_several_documents_counts(
     errors: dict[int, BaseException], answered: bool
 ) -> None:
     # A server-side output cap cuts every document's output, but not a
     # known-good request's short answer: that answer cannot tell the cap
-    # from each document's own output, so output errors across documents
-    # count for none now, and nothing is sent. They are handed back as
-    # capped: the registry counts them after max_document_failures runs.
+    # from each document's own output, so nothing is sent and output errors
+    # across documents count as each document's own (one failure a run, so
+    # a batch that always fails is excluded and stops no run).
     probe = _Probe(answered)
-    capped: list[int] = []
-    counted = _indices(
-        errors, len(errors), item_error_predicate(_BEDROCK), probe, 2, capped
-    )
-    assert (counted, probe.sent) == ([], [])
-    assert capped == [
+    counted = _indices(errors, len(errors), item_error_predicate(_BEDROCK), probe, 2)
+    assert probe.sent == []
+    assert counted == [
         idx for idx, error in sorted(errors.items()) if error in _OUTPUT_ERRORS
     ]
 
@@ -645,11 +641,14 @@ def test_every_extraction_stage_asks_a_known_good_request_on_uniform_bad_output(
     stage: str, error: Exception, config: Config
 ) -> None:
     # Every unit's output cut off or unparseable (a server-side output cap):
-    # across documents no document counts. For one document the known-good
-    # request's answer, cut too, makes it the model's; one that parses makes
-    # it the document's own.
+    # across documents each counts, whatever a known-good request would
+    # answer. For one document the known-good request's answer, cut too,
+    # makes it the model's; one that parses makes it the document's own.
     for answered in (False, True):
-        assert _run(stage, config, _two_documents(), error, answered) == []
+        assert _run(stage, config, _two_documents(), error, answered) == [
+            "u0",
+            "u1",
+        ]
     one = _two_documents()[:1]
     assert _run(stage, config, one, error) == []
     assert _run(stage, config, one, error, known_good_answered=True) == ["u0"]

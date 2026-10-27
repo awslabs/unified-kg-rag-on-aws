@@ -686,13 +686,16 @@ def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
     assert PipelineStageType.GRAPH_ANALYSIS not in STAGE_OUTPUTS
 
 
-def test_claims_are_merged_in_text_unit_id_order(mocker) -> None:
+def test_claims_are_handed_on_per_statement_in_text_unit_id_order(mocker) -> None:
     # Regression: the stage merged a claim's statements in document order,
     # derivation in text-unit id order, so the description's line order (and
-    # a status tie) of a first build and an incremental run differed.
+    # a status tie) of a first build and an incremental run differed. Then
+    # both merged the statements by the names they state before resolving
+    # them, so statements another unit's entities would resolve elsewhere
+    # merged (option S): each unit's statement is resolved on its own, and
+    # claim resolution merges those that resolve to one claim.
     from unified_kg_rag.adapters.ingestion.claim_extractor import (
         ClaimExtractionStats,
-        ClaimExtractor,
     )
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
     from unified_kg_rag.domain.models import Claim, TextUnit, TextUnitExtraction
@@ -714,7 +717,6 @@ def test_claims_are_merged_in_text_unit_id_order(mocker) -> None:
         {"u2": [statement("u2")], "u1": [statement("u1")]},
         ClaimExtractionStats(),
     )
-    extractor.return_value.merge_claims.side_effect = ClaimExtractor.merge_claims
     store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
     store.return_value.load.return_value = {}
     store.return_value.save.return_value = set()
@@ -735,9 +737,10 @@ def test_claims_are_merged_in_text_unit_id_order(mocker) -> None:
 
     stage._execute_core(context)
 
-    (claim,) = context.claims
-    assert claim.description == "stated in u1\nstated in u2"
-    assert claim.status == "false"
+    assert [(c.text_unit_ids, c.description) for c in context.claims] == [
+        (["u1"], "stated in u1"),
+        (["u2"], "stated in u2"),
+    ]
 
 
 @pytest.mark.parametrize("stage_name", ["claim_extraction", "gleaning"])
@@ -769,7 +772,6 @@ def test_a_stage_hands_on_the_units_failed_for_their_own_error(
             {},
             ClaimExtractionStats(**failed),
         )
-        extractor.return_value.merge_claims.return_value = []
         store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
         store.return_value.load.return_value = {}
         store.return_value.save.return_value = set()

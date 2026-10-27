@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
+from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -1336,17 +1337,26 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 f"Relationship: {src_name or 'unknown'}{arrow}{tgt_name or 'unknown'}"
             )
 
-        # A claim hit names what it claims and its status as well: the
-        # description alone read a FALSE or SUSPECTED claim as a plain fact
-        # (GraphRAG's covariate context shows the subject, object, type and
-        # status).
+        # A claim hit names what it claims, its status and its known dates as
+        # well: the description alone read a FALSE or SUSPECTED claim as a
+        # plain fact (GraphRAG's covariate context shows the subject, object,
+        # type, status and dates).
         subject, claimed = source.get("subject_name"), source.get("object_name")
         if subject or claimed:
             claim_type, status = source.get("type"), source.get("status")
             arrow = f" -[{claim_type}]-> " if claim_type else " -> "
+            start, end = (
+                (
+                    str(source.get(key) or "").strip()
+                    if claim_date_key(source.get(key))
+                    else ""
+                )
+                for key in ("start_date", "end_date")
+            )
+            notes = [n for n in (status, f"{start}–{end}" if start or end else "") if n]
             content_parts.append(
                 f"Claim: {subject or 'unknown'}{arrow}{claimed or 'unknown'}"
-                + (f" ({status})" if status else "")
+                + (f" ({', '.join(notes)})" if notes else "")
             )
 
         if description := source.get("description"):
