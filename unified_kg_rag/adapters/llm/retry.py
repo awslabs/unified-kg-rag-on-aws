@@ -158,6 +158,8 @@ def item_failed_indices(
     batch_processor: BatchProcessor,
     prepare_inputs: Callable[[list[TextUnit]], list[dict[str, Any]]],
     invoke: Callable[[dict[str, Any]], Any],
+    *,
+    counted: bool = True,
 ) -> list[int]:
     """The indices, of the batch of ``units``, whose ``errors`` count
     against their document (``is_item_error``).
@@ -178,6 +180,8 @@ def item_failed_indices(
     through ``batch_processor``, as the items were) decides: failed too,
     none is counted; answered, the errors are counted. For output errors
     the answer must also parse; for a rejection, being answered is enough.
+    ``counted=False`` (claims, which are optional) only words the warnings
+    so: their documents are indexed without them, counted for none.
 
     The request is neither served from nor stored in the run's LLM response
     cache (``uncached_responses``): a response an earlier run cached for it
@@ -185,6 +189,11 @@ def item_failed_indices(
     segments stay what the documents' requests made them.
     """
     own = {idx: error for idx, error in sorted(errors.items()) if is_item_error(error)}
+    outcome = (
+        "counted against their documents"
+        if counted
+        else "their documents are indexed without them, counted for none"
+    )
     first = next(iter(own.values()), None)
     if (
         first is not None
@@ -196,10 +205,11 @@ def item_failed_indices(
             logger.warning(
                 "%s: the output of every item of %d documents failed alike "
                 "(%s), possibly under a model or server output cap: taken "
-                "for an error of each document's own",
+                "for an error of each document's own, %s",
                 task,
                 len(documents),
                 first,
+                outcome,
             )
             return list(own)
         # Imported here: the cache module imports the chain factory, which
@@ -225,9 +235,10 @@ def item_failed_indices(
             return []
         logger.warning(
             "%s: every item failed alike (%s) but a known-good request was "
-            "answered: counted against their documents",
+            "answered: %s",
             task,
             first,
+            outcome,
         )
     return list(own)
 

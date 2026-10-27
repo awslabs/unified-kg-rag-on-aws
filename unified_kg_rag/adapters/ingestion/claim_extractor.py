@@ -205,6 +205,7 @@ class ClaimExtractor(BaseProcessor):
                 self.batch_processor,
                 lambda units: list(self._prepare_extraction_inputs(units, []).values()),
                 self._extract,
+                counted=False,
             )
         )
         self.stats.total_claims_extracted = sum(len(c) for c in per_unit.values())

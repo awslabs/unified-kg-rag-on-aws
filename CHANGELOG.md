@@ -1439,6 +1439,10 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- Claim extraction: the warnings on output or a rejection failing alike
+  say the documents are indexed without those claims and counted for
+  none; they said "counted against their documents", true of the graph
+  and gleaning stages only (#PR).
 - `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a run the
   stop watchdog ends (after the 100 s grace, or at a second signal) prints
   `Stopped by SIGTERM.` / `SIGINT.` as a run that unwinds does; it exited
