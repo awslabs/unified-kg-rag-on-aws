@@ -290,7 +290,9 @@ is a setting and counts for none.
 
 - **Retry limit.** After `indexing.max_document_failures` (default `3`)
   consecutive runs that recorded unchanged content `FAILED` for an error of
-  its own (see above; with the same extraction settings) the document stays
+  its own, or output that failed alike on several documents (see above;
+  with the same extraction settings: a settings change starts the count
+  over) the document stays
   `FAILED`, keeps what it indexed, and is skipped: each run logs a WARNING
   naming the file and goes on with the rest of the delta, deletions included.
   Fix the cause (often an oversized or malformed file), edit the file, or

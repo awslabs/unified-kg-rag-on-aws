@@ -19,6 +19,7 @@ from unified_kg_rag.application.ingestion.namespace_lease import (
     longest_write_request_seconds,
 )
 from unified_kg_rag.shared import NamespaceLeaseError
+from unified_kg_rag.shared.exceptions import PipelineInterrupted
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 pytestmark = pytest.mark.unit
@@ -469,3 +470,36 @@ def test_a_renewal_landing_after_a_stop_leaves_the_lease_expired(
     holder = store.lease_holder("ns")
     assert holder is not None, "released, not expired"
     assert holder[1] <= stopped
+
+
+@pytest.mark.parametrize(
+    ("ended_with", "stop"),
+    [
+        (None, KeyboardInterrupt()),
+        (None, PipelineInterrupted(15)),
+        (KeyboardInterrupt, KeyboardInterrupt()),
+    ],
+)
+def test_a_stop_raised_while_the_lease_exits_still_gives_it_up(
+    ended_with: type[BaseException] | None, stop: BaseException
+) -> None:
+    # Regression: a signal handler raising in the heartbeat join skipped the
+    # give-up, so the lease stayed held for lease_seconds and the rerun
+    # failed with "being written by" (14 of 250 end-of-run signals).
+    store = FakeDocStatusStore()
+    lease = NamespaceLease(store, "ns", 600.0)
+    lease.__enter__()
+    thread = lease._thread
+    assert thread is not None
+
+    def join(*_args: object) -> None:
+        raise stop
+
+    thread.join = join  # type: ignore[method-assign]
+    with pytest.raises(type(stop)):
+        lease.__exit__(ended_with, ended_with() if ended_with else None, None)
+    holder = store.lease_holder("ns")
+    assert holder is None or holder[1] <= time.time()
+    assert lease._stop.is_set()
+    with NamespaceLease(store, "ns", 60):
+        pass

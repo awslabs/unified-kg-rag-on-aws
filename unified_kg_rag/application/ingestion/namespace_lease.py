@@ -212,37 +212,43 @@ class NamespaceLease:
         # A run that ends during its takeover wait (stopped, or failed before
         # writing) hands the wait on: the lease goes back expired at the
         # previous holder's expiry, so the next run waits as long.
-        now = time.time()
-        handed_on = self.writes_from > now
-        if handed_on:
-            self._give_up = functools.partial(self._expire, self._previous_expiry)
-            self.next_writes_from = self.writes_from
-        elif is_stop(exc_type) and not self.in_process_stores:
-            self._give_up = functools.partial(self._expire, now)
-            self.next_writes_from = now + self._late_write_seconds()
-        else:
-            self._give_up = self._release
-        if self.next_writes_from > now:
-            logger.warning(
-                "Gave up the write lease of namespace '%s' with writes %s "
-                "possibly still in flight: the next run on it waits until %s "
-                "before its first write",
-                self.namespace,
-                (
-                    "of the run whose expired lease this one took over"
-                    if handed_on
-                    else "of this run"
-                ),
-                _when(self.next_writes_from),
-            )
-        self._stop.set()
-        if self._thread is not None:
-            # A renewal in flight may hang on an unreachable registry: the
-            # run does not wait for it (the heartbeat gives up what it
-            # renews once stopped).
-            self._thread.join(_HEARTBEAT_JOIN_SECONDS)
-        if held:
-            self._give_up()
+        # A stop raised in here (its handler runs wherever the main thread
+        # is, the heartbeat join most often) still gives the lease up: left
+        # held, it blocked the next run for indexing.lease_seconds.
+        try:
+            now = time.time()
+            handed_on = self.writes_from > now
+            if handed_on:
+                self._give_up = functools.partial(self._expire, self._previous_expiry)
+                self.next_writes_from = self.writes_from
+            elif is_stop(exc_type) and not self.in_process_stores:
+                self._give_up = functools.partial(self._expire, now)
+                self.next_writes_from = now + self._late_write_seconds()
+            else:
+                self._give_up = self._release
+            if self.next_writes_from > now:
+                logger.warning(
+                    "Gave up the write lease of namespace '%s' with writes %s "
+                    "possibly still in flight: the next run on it waits until %s "
+                    "before its first write",
+                    self.namespace,
+                    (
+                        "of the run whose expired lease this one took over"
+                        if handed_on
+                        else "of this run"
+                    ),
+                    _when(self.next_writes_from),
+                )
+            self._stop.set()
+            if self._thread is not None:
+                # A renewal in flight may hang on an unreachable registry: the
+                # run does not wait for it (the heartbeat gives up what it
+                # renews once stopped).
+                self._thread.join(_HEARTBEAT_JOIN_SECONDS)
+        finally:
+            self._stop.set()
+            if held:
+                self._give_up()
 
     def _late_write_seconds(self) -> float:
         """How long after the lease expired a write of its holder may land,

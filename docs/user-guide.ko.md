@@ -703,7 +703,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 |---|---|---|
 | `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
 | `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려감)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
+| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. |
 
@@ -793,7 +793,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
   범위를 좁힌 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `global`은
   자기 검색 범위를 정하는 키를 거부합니다. `depth`와 `max_cut_depth`(`search.global_search.use_dynamic_selection`을
-  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
+  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `id`,
+  `source_id`, `target_id`는 `local`, `drift`, `mix`, `hybrid`가 id로 가져오거나 탐색으로 닿는
+  대상을 좁힙니다(값이 목록에 있는 항목만 돌아옴). 이 키에 범위를 주면 어느 전략에서나 거부됩니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
   적용하는 전략 사이에서만 라우팅하고(기본 집합에서 `type:person`이면 `local`과 `mix`), 그런
   전략이 없을 때만 라우팅 전에 필터를 거부합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
@@ -822,7 +824,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   있으면 local과 mix는 상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로
   청크 할당량을 채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
   적용됩니다. 엔티티 정점에 없는 이 키와 `name.keyword`는 그래프 걷기가 닿은 엔티티를
-  시드까지 포함해 엔티티 인덱스로 확인합니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
+  LightRAG의 시드까지 포함해 엔티티 인덱스로 확인합니다(`local`과 `drift`의 시드는 필터로 찾은 것).
+  이 확인은 걷기가 홉별 상한과 `top_k`로 자른 뒤 남은 엔티티만 보므로, 필터를 통과하지만 그
+  아래 순위인 이웃에는 닿지 못합니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
   기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 엔티티 인덱스 확인도 적용되므로, 문서에
   `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
   모두 엄격하게 적용합니다.
@@ -1454,7 +1458,7 @@ custom_prompts:
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
 
-`130`이나 `143`으로 중지된 실행은 프로세스를 바로 끝냅니다. 진행 중인 모델 호출은 기다리지 않고 버리며, 그 전에 로그, 추적 데이터, 표준 출력을 비우고 프로세스 풀의 작업자도 함께 끝냅니다. SIGTERM과 Ctrl-C는 질의 CLI의 작업을 다음 await 지점에서 취소하므로 정리 작업(저장소 연결 닫기, `run-eval`의 업로드)은 실행됩니다(대화형 프롬프트에서 기다리는 중이면 SIGTERM은 세션을, Ctrl-C는 이전처럼 대화를 바로 끝냄). 중지된 프로세스가 10초 뒤에도 남아 있으면 그때 끝내며, 출력한 문서가 없으면 상태 문서를 출력합니다. 끝난 CLI는 종료 처리기를 실행한 즉시 자기 종료 코드로 프로세스를 끝내므로, 종료 중에 받은 신호가 `0`, `1`, `2`를 `-15`나 `-2`로 바꾸지 못합니다.
+`130`이나 `143`으로 중지된 실행은 프로세스를 바로 끝냅니다. 진행 중인 모델 호출은 기다리지 않고 버리며, 그 전에 로그, 추적 데이터, 표준 출력을 비우고 프로세스 풀의 작업자도 함께 끝냅니다. SIGTERM과 Ctrl-C는 질의 CLI의 작업을 다음 await 지점에서 취소하므로 정리 작업(저장소 연결 닫기, `run-eval`의 업로드)은 실행됩니다(대화형 프롬프트에서 기다리는 중이면 SIGTERM은 세션을, Ctrl-C는 이전처럼 대화를 바로 끝냄). SIGTERM이나 이벤트 루프 실행 중의 Ctrl-C로 중지된 질의 CLI가 100초 뒤에도 남아 있으면 그때 끝내며(앱 컨테이너의 StopTimeout 120초 안), 출력한 문서가 없으면 상태 문서를 출력합니다. 두 번째 신호는 바로 끝냅니다. `run-ingestion`은 대신 SIGTERM이나 Ctrl-C를 받으면 진행 중인 체크포인트나 메타데이터 쓰기를 마친 뒤 멈추며, StopTimeout이 그 상한입니다. 끝난 CLI는 종료 처리기를 실행한 즉시 자기 종료 코드로 프로세스를 끝내므로, 종료 중에 받은 신호가 `0`, `1`, `2`를 `-15`나 `-2`로 바꾸지 못합니다.
 
 플래그는 전체 이름으로 써야 하며, `--output`처럼 앞부분만 쓰면 거부합니다.
 
@@ -1464,8 +1468,9 @@ custom_prompts:
 결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모든
 단위를 실패시킨 모델 장애는 아무것도 기록하지 않고, 일부 단위만 실패시킨 장애는 그 문서들을 기록하며
 다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 문서 자체의 것이 아닌 오류로 연속 실행에서
-또 실패한 문서 수(`documents_retrying`. 제외되지 않으며, 파일과 실행 횟수를 경고로도 알림), 내용이 그대로인 채
-`indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 요약에도 표시),
+또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않고, 서버 측 출력 상한처럼 여러 문서의 응답이 똑같이 실패했으면
+그런 실행이 `indexing.max_document_failures`번 이어진 뒤 제외됨. 파일과 실행 횟수를 경고로도 알림), 내용과 추출 설정이 그대로인 채
+`indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 설정을 바꾸면 다시 셈. 요약에도 표시),
 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면

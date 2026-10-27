@@ -6,9 +6,7 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import (
-    BaseSearchStrategy,
-)
+from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy, scope_filters
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     RetrievalResult,
@@ -141,8 +139,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(candidate_entity_ids) > 5 else "",
         )
 
+        # The candidates were found under the caller's filters.
         expanded_entity_nodes = await self._expand_via_graph(
-            query, candidate_entity_ids
+            query, candidate_entity_ids, seeds_pass=True
         )
         if not expanded_entity_nodes and candidate_hits:
             # A successful expansion returns at least the seeds, so none means
@@ -471,7 +470,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=len(text_unit_ids),
             index_prefixes=[prefix],
             suffix=suffix,
-            filters={**(filters or {}), "id": text_unit_ids},
+            filters=scope_filters(filters, id=text_unit_ids),
         )
 
         results = await self._fetch_by_ids(

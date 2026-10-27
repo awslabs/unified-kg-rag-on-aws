@@ -1185,6 +1185,30 @@ def test_extract_content_relationship_with_one_missing_endpoint(retriever) -> No
     assert "Relationship: a -> unknown" in content
 
 
+def test_extract_content_names_a_claims_subject_object_and_status(retriever) -> None:
+    # Rendered as its description alone, a FALSE claim read as a fact.
+    content = retriever._extract_content(
+        {
+            "subject_name": "Vendor",
+            "object_name": "Buyer",
+            "type": "breach of contract",
+            "status": "FALSE",
+            "description": "Vendor breached the supply contract",
+        }
+    )
+    assert content.splitlines()[0] == (
+        "Claim: Vendor -[breach of contract]-> Buyer (FALSE)"
+    )
+    assert "Description: Vendor breached the supply contract" in content
+
+
+def test_extract_content_claim_with_a_literal_object_and_no_status(retriever) -> None:
+    content = retriever._extract_content(
+        {"subject_name": "Vendor", "object_name": "2024-01-31", "description": "d"}
+    )
+    assert "Claim: Vendor -> 2024-01-31" in content
+
+
 def test_extract_content_non_relationship_hit_gets_no_relationship_line(
     retriever,
 ) -> None:

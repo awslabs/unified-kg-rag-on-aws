@@ -153,8 +153,10 @@ class CommandLineInterface:
         parser.add_argument(
             "--filters",
             nargs="*",
+            action="extend",
             type=_filter_pair,
-            help="Attribute filters as space-separated 'key:value' pairs",
+            help="Attribute filters as space-separated 'key:value' pairs (a "
+            "repeated --filters adds its pairs)",
         )
         add_output_format_argument(parser)
         parser.add_argument(
@@ -675,7 +677,8 @@ def main() -> None:
     try:
         code = asyncio.run(stoppable(async_main(args)))
     except KeyboardInterrupt:
-        # Ctrl-C while the loop waits on I/O lands here, outside the task.
+        # A Ctrl-C while the loop runs cancels the task (exits_on_sigterm);
+        # one raises KeyboardInterrupt here only outside it, defensively kept.
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
         code = EXIT_INTERRUPTED
     sys.exit(code)

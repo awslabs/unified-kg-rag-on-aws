@@ -2272,7 +2272,10 @@ class IndexingConfig(BaseModel):
         "of its own this many consecutive runs with unchanged content, under "
         "the same extraction settings, is no longer retried. It stays "
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
-        "changes or this value is raised.",
+        "changes or this value is raised. Output that fails alike on several "
+        "documents (a server-side output cap) counts once it failed so this "
+        "many consecutive runs; changed extraction settings start the count "
+        "over.",
     )
     max_document_attempts: int = Field(
         default=3,
@@ -2470,7 +2473,8 @@ class GlobalSearchConfig(BaseModel):
             "Upper bound on the reports one cut (or one step of the dynamic "
             "selection) contributes. A cut with more reports gives way to the "
             "deepest shallower cut that fits (global_cut_depth in the search "
-            "metadata); when even the root cut does not fit, to the reports "
+            "metadata); when even the root cut does not fit, or under a filter "
+            "on a report key (community_id, level, rating), to the reports "
             "of the cut most similar to the query (a hybrid search restricted "
             "to the cut, global_level_capped). "
             "At most indexing.opensearch.max_query_size - 1 (and the reports "
@@ -2884,7 +2888,8 @@ class SearchConfig(BaseModel):
         min_length=1,
         description=(
             "Strategies the auto router may pick; its prompt describes exactly"
-            " these, in this order. simple is left out by default because the "
+            " these, in this order (under filters, only those applying every "
+            "filter key; none applying them refuses the filters). simple is left out by default because the "
             "graph strategies cover its direct lookups with graph context, and"
             " drift because it costs up to 27 LLM calls a query (local: 2), a "
             "price one misrouted question should not pay; add it to route to "

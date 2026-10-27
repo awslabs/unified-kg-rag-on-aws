@@ -1336,6 +1336,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 f"Relationship: {src_name or 'unknown'}{arrow}{tgt_name or 'unknown'}"
             )
 
+        # A claim hit names what it claims and its status as well: the
+        # description alone read a FALSE or SUSPECTED claim as a plain fact
+        # (GraphRAG's covariate context shows the subject, object, type and
+        # status).
+        subject, claimed = source.get("subject_name"), source.get("object_name")
+        if subject or claimed:
+            claim_type, status = source.get("type"), source.get("status")
+            arrow = f" -[{claim_type}]-> " if claim_type else " -> "
+            content_parts.append(
+                f"Claim: {subject or 'unknown'}{arrow}{claimed or 'unknown'}"
+                + (f" ({status})" if status else "")
+            )
+
         if description := source.get("description"):
             content_parts.append(f"Description: {description}")
 

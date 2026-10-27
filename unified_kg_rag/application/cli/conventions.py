@@ -65,17 +65,20 @@ _json = {"enabled": False, "printed": False}
 _exit_at_once = {"enabled": True}
 # How long a stopped CLI waits for its terminated worker processes to end.
 _CHILD_EXIT_SECONDS = 1.0
-# How long a CLI stopped by SIGTERM may take to unwind (its finally blocks,
-# run-eval's upload of the finished runs) before it is ended anyway: a cap
-# on any hang on the way out, well inside the 30 s ECS gives a stopped task
-# by default.
-_STOP_GRACE_SECONDS = 10.0
-# The task a SIGTERM cancels (see stoppable), the signal that stopped the
+# How long a CLI stopped by a signal in its event loop may take to unwind
+# (its finally blocks, run-eval's upload of the finished runs) before it is
+# ended anyway: a cap on any hang on the way out, inside the 120 s StopTimeout
+# the stack gives the app container (ECS's default is 30 s). A second signal
+# ends it at once.
+_STOP_GRACE_SECONDS = 100.0
+# The task a stop cancels (see stoppable), the signal that stopped the
 # run once one did, and whether the loop's thread waits in a blocking call
 # (see interruptible).
 _stop: dict[str, Any] = {"task": None, "signum": None, "interruptible": False}
-# Set when a stop starts the grace period of the watchdog thread.
+# Set when a stop starts the grace period of the watchdog thread, and when
+# a second signal ends it.
 _stop_started = threading.Event()
+_stop_now = threading.Event()
 # Held while the one JSON document is printed: the watchdog may print the
 # status from its own thread. Reentrant, as a signal handler may print the
 # status on the main thread in the middle of print_json.
@@ -128,8 +131,11 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     ``main`` then exits ``128 + signal``. Elsewhere SIGTERM raises
     ``SystemExit`` and SIGINT ``KeyboardInterrupt``, as Python's own handler
     does (a SIGINT the parent ignores stays ignored). A watchdog thread ends
-    a stopped process still running :data:`_STOP_GRACE_SECONDS` later (with
-    the status document, if none was printed), so no stop can hang.
+    a process stopped so (a SIGTERM, or a Ctrl-C in the loop) still running
+    :data:`_STOP_GRACE_SECONDS` later, or at a second signal (with the status
+    document, if none was printed), so no such stop can hang. A handler a
+    CLI installs over these (``run-ingestion``'s checkpointed SIGTERM) and a
+    Ctrl-C the CLI handles outside the loop are not watched.
 
     When ``main`` ends, the process ends with its exit code at once
     (:func:`_exit_finished`): the interpreter's shutdown resets the signal
@@ -147,7 +153,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
             _stopped_in_teardown(signum, frame)
             raise SystemExit(128 + signum)
         if _stop["signum"] is not None:
-            return  # already stopping
+            # Already stopping: a second signal ends the process now.
+            _stop_now.set()
+            return
         task = _stop["task"]
         in_loop = (
             task is not None
@@ -198,7 +206,14 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                 if _stop["signum"] is not None:
                     # A stop the event loop took as a cancellation (main
                     # raised CancelledError) or one that came as main's
-                    # coroutine ended.
+                    # coroutine ended. The JSON status says so; in text mode,
+                    # this line (the CLI's own KeyboardInterrupt messages
+                    # are for a Ctrl-C outside the loop, which sets no stop).
+                    if not _json["enabled"]:
+                        console.print(
+                            "\n[yellow]Stopped by "
+                            f"{signal.Signals(_stop['signum']).name}.[/yellow]"
+                        )
                     raise SystemExit(128 + _stop["signum"])
             if isinstance(result, int) and result:  # mains that return the code
                 print_status(result)
@@ -231,8 +246,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 async def stoppable(main: Awaitable[_R]) -> _R:
-    """Await ``main`` as the task a SIGTERM cancels: a CLI wraps the coroutine
-    it runs (``asyncio.run(stoppable(...))``) under :func:`exits_on_sigterm`."""
+    """Await ``main`` as the task a SIGTERM or Ctrl-C cancels: a CLI wraps
+    the coroutine it runs (``asyncio.run(stoppable(...))``) under
+    :func:`exits_on_sigterm`."""
     _stop["task"] = asyncio.current_task()
     return await main
 
@@ -240,9 +256,9 @@ async def stoppable(main: Awaitable[_R]) -> _R:
 @contextlib.contextmanager
 def interruptible() -> Iterator[None]:
     """Mark a blocking call a coroutine makes on the loop's thread (an
-    interactive prompt): a SIGTERM during it raises ``SystemExit`` there, as
-    outside a loop, since it cannot land in the loop's code and a cancel
-    would wait for the call to return."""
+    interactive prompt): a SIGTERM during it raises ``SystemExit`` there and
+    a Ctrl-C ``KeyboardInterrupt``, as outside a loop, since it cannot land
+    in the loop's code and a cancel would wait for the call to return."""
     _stop["interruptible"] = True
     try:
         yield
@@ -251,13 +267,14 @@ def interruptible() -> Iterator[None]:
 
 
 def _stop_watchdog() -> None:
-    """End the process a grace period after a stop, if it is still running.
+    """End the process a grace period after a stop, if it is still running,
+    or at once at a second signal.
 
     Started before any stop (starting a thread in a signal handler could
     wait forever on a lock the interrupted code holds) and waits for it.
     """
     _stop_started.wait()
-    time.sleep(_STOP_GRACE_SECONDS)
+    _stop_now.wait(_STOP_GRACE_SECONDS)
     if not _exit_at_once["enabled"]:  # the test suite
         return
     exit_code = 128 + (_stop["signum"] or signal.SIGTERM)
@@ -280,6 +297,7 @@ def _stop_watchdog() -> None:
 def _start_stop_watchdog() -> None:
     """Start the watchdog thread (once per process) and disarm it."""
     _stop_started.clear()
+    _stop_now.clear()
     if not _exit_at_once["enabled"] or any(
         t.name == "stop-watchdog" for t in threading.enumerate()
     ):

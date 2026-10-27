@@ -647,6 +647,10 @@ changed once with the full-config keys (#332).
   matches no filter) (#372), or between #370 and #376 with a removal that
   pruned a community (the kept text units of that community lost their
   document filters and dropped out of filtered retrieval) (#376).
+- Claims: rebuild once with `indexing.reset: true` to apply #442's claim
+  resolution (a claim links only to the entities its own text units state)
+  to all claims; until then a stored claim changes only when it is derived
+  again (#442).
 
 ### Added
 - Incremental indexing: a document failing consecutive runs for an error
@@ -845,6 +849,9 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Queries with `auto` and filters: an INFO line names the strategies the
+  filters leave out of the route (`auto routes only among local, mix: the
+  filters leave out global`) (#443).
 - Claim resolution: a claim's subject and object resolve only against the
   entities its own text units stated, in a full build as in an incremental
   run. A claim whose subject its units' entity extraction did not list is
@@ -1398,6 +1405,58 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-eval`: a stopped run names the local copy of the finished runs'
+  results before it uploads them (a WARNING). It was named only after a
+  failed upload, so one the stop watchdog cut short left the files
+  unnamed (#443).
+- `run-rag`: a repeated `--filters` adds its pairs to the earlier ones
+  (a key given twice is still exit 2). The later `--filters` silently
+  replaced the earlier one (#443).
+- `run-ingestion`: a Ctrl-C stops the run as a SIGTERM does
+  (`request_stop`), after the checkpoint or metadata write in progress,
+  and exits 130. Raised as `KeyboardInterrupt` wherever the run was, a
+  Ctrl-C during the metadata save failed it (exit 1). A SIGINT the parent
+  ignores stays ignored (#443).
+- Queries: a claim in the context names its subject, type, object and
+  status (`Claim: Vendor -[breach of contract]-> Buyer (FALSE)`) before its
+  description. Shown as the description alone, a `FALSE` or `SUSPECTED`
+  claim read as a plain statement (#443).
+- `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
+  its namespace lease (most often while it waits for the heartbeat thread)
+  still gives the lease up. It stayed held for `indexing.lease_seconds`
+  (600 s by default), so the rerun failed with `... is being written by`
+  (14 of 250 signals at the end of a run) (#443).
+- `local` and `drift` under an entity key graph vertices do not store
+  (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
+  filters, are not checked against the entities index again, which cost a
+  request per expansion (#443).
+- `global` under a filter on a report key (`community_id`, `level`,
+  `parent_community_id`, `rating`): a cut over `max_reports_per_level`
+  maps the cut's reports most similar to the query instead of giving way
+  to a shallower cut, whose reports pass the filter on their own. A
+  `community_id` filter naming all 101 leaves mapped 0 reports as a
+  complete cut (50 leaves mapped 50) (#443).
+- `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a SIGTERM, or
+  a Ctrl-C while the event loop runs, prints `Stopped by SIGTERM.` (or
+  `SIGINT`) once. Since #441 cancelled the CLI's task, the run exited 130
+  or 143 without a word (#443).
+- `run-prompt-tuning`: a SIGTERM or Ctrl-C during a model call ends the run
+  at once (with its logs and spans flushed). The event loop waited for the
+  call's thread on the way out, so the stop took until the call returned or
+  the watchdog ended the process without the flush (#443).
+- `run-rag`, `run-eval` and `run-prompt-tuning`: a stopped CLI gets 100
+  seconds to unwind before the watchdog ends it, not 10, inside the 120 s
+  StopTimeout of the app container, and a second SIGTERM or Ctrl-C ends it
+  at once (with the interrupted status if nothing was printed). The 10 s
+  cut `run-eval`'s upload of the finished runs: a 15 s upload never
+  finished (#443).
+- Queries with `local`, `drift`, `mix` and `hybrid`: a filter on `id`,
+  `source_id` or `target_id` narrows what the strategy fetches by id or
+  walks to, instead of being replaced by its scope. `--filters
+  source_id:<vendor>` returned the walk's edges of other sources too, and
+  `--filters id:<entity>` every expanded entity and the text units of the
+  others (local: 7 results, 1 now). A range on these keys is refused with
+  every strategy (`InvalidFilterError`, exit 2) (#443).
 - Claim extraction: a claim the response was cut off inside without a
   stop reason (its `<claim>` never closed, as under a server-side output
   cap) is dropped; when it was the only claim, the unit fails with
@@ -1515,7 +1574,9 @@ changed once with the full-config keys (#332).
   server-side output cap cuts every document's output but not that short
   request's answer, so the cap counted against every document and excluded
   the corpus after three runs. A single document's output errors are still
-  judged by the known-good request (#440).
+  judged by the known-good request (#440). Superseded by #442: such
+  documents count once they failed so for `indexing.max_document_failures`
+  consecutive runs.
 - Incremental indexing: a derivation reads each text unit's extraction
   records once, and the stored edges of each entity once, instead of again
   every round. A cascading re-key beside a hub of 3000 text units read
@@ -1538,7 +1599,9 @@ changed once with the full-config keys (#332).
   keys are checked against every strategy `auto` may route to before the
   router runs, as an interactive session already did. Only the routed
   strategy was checked, after the router call, so one filter answered or
-  exited 2 depending on the route (#439).
+  exited 2 depending on the route (#439). Superseded by #441: `auto` refuses
+  the filters only when no such strategy applies every key, and routes
+  among those that do.
 - Incremental indexing: reading the stored extraction records of a delta
   no longer rebuilds the set of cited text units per delta unit, which
   took seconds per derive round on a 10k-unit delta (#439).

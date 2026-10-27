@@ -29,8 +29,10 @@ from unified_kg_rag.application.cli import (
 )
 from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
+    interruptible,
     json_output,
     print_json,
+    stoppable,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -324,6 +326,75 @@ def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() ->
     assert result.returncode == 143, result.stderr
     assert time.time() - started < 20
     assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
+def test_the_stop_grace_leaves_cleanup_time_inside_the_stop_timeout() -> None:
+    # 10 s cut run-eval's upload of the finished runs, which the 120 s
+    # StopTimeout of the app container (iac compute stack) leaves time for.
+    from unified_kg_rag.application.cli import conventions
+
+    assert 60 <= conventions._STOP_GRACE_SECONDS < 120
+
+
+def test_a_second_signal_ends_a_stopping_cli_at_once() -> None:
+    # Ignored, it left the process to the full grace period.
+    import time
+
+    started = time.time()
+    result = _run_cli_script("""
+        import argparse, asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import json_output, stoppable
+
+        conventions._STOP_GRACE_SECONDS = 40.0
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            try:
+                await asyncio.sleep(30)
+            finally:
+                threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT)).start()
+                time.sleep(30)  # a cleanup that hangs
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert time.time() - started < 20
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_a_text_mode_stop_in_the_loop_says_so_once(signum: int) -> None:
+    # The cancelled task exited 130 or 143 without a word.
+    result = _run_cli_script(f"""
+        import asyncio
+        from unified_kg_rag.application.cli.conventions import stoppable
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+        async def run():
+            os.kill(os.getpid(), {int(signum)})
+            await asyncio.sleep(30)
+
+        @exits_on_sigterm
+        def main():
+            try:
+                asyncio.run(stoppable(run()))
+            except KeyboardInterrupt:
+                print("interrupted by user")
+
+        main()
+        """)
+    name = signal.Signals(signum).name
+    assert result.returncode == 128 + signum, result.stderr
+    assert result.stdout.count("Stopped by") == 1, result.stdout
+    assert f"Stopped by {name}." in result.stdout
+    assert "interrupted by user" not in result.stdout
 
 
 def test_a_sigterm_after_the_result_is_printed_ends_the_process_at_once(
@@ -1050,6 +1121,37 @@ def test_ingestion_stopped_after_its_result_prints_one_document(
     assert "after it finished" in err
 
 
+@pytest.mark.parametrize("inherited", [signal.default_int_handler, signal.SIG_IGN])
+def test_ingestion_stops_on_ctrl_c_as_on_sigterm(inherited: Any) -> None:
+    # A Ctrl-C raised KeyboardInterrupt wherever the run was: during the
+    # metadata save it failed the save (exit 1) instead of waiting for it,
+    # as request_stop does. A SIGINT the parent ignores stays ignored.
+    stops: list[int] = []
+
+    class _Pipeline:
+        def request_stop(self, signum: int) -> None:
+            stops.append(signum)
+
+    runner_class = run_ingestion_pipeline.IngestionPipelineRunner
+    previous = {
+        signum: signal.getsignal(signum) for signum in (signal.SIGTERM, signal.SIGINT)
+    }
+    signal.signal(signal.SIGINT, inherited)
+    try:
+        replaced = runner_class._stop_on_signals(_Pipeline())  # type: ignore[arg-type]
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGINT)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if inherited is signal.SIG_IGN:
+        assert set(replaced) == {signal.SIGTERM}
+        assert stops == [signal.SIGTERM]
+    else:
+        assert set(replaced) == {signal.SIGTERM, signal.SIGINT}
+        assert stops == [signal.SIGTERM, signal.SIGINT]
+
+
 @pytest.mark.parametrize("value", ["0", "-3"])
 def test_prompt_tuning_rejects_a_non_positive_max_docs(value: str) -> None:
     # Before, --max-docs 0 was accepted and then sampled nothing.
@@ -1573,3 +1675,174 @@ def test_a_stopped_ingestion_says_when_the_next_run_may_write() -> None:
     done = SimpleNamespace(pipeline=SimpleNamespace(next_run_writes_from=0.0))
     assert _next_run_wait(done) == ""  # type: ignore[arg-type]
     assert _next_run_wait(None) == ""
+
+
+def test_a_finished_cli_writes_its_json_document_to_a_pipe() -> None:
+    # The process ends with os._exit: stdout, a block-buffered pipe here,
+    # must be flushed first or the result is lost.
+    result = _run_cli_script("""
+        import argparse
+        from unified_kg_rag.application.cli.conventions import json_output, print_json
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            print_json({"status": "completed"})
+            return 0
+
+        sys.exit(main())
+        """)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "completed"}
+
+
+def test_a_finished_cli_shuts_its_tracing_backend_down() -> None:
+    result = _run_cli_script("""
+        class Backend:
+            def shutdown(self):
+                print("tracing flushed", flush=True)
+
+        observability.install(Backend())
+
+        @exits_on_sigterm
+        def main():
+            return 0
+
+        sys.exit(main())
+        """)
+    assert result.returncode == 0, result.stderr
+    assert "tracing flushed" in result.stdout
+
+
+def test_a_ctrl_c_stop_the_watchdog_ends_exits_130() -> None:
+    result = _run_cli_script("""
+        import argparse, asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import json_output, stoppable
+
+        conventions._STOP_GRACE_SECONDS = 0.5
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGINT)
+            try:
+                await asyncio.sleep(30)
+            finally:
+                time.sleep(30)  # a cleanup that hangs
+
+        @exits_on_sigterm
+        def main():
+            json_output(argparse.Namespace(output_format="json"))
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 130, result.stderr
+    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 130}
+
+
+class TestStopsInTheLoop:
+    """A stop cancels the CLI's task from the signal handler."""
+
+    def test_a_stop_while_the_loop_waits_on_io_cancels_at_once(self) -> None:
+        # The signal lands while the loop blocks in select() with nothing
+        # ready: a cancel scheduled without waking the loop
+        # (call_soon_threadsafe) waited out the sleep.
+        import asyncio
+        import threading
+        import time
+
+        async def run() -> int:
+            await asyncio.sleep(5)
+            return 0
+
+        @exits_on_sigterm
+        def main() -> int:
+            return asyncio.run(stoppable(run()))
+
+        threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGTERM)).start()
+        started = time.monotonic()
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 143
+        assert time.monotonic() - started < 2.5
+
+    def test_a_second_stop_does_not_cancel_the_cleanup(self) -> None:
+        # In the process, a second Ctrl-C leaves the task's finally awaits
+        # (an aclose) alone; outside the test suite it ends the process.
+        import asyncio
+
+        events: list[str] = []
+
+        async def run() -> int:
+            try:
+                os.kill(os.getpid(), signal.SIGINT)
+                await asyncio.sleep(5)
+            finally:
+                os.kill(os.getpid(), signal.SIGINT)
+                try:
+                    await asyncio.sleep(0.2)
+                    events.append("closed")
+                except asyncio.CancelledError:
+                    events.append("cleanup cancelled")
+                    raise
+            return 0
+
+        @exits_on_sigterm
+        def main() -> int:
+            return asyncio.run(stoppable(run()))
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 130
+        assert events == ["closed"]
+
+    def test_after_an_interruptible_prompt_a_stop_cancels_again(self) -> None:
+        import asyncio
+
+        events: list[str] = []
+
+        async def run() -> int:
+            with interruptible():
+                pass  # the prompt returned
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+                events.append("next await")
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                events.append("cancelled")
+                raise
+            return 0
+
+        @exits_on_sigterm
+        def main() -> int:
+            return asyncio.run(stoppable(run()))
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 143
+        assert events == ["next await", "cancelled"]
+
+
+@pytest.mark.parametrize(
+    ("module", "call"),
+    [
+        ("run_rag_chain", "asyncio.run(stoppable(async_main(args)))"),
+        ("run_rag_chain", "with interruptible():"),
+        ("run_evaluation", "stoppable(_run_and_close())"),
+        ("run_prompt_tuning", "stoppable(tuner.tune(texts))"),
+    ],
+)
+def test_each_query_cli_runs_its_coroutine_as_the_stoppable_task(
+    module: str, call: str
+) -> None:
+    # Without the wrapper a stop raises into the loop's own code (the hang
+    # the cancel replaced); without interruptible the prompt waits for a
+    # line before a SIGTERM takes effect.
+    import importlib
+    import inspect
+
+    source = inspect.getsource(
+        importlib.import_module(f"unified_kg_rag.application.cli.{module}")
+    )
+    assert call in source
