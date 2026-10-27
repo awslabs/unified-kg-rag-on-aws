@@ -305,7 +305,12 @@ gets its models and stores from the run's `Providers` bundle.
   (`domain/ingestion/contributions.merge_contributions`: items merged by id,
   weights kept per unit), so the merged graph does not depend on which units
   shared a batch. Claim prompts list the unit's own entities, so a unit's
-  claims depend on the unit alone.
+  claims depend on the unit alone. A claim's subject and object resolve
+  only against the entities its own text units stated (`ClaimResolver`, in
+  a full build as incrementally): a claim whose subject its units' entity
+  extraction did not list is dropped, and an object not listed there is
+  kept as the literal name the claim states (`object_id` empty), though
+  another document states that entity.
 - **The extraction store** keeps each record, keyed by
   `<fingerprint>:<SHA-256 of the processed text>`, in the vector store's
   extraction-records index. The fingerprint
@@ -533,8 +538,13 @@ unless noted.
    sent fails and its own errors are of one cause (alike in type, code and
    HTTP status, not message; or all unparseable or cut-off output; a unit
    that failed otherwise, throttled say, is left out), output errors on the
-   units of more than one document count for none (a server-side output cap
-   cuts them all; a short request cannot tell). Otherwise the stage sends one
+   units of more than one document count only once those documents failed
+   so for `indexing.max_document_failures` consecutive runs (`retry_count`),
+   then at the limit, excluding them: a server-side output cap cuts them all
+   and a short request cannot tell, but a batch that always fails must not
+   stop every run with its deletions (the trade-off: a cap that persists that
+   many runs excludes them, until their content or the extraction settings
+   change). Otherwise the stage sends one
    known-good request through the same chain, bypassing the LLM response
    cache: failed too (for output errors, unparseable counts as failed), the
    cause is the model or a setting and none counts; answered, the errors are

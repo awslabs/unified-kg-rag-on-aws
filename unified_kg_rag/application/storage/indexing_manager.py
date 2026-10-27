@@ -170,6 +170,28 @@ def _with_old_ids(ids: Iterable[str], rekey: Mapping[str, str]) -> list[str]:
     return sorted(wanted | {old for old, new in rekey.items() if new in wanted})
 
 
+class _IncidentEdges:
+    """The stored edges incident to entity ids, by call site, for one
+    derivation: the stored edges do not change during it, so a query over a
+    superset of the ids its site asked last reads only the ids it adds. A
+    query over other ids reads them all again (the edges found for ids no
+    longer asked must not be returned)."""
+
+    def __init__(self, read: Callable[[list[str]], Iterable[str]]) -> None:
+        self._read = read
+        self._by_site: dict[str, tuple[set[str], set[str]]] = {}
+
+    def __call__(self, site: str, ids: Collection[str]) -> set[str]:
+        asked, found = self._by_site.get(site, (set(), set()))
+        wanted = set(ids)
+        if not asked <= wanted:
+            asked, found = set(), set()
+        if new := sorted(wanted - asked):
+            found = found | set(self._read(new))
+        self._by_site[site] = (wanted, found)
+        return found
+
+
 def _edges_of_written_entities(
     relationships: list[Relationship] | None, entity_stats: IndexingStats | None
 ) -> tuple[list[Relationship] | None, IndexingStats | None]:
@@ -1081,23 +1103,12 @@ class IndexingManager:
         records: dict[str, TextUnitExtraction] = {}
         claim_records: dict[str, list[Claim]] = {}
         read_units: set[str] = set()
-        # Nor do the stored edges: a query over a superset of the ids a call
-        # site asked last reads only the ids it adds.
-        incident_reads: dict[str, tuple[set[str], set[str]]] = {}
-
-        def incident(site: str, ids: Collection[str]) -> set[str]:
-            asked, found = incident_reads.get(site, (set(), set()))
-            wanted = set(ids)
-            if not asked <= wanted:
-                asked, found = set(), set()
-            if new := sorted(wanted - asked):
-                found = found | set(
-                    self.neptune_indexer.find_incident_relationship_ids(
-                        new, suffix=suffix
-                    )
-                )
-            incident_reads[site] = (wanted, found)
-            return found
+        # Nor do the stored edges (read once per call site, _IncidentEdges).
+        incident = _IncidentEdges(
+            lambda ids: self.neptune_indexer.find_incident_relationship_ids(
+                ids, suffix=suffix
+            )
+        )
 
         # A new id another stored item holds: that item is a copy an
         # interrupted re-key left, or another spelling a full build merges
@@ -2324,6 +2335,16 @@ class IndexingManager:
         entities = self.neptune_indexer.read_entities(
             sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
+        # The claims' stored subject and object names too: an endpoint a
+        # removal deleted (its spelling was stated only in removed text
+        # units) is read back as nothing, and the claim's statement now
+        # resolves to another spelling of its name.
+        stated_keys = {
+            compact_name_key(name)
+            for c in claims
+            for name in (c.subject_name, c.object_name)
+            if name
+        }
         if removed:
             # And the stored entities of the other spellings of their names:
             # a retried strip re-derives the claims it noted about a split's
@@ -2331,11 +2352,15 @@ class IndexingManager:
             # spelling resolves to the part only when the part is among
             # them. Only a strip reads them (a commit's merge reads its
             # names' spellings already, see merge_with_existing_graph).
-            keys = {compact_name_key(e.name) for e in entities} | {
-                compact_name_key(derived_entities[i].name)
-                for i in entity_ids
-                if i in derived_entities
-            }
+            keys = (
+                {compact_name_key(e.name) for e in entities}
+                | {
+                    compact_name_key(derived_entities[i].name)
+                    for i in entity_ids
+                    if i in derived_entities
+                }
+                | stated_keys
+            )
             family = set(
                 self.neptune_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
                 or []
@@ -2352,7 +2377,7 @@ class IndexingManager:
         # The other spellings of their names this run derived (not stored
         # yet): their text units' records decide, with the claims' own,
         # which spelling a claim's subject and object resolve to.
-        keys = {compact_name_key(e.name) for e in entities}
+        keys = {compact_name_key(e.name) for e in entities} | stated_keys
         given = {e.id for e in entities}
         entities += [
             e

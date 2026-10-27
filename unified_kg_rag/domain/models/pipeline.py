@@ -353,6 +353,13 @@ class PipelineContext(BaseModel):
         "stage fails the run. Any other error (an outage, credentials, a "
         "quota, a setting) counts for none.",
     )
+    capped_text_unit_ids: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="The failed text units whose output failed alike on every "
+        "unit of several documents (a server-side output cap, say), by stage "
+        "name: their documents count toward indexing.max_document_failures "
+        "only once they failed so for that many consecutive runs.",
+    )
 
     recorded_failed_doc_ids: list[str] = Field(
         default_factory=list,

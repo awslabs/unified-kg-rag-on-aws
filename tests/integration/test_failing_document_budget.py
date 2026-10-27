@@ -431,6 +431,54 @@ def test_a_delta_of_only_documents_the_model_rejects_is_excluded(
     assert seen[-1][2] is False, seen
 
 
+@_STAGES
+def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
+    tmp_path: Path, stage: str
+) -> None:
+    # Two documents whose every response of one stage is cut at the output
+    # token limit (a server-side output cap, say), alone in a delta with a
+    # deletion: taken for one cause across documents, counted for none, so
+    # they were extracted again on every run, and with graph extraction
+    # every run failed and the deletion never applied. They count once
+    # they failed so for max_document_failures (2) consecutive runs, and
+    # are then excluded.
+    config, providers, source = _rejecting(tmp_path, {"stage": ""})
+    server = FakeOllama(e2e._respond, "x", e2e.DIM)
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            body = json.loads(request.content)
+            text = "".join(m["content"] for m in body["messages"])
+            if stage in text and "Zorbix" in text:
+                chunk = {
+                    "model": body["model"],
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "message": {"role": "assistant", "content": "<entities>"},
+                    "done": True,
+                    "done_reason": "length",
+                }
+                return httpx.Response(200, content=(json.dumps(chunk) + "\n").encode())
+        return server(request)
+
+    providers = e2e._providers(
+        config, transport, e2e.FakeCrossEncoder("r")  # type: ignore[arg-type]
+    )
+    source.mkdir()
+    for name, text in _FILES.items():
+        (source / name).write_text(text)
+    e2e._ingest(config, providers, source, tmp_path / "seed")
+    (source / "d1.txt").unlink()
+    (source / "z1.txt").write_text(_FAILING)
+    (source / "z2.txt").write_text("Zorbix and Depot trade parts.")
+    seen = []
+    for run in range(3):
+        e2e._ingest(config, providers, source, tmp_path / f"run{run}")
+        counts = _counts(providers)
+        seen.append((counts["z1.txt"], counts["z2.txt"], "d1.txt" in counts))
+    assert [run[:2] for run in seen] == [(0, 0), (2, 2), (2, 2)], seen
+    assert seen[-1][2] is False, seen
+
+
 def test_a_cached_known_good_answer_does_not_hide_a_rejected_setting(
     tmp_path: Path,
 ) -> None:
@@ -621,6 +669,27 @@ def test_new_content_starts_failure_count_over(tmp_path: Path, stage: str) -> No
         seen.append((_fz(providers).failure_count, _fz(providers).retry_count))
         mode["status"] = 503
     assert seen == [(1, 0), (0, 1)], seen
+
+
+@_STOPS_OR_COMMITS
+def test_other_extraction_settings_start_failure_count_over(
+    tmp_path: Path, stage: str
+) -> None:
+    # An error of its own, then the same error under other extraction
+    # settings: the diff re-extracts a document excluded at other settings,
+    # so the failures at the earlier settings must not count toward the new
+    # ones (the record kept adding to them). d0 goes, so the re-extraction
+    # for the new settings is of fz alone (graph extraction then stops the
+    # run before indexing).
+    config, providers, source = _outage(tmp_path, stage, {"status": 400})
+    (source / "d0.txt").unlink()
+    (source / "fz.txt").write_text(_FAILING)
+    seen = []
+    for run, gleaning in enumerate([False, True]):
+        config.processing.gleaning.enabled = gleaning
+        e2e._ingest(config, providers, source, tmp_path / f"s{run}")
+        seen.append(_fz(providers).failure_count)
+    assert seen == [1, 1], seen
 
 
 def test_a_failed_registry_write_records_no_failed_documents(

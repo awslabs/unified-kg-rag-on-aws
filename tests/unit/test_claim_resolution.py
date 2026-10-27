@@ -4,7 +4,8 @@
 
 Regression cover for the over-dropping bug: a claim is anchored to its SUBJECT
 entity; the OBJECT may be a literal value (date/amount/status), so it must not be
-required to resolve to an entity.
+required to resolve to an entity. Only an entity stated in the claim's text
+units is a candidate.
 """
 
 from __future__ import annotations
@@ -28,14 +29,23 @@ def _claim(subject: str, obj: str) -> Claim:
         object_name=obj,
         type="PERFORMANCE",
         description="...",
+        text_unit_ids=["u1"],
     )
 
 
-def _resolve(claim: Claim, names: list[str], method: str = ResolutionMethod.MINHASH):
+def _resolve(
+    claim: Claim,
+    names: list[str],
+    method: str = ResolutionMethod.MINHASH,
+    elsewhere: tuple[str, ...] = (),
+):
+    """``claim`` resolved against ``names``, each stated in the claim's unit
+    but those ``elsewhere`` (stated in another document's unit only)."""
     names_by_key = {entity_key(n): n for n in names}
     ids_by_key = {entity_key(n): f"e-{n}" for n in names}
     matcher = FuzzyMatcher(names, resolution_method=method, similarity_threshold=0.6)
-    return resolve_single_claim(claim, names_by_key, ids_by_key, matcher, {})
+    units = {n: {"u9" if n in elsewhere else "u1"} for n in names}
+    return resolve_single_claim(claim, names_by_key, ids_by_key, matcher, units)
 
 
 def test_object_literal_value_is_kept_with_no_object_id() -> None:
@@ -102,35 +112,40 @@ def test_equal_scores_break_ties_on_the_name() -> None:
     assert resolved.subject_name == reversed_order.subject_name == "Gamma Lab Inc"
 
 
-def test_a_tie_goes_to_the_entity_stated_in_the_claims_units() -> None:
+def test_only_an_entity_stated_in_the_claims_units_is_a_candidate() -> None:
     # "Acme Inc" matches "Acme" and "Acme Corp" equally (legal forms). The
-    # claim's unit states "Acme Corp"; "Acme" comes from another document, so
-    # an incremental run deriving the claim from its unit alone sees only
-    # "Acme Corp". Breaking the tie on the name chose "Acme" in a full build.
+    # claim's unit states "Acme Corp"; "Acme" comes from another document,
+    # so an incremental run deriving the claim from its unit alone sees only
+    # "Acme Corp": a full build must not choose "Acme" either.
     names = ["Acme", "Acme Corp", "Buyer"]
-    names_by_key = {entity_key(n): n for n in names}
-    ids_by_key = {entity_key(n): f"e-{n}" for n in names}
-    matcher = FuzzyMatcher(
-        names, resolution_method=ResolutionMethod.MINHASH, similarity_threshold=0.6
-    )
-    claim = _claim("Acme Inc", "Buyer").model_copy(update={"text_unit_ids": ["u2"]})
-
-    resolved = resolve_single_claim(
-        claim,
-        names_by_key,
-        ids_by_key,
-        matcher,
-        {"Acme": {"u1"}, "Acme Corp": {"u2"}, "Buyer": {"u2"}},
-    )
-    unhinted = resolve_single_claim(claim, names_by_key, ids_by_key, matcher, {})
-
-    assert resolved is not None and unhinted is not None
+    resolved = _resolve(_claim("Acme Inc", "Buyer"), names, elsewhere=("Acme",))
+    assert resolved is not None
     assert resolved.subject_name == "Acme Corp"
-    assert unhinted.subject_name == "Acme"
 
 
-def test_the_claim_resolver_breaks_a_tie_on_the_claims_units() -> None:
-    # Through ClaimResolver: it hands each entity's text units to the tie.
+def test_a_subject_stated_only_in_another_document_drops_the_claim() -> None:
+    # The same name, but the claim's unit did not list it: its entity
+    # extraction did not state the entity there.
+    assert (
+        _resolve(_claim("Acme", "Buyer"), ["Acme", "Buyer"], elsewhere=("Acme",))
+        is None
+    )
+    assert (
+        _resolve(_claim("Acme Inc", "Buyer"), ["Acme", "Buyer"], elsewhere=("Acme",))
+        is None
+    )
+
+
+def test_an_object_stated_only_in_another_document_stays_a_literal() -> None:
+    resolved = _resolve(
+        _claim("Buyer", "Acme Inc"), ["Acme", "Buyer"], elsewhere=("Acme",)
+    )
+    assert resolved is not None
+    assert (resolved.object_id, resolved.object_name) == (None, "Acme Inc")
+
+
+def test_the_claim_resolver_resolves_against_the_claims_units() -> None:
+    # Through ClaimResolver: it hands each entity's text units over.
     from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
     from unified_kg_rag.domain.models import Config, Entity
 

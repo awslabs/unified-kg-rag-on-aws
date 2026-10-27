@@ -35,6 +35,7 @@ def _claim(
     type_: str = "PERFORMANCE",
     **kw: object,
 ) -> Claim:
+    kw.setdefault("text_unit_ids", ["u1"])
     return Claim(
         id=id_,
         subject_id="",
@@ -44,6 +45,11 @@ def _claim(
         type=type_,
         **kw,
     )
+
+
+def _entity(id_: str, name: str, units: tuple[str, ...] = ("u1",)) -> Entity:
+    """An entity stated in ``units`` (by default the one ``_claim`` cites)."""
+    return Entity(id=id_, name=name, text_unit_ids=list(units))
 
 
 class TestReductionRate:
@@ -66,7 +72,7 @@ class TestResolvePipeline:
         assert stats.claim_groups_created == 0
 
     def test_both_entities_resolve_end_to_end(self) -> None:
-        ents = [Entity(id="e-alice", name="Alice"), Entity(id="e-acme", name="Acme")]
+        ents = [_entity("e-alice", "Alice"), _entity("e-acme", "Acme")]
         out, stats = _resolver().resolve(
             [_claim("c1", "Alice", "Acme", type_="WORKS_AT")], ents
         )
@@ -78,16 +84,34 @@ class TestResolvePipeline:
 
     def test_literal_object_kept_with_no_object_id(self) -> None:
         # Object is a literal value: subject anchors, object stays as text.
-        ents = [Entity(id="e-alice", name="Alice")]
+        ents = [_entity("e-alice", "Alice")]
         out, _ = _resolver().resolve([_claim("c1", "Alice", "$100k revenue")], ents)
         assert len(out) == 1
         assert out[0].subject_id == "e-alice"
         assert out[0].object_id is None
         assert out[0].object_name == "$100k revenue"
 
+    def test_an_entity_stated_only_in_another_unit_is_not_a_candidate(self) -> None:
+        # A full build resolves a claim as an incremental run derives it:
+        # against the entities its own text units stated. The subject's
+        # entity stated elsewhere drops the claim; the object's leaves the
+        # object a literal value.
+        ents = [_entity("e-alice", "Alice"), _entity("e-acme", "Acme", ("u2",))]
+        out, stats = _resolver().resolve(
+            [
+                _claim("c1", "Alice", "Acme", type_="WORKS_AT"),
+                _claim("c2", "Acme", "Alice", type_="EMPLOYS"),
+            ],
+            ents,
+        )
+        assert [(c.subject_id, c.object_id, c.object_name) for c in out] == [
+            ("e-alice", None, "Acme")
+        ]
+        assert stats.unresolved_claims == 1
+
     def test_unresolvable_subject_counts_as_unresolved(self) -> None:
         # Subject has no anchor entity -> claim dropped, counted unresolved.
-        ents = [Entity(id="e-acme", name="Acme")]
+        ents = [_entity("e-acme", "Acme")]
         out, stats = _resolver().resolve(
             [_claim("c1", "totally-unknown-subject-zzz", "Acme")], ents
         )
@@ -101,7 +125,7 @@ class TestEntityNameMapConstruction:
     def test_blank_name_entity_skipped_from_map(self) -> None:
         # An entity whose name normalizes to empty contributes no anchor, so a
         # claim referencing only it cannot resolve.
-        ents = [Entity(id="e-blank", name="   "), Entity(id="e-alice", name="Alice")]
+        ents = [_entity("e-blank", "   "), _entity("e-alice", "Alice")]
         out, _ = _resolver().resolve([_claim("c1", "   ", "Alice")], ents)
         # Subject "   " (blank) has no anchor -> dropped.
         assert out == []
@@ -109,7 +133,7 @@ class TestEntityNameMapConstruction:
     def test_resolution_uses_original_entity_name_not_query(self) -> None:
         # Subject given lowercase; resolves to entity, subject_name normalized to
         # the original entity name "Alice".
-        ents = [Entity(id="e-alice", name="Alice")]
+        ents = [_entity("e-alice", "Alice")]
         out, _ = _resolver().resolve([_claim("c1", "alice", "anything literal")], ents)
         assert len(out) == 1
         assert out[0].subject_id == "e-alice"
@@ -357,7 +381,7 @@ class TestResolveDedupIntegration:
     def test_duplicate_claims_merge_into_one(self) -> None:
         # Two identical resolvable claims collapse to a single merged claim, so
         # resolved_claims (post-merge) is 1 while original_claims is 2.
-        ents = [Entity(id="e-alice", name="Alice"), Entity(id="e-acme", name="Acme")]
+        ents = [_entity("e-alice", "Alice"), _entity("e-acme", "Acme")]
         dup = [
             _claim("c1", "Alice", "Acme", type_="WORKS_AT", description="d1"),
             _claim("c2", "Alice", "Acme", type_="WORKS_AT", description="d2"),
@@ -373,7 +397,8 @@ class TestResolveDedupIntegration:
 class TestResolvedClaimId:
     """The stored id is keyed on the resolved entities, not the raw names."""
 
-    _ENTITIES = [Entity(id="e-acme", name="Acme"), Entity(id="e-buyer", name="Buyer")]
+    _UNITS = ("t-Acme Inc.", "t-Acme", "t-a", "t-b")
+    _ENTITIES = [_entity("e-acme", "Acme", _UNITS), _entity("e-buyer", "Buyer", _UNITS)]
 
     def _resolve(self, *subjects: str) -> list[Claim]:
         claims = [

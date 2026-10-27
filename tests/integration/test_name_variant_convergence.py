@@ -2022,26 +2022,47 @@ def test_a_cascading_derivation_reads_each_record_once(
         "r7.txt": "Initech Corp and Acme Ltd and Initech trade parts 3.",
     }
     reads: list[list[str]] = []
+    # And the stored edges of each entity id, once per call site (the given
+    # entities, the moved ones): at most twice per derivation.
+    incident: list[list[str]] = []
     derive = IndexingManager.derive
     read_records = OpenSearchIndexer.read_extraction_records
+    read_incident = SQLiteGraphIndexer.find_incident_relationship_ids
+
+    deriving = [False]
 
     def counted_derive(self: Any, *args: Any, **kwargs: Any) -> Any:
         reads.append([])
-        return derive(self, *args, **kwargs)
+        incident.append([])
+        deriving[0] = True
+        try:
+            return derive(self, *args, **kwargs)
+        finally:
+            deriving[0] = False
 
     def counted_records(self: Any, keys: list[str], *args: Any, **kwargs: Any) -> Any:
-        if reads:
+        if deriving[0]:
             reads[-1].extend(keys)
         return read_records(self, keys, *args, **kwargs)
 
+    def counted_incident(self: Any, ids: list[str], *args: Any, **kwargs: Any) -> Any:
+        if deriving[0]:
+            incident[-1].extend(ids)
+        return read_incident(self, ids, *args, **kwargs)
+
     monkeypatch.setattr(IndexingManager, "derive", counted_derive)
     monkeypatch.setattr(OpenSearchIndexer, "read_extraction_records", counted_records)
+    monkeypatch.setattr(
+        SQLiteGraphIndexer, "find_incident_relationship_ids", counted_incident
+    )
 
     _state(tmp_path, [{**kept, "d7.txt": "Initech and Buyer trade cash 2."}, kept])
 
-    assert reads
+    assert any(reads) and any(incident)
     for read in reads:
         assert len(read) == len(set(read))
+    for asked in incident:
+        assert all(asked.count(i) <= 2 for i in asked), sorted(asked)
 
 
 def test_an_edit_leaves_no_interim_claim(tmp_path: Path) -> None:

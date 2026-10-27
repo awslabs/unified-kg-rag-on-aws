@@ -65,34 +65,38 @@ def resolve_entity_reference(
     entity_reference: str,
     names_by_key: dict[str, str],
     fuzzy_matcher: FuzzyMatcher,
-    stated_in: Callable[[str], bool] = lambda name: False,
+    stated_in: Callable[[str], bool],
 ) -> str | None:
     """Return the name of the entity ``entity_reference`` denotes, else None.
 
-    Tried in order: the same ``entity_key``, then the guarded fuzzy match of
+    Only an entity ``stated_in`` the claim's text units (extracted there)
+    is a candidate, in a full build as in an incremental run, which derives
+    a claim against its units' entities only: a claim's subject or object
+    that its units' entity extraction did not list does not resolve, though
+    another document states the entity. Tried in order: the same
+    ``entity_key``, then the guarded fuzzy match of
     :meth:`FuzzyMatcher.find_all_matches` (spelling and legal-form variants
     share a ``compact_name_key`` and score 1.0; a candidate whose identifier
     tokens or head character differ is never returned), the best score
-    winning; among equal scores the one ``stated_in`` the claim's text units
-    (it names an entity extracted there), then the smallest name. The guards
-    matter as much here as in entity grouping: "PO 1003" must not become
-    "PO 1002", and a literal value must stay a literal value.
+    winning, then the smallest name. The guards matter as much here as in
+    entity grouping: "PO 1003" must not become "PO 1002", and a literal
+    value must stay a literal value.
     """
     key = entity_key(entity_reference)
     if not key:
         return None
-    if key in names_by_key:
+    if key in names_by_key and stated_in(names_by_key[key]):
         return names_by_key[key]
-    matches = fuzzy_matcher.find_all_matches(entity_reference)
+    matches = [
+        match
+        for match in fuzzy_matcher.find_all_matches(entity_reference)
+        if stated_in(match[0])
+    ]
     if not matches:
         return None
-    # Equal scores break on the claim's own text units, then the name: the
-    # choice depends neither on the order the LSH returns candidates in nor
-    # on entities stated elsewhere in the corpus (an incremental run resolves
-    # a claim against its units' entities only).
-    return min(
-        matches, key=lambda match: (-match[1], not stated_in(match[0]), match[0])
-    )[0]
+    # Equal scores break on the name: the choice does not depend on the order
+    # the LSH returns candidates in.
+    return min(matches, key=lambda match: (-match[1], match[0]))[0]
 
 
 def resolve_single_claim(
@@ -106,8 +110,11 @@ def resolve_single_claim(
 
     ``names_by_key`` / ``ids_by_key`` map an ``entity_key`` to the entity's
     name and id; ``fuzzy_matcher`` holds the entity names as candidates;
-    ``units_by_name`` the text units of each entity name (a tie between
-    candidates goes to one stated in the claim's units).
+    ``units_by_name`` the text units of each entity name: only an entity
+    stated in one of the claim's text units is a candidate
+    (:func:`resolve_entity_reference`). A subject that resolves to none
+    drops the claim; an object that resolves to none is kept as the
+    literal value the claim states.
     """
     claim_units = set(claim.text_unit_ids or [])
 

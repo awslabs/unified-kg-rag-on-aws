@@ -49,15 +49,17 @@ def _context(doc: Document, content_hash: str) -> PipelineContext:
 
 
 @pytest.mark.parametrize(
-    ("status", "stored_hash", "failures"),
+    ("status", "stored_hash", "stored_settings", "failures"),
     [
-        (DocStatus.FAILED, "h-new", 3),  # one more failure of this content
-        (DocStatus.FAILED, "h-old", 1),  # failures of another version
-        (DocStatus.PENDING, "h-new", 1),  # not failing before
+        (DocStatus.FAILED, "h-new", "fp-now", 3),  # one more failure of this content
+        (DocStatus.FAILED, "h-new", None, 3),  # settings unknown: not changed
+        (DocStatus.FAILED, "h-new", "fp-old", 1),  # failures at other settings
+        (DocStatus.FAILED, "h-old", "fp-now", 1),  # failures of another version
+        (DocStatus.PENDING, "h-new", "fp-old", 1),  # not failing before
     ],
 )
 def test_a_failed_record_counts_consecutive_failures_and_closes_the_attempt(
-    status: DocStatus, stored_hash: str, failures: int
+    status: DocStatus, stored_hash: str, stored_settings: str | None, failures: int
 ) -> None:
     doc = document("/c/a.txt", [[("Vendor", "Depot", 1)]])
     doc_id = document_doc_id(doc)
@@ -72,7 +74,7 @@ def test_a_failed_record_counts_consecutive_failures_and_closes_the_attempt(
             crash_batch=3,
             attempted_hash="h-new",
             attempt_batch=1,
-            extraction_fingerprint="fp-old",
+            extraction_fingerprint=stored_settings,
         )
     )
     context = _context(doc, "h-new")

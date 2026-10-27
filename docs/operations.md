@@ -266,9 +266,15 @@ from the second, the run warns with the file and the count and reports it in
 are of one cause (the same error type, code and HTTP status, whatever the
 message says; or all output that does not parse or was cut off; a unit
 throttled or timed out alongside is left out), output errors on the units of
-more than one document count for none: a server-side output cap cuts them
-all, and a short known-good request cannot tell it from each document's own
-output. Otherwise a known-good request decides (sent through the same chain,
+more than one document are not counted at first: a server-side output cap
+cuts them all, and a short known-good request cannot tell it from each
+document's own output. They are retried (`retry_count`), and the run that is
+the `indexing.max_document_failures`-th consecutive one they failed records
+them `FAILED` at the limit, so the next runs skip them and apply the delta's
+deletions: a batch that always fails cannot stop every run. The trade-off: a
+server-side output cap that persists for that many runs excludes those
+documents too, until their content or the extraction settings change (fix
+the cap, then edit the files or change a setting). Otherwise a known-good request decides (sent through the same chain,
 never served from the LLM response cache): failed too (for output errors,
 an answer that does not parse is a failure), nothing counts; answered, the
 errors count, so a delta of documents the model rejects is still excluded,
