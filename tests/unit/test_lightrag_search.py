@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = pytest.mark.unit
 
@@ -1252,14 +1253,23 @@ class TestCallerFiltersReachEverySubQuery:
 
         assert [q.filters for q in os_r.calls] == [None]
 
-    async def test_id_scope_overrides_caller_id_key(self, config: Config) -> None:
+    async def test_id_scope_narrows_caller_id_key(self, config: Config) -> None:
         strategy, _, _ = _make_strategy(config)
-        query = SearchQuery(query="q", filters={"id": ["caller"], "doc_type": "c"})
+        query = SearchQuery(query="q", filters={"id": ["b", "caller"], "doc_type": "c"})
 
-        merged = strategy._scoped_filters(query, id=["scoped"])
+        merged = strategy._scoped_filters(query, id=["scoped", "b"])
 
-        assert merged == {"id": ["scoped"], "doc_type": "c"}
-        assert query.filters == {"id": ["caller"], "doc_type": "c"}
+        # The scope's values the caller allows, in the scope's order.
+        assert merged == {"id": ["b"], "doc_type": "c"}
+        assert query.filters == {"id": ["b", "caller"], "doc_type": "c"}
+        assert strategy._scoped_filters(
+            SearchQuery(query="q", filters={"id": "z"}), id=["a"]
+        ) == {"id": []}
+        assert strategy._scoped_filters(SearchQuery(query="q")) is None
+        with pytest.raises(InvalidFilterError, match="range"):
+            strategy._scoped_filters(
+                SearchQuery(query="q", filters={"id": {"gte": "a"}}), id=["a"]
+            )
 
 
 class _ConcurrencyProbe:

@@ -30,6 +30,7 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
+    SCOPED_FILTER_KEYS,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     query_scope,
@@ -996,6 +997,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 f"Filter key(s) {', '.join(reserved)}: {strategy.value} search "
                 "sets them itself to scope what it reads, so the filter would "
                 "be replaced."
+            )
+        ranges = sorted(
+            key
+            for key in SCOPED_FILTER_KEYS
+            if isinstance((filters or {}).get(key), dict)
+        )
+        if ranges:
+            raise InvalidFilterError(
+                f"Filter key(s) {', '.join(ranges)}: a range cannot be "
+                "combined with the ids a search scopes these keys to; give a "
+                "value or a list of values."
             )
         self._validate_filter_keys(
             filters,

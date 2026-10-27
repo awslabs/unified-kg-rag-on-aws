@@ -241,12 +241,13 @@ async def test_find_candidate_entities_carries_caller_filters() -> None:
 async def test_retrieve_documents_merges_caller_filters_with_id_scope() -> None:
     retriever = _StubRetriever([_result("t1")])
     strat = _bare_strategy(retrievers={"document": retriever})
-    caller = {"year": 2024, "id": ["ignored"]}
-    await strat._retrieve_documents(["t1"], None, filters=caller)
+    caller = {"year": 2024, "id": ["t1", "other"]}
+    await strat._retrieve_documents(["t2", "t1"], None, filters=caller)
     sent = retriever.last_query
     assert sent is not None
+    # The scope keeps the ids the caller's filter allows.
     assert sent.filters == {"year": 2024, "id": ["t1"]}
-    assert caller == {"year": 2024, "id": ["ignored"]}
+    assert caller == {"year": 2024, "id": ["t1", "other"]}
 
 
 async def test_find_candidate_entities_returns_sources_and_top_k() -> None:

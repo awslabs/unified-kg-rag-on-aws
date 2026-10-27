@@ -855,7 +855,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   pipeline builds. `global` refuses the keys it scopes its own searches by:
   `depth` and `max_cut_depth` (with
   `search.global_search.use_dynamic_selection`, `depth` and
-  `community_id`), and `community_ids` with `text_unit_slots`. `auto` routes
+  `community_id`), and `community_ids` with `text_unit_slots`. `id`,
+  `source_id` and `target_id` narrow what `local`, `drift`, `mix` and
+  `hybrid` fetch by id or walk to (only artifacts with a listed value come
+  back); a range on them is refused with every strategy. `auto` routes
   only among the strategies it may route to that apply every key (with the
   default set, `type:person` leaves `local` and `mix`) and refuses the
   filters, before routing, only when none does. Neptune filters entity

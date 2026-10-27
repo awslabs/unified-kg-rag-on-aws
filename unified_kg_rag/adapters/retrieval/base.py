@@ -42,6 +42,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
@@ -289,6 +290,43 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         return graph_label(prefix, suffix, self._config.indexing.additional_suffix)
 
 
+SCOPED_FILTER_KEYS = frozenset({"id", "source_id", "target_id"})
+"""The keys strategies scope their sub-searches by (a fetch by id, a walk
+step's incident edges): a caller value on one is intersected with the scope
+(``scope_filters``), and a range there is refused (``GraphRAGChain``)."""
+
+
+def scope_filters(
+    filters: dict[str, Any] | None, **scope: Any
+) -> dict[str, Any] | None:
+    """``filters`` with the ``scope`` a strategy adds to a sub-search (e.g.
+    ``id=[...]`` for a fetch by id).
+
+    A key both set keeps the scope's values the caller's also allows, in the
+    scope's order (an empty list matches nothing), so the scope narrows a
+    caller filter and never replaces it. A range on either side of such a
+    key cannot be intersected as a list and is refused
+    (``InvalidFilterError``; the chain refuses a caller range on
+    ``SCOPED_FILTER_KEYS`` before the search). Returns a new dict, or
+    ``None`` when there is nothing to apply.
+    """
+    merged = {**(filters or {})}
+    for key, value in scope.items():
+        if key not in merged:
+            merged[key] = value
+            continue
+        given = merged[key]
+        if isinstance(given, dict) or isinstance(value, dict):
+            raise InvalidFilterError(
+                f"Filter '{key}' is a range, but the search scopes '{key}' by "
+                "value; give a value or a list of values."
+            )
+        allowed = set(given) if isinstance(given, list) else {given}
+        values = value if isinstance(value, list) else [value]
+        merged[key] = [v for v in values if v in allowed]
+    return merged or None
+
+
 class BaseSearchStrategy(ABC):
     """A search algorithm over role-keyed retrievers.
 
@@ -332,9 +370,11 @@ class BaseSearchStrategy(ABC):
         return None
 
     def reserved_filter_keys(self, strategy: SearchStrategy) -> frozenset[str]:
-        """The filter keys ``strategy`` sets itself on the searches it scopes
-        (a sub-query's scope replaces a caller value, ``_scoped_filters``),
-        which ``GraphRAGChain`` therefore refuses. None by default."""
+        """The filter keys ``strategy`` scopes its searches by with values a
+        caller value cannot be intersected with (a range, a browse from the
+        roots), which ``GraphRAGChain`` therefore refuses. None by default:
+        the id keys a strategy scopes (``SCOPED_FILTER_KEYS``) are
+        intersected with the caller's values instead (``scope_filters``)."""
         return frozenset()
 
     def filtered_retrievers(
@@ -808,8 +848,15 @@ class BaseSearchStrategy(ABC):
                 return walked
         search_query = query.model_copy(deep=True)
         search_query.filters = (search_query.filters or {}).copy()
+        # The graph reads ``id`` as the seeds to walk from: a caller's ``id``
+        # (whose entities the seeds already are) applies to what it reached.
+        caller_ids = search_query.filters.pop("id", None)
         search_query.filters["id"] = seed_entity_ids
         expanded = await self._safe_aretrieve(graph, search_query, "graph expansion")
+        if caller_ids is not None:
+            passing = scope_filters({"id": caller_ids}, id=[r.source for r in expanded])
+            kept = set((passing or {})["id"])
+            expanded = [r for r in expanded if r.source in kept]
         if unapplied := self._graph_unapplied_filters(query):
             expanded = await self._vouch_by_entities_index(
                 query, expanded, seeds, unapplied
@@ -1374,12 +1421,10 @@ class BaseSearchStrategy(ABC):
 
         Strategies that build a fresh ``SearchQuery`` for a sub-retrieval must
         carry the caller's attribute filters through, or ``--filters`` is
-        silently dropped on that path. ``scope`` holds the filters the strategy
-        itself adds (e.g. ``id=[...]`` for a fetch-by-id); on a key collision
-        the scope wins, since it pins the fetch to specific artifacts. Returns a
-        new dict (never the caller's) or ``None`` when there is nothing to apply.
-        Indexes have different fields, so the retrievers drop each caller key
-        from the sub-queries whose index (or vertex label) lacks that field.
+        silently dropped on that path. Returns a new dict (never the
+        caller's) or ``None`` when there is nothing to apply; see
+        ``scope_filters``. Indexes have different fields, so the retrievers
+        drop each caller key from the sub-queries whose index (or vertex
+        label) lacks that field.
         """
-        merged = {**(query.filters or {}), **scope}
-        return merged or None
+        return scope_filters(query.filters, **scope)

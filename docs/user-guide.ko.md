@@ -793,7 +793,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
   범위를 좁힌 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `global`은
   자기 검색 범위를 정하는 키를 거부합니다. `depth`와 `max_cut_depth`(`search.global_search.use_dynamic_selection`을
-  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
+  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `id`,
+  `source_id`, `target_id`는 `local`, `drift`, `mix`, `hybrid`가 id로 가져오거나 탐색으로 닿는
+  대상을 좁힙니다(값이 목록에 있는 항목만 돌아옴). 이 키에 범위를 주면 어느 전략에서나 거부됩니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
   적용하는 전략 사이에서만 라우팅하고(기본 집합에서 `type:person`이면 `local`과 `mix`), 그런
   전략이 없을 때만 라우팅 전에 필터를 거부합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
 - OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.

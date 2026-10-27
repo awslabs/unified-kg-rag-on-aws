@@ -1398,6 +1398,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Queries with `local`, `drift`, `mix` and `hybrid`: a filter on `id`,
+  `source_id` or `target_id` narrows what the strategy fetches by id or
+  walks to, instead of being replaced by its scope. `--filters
+  source_id:<vendor>` returned the walk's edges of other sources too, and
+  `--filters id:<entity>` every expanded entity and the text units of the
+  others (local: 7 results, 1 now). A range on these keys is refused with
+  every strategy (`InvalidFilterError`, exit 2) (#PR).
 - Claim extraction: a claim the response was cut off inside without a
   stop reason (its `<claim>` never closed, as under a server-side output
   cap) is dropped; when it was the only claim, the unit fails with
