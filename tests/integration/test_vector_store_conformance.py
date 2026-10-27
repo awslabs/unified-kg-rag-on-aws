@@ -363,7 +363,7 @@ def test_claims_read_from_a_suffix_are_tagged_and_written_back_there(
     assert (read.subject_id, read.object_name, read.status) == (
         "e-vendor",
         "Buyer",
-        "TRUE",
+        "true",  # stored lowercase
     )
     stats = indexer.update_claim_lineage(
         [read.model_copy(update={"text_unit_ids": ["t2"]})]
@@ -557,7 +557,7 @@ def _earlier_claims_index(
 
     def earlier_doc(claim: Claim, embeddings: tuple[list[float], ...]) -> Any:
         doc = prepare(claim, embeddings)
-        del doc["start_date"], doc["end_date"]
+        doc.pop("start_date", None), doc.pop("end_date", None)
         return doc
 
     prepare = indexer._prepare_claim_doc
@@ -614,6 +614,62 @@ def test_a_date_like_filter_value_does_not_type_its_field(
     )
     _write(harness, "claims", "upsert", [_dated_claim("cl2", None, signed="pending")])
     assert harness.stored_ids("claims") == {"cl1", "cl2"}
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> None:
+    # Regression: type and status were stored as the model wrote them, so
+    # status:true matched nothing; an unknown date was stored as "", which
+    # every "lte" range matched; a written-out date compared as a string.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    (claim,) = _claims(None)
+    dated = {
+        "cl-iso": "2024-01-15",
+        "cl-written": "January 20, 2024",
+        "cl-unknown": "UNKNOWN",
+        "cl-none": None,
+        "cl-quarter": "Q1 2024",
+    }
+    _write(
+        harness,
+        "claims",
+        "upsert",
+        [
+            claim.model_copy(update={"id": i, "status": "TRUE", "end_date": d})
+            for i, d in dated.items()
+        ],
+    )
+    assert harness.vector_retriever is not None
+    prefix = harness.config.indexing.opensearch.claims_index_prefix
+
+    async def matching(filters: dict[str, Any]) -> set[str]:
+        retriever = harness.vector_retriever()
+        try:
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=10,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    filters=filters,
+                    source_fields=[],
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return {str(hit.source) for hit in hits}
+
+    assert asyncio.run(matching({"status": "true"})) == set(dated)
+    assert asyncio.run(matching({"type": "obligation"})) == set(dated)
+    assert asyncio.run(matching({"end_date": {"lte": "2024-01-31"}})) == {
+        "cl-iso",
+        "cl-written",
+    }
+    assert asyncio.run(matching({"end_date": "Q1 2024"})) == {"cl-quarter"}
 
 
 def test_find_documents_matches_a_keyword_field_in_a_suffix(

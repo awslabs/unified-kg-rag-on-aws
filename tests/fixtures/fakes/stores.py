@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_label,
     relationship_properties,
 )
+from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 
@@ -531,12 +532,24 @@ class FakeVectorStore(_Recorder):
     def read_claims(self, ids: list[str], suffix: str | None = None) -> list[Any]:
         # Like the OpenSearch claims index: only the stored fields come back,
         # tagged with the suffix they were read from (the port's contract).
+        # Type and status lowercase, dates as claim_date_value stores them.
         bucket = self.data.get("claims", {})
         wanted = suffix or Constants.DEFAULT_SUFFIX.value
+
+        def stored(claim: Claim) -> dict[str, Any]:
+            fields = claim.model_dump(include=_STORED_CLAIM_FIELDS)
+            return {
+                **fields,
+                "type": (claim.type or "").lower(),
+                "status": claim.status.lower() if claim.status else None,
+                "start_date": claim_date_value(claim.start_date),
+                "end_date": claim_date_value(claim.end_date),
+            }
+
         return [
             Claim.model_validate(
                 {
-                    **bucket[i].model_dump(include=_STORED_CLAIM_FIELDS),
+                    **stored(bucket[i]),
                     "attributes": ({Constants.INDEX.value: suffix} if suffix else {}),
                 }
             )

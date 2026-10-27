@@ -227,7 +227,7 @@ def test_prepare_claim_doc_shape(indexer) -> None:
     assert doc["object_id"] == "e2"
     assert doc["object_name"] == "Acme"
     assert doc["type"] == "employment"
-    assert doc["status"] == "TRUE"
+    assert doc["status"] == "true"
     assert doc["description"] == "works at"
     assert doc["description_embedding"] == [0.9]
     assert doc["source_text"] == "Alice works at Acme."
@@ -235,20 +235,40 @@ def test_prepare_claim_doc_shape(indexer) -> None:
 
 @pytest.mark.parametrize(
     ("given", "stored"),
-    [("2020-01-01", "2020-01-01"), (" 2020-01-01 ", "2020-01-01"), ("UNKNOWN", "")],
+    [
+        ("2020-01-01", "2020-01-01"),
+        (" 2020-01-01 ", "2020-01-01"),
+        ("2020-01-01T09:30:00Z", "2020-01-01"),
+        ("January 15, 2020", "2020-01-15"),
+        ("15 Jan 2020", "2020-01-15"),
+        ("Q1  2024", "Q1 2024"),
+        ("03/04/2020", "03/04/2020"),  # day and month order unknown
+        ("UNKNOWN", None),
+        ("", None),
+    ],
 )
 def test_prepare_claim_doc_stores_dates_as_the_claims_identity_reads_them(
-    indexer, given: str, stored: str
+    indexer, given: str, stored: str | None
 ) -> None:
-    # Statements of one claim (one id) may spell its dates apart, and a full
-    # build and an incremental run may keep another statement's spelling.
+    # Statements of one claim (one id) may spell its dates apart: a calendar
+    # date is stored as YYYY-MM-DD (a range filter orders those), another
+    # value as written, and an unknown date not at all (it stored "", which
+    # every "lte" range matched).
+    from unified_kg_rag.domain.ingestion.claim_resolver import (
+        claim_date_key,
+        claim_date_value,
+    )
+
     claim = Claim(
         id="cl1", subject_id="e1", subject_name="A", object_name="B", type="t"
     )
     doc = OpenSearchIndexer._prepare_claim_doc(
         claim.model_copy(update={"start_date": given, "end_date": given}), ([0.0],)
     )
-    assert (doc["start_date"], doc["end_date"]) == (stored, stored)
+    assert (doc.get("start_date"), doc.get("end_date")) == (stored, stored)
+    # Read back, a stored date keys the claim as the date it was.
+    assert claim_date_value(stored) == stored
+    assert claim_date_key(stored) == claim_date_key(given)
 
 
 def test_prepare_claim_doc_degrades_none(indexer) -> None:

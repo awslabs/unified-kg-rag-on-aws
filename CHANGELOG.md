@@ -657,6 +657,13 @@ changed once with the full-config keys (#332).
   as dates, so every later claim with an unknown date failed to write:
   such an index is refused before any model call, and needs one rebuild
   with `indexing.reset: true` (#PR).
+- Claims: claims indexed by #444 have `type` and `status` as the model
+  wrote them, `""` for an unknown date and casefolded dates. Rebuild once with
+  `indexing.reset: true` for `status:` / `type:` filters and date ranges to
+  match them; until then a claim is fixed when it is derived again. A
+  claim whose date is written out (`January 15, 2024`, or with a time)
+  now keys on `2024-01-15`, so its id changes on the rebuild; claims with
+  ISO dates, or none, keep their ids (#PR).
 - Document filters: an index built before #PR maps an `attr_<key>` or
   `attributes.filters.<key>` field as a date when its first value looked
   like one (OpenSearch date detection), and every later value of another
@@ -1439,6 +1446,14 @@ changed once with the full-config keys (#332).
   vertices, and the walk reached no or fewer neighbours. The edges are now
   asked without them, as the graph walk crosses its edges; the reached
   entities are still read under them (#445).
+- Claim filters: claim `type` and `status` are stored lowercase again, so
+  the documented `status:true` and `type:affiliation` match (since #444
+  they were stored as the model wrote them and matched nothing). An
+  unknown claim date is no longer stored as `""`, which every `lte` range
+  matched (83% of the `end_date` `lte` matches had no end date); a date
+  that reads as a calendar date is stored as `YYYY-MM-DD`, any other value
+  as written rather than casefolded, so an exact filter on it matches
+  (#PR).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the

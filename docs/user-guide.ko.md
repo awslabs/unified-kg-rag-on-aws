@@ -786,6 +786,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
   `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
   범위 필터는 문자열로 비교하며, ISO 날짜(`YYYY-MM-DD`)는 이 비교로도 올바르게 정렬됩니다.
+  달력 날짜로 읽히는 주장 날짜(`2024-01-15`, `January 15, 2024`)는 `YYYY-MM-DD`로 저장하고,
+  그 밖의 값(`Q1 2024`)은 적힌 그대로 저장하므로 정확히 일치하는 필터만 의미가 있습니다. 알 수
+  없는 날짜는 저장하지 않으므로 범위 필터를 포함해 어떤 필터에도 일치하지 않습니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
   `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다

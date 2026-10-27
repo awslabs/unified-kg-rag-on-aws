@@ -19,7 +19,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
-from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
+from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.models import (
@@ -700,15 +700,21 @@ class OpenSearchIndexer(VectorIndexer):
             "subject_name": claim.subject_name or "",
             "object_id": claim.object_id,
             "object_name": claim.object_name or "",
-            "type": claim.type or "",
-            "status": claim.status or "",
-            # Part of the claim's identity (resolved_claim_id), so stored as
-            # the identity reads them ("" for none or a placeholder such as
-            # UNKNOWN): statements of one claim may spell them apart. Read
-            # back by read_claims, shown with the claim (``Claim: ...
-            # (STATUS, start–end)``).
-            "start_date": claim_date_key(claim.start_date),
-            "end_date": claim_date_key(claim.end_date),
+            # Lowercase, as entity types: a filter's term matches exactly
+            # (``type:affiliation``, ``status:true``).
+            "type": (claim.type or "").lower(),
+            "status": (claim.status or "").lower(),
+            # Stored as claim_date_value reads them, which the claim's
+            # identity keys on: YYYY-MM-DD for a calendar date, so a range
+            # filter orders them; another value as written, matched exactly.
+            # An unknown date is left out, so it matches no filter. Read back
+            # by read_claims, shown with the claim (``Claim: ... (status,
+            # start–end)``).
+            **{
+                name: date
+                for name in ("start_date", "end_date")
+                if (date := claim_date_value(getattr(claim, name))) is not None
+            },
             "description": claim.description or "",
             "description_embedding": embeddings[0],
             "source_text": claim.source_text or "",

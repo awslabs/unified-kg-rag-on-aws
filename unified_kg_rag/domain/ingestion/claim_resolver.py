@@ -25,10 +25,46 @@ logger = get_logger(__name__)
 _UNKNOWN_DATE_VALUES = frozenset({"", "unknown", "none", "n/a", "na", "null"})
 
 
+# Written-out dates read as calendar dates besides ISO 8601 (which the claim
+# prompt asks for); an all-numeric day/month order is ambiguous and stays
+# as written.
+_DATE_FORMATS = (
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+    "%Y/%m/%d",
+    "%Y.%m.%d",
+)
+
+
+def claim_date_value(value: str | None) -> str | None:
+    """A claim date as stored: None when absent or a placeholder such as
+    UNKNOWN, ``YYYY-MM-DD`` when it reads as a calendar date (ISO 8601, a
+    time dropped, or a written-out date such as "January 15, 2024"), else
+    as written (whitespace collapsed). Applied to its own result it returns
+    it unchanged."""
+    text = " ".join((value or "").split())
+    if text.casefold() in _UNKNOWN_DATE_VALUES:
+        return None
+    try:
+        return datetime.fromisoformat(text).date().isoformat()
+    except ValueError:
+        pass
+    for date_format in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, date_format).date().isoformat()
+        except ValueError:
+            continue
+    return text
+
+
 def claim_date_key(value: str | None) -> str:
-    """Normalize a claim date for identity ("" when absent or a placeholder)."""
-    key = " ".join((value or "").split()).casefold()
-    return "" if key in _UNKNOWN_DATE_VALUES else key
+    """A claim date for identity: its stored value (``claim_date_value``)
+    casefolded, "" when unknown. A stored date keys as the date it was."""
+    return (claim_date_value(value) or "").casefold()
 
 
 def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
@@ -156,6 +192,10 @@ def resolve_single_claim(
             "subject_name": resolved_subject_name,
             "object_id": ids_by_key[entity_key(object_name)] if object_name else None,
             "object_name": object_name or claim.object_name,
+            # Lowercase, as stored and as entity types are: a merge counts
+            # "TRUE" and "true" as one status.
+            "type": claim.type.lower(),
+            "status": claim.status.lower() if claim.status else claim.status,
         }
     )
 
