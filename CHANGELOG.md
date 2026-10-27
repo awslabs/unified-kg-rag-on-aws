@@ -652,24 +652,24 @@ changed once with the full-config keys (#332).
   dates, and read back for a merge without them, until they are derived
   again or the suffix is rebuilt with `indexing.reset: true` (#444). An
   incremental run maps the two fields as keywords on the live claims index
-  before its first write (#PR). An incremental run of #444 itself left
+  before its first write (#446). An incremental run of #444 itself left
   them to the first dated claim, which OpenSearch's date detection mapped
   as dates, so every later claim with an unknown date failed to write:
   such an index is refused before any model call, and needs one rebuild
-  with `indexing.reset: true` (#PR).
+  with `indexing.reset: true` (#446).
 - Claims: claims indexed by #444 have `type` and `status` as the model
   wrote them, `""` for an unknown date and casefolded dates. Rebuild once with
   `indexing.reset: true` for `status:` / `type:` filters and date ranges to
   match them; until then a claim is fixed when it is derived again. A
   claim whose date is written out (`January 15, 2024`, or with a time)
   now keys on `2024-01-15`, so its id changes on the rebuild; claims with
-  ISO dates, or none, keep their ids (#PR).
+  ISO dates, or none, keep their ids (#446).
 - Document filters: an index built before #PR maps an `attr_<key>` or
   `attributes.filters.<key>` field as a date when its first value looked
   like one (OpenSearch date detection), and every later value of another
   form fails to write. An incremental run turns date detection off on the
   live indices, so a field not mapped yet stays a keyword; one already
-  mapped as a date needs a rebuild with `indexing.reset: true` (#PR).
+  mapped as a date needs a rebuild with `indexing.reset: true` (#446).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1453,39 +1453,39 @@ changed once with the full-config keys (#332).
   matched (83% of the `end_date` `lte` matches had no end date); a date
   that reads as a calendar date is stored as `YYYY-MM-DD`, any other value
   as written rather than casefolded, so an exact filter on it matches
-  (#PR).
+  (#446).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
-  pipeline summary; only a warning named them (#PR).
+  pipeline summary; only a warning named them (#446).
 - Claim extraction: the warnings on output or a rejection failing alike
   say the documents are indexed without those claims and counted for
   none; they said "counted against their documents", true of the graph
-  and gleaning stages only (#PR).
+  and gleaning stages only (#446).
 - `run-rag`, `run-eval` and `run-prompt-tuning` in text mode: a run the
   stop watchdog ends (after the 100 s grace, or at a second signal) prints
   `Stopped by SIGTERM.` / `SIGINT.` as a run that unwinds does; it exited
-  143 or 130 without a word (#PR).
+  143 or 130 without a word (#446).
 - Claim resolution: each subject or object spelling is fuzzy-matched
   (MinHash + LSH) once per resolution instead of once per claim statement,
   as #444's per-statement resolution did (100k statements with spelling
-  variants: 43.9 s before, 6.9 s now, same output) (#PR).
+  variants: 43.9 s before, 6.9 s now, same output) (#446).
 - Incremental runs with `processing.deduplicate`: a document indexed
   without the claims of some units (recorded `FAILED` only so the next run
   extracts them again) gave way to a new near-copy, which deleted it from
-  the stores and indexed the copy instead; it is now kept as indexed (#PR).
+  the stores and indexed the copy instead; it is now kept as indexed (#446).
 - `local`, `drift` and `mix` under a caller `id` filter: the entity-linked
   chunks' quota took the top-ranked chunks, which the fetch then
   intersected with the caller's ids, so the slots of the removed ones
   stayed empty (1 chunk of a quota of 4). The caller's ids now narrow the
-  ranked chunks before the quota is taken (#PR).
+  ranked chunks before the quota is taken (#446).
 - Claims and document filters: a date-like value (a claim date, an
   `attr_<key>` value such as `2024-01-15`) no longer maps its field as a
   date on the first write (`date_detection: false` on every index), which
   made every later value of another form, such as an unknown claim date,
   fail to write. An incremental run adds the fields this release maps
   that a live index lacks, and turns date detection off on it, in one
-  additive mapping update before any write (#PR).
+  additive mapping update before any write (#446).
 - Incremental runs: the claims a derivation drops (their subject is not an
   entity their own text units state) are no longer warned of on every run
   (`Failed to resolve N out of M claims` repeated with each re-derivation);
@@ -1567,7 +1567,7 @@ changed once with the full-config keys (#332).
   the end of the run until the lease is given up (0 of 600 signals aimed
   at the lease's exit). An API caller's default Ctrl-C handler is held over
   the exit, which covers the give-up request (most of the window with a
-  remote registry) but not the few bytecodes entering it (#PR).
+  remote registry) but not the few bytecodes entering it (#446).
 - `local` and `drift` under an entity key graph vertices do not store
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a
