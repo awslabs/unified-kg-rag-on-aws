@@ -305,7 +305,12 @@ gets its models and stores from the run's `Providers` bundle.
   (`domain/ingestion/contributions.merge_contributions`: items merged by id,
   weights kept per unit), so the merged graph does not depend on which units
   shared a batch. Claim prompts list the unit's own entities, so a unit's
-  claims depend on the unit alone.
+  claims depend on the unit alone. A claim's subject and object resolve
+  only against the entities its own text units stated (`ClaimResolver`, in
+  a full build as incrementally): a claim whose subject its units' entity
+  extraction did not list is dropped, and an object not listed there is
+  kept as the literal name the claim states (`object_id` empty), though
+  another document states that entity.
 - **The extraction store** keeps each record, keyed by
   `<fingerprint>:<SHA-256 of the processed text>`, in the vector store's
   extraction-records index. The fingerprint

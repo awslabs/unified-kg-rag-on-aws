@@ -1,11 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A claim's subject and object after a removal (embedded stores).
+"""A claim's subject and object after a removal, and of a claim naming an
+entity its own text unit's extraction did not list (embedded stores).
 
 A removal that deletes an entity (only the removed text units stated its
 spelling) must leave no stored claim pointing at it: the claim follows the
 spelling its units state now, as a full build of the remaining corpus
-resolves it.
+resolves it. A claim resolves only against the entities its own text units
+stated, in a full build as in an incremental run, so whichever documents
+came first the stored claims are the same.
 """
 
 from __future__ import annotations
@@ -93,6 +96,23 @@ def _spellings(system: str, human: str) -> str:
     return stages._respond(system, human)
 
 
+def _unlisted(system: str, human: str) -> str:
+    # Entity extraction lists Globex only where it is the topic; a claim
+    # about it is stated elsewhere too.
+    if not any(kind in system for kind in _EXTRACTION):
+        return stages._respond(system, human)
+    text = stages._source_text(human).strip()
+    if "knowledge graph extraction expert" in system:
+        names = ["Globex"] if "Globex trades" in text else ["Buyer", "Depot"]
+        return _entities(names, "ORGANIZATION", text)
+    if "claim extraction specialist" in system:
+        if "owes" not in text:
+            return "<claims></claims>"
+        pair = ("Globex", "Buyer") if "Globex owes" in text else ("Buyer", "Globex")
+        return _claim(*pair, text)
+    return stages._respond(system, human)
+
+
 def _claims_after(
     tmp: Path, respond, corpora: list[dict[str, str]]
 ) -> tuple[list[tuple], set[str]]:
@@ -160,5 +180,44 @@ def test_a_claim_whose_object_a_removal_deletes_follows_the_kept_spelling(
         tmp_path / "inc", _spellings, [{**REMOVED, **KEPT}, KEPT]
     )
     assert ("Buyer", "Acme Inc", False) in full
+    assert not dangling, dangling
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "statement", ["Buyer owes Globex and Depot.", "Globex owes Buyer and Depot."]
+)
+def test_a_claim_about_an_entity_a_removal_deletes(
+    tmp_path: Path, statement: str
+) -> None:
+    # The claim's unit names Globex, its entity extraction did not list it:
+    # a subject stated elsewhere only drops the claim, an object stays a
+    # literal value, before and after the document stating Globex goes.
+    kept = {"k.txt": statement}
+    removed = {"r.txt": "Globex trades goods."}
+    full, _ = _claims_after(tmp_path / "full", _unlisted, [kept])
+    incremental, dangling = _claims_after(
+        tmp_path / "inc", _unlisted, [{**kept, **removed}, kept]
+    )
+    both, _ = _claims_after(tmp_path / "both", _unlisted, [{**kept, **removed}])
+    expected = [("Buyer", "Globex", True)] if statement.startswith("Buyer") else []
+    assert full == both == expected
+    assert not dangling, dangling
+    assert incremental == full
+
+
+@pytest.mark.parametrize(
+    "statement", ["Buyer owes Globex and Depot.", "Globex owes Buyer and Depot."]
+)
+def test_a_claim_added_about_an_entity_another_document_states(
+    tmp_path: Path, statement: str
+) -> None:
+    # An earlier run stored Globex; the claim's own unit does not list it.
+    kept = {"r.txt": "Globex trades goods."}
+    added = {"k.txt": statement}
+    full, _ = _claims_after(tmp_path / "full", _unlisted, [{**kept, **added}])
+    incremental, dangling = _claims_after(
+        tmp_path / "inc", _unlisted, [kept, {**kept, **added}]
+    )
     assert not dangling, dangling
     assert incremental == full

@@ -845,6 +845,17 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Claim resolution: a claim's subject and object resolve only against the
+  entities its own text units stated, in a full build as in an incremental
+  run. A claim whose subject its units' entity extraction did not list is
+  now dropped, and an object not listed there is kept as the literal name
+  the claim states (no `object_id`), even when another document states
+  that entity. A full build linked them to the entity stated anywhere in
+  the corpus, while an incremental run, which derives a claim against its
+  units' entities, did not: the stored claims depended on which documents
+  came first (6 of 120 random corpus walks differed from a full build;
+  0 of 240 now). Existing claims change on their next re-derivation or a
+  rebuild (#PR).
 - Incremental indexing: an interruption during indexing, once the
   write-ahead `PENDING` records are written, resets a document's
   `retry_count` (consecutive failed runs for an error not its own), as it
