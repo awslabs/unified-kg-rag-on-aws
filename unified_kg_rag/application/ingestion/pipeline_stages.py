@@ -1900,6 +1900,9 @@ class IndexingStage(_RegistryStage):
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 context.record_retrying_documents(incremental.retrying_doc_ids)
+                context.record_claims_missing_documents(
+                    incremental.claims_missing_doc_ids
+                )
                 if recorded:
                     # The records of documents the rebuild replaced go; a
                     # failed rebuild keeps them (their artifacts may remain).

@@ -266,8 +266,8 @@ WARNING(`XML output ends with <entities> unclosed`)을 남깁니다. OpenAI 호�
 - **주장은 선택 사항.** 문서의 일부 단위에서 주장 추출만 단위 자체의 오류(내용 때문에 거부된
   요청, 잘리거나 파싱할 수 없는 출력. 여러 문서에서 똑같이 실패한 경우 포함)로 실패하면, 문서는
   그 단위의 주장 없이 인덱싱되고 실패로 세지 않습니다. 한 번은 `FAILED`로 기록하므로
-  (`error_info`: `indexed without the claims of some text units ...`, `failed_documents`에는
-  세지 않음) 다음 실행이 저장된 그래프·주장 레코드를 재사용해 빠진 주장만 다시 추출합니다. 그때도
+  (`error_info`: `indexed without the claims of some text units ...`, `failed_documents`가 아니라
+  `documents_without_claims`에 셈) 다음 실행이 저장된 그래프·주장 레코드를 재사용해 빠진 주장만 다시 추출합니다. 그때도
   실패하면 주장 없이 `PROCESSED`로 기록하고, 내용이나 추출 설정이 바뀔 때까지 다시 추출하지
   않습니다. 그래서 주장에 걸린 서버 쪽 출력 한도는 그런 문서를 한 번 더 인덱싱할 뿐 제외하지
   않습니다. 두 실행 모두 파일을 밝혀 경고합니다. 그 밖의 주장 추출 실패(장애, 저장하지 못한

@@ -793,6 +793,11 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     assert runner._json_result(context)["failed_documents"] == 2
     context.record_failed_documents(["doc-a"])
     assert context.recorded_failed_doc_ids == ["doc-a", "doc-c"]
+    # Indexed without some claims: not failed, counted apart.
+    assert runner._json_result(context)["documents_without_claims"] == 0
+    context.record_claims_missing_documents(["doc-b", "doc-b"])
+    result = runner._json_result(context)
+    assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
 
 
 async def test_eval_json_output_is_the_only_stdout(

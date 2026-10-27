@@ -286,6 +286,8 @@ class IncrementalIndexer:
         # failing again for an error not their own (warn_retrying).
         self.recorded_failed_doc_ids: list[str] = []
         self.retrying_doc_ids: list[str] = []
+        # The documents the last commit indexed without some of their claims.
+        self.claims_missing_doc_ids: list[str] = []
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the stores lost the registry's documents.
@@ -1006,6 +1008,7 @@ class IncrementalIndexer:
         }
         records: list[DocStatusRecord] = []
         claims_given_up: list[str] = []
+        claims_missing: set[str] = set()
         for lineage in lineages:
             existing = prior.get(lineage.doc_id)
             content_hash = fingerprints.get(
@@ -1017,6 +1020,7 @@ class IncrementalIndexer:
             elif lineage.doc_id in write_failed_doc_ids:
                 error_info = _WRITE_FAILED
             elif lineage.doc_id in claims_missing_doc_ids:
+                claims_missing.add(lineage.doc_id)
                 if _same_failure(
                     existing, content_hash, self.extraction_fingerprint, _CLAIMS_MISSING
                 ):
@@ -1083,6 +1087,7 @@ class IncrementalIndexer:
             claims_given_up,
         )
         self.retrying_doc_ids = warn_retrying(records)
+        self.claims_missing_doc_ids = sorted(claims_missing)
         if unproductive:
             logger.warning(
                 "%d documents of the delta produced no lineage this run; their "
@@ -2205,6 +2210,7 @@ def index_delta(
     finally:
         context.record_failed_documents(incremental.recorded_failed_doc_ids)
         context.record_retrying_documents(incremental.retrying_doc_ids)
+        context.record_claims_missing_documents(incremental.claims_missing_doc_ids)
     if not removed:
         raise PipelineStageError(
             "Removing the artifacts of deleted documents failed; their "

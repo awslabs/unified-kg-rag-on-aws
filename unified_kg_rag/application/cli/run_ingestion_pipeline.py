@@ -607,6 +607,7 @@ class IngestionPipelineRunner:
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
             "documents_retrying": len(context.retrying_doc_ids),
+            "documents_without_claims": len(context.claims_missing_doc_ids),
             "documents_excluded": (
                 len(context.incremental_delta.excluded)
                 if context.incremental_delta is not None

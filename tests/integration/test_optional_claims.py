@@ -112,6 +112,8 @@ def test_documents_are_indexed_without_the_failed_claims_and_retried_once(
         assert state[name] == (DocStatus.FAILED, 0, 0), state
     assert context.recorded_failed_doc_ids == []
     assert context.retrying_doc_ids == []
+    # Counted in the run's result (documents_without_claims).
+    assert len(context.claims_missing_doc_ids) == len(failing)
     assert "the next run extracts them again: " + ", ".join(failing) in caplog.text
     indexed = _claims(config, providers)
     assert "Acme must deliver to Buyer" in indexed
@@ -137,10 +139,12 @@ def test_documents_are_indexed_without_the_failed_claims_and_retried_once(
     assert all(state[name][0] is DocStatus.PROCESSED for name in state), state
     assert "which are not extracted again" in caplog.text
     assert context.recorded_failed_doc_ids == []
+    assert len(context.claims_missing_doc_ids) == len(failing)
 
     # And not again: the documents read unchanged.
     calls.clear()
-    e2e._ingest(config, providers, source, tmp_path / "run2")
+    context = e2e._ingest(config, providers, source, tmp_path / "run2")
+    assert context.claims_missing_doc_ids == []
     assert sum(calls.values()) == 0, calls
     assert _claims(config, providers) == indexed
 
@@ -172,6 +176,7 @@ def test_a_reset_rebuild_indexes_without_the_failed_claims(tmp_path: Path) -> No
         assert context.status is PipelineStageStatus.COMPLETED
         seen.append(_state(providers)["z1.txt"])
         assert context.recorded_failed_doc_ids == []
+        assert len(context.claims_missing_doc_ids) == 2
     assert seen == [(DocStatus.FAILED, 0, 0), (DocStatus.PROCESSED, 0, 0)], seen
 
 

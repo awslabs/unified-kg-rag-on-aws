@@ -374,9 +374,21 @@ class PipelineContext(BaseModel):
         "count.",
     )
 
+    claims_missing_doc_ids: list[str] = Field(
+        default_factory=list,
+        description="Registry ids of the documents this run indexed without "
+        "the claims of some text units (their claim extraction failed for an "
+        "error of their own, counted for none); the run's "
+        "documents_without_claims count.",
+    )
+
     def record_failed_documents(self, doc_ids: Iterable[str]) -> None:
         """Add ``doc_ids`` to :attr:`recorded_failed_doc_ids`."""
         self.recorded_failed_doc_ids = sorted({*self.recorded_failed_doc_ids, *doc_ids})
+
+    def record_claims_missing_documents(self, doc_ids: Iterable[str]) -> None:
+        """Add ``doc_ids`` to :attr:`claims_missing_doc_ids`."""
+        self.claims_missing_doc_ids = sorted({*self.claims_missing_doc_ids, *doc_ids})
 
     def record_retrying_documents(self, doc_ids: Iterable[str]) -> None:
         """Add ``doc_ids`` to :attr:`retrying_doc_ids`."""

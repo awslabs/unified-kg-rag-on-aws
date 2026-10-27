@@ -2408,6 +2408,11 @@ class DataIngestionPipeline:
             f"{total_entities} entities, {total_relationships} relationships, "
             f"{total_claims} claims -> {total_communities} communities"
         )
+        if context.claims_missing_doc_ids:
+            summary += (
+                f"\nIndexed without some of their claims: "
+                f"{len(context.claims_missing_doc_ids)} documents"
+            )
         logger.info("=" * 60)
         logger.info("PIPELINE SUMMARY")
         logger.info("=" * 60)

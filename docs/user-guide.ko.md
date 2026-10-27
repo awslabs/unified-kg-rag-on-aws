@@ -1472,7 +1472,7 @@ custom_prompts:
 결과(`run-rag`), 파이프라인 ID와 상태, 실행이 `FAILED`로 기록한 문서 수(`failed_documents`. 모든
 단위를 실패시킨 모델 장애는 아무것도 기록하지 않고, 일부 단위만 실패시킨 장애는 그 문서들을 기록하며
 다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 문서 자체의 것이 아닌 오류로 연속 실행에서
-또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않음. 파일과 실행 횟수를 경고로도 알림), 내용과 추출 설정이 그대로인 채
+또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않음. 파일과 실행 횟수를 경고로도 알림), 일부 텍스트 단위의 주장 추출이 단위 자체의 오류로 실패해 그 주장 없이 인덱싱된 문서 수(`documents_without_claims`. 실패로 세지 않음. 요약에도 표시), 내용과 추출 설정이 그대로인 채
 `indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 설정을 바꾸면 다시 셈. 요약에도 표시),
 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
 실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필

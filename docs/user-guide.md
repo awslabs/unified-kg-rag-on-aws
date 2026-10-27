@@ -1645,7 +1645,10 @@ retried by the next run without counting toward
 `indexing.max_document_failures`), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
 an outage or a setting never excludes them; also warned of with each file
-and its run count), the number of documents left out because they failed
+and its run count), the number of documents indexed without the claims of
+some text units, whose claim extraction failed for an error of their own
+(`documents_without_claims`: counted for none, also in the summary), the
+number of documents left out because they failed
 `indexing.max_document_failures` consecutive runs unchanged, at the same
 extraction settings (a settings change starts the count over)
 (`documents_excluded`, also in the summary) and
