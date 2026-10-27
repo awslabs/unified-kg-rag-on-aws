@@ -42,7 +42,6 @@ from unified_kg_rag.domain.ingestion.claim_resolver import (
     resolved_claim_id,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
-    merge_claim_contributions,
     merge_contributions,
 )
 from unified_kg_rag.domain.ingestion.graph_resolver import (
@@ -520,13 +519,11 @@ def derive(
     derived_claims: list[Claim] = []
     if claims:
         claim_records = claim_records or {}
-        statements = merge_claim_contributions(
-            [
-                claim.model_copy(deep=True)
-                for unit_id in sorted(unit_ids)
-                for claim in claim_records.get(unit_id, [])
-            ]
-        )
+        statements = [
+            claim.model_copy(deep=True)
+            for unit_id in sorted(unit_ids)
+            for claim in claim_records.get(unit_id, [])
+        ]
         resolved_claims, _ = ClaimResolver(
             config, max_workers=1, use_process_pool=False
         ).resolve(statements, resolved["entities"])

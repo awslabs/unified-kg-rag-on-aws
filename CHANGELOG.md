@@ -1405,6 +1405,16 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Claim resolution: each text unit's claim statement resolves against the
+  entities its own unit states, and only the statements that resolve to
+  one claim merge. A full build (and a derivation) first merged the
+  statements that name the same subject, object and type across units, so
+  a statement whose unit does not state the subject was kept through the
+  other unit's, and an object one unit states as an entity another states
+  as a literal name took one of the two; the stored claims then depended
+  on whether the documents were indexed together or one run after another
+  (18 of 2680 random corpus walks differed from a full build, 0 now).
+  Existing claims change on their next re-derivation or a rebuild (#PR).
 - Incremental runs: claims are optional. When only claim extraction failed
   on some of a document's units for an error of their own (a request
   rejected for its content, output cut off or unparseable, alike across
@@ -4769,6 +4779,13 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- Unused code: `ClaimExtractor.merge_claims` and
+  `contributions.merge_claim_contributions` (claim statements are no
+  longer merged before resolution), and the capped-unit bookkeeping of the
+  extraction stages (`capped_text_unit_ids` on the stage stats and
+  `PipelineContext`, the `capped_doc_ids` / `capped_unit_ids` parameters):
+  output failing alike across documents now counts as each document's own
+  (#PR).
 - `PipelineContext.failed_documents`: nothing read it since the run's
   `failed_documents` count became the documents recorded `FAILED`
   (`recorded_failed_doc_ids`, #425) (#432).

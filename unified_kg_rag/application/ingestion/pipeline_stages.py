@@ -1151,17 +1151,16 @@ class ClaimExtractionStage(PipelineStage):
                 stats.failed_text_unit_ids = sorted(
                     {*stats.failed_text_unit_ids, *unsaved}
                 )
-        # Merged in text-unit id order, as derivation merges the stored
-        # claims' units (``derivation.derive``): where the merge keeps the
-        # first statement (description line order, a status tie) a full
-        # build and an incremental run choose alike.
-        claims = self.extractor.merge_claims(
-            [
-                claim.model_copy(deep=True)
-                for unit_id in sorted(per_unit)
-                for claim in per_unit[unit_id]
-            ]
-        )
+        # Each unit's statements, in text-unit id order, not merged by the
+        # names they state: each resolves against the entities its own unit
+        # states (ClaimResolver), as derivation resolves the stored claims'
+        # units (``derivation.derive``), and the resolver merges those that
+        # resolve to one claim.
+        claims = [
+            claim.model_copy(deep=True)
+            for unit_id in sorted(per_unit)
+            for claim in per_unit[unit_id]
+        ]
         context.claims = claims
         context.failed_text_unit_ids[self.name] = stats.failed_text_unit_ids
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids

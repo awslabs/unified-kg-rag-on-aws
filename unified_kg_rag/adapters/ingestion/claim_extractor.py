@@ -24,7 +24,6 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
-from unified_kg_rag.domain.ingestion.contributions import merge_claim_contributions
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
@@ -383,11 +382,6 @@ class ClaimExtractor(BaseProcessor):
             f"{claim_type}{claim_identity_suffix(start_date, end_date)}".lower()
         )
         return generate_stable_id(claim_id_content)
-
-    @staticmethod
-    def merge_claims(claims: list[Claim]) -> list[Claim]:
-        """Merge claim statements by id (see ``merge_claim_contributions``)."""
-        return merge_claim_contributions(claims)
 
     @staticmethod
     def _log_completion_summary(stats: ClaimExtractionStats) -> None:

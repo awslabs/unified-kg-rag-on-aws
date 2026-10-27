@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.ingestion.contributions import (
-    merge_claim_contributions,
     merge_entity_contributions,
     merge_relationship_contributions,
 )
@@ -60,6 +59,8 @@ def test_a_name_is_its_most_frequent_spelling_the_smallest_on_a_tie(
 
 @pytest.mark.parametrize("order", [("TRUE", "SUSPECTED"), ("SUSPECTED", "TRUE")])
 def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
+    from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+
     claims = [
         Claim(
             id="c",
@@ -73,9 +74,9 @@ def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
         for n, status in enumerate(order)
     ]
 
-    (merged,) = merge_claim_contributions(claims)
+    merged = object.__new__(ClaimResolver)._merge_claims(claims)
 
-    assert merged.status == "suspected"
+    assert merged.status == "SUSPECTED"
 
 
 def _claim_statements(order: tuple[int, ...]) -> list[Claim]:
@@ -94,18 +95,6 @@ def _claim_statements(order: tuple[int, ...]) -> list[Claim]:
         )
         for n in order
     ]
-
-
-@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
-def test_merged_claim_statements_do_not_depend_on_their_order(
-    order: tuple[int, ...],
-) -> None:
-    # The object name and the descriptions' order were the first statement's.
-    (merged,) = merge_claim_contributions(_claim_statements(order))
-
-    assert merged.object_name == "USD 100"
-    assert merged.description == "A fee.\nAcme pays 100."
-    assert merged.source_text == "A fee.\nAcme pays 100."
 
 
 @pytest.mark.parametrize("order", [(0, 1), (1, 0)])
@@ -128,12 +117,9 @@ def test_the_most_frequent_claim_object_name_wins(order: tuple[int, ...]) -> Non
     # comes before the tie-break, in the merge and in claim resolution.
     from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 
-    statements = _claim_statements(order)
+    resolved = object.__new__(ClaimResolver)._merge_claims(_claim_statements(order))
 
-    (merged,) = merge_claim_contributions(_claim_statements(order))
-    resolved = object.__new__(ClaimResolver)._merge_claims(statements)
-
-    assert merged.object_name == resolved.object_name == "usd 100"
+    assert resolved.object_name == "usd 100"
 
 
 @pytest.mark.parametrize("name", ["{Seller}", "{0}", "{}", "Map{K,V}", "100%"])
@@ -157,22 +143,8 @@ def test_statements_of_a_name_with_braces_merge(name: str) -> None:
         )
         for n in range(2)
     ]
-    claims = [
-        Claim(
-            id="c",
-            subject_id="",
-            subject_name=name,
-            object_id="",
-            object_name=name,
-            type="LEGAL",
-            text_unit_ids=[f"t{n}"],
-        )
-        for n in range(2)
-    ]
-
     assert [e.name for e in merge_entity_contributions(entities)] == [name]
     assert len(merge_relationship_contributions(relationships)) == 1
-    assert len(merge_claim_contributions(claims)) == 1
 
 
 @pytest.mark.parametrize("order", [(0, 1), (1, 0)])
@@ -202,14 +174,16 @@ def test_an_empty_value_casts_no_vote(
         )
     ]
 
+    from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+
     (entity,) = merge_entity_contributions([entities[n] for n in order])
-    (claim,) = merge_claim_contributions([claims[n] for n in order])
+    claim = object.__new__(ClaimResolver)._merge_claims([claims[n] for n in order])
 
     assert (entity.name, entity.type) == ("Acme", "organization")
     assert (claim.object_name, claim.type, claim.status, claim.description) == (
         "Buyer",
-        "pays",
-        "true",
+        "PAYS",
+        "TRUE",
         "Acme pays.",
     )
 

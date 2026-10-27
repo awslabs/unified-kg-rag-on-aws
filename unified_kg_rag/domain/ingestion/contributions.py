@@ -24,7 +24,6 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     union_all_document_filters,
 )
 from unified_kg_rag.domain.ingestion.descriptions import (
-    by_frequency,
     merge_descriptions,
 )
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
@@ -118,36 +117,6 @@ def merge_relationship_contributions(
     for rel in merged:
         apply_text_unit_weights(rel, sum_weights(weight_maps[rel.id]))
     return merged
-
-
-def merge_claim_contributions(claims: list[Claim]) -> list[Claim]:
-    """Merge claim statements by id (mutates the first of each id): their
-    text units and filters unioned, the most frequent type, status and
-    object name (the smallest on a tie), and their descriptions and source
-    texts unioned in that order, whatever the order of the statements."""
-
-    def most_frequent(values: list[Any]) -> Any:
-        return next(iter(by_frequency(values)), values[0])
-
-    def merge_by_frequency(values: list[Any]) -> str | None:
-        return merge_descriptions(by_frequency(values))
-
-    field_mergers: dict[str, Callable[[list[Any]], Any]] = {
-        "object_name": most_frequent,
-        "description": merge_by_frequency,
-        "source_text": merge_by_frequency,
-        "text_unit_ids": _union_ids,
-        "attributes": union_all_document_filters,
-    }
-    return BaseProcessor._merge_items(
-        items=claims,
-        item_name="Claim",
-        field_mergers=field_mergers,
-        frequency_fields=["type", "status"],
-        describe_item=lambda c: (
-            f"Claim '{c.subject_name}' -> '{c.object_name}' (type: '{c.type}')"
-        ),
-    )
 
 
 def merge_contributions(

@@ -310,7 +310,9 @@ gets its models and stores from the run's `Providers` bundle.
   a full build as incrementally): a claim whose subject its units' entity
   extraction did not list is dropped, and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity.
+  another document states that entity. Each unit's statement is resolved
+  on its own, and resolution merges the statements that resolve to one
+  claim id.
 - **The extraction store** keeps each record, keyed by
   `<fingerprint>:<SHA-256 of the processed text>`, in the vector store's
   extraction-records index. The fingerprint
