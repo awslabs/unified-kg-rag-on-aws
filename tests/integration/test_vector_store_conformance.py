@@ -377,6 +377,17 @@ def test_claims_read_from_a_suffix_are_tagged_and_written_back_there(
         assert default.attributes in (None, {})
 
 
+def test_a_claims_dates_are_read_back(harness: StoreHarness) -> None:
+    # The dates are part of a claim's identity (resolved_claim_id): read back
+    # without them, a stored claim re-keyed to follow a renamed entity took a
+    # date-free id that a full build never gives it.
+    (claim,) = _claims()
+    dated = claim.model_copy(update={"start_date": "2024-01-01"})
+    _write(harness, "claims", "upsert", [dated])
+    (read,) = harness.vector_indexer.read_claims(["cl1"])
+    assert (read.start_date, read.end_date) == ("2024-01-01", None)
+
+
 def test_description_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
     indexer = harness.vector_indexer
     tenant = harness.suffix("tenant")

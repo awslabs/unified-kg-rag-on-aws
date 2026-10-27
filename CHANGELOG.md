@@ -647,6 +647,12 @@ changed once with the full-config keys (#332).
   matches no filter) (#372), or between #370 and #376 with a removal that
   pruned a community (the kept text units of that community lost their
   document filters and dropped out of filtered retrieval) (#376).
+- Claims: claims indexed before #PR have no `start_date` / `end_date` in
+  the claims index (their ids already cover them): they are shown without
+  dates, and read back for a merge without them, until they are derived
+  again or the suffix is rebuilt with `indexing.reset: true`. The fields
+  are added to a live index on the first write (no mapping change to
+  apply) (#PR).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1405,6 +1411,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Claims: the claims index stores a claim's `start_date` and `end_date`
+  (filterable like `status`), `read_claims` reads them back, and a claim in
+  the query context shows its known dates beside its status (`Claim:
+  Vendor -[delivery]-> Buyer (TRUE, 2024-01-01–2024-01-31)`). The dates are
+  part of a claim's id, but were dropped on indexing: two claims of one
+  subject, object and type with other dates read alike, and a stored claim
+  read back for a merge lost them (#PR).
 - Claim extraction: a response whose `</claims>` closes keeps its last
   claim when text after the section names a `<claim>` tag (a note, a code
   fence's trailer). Taken for a claim cut off inside, it was dropped, and

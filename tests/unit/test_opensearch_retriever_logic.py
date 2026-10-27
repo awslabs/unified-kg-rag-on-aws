@@ -1202,6 +1202,33 @@ def test_extract_content_names_a_claims_subject_object_and_status(retriever) -> 
     assert "Description: Vendor breached the supply contract" in content
 
 
+@pytest.mark.parametrize(
+    ("dates", "line"),
+    [
+        (("2024-01-01", "2024-01-31"), "(FALSE, 2024-01-01–2024-01-31)"),
+        (("2024-01-01", "UNKNOWN"), "(FALSE, 2024-01-01–)"),
+        (("", "2024-01-31"), "(FALSE, –2024-01-31)"),
+        (("unknown", None), "(FALSE)"),
+    ],
+)
+def test_extract_content_names_a_claims_known_dates(
+    retriever, dates: tuple, line: str
+) -> None:
+    # Claims of one subject, object and type with other dates are other
+    # claims (their ids differ), but read alike without the dates.
+    content = retriever._extract_content(
+        {
+            "subject_name": "Vendor",
+            "object_name": "Buyer",
+            "type": "delivery",
+            "status": "FALSE",
+            "start_date": dates[0],
+            "end_date": dates[1],
+        }
+    )
+    assert content.splitlines()[0] == f"Claim: Vendor -[delivery]-> Buyer {line}"
+
+
 def test_extract_content_claim_with_a_literal_object_and_no_status(retriever) -> None:
     content = retriever._extract_content(
         {"subject_name": "Vendor", "object_name": "2024-01-31", "description": "d"}
