@@ -1092,3 +1092,18 @@ def test_a_scope_that_allows_nothing_still_reaches_the_store() -> None:
     # A strategy's own fetch by id may intersect to an empty list: the
     # retriever's check keeps accepting it (it matches nothing).
     check_filter_values(scope_filters({"id": ["a"]}, id=["b"]))
+
+
+@pytest.mark.parametrize("strategy", ["local", "mix", "naive", "global", "auto"])
+@pytest.mark.parametrize("key", ["id", "source_id", "target_id"])
+async def test_a_range_on_a_scoped_key_is_refused_by_every_strategy(
+    config: Config, strategy: str, key: str
+) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    # Uniform by choice: naive and global never scope these keys, but a
+    # filter that one strategy refuses is refused by all, so auto routes
+    # the same way whatever it picks.
+    chain = _strategy_chain(config)
+    with pytest.raises(InvalidFilterError, match=f"{key}: a range cannot be"):
+        chain.check_filter_keys({key: {"gte": "a"}}, SearchStrategy(strategy))

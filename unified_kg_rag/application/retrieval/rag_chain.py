@@ -1000,6 +1000,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "sets them itself to scope what it reads, so the filter would "
                 "be replaced."
             )
+        # Under every strategy, those that never scope these keys (naive,
+        # global) too: a filter is valid or not whatever the strategy, and
+        # auto routes it among the same candidates.
         ranges = sorted(
             key
             for key in SCOPED_FILTER_KEYS
