@@ -1398,6 +1398,11 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Incremental runs: a document's consecutive failures
+  (`failure_count`) start over when the extraction settings change, as
+  they do for new content. The failures at the earlier settings were added
+  to, so a document re-extracted for new settings could be excluded after
+  one failure (#PR).
 - Incremental runs: documents whose output fails alike on every unit of
   several documents (cut off or unparseable, as under a server-side output
   cap) in graph extraction, claim extraction or gleaning are counted once

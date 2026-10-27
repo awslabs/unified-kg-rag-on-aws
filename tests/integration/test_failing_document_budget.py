@@ -671,6 +671,27 @@ def test_new_content_starts_failure_count_over(tmp_path: Path, stage: str) -> No
     assert seen == [(1, 0), (0, 1)], seen
 
 
+@_STOPS_OR_COMMITS
+def test_other_extraction_settings_start_failure_count_over(
+    tmp_path: Path, stage: str
+) -> None:
+    # An error of its own, then the same error under other extraction
+    # settings: the diff re-extracts a document excluded at other settings,
+    # so the failures at the earlier settings must not count toward the new
+    # ones (the record kept adding to them). d0 goes, so the re-extraction
+    # for the new settings is of fz alone (graph extraction then stops the
+    # run before indexing).
+    config, providers, source = _outage(tmp_path, stage, {"status": 400})
+    (source / "d0.txt").unlink()
+    (source / "fz.txt").write_text(_FAILING)
+    seen = []
+    for run, gleaning in enumerate([False, True]):
+        config.processing.gleaning.enabled = gleaning
+        e2e._ingest(config, providers, source, tmp_path / f"s{run}")
+        seen.append(_fz(providers).failure_count)
+    assert seen == [1, 1], seen
+
+
 def test_a_failed_registry_write_records_no_failed_documents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

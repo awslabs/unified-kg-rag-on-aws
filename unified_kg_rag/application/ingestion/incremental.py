@@ -998,10 +998,10 @@ class IncrementalIndexer:
             content_hash = fingerprints.get(
                 lineage.doc_id, existing.content_hash if existing else ""
             )
-            # Consecutive failures of this content; new content starts over.
-            # A failure that is not the document's own (an outage,
-            # credentials, a setting, a failed write) neither counts nor
-            # resets it.
+            # Consecutive failures of this content at these extraction
+            # settings; new content or other settings start over. A failure
+            # that is not the document's own (an outage, credentials, a
+            # setting, a failed write) neither counts nor resets it.
             failure_count = retry_count = 0
             if failed:
                 retries = earlier_retries(existing, content_hash) + 1
@@ -1019,6 +1019,9 @@ class IncrementalIndexer:
                     existing is not None
                     and existing.status is DocStatus.FAILED
                     and existing.content_hash == content_hash
+                    and not settings_changed(
+                        existing.extraction_fingerprint, self.extraction_fingerprint
+                    )
                 ):
                     failure_count += existing.failure_count
                 if capped:
@@ -1942,7 +1945,12 @@ def record_item_failures(
         content_hash = fingerprints.get(doc_id, record.content_hash)
         earlier = (
             record.failure_count
-            if record.status is DocStatus.FAILED and record.content_hash == content_hash
+            if record.status is DocStatus.FAILED
+            and record.content_hash == content_hash
+            and not settings_changed(
+                record.extraction_fingerprint,
+                context.incremental_extraction_fingerprint,
+            )
             else 0
         )
         records.append(
