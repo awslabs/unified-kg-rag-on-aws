@@ -899,9 +899,12 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   with the entity-linked chunks that pass, not the top-ranked ones only.
   Other
   `attributes.<path>` keys name an item's own attributes and apply to the
-  entities index only; a graph walk's entities, its seeds included, are
-  checked against that index for them and for `name.keyword`, which entity
-  vertices do not store. On Neptune, `attr_<key>` is also an entity vertex
+  entities index only; a graph walk's entities, LightRAG's seeds included
+  (`local`'s and `drift`'s were found under the filters), are checked
+  against that index for them and for `name.keyword`, which entity
+  vertices do not store. The check sees what the walk kept after its own
+  per-hop and `top_k` cuts, so a passing neighbour ranked below them is
+  not reached. On Neptune, `attr_<key>` is also an entity vertex
   property (`attr_role`), applied where present (a vertex without it passes),
   but the entities-index check above still applies: `attr_role:buyer` selects
   nothing unless documents carry a `role` filter. Every other key is strict

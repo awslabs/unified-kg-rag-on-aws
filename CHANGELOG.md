@@ -1402,6 +1402,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `local` and `drift` under an entity key graph vertices do not store
+  (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
+  filters, are not checked against the entities index again, which cost a
+  request per expansion (#PR).
 - `global` under a filter on a report key (`community_id`, `level`,
   `parent_community_id`, `rating`): a cut over `max_reports_per_level`
   maps the cut's reports most similar to the query instead of giving way

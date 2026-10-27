@@ -655,6 +655,8 @@ class BaseSearchStrategy(ABC):
         results: list[RetrievalResult],
         seeds: set[str],
         filters: dict[str, Any],
+        *,
+        seeds_pass: bool = False,
     ) -> list[RetrievalResult]:
         """Graph-expansion ``results`` without the vertices that do not pass
         ``filters`` (``_graph_unapplied_filters``) on the entities index.
@@ -672,7 +674,8 @@ class BaseSearchStrategy(ABC):
         match each document key independently (see the user guide). The
         seeds are checked for the entity keys: a seed need not have been
         found under them (LightRAG seeds the walk with the endpoints of the
-        relationships it found, which hold no entity key).
+        relationships it found, which hold no entity key), unless
+        ``seeds_pass`` says they were.
         """
         o = self.config.indexing.opensearch
         others = [r for r in results if r.source not in seeds]
@@ -689,7 +692,8 @@ class BaseSearchStrategy(ABC):
                 },
                 documents,
             )
-        if own := {k: v for k, v in filters.items() if k not in documents}:
+        own = {k: v for k, v in filters.items() if k not in documents}
+        if own and not seeds_pass:
             passed |= await self._ids_passing(
                 query,
                 o.entities_index_prefix,
@@ -818,7 +822,11 @@ class BaseSearchStrategy(ABC):
         }
 
     async def _expand_via_graph(
-        self, query: SearchQuery, seed_entity_ids: list[str]
+        self,
+        query: SearchQuery,
+        seed_entity_ids: list[str],
+        *,
+        seeds_pass: bool = False,
     ) -> list[RetrievalResult]:
         """Expand seed entities through the graph (GraphRAG local and LightRAG).
 
@@ -829,7 +837,9 @@ class BaseSearchStrategy(ABC):
         (``_expand_over_passing_relationships``); without that index the
         graph walk stands, its entities checked against the entities index,
         as they are under an entity key the graph does not store
-        (``name.keyword``, ``attributes.<path>``).
+        (``name.keyword``, ``attributes.<path>``). ``seeds_pass``: the seeds
+        were found under ``query.filters`` on the entities index (local's),
+        so they are not checked again.
         """
         graph = self.graph_retriever
         if graph is None or not seed_entity_ids:
@@ -859,7 +869,7 @@ class BaseSearchStrategy(ABC):
             expanded = [r for r in expanded if r.source in kept]
         if unapplied := self._graph_unapplied_filters(query):
             expanded = await self._vouch_by_entities_index(
-                query, expanded, seeds, unapplied
+                query, expanded, seeds, unapplied, seeds_pass=seeds_pass
             )
         return expanded
 

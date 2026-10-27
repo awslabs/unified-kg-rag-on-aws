@@ -139,8 +139,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(candidate_entity_ids) > 5 else "",
         )
 
+        # The candidates were found under the caller's filters.
         expanded_entity_nodes = await self._expand_via_graph(
-            query, candidate_entity_ids
+            query, candidate_entity_ids, seeds_pass=True
         )
         if not expanded_entity_nodes and candidate_hits:
             # A successful expansion returns at least the seeds, so none means

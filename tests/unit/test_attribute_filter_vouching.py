@@ -189,6 +189,51 @@ async def test_an_entity_key_the_graph_does_not_store_is_vouched(
     ]
 
 
+async def test_local_seeds_found_under_the_filters_are_not_checked_again(
+    config: Config,
+) -> None:
+    # local's seeds came from the entities index under the same filters:
+    # checking them again cost a request per expansion.
+    prefix = config.indexing.opensearch.entities_index_prefix
+    entities = opensearch_filter_fields(
+        *config.processing.translation.translated_languages
+    )
+    document = _Store(
+        prefix, [], fields=entities["entities"], passing=frozenset({"near"})
+    )
+    graph = _graph(prefix)
+    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    strategy = _strategy(config, document, graph)
+    query = SearchQuery(query="q", filters={"name.keyword": "x"})
+
+    kept = await strategy._expand_via_graph(query, ["seed"], seeds_pass=True)
+
+    assert [r.source for r in kept] == ["seed", "near"]
+    assert [q.filters for q in document.queries] == [
+        {"name.keyword": "x", "id": ["near", "one", "far"]}
+    ]
+
+
+async def test_local_search_seeds_the_walk_as_passing(config: Config) -> None:
+    prefix = config.indexing.opensearch.entities_index_prefix
+    strategy = _strategy(config, _Store(prefix, []), _graph(prefix))
+    seen: list[bool] = []
+
+    async def candidates(query: SearchQuery) -> list[RetrievalResult]:
+        return [_hit("seed")]
+
+    async def expand(
+        query: SearchQuery, seeds: list[str], *, seeds_pass: bool = False
+    ) -> list[RetrievalResult]:
+        seen.append(seeds_pass)
+        return [_hit("seed")]
+
+    strategy._find_candidate_entities = candidates
+    strategy._expand_via_graph = expand
+    await strategy._retrieve_entity_chain(SearchQuery(query="q"))
+    assert seen == [True]
+
+
 async def test_a_key_the_graph_applies_is_not_vouched(config: Config) -> None:
     prefix = config.indexing.opensearch.entities_index_prefix
     entities = opensearch_filter_fields(
