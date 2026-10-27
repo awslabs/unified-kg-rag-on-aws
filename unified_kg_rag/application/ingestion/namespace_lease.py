@@ -53,11 +53,13 @@ from __future__ import annotations
 
 import functools
 import os
+import signal
 import socket
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import Token
 from datetime import UTC, datetime
 from types import TracebackType
@@ -103,6 +105,34 @@ def longest_write_request_seconds() -> float:
 
 def _when(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat(timespec="seconds")
+
+
+@contextmanager
+def _stops_deferred() -> Iterator[None]:
+    """Run the block with SIGINT and SIGTERM held, then deliver them.
+
+    A stop raised in the give-up itself left the lease held. The Python
+    handlers are swapped, not the thread's signal mask: a handler runs in
+    the main thread whichever thread the signal reached. Off the main
+    thread no handler can interrupt the block.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    received: list[int] = []
+    previous = {
+        signum: signal.signal(signum, lambda signum, _: received.append(signum))
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            # None: a handler not installed from Python, which the default
+            # stands in for.
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
+        for pending in dict.fromkeys(received):
+            signal.raise_signal(pending)
 
 
 class NamespaceLease:
@@ -248,7 +278,8 @@ class NamespaceLease:
         finally:
             self._stop.set()
             if held:
-                self._give_up()
+                with _stops_deferred():
+                    self._give_up()
 
     def _late_write_seconds(self) -> float:
         """How long after the lease expired a write of its holder may land,

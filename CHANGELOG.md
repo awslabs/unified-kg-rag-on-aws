@@ -1518,6 +1518,10 @@ changed once with the full-config keys (#332).
   still gives the lease up. It stayed held for `indexing.lease_seconds`
   (600 s by default), so the rerun failed with `... is being written by`
   (14 of 250 signals at the end of a run) (#443).
+- `run-ingestion`: a SIGTERM or Ctrl-C that lands inside the lease's
+  give-up itself (the release or expiry request) is held until the lease
+  is given up, then raised; it left the lease held for
+  `indexing.lease_seconds` (#PR).
 - `local` and `drift` under an entity key graph vertices do not store
   (`name.keyword`, `attributes.<path>`): the walk's seeds, found under the
   filters, are not checked against the entities index again, which cost a

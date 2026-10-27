@@ -503,3 +503,26 @@ def test_a_stop_raised_while_the_lease_exits_still_gives_it_up(
     assert lease._stop.is_set()
     with NamespaceLease(store, "ns", 60):
         pass
+
+
+class _SignalledGiveUp(FakeDocStatusStore):
+    """Receives SIGINT (Ctrl-C) while the lease is being given up."""
+
+    def release_lease(self, namespace: str, owner: str) -> None:
+        import os
+        import signal
+
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.05)  # the handler runs at the next bytecode boundary
+        super().release_lease(namespace, owner)
+
+
+def test_a_stop_landing_in_the_give_up_still_gives_it_up() -> None:
+    # Regression: a Ctrl-C raised inside the release itself left the lease
+    # held for lease_seconds. Now the stop is held until it is given up, and
+    # then raised.
+    store = _SignalledGiveUp()
+    with pytest.raises(KeyboardInterrupt):
+        with NamespaceLease(store, "ns", 600.0):
+            pass
+    assert store.lease_holder("ns") is None
