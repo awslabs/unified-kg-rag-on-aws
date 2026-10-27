@@ -855,7 +855,7 @@ changed once with the full-config keys (#332).
   units' entities, did not: the stored claims depended on which documents
   came first (6 of 120 random corpus walks differed from a full build;
   0 of 240 now). Existing claims change on their next re-derivation or a
-  rebuild (#PR).
+  rebuild (#442).
 - Incremental indexing: an interruption during indexing, once the
   write-ahead `PENDING` records are written, resets a document's
   `retry_count` (consecutive failed runs for an error not its own), as it
@@ -1404,12 +1404,12 @@ changed once with the full-config keys (#332).
   `LLMOutputTruncatedError`, as other cut-off output does. It was stored
   with the fields before the cut (a claim type, description or source text
   cut short, or no description at all), and its unit recorded `PROCESSED`
-  (#PR).
+  (#442).
 - Incremental runs: a document's consecutive failures
   (`failure_count`) start over when the extraction settings change, as
   they do for new content. The failures at the earlier settings were added
   to, so a document re-extracted for new settings could be excluded after
-  one failure (#PR).
+  one failure (#442).
 - Incremental runs: documents whose output fails alike on every unit of
   several documents (cut off or unparseable, as under a server-side output
   cap) in graph extraction, claim extraction or gleaning are counted once
@@ -1420,12 +1420,12 @@ changed once with the full-config keys (#332).
   run before indexing, so a deleted document was never removed. The
   trade-off: a server-side output cap that persists for that many runs
   excludes those documents too, until their content or the extraction
-  settings change. Outages and rejected settings still never count (#PR).
+  settings change. Outages and rejected settings still never count (#442).
 - Incremental claims: a stored claim whose subject or object entity a
   removal deletes (only the removed documents stated its spelling) is
   derived against the other stored spellings of the names the claim states,
   as a full build of the remaining corpus resolves it. It kept pointing at
-  the deleted entity's id, which no stored entity has (#PR).
+  the deleted entity's id, which no stored entity has (#442).
 - `run-ingestion`: a SIGTERM while the finished run saves its pipeline
   metadata waits for the save and then stops the run (143). Raised inside
   the metadata's serialization, the stop was wrapped as a failed save:
