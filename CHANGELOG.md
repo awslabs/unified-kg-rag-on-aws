@@ -1416,12 +1416,19 @@ changed once with the full-config keys (#332).
   (`Failed to resolve N out of M claims` repeated with each re-derivation);
   the claim resolution stage warns once per run, with the reason (#PR).
 - Claims: the claims index stores a claim's `start_date` and `end_date`
-  (filterable like `status`), `read_claims` reads them back, and a claim in
-  the query context shows its known dates beside its status (`Claim:
-  Vendor -[delivery]-> Buyer (TRUE, 2024-01-01–2024-01-31)`). The dates are
-  part of a claim's id, but were dropped on indexing: two claims of one
-  subject, object and type with other dates read alike, and a stored claim
-  read back for a merge lost them (#PR).
+  as its id reads them (whitespace collapsed, lower case, `UNKNOWN` and
+  other placeholders empty; filterable like `status`), `read_claims` reads
+  them back, and a claim in the query context shows its known dates beside
+  its status (`Claim: Vendor -[delivery]-> Buyer (TRUE,
+  2024-01-01–2024-01-31)`). The dates are part of a claim's id, but were
+  dropped on indexing: two claims of one subject, object and type with
+  other dates read alike, and a stored claim read back for a merge lost
+  them (#PR).
+- Incremental claims: a derived claim takes the dates of the claim it now
+  is, with that claim's id. It kept the given claim's dates (none, for a
+  stored claim read back), so its dates and its id disagreed and differed
+  from a full build's (cl59 with dated claims: 59 of 2680 corpus walks
+  before, 0 now) (#PR).
 - Claim extraction: a response whose `</claims>` closes keeps its last
   claim when text after the section names a `<claim>` tag (a note, a code
   fence's trailer). Taken for a claim cut off inside, it was dropped, and

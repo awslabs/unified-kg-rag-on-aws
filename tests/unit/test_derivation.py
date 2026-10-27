@@ -551,6 +551,30 @@ def test_an_unmatched_claim_takes_the_claim_sharing_most_of_its_units() -> None:
     assert any(other > buyer for buyer, other in results)
 
 
+@pytest.mark.parametrize("given_dates", [(None, None), ("2019-05-05", None)])
+def test_a_derived_claim_takes_the_dates_of_its_new_id(given_dates: tuple) -> None:
+    # The given claim (stored without dates, or with others) matches the
+    # dated claim its unit states: it took that claim's id, whose dates are
+    # part of it, but kept its own dates, so the id and the dates disagreed
+    # and a full build stored the date the incremental run did not.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {"u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1"))}
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    dated = _pays("Acme", "Buyer", ["u1"]).model_copy(
+        update={"start_date": "2020-01-01"}
+    )
+    given = _pays("Acme", "Nobody", ["u1"], "given").model_copy(
+        update={"start_date": given_dates[0], "end_date": given_dates[1]}
+    )
+
+    derived = derive(Config(), [acme, buyer], [], [given], records, {"u1": [dated]})
+
+    (claim,) = derived.claims
+    assert claim.start_date == "2020-01-01"
+    assert claim.id == resolved_claim_id(claim)
+
+
 def test_another_spelling_is_an_endpoint_only_where_the_edge_states_it() -> None:
     # "Acme Inc" (another type) is stated in u2 only. The stored Acme-Depot
     # edge of u1, which u1's records no longer state, is dropped; it must not
