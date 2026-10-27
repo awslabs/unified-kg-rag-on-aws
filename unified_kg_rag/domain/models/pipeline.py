@@ -371,8 +371,10 @@ class PipelineContext(BaseModel):
     retrying_doc_ids: list[str] = Field(
         default_factory=list,
         description="Registry ids of the documents this run failed for an "
-        "error not their own (never counted toward exclusion) that had failed "
-        "so the run before too (DocStatusRecord.retry_count >= 2); the run's "
+        "error not their own (an outage or a setting, never counted toward "
+        "exclusion, or output failing alike on several documents, counted "
+        "after indexing.max_document_failures such runs) that had failed so "
+        "the run before too (DocStatusRecord.retry_count >= 2); the run's "
         "documents_retrying count.",
     )
 

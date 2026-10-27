@@ -647,6 +647,10 @@ changed once with the full-config keys (#332).
   matches no filter) (#372), or between #370 and #376 with a removal that
   pruned a community (the kept text units of that community lost their
   document filters and dropped out of filtered retrieval) (#376).
+- Claims: rebuild once with `indexing.reset: true` to apply #442's claim
+  resolution (a claim links only to the entities its own text units state)
+  to all claims; until then a stored claim changes only when it is derived
+  again (#442).
 
 ### Added
 - Incremental indexing: a document failing consecutive runs for an error
@@ -1536,7 +1540,9 @@ changed once with the full-config keys (#332).
   server-side output cap cuts every document's output but not that short
   request's answer, so the cap counted against every document and excluded
   the corpus after three runs. A single document's output errors are still
-  judged by the known-good request (#440).
+  judged by the known-good request (#440). Superseded by #442: such
+  documents count once they failed so for `indexing.max_document_failures`
+  consecutive runs.
 - Incremental indexing: a derivation reads each text unit's extraction
   records once, and the stored edges of each entity once, instead of again
   every round. A cascading re-key beside a hub of 3000 text units read
@@ -1559,7 +1565,9 @@ changed once with the full-config keys (#332).
   keys are checked against every strategy `auto` may route to before the
   router runs, as an interactive session already did. Only the routed
   strategy was checked, after the router call, so one filter answered or
-  exited 2 depending on the route (#439).
+  exited 2 depending on the route (#439). Superseded by #441: `auto` refuses
+  the filters only when no such strategy applies every key, and routes
+  among those that do.
 - Incremental indexing: reading the stored extraction records of a delta
   no longer rebuilds the set of cited text units per delta unit, which
   took seconds per derive round on a 10k-unit delta (#439).

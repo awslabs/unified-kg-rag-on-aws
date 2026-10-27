@@ -263,7 +263,8 @@ WARNING(`XML output ends with <entities> unclosed`)을 남깁니다. OpenAI 호�
 'max_completion_tokens' is too large")는 설정 문제로 보고 세지 않습니다.
 
 - **재시도 한도.** 내용과 추출 설정이 그대로인 채 `indexing.max_document_failures`(기본값
-  `3`)번 연속으로 문서 자체의 오류(위 설명 참고)로 `FAILED`가 기록되면 문서는
+  `3`)번 연속으로 문서 자체의 오류나 여러 문서에서 똑같이 실패한 응답(위 설명 참고)으로
+  `FAILED`가 기록되면(추출 설정을 바꾸면 다시 셈) 문서는
   `FAILED`로 남고 인덱싱한 내용을 유지한 채 건너뜁니다. 실행마다 파일 이름을 밝힌
   WARNING을 남기고 삭제를 포함한 나머지 델타를 처리합니다. 원인(흔히 너무 크거나 잘못된
   파일)을 고치거나, 파일을 수정하거나, 한도를 올리세요.
