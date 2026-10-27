@@ -370,6 +370,9 @@ async def test_a_stopped_run_keeps_what_it_cannot_upload(
         "--output-directory",
         "s3://no-such-bucket/out",
     )
+    warning = mocker.spy(run_evaluation.logger, "warning")
     with pytest.raises(KeyboardInterrupt):
         await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
     assert list((work_dir / "outputs").glob("evaluation_summary_*.json"))
+    # Named before the upload, which the stop watchdog may cut short.
+    assert any(work_dir / "outputs" in call.args for call in warning.call_args_list)

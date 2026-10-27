@@ -1402,6 +1402,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-eval`: a stopped run names the local copy of the finished runs'
+  results before it uploads them (a WARNING). It was named only after a
+  failed upload, so one the stop watchdog cut short left the files
+  unnamed (#PR).
 - `run-rag`: a repeated `--filters` adds its pairs to the earlier ones
   (a key given twice is still exit 2). The later `--filters` silently
   replaced the earlier one (#PR).

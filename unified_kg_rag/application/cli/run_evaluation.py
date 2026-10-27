@@ -456,6 +456,13 @@ class EvaluationRunner:
         outputs = self._local_outputs(work_dir)
         if not is_s3_uri(target) or not any(outputs.glob("*")):
             return True
+        # Before the upload: one the stop watchdog cuts short says no more.
+        logger.warning(
+            "Evaluation stopped; uploading the finished runs' results in '%s' "
+            "to '%s' (they stay there unless the upload finishes).",
+            outputs,
+            target,
+        )
         try:
             upload_directory_to_s3(
                 s3_client_for(self.config), outputs, target, self.config
