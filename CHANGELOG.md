@@ -652,7 +652,7 @@ changed once with the full-config keys (#332).
   dates, and read back for a merge without them, until they are derived
   again or the suffix is rebuilt with `indexing.reset: true`. The fields
   are added to a live index on the first write (no mapping change to
-  apply) (#PR).
+  apply) (#444).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1414,7 +1414,7 @@ changed once with the full-config keys (#332).
 - Incremental runs: the claims a derivation drops (their subject is not an
   entity their own text units state) are no longer warned of on every run
   (`Failed to resolve N out of M claims` repeated with each re-derivation);
-  the claim resolution stage warns once per run, with the reason (#PR).
+  the claim resolution stage warns once per run, with the reason (#444).
 - Claims: the claims index stores a claim's `start_date` and `end_date`
   as its id reads them (whitespace collapsed, lower case, `UNKNOWN` and
   other placeholders empty; filterable like `status`), `read_claims` reads
@@ -1423,16 +1423,16 @@ changed once with the full-config keys (#332).
   2024-01-01–2024-01-31)`). The dates are part of a claim's id, but were
   dropped on indexing: two claims of one subject, object and type with
   other dates read alike, and a stored claim read back for a merge lost
-  them (#PR).
+  them (#444).
 - Incremental claims: a derived claim takes the dates of the claim it now
   is, with that claim's id. It kept the given claim's dates (none, for a
   stored claim read back), so its dates and its id disagreed and differed
   from a full build's (cl59 with dated claims: 59 of 2680 corpus walks
-  before, 0 now) (#PR).
+  before, 0 now) (#444).
 - Claim extraction: a response whose `</claims>` closes keeps its last
   claim when text after the section names a `<claim>` tag (a note, a code
   fence's trailer). Taken for a claim cut off inside, it was dropped, and
-  an output of that one claim failed its unit as cut off (#PR).
+  an output of that one claim failed its unit as cut off (#444).
 - Claim resolution: each text unit's claim statement resolves against the
   entities its own unit states, and only the statements that resolve to
   one claim merge. A full build (and a derivation) first merged the
@@ -1442,7 +1442,7 @@ changed once with the full-config keys (#332).
   as a literal name took one of the two; the stored claims then depended
   on whether the documents were indexed together or one run after another
   (18 of 2680 random corpus walks differed from a full build, 0 now).
-  Existing claims change on their next re-derivation or a rebuild (#PR).
+  Existing claims change on their next re-derivation or a rebuild (#444).
 - Incremental runs: claims are optional. When only claim extraction failed
   on some of a document's units for an error of their own (a request
   rejected for its content, output cut off or unparseable, alike across
@@ -1453,7 +1453,7 @@ changed once with the full-config keys (#332).
   they fail again; both runs warn with the files. Counted like a graph
   error, a server-side output cap on claims excluded every document after
   three runs though its graph was extracted; it now re-indexes each once.
-  Claim extraction outages still fail the document uncounted (#PR).
+  Claim extraction outages still fail the document uncounted (#444).
 - Incremental runs: output that fails alike on every unit of several
   documents (cut off or unparseable, as under a server-side output cap)
   counts once a run against each document, as an error of its own does:
@@ -1461,7 +1461,7 @@ changed once with the full-config keys (#332).
   excluded after `indexing.max_document_failures` of them. The streak was
   their `retry_count`, which outage runs raise too and a settings change
   kept, so one cut run after two outage runs excluded them at a limit of
-  3, as did one cut run at new settings after one at the old (#PR).
+  3, as did one cut run at new settings after one at the old (#444).
 - `run-eval`: a stopped run names the local copy of the finished runs'
   results before it uploads them (a WARNING). It was named only after a
   failed upload, so one the stop watchdog cut short left the files
@@ -4813,7 +4813,7 @@ changed once with the full-config keys (#332).
   extraction stages (`capped_text_unit_ids` on the stage stats and
   `PipelineContext`, the `capped_doc_ids` / `capped_unit_ids` parameters):
   output failing alike across documents now counts as each document's own
-  (#PR).
+  (#444).
 - `PipelineContext.failed_documents`: nothing read it since the run's
   `failed_documents` count became the documents recorded `FAILED`
   (`recorded_failed_doc_ids`, #425) (#432).
