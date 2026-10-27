@@ -1405,6 +1405,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Claim extraction: a response whose `</claims>` closes keeps its last
+  claim when text after the section names a `<claim>` tag (a note, a code
+  fence's trailer). Taken for a claim cut off inside, it was dropped, and
+  an output of that one claim failed its unit as cut off (#PR).
 - Claim resolution: each text unit's claim statement resolves against the
   entities its own unit states, and only the statements that resolve to
   one claim merge. A full build (and a derivation) first merged the

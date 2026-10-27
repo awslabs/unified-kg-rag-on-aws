@@ -406,6 +406,7 @@ class ClaimExtractor(BaseProcessor):
 
 _CLAIM_OPENED = re.compile(r"<claim[\s>]")
 _CLAIM_CLOSED = re.compile(r"</claim\s*>")
+_SECTION_CLOSED = re.compile(r"</claims\s*>")
 
 
 class ClaimsOutputParser(RobustXMLOutputParser):
@@ -418,6 +419,10 @@ class ClaimsOutputParser(RobustXMLOutputParser):
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
+        # Only a response without its closing </claims> was cut off: text
+        # after the section (a note naming a <claim> tag) is not a claim.
+        if _SECTION_CLOSED.search(text):
+            return result
         opened = [m.start() for m in _CLAIM_OPENED.finditer(text)]
         closed = [m.start() for m in _CLAIM_CLOSED.finditer(text)]
         section = result.get("claims") if isinstance(result, dict) else None

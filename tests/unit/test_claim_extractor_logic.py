@@ -245,6 +245,16 @@ class TestClaimsOutputParser:
         claims = extractor._parse_extraction_result(result, text_unit)
         assert [c.subject_name for c in claims] == ["A", "C"]
 
+    def test_a_note_after_the_closed_section_keeps_the_last_claim(
+        self, extractor, text_unit
+    ) -> None:
+        # The section is closed, so nothing was cut off: a note after it that
+        # names a <claim> tag made the last claim look unclosed and blanked it.
+        text = _TWO_CLAIMS + "\nNote: each <claim> above is one obligation."
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        claims = extractor._parse_extraction_result(result, text_unit)
+        assert [c.subject_name for c in claims] == ["A", "C"]
+
     def test_an_output_of_only_a_cut_off_claim_is_cut_off(
         self, extractor, text_unit
     ) -> None:
