@@ -273,6 +273,7 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool = True,
         errors: dict[int, BaseException] | None = None,
+        discards: dict[int, Callable[[], None]] | None = None,
     ) -> list[Any]:
         """Call ``sequential_func`` once per item and retry failures.
 
@@ -285,7 +286,11 @@ class BatchProcessor(BaseModel):
         :data:`BATCH_ITEM_FAILED`, and its last error is put in ``errors``
         (when given) under its index (classified by
         ``adapters.llm.retry.item_error_predicate``), and the responses its
-        calls registered are discarded (:func:`discard_if_item_fails`).
+        calls registered are discarded (:func:`discard_if_item_fails`). An
+        item that succeeded gets, in ``discards`` (when given) under its
+        index, the call that discards them: for a caller that rejects the
+        result afterwards (a record it cannot build), so a re-run asks the
+        model again instead of replaying it.
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -297,6 +302,7 @@ class BatchProcessor(BaseModel):
                 task_name,
                 show_progress,
                 errors,
+                discards,
             )
             span.set_attributes(_batch_outcome(items_to_process, results))
             return results
@@ -335,6 +341,7 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool,
         errors: dict[int, BaseException] | None = None,
+        item_discards: dict[int, Callable[[], None]] | None = None,
     ) -> list[Any]:
         inputs = self._prepare(items_to_process, prepare_inputs_func, task_name)
         if not inputs:
@@ -362,14 +369,21 @@ class BatchProcessor(BaseModel):
 
         def process_one(idx: int, single_input: dict[str, Any]) -> Any:
             discards: list[Callable[[], None]] = []
+
+            def discard_responses() -> None:
+                for discard in discards:
+                    discard()
+
             token = _ITEM_DISCARDS.set(discards)
             try:
-                return retrying_sequential_func(single_input)
+                result = retrying_sequential_func(single_input)
+                if item_discards is not None:
+                    item_discards[idx] = discard_responses
+                return result
             except _BatchAbandoned:
                 return BATCH_ITEM_FAILED
             except Exception as error:
-                for discard in discards:
-                    discard()
+                discard_responses()
                 if errors is not None:
                     errors[idx] = error
                 return self._failed(task_name, error)

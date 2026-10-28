@@ -209,9 +209,13 @@ class BaseProcessor:
             return text_unit.translated_texts.get(target_language, text_unit.text)
         return text_unit.text
 
-    def parse_entity_data(
-        self, entity_data: dict[str, Any], text_unit: TextUnit
-    ) -> Entity | None:
+    def parse_entity_data(self, entity_data: Any, text_unit: TextUnit) -> Entity | None:
+        if not isinstance(entity_data, dict):
+            # <entity>Acme</entity>: no fields to read.
+            logger.warning(
+                "Skipping entity without fields in text unit '%s'", text_unit.short_id
+            )
+            return None
         try:
             name = clean_display_name(coerce_llm_text(entity_data.get("name")))
             if not name:

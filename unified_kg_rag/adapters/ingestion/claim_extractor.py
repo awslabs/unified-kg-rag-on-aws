@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -175,6 +176,7 @@ class ClaimExtractor(BaseProcessor):
             return [unit_to_input[unit.id] for unit in chunk_items]
 
         errors: dict[int, BaseException] = {}
+        discards: dict[int, Callable[[], None]] = {}
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=units_to_process,
@@ -183,6 +185,7 @@ class ClaimExtractor(BaseProcessor):
                 task_name="Claim Extraction",
                 show_progress=self.show_progress,
                 errors=errors,
+                discards=discards,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -193,7 +196,7 @@ class ClaimExtractor(BaseProcessor):
             return {}, self.stats
 
         per_unit = self._process_extraction_results(
-            units_to_process, extraction_results
+            units_to_process, extraction_results, discards
         )
         self.stats.item_failed_text_unit_ids.extend(
             units_to_process[idx].id
@@ -239,13 +242,21 @@ class ClaimExtractor(BaseProcessor):
         return unit_to_input
 
     def _process_extraction_results(
-        self, text_units: list[TextUnit], extraction_results: list[Any]
+        self,
+        text_units: list[TextUnit],
+        extraction_results: list[Any],
+        discards: dict[int, Callable[[], None]] | None = None,
     ) -> dict[str, list[Claim]]:
+        """The units' claims; a unit whose claims fail to build fails as its
+        own error, and its response is discarded from the LLM response cache
+        (``discards``, from the batch) so a re-run asks again."""
         per_unit: dict[str, list[Claim]] = {}
 
         # The batch processor returns one result per item (BATCH_ITEM_FAILED for
         # a failed one), so a length mismatch is a bug, not lost results.
-        for text_unit, result in zip(text_units, extraction_results, strict=True):
+        for idx, (text_unit, result) in enumerate(
+            zip(text_units, extraction_results, strict=True)
+        ):
             if result and result is not BATCH_ITEM_FAILED:
                 try:
                     per_unit[text_unit.id] = self._parse_extraction_result(
@@ -253,6 +264,8 @@ class ClaimExtractor(BaseProcessor):
                     )
                     self.stats.num_successful_extractions += 1
                 except Exception as e:
+                    if discard := (discards or {}).get(idx):
+                        discard()
                     self._record_failure(text_unit)
                     self.stats.item_failed_text_unit_ids.append(text_unit.id)
                     logger.warning(
