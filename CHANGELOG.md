@@ -872,6 +872,12 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Graph expansion under a document filter and a caller `id` list stops
+  walking the relationships index once it has reached every listed id: the
+  results keep only those ids and a reached entity's path does not change,
+  so the rest of the walk only cost requests (a synthetic 800-entity graph,
+  `top_k` 100: 319 edge requests to 61 for `local`, 208 to 1 for `mix`,
+  `hybrid` and `drift`; results identical) (#448).
 - Queries with `auto` and filters: an INFO line names the strategies the
   filters leave out of the route (`auto routes only among local, mix: the
   filters leave out global`) (#443).
@@ -1428,6 +1434,16 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Neptune retriever: a traversal still running when its chain was closed
+  (its worker waiting for the connection while the close held it) opened
+  a new Neptune connection afterwards, which nothing closed: its websocket
+  and threads stayed for the life of the process. A closed retriever now
+  opens no connection or worker pool; such a traversal fails with
+  `StoreConnectionError` (#448).
+- `run-eval`: a dataset item whose `filters` the RAG chain refuses (an
+  empty list of values, a `None` value) now fails loading with the item's
+  index and query id, as the other malformed fields do, instead of failing
+  each such query mid-run (#448).
 - A re-run or resume with the same pipeline id replayed, from the LLM
   response cache, the response that had failed a text unit for an error of
   its own (one that does not parse): the failure was recorded again without

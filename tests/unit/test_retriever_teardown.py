@@ -49,6 +49,7 @@ def test_neptune_retriever_close_delegates() -> None:
     client = MagicMock()
     object.__setattr__(inst, "_neptune_client", client)
     object.__setattr__(inst, "_executor", None)
+    object.__setattr__(inst, "_closed", False)
     inst.close()
     client.close.assert_called_once()
 

@@ -1476,6 +1476,8 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
         ({"id": ["S", "D"]}, {"S": "S", "D": "S -> B -> D"}),
         # ... and under its source_id, intersected with the frontier.
         ({"source_id": ["X"]}, {"S": "S", "B": "S -> B", "D": "S -> B -> D"}),
+        # ... and under its target_id.
+        ({"target_id": ["X"]}, {"S": "S", "B": "S -> B", "D": "S -> B -> D"}),
     ],
 )
 async def test_the_walk_crosses_edges_without_the_callers_id_keys(
@@ -1490,6 +1492,9 @@ async def test_the_walk_crosses_edges_without_the_callers_id_keys(
         f for prefix, f in index.calls if prefix == index.o.relationships_index_prefix
     ]
     assert edge_calls and all("id" not in f for f in edge_calls)
+    # The caller's document filter stays on every edge request (the fake
+    # store answers the passing edges whatever the filters say).
+    assert all(f.get("attr_grp") == "a" for f in edge_calls)
     assert all(
         "X" not in f.get(end, []) and f.get(end) != []
         for f in edge_calls
@@ -1497,3 +1502,21 @@ async def test_the_walk_crosses_edges_without_the_callers_id_keys(
     )
     reads = [f for prefix, f in index.calls if prefix == index.o.entities_index_prefix]
     assert reads and all(f.get(k) is not None for f in reads for k in scoped)
+
+
+async def test_the_walk_stops_once_every_caller_id_is_reached(config: Config) -> None:
+    # The entity read keeps only the caller's ids and a vertex's path is
+    # fixed once reached: with S and B reached at the first hop, the next
+    # hop (from B to D) cannot change the result, so it is not asked.
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", "id": ["S", "B"]})
+    assert _paths(kept) == {"S": "S", "B": "S -> B"}
+    edge_calls = [
+        f for prefix, f in index.calls if prefix == index.o.relationships_index_prefix
+    ]
+    assert len(edge_calls) == 2  # one hop: a request per endpoint
+    # An id not reached yet keeps the walk going (D is two hops away).
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", "id": ["S", "D"]})
+    assert _paths(kept) == {"S": "S", "D": "S -> B -> D"}
+    assert sum(p == index.o.relationships_index_prefix for p, _ in index.calls) > 1

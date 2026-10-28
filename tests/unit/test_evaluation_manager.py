@@ -134,6 +134,15 @@ class TestLoadData:
                 [{"question": "q", "metadata": {"answer_aliases": ["x", 2]}}],
                 "'answer_aliases' must be a string or a list of strings",
             ),
+            # A filter the chain would refuse on every query (#445).
+            (
+                [{"id": "f1", "question": "q", "metadata": {"filters": {"id": []}}}],
+                "(?s)query_id 'f1'.*'id' is an empty list",
+            ),
+            (
+                [{"id": "f2", "question": "q", "metadata": {"filters": {"g": None}}}],
+                "(?s)query_id 'f2'.*'g' has no value",
+            ),
         ],
     )
     def test_invalid_dataset_fails_fast_with_location(

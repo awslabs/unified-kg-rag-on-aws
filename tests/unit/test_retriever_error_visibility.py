@@ -961,6 +961,7 @@ def _neptune_retriever(config: Config, neptune_client) -> NeptuneRetriever:
     object.__setattr__(inst, "_pool_size", config.aws.neptune.pool_size)
     object.__setattr__(inst, "_traversal_slots", weakref.WeakKeyDictionary())
     object.__setattr__(inst, "_executor", None)
+    object.__setattr__(inst, "_closed", False)
     # Stub out the metrics recorders (pydantic model -> inject, don't patch).
     return inst
 

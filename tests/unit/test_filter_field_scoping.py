@@ -1095,7 +1095,7 @@ def test_an_empty_filter_list_is_refused_before_the_search(
 def test_a_scope_that_allows_nothing_still_reaches_the_store() -> None:
     # A strategy's own fetch by id may intersect to an empty list: the
     # retriever's check keeps accepting it (it matches nothing).
-    check_filter_values(scope_filters({"id": ["a"]}, id=["b"]))
+    check_filter_values(scope_filters({"id": ["a"]}, id=["b"]), allow_empty_lists=True)
 
 
 @pytest.mark.parametrize("strategy", ["local", "mix", "naive", "global", "auto"])

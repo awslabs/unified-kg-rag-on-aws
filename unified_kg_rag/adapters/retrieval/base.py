@@ -919,7 +919,8 @@ class BaseSearchStrategy(ABC):
         filters (a vertex filter such as ``type`` keeps only its entities,
         the walk goes through the others; so does a caller ``id``, and the
         edges are asked without the caller's ``id``/``source_id``/
-        ``target_id``, as the graph walk crosses them), scored by distance
+        ``target_id``, as the graph walk crosses them; the walk stops once
+        it has reached every id a caller ``id`` lists), scored by distance
         and importance as the graph walk does (``degree`` reads as
         ``rank``: the index holds no degree), and cut to ``top_k * retrieval_multiplier``; ``Path:``
         follows the walk.
@@ -951,6 +952,19 @@ class BaseSearchStrategy(ABC):
             }
         )
         parent: dict[str, str | None] = dict.fromkeys(seeds)
+        # A caller id list: the entity read below keeps only those ids, and
+        # a vertex's path is fixed once reached, so once every listed id is
+        # reached the rest of the walk cannot change the result.
+        caller_ids = (query.filters or {}).get("id")
+        wanted = (
+            {str(v) for v in caller_ids}
+            if isinstance(caller_ids, list)
+            else {str(caller_ids)} if isinstance(caller_ids, str | int) else None
+        )
+
+        def all_wanted_reached() -> bool:
+            return wanted is not None and wanted.issubset(parent)
+
         root = {seed: seed for seed in seeds}
         taken = dict.fromkeys(seeds, 0)
         names: dict[str, str] = {}
@@ -1017,7 +1031,8 @@ class BaseSearchStrategy(ABC):
             per_vertex.clear()
             # Only the vertices whose seed is still short of its share.
             frontier = [vertex for vertex in frontier if open_(vertex)]
-            if not frontier:
+            # Hop 0 always asks: an empty first page checks for the index.
+            if not frontier or (hop and all_wanted_reached()):
                 break
             reached: list[str] = []
             edges, full, dropped = await passing(frontier)
@@ -1035,6 +1050,8 @@ class BaseSearchStrategy(ABC):
                     return None
             take(edges, set(frontier))
             still_open = [vertex for vertex in frontier if open_(vertex)]
+            if all_wanted_reached():
+                break
             if full and still_open:
                 # A full page held the busiest vertices' best edges only. The
                 # vertices still open are asked again together at the full
@@ -1044,6 +1061,8 @@ class BaseSearchStrategy(ABC):
                 dropped |= more  # the same edges come back: the larger count
                 take(edges, set(still_open))
                 still_open = [vertex for vertex in still_open if open_(vertex)]
+            if all_wanted_reached():
+                break
             if full and still_open:
                 # Full again: each vertex still open is asked on its own, in
                 # waves of search.max_concurrency. Asked at once, the requests
@@ -1054,6 +1073,8 @@ class BaseSearchStrategy(ABC):
                 # all the open seeds' room (which a request on its own got).
                 step = self.config.search.max_concurrency
                 for start in range(0, len(still_open), step):
+                    if all_wanted_reached():
+                        break
                     wave = [v for v in still_open[start : start + step] if open_(v)]
                     room = sum(needed(v) for v in wave)
                     pages = await gather_or_cancel(

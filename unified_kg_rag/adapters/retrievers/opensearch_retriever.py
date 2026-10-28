@@ -1064,7 +1064,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             InvalidFilterError: A list filter has more values than that, or a
                 value is malformed.
         """
-        check_filter_values(filters)
+        # A strategy's own scope may allow nothing (an empty list).
+        check_filter_values(filters, allow_empty_lists=True)
         for key, value in (filters or {}).items():
             if isinstance(value, list) and len(value) > limit:
                 raise InvalidFilterError(
