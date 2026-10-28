@@ -1467,6 +1467,10 @@ changed once with the full-config keys (#332).
   over the links of the edges its derivation drops (still stored until
   then): their `rank` stayed one higher than a full build's. Those links no
   longer count (#PR).
+- CLIs in text mode: a stop whose teardown (a tracing flush, say) outlasted
+  the grace period printed `Stopped by SIGTERM.` twice, once at the run's
+  exit and once when the watchdog ended the process. It is printed once
+  (#PR).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction
