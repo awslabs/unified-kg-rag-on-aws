@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.storage.filter_schema import check_filter_values
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
@@ -46,6 +47,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.utils.cache_keys import answer_settings
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
@@ -200,7 +202,8 @@ class EvaluationManager:
         Fails fast with an ``EvaluationException`` naming the item index and
         query id on any malformed item — a missing/blank ``question``, a
         duplicate id, a field of the wrong type, or ``metadata`` the RAG chain
-        would reject (e.g. an unknown ``search_strategy``) — instead of
+        would reject (e.g. an unknown ``search_strategy`` or a malformed
+        filter value such as an empty list) — instead of
         skipping it or failing per query mid-run. An empty dataset is an error.
         """
         if not eval_data_path:
@@ -296,7 +299,9 @@ class EvaluationManager:
         }
         try:
             # Validate what the RAG chain will receive now, not per query later.
-            RAGInput.model_validate({**rag_fields, "query": question})
+            rag_input = RAGInput.model_validate({**rag_fields, "query": question})
+            # The chain refuses these per query (an empty list included).
+            check_filter_values(rag_input.filters, allow_empty_lists=False)
             query = EvaluationQuery(
                 query_id=query_id,
                 question=question,
@@ -325,7 +330,7 @@ class EvaluationManager:
                     expected_entities=expected_entities,
                     expected_relationships=expected_relationships,
                 )
-        except ValidationError as e:
+        except (ValidationError, InvalidFilterError) as e:
             raise EvaluationException(f"{where}: {e}") from e
         return query, gt
 

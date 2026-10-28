@@ -1428,6 +1428,10 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `run-eval`: a dataset item whose `filters` the RAG chain refuses (an
+  empty list of values, a `None` value) now fails loading with the item's
+  index and query id, as the other malformed fields do, instead of failing
+  each such query mid-run (#PR).
 - A re-run or resume with the same pipeline id replayed, from the LLM
   response cache, the response that had failed a text unit for an error of
   its own (one that does not parse): the failure was recorded again without
