@@ -1428,6 +1428,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A re-run or resume with the same pipeline id replayed, from the LLM
+  response cache, the response that had failed a text unit for an error of
+  its own (one that does not parse): the failure was recorded again without
+  a model call, so the document's claims were given up for good (PROCESSED
+  without them) or its failure counted toward
+  `indexing.max_document_failures` with no real attempt. A stage whose
+  earlier attempt failed such units now runs uncached (#PR).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

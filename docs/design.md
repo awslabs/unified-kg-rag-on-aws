@@ -437,7 +437,9 @@ gets its models and stores from the run's `Providers` bundle.
   `BaseCache` on every ingestion model, keyed by the rendered messages and the
   model and generation settings, stored with the stage cache. An earlier
   run's entry is served at most once per run and truncated responses are not
-  kept, so a retry after a bad response asks the model again.
+  kept, so a retry after a bad response asks the model again. A stage whose
+  earlier attempt failed units for errors of their own runs under
+  `uncached_responses()`, so a re-run does not replay those responses.
 - **Output fixing.** Structured outputs are parsed with a
   `FixingConfig`-based output-fixing parser.
 - **Resources.** The pipeline releases indexer and client resources in
