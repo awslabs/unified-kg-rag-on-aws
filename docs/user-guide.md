@@ -850,9 +850,14 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   index built before #446, an `attr_*` field already mapped as a date stays
   one until a rebuild with `indexing.reset: true`). A claim
   date that reads as a calendar date (`2024-01-15`, `2024-1-5`,
-  `January 15th, 2024`) is stored as `YYYY-MM-DD`; any other value
-  (`Q1 2024`, `2024-W03`) as written, which only an exact filter matches
-  meaningfully; an unknown date (`UNKNOWN`, `TBD`, `present`) is not
+  `January 15th, 2024`, `Sept. 3, 2024`) is stored as `YYYY-MM-DD`, and a
+  coarser period as its first day: an ISO week (`2024-W03`) as its Monday,
+  a quarter (`Q3 2022`) as 2022-07-01, a month (`March 2024`, `2024-03`) or
+  a year (`2024`) as its first day, so `{"gte": "2022-07-01", "lte":
+  "2022-09-30"}` matches `Q3 2022` but `{"gte": "2022-08-01"}` does not.
+  Any other value (`10/08/2024`, whose day and month order is unknown, or
+  `early 2024`) is stored as written and compares as text, so only an
+  exact filter matches it meaningfully; an unknown date (`UNKNOWN`, `TBD`, `present`) is not
   stored, so it matches no filter, a range included.
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the

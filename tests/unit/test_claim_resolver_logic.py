@@ -537,11 +537,11 @@ def test_a_merged_claim_s_dates_do_not_depend_on_statement_order(
     # Statements of one claim agree on a non-calendar date only up to case.
     ents = [_entity("e1", "Alice"), _entity("e2", "Acme")]
     statements = [
-        _claim("c1", "Alice", "Acme", start_date="Q1 2024", end_date="tbd later"),
-        _claim("c2", "Alice", "Acme", start_date="q1 2024", end_date="TBD later"),
+        _claim("c1", "Alice", "Acme", start_date="Early 2024", end_date="tbd later"),
+        _claim("c2", "Alice", "Acme", start_date="early 2024", end_date="TBD later"),
     ]
     out, _ = _resolver().resolve([statements[i] for i in order], ents)
-    assert [(c.start_date, c.end_date) for c in out] == [("Q1 2024", "TBD later")]
+    assert [(c.start_date, c.end_date) for c in out] == [("Early 2024", "TBD later")]
 
 
 def test_a_reference_unmatched_in_one_statement_resolves_in_another() -> None:

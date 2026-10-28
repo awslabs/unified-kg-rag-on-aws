@@ -1565,14 +1565,20 @@ changed once with the full-config keys (#332).
   as written rather than casefolded, so an exact filter on it matches
   (#446).
 - Claim dates: `2024-1-5`, `January 15th, 2024` and `Jan. 15, 2024` are
-  read as calendar dates, an ISO week (`2024-W03`) is no longer stored as
-  its Monday, and `TBD`, `unspecified`, `ongoing`, `present` and `-` count
-  as unknown. A claim stated with a non-calendar date in another case
-  (`Q1 2024`, `q1 2024`) kept the first statement's spelling, which
+  read as calendar dates, and `TBD`, `unspecified`, `ongoing`, `present`
+  and `-` count as unknown. A claim stated with a non-calendar date in
+  another case (`Early 2024`, `early 2024`) kept the first statement's spelling, which
   depended on the statements' order; it keeps the smallest. A claim id
   keys on its dates, so a stored claim whose date now reads differently
   keeps its old id until its documents are indexed again (`indexing.reset`
-  re-indexes them all) (#449).
+  re-indexes them all) (#449). A coarser period is stored as its first
+  day, so a range filter orders it with the calendar dates instead of
+  comparing its text (`Q3 2022` sorted after every ISO date, `2024-W03`
+  inside 2024-03): an ISO week as its Monday, a quarter (`Q3 2022`,
+  `2022-Q3`), a month (`March 2024`, `2024-03`) or a year (`2024`) as its
+  first day; `Sept.` and `Dec.31` read as dates too. An all-numeric date
+  whose day and month order is unknown (`10/08/2024`) is still stored as
+  written (#PR).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
