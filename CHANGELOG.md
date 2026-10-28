@@ -1514,6 +1514,15 @@ changed once with the full-config keys (#332).
   that reads as a calendar date is stored as `YYYY-MM-DD`, any other value
   as written rather than casefolded, so an exact filter on it matches
   (#446).
+- Claim dates: `2024-1-5`, `January 15th, 2024` and `Jan. 15, 2024` are
+  read as calendar dates, an ISO week (`2024-W03`) is no longer stored as
+  its Monday, and `TBD`, `unspecified`, `ongoing`, `present` and `-` count
+  as unknown. A claim stated with a non-calendar date in another case
+  (`Q1 2024`, `q1 2024`) kept the first statement's spelling, which
+  depended on the statements' order; it keeps the smallest. A claim id
+  keys on its dates, so a stored claim whose date now reads differently
+  keeps its old id until its documents are indexed again (`indexing.reset`
+  re-indexes them all) (#PR).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the

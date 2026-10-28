@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Mapping
@@ -22,7 +23,26 @@ _RESOLVE_PROGRESS_EVERY = 2000
 logger = get_logger(__name__)
 
 # Placeholders the claim prompt (or the model) uses for an absent date.
-_UNKNOWN_DATE_VALUES = frozenset({"", "unknown", "none", "n/a", "na", "null"})
+_UNKNOWN_DATE_VALUES = frozenset(
+    {
+        "",
+        "-",
+        "unknown",
+        "none",
+        "n/a",
+        "na",
+        "null",
+        "tbd",
+        "unspecified",
+        "ongoing",
+        "present",
+    }
+)
+# An ISO 8601 week ("2024-W03"): fromisoformat reads it as its Monday.
+_ISO_WEEK = re.compile(r"\d{4}-?W\d{2}", re.IGNORECASE)
+# What a written-out date may carry that strptime does not read: an ordinal
+# suffix ("15th") or an abbreviation's dot ("Jan.").
+_DATE_NOISE = re.compile(r"(?<=\d)(st|nd|rd|th)\b|(?<=[A-Za-z])\.", re.IGNORECASE)
 
 
 # Written-out dates read as calendar dates besides ISO 8601 (which the claim
@@ -35,6 +55,7 @@ _DATE_FORMATS = (
     "%b %d %Y",
     "%d %B %Y",
     "%d %b %Y",
+    "%Y-%m-%d",
     "%Y/%m/%d",
     "%Y.%m.%d",
 )
@@ -42,20 +63,24 @@ _DATE_FORMATS = (
 
 def claim_date_value(value: str | None) -> str | None:
     """A claim date as stored: None when absent or a placeholder such as
-    UNKNOWN, ``YYYY-MM-DD`` when it reads as a calendar date (ISO 8601, a
-    time dropped, or a written-out date such as "January 15, 2024"), else
-    as written (whitespace collapsed). Applied to its own result it returns
+    UNKNOWN or TBD, ``YYYY-MM-DD`` when it reads as a calendar date (ISO
+    8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
+    as "January 15th, 2024" or "Jan. 15, 2024"), else as written
+    (whitespace collapsed; an ISO week such as ``2024-W03`` is no day). Applied to its own result it returns
     it unchanged."""
     text = " ".join((value or "").split())
     if text.casefold() in _UNKNOWN_DATE_VALUES:
         return None
+    if _ISO_WEEK.fullmatch(text):
+        return text
     try:
         return datetime.fromisoformat(text).date().isoformat()
     except ValueError:
         pass
+    cleaned = _DATE_NOISE.sub("", text)
     for date_format in _DATE_FORMATS:
         try:
-            return datetime.strptime(text, date_format).date().isoformat()
+            return datetime.strptime(cleaned, date_format).date().isoformat()
         except ValueError:
             continue
     return text
@@ -360,8 +385,17 @@ class ClaimResolver(BaseResolver):
             type=self._get_most_common_value([c.type for c in claims])
             or primary_claim.type,
             status=self._get_most_common_value([c.status for c in claims if c.status]),
-            start_date=primary_claim.start_date,
-            end_date=primary_claim.end_date,
+            # As stored, the smallest: the statements of one claim agree on
+            # its dates only up to case (claim_date_key), and their order
+            # varies.
+            start_date=min(
+                (v for c in claims if (v := claim_date_value(c.start_date))),
+                default=primary_claim.start_date,
+            ),
+            end_date=min(
+                (v for c in claims if (v := claim_date_value(c.end_date))),
+                default=primary_claim.end_date,
+            ),
             description=self._merge_descriptions(
                 by_frequency(c.description for c in claims)
             ),

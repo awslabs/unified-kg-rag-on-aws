@@ -243,7 +243,14 @@ def test_prepare_claim_doc_shape(indexer) -> None:
         ("15 Jan 2020", "2020-01-15"),
         ("Q1  2024", "Q1 2024"),
         ("03/04/2020", "03/04/2020"),  # day and month order unknown
+        ("2024-1-5", "2024-01-05"),
+        ("January 15th, 2024", "2024-01-15"),
+        ("Jan. 15, 2024", "2024-01-15"),
+        ("2024-W03", "2024-W03"),  # a week, not its Monday
         ("UNKNOWN", None),
+        ("TBD", None),
+        ("present", None),
+        ("-", None),
         ("", None),
     ],
 )

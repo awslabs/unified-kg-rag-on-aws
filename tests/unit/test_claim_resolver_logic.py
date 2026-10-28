@@ -515,3 +515,30 @@ def test_each_reference_is_fuzzy_matched_once_per_resolution(mocker) -> None:
     resolved, _ = resolver.resolve(claims, entities)
     assert {c.subject_id for c in resolved} == {"e1"}
     assert sorted(calls) == ["Buyer Ltd", "Vendor Inc."]
+
+
+def test_resolution_lowercases_type_and_status_before_the_merge() -> None:
+    # Before the merge, not only at the store: "TRUE" and "true" are one
+    # status in the vote.
+    ents = [_entity("e1", "Alice"), _entity("e2", "Acme")]
+    claims = [
+        _claim("c1", "Alice", "Acme", type_="EMPLOYMENT", status="TRUE"),
+        _claim("c2", "Alice", "Acme", type_="employment", status="true"),
+        _claim("c3", "Alice", "Acme", type_="Employment", status="FALSE"),
+    ]
+    out, _ = _resolver().resolve(claims, ents)
+    assert [(c.type, c.status) for c in out] == [("employment", "true")]
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_a_merged_claim_s_dates_do_not_depend_on_statement_order(
+    order: tuple[int, int],
+) -> None:
+    # Statements of one claim agree on a non-calendar date only up to case.
+    ents = [_entity("e1", "Alice"), _entity("e2", "Acme")]
+    statements = [
+        _claim("c1", "Alice", "Acme", start_date="Q1 2024", end_date="tbd later"),
+        _claim("c2", "Alice", "Acme", start_date="q1 2024", end_date="TBD later"),
+    ]
+    out, _ = _resolver().resolve([statements[i] for i in order], ents)
+    assert [(c.start_date, c.end_date) for c in out] == [("Q1 2024", "TBD later")]
