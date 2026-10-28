@@ -13,12 +13,17 @@ Entries live in immutable JSON segment files in the run's cache directory
 each at most once per run: a retry within the run (after a response failed to
 parse, say) calls the model again, and its response replaces the old one. A
 response cut off at the output-token limit is not stored, since its failure is
-not retried. A call made under ``uncached_responses`` is neither served nor
-stored: it always reaches the model.
+not retried. The responses of a batch item that failed every attempt (one
+that never parsed, say) are dropped (``shared.utils.langchain.
+discard_if_item_fails``): a re-run asks the model again for that item only,
+instead of replaying them and recording the same failure. A call made under
+``uncached_responses`` is neither served nor stored: it always reaches the
+model.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -39,6 +44,7 @@ from unified_kg_rag.adapters.llm.chain_factory import _truncation_reason
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.langchain import discard_if_item_fails
 
 logger = get_logger(__name__)
 
@@ -128,7 +134,10 @@ class LLMResponseCache(BaseCache):
             try:
                 segment = json.loads(path.read_text(encoding="utf-8"))
                 for entry in segment["entries"]:
-                    entries[entry["key"]] = entry["generations"]
+                    if entry["generations"] is None:  # discarded
+                        entries.pop(entry["key"], None)
+                    else:
+                        entries[entry["key"]] = entry["generations"]
             except (OSError, ValueError, KeyError, TypeError) as e:
                 logger.warning(
                     "Skipping unreadable LLM cache segment '%s': %s", path, e
@@ -173,6 +182,7 @@ class LLMResponseCache(BaseCache):
                 return None
             self._served.add(key)
             self.hits += 1
+        discard_if_item_fails(functools.partial(self._discard, key))
         return [_load_generation(g) for g in cached]
 
     def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:
@@ -181,8 +191,9 @@ class LLMResponseCache(BaseCache):
             for g in return_val
         ):
             return
+        key = _cache_key(prompt, llm_string)
         entry = {
-            "key": _cache_key(prompt, llm_string),
+            "key": key,
             "generations": [_dump_generation(g) for g in return_val],
         }
         with self._lock:
@@ -190,8 +201,18 @@ class LLMResponseCache(BaseCache):
                 return
             self._pending.append(entry)
             full = len(self._pending) >= self.flush_every
+        discard_if_item_fails(functools.partial(self._discard, key))
         if full:
             self.flush()
+
+    def _discard(self, key: str) -> None:
+        """Drop the response stored under ``key``: a later segment's entry
+        without generations removes it when the segments are loaded."""
+        with self._lock:
+            if self._directory is None:
+                return
+            self._entries.pop(key, None)
+            self._pending.append({"key": key, "generations": None})
 
     def flush(self) -> None:
         """Write the pending responses as a new segment (no-op when none)

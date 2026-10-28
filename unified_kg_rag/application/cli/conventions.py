@@ -74,7 +74,12 @@ _STOP_GRACE_SECONDS = 100.0
 # The task a stop cancels (see stoppable), the signal that stopped the
 # run once one did, and whether the loop's thread waits in a blocking call
 # (see interruptible).
-_stop: dict[str, Any] = {"task": None, "signum": None, "interruptible": False}
+_stop: dict[str, Any] = {
+    "task": None,
+    "signum": None,
+    "interruptible": False,
+    "line_printed": False,
+}
 # Set when a stop starts the grace period of the watchdog thread, and when
 # a second signal ends it.
 _stop_started = threading.Event()
@@ -185,7 +190,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
         # Set from the command line before it is parsed, so an argparse
         # error or a config that fails to load still prints a JSON status.
         _json.update(enabled=wants_json(argv), printed=False)
-        _stop.update(task=None, signum=None, interruptible=False)
+        _stop.update(task=None, signum=None, interruptible=False, line_printed=False)
         _start_stop_watchdog()
         if _json["enabled"]:
             console.stderr = True
@@ -209,11 +214,7 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
                     # coroutine ended. The JSON status says so; in text mode,
                     # this line (the CLI's own KeyboardInterrupt messages
                     # are for a Ctrl-C outside the loop, which sets no stop).
-                    if not _json["enabled"]:
-                        console.print(
-                            "\n[yellow]Stopped by "
-                            f"{signal.Signals(_stop['signum']).name}.[/yellow]"
-                        )
+                    _print_stop_line(_stop["signum"])
                     raise SystemExit(128 + _stop["signum"])
             if isinstance(result, int) and result:  # mains that return the code
                 print_status(result)
@@ -266,6 +267,16 @@ def interruptible() -> Iterator[None]:
         _stop["interruptible"] = False
 
 
+def _print_stop_line(signum: int) -> None:
+    """In text mode, print the line saying which signal stopped the run,
+    once: main's exit and the watchdog may both get to it."""
+    with _print_lock:
+        if _json["enabled"] or _stop["line_printed"]:
+            return
+        _stop["line_printed"] = True
+        console.print(f"\n[yellow]Stopped by {signal.Signals(signum).name}.[/yellow]")
+
+
 def _stop_watchdog() -> None:
     """End the process a grace period after a stop, if it is still running,
     or at once at a second signal.
@@ -283,10 +294,7 @@ def _stop_watchdog() -> None:
     if _print_lock.acquire(timeout=1.0):
         try:
             print_status(exit_code)
-            if not _json["enabled"]:  # the line main's own exit prints
-                console.print(
-                    f"\n[yellow]Stopped by {signal.Signals(signum).name}.[/yellow]"
-                )
+            _print_stop_line(signum)  # unless main's own exit printed it
         except Exception:  # noqa: BLE001, S110 - ending anyway
             pass
         finally:

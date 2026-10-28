@@ -664,7 +664,7 @@ changed once with the full-config keys (#332).
   claim whose date is written out (`January 15, 2024`, or with a time)
   now keys on `2024-01-15`, so its id changes on the rebuild; claims with
   ISO dates, or none, keep their ids (#446).
-- Document filters: an index built before #PR maps an `attr_<key>` or
+- Document filters: an index built before #446 maps an `attr_<key>` or
   `attributes.filters.<key>` field as a date when its first value looked
   like one (OpenSearch date detection), and every later value of another
   form fails to write. An incremental run turns date detection off on the
@@ -1449,8 +1449,28 @@ changed once with the full-config keys (#332).
   its own (one that does not parse): the failure was recorded again without
   a model call, so the document's claims were given up for good (PROCESSED
   without them) or its failure counted toward
-  `indexing.max_document_failures` with no real attempt. A stage whose
-  earlier attempt failed such units now runs uncached (#447).
+  `indexing.max_document_failures` with no real attempt. The cache now
+  drops the responses of a model call that failed every attempt (graph,
+  gleaning, claims, community reports alike), so a re-run asks
+  the model again for those units only; the stage-wide uncached re-run of
+  #447, which re-asked every unit the extraction store could not supply and
+  replayed the response after a stop during the re-run, is gone (#447, #PR).
+- Translation: an empty answer was recorded as a failed unit but not as
+  an error of its own, so it never counted toward
+  `indexing.max_document_failures`, and its response was replayed from the
+  LLM response cache by a re-run with the same pipeline id. It is now
+  retried like output that does not parse, counted, and dropped from the
+  cache (#449).
+- Incremental indexing: a document removal killed after its strip wrote
+  the stripped items but before the retired ids were deleted, then resumed
+  (or retried by a new pipeline id), ranked the stripped entities and edges
+  over the links of the edges its derivation drops (still stored until
+  then): their `rank` stayed one higher than a full build's. Those links no
+  longer count (#449).
+- CLIs in text mode: a stop whose teardown (a tracing flush, say) outlasted
+  the grace period printed `Stopped by SIGTERM.` twice, once at the run's
+  exit and once when the watchdog ended the process. It is printed once
+  (#449).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction
@@ -1498,10 +1518,21 @@ changed once with the full-config keys (#332).
   that reads as a calendar date is stored as `YYYY-MM-DD`, any other value
   as written rather than casefolded, so an exact filter on it matches
   (#446).
+- Claim dates: `2024-1-5`, `January 15th, 2024` and `Jan. 15, 2024` are
+  read as calendar dates, an ISO week (`2024-W03`) is no longer stored as
+  its Monday, and `TBD`, `unspecified`, `ongoing`, `present` and `-` count
+  as unknown. A claim stated with a non-calendar date in another case
+  (`Q1 2024`, `q1 2024`) kept the first statement's spelling, which
+  depended on the statements' order; it keeps the smallest. A claim id
+  keys on its dates, so a stored claim whose date now reads differently
+  keeps its old id until its documents are indexed again (`indexing.reset`
+  re-indexes them all) (#449).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
-  pipeline summary; only a warning named them (#446).
+  pipeline summary; only a warning named them (#446). A re-run with the
+  same pipeline id counts only its own: it repeated the earlier run's
+  documents after their claims were extracted (#449).
 - Claim extraction: the warnings on output or a rejection failing alike
   say the documents are indexed without those claims and counted for
   none; they said "counted against their documents", true of the graph
@@ -1597,6 +1628,13 @@ changed once with the full-config keys (#332).
   status (`Claim: Vendor -[breach of contract]-> Buyer (FALSE)`) before its
   description. Shown as the description alone, a `FALSE` or `SUSPECTED`
   claim read as a plain statement (#443).
+- `run-ingestion` and the Python API: a SIGTERM or Ctrl-C that lands just
+  after the run took its namespace lease (in the acquire request, the
+  heartbeat's start or the write fence's install) left the lease held for
+  `indexing.lease_seconds`, so the next run failed with `... is being
+  written by` (103 of 150 signals sent at `Holding the write lease`). The
+  stop is now held until the lease is taken, then raised, and the lease
+  released (#449).
 - `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
   its namespace lease (most often while it waits for the heartbeat thread)
   still gives the lease up. It stayed held for `indexing.lease_seconds`

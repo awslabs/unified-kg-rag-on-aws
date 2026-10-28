@@ -249,7 +249,7 @@ are recorded `FAILED`, so the retry limit below applies.
 
 Only an error of the unit's own counts toward the retry limit, on this path
 and when the indexing stage records a document `FAILED`: a response that does
-not parse or was cut off, or a request the model rejects for its content (a
+not parse or was cut off (or an empty translation), or a request the model rejects for its content (a
 Bedrock `ValidationException`, HTTP 400/413/422 from a local server) other
 than a rejection of the model or a setting (an invalid model id, a model that
 needs an inference profile, an unsupported parameter). Nothing else counts:

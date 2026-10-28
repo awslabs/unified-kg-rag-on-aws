@@ -470,7 +470,10 @@ class VectorIndexer(BaseIndexer):
         text fields for its languages, and have been built by a run that
         recorded their documents in the doc-status registry. Raises
         :class:`~unified_kg_rag.shared.ConfigurationError` on a mismatch.
-        Default does nothing (a backend that records no index settings).
+        Indices that pass may be brought up to what this release writes, in
+        one additive mapping update before any write (OpenSearch adds the
+        fields they lack and turns date detection off). Default does nothing
+        (a backend that records no index settings).
         """
         return None
 

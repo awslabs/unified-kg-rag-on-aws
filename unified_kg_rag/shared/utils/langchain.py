@@ -10,6 +10,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final
 
 import tenacity
@@ -56,6 +57,28 @@ an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 
 class _BatchAbandoned(Exception):
     """An item's next attempt, not made: its batch was abandoned."""
+
+
+# The discards registered by the calls of the batch item being processed.
+_ITEM_DISCARDS: ContextVar[list[Callable[[], None]] | None] = ContextVar(
+    "batch_item_discards", default=None
+)
+
+
+def discard_if_item_fails(discard: Callable[[], None]) -> None:
+    """Call ``discard`` if the ``BatchProcessor`` item being processed fails
+    every attempt (the LLM response cache drops the responses that item got,
+    so a later run asks the model again instead of replaying them). Outside
+    an item, or when the item succeeds or its batch is abandoned, it is not
+    called."""
+    discards = _ITEM_DISCARDS.get()
+    if discards is not None:
+        discards.append(discard)
+
+
+def _discard_item_responses(discards: list[Callable[[], None]]) -> None:
+    for discard in discards:
+        discard()
 
 
 def _batch_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
@@ -238,7 +261,8 @@ class BatchProcessor(BaseModel):
         1:1 with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`, and its last error is put in ``errors``
         (when given) under its index (classified by
-        ``adapters.llm.retry.item_error_predicate``).
+        ``adapters.llm.retry.item_error_predicate``), and the responses its
+        calls registered are discarded (:func:`discard_if_item_fails`).
         """
         with observability.span(
             "kg_rag.batch", task=task_name, items=len(items_to_process)
@@ -314,14 +338,19 @@ class BatchProcessor(BaseModel):
         )
 
         def process_one(idx: int, single_input: dict[str, Any]) -> Any:
+            discards: list[Callable[[], None]] = []
+            token = _ITEM_DISCARDS.set(discards)
             try:
                 return retrying_sequential_func(single_input)
             except _BatchAbandoned:
                 return BATCH_ITEM_FAILED
             except Exception as error:
+                _discard_item_responses(discards)
                 if errors is not None:
                     errors[idx] = error
                 return self._failed(task_name, error)
+            finally:
+                _ITEM_DISCARDS.reset(token)
 
         results: list[Any] = [BATCH_ITEM_FAILED] * len(inputs)
         progress = ProgressLogger(task_name, len(inputs))
@@ -510,10 +539,13 @@ class BatchProcessor(BaseModel):
         progress = ProgressLogger(task_name, len(inputs))
 
         async def process_one(single_input: dict[str, Any]) -> Any:
+            discards: list[Callable[[], None]] = []
+            _ITEM_DISCARDS.set(discards)  # the item's own task context
             async with semaphore:
                 try:
                     result = await retrying_sequential_func(single_input)
                 except Exception as error:
+                    _discard_item_responses(discards)
                     result = self._failed(task_name, error)
             progress.update()
             return result

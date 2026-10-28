@@ -670,8 +670,9 @@ prompt plus the model id, max tokens, temperature and reasoning.
 
 - Only earlier runs' responses are served, each at most once per run; a
   response cut off at the output-token limit is not kept. Above temperature 0
-  a re-run replays the earlier sample. A stage that failed units for errors
-  of their own (a response that does not parse) runs uncached on the re-run.
+  a re-run replays the earlier sample. The responses of a call that failed
+  every attempt (one that never parsed) are dropped, so a re-run asks the
+  model again for those units only.
 - `--force-rebuild` serves nothing; query and evaluation calls are never
   cached.
 - The cache grows by a few KB per model call and is read into memory at
@@ -844,11 +845,14 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
   claim dates are keywords, a date-like value too, so a range on them
-  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly. A claim
-  date that reads as a calendar date (`2024-01-15`, `January 15, 2024`) is
-  stored as `YYYY-MM-DD`; any other value (`Q1 2024`) as written, which only
-  an exact filter matches meaningfully; an unknown date is not stored, so it
-  matches no filter, a range included.
+  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly (on an
+  index built before #446, an `attr_*` field already mapped as a date stays
+  one until a rebuild with `indexing.reset: true`). A claim
+  date that reads as a calendar date (`2024-01-15`, `2024-1-5`,
+  `January 15th, 2024`) is stored as `YYYY-MM-DD`; any other value
+  (`Q1 2024`, `2024-W03`) as written, which only an exact filter matches
+  meaningfully; an unknown date (`UNKNOWN`, `TBD`, `present`) is not
+  stored, so it matches no filter, a range included.
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the
   selected strategy reads declares (e.g. `category`, or `type` with `naive`

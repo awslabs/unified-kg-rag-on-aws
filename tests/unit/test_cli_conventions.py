@@ -356,6 +356,36 @@ def test_a_text_mode_cli_ended_after_the_grace_period_says_it_was_stopped() -> N
     assert "Stopped by SIGTERM." in result.stdout + result.stderr
 
 
+def test_a_stop_whose_teardown_outlasts_the_grace_says_so_once() -> None:
+    # main's exit printed the line, then the watchdog ended the slow
+    # teardown (a tracing flush) and printed it again.
+    result = _run_cli_script("""
+        import asyncio
+        from unified_kg_rag.application.cli import conventions
+        from unified_kg_rag.application.cli.conventions import stoppable
+
+        conventions._STOP_GRACE_SECONDS = 0.5
+
+        class Backend:
+            def shutdown(self):
+                time.sleep(5)
+
+        observability.install(Backend())
+
+        async def run():
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.sleep(30)
+
+        @exits_on_sigterm
+        def main():
+            asyncio.run(stoppable(run()))
+
+        main()
+        """)
+    assert result.returncode == 143, result.stderr
+    assert result.stdout.count("Stopped by SIGTERM.") == 1, result.stdout
+
+
 def test_the_stop_grace_leaves_cleanup_time_inside_the_stop_timeout() -> None:
     # 10 s cut run-eval's upload of the finished runs, which the 120 s
     # StopTimeout of the app container (iac compute stack) leaves time for.

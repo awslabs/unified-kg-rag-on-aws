@@ -604,6 +604,37 @@ def test_incremental_run_refuses_claim_dates_mapped_as_dates(
         harness.vector_indexer.check_index_settings("default")
 
 
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_turns_date_detection_off_on_an_index_lacking_no_field(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every field mapped, only date detection still on: the mapping update
+    # is sent anyway, or a new date-like filter value typed its field.
+    indexer = harness.vector_indexer
+    current = indexer._get_claims_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        mapping["mappings"].pop("date_detection", None)
+        return mapping
+
+    monkeypatch.setattr(indexer, "_get_claims_mapping", earlier)
+    _write(harness, "claims", "index", [_dated_claim("cl0", None)])
+    monkeypatch.undo()
+    client = indexer.opensearch_client
+    name = client.get_index_name_by_alias(
+        indexer._get_name(harness.config.indexing.opensearch.claims_index_prefix, None)
+    )
+    assert client.get_index_mappings(name).get("date_detection") is not False
+    indexer.check_index_settings("default")
+    assert client.get_index_mappings(name)["date_detection"] is False
+    _write(
+        harness, "claims", "upsert", [_dated_claim("cl1", None, signed="2024-01-15")]
+    )
+    _write(harness, "claims", "upsert", [_dated_claim("cl2", None, signed="pending")])
+    assert harness.stored_ids("claims") >= {"cl1", "cl2"}
+
+
 def test_a_date_like_filter_value_does_not_type_its_field(
     harness: StoreHarness,
 ) -> None:
