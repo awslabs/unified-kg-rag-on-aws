@@ -66,19 +66,35 @@ _ITEM_DISCARDS: ContextVar[list[Callable[[], None]] | None] = ContextVar(
 
 
 def discard_if_item_fails(discard: Callable[[], None]) -> None:
-    """Call ``discard`` if the ``BatchProcessor`` item being processed fails
-    every attempt (the LLM response cache drops the responses that item got,
-    so a later run asks the model again instead of replaying them). Outside
-    an item, or when the item succeeds or its batch is abandoned, it is not
-    called."""
+    """Call ``discard`` if the item ``BatchProcessor.execute_with_fallback``
+    is processing fails every attempt (the LLM response cache drops the
+    responses that item got, so a later run asks the model again instead of
+    replaying them). Outside an item, or when the item succeeds or its batch
+    is abandoned, it is not called."""
     discards = _ITEM_DISCARDS.get()
     if discards is not None:
         discards.append(discard)
 
 
-def _discard_item_responses(discards: list[Callable[[], None]]) -> None:
-    for discard in discards:
-        discard()
+class _Attempt:
+    """One timed call of a batch item; ``abandoned`` once it timed out."""
+
+    __slots__ = ("abandoned",)
+
+    def __init__(self) -> None:
+        self.abandoned = False
+
+
+# The timed call (``BatchProcessor._run_with_timeout``) running in this thread.
+_ATTEMPT: ContextVar[_Attempt | None] = ContextVar("batch_attempt", default=None)
+
+
+def in_abandoned_attempt() -> bool:
+    """Whether this runs in a batch item's call that timed out: its item was
+    retried or failed meanwhile, so what the call gets is no longer the
+    item's (the LLM response cache neither serves nor stores it)."""
+    attempt = _ATTEMPT.get()
+    return attempt is not None and attempt.abandoned
 
 
 def _batch_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
@@ -216,8 +232,14 @@ class BatchProcessor(BaseModel):
         # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
         # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
         # so control returns to the caller immediately for the item's retry.
+        attempt = _Attempt()
+
+        def run() -> Any:
+            _ATTEMPT.set(attempt)  # in the worker's copy of the context
+            return func()
+
         pool = ContextThreadPoolExecutor(max_workers=1)
-        future = pool.submit(func)
+        future = pool.submit(run)
         try:
             result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError as exc:
@@ -226,6 +248,7 @@ class BatchProcessor(BaseModel):
                 # ``func`` raised a TimeoutError of its own (the builtin is
                 # concurrent.futures.TimeoutError): not ours.
                 raise
+            attempt.abandoned = True
             logger.warning(
                 "'%s' exceeded the %ss call timeout; the abandoned call may still "
                 "complete in the background while the item is retried",
@@ -345,7 +368,8 @@ class BatchProcessor(BaseModel):
             except _BatchAbandoned:
                 return BATCH_ITEM_FAILED
             except Exception as error:
-                _discard_item_responses(discards)
+                for discard in discards:
+                    discard()
                 if errors is not None:
                     errors[idx] = error
                 return self._failed(task_name, error)
@@ -539,13 +563,10 @@ class BatchProcessor(BaseModel):
         progress = ProgressLogger(task_name, len(inputs))
 
         async def process_one(single_input: dict[str, Any]) -> Any:
-            discards: list[Callable[[], None]] = []
-            _ITEM_DISCARDS.set(discards)  # the item's own task context
             async with semaphore:
                 try:
                     result = await retrying_sequential_func(single_input)
                 except Exception as error:
-                    _discard_item_responses(discards)
                     result = self._failed(task_name, error)
             progress.update()
             return result

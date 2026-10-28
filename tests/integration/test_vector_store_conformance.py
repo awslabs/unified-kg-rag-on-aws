@@ -663,6 +663,7 @@ def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> No
         "cl-unknown": "UNKNOWN",
         "cl-none": None,
         "cl-quarter": "Q1 2024",
+        "cl-text": "early 2024",
     }
     _write(
         harness,
@@ -696,11 +697,13 @@ def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> No
 
     assert asyncio.run(matching({"status": "true"})) == set(dated)
     assert asyncio.run(matching({"type": "obligation"})) == set(dated)
+    # A quarter is stored as its first day.
     assert asyncio.run(matching({"end_date": {"lte": "2024-01-31"}})) == {
         "cl-iso",
         "cl-written",
+        "cl-quarter",
     }
-    assert asyncio.run(matching({"end_date": "Q1 2024"})) == {"cl-quarter"}
+    assert asyncio.run(matching({"end_date": "early 2024"})) == {"cl-text"}
 
 
 def test_find_documents_matches_a_keyword_field_in_a_suffix(

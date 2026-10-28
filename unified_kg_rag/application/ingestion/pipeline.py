@@ -685,6 +685,7 @@ class DataIngestionPipeline:
             logger.exception("Pipeline execution failed")
             raise
         except Exception as e:
+            self._raise_if_stopped_by(e)
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
@@ -910,6 +911,14 @@ class DataIngestionPipeline:
         if self._stop_signal is not None:
             raise PipelineInterrupted(self._stop_signal)
 
+    def _raise_if_stopped_by(self, error: Exception) -> None:
+        """End a run that failed with ``error`` once a stop was requested as
+        a stop: the stop surfaced wrapped in it (raised inside a
+        serialization pydantic wraps it in, say)."""
+        if self._stop_signal is not None:
+            self._checkpoint_on_stop()
+            raise PipelineInterrupted(self._stop_signal) from error
+
     def _open_llm_response_cache(self, pipeline_id: str) -> None:
         """Serve this run's ingestion model calls from the responses earlier
         runs of ``pipeline_id`` stored (none on a force rebuild)."""
@@ -956,13 +965,20 @@ class DataIngestionPipeline:
 
     @contextmanager
     def _checkpoint_write(self) -> Iterator[None]:
-        """Defer a requested stop until the enclosed checkpoint write is done."""
+        """Defer a requested stop until the enclosed checkpoint write is done
+        (the outermost one, when nested).
+
+        Every metadata save goes through one: a stop raised inside its JSON
+        serialization is wrapped by pydantic, as a warning (the run went on)
+        or an error (the run failed instead of stopping).
+        """
+        outer = self._checkpointing
         self._checkpointing = True
         try:
             yield
         finally:
-            self._checkpointing = False
-        if self._stop_signal is not None:
+            self._checkpointing = outer
+        if not outer and self._stop_signal is not None:
             raise PipelineInterrupted(self._stop_signal)
 
     def _checkpoint_on_stop(self) -> None:
@@ -1940,7 +1956,8 @@ class DataIngestionPipeline:
                 ),
             )
             logger.error("%s", result.error_message)
-            self.state_manager.update_stage_result(context, result)
+            with self._checkpoint_write():
+                self.state_manager.update_stage_result(context, result)
             return result
         result = self._run_stage(stage, context)
         if result.status == PipelineStageStatus.FAILED:
@@ -1975,7 +1992,8 @@ class DataIngestionPipeline:
             return
         units = context.translated_units or context.text_units or []
         context.failed_text_unit_ids[stage.name] = [unit.id for unit in units]
-        self.state_manager.save_pipeline_metadata(context)
+        with self._checkpoint_write():
+            self.state_manager.save_pipeline_metadata(context)
         if units:
             logger.warning(
                 "Stage '%s' failed: recording all %s text units as failed so "
@@ -2028,7 +2046,8 @@ class DataIngestionPipeline:
             status=PipelineStageStatus.RUNNING,
             start_time=datetime.now(),
         )
-        self.state_manager.update_stage_result(context, running_result)
+        with self._checkpoint_write():
+            self.state_manager.update_stage_result(context, running_result)
 
         try:
             result = stage.execute(context)
@@ -2060,7 +2079,8 @@ class DataIngestionPipeline:
                 end_time=datetime.now(),
                 error_message=f"Unexpected error: {str(e)}",
             )
-            self.state_manager.update_stage_result(context, failed_result)
+            with self._checkpoint_write():
+                self.state_manager.update_stage_result(context, failed_result)
             return failed_result
 
     def _save_stage_outputs_to_cache(
@@ -2184,8 +2204,6 @@ class DataIngestionPipeline:
             context.status = PipelineStageStatus.COMPLETED
             logger.info("Pipeline completed successfully with all stages passed")
 
-        # A stop landing inside the metadata's serialization surfaced as a
-        # failed save (pydantic wraps the PipelineInterrupted it raised).
         with self._checkpoint_write():
             self.state_manager.save_pipeline_metadata(context)
 

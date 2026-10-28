@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import functools
 import re
 import time
 from collections import defaultdict
@@ -39,15 +40,24 @@ _UNKNOWN_DATE_VALUES = frozenset(
     }
 )
 # An ISO 8601 week ("2024-W03"): fromisoformat reads it as its Monday.
-_ISO_WEEK = re.compile(r"\d{4}-?W\d{2}", re.IGNORECASE)
+_ISO_WEEK = re.compile(r"\d{4}-?W\d{2}(-?\d)?", re.IGNORECASE)
+# A quarter ("Q3 2022", "2022-Q3"), read as its first day.
+_QUARTER = re.compile(
+    r"Q(?P<q>[1-4])[\s,]*(?P<y>\d{4})|(?P<y2>\d{4})[\s-]*Q(?P<q2>[1-4])",
+    re.IGNORECASE,
+)
 # What a written-out date may carry that strptime does not read: an ordinal
-# suffix ("15th") or an abbreviation's dot ("Jan.").
-_DATE_NOISE = re.compile(r"(?<=\d)(st|nd|rd|th)\b|(?<=[A-Za-z])\.", re.IGNORECASE)
+# suffix ("15th"), dropped, or an abbreviation's dot ("Jan.", "Dec.31"),
+# read as a space.
+_ORDINAL = re.compile(r"(?<=\d)(st|nd|rd|th)\b", re.IGNORECASE)
+_ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\.")
+# "Sept" is no %b abbreviation.
+_SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
 
 
 # Written-out dates read as calendar dates besides ISO 8601 (which the claim
-# prompt asks for); an all-numeric day/month order is ambiguous and stays
-# as written.
+# prompt asks for); a month or a year alone reads as its first day. An
+# all-numeric day/month order is ambiguous and stays as written.
 _DATE_FORMATS = (
     "%B %d, %Y",
     "%b %d, %Y",
@@ -58,26 +68,44 @@ _DATE_FORMATS = (
     "%Y-%m-%d",
     "%Y/%m/%d",
     "%Y.%m.%d",
+    "%B %Y",
+    "%b %Y",
+    "%B, %Y",
+    "%b, %Y",
+    "%Y-%m",
+    "%Y/%m",
+    "%Y",
 )
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def claim_date_value(value: str | None) -> str | None:
     """A claim date as stored: None when absent or a placeholder such as
     UNKNOWN or TBD, ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
-    as "January 15th, 2024" or "Jan. 15, 2024"), else as written
-    (whitespace collapsed; an ISO week such as ``2024-W03`` is no day). Applied to its own result it returns
-    it unchanged."""
+    as "January 15th, 2024", "Jan. 15, 2024" or "Sept. 3, 2024"), or as a
+    coarser period, stored as its first day (an ISO week ``2024-W03`` as its
+    Monday, ``Q3 2022`` as 2022-07-01, ``March 2024``/``2024-03`` as
+    2024-03-01, ``2024`` as 2024-01-01), else as written (whitespace
+    collapsed; ``10/08/2024``, whose day and month order is unknown, say).
+    Applied to its own result it returns it unchanged. Called for every
+    statement of every claim, often with the same values: memoised."""
     text = " ".join((value or "").split())
     if text.casefold() in _UNKNOWN_DATE_VALUES:
         return None
     if _ISO_WEEK.fullmatch(text):
-        return text
+        text = text.upper()
     try:
         return datetime.fromisoformat(text).date().isoformat()
     except ValueError:
         pass
-    cleaned = _DATE_NOISE.sub("", text)
+    if quarter := _QUARTER.fullmatch(text):
+        year = int(quarter["y"] or quarter["y2"])
+        month = 3 * (int(quarter["q"] or quarter["q2"]) - 1) + 1
+        return f"{year:04d}-{month:02d}-01"
+    cleaned = " ".join(
+        _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
+    )
     for date_format in _DATE_FORMATS:
         try:
             return datetime.strptime(cleaned, date_format).date().isoformat()

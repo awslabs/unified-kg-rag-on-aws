@@ -322,6 +322,103 @@ def test_a_stop_while_the_final_metadata_is_saved_waits_for_it(
     assert saved == ["pid"]
 
 
+def _stage_context(tmp_path: Path) -> PipelineContext:
+    return PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+
+
+def test_a_stop_while_the_stage_start_is_saved_waits_for_it(tmp_path, mocker) -> None:
+    # Regression: the RUNNING result was saved outside _checkpoint_write, so
+    # a stop raised inside its JSON serialization was wrapped by pydantic:
+    # swallowed as a warning (the stage ran on) or a PipelineStateError
+    # (exit 1, "Critical error saving pipeline metadata").
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    saved: list[str] = []
+
+    def save(context, result):  # type: ignore[no-untyped-def]
+        pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+        saved.append(result.status.value)
+
+    pipe.state_manager.update_stage_result.side_effect = save
+    stage = mocker.MagicMock()
+    stage.name = "graph_extraction"
+    with pytest.raises(PipelineInterrupted):
+        pipe._run_stage(stage, _stage_context(tmp_path))
+    assert saved == [PipelineStageStatus.RUNNING.value]
+    stage.execute.assert_not_called()
+    assert pipe._checkpointing is False
+
+
+def test_a_stop_while_a_failed_stage_is_saved_waits_for_it(tmp_path, mocker) -> None:
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    saved: list[str] = []
+
+    def save(context, result):  # type: ignore[no-untyped-def]
+        if result.status is PipelineStageStatus.FAILED:
+            pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+        saved.append(result.status.value)
+
+    pipe.state_manager.update_stage_result.side_effect = save
+    stage = mocker.MagicMock()
+    stage.name = "graph_extraction"
+    stage.execute.side_effect = RuntimeError("boom")
+    with pytest.raises(PipelineInterrupted):
+        pipe._run_stage(stage, _stage_context(tmp_path))
+    assert saved == [
+        PipelineStageStatus.RUNNING.value,
+        PipelineStageStatus.FAILED.value,
+    ]
+
+
+def test_checkpoint_writes_nest(tmp_path, mocker) -> None:
+    # An inner write must not end the outer one's deferral.
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    written: list[str] = []
+    with pytest.raises(PipelineInterrupted):
+        with pipe._checkpoint_write():
+            with pipe._checkpoint_write():
+                written.append("inner")
+            pipe.request_stop(signal.SIGTERM)  # still deferred
+            written.append("outer")
+    assert written == ["inner", "outer"]
+    assert pipe._checkpointing is False
+
+
+def test_a_stop_wrapped_by_a_failed_save_still_stops_the_run(tmp_path, mocker) -> None:
+    # Backstop: a stop that surfaced wrapped in another error (pydantic wraps
+    # what a signal handler raises inside serialization) ends the run as a
+    # stop (exit 143), its checkpoint uploaded, not as a crash (exit 1).
+    from unified_kg_rag.shared.exceptions import PipelineStateError
+
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe.state_manager.pipeline_exists.return_value = False
+    pipe._prepare_new_run = mocker.MagicMock(return_value=(mocker.MagicMock(), None))
+    pipe.s3_cache_manager.sync_pipeline_from_s3.side_effect = None
+    mocker.patch.object(pipe, "_set_corpus_fingerprint")
+    mocker.patch.object(pipe, "_validate_retired_scopes")
+    mocker.patch.object(pipe, "_use_source_directory")
+    pipe.pipeline_config.force_rebuild = False
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        pipe._stop_signal = signal.SIGTERM  # the handler ran, its raise wrapped
+        raise PipelineStateError("Critical error saving pipeline metadata")
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    with pytest.raises(PipelineInterrupted) as exc:
+        pipe.run(tmp_path, pipeline_id="pid")
+    assert exc.value.signum == signal.SIGTERM
+    assert isinstance(exc.value.__cause__, PipelineStateError)
+    pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once_with("pid", tmp_path)
+
+
 def test_a_stop_request_does_no_io(tmp_path, mocker) -> None:
     # The signal handler runs wherever the main thread was, possibly inside
     # ThreadPoolExecutor.submit holding its global lock, which an S3 upload

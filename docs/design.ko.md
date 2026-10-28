@@ -383,6 +383,8 @@ import는 순환이 됨).
   `BaseCache`로, 렌더링한 메시지와 모델·생성 설정을 키로 단계 캐시와 함께 저장합니다. 이전 실행의 항목은 실행마다 한 번까지만 쓰고 잘린 응답은 보관하지 않으므로,
   잘못된 응답 뒤의 재시도는 모델을 다시 호출합니다. 모든 시도가 실패한 `BatchProcessor` 항목은
   그 호출이 받거나 저장한 응답을 버리므로(`discard_if_item_fails`), 다시 실행하면 그 항목만 다시 묻고 응답을 재생하지 않습니다.
+  `call_timeout_seconds`를 넘겨 버려진 호출은 캐시에서 답하지도 저장하지도 않습니다. 그 항목은 그사이
+  재시도되었거나 실패했으므로 늦게 온 응답은 그 항목의 것이 아닙니다.
 - **출력 수정.** 구조화된 출력은 `FixingConfig` 기반 output-fixing 파서로 파싱합니다.
 - **자원.** 파이프라인은 `close()`에서 인덱서와 클라이언트 자원을 해제하며,
   `run-ingestion`이 `finally`에서 호출합니다(§8.2).
@@ -867,7 +869,8 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 `close()` / `aclose()`를 제공합니다.
 
 - `OpenSearchClient`와 `NeptuneClient`는 풀을 닫습니다(OpenSearch는 이벤트 루프가 바뀔 때도
-  이전 클라이언트를 그 루프에서 닫음).
+  이전 클라이언트를 그 루프에서 닫음). 닫힌 Neptune 리트리버는 연결이나 작업 스레드 풀을 다시
+  열지 않으므로, 닫을 때 실행 중이던 탐색이나 닫은 뒤 시작한 탐색은 `StoreConnectionError`로 실패합니다.
 - `GraphRAGChain.close()` / `aclose()`는 체인이 만든 것을 닫습니다. `IndexingManager.close()`는
   주입된 것을 포함해 두 인덱서를 모두 닫습니다. `DataIngestionPipeline(vector_indexer=...,
   graph_indexer=...)`에 넘긴 인덱서는 빌려 쓰는 것이라 파이프라인이 닫지 않고 소유자가 닫습니다.

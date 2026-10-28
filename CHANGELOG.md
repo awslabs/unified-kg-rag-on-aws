@@ -1463,6 +1463,31 @@ changed once with the full-config keys (#332).
   said. A query with an explicit strategy (`local`, `mix`, ...) refuses
   such a key before any model call; it was refused after the follow-up
   rewrite and the query processing had run (1 model call each) (#450).
+- Ingestion: a stop (SIGTERM, Ctrl-C) landing while a stage's start, a
+  failed stage or a crashed stage's failed units were saved to the pipeline
+  metadata was raised inside the metadata's JSON serialization, which
+  pydantic wraps: the run failed (exit 1, "Critical error saving pipeline
+  metadata") instead of stopping, or the stop was lost until the stage
+  ended. Every metadata save now defers a stop until it is written, as the
+  checkpoint writes do, and a stop that still surfaces wrapped in another
+  error ends the run as a stop (exit 128 + signal), its checkpoint uploaded
+  (#451).
+- LLM response cache: a model call abandoned on its call timeout
+  (`BatchProcessor.call_timeout_seconds`) stored its late answer after its
+  item's retry, so a re-run with the same pipeline id was served that answer
+  (one that may not parse) over the retry's, or kept it although the item
+  had failed and its responses were dropped. An abandoned call is now
+  neither served nor stored. A response dropped before it was written
+  leaves no entry at all (it wrote the response and a removal entry, a third
+  more segments on a run with failing units) (#451).
+- Incremental indexing warnings: a document whose translation failed was
+  reported as "Extraction failed"; claims given up after a second failure
+  were said not to be extracted again until the content or settings change,
+  although a re-run with the same pipeline id still extracts them; and the
+  retrying-documents warning said an outage or a setting "never counts"; it
+  now says such a failure does not count toward
+  `indexing.max_document_failures`, so the document is retried every run
+  (#451).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
@@ -1483,7 +1508,7 @@ changed once with the full-config keys (#332).
   gleaning, claims, community reports alike), so a re-run asks
   the model again for those units only; the stage-wide uncached re-run of
   #447, which re-asked every unit the extraction store could not supply and
-  replayed the response after a stop during the re-run, is gone (#447, #PR).
+  replayed the response after a stop during the re-run, is gone (#447, #449).
 - Translation: an empty answer was recorded as a failed unit but not as
   an error of its own, so it never counted toward
   `indexing.max_document_failures`, and its response was replayed from the
@@ -1548,14 +1573,20 @@ changed once with the full-config keys (#332).
   as written rather than casefolded, so an exact filter on it matches
   (#446).
 - Claim dates: `2024-1-5`, `January 15th, 2024` and `Jan. 15, 2024` are
-  read as calendar dates, an ISO week (`2024-W03`) is no longer stored as
-  its Monday, and `TBD`, `unspecified`, `ongoing`, `present` and `-` count
-  as unknown. A claim stated with a non-calendar date in another case
-  (`Q1 2024`, `q1 2024`) kept the first statement's spelling, which
+  read as calendar dates, and `TBD`, `unspecified`, `ongoing`, `present`
+  and `-` count as unknown. A claim stated with a non-calendar date in
+  another case (`Early 2024`, `early 2024`) kept the first statement's spelling, which
   depended on the statements' order; it keeps the smallest. A claim id
   keys on its dates, so a stored claim whose date now reads differently
   keeps its old id until its documents are indexed again (`indexing.reset`
-  re-indexes them all) (#449).
+  re-indexes them all) (#449). A coarser period is stored as its first
+  day, so a range filter orders it with the calendar dates instead of
+  comparing its text (`Q3 2022` sorted after every ISO date, `2024-W03`
+  inside 2024-03): an ISO week as its Monday, a quarter (`Q3 2022`,
+  `2022-Q3`), a month (`March 2024`, `2024-03`) or a year (`2024`) as its
+  first day; `Sept.` and `Dec.31` read as dates too. An all-numeric date
+  whose day and month order is unknown (`10/08/2024`) is still stored as
+  written (#451).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the

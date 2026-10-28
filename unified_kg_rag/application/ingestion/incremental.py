@@ -990,8 +990,9 @@ class IncrementalIndexer:
                 if lineage.doc_id in failed_doc_ids
             )
             logger.warning(
-                "Extraction failed on part of %d documents; recording them FAILED "
-                "so the next run re-extracts them (%d counted toward "
+                "Translation or extraction failed on part of %d documents; "
+                "recording them FAILED so the next run processes them again (%d "
+                "counted toward "
                 "indexing.max_document_failures, failed for an error of their "
                 "own): %s",
                 len(failed_doc_ids),
@@ -1939,8 +1940,9 @@ def _warn_claims_missing(retried: list[str], given_up: list[str]) -> None:
     if given_up:
         logger.warning(
             "Claim extraction failed again on part of %d documents: indexed "
-            "without those claims, which are not extracted again until the "
-            "content or the extraction settings change: %s",
+            "without those claims, which later runs do not extract again until "
+            "the content or the extraction settings change (a re-run with this "
+            "pipeline id still does): %s",
             len(given_up),
             files(given_up),
         )
@@ -1982,10 +1984,11 @@ def warn_retrying(records: Iterable[DocStatusRecord]) -> list[str]:
     )
     if retrying:
         logger.warning(
-            "%d documents failed again for an error that is not their own "
-            "(an outage or a setting never counts toward "
-            "indexing.max_document_failures); fix the cause to index them "
-            "(consecutive failed runs in parentheses): %s",
+            "%d documents failed again for an error that is not their own (an "
+            "outage or a misconfiguration does not count toward "
+            "indexing.max_document_failures, so they are retried every run); "
+            "fix the cause to index them (consecutive failed runs in "
+            "parentheses): %s",
             len(retrying),
             ", ".join(
                 f"{r.file_path or r.doc_id} ({r.retry_count})" for r in retrying[:10]

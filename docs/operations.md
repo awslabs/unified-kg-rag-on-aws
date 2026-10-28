@@ -298,8 +298,9 @@ is a setting and counts for none.
   some text units ...`, counted in `documents_without_claims`, not in
   `failed_documents`) so the next run extracts
   the missing claims again, reusing the stored graph and claim records;
-  failing so again, it is recorded `PROCESSED` without them, and they are
-  not extracted again until its content or the extraction settings change.
+  failing so again, it is recorded `PROCESSED` without them, and later runs
+  do not extract them again until its content or the extraction settings
+  change (a re-run or resume with the same pipeline id still does).
   A server-side output cap on claims thus re-indexes such documents once and
   excludes none. Both runs warn with the files. Any other claim extraction
   failure (an outage, a record not stored) fails the document, uncounted, as

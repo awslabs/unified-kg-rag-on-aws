@@ -177,6 +177,14 @@ class NamespaceLease:
         self._previous_expiry = 0.0
 
     def __enter__(self) -> NamespaceLease:
+        """Take the lease (``NamespaceLeaseError`` when another run holds it).
+
+        A stop requested meanwhile waits for the acquire's registry requests:
+        against a registry that accepts connections but does not answer,
+        each lasts up to the lease client's timeouts and retries (about 30 s
+        on DynamoDB; with the release that follows, about 70 s, within ECS's
+        120 s stop timeout).
+        """
         # Read first: a lease that is still there but expired was not
         # released (the holder died or froze), so its writes may be late.
         previous = self.store.lease_holder(self.namespace)

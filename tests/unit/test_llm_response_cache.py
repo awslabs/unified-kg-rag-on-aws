@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import json
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -285,4 +288,80 @@ def test_a_served_response_its_item_rejects_is_dropped(tmp_path: Path) -> None:
     third = LLMResponseCache()
     third.open(tmp_path)
     _ask(_model(third, respond), "bad")
+    assert respond.calls == 2
+
+
+def _late_first_attempt(second: str) -> tuple[Any, threading.Event]:
+    """A model whose first call hangs past the call timeout and answers
+    "late" once released; later calls answer ``second``."""
+    release, answered = threading.Event(), threading.Event()
+    calls: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        calls.append(human)
+        if len(calls) == 1:
+            release.wait(10)
+            answered.set()
+            return "late"
+        return second
+
+    respond.release = release  # type: ignore[attr-defined]
+    return respond, answered
+
+
+@pytest.mark.parametrize("second", ["good", "bad"])
+def test_a_timed_out_attempt_s_late_answer_is_not_stored(
+    tmp_path: Path, second: str
+) -> None:
+    # The abandoned call answered after its item's retry: stored last, a
+    # re-run was served it (over the retry's good answer), or kept it after
+    # the item's failure had already dropped its responses.
+    respond, answered = _late_first_attempt(second)
+    cache = LLMResponseCache()
+    cache.open(tmp_path)
+    model = _model(cache, respond)
+    results = BatchProcessor(
+        max_attempts=2, retry_multiplier=1.0, retry_max_wait=0, call_timeout_seconds=1
+    ).execute_with_fallback(
+        ["q"],
+        lambda items: [{"text": text} for text in items],
+        lambda request: _rejecting("bad")(_ask(model, request["text"])),
+        "test",
+        show_progress=False,
+    )
+    assert results == (["good"] if second == "good" else [BATCH_ITEM_FAILED])
+    respond.release.set()  # type: ignore[attr-defined]
+    assert answered.wait(10)
+    time.sleep(0.2)  # the abandoned call's cache update
+    cache.close()
+
+    rerun = LLMResponseCache()
+    rerun.open(tmp_path)
+    expected = "good" if second == "good" else "asked again"
+    assert _ask(_model(rerun, lambda system, human: "asked again")) == expected
+
+
+def test_a_dropped_response_still_pending_writes_nothing(tmp_path: Path) -> None:
+    # A response stored and dropped before any flush is never written: no
+    # entry, no removal entry (nothing on disk to remove).
+    respond = _Counter()
+    cache = LLMResponseCache()
+    cache.open(tmp_path)
+    _batch(_model(cache, respond), ["good", "bad"], _rejecting("bad"))
+    cache.close()
+    (segment,) = tmp_path.glob("*.json")
+    entries = json.loads(segment.read_text(encoding="utf-8"))["entries"]
+    assert [entry["generations"] is None for entry in entries] == [False]
+
+
+def test_a_dropped_response_already_written_is_removed(tmp_path: Path) -> None:
+    # Flushed (a full segment) before its item failed: a removal entry.
+    respond = _Counter()
+    cache = LLMResponseCache(flush_every=1)
+    cache.open(tmp_path)
+    _batch(_model(cache, respond), ["bad"], _rejecting("bad"))
+    cache.close()
+    rerun = LLMResponseCache()
+    rerun.open(tmp_path)
+    _ask(_model(rerun, respond), "bad")
     assert respond.calls == 2

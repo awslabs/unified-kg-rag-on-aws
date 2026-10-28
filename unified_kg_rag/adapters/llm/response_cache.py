@@ -17,8 +17,8 @@ not retried. The responses of a batch item that failed every attempt (one
 that never parsed, say) are dropped (``shared.utils.langchain.
 discard_if_item_fails``): a re-run asks the model again for that item only,
 instead of replaying them and recording the same failure. A call made under
-``uncached_responses`` is neither served nor stored: it always reaches the
-model.
+``uncached_responses``, or abandoned on its call timeout (its late answer is
+not its item's), is neither served nor stored: it always reaches the model.
 """
 
 from __future__ import annotations
@@ -44,7 +44,10 @@ from unified_kg_rag.adapters.llm.chain_factory import _truncation_reason
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils.langchain import discard_if_item_fails
+from unified_kg_rag.shared.utils.langchain import (
+    discard_if_item_fails,
+    in_abandoned_attempt,
+)
 
 logger = get_logger(__name__)
 
@@ -105,6 +108,9 @@ class LLMResponseCache(BaseCache):
         self._entries: dict[str, list[dict[str, Any]]] = {}
         self._served: set[str] = set()
         self._pending: list[dict[str, Any]] = []
+        # Keys whose responses a written segment holds: a dropped one needs
+        # a removal entry (a pending one is dropped in place).
+        self._written: set[str] = set()
         self._on_segment: Callable[[Path], None] | None = None
         # Segments ``on_segment`` failed on, retried at the next flush.
         self._unsynced: list[Path] = []
@@ -148,6 +154,7 @@ class LLMResponseCache(BaseCache):
             self._entries = entries
             self._served = set()
             self._pending = []
+            self._written = set(entries)
             self._on_segment = on_segment
             self._unsynced = []
             self.hits = self.misses = 0
@@ -170,7 +177,7 @@ class LLMResponseCache(BaseCache):
             self._entries = {}
 
     def lookup(self, prompt: str, llm_string: str) -> RETURN_VAL_TYPE | None:
-        if _UNCACHED.get():
+        if _UNCACHED.get() or in_abandoned_attempt():
             return None
         key = _cache_key(prompt, llm_string)
         with self._lock:
@@ -186,9 +193,13 @@ class LLMResponseCache(BaseCache):
         return [_load_generation(g) for g in cached]
 
     def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:
-        if _UNCACHED.get() or any(
-            isinstance(g, ChatGeneration) and _truncation_reason(g.message)
-            for g in return_val
+        if (
+            _UNCACHED.get()
+            or in_abandoned_attempt()
+            or any(
+                isinstance(g, ChatGeneration) and _truncation_reason(g.message)
+                for g in return_val
+            )
         ):
             return
         key = _cache_key(prompt, llm_string)
@@ -206,13 +217,16 @@ class LLMResponseCache(BaseCache):
             self.flush()
 
     def _discard(self, key: str) -> None:
-        """Drop the response stored under ``key``: a later segment's entry
-        without generations removes it when the segments are loaded."""
+        """Drop the response stored under ``key``: a pending one is not
+        written; one a segment holds is removed by a later segment's entry
+        without generations when the segments are loaded."""
         with self._lock:
             if self._directory is None:
                 return
             self._entries.pop(key, None)
-            self._pending.append({"key": key, "generations": None})
+            self._pending = [e for e in self._pending if e["key"] != key]
+            if key in self._written:
+                self._pending.append({"key": key, "generations": None})
 
     def flush(self) -> None:
         """Write the pending responses as a new segment (no-op when none)
@@ -234,6 +248,9 @@ class LLMResponseCache(BaseCache):
                 encoding="utf-8",
             )
             temp.replace(path)
+            self._written.update(
+                e["key"] for e in pending if e["generations"] is not None
+            )
             due, self._unsynced = [*self._unsynced, path], []
         if on_segment is None:
             return

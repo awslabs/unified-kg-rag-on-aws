@@ -440,7 +440,9 @@ gets its models and stores from the run's `Providers` bundle.
   kept, so a retry after a bad response asks the model again. A
   `BatchProcessor` item that failed every attempt drops the responses its
   calls were served or stored (`discard_if_item_fails`), so a re-run asks
-  again for that item only instead of replaying them.
+  again for that item only instead of replaying them. A call abandoned on
+  its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
+  is not its item's, which was retried or failed meanwhile.
 - **Output fixing.** Structured outputs are parsed with a
   `FixingConfig`-based output-fixing parser.
 - **Resources.** The pipeline releases indexer and client resources in
@@ -1055,6 +1057,9 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 
 - `OpenSearchClient` and `NeptuneClient` close their pools (OpenSearch also
   when the event loop changes, awaiting the old client on its own loop).
+  A closed Neptune retriever opens no connection or worker pool again: a
+  traversal still running at the close, or started after it, fails with
+  `StoreConnectionError`.
 - `GraphRAGChain.close()` / `aclose()` close what the chain built.
   `IndexingManager.close()` closes both its indexers, injected ones too.
   Indexers passed to `DataIngestionPipeline(vector_indexer=...,

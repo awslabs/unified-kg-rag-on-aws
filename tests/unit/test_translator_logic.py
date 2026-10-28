@@ -13,6 +13,7 @@ exercised. The real ``BatchProcessor`` is used end-to-end (it is pure Python).
 from __future__ import annotations
 
 import pytest
+from botocore.exceptions import ClientError
 
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion import translator as tr_module
@@ -43,7 +44,11 @@ class _FakeChain:
 def _make_translator(
     mocker, *, target=LanguageCode.EN, additional=None, transform=None
 ) -> tuple[TextUnitTranslator, _FakeChain]:
-    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+    factory = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+    # The real classifiers: a MagicMock's would call every error transient and
+    # the unit's own.
+    factory.return_value.is_transient_error = bedrock_module.is_transient_bedrock_error
+    factory.return_value.is_item_error = bedrock_module.is_bedrock_item_error
     fake_chain = _FakeChain(transform=transform)
     mocker.patch.object(tr_module, "setup_chain", return_value=fake_chain)
 
@@ -89,15 +94,6 @@ class TestApplyTranslationResult:
         assert unit.translated_texts == {"fr": "bonjour"}
         assert tr.stats.num_successful_translations == 1
         assert tr.stats.num_translated == 1
-
-    def test_empty_result_counts_as_failure(self, mocker) -> None:
-        tr, _ = _make_translator(mocker)
-        tr.stats = TranslationStats(num_total_units=1)
-        unit = TextUnit(id="t1", text="x")
-        tr._apply_translation_result(unit, "   ", LanguageCode.FR)
-        assert unit.translated_texts is None
-        assert tr.stats.num_failed_translations == 1
-        assert tr.stats.num_successful_translations == 0
 
     def test_none_result_counts_as_failure(self, mocker) -> None:
         tr, _ = _make_translator(mocker)
@@ -207,6 +203,56 @@ class TestTranslateTextUnits:
         # An error of the unit's own: counted, and its (empty) response is
         # not kept by the run's response cache for a re-run to replay.
         assert tr.stats.item_failed_text_unit_ids == ["t2"]
+
+    def test_a_throttled_translation_is_not_the_unit_s_own_error(self, mocker) -> None:
+        def transform(inp):
+            if inp["text"] == "Goodbye world":
+                raise ClientError(
+                    {"Error": {"Code": "ThrottlingException", "Message": "slow"}},
+                    "Converse",
+                )
+            return "ok"
+
+        tr, _ = _make_translator(mocker, target=LanguageCode.KO, transform=transform)
+        tr.translate_text_units(_units())
+        assert tr.stats is not None
+        # Retried next run, but an outage never counts against the document.
+        assert tr.stats.failed_text_unit_ids == ["t2"]
+        assert tr.stats.item_failed_text_unit_ids == []
+
+    def test_a_rejected_request_is_the_unit_s_own_error(self, mocker) -> None:
+        def transform(inp):
+            if inp["text"] == "Goodbye world":
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "ValidationException",
+                            "Message": "Input is too long for requested model.",
+                        }
+                    },
+                    "Converse",
+                )
+            return "ok"
+
+        tr, _ = _make_translator(mocker, target=LanguageCode.KO, transform=transform)
+        tr.translate_text_units(_units())
+        assert tr.stats is not None
+        assert tr.stats.item_failed_text_unit_ids == ["t2"]
+
+    def test_own_failures_of_every_language_are_kept(self, mocker) -> None:
+        # Each language's own failures add to the earlier languages'.
+        failing = {("Hello world", "ko"), ("Goodbye world", "ja")}
+        tr, _ = _make_translator(
+            mocker,
+            target=LanguageCode.KO,
+            additional=[LanguageCode.JA],
+            transform=lambda inp: (
+                "" if (inp["text"], inp["target_language"].value) in failing else "ok"
+            ),
+        )
+        tr.translate_text_units(_units())
+        assert tr.stats is not None
+        assert tr.stats.item_failed_text_unit_ids == ["t1", "t2"]
 
     def test_a_unit_failing_in_two_languages_is_listed_once(self, mocker) -> None:
         tr, _ = _make_translator(
