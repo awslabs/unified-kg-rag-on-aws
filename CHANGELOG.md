@@ -1441,6 +1441,14 @@ changed once with the full-config keys (#332).
   before stopping the loop; each raises `StoreConnectionError` ("closed
   while this call was in flight"). A later call reconnects, as before
   (#PR).
+- Neptune retriever: a traversal whose worker started only after the close
+  opened a Neptune connection and closed it again, and one waiting for a
+  traversal slot at the close built a new worker pool that nothing shut
+  down. Both now fail with `StoreConnectionError` before either (#PR).
+- OpenSearch: a query racing a retriever's close rebuilt the async client
+  after it, an aiohttp pool nothing closed. A closed `OpenSearchClient`
+  builds no async client; the query fails with `StoreConnectionError`
+  (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
