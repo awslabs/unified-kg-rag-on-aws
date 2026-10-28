@@ -1476,6 +1476,8 @@ async def test_a_fetch_by_id_names_every_ranked_id(config: Config, fetch: str) -
         ({"id": ["S", "D"]}, {"S": "S", "D": "S -> B -> D"}),
         # ... and under its source_id, intersected with the frontier.
         ({"source_id": ["X"]}, {"S": "S", "B": "S -> B", "D": "S -> B -> D"}),
+        # ... and under its target_id.
+        ({"target_id": ["X"]}, {"S": "S", "B": "S -> B", "D": "S -> B -> D"}),
     ],
 )
 async def test_the_walk_crosses_edges_without_the_callers_id_keys(
@@ -1490,6 +1492,9 @@ async def test_the_walk_crosses_edges_without_the_callers_id_keys(
         f for prefix, f in index.calls if prefix == index.o.relationships_index_prefix
     ]
     assert edge_calls and all("id" not in f for f in edge_calls)
+    # The caller's document filter stays on every edge request (the fake
+    # store answers the passing edges whatever the filters say).
+    assert all(f.get("attr_grp") == "a" for f in edge_calls)
     assert all(
         "X" not in f.get(end, []) and f.get(end) != []
         for f in edge_calls
