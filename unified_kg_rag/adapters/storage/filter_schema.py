@@ -117,7 +117,7 @@ _RANGE_BOUNDS = frozenset({"gt", "gte", "lt", "lte"})
 
 
 def check_filter_values(
-    filters: dict[str, Any] | None, *, allow_empty_lists: bool = True
+    filters: dict[str, Any] | None, *, allow_empty_lists: bool = False
 ) -> None:
     """Reject filter values a search engine would refuse or misread.
 
@@ -127,11 +127,11 @@ def check_filter_values(
     mapping, and an empty range are rejected: OpenSearch answers them with a
     400 and the embedded engine would match them instead (a null field,
     say). Checked when a query is given, before any model call, and again by
-    the retriever. Without ``allow_empty_lists`` (a caller's filters) an
-    empty list is rejected too: OpenSearch refuses a search with query text
-    under one, the embedded engine returns nothing. A strategy's own scope
-    may be one (``scope_filters``: nothing the caller allows), which only a
-    text-less fetch by id carries.
+    the retriever. An empty list is rejected too (a caller's filters):
+    OpenSearch refuses a search with query text under one, the embedded
+    engine returns nothing. The retriever passes ``allow_empty_lists``: a
+    strategy's own scope may be one (``scope_filters``: nothing the caller
+    allows), which only a text-less fetch by id carries.
 
     Raises:
         InvalidFilterError: A value is malformed.

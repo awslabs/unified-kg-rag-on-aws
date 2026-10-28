@@ -301,7 +301,7 @@ class EvaluationManager:
             # Validate what the RAG chain will receive now, not per query later.
             rag_input = RAGInput.model_validate({**rag_fields, "query": question})
             # The chain refuses these per query (an empty list included).
-            check_filter_values(rag_input.filters, allow_empty_lists=False)
+            check_filter_values(rag_input.filters)
             query = EvaluationQuery(
                 query_id=query_id,
                 question=question,
