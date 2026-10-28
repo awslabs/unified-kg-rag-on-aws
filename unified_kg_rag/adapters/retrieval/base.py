@@ -981,6 +981,13 @@ class BaseSearchStrategy(ABC):
         def open_(vertex: str) -> bool:
             return needed(vertex) > 0
 
+        def still_open(vertices: list[str]) -> list[str]:
+            """The ``vertices`` still open; none once every wanted id is
+            reached (the rest of the walk cannot change the result)."""
+            if all_wanted_reached():
+                return []
+            return [vertex for vertex in vertices if open_(vertex)]
+
         def take(edges: list[RetrievalResult], asked: set[str]) -> None:
             """Walk ``edges`` from the ``asked`` vertices."""
             for edge in edges:
@@ -1049,21 +1056,17 @@ class BaseSearchStrategy(ABC):
                     )
                     return None
             take(edges, set(frontier))
-            still_open = [vertex for vertex in frontier if open_(vertex)]
-            if all_wanted_reached():
-                break
-            if full and still_open:
+            open_vertices = still_open(frontier)
+            if full and open_vertices:
                 # A full page held the busiest vertices' best edges only. The
                 # vertices still open are asked again together at the full
                 # ends: with the reached vertices left out, that page holds
                 # new edges only.
-                edges, full, more = await passing(still_open, None, full)
+                edges, full, more = await passing(open_vertices, None, full)
                 dropped |= more  # the same edges come back: the larger count
-                take(edges, set(still_open))
-                still_open = [vertex for vertex in still_open if open_(vertex)]
-            if all_wanted_reached():
-                break
-            if full and still_open:
+                take(edges, set(open_vertices))
+                open_vertices = still_open(open_vertices)
+            if full and open_vertices:
                 # Full again: each vertex still open is asked on its own, in
                 # waves of search.max_concurrency. Asked at once, the requests
                 # share their neighbours and the first to take one keeps it,
@@ -1072,10 +1075,10 @@ class BaseSearchStrategy(ABC):
                 # what the waves before it reached, so it asks for less than
                 # all the open seeds' room (which a request on its own got).
                 step = self.config.search.max_concurrency
-                for start in range(0, len(still_open), step):
-                    if all_wanted_reached():
-                        break
-                    wave = [v for v in still_open[start : start + step] if open_(v)]
+                for start in range(0, len(open_vertices), step):
+                    wave = still_open(open_vertices[start : start + step])
+                    if not wave:
+                        continue
                     room = sum(needed(v) for v in wave)
                     pages = await gather_or_cancel(
                         passing(

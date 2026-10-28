@@ -1308,7 +1308,9 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   an empty or non-array dataset, a missing `question`, a duplicate id, a field
   of the wrong type (a non-list `expected_entities`, an `answer_aliases` that
   is not a string or a list of strings) or `metadata` the RAG chain rejects
-  (an unknown `search_strategy`) stops the run with
+  (an unknown `search_strategy`, or `filters` it refuses: a malformed value
+  such as an empty list, or a key the item's strategy refuses, checked under
+  every compared strategy in a comparison) stops the run with
   `Error: invalid evaluation dataset:`, the item index and id, and exit code 2.
 
 ### Examples
@@ -1767,7 +1769,9 @@ finally:
   size the loop's executor once at startup:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
 - Always `close()` / `aclose()` what you build: both classes open connections
-  on first use and keep them until garbage collection otherwise.
+  on first use and keep them until garbage collection otherwise. A sync call
+  still running on another thread when the chain closes raises
+  `StoreConnectionError`; a later call reconnects.
 - Importing the package configures no logging handler;
   `unified_kg_rag.setup_logging(config)` gives the CLI's logging. Without it,
   structured fields (including `structlog.contextvars` bindings) reach your

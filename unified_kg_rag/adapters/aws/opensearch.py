@@ -373,6 +373,9 @@ class OpenSearchClient:
         # The loop object itself: keeps its id from being reused while bound,
         # and lets a rotated client be closed (awaited) on its own loop.
         self._bound_loop: asyncio.AbstractEventLoop | None = None
+        # Set by close()/aclose(): no async client is built after it (one
+        # built by a query racing the close would never be closed).
+        self._closed = False
 
     @cached_property
     def boto_session(self) -> "boto3.Session":
@@ -397,6 +400,8 @@ class OpenSearchClient:
 
     @property
     def async_client(self) -> AsyncOpenSearch:
+        if getattr(self, "_closed", False):
+            raise StoreConnectionError("The OpenSearch client is closed.")
         current_loop_id = self._get_current_loop_id()
 
         if self._async_client is None or (
@@ -473,6 +478,7 @@ class OpenSearchClient:
         path). Releases the requests connection pool so a process that finishes
         a query/ingest does not leak sockets.
         """
+        self._closed = True
         if self._client is not None:
             try:
                 self._client.close()
@@ -495,6 +501,7 @@ class OpenSearchClient:
         (avoiding the "Unclosed client session" warning) rather than only
         dropping the connector. The sync client is closed too. Never raises.
         """
+        self._closed = True
         if self._async_client is not None:
             try:
                 await self._async_client.close()

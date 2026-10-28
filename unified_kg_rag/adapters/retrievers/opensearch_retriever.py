@@ -323,6 +323,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 asked = self._within_terms(query, terms_limit)
                 self._check_filter_values(asked.filters, terms_limit)
                 self._check_filter_values(asked.exclude, terms_limit)
+                if any(value == [] for value in (asked.filters or {}).values()):
+                    # A strategy scope that allows nothing matches nothing.
+                    # Not sent: OpenSearch refuses an empty terms clause
+                    # beside a kNN query ("query must be rewritten first").
+                    return []
                 search_tasks = self._create_search_tasks(
                     asked, search_type, index_prefixes, query_vector, limits
                 )

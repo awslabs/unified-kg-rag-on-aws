@@ -1111,3 +1111,63 @@ async def test_a_range_on_a_scoped_key_is_refused_by_every_strategy(
     chain = _strategy_chain(config)
     with pytest.raises(InvalidFilterError, match=f"{key}: a range cannot be"):
         chain.check_filter_keys({key: {"gte": "a"}}, SearchStrategy(strategy))
+
+
+@pytest.mark.parametrize("strategy", ["local", "mix"])
+async def test_an_explicit_strategy_refuses_a_key_before_any_model_call(
+    config: Config, strategy: str
+) -> None:
+    # Checked at retrieval only, after the follow-up rewrite and the query
+    # processing (entity or keyword extraction) had been paid for.
+    chain = _strategy_chain(config)
+
+    async def no_model_calls(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the query ran past the filter check")
+
+    chain._ainvoke = no_model_calls  # type: ignore[method-assign]
+    with pytest.raises(InvalidFilterError, match="Unknown filter key\\(s\\): bogus"):
+        await chain.ainvoke(
+            {"query": "q", "search_strategy": strategy, "filters": {"bogus": "x"}}
+        )
+
+
+def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
+    import json
+
+    path = tmp_path / "eval.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "q1",
+                    "question": "q",
+                    "metadata": {"filters": filters, **metadata},
+                }
+            ]
+        )
+    )
+    return path
+
+
+def test_run_eval_refuses_filter_keys_when_loading(config: Config, tmp_path) -> None:
+    # Regression: load_data checked filter values only, so an item whose
+    # keys every query of the run refused loaded fine and failed mid-run.
+    from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
+    from unified_kg_rag.shared import EvaluationException
+
+    check = _strategy_chain(config).check_filter_keys
+    bogus = _eval_dataset(tmp_path, {"bogus": "x"}, search_strategy="local")
+    EvaluationManager.load_data(bogus)  # without the chain's check: values only
+    with pytest.raises(EvaluationException, match="index 0 \\(query_id 'q1'\\).*bogus"):
+        EvaluationManager.load_data(bogus, check_filter_keys=check)
+    # The item's own strategy, unless a comparison runs it with others:
+    # naive reads no entities index, so it refuses type.
+    typed = _eval_dataset(tmp_path, {"type": "person"}, search_strategy="local")
+    EvaluationManager.load_data(typed, check_filter_keys=check)
+    with pytest.raises(EvaluationException, match="type"):
+        EvaluationManager.load_data(
+            typed, check_filter_keys=check, run_strategies=["local", "naive"]
+        )
+    naive = _eval_dataset(tmp_path, {"type": "person"}, search_strategy="naive")
+    with pytest.raises(EvaluationException, match="type"):
+        EvaluationManager.load_data(naive, check_filter_keys=check)

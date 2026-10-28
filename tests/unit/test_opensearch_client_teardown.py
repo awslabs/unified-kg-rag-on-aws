@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -132,6 +134,29 @@ def test_loop_change_discards_previous_async_client(monkeypatch) -> None:
     connector.close.assert_called_once()
     assert result is new_async
     assert client._bound_loop_id == 2
+
+
+@pytest.mark.parametrize("closer", ["close", "aclose"])
+async def test_closed_client_builds_no_async_client(monkeypatch, closer: str) -> None:
+    # Regression: a query racing the close rebuilt the async client after it,
+    # and nothing closed that one (its aiohttp pool leaked).
+    client = OpenSearchClient(Config())
+    created: list[MagicMock] = []
+    monkeypatch.setattr(
+        client,
+        "_create_async_client",
+        lambda: created.append(MagicMock()) or created[-1],
+    )
+    assert client.async_client is created[0]
+    created[0].close = AsyncMock()
+    if closer == "close":
+        client.close()
+    else:
+        await client.aclose()
+
+    with pytest.raises(StoreConnectionError, match="closed"):
+        client.async_client  # noqa: B018 - the property access is the test
+    assert len(created) == 1
 
 
 def test_discard_async_client_never_raises() -> None:

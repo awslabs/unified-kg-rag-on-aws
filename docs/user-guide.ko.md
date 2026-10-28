@@ -1169,8 +1169,9 @@ F1은 내지 않습니다.
 - 파일은 질의를 실행하기 전에 검증합니다. 읽을 수 없는 파일, 비어 있거나 배열이 아닌
   데이터셋, `question` 누락, 중복 ID, 타입이 틀린 필드(목록이 아닌 `expected_entities`,
   문자열이나 문자열 목록이 아닌 `answer_aliases`), RAG 체인이 거부하는 `metadata`(알 수
-  없는 `search_strategy`)가 있으면 `Error: invalid evaluation dataset:`과 항목 번호,
-  ID를 출력하고 종료 코드 2로 멈춥니다.
+  없는 `search_strategy`, 또는 체인이 거부하는 `filters`: 빈 목록 같은 잘못된 값이나
+  항목의 전략이 거부하는 키. 비교 실행이면 비교하는 모든 전략으로 확인)가 있으면
+  `Error: invalid evaluation dataset:`과 항목 번호, ID를 출력하고 종료 코드 2로 멈춥니다.
 
 ### 예시
 
@@ -1573,7 +1574,8 @@ finally:
   때 이벤트 루프의 실행기 크기를 한 번 지정하세요:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
 - 만든 객체는 항상 `close()` / `aclose()`로 닫으세요. 두 클래스 모두 처음 쓸 때 연결을
-  열고, 닫지 않으면 가비지 컬렉션 때까지 유지합니다.
+  열고, 닫지 않으면 가비지 컬렉션 때까지 유지합니다. 체인을 닫을 때 다른 스레드에서
+  실행 중인 동기 호출은 `StoreConnectionError`를 일으키고, 그 뒤의 호출은 다시 연결합니다.
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅은
   `unified_kg_rag.setup_logging(config)`로 켭니다. 호출하지 않으면 구조화 필드
   (`structlog.contextvars`로 바인딩한 값 포함)가 레코드 속성으로 호스트 핸들러에

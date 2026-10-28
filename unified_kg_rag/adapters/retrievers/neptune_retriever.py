@@ -264,11 +264,16 @@ class NeptuneRetriever(GraphExpansionRetriever):
         used: list[GraphTraversalSource] = []
 
         def run() -> list[Any]:
+            if self._closed:
+                # Closed before this worker started: open nothing.
+                raise closed
             # Opening the connection is blocking: gremlinpython drives its
             # websocket handshake with run_until_complete on a private loop,
             # which fails on a thread that already runs one.
             g = self._neptune_client.g
-            if self._closed:
+            # Read again (past mypy's narrowing above): close() may run on
+            # another thread meanwhile.
+            if getattr(self, "_closed", True):
                 # Closed while this worker waited for the client (close()
                 # holds its lock): ``g`` may be a connection opened after
                 # the close, which nothing would close.
@@ -285,6 +290,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
         timeout = 2 * self._config.search.store_timeout_seconds
         try:
             async with slots:
+                if self._closed:
+                    # Closed while this query waited for a slot: no new pool.
+                    raise closed
                 result: list[Any] = await asyncio.wait_for(
                     loop.run_in_executor(self._traversal_executor(), run), timeout
                 )

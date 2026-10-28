@@ -102,33 +102,97 @@ async def test_aclose_closes_the_connection_off_the_loop(retriever) -> None:
     assert _FakeGremlinConnection.close_threads[0] is not threading.current_thread()
 
 
-async def test_a_traversal_racing_close_leaves_no_connection_open(
+async def test_a_worker_reaching_the_client_after_close_closes_it(
     retriever, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Regression: a traversal whose worker waited on the client lock while
-    # close() held it opened a new connection once close() released it; the
-    # closed retriever never closed that one (its websocket and threads
-    # stayed for the life of the process).
-    closing, release = threading.Event(), threading.Event()
-    close = _FakeGremlinConnection.close
+    # Regression: a traversal whose worker was already past the closed check
+    # when close() ran opened a new connection after it; the closed retriever
+    # never closed that one (its websocket and threads stayed for the life of
+    # the process). The worker now closes what it opened and fails.
+    entered, go = threading.Event(), threading.Event()
+    original = NeptuneClient.g.fget
 
-    def slow_close(self: _FakeGremlinConnection) -> None:
-        closing.set()
-        release.wait(5)
-        close(self)
+    def gated(self: NeptuneClient) -> Any:
+        entered.set()
+        go.wait(5)
+        return original(self)
 
-    monkeypatch.setattr(_FakeGremlinConnection, "close", slow_close)
-    await retriever.aretrieve(_SEEDED)  # opens the connection
-    closer = asyncio.create_task(retriever.aclose())
-    assert await asyncio.to_thread(closing.wait, 5)
+    monkeypatch.setattr(NeptuneClient, "g", property(gated))
     late = asyncio.create_task(retriever.aretrieve(_SEEDED))
-    await asyncio.sleep(0.2)  # its worker now waits on the lock close() holds
-    release.set()
-    await closer
-    with pytest.raises(StoreConnectionError):
+    assert await asyncio.to_thread(entered.wait, 5)
+    await retriever.aclose()  # the worker now waits inside ``g``
+    go.set()
+    with pytest.raises(StoreConnectionError, match="closed"):
         await late
-    opened = _FakeGremlinConnection.threads
-    assert len(_FakeGremlinConnection.close_threads) == len(opened)
+    assert len(_FakeGremlinConnection.threads) == 1  # opened after the close
+    assert len(_FakeGremlinConnection.close_threads) == 1  # ... and closed
+
+
+async def test_a_worker_starting_after_close_opens_no_connection(
+    retriever, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker was submitted before close() but starts after it: it must
+    # not open a websocket only to close it again.
+    submitted, go = threading.Event(), threading.Event()
+    executor = retriever._traversal_executor()
+    submit = executor.submit
+
+    def gated_submit(fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def gated() -> Any:
+            submitted.set()
+            go.wait(5)
+            return fn(*args, **kwargs)
+
+        return submit(gated)
+
+    monkeypatch.setattr(executor, "submit", gated_submit)
+    late = asyncio.create_task(retriever.aretrieve(_SEEDED))
+    assert await asyncio.to_thread(submitted.wait, 5)
+    await retriever.aclose()
+    go.set()
+    with pytest.raises(StoreConnectionError, match="closed"):
+        await late
+    assert _FakeGremlinConnection.threads == []
+
+
+async def test_a_query_waiting_for_a_slot_at_close_builds_no_pool(
+    retriever, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One slot: the second query waits for it while the first is in its
+    # worker. Once close() ran, the waiter must not build a new worker pool.
+    entered, go = threading.Event(), threading.Event()
+    original = NeptuneClient.g.fget
+
+    def gated(self: NeptuneClient) -> Any:
+        entered.set()
+        go.wait(5)
+        return original(self)
+
+    retriever._pool_size = 1
+    monkeypatch.setattr(NeptuneClient, "g", property(gated))
+    first = asyncio.create_task(retriever.aretrieve(_SEEDED))
+    assert await asyncio.to_thread(entered.wait, 5)
+    waiter = asyncio.create_task(retriever.aretrieve(_SEEDED))
+    await asyncio.sleep(0.05)  # the waiter is now queued on the slot
+    await retriever.aclose()
+    go.set()
+    for task in (first, waiter):
+        with pytest.raises(StoreConnectionError, match="closed"):
+            await task
+    assert retriever._executor is None
+
+
+def test_sync_close_marks_the_retriever_closed(retriever) -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(retriever.aretrieve(_SEEDED))
+        retriever.close()
+        with pytest.raises(StoreConnectionError, match="closed"):
+            loop.run_until_complete(retriever.aretrieve(_SEEDED))
+    finally:
+        loop.close()
+    assert len(_FakeGremlinConnection.threads) == 1
+    assert retriever._executor is None
 
 
 async def test_a_closed_retriever_opens_no_connection(retriever) -> None:

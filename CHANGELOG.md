@@ -1434,6 +1434,35 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
+  `batch`) still running on another thread waited forever, because the
+  close stopped the chain's loop with the call's task still pending on it.
+  The close now cancels the calls in flight and waits for them to unwind
+  before stopping the loop; each raises `StoreConnectionError` ("closed
+  while this call was in flight"). A later call reconnects, as before
+  (#450).
+- Neptune retriever: a traversal whose worker started only after the close
+  opened a Neptune connection and closed it again, and one waiting for a
+  traversal slot at the close built a new worker pool that nothing shut
+  down. Both now fail with `StoreConnectionError` before either (#450).
+- OpenSearch: a query racing a retriever's close rebuilt the async client
+  after it, an aiohttp pool nothing closed. A closed `OpenSearchClient`
+  builds no async client; the query fails with `StoreConnectionError`
+  (#450).
+- OpenSearch retriever: a vector or hybrid search with query text under
+  a strategy scope that allows nothing (an empty id list) was refused with
+  a 400 ("query must be rewritten first"), where the embedded engine
+  returned no hits. Such a search returns no hits without a request on
+  every engine; the text-less searches that send one today were not
+  affected (#450).
+- `run-eval` checks each item's filter keys when loading, under the item's
+  strategy (under every compared strategy in a comparison), so a key the
+  chain refuses (unknown to the indexes the strategy reads, a range on
+  `id`, a key `global` scopes itself) fails loading with the item's index
+  and query id instead of every such query mid-run, as the user guide
+  said. A query with an explicit strategy (`local`, `mix`, ...) refuses
+  such a key before any model call; it was refused after the follow-up
+  rewrite and the query processing had run (1 model call each) (#450).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
