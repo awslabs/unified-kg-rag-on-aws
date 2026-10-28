@@ -520,7 +520,10 @@ def test_translation_stage_records_failed_units(mocker) -> None:
 
     translator = mocker.MagicMock()
     translator.translate_text_units.side_effect = lambda units: units
-    translator.stats = TranslationStats(failed_text_unit_ids=["t1"])
+    # t2's error was its own (counted), t1's an outage (retried only).
+    translator.stats = TranslationStats(
+        failed_text_unit_ids=["t1", "t2"], item_failed_text_unit_ids=["t2"]
+    )
     mocker.patch.object(ps, "TextUnitTranslator", return_value=translator)
     config = Config()
     config.processing.translation.enabled = True
@@ -530,7 +533,8 @@ def test_translation_stage_records_failed_units(mocker) -> None:
 
     stage._execute_core(ctx)
 
-    assert ctx.failed_text_unit_ids == {"translation": ["t1"]}
+    assert ctx.failed_text_unit_ids == {"translation": ["t1", "t2"]}
+    assert ctx.item_failed_text_unit_ids == {"translation": ["t2"]}
 
 
 def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:

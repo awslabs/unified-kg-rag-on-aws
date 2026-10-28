@@ -230,7 +230,8 @@ class TextUnitTranslator:
     def _apply_translation_result(
         self, text_unit: TextUnit, result: str | None, target_language: LanguageCode
     ) -> None:
-        if not result or not result.strip():
+        # A blank answer already failed its call (``_translate``).
+        if result is None:
             self._record_failure(text_unit)
             return
 
