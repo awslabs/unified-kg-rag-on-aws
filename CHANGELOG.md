@@ -1440,6 +1440,10 @@ changed once with the full-config keys (#332).
   claim extraction failed: such a failure no longer counts as an extraction
   that may explain the empty graph, since claims are optional and the
   units' entities were extracted (#PR).
+- Claim extraction failed a unit as cut-off output when its closed
+  `<claims>` section listed only claims missing a subject, object or type.
+  Only a section without its `</claims>` is taken for cut-off output now;
+  such claims are dropped as invalid (#PR).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

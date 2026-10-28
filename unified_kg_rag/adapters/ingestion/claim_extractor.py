@@ -408,6 +408,8 @@ class ClaimExtractor(BaseProcessor):
 _CLAIM_OPENED = re.compile(r"<claim[\s>]")
 _CLAIM_CLOSED = re.compile(r"</claim\s*>")
 _SECTION_CLOSED = re.compile(r"</claims\s*>")
+# Set by ClaimsOutputParser on an output whose </claims> closes the section.
+_CLOSED_KEY = "claims_section_closed"
 
 
 class ClaimsOutputParser(RobustXMLOutputParser):
@@ -423,6 +425,8 @@ class ClaimsOutputParser(RobustXMLOutputParser):
         # Only a response without its closing </claims> was cut off: text
         # after the section (a note naming a <claim> tag) is not a claim.
         if _SECTION_CLOSED.search(text):
+            if isinstance(result, dict):
+                result[_CLOSED_KEY] = True
             return result
         opened = [m.start() for m in _CLAIM_OPENED.finditer(text)]
         closed = [m.start() for m in _CLAIM_CLOSED.finditer(text)]
@@ -452,14 +456,19 @@ def _checked(result: Any) -> dict[str, Any]:
     the unit was never extracted again. It is counted against the document
     as output cut at the token limit is, and not retried (the same input
     meets the same cap). An empty ``<claims></claims>``, the answer for a
-    unit that states none, is whole.
+    unit that states none, is whole, as is a section its ``</claims>``
+    closes whose claims all lack a field (they are dropped as invalid).
     """
     if not isinstance(result, dict) or "claims" not in result:
         raise LLMOutputTruncatedError(
             "the claim extraction output has no claims section (output cut off?)"
         )
     listed = ensure_list(result.get("claims"), inner_key="claim")
-    if listed and not any(_complete(claim) for claim in listed):
+    if (
+        listed
+        and not result.get(_CLOSED_KEY)
+        and not any(_complete(claim) for claim in listed)
+    ):
         raise LLMOutputTruncatedError(
             f"none of the {len(listed)} claims of the claim extraction output is "
             "complete (output cut off?)"

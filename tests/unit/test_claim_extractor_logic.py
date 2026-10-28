@@ -255,6 +255,22 @@ class TestClaimsOutputParser:
         claims = extractor._parse_extraction_result(result, text_unit)
         assert [c.subject_name for c in claims] == ["A", "C"]
 
+    @pytest.mark.parametrize(
+        "missing", ["<object>B</object>", "<claim_type>X</claim_type>"]
+    )
+    def test_a_closed_section_of_only_an_invalid_claim_is_no_claims(
+        self, extractor, text_unit, missing: str
+    ) -> None:
+        # The model closed </claims>: nothing was cut off, the claim lacks a
+        # field and is dropped, rather than the unit failed as cut-off output.
+        text = (
+            "<claims><claim><subject>A</subject><object>B</object>"
+            "<claim_type>X</claim_type><description>A owes B</description>"
+            "</claim></claims>"
+        ).replace(missing, "")
+        result = ClaimsOutputParser(tags=["claims"]).parse(text)
+        assert extractor._parse_extraction_result(result, text_unit) == []
+
     def test_an_output_of_only_a_cut_off_claim_is_cut_off(
         self, extractor, text_unit
     ) -> None:
