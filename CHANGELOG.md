@@ -1463,6 +1463,15 @@ changed once with the full-config keys (#332).
   said. A query with an explicit strategy (`local`, `mix`, ...) refuses
   such a key before any model call; it was refused after the follow-up
   rewrite and the query processing had run (1 model call each) (#450).
+- Ingestion: a stop (SIGTERM, Ctrl-C) landing while a stage's start, a
+  failed stage or a crashed stage's failed units were saved to the pipeline
+  metadata was raised inside the metadata's JSON serialization, which
+  pydantic wraps: the run failed (exit 1, "Critical error saving pipeline
+  metadata") instead of stopping, or the stop was lost until the stage
+  ended. Every metadata save now defers a stop until it is written, as the
+  checkpoint writes do, and a stop that still surfaces wrapped in another
+  error ends the run as a stop (exit 128 + signal), its checkpoint uploaded
+  (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
@@ -1483,7 +1492,7 @@ changed once with the full-config keys (#332).
   gleaning, claims, community reports alike), so a re-run asks
   the model again for those units only; the stage-wide uncached re-run of
   #447, which re-asked every unit the extraction store could not supply and
-  replayed the response after a stop during the re-run, is gone (#447, #PR).
+  replayed the response after a stop during the re-run, is gone (#447, #449).
 - Translation: an empty answer was recorded as a failed unit but not as
   an error of its own, so it never counted toward
   `indexing.max_document_failures`, and its response was replayed from the
