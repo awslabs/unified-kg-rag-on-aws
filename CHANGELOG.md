@@ -1435,6 +1435,11 @@ changed once with the full-config keys (#332).
   without them) or its failure counted toward
   `indexing.max_document_failures` with no real attempt. A stage whose
   earlier attempt failed such units now runs uncached (#PR).
+- An incremental delta whose new or changed documents name no entity
+  stopped every run (`graph_analysis` "received 0 inputs") when only their
+  claim extraction failed: such a failure no longer counts as an extraction
+  that may explain the empty graph, since claims are optional and the
+  units' entities were extracted (#PR).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

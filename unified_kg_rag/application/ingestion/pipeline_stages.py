@@ -300,16 +300,26 @@ class PipelineStage(ABC):
         Failing here would stop every later run at the same documents. The
         check stays when a text unit failed (an unreachable model also
         extracts nothing) and for a full build, where a corpus without a
-        single entity points at a broken model or prompt.
+        single entity points at a broken model or prompt. A failure of the
+        claim stages does not count: claims are optional, and a unit they
+        failed on still had its entities extracted.
         """
         if context.incremental_delta is None:
             return False
         if not context.documents:
             return True
+        claim_stages = {
+            PipelineStageType.CLAIM_EXTRACTION.value,
+            PipelineStageType.CLAIM_RESOLUTION.value,
+        }
         return (
             self.stage_type in self.GRAPH_STAGES
             and not self.config.indexing.reset
-            and not any(context.failed_text_unit_ids.values())
+            and not any(
+                unit_ids
+                for name, unit_ids in context.failed_text_unit_ids.items()
+                if name not in claim_stages
+            )
         )
 
     def _empty_input_hint(self) -> str:

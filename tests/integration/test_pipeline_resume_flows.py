@@ -355,6 +355,31 @@ def test_a_delta_whose_documents_name_no_entity_still_commits(
     assert harness.run() == 0
 
 
+def test_a_claims_failure_on_a_delta_naming_no_entity_still_commits(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claims are optional: a unit whose claims failed still had its entities
+    # extracted, so an empty graph is not taken for a failed extraction
+    # (which would stop every later run at the same document).
+    harness.config.processing.claim_extraction.enabled = True
+    assert harness.run() == 0
+    respond = stages_test._respond
+
+    def answer(system: str, human: str) -> str:
+        if "claim extraction specialist" in system:
+            return "<claims><claim><subj"
+        return respond(system, human)
+
+    monkeypatch.setattr(stages_test, "_respond", answer)
+    (harness.source / "contract.txt").write_text("Nothing notable is written here.")
+    (harness.source / "logistics.txt").unlink()
+
+    assert harness.run() == 0
+    (record,) = harness.registry.list_all()
+    assert Path(record.file_path).name == "contract.txt"
+    assert not harness.graph.ids("entities")
+
+
 @pytest.mark.parametrize(
     ("block", "stage"),
     [("gleaning", "gleaning"), ("claim_extraction", "claim_extraction")],
