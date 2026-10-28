@@ -1441,6 +1441,13 @@ changed once with the full-config keys (#332).
   before stopping the loop; each raises `StoreConnectionError` ("closed
   while this call was in flight"). A later call reconnects, as before
   (#450).
+- `GraphRAGChain.close()` / `aclose()` could raise ("cannot join thread
+  before it is started") when a query evicted retrievers on another thread
+  at the same moment: the eviction's close worker was registered before it
+  was started, and the close joined it in between. The close then left the
+  chain's loop running and its in-flight calls waiting. The worker is now
+  started under the lock it is registered with, and the loop is stopped
+  whatever the retriever closes did, so the close never raises (#453).
 - Neptune retriever: a traversal whose worker started only after the close
   opened a Neptune connection and closed it again, and one waiting for a
   traversal slot at the close built a new worker pool that nothing shut

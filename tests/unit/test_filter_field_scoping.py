@@ -1131,6 +1131,25 @@ async def test_an_explicit_strategy_refuses_a_key_before_any_model_call(
         )
 
 
+@pytest.mark.parametrize("strategy", ["local", "mix"])
+async def test_a_stream_refuses_an_explicit_strategys_key_before_any_model_call(
+    config: Config, strategy: str
+) -> None:
+    # The stream path checks the keys at entry too (input screening, the
+    # follow-up rewrite and query processing all call a model).
+    chain = _strategy_chain(config)
+
+    async def no_model_calls(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the stream ran past the filter check")
+
+    chain._screen_input = no_model_calls  # type: ignore[method-assign]
+    with pytest.raises(InvalidFilterError, match="Unknown filter key\\(s\\): bogus"):
+        async for _ in chain.astream(
+            {"query": "q", "search_strategy": strategy, "filters": {"bogus": "x"}}
+        ):
+            pass
+
+
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
     import json
 

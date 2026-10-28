@@ -1553,3 +1553,65 @@ async def test_the_walk_stops_mid_hop_once_every_caller_id_is_reached(
     )
     assert sorted(_paths(kept)) == sorted(wanted)
     assert len(_relationship_calls(config, index)) == asks
+
+
+async def test_hop_zero_is_asked_when_every_caller_id_is_a_seed(
+    config: Config,
+) -> None:
+    # Hop 0 is asked even with nothing left to reach: its empty first page
+    # is what tells a missing relationships index (the graph walk then).
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", "id": ["S"]})
+    assert _paths(kept) == {"S": "S"}
+    assert len(_relationship_calls(config, index)) == 2  # hop 0 only
+
+
+@pytest.mark.parametrize(
+    ("caller_id", "edges"),
+    [
+        # A single id rather than a list.
+        ("B", _EDGES),
+        # Ids that are not strings match the vertex ids they spell.
+        ([7], [("r-s7", "S", "7", 5.0), ("r-78", "7", "8", 4.0)]),
+    ],
+    ids=["scalar", "non-string"],
+)
+async def test_the_walk_stops_once_a_scalar_or_non_string_caller_id_is_reached(
+    config: Config, caller_id: Any, edges: list[tuple[str, str, str, float]]
+) -> None:
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    await _expand(config, index, {"attr_grp": "a", "id": caller_id})
+    # Reached at the first hop: the second hop is not asked.
+    assert len(_relationship_calls(config, index)) == 2
+
+
+async def test_an_emptied_wave_does_not_end_the_waves(config: Config) -> None:
+    # Hop 1 frontier, in reach order: D (S3), C (S2), A, B (both S1), E (S4).
+    # D's and C's 300 best edges fill the first two pages; A and B are then
+    # asked on their own (one per wave): A fills S1's share, which closes B,
+    # so B's wave is empty, and E (whose wave comes after) must still be asked.
+    edges = [
+        ("s3d", "S3", "D", 9.0),
+        ("s2c", "S2", "C", 8.0),
+        ("s1a", "S1", "A", 7.0),
+        ("s1b", "S1", "B", 6.0),
+        ("s4e", "S4", "E", 5.0),
+    ]
+    edges += [(f"d{i:03d}", "D", f"DX{i:03d}", 100.0) for i in range(300)]
+    edges += [(f"c{i:03d}", "C", f"CX{i:03d}", 90.0) for i in range(300)]
+    edges += [(f"a{i:03d}", "A", f"AX{i:03d}", 50.0) for i in range(20)]
+    edges += [(f"b{i:03d}", "B", f"BX{i:03d}", 45.0) for i in range(20)]
+    edges += [(f"e{i:03d}", "E", f"EX{i:03d}", 40.0) for i in range(3)]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.neptune.max_hops = 2
+    config.search.max_concurrency = 1
+    query = SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"})
+    share = seed_share(query, config.indexing.neptune.traversal_fetch_multiplier, 4)
+    assert 3 < share < 20
+    await _strategy(config, _Graph(), index)._expand_via_graph(
+        query, ["S1", "S2", "S3", "S4"]
+    )
+    o = config.indexing.opensearch
+    (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
+    assert not any(v.startswith("BX") for v in reached)  # B's wave was empty
+    assert any(v.startswith("EX") for v in reached)

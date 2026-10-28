@@ -61,6 +61,11 @@ class NeptuneRetriever(GraphExpansionRetriever):
         self._executor: ThreadPoolExecutor | None = None
         self._closed = False
 
+    def _is_closed(self) -> bool:
+        """``_closed`` read through a call, so a re-read after an earlier
+        check is not narrowed away (close() may run on another thread)."""
+        return self._closed
+
     def _traversal_executor(self) -> ThreadPoolExecutor:
         if self._executor is None:
             self._executor = ThreadPoolExecutor(
@@ -271,9 +276,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
             # websocket handshake with run_until_complete on a private loop,
             # which fails on a thread that already runs one.
             g = self._neptune_client.g
-            # Read again (past mypy's narrowing above): close() may run on
-            # another thread meanwhile.
-            if getattr(self, "_closed", True):
+            # Read again: close() may run on another thread meanwhile.
+            if self._is_closed():
                 # Closed while this worker waited for the client (close()
                 # holds its lock): ``g`` may be a connection opened after
                 # the close, which nothing would close.
