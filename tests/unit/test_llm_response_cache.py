@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration
 
@@ -17,6 +18,7 @@ from unified_kg_rag.adapters.llm.response_cache import (
     LLMResponseCache,
 )
 from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 
@@ -206,3 +208,81 @@ def test_the_caching_factory_keeps_the_wrapped_factory_s_policies() -> None:
     factory = CachingLLMFactory(inner, LLMResponseCache())
     assert factory.transient_retry == "policy"
     assert factory.get_model_info("model-a") == inner.get_model_info("model-a")
+
+
+def _batch(
+    model: Any, texts: list[str], parse: Any, max_attempts: int = 1
+) -> list[Any]:
+    """Ask ``model`` each of ``texts`` as one item of a batch, its answer
+    checked by ``parse`` (raising fails the item)."""
+    return BatchProcessor(
+        max_attempts=max_attempts, retry_multiplier=1.0, retry_max_wait=0
+    ).execute_with_fallback(
+        texts,
+        lambda items: [{"text": text} for text in items],
+        lambda request: parse(_ask(model, request["text"])),
+        "test",
+        show_progress=False,
+    )
+
+
+def _rejecting(bad: str) -> Any:
+    def parse(answer: str) -> str:
+        if bad in answer:
+            raise OutputParserException(f"cannot parse {answer}")
+        return answer
+
+    return parse
+
+
+@pytest.mark.parametrize("max_attempts", [1, 3])
+def test_the_responses_of_a_failed_item_are_not_served_again(
+    tmp_path: Path, max_attempts: int
+) -> None:
+    # A re-run must ask the model again for the item a bad response failed
+    # (not replay it and record the same failure), and only for that item.
+    respond = _Counter()
+    first = LLMResponseCache()
+    first.open(tmp_path)
+    results = _batch(
+        _model(first, respond), ["good", "bad"], _rejecting("bad"), max_attempts
+    )
+    assert results[0] == "answer to good" and results[1] is BATCH_ITEM_FAILED
+    assert respond.calls == 1 + max_attempts
+    first.close()
+
+    second = LLMResponseCache()
+    second.open(tmp_path)
+    asked = respond.calls
+    results = _batch(_model(second, respond), ["good", "bad"], lambda answer: answer)
+    assert results == ["answer to good", "answer to bad"]
+    assert respond.calls == asked + 1
+    assert (second.hits, second.misses) == (1, 1)
+    second.close()
+
+    # The answer that parsed is kept for the next run.
+    third = LLMResponseCache()
+    third.open(tmp_path)
+    _batch(_model(third, respond), ["good", "bad"], lambda answer: answer)
+    assert respond.calls == asked + 1
+
+
+def test_a_served_response_its_item_rejects_is_dropped(tmp_path: Path) -> None:
+    # Stored by an earlier run (a parser since tightened, a response from
+    # before this rule): once its item fails on it, no later run gets it.
+    respond = _Counter()
+    first = LLMResponseCache()
+    first.open(tmp_path)
+    _ask(_model(first, respond), "bad")
+    first.close()
+
+    second = LLMResponseCache()
+    second.open(tmp_path)
+    results = _batch(_model(second, respond), ["bad"], _rejecting("bad"))
+    assert results == [BATCH_ITEM_FAILED] and respond.calls == 1
+    second.close()
+
+    third = LLMResponseCache()
+    third.open(tmp_path)
+    _ask(_model(third, respond), "bad")
+    assert respond.calls == 2

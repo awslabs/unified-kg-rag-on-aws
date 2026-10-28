@@ -17,10 +17,7 @@ from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
-from unified_kg_rag.adapters.llm.response_cache import (
-    LLMResponseCache,
-    uncached_responses,
-)
+from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.ingestion.incremental import (
@@ -1922,13 +1919,6 @@ class DataIngestionPipeline:
         self._executed_stages = self._executed_stages | {stage.name}
         # The persisted results downstream of this stage are now stale.
         self.state_manager.mark_rerun(stage.name)
-        # An earlier attempt of this pipeline id failed units of this stage
-        # for errors of their own (a response that does not parse, say): ask
-        # the model again. The run's response cache stores such a response
-        # and would replay it, recording the same failure (counted, or the
-        # claims given up) without a model call. Units failed by the model (an
-        # outage) have no stored response: their stage keeps the cache.
-        retried = bool(context.item_failed_text_unit_ids.get(stage.name))
         # A failure recorded for this stage by an earlier attempt is replaced
         # by what this execution reports.
         context.failed_text_unit_ids.pop(stage.name, None)
@@ -1951,8 +1941,7 @@ class DataIngestionPipeline:
             logger.error("%s", result.error_message)
             self.state_manager.update_stage_result(context, result)
             return result
-        with uncached_responses() if retried else nullcontext():
-            result = self._run_stage(stage, context)
+        result = self._run_stage(stage, context)
         if result.status == PipelineStageStatus.FAILED:
             self._mark_units_failed(stage, context)
         return result

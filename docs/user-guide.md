@@ -670,8 +670,9 @@ prompt plus the model id, max tokens, temperature and reasoning.
 
 - Only earlier runs' responses are served, each at most once per run; a
   response cut off at the output-token limit is not kept. Above temperature 0
-  a re-run replays the earlier sample. A stage that failed units for errors
-  of their own (a response that does not parse) runs uncached on the re-run.
+  a re-run replays the earlier sample. The responses of a call that failed
+  every attempt (one that never parsed) are dropped, so a re-run asks the
+  model again for those units only.
 - `--force-rebuild` serves nothing; query and evaluation calls are never
   cached.
 - The cache grows by a few KB per model call and is read into memory at

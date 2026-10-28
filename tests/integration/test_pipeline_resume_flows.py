@@ -584,3 +584,50 @@ def test_a_rerun_asks_again_for_the_graph_a_bad_response_failed(
     assert harness.run("--pipeline-id", "p1") == 0
     assert [t for t in calls[asked:] if "Depot" in t]
     assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+
+
+def test_a_rerun_asks_again_only_for_the_unit_a_bad_response_failed(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Gleaning has no record store: the rerun's other units are answered by
+    # the response cache, and only the unit whose response failed is asked.
+    harness.config.processing.gleaning.enabled = True
+    calls = _answer_badly_once(monkeypatch, "graph refinement specialist", "garbage")
+    assert harness.run("--pipeline-id", "p1") == 0
+    asked = len(calls)
+
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert calls[asked:] == ["Depot stores widgets for Vendor."]
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+
+
+def test_a_rerun_stopped_before_it_asked_again_does_not_replay_the_response(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stop checkpoints the rerun before it asked again for the unit;
+    # resuming then must still not replay the response that failed it.
+    import os
+    import signal
+
+    calls = _answer_badly_once(
+        monkeypatch, "knowledge graph extraction expert", "garbage"
+    )
+    answer = stages_test._respond
+    stop = {"on": False}
+
+    def stopping(system: str, human: str) -> str:
+        if stop["on"] and "Depot" in stages_test._source_text(human):
+            stop["on"] = False
+            os.kill(os.getpid(), signal.SIGTERM)
+            raise TimeoutError("stopped")
+        return answer(system, human)
+
+    monkeypatch.setattr(stages_test, "_respond", stopping)
+    assert harness.run("--pipeline-id", "p1") == 0
+    stop["on"] = True
+    assert harness.run("--pipeline-id", "p1") == 143
+    asked = len(calls)
+
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert "Depot stores widgets for Vendor." in calls[asked:]
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}

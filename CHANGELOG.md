@@ -1449,8 +1449,12 @@ changed once with the full-config keys (#332).
   its own (one that does not parse): the failure was recorded again without
   a model call, so the document's claims were given up for good (PROCESSED
   without them) or its failure counted toward
-  `indexing.max_document_failures` with no real attempt. A stage whose
-  earlier attempt failed such units now runs uncached (#447).
+  `indexing.max_document_failures` with no real attempt. The cache now
+  drops the responses of a model call that failed every attempt (graph,
+  gleaning, claims, community reports alike), so a re-run asks
+  the model again for those units only; the stage-wide uncached re-run of
+  #447, which re-asked every unit the extraction store could not supply and
+  replayed the response after a stop during the re-run, is gone (#447, #PR).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction
