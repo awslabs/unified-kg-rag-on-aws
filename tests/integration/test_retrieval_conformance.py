@@ -320,6 +320,27 @@ def test_term_terms_range_and_attribute_filters(harness: StoreHarness) -> None:
     assert all(r.score == 0.0 for r in results[1])
 
 
+def test_an_empty_scope_list_matches_nothing(harness: StoreHarness) -> None:
+    # A strategy's own scope may leave nothing (``_ask_incident`` intersects
+    # a caller source_id with the frontier): the retriever takes the empty
+    # list (a caller's is refused before any search) and matches no hit,
+    # with query text too (OpenSearch refused that beside a kNN query).
+    _ingest(harness)
+    o = _prefixes(harness)
+    empty = {"source_id": []}
+    results = _search(
+        harness,
+        _query("", o.relationships_index_prefix, filters=empty),
+        *(
+            _query("widgets", o.relationships_index_prefix, filters=empty).model_copy(
+                update={"search_type": search_type}
+            )
+            for search_type in SearchType
+        ),
+    )
+    assert results == [[]] * (1 + len(SearchType))
+
+
 @pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
 def test_attribute_filter_skips_an_index_without_the_attribute(
     harness: StoreHarness, search_type: SearchType

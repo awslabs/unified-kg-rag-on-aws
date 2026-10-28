@@ -1449,6 +1449,12 @@ changed once with the full-config keys (#332).
   after it, an aiohttp pool nothing closed. A closed `OpenSearchClient`
   builds no async client; the query fails with `StoreConnectionError`
   (#PR).
+- OpenSearch retriever: a vector or hybrid search with query text under
+  a strategy scope that allows nothing (an empty id list) was refused with
+  a 400 ("query must be rewritten first"), where the embedded engine
+  returned no hits. Such a search returns no hits without a request on
+  every engine; the text-less searches that send one today were not
+  affected (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket

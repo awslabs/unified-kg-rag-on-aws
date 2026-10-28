@@ -1520,3 +1520,36 @@ async def test_the_walk_stops_once_every_caller_id_is_reached(config: Config) ->
     kept = await _expand(config, index, {"attr_grp": "a", "id": ["S", "D"]})
     assert _paths(kept) == {"S": "S", "D": "S -> B -> D"}
     assert sum(p == index.o.relationships_index_prefix for p, _ in index.calls) > 1
+
+
+@pytest.mark.parametrize(
+    ("wanted", "asks"),
+    [
+        # Reached on the first page: the full page is not asked again.
+        (["M00", "V00-000"], 2),
+        # Reached on the open vertices' page: none is asked on its own.
+        (["M01", "V01-000"], 2 + 1),
+        # Reached in the first wave on their own: the other waves are not
+        # sent (3 at a time: 18 open vertices would be 6 waves).
+        (["M02", "V02-000"], 2 + 1 + 3),
+    ],
+    ids=["first-page", "open-vertices-page", "first-wave"],
+)
+async def test_the_walk_stops_mid_hop_once_every_caller_id_is_reached(
+    config: Config, wanted: list[str], asks: int
+) -> None:
+    # Full pages (20 hubs of 120 edges): each phase of a hop stops asking
+    # once every id the caller lists is reached.
+    edges = [
+        (f"m{j:02d}-{i:03d}", f"M{j:02d}", f"V{j:02d}-{i:03d}", 100.0)
+        for j in range(20)
+        for i in range(120)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.search.max_concurrency = 3
+    kept = await _strategy(config, _Graph(), index)._expand_via_graph(
+        SearchQuery(query="q", top_k=10, filters={"attr_grp": "a", "id": wanted}),
+        [f"M{j:02d}" for j in range(20)],
+    )
+    assert sorted(_paths(kept)) == sorted(wanted)
+    assert len(_relationship_calls(config, index)) == asks
