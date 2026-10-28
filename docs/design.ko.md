@@ -869,7 +869,8 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 `close()` / `aclose()`를 제공합니다.
 
 - `OpenSearchClient`와 `NeptuneClient`는 풀을 닫습니다(OpenSearch는 이벤트 루프가 바뀔 때도
-  이전 클라이언트를 그 루프에서 닫음).
+  이전 클라이언트를 그 루프에서 닫음). 닫힌 Neptune 리트리버는 연결이나 작업 스레드 풀을 다시
+  열지 않으므로, 닫을 때 실행 중이던 탐색이나 닫은 뒤 시작한 탐색은 `StoreConnectionError`로 실패합니다.
 - `GraphRAGChain.close()` / `aclose()`는 체인이 만든 것을 닫습니다. `IndexingManager.close()`는
   주입된 것을 포함해 두 인덱서를 모두 닫습니다. `DataIngestionPipeline(vector_indexer=...,
   graph_indexer=...)`에 넘긴 인덱서는 빌려 쓰는 것이라 파이프라인이 닫지 않고 소유자가 닫습니다.

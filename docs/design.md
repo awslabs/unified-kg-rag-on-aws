@@ -1057,6 +1057,9 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 
 - `OpenSearchClient` and `NeptuneClient` close their pools (OpenSearch also
   when the event loop changes, awaiting the old client on its own loop).
+  A closed Neptune retriever opens no connection or worker pool again: a
+  traversal still running at the close, or started after it, fails with
+  `StoreConnectionError`.
 - `GraphRAGChain.close()` / `aclose()` close what the chain built.
   `IndexingManager.close()` closes both its indexers, injected ones too.
   Indexers passed to `DataIngestionPipeline(vector_indexer=...,

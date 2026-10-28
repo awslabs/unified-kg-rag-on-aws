@@ -140,7 +140,7 @@ def test_documents_are_indexed_without_the_failed_claims_and_retried_once(
     assert calls["claims"] == len(failing) + (cause == "rejected"), calls
     state = _state(providers)
     assert all(state[name][0] is DocStatus.PROCESSED for name in state), state
-    assert "which are not extracted again" in caplog.text
+    assert "which later runs do not extract again" in caplog.text
     assert context.recorded_failed_doc_ids == []
     assert len(context.claims_missing_doc_ids) == len(failing)
 

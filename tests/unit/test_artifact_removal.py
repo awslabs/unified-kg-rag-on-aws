@@ -881,3 +881,59 @@ def test_a_dropped_edge_still_stored_does_not_rank_its_endpoints(mocker) -> None
         dropped=[dropped.id],
     )
     assert [e.rank for e in entities] == [1]
+
+
+def test_a_dropped_edge_still_stored_leaves_only_its_own_link(mocker) -> None:
+    # At the other end too, and only that link: c keeps its link to a.
+    manager, graph, _ = _manager()
+    mocker.patch.object(
+        graph, "read_neighbor_ids", return_value={"a": ["b", "c"], "c": ["a"]}
+    )
+    mocker.patch.object(graph, "find_incident_relationship_ids", return_value=[])
+    dropped = Relationship(
+        id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
+    )
+    entities, _ = manager._finish(
+        "default",
+        [
+            Entity(id="a", name="A", type="ORG", description="A"),
+            Entity(id="c", name="C", type="ORG", description="C"),
+        ],
+        [],
+        stored_relationships=[dropped],
+        dropped=[dropped.id],
+    )
+    assert {e.id: e.rank for e in entities} == {"a": 1, "c": 1}
+
+
+def test_a_rewritten_stored_edge_is_ranked_without_a_dropped_link(mocker) -> None:
+    # The stored edges rewritten beside the strip's are ranked over the same
+    # links as its entities: a-c is 2 (a: c, c: a), not 3 over a-b.
+    manager, graph, _ = _manager()
+    neighbours = {"a": ["b", "c"], "b": ["a"], "c": ["a"]}
+    mocker.patch.object(
+        graph,
+        "read_neighbor_ids",
+        side_effect=lambda ids, suffix=None: {i: neighbours.get(i, []) for i in ids},
+    )
+    mocker.patch.object(graph, "find_incident_relationship_ids", return_value=["r-ac"])
+    stored = Relationship(
+        id="r-ac",
+        source_id="a",
+        target_id="c",
+        description="y",
+        text_unit_ids=["t1"],
+        rank=0,
+    )
+    mocker.patch.object(graph, "read_relationships", return_value=[stored])
+    dropped = Relationship(
+        id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
+    )
+    _, relationships = manager._finish(
+        "default",
+        [Entity(id="a", name="A", type="ORG", description="A")],
+        [],
+        stored_relationships=[dropped],
+        dropped=[dropped.id],
+    )
+    assert {r.id: r.rank for r in relationships}.get("r-ac") == 2

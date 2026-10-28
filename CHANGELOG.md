@@ -1480,6 +1480,14 @@ changed once with the full-config keys (#332).
   neither served nor stored. A response dropped before it was written
   leaves no entry at all (it wrote the response and a removal entry, a third
   more segments on a run with failing units) (#PR).
+- Incremental indexing warnings: a document whose translation failed was
+  reported as "Extraction failed"; claims given up after a second failure
+  were said not to be extracted again until the content or settings change,
+  although a re-run with the same pipeline id still extracts them; and the
+  retrying-documents warning said an outage or a setting "never counts"; it
+  now says such a failure does not count toward
+  `indexing.max_document_failures`, so the document is retried every run
+  (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
