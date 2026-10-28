@@ -1450,6 +1450,12 @@ changed once with the full-config keys (#332).
   but not that part's name keys, so once a later run resolved that part
   apart again, no entity was derived for it and nothing cited its unit
   (#PR).
+- Incremental indexing across an upgrade: a finished pipeline id run again
+  restored its delta although a run of a release before `written_by` had
+  since committed another version of one of its documents (a record
+  without a writer, `PROCESSED` at other content). The delta indexed its
+  version over that one's artifacts, which stayed. Such a record now makes
+  the run diff again from document_loading (#PR).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

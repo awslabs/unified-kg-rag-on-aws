@@ -379,7 +379,8 @@ would stop every later run, so runs count deaths and isolate the culprit.
   written a record of one of its documents (every record names the pipeline
   id that wrote it last; a record written before that was recorded names
   none: a `PENDING` or `FAILED` one, or one with an open attempt, counts as
-  another pipeline id's, a `PROCESSED` one is left to the other checks),
+  another pipeline id's, as does a `PROCESSED` one at other content than the
+  delta's; one at the delta's content is left to the other checks),
   committed one of its documents with other extraction settings (a record
   naming no writer counts even for a document the delta re-extracts for a
   settings change), or added, changed or deleted a document outside its

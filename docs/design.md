@@ -639,7 +639,8 @@ whose processing kills the task would stop every later run the same way.
   delta names a document whose record is gone, holds other content, reached
   the limit or was written by another pipeline id since (`written_by`; a
   record written before the field has none and counts as another pipeline
-  id's unless it is `PROCESSED` without an open attempt, and even then when
+  id's unless it is `PROCESSED` at the delta's content without an open
+  attempt, and even then when
   it was committed under other extraction settings for a document the delta
   re-extracts for a settings change), or deletes a document another
   pipeline id (or a record without a writer) has recorded in another scope
