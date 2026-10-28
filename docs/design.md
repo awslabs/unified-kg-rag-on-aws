@@ -1062,7 +1062,9 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   A closed Neptune retriever opens no connection or worker pool again: a
   traversal still running at the close, or started after it, fails with
   `StoreConnectionError`.
-- `GraphRAGChain.close()` / `aclose()` close what the chain built.
+- `GraphRAGChain.close()` / `aclose()` close what the chain built, then
+  stop the chain's loop (cancelling the sync calls still in flight), even
+  when a retriever close or the wait for one fails.
   `IndexingManager.close()` closes both its indexers, injected ones too.
   Indexers passed to `DataIngestionPipeline(vector_indexer=...,
   graph_indexer=...)` are borrowed: the pipeline never closes them, their

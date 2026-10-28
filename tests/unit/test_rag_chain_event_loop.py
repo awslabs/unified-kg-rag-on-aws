@@ -468,3 +468,104 @@ def test_stream_stopped_by_close_does_not_restart_the_loop() -> None:
     assert not thread.is_alive()
     assert len(outcome) == 1 and isinstance(outcome[0], StoreConnectionError)
     assert runner._loop is None  # the iterator's finally did not restart it
+
+
+def test_join_waits_for_a_close_registered_but_not_yet_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: start() registered its worker, released the lock, then
+    # started it; a join() in between (chain close racing an eviction on the
+    # query path) raised "cannot join thread before it is started", so
+    # close() raised and never stopped the loop.
+    background = rag_chain_module._BackgroundCloses()
+    entered, release = threading.Event(), threading.Event()
+    start = threading.Thread.start
+
+    def gated_start(self: threading.Thread) -> None:
+        if self.name == "kg-rag-retriever-close":
+            entered.set()
+            assert release.wait(timeout=5)
+        start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", gated_start)
+    starter = threading.Thread(target=background.start, args=([],), daemon=True)
+    starter.start()
+    assert entered.wait(timeout=5)
+    errors: list[BaseException] = []
+
+    def join() -> None:
+        try:
+            background.join(timeout=5)
+        except BaseException as e:  # noqa: BLE001 - recorded for the assertion
+            errors.append(e)
+
+    joiner = threading.Thread(target=join, daemon=True)
+    joiner.start()
+    joiner.join(timeout=0.5)  # the join is in flight (or failed) by now
+    release.set()
+    starter.join(timeout=5)
+    joiner.join(timeout=5)
+    assert not joiner.is_alive() and errors == []
+
+
+def test_close_and_aclose_stop_the_loop_even_if_waiting_for_closes_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain, _ = _chain()
+
+    def failing_join(self: Any, timeout: float = 0.0) -> None:
+        raise RuntimeError("join failed")
+
+    monkeypatch.setattr(rag_chain_module._BackgroundCloses, "join", failing_join)
+    for close in (chain.close, lambda: _run_on_fresh_loop(chain.aclose())):
+        chain.invoke({"query": "q"})  # type: ignore[arg-type]
+        thread = chain._loop_runner._thread
+        close()  # never raises
+        assert thread is not None and not thread.is_alive()
+
+
+def test_stop_cancels_a_task_no_call_awaits() -> None:
+    # A task a call spawned and left running (a shared embedding future,
+    # say) is cancelled and ended before the loop stops, not waited for.
+    runner = _LoopRunner()
+    spawned: list[asyncio.Task[None]] = []
+
+    async def spawn() -> None:
+        spawned.append(asyncio.ensure_future(asyncio.Event().wait()))
+
+    runner.run(spawn())
+    started = time.monotonic()
+    runner.stop()
+    assert spawned[0].cancelled()
+    assert time.monotonic() - started < 5
+
+
+def test_calls_racing_stop_never_hang() -> None:
+    # A call finds (or starts) the loop and registers itself under one lock
+    # hold, so a stop() racing it either fails it as closed or leaves it to
+    # a restarted loop: it never waits on a stopped loop.
+    runner = _LoopRunner()
+    outcomes: list[str] = []
+
+    def calls() -> None:
+        for _ in range(100):
+            call = asyncio.sleep(0)
+            try:
+                runner.run(call)
+                outcomes.append("ok")
+            except StoreConnectionError:
+                call.close()  # cancelled before it ran
+                outcomes.append("closed")
+
+    threads = [threading.Thread(target=calls, daemon=True) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 20
+    try:
+        while time.monotonic() < deadline and any(t.is_alive() for t in threads):
+            runner.stop()
+            threads[0].join(timeout=0.001)
+    finally:
+        runner.stop()
+    assert not any(thread.is_alive() for thread in threads)
+    assert len(outcomes) == 400

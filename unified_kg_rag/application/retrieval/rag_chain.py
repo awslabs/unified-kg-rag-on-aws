@@ -920,6 +920,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # one query against another query's strategy (silent cross-contamination).
         # The instance itself is cached per loop and holds no per-query state.
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
+        # A backstop: every entry point (ainvoke/asearch/astream, auto's
+        # routing) has checked these keys before any model call already; this
+        # catches a caller driving the composed runnable directly.
         if state.get("filters"):
             self._check_strategy_filter_keys(
                 state["filters"], state["resolved_strategy"]
@@ -1245,12 +1248,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             else:
                 # Their loop is gone: the blocking closes run off this loop.
                 await asyncio.to_thread(_close_retrievers, retrievers)
-        background = getattr(self, "_background_closes", None)
-        if background is not None:
-            await asyncio.to_thread(background.join)
-        runner = getattr(self, "_loop_runner", None)
-        if runner is not None:
-            await asyncio.to_thread(runner.stop)
+        try:
+            background = getattr(self, "_background_closes", None)
+            if background is not None:
+                await asyncio.to_thread(background.join)
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error waiting for background retriever closes: %s", e)
+        finally:
+            runner = getattr(self, "_loop_runner", None)
+            if runner is not None:
+                await asyncio.to_thread(runner.stop)
 
     def close(self) -> None:
         """Synchronous teardown of cached retrievers and the sync-API loop."""
@@ -2033,9 +2040,15 @@ class _BackgroundCloses:
         worker = threading.Thread(
             target=run, name="kg-rag-retriever-close", daemon=True
         )
+        # Registered and started under one lock hold, so join() never sees a
+        # worker that is not yet started (joining one raises RuntimeError).
         with self._lock:
             self._workers.add(worker)
-        worker.start()
+            try:
+                worker.start()
+            except BaseException:
+                self._workers.discard(worker)
+                raise
         return worker
 
     def join(self, timeout: float = _TEARDOWN_TIMEOUT_SECONDS) -> None:
@@ -2091,14 +2104,22 @@ def _release_cached_resources(
     Takes the chain's state rather than the chain, so it also serves as the
     chain's GC finalizer.
     """
-    for loop, retrievers in _take_cached(retriever_cache, strategy_cache, lock).items():
-        GraphRAGChain._release_retrievers(
-            retrievers, loop, wait=True, background=background
-        )
-    if background is not None:
-        background.join()
-    if runner is not None:
-        runner.stop()
+    try:
+        for loop, retrievers in _take_cached(
+            retriever_cache, strategy_cache, lock
+        ).items():
+            GraphRAGChain._release_retrievers(
+                retrievers, loop, wait=True, background=background
+            )
+        if background is not None:
+            background.join()
+    except Exception as e:  # noqa: BLE001 - teardown must never raise
+        logger.debug("Error releasing the chain's retrievers: %s", e)
+    finally:
+        # Whatever happened above, in-flight calls are cancelled and the loop
+        # stopped (stop() itself never raises).
+        if runner is not None:
+            runner.stop()
 
 
 class _LoopStoppedError(StoreConnectionError):
@@ -2124,11 +2145,8 @@ class _LoopRunner:
         self._pending: set[concurrent.futures.Future[Any]] = set()
         self._stopped: set[concurrent.futures.Future[Any]] = set()
 
-    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
-        with self._lock:
-            return self._ensure_loop_locked()
-
     def _ensure_loop_locked(self) -> asyncio.AbstractEventLoop:
+        """The running loop, started first if needed (caller holds the lock)."""
         if self._loop is None:
             loop = asyncio.new_event_loop()
             if self._io_workers is not None:
@@ -2147,21 +2165,20 @@ class _LoopRunner:
             StoreConnectionError: :meth:`stop` closed the loop while the call
                 was in flight (the chain was closed under it).
         """
-        loop = self._ensure_loop()
-        if threading.current_thread() is self._thread:
-            raise RuntimeError(
-                "A synchronous GraphRAGChain method was called from the chain's "
-                "own event loop; await the async variant instead."
-            )
 
         async def _await() -> _T:
             return await awaitable
 
+        # One lock hold from finding (or starting) the loop to registering the
+        # call: stop() cannot land in between, so a call is never submitted
+        # to a loop that has been stopped (where it would never finish).
         with self._lock:
-            if self._loop is not loop:
-                # stop() ran since _ensure_loop: submit to the restarted loop,
-                # never to the stopped one (where the call would never finish).
-                loop = self._ensure_loop_locked()
+            loop = self._ensure_loop_locked()
+            if threading.current_thread() is self._thread:
+                raise RuntimeError(
+                    "A synchronous GraphRAGChain method was called from the "
+                    "chain's own event loop; await the async variant instead."
+                )
             future = asyncio.run_coroutine_threadsafe(_await(), loop)
             self._pending.add(future)
         try:
