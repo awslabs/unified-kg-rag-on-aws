@@ -584,3 +584,82 @@ def test_a_stop_raised_before_the_give_up_still_stops_the_heartbeat(
     with pytest.raises(KeyboardInterrupt):
         lease.__exit__(KeyboardInterrupt, KeyboardInterrupt(), None)
     assert lease._stop.is_set()
+
+
+@pytest.fixture
+def sigterm_stops():  # type: ignore[no-untyped-def]
+    """A SIGTERM handler raising as the pipeline's does (ECS StopTask)."""
+    import signal
+
+    def handler(signum: int, _frame: object) -> None:
+        raise PipelineInterrupted(signum)
+
+    previous = signal.signal(signal.SIGTERM, handler)
+    yield
+    signal.signal(signal.SIGTERM, previous)
+
+
+def _sigterm() -> None:
+    import os
+    import signal
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(0.05)
+
+
+class _SignalledAcquire(FakeDocStatusStore):
+    """Receives SIGTERM while its first acquire request is in flight."""
+
+    signalled = False
+
+    def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
+        acquired = super().try_acquire_lease(namespace, owner, seconds)
+        if not self.signalled:
+            self.signalled = True
+            _sigterm()
+        return acquired
+
+
+@pytest.mark.usefixtures("sigterm_stops")
+@pytest.mark.parametrize(
+    "at", ["acquire request", "heartbeat start", "fence install", "fence removal"]
+)
+def test_a_sigterm_landing_while_the_lease_is_taken_still_gives_it_up(
+    monkeypatch: pytest.MonkeyPatch, at: str
+) -> None:
+    # Regression: a stop raised in the enter after the acquire (the request
+    # itself, the heartbeat's start, the fence's install) left the lease
+    # held for lease_seconds, and the next run failed with "being written
+    # by". The stop is held until the lease is taken, then raised, and the
+    # lease given up (released: the run wrote nothing).
+    import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
+
+    store = _SignalledAcquire() if at == "acquire request" else FakeDocStatusStore()
+    if at == "heartbeat start":
+        start = lease_mod.threading.Thread.start
+
+        def signalled_start(thread: lease_mod.threading.Thread) -> None:
+            start(thread)
+            _sigterm()
+
+        monkeypatch.setattr(lease_mod.threading.Thread, "start", signalled_start)
+    elif at in ("fence install", "fence removal"):
+        name = "install_write_fence" if at == "fence install" else "remove_write_fence"
+        original = getattr(lease_mod, name)
+
+        def signalled(arg: object) -> object:
+            result = original(arg)
+            _sigterm()
+            return result
+
+        monkeypatch.setattr(lease_mod, name, signalled)
+    lease = NamespaceLease(store, "ns", 600.0)
+    with pytest.raises(PipelineInterrupted):
+        with lease:
+            assert at == "fence removal"
+    monkeypatch.undo()
+    assert lease._stop.is_set()
+    holder = store.lease_holder("ns")
+    assert holder is None or holder[1] <= time.time()
+    with NamespaceLease(store, "ns", 60):
+        pass

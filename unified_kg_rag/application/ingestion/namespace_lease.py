@@ -180,6 +180,20 @@ class NamespaceLease:
         # Read first: a lease that is still there but expired was not
         # released (the holder died or froze), so its writes may be late.
         previous = self.store.lease_holder(self.namespace)
+        # A stop raised from the acquire on (its request, the heartbeat's
+        # start, the fence's install) left the lease held for lease_seconds:
+        # held until the lease is taken, then raised, and the lease given up
+        # as by a run that ended before writing.
+        try:
+            with _stops_deferred():
+                self._acquire(previous)
+        except BaseException:
+            if self._renewed_at:
+                self.__exit__(None, None, None)
+            raise
+        return self
+
+    def _acquire(self, previous: tuple[str, float] | None) -> None:
         sent = time.time()
         if not self.store.try_acquire_lease(self.namespace, self.owner, self.seconds):
             holder = self.store.lease_holder(self.namespace)
@@ -214,7 +228,6 @@ class NamespaceLease:
         )
         self._thread.start()
         self._token = install_write_fence(self)
-        return self
 
     def __exit__(
         self,

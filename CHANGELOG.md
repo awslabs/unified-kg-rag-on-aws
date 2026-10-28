@@ -1601,6 +1601,13 @@ changed once with the full-config keys (#332).
   status (`Claim: Vendor -[breach of contract]-> Buyer (FALSE)`) before its
   description. Shown as the description alone, a `FALSE` or `SUSPECTED`
   claim read as a plain statement (#443).
+- `run-ingestion` and the Python API: a SIGTERM or Ctrl-C that lands just
+  after the run took its namespace lease (in the acquire request, the
+  heartbeat's start or the write fence's install) left the lease held for
+  `indexing.lease_seconds`, so the next run failed with `... is being
+  written by` (103 of 150 signals sent at `Holding the write lease`). The
+  stop is now held until the lease is taken, then raised, and the lease
+  released (#PR).
 - `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
   its namespace lease (most often while it waits for the heartbeat thread)
   still gives the lease up. It stayed held for `indexing.lease_seconds`
