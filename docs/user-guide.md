@@ -845,7 +845,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
   claim dates are keywords, a date-like value too, so a range on them
-  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly. A claim
+  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly (on an
+  index built before #446, an `attr_*` field already mapped as a date stays
+  one until a rebuild with `indexing.reset: true`). A claim
   date that reads as a calendar date (`2024-01-15`, `2024-1-5`,
   `January 15th, 2024`) is stored as `YYYY-MM-DD`; any other value
   (`Q1 2024`, `2024-W03`) as written, which only an exact filter matches

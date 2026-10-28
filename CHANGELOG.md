@@ -664,7 +664,7 @@ changed once with the full-config keys (#332).
   claim whose date is written out (`January 15, 2024`, or with a time)
   now keys on `2024-01-15`, so its id changes on the rebuild; claims with
   ISO dates, or none, keep their ids (#446).
-- Document filters: an index built before #PR maps an `attr_<key>` or
+- Document filters: an index built before #446 maps an `attr_<key>` or
   `attributes.filters.<key>` field as a date when its first value looked
   like one (OpenSearch date detection), and every later value of another
   form fails to write. An incremental run turns date detection off on the

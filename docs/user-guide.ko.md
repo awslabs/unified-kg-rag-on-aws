@@ -786,7 +786,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
   `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
-  범위 필터는 문자열로 비교하며, ISO 날짜(`YYYY-MM-DD`)는 이 비교로도 올바르게 정렬됩니다.
+  범위 필터는 문자열로 비교하며, ISO 날짜(`YYYY-MM-DD`)는 이 비교로도 올바르게 정렬됩니다(#446 이전에
+  만든 인덱스에서 이미 날짜로 매핑된 `attr_*` 필드는 `indexing.reset: true`로 다시 만들 때까지 날짜로 남습니다).
   달력 날짜로 읽히는 주장 날짜(`2024-01-15`, `2024-1-5`, `January 15th, 2024`)는 `YYYY-MM-DD`로 저장하고,
   그 밖의 값(`Q1 2024`, `2024-W03`)은 적힌 그대로 저장하므로 정확히 일치하는 필터만 의미가 있습니다. 알 수
   없는 날짜(`UNKNOWN`, `TBD`, `present`)는 저장하지 않으므로 범위 필터를 포함해 어떤 필터에도 일치하지 않습니다.

@@ -542,3 +542,16 @@ def test_a_merged_claim_s_dates_do_not_depend_on_statement_order(
     ]
     out, _ = _resolver().resolve([statements[i] for i in order], ents)
     assert [(c.start_date, c.end_date) for c in out] == [("Q1 2024", "TBD later")]
+
+
+def test_a_reference_unmatched_in_one_statement_resolves_in_another() -> None:
+    # The fuzzy-match memo is per reference string, its matches filtered by
+    # each statement's own units: "Vendor Inc." not stated (as "Vendor") in
+    # u0 is still resolved where u1 states it.
+    claims = [
+        _claim("c0", "Vendor Inc.", "Buyer", text_unit_ids=["u0"]),
+        _claim("c1", "Vendor Inc.", "Buyer", text_unit_ids=["u1"]),
+    ]
+    entities = [_entity("e1", "Vendor", ("u1",)), _entity("e2", "Buyer", ("u0", "u1"))]
+    resolved, _ = _resolver().resolve(claims, entities)
+    assert [c.subject_id for c in resolved] == ["e1"]
