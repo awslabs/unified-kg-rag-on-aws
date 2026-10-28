@@ -3,11 +3,16 @@
 import time
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.adapters.llm.retry import transient_error_predicate
+from unified_kg_rag.adapters.llm.retry import (
+    item_error_predicate,
+    item_failed_indices,
+    transient_error_predicate,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -46,6 +51,12 @@ class TranslationStats(BaseModel):
         description="Ids of text units missing a translation in some target "
         "language, each listed once. They keep their original text, so an "
         "incremental run records their documents FAILED and retries them.",
+    )
+    item_failed_text_unit_ids: list[str] = Field(
+        default_factory=list,
+        description="Those of them that failed for an error of their own (an "
+        "empty answer, a request rejected for its content), counted toward "
+        "indexing.max_document_failures",
     )
 
     @property
@@ -97,6 +108,7 @@ class TextUnitTranslator:
             self.config.processing,
             is_transient_error=transient_error_predicate(self.factory),
         )
+        self.is_item_error = item_error_predicate(self.factory)
 
         self.translator = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -147,17 +159,18 @@ class TextUnitTranslator:
                 self.stats.num_successful_translations += len(text_units)
             return
 
-        texts_to_translate = [unit.text for unit in text_units]
+        def prepare_inputs(units: list[TextUnit]) -> list[dict[str, Any]]:
+            return self._create_chain_inputs([u.text for u in units], target_language)
 
+        errors: dict[int, BaseException] = {}
         try:
             translation_results = self.batch_processor.execute_with_fallback(
-                items_to_process=texts_to_translate,
-                prepare_inputs_func=lambda texts: self._create_chain_inputs(
-                    texts, target_language
-                ),
-                sequential_func=self.translator.invoke,
+                items_to_process=text_units,
+                prepare_inputs_func=prepare_inputs,
+                sequential_func=self._translate,
                 task_name=f"Translation ({target_language.value})",
                 show_progress=self.show_progress,
+                errors=errors,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -180,6 +193,33 @@ class TextUnitTranslator:
                 None if result is BATCH_ITEM_FAILED else result,
                 target_language,
             )
+        own = item_failed_indices(
+            errors,
+            text_units,
+            self.is_item_error,
+            f"Translation ({target_language.value})",
+            self.batch_processor,
+            prepare_inputs,
+            self._translate,
+        )
+        if self.stats:
+            self.stats.item_failed_text_unit_ids = list(
+                dict.fromkeys(
+                    [
+                        *self.stats.item_failed_text_unit_ids,
+                        *(text_units[idx].id for idx in own),
+                    ]
+                )
+            )
+
+    def _translate(self, request: dict[str, Any]) -> str:
+        """The chain's translation of ``request``; an empty answer raises
+        ``OutputParserException``, as output that does not parse does
+        (retried, and an error of the unit's own)."""
+        result = str(self.translator.invoke(request))
+        if not result.strip():
+            raise OutputParserException("The model returned an empty translation")
+        return result
 
     @staticmethod
     def _create_chain_inputs(

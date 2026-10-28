@@ -1455,6 +1455,12 @@ changed once with the full-config keys (#332).
   the model again for those units only; the stage-wide uncached re-run of
   #447, which re-asked every unit the extraction store could not supply and
   replayed the response after a stop during the re-run, is gone (#447, #PR).
+- Translation: an empty answer was recorded as a failed unit but not as
+  an error of its own, so it never counted toward
+  `indexing.max_document_failures`, and its response was replayed from the
+  LLM response cache by a re-run with the same pipeline id. It is now
+  retried like output that does not parse, counted, and dropped from the
+  cache (#PR).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction

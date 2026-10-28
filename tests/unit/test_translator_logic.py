@@ -50,6 +50,8 @@ def _make_translator(
     config = Config()
     config.processing.translation.target_language = target
     config.processing.translation.additional_target_languages = additional
+    # An empty answer is retried like output that does not parse: no waits.
+    config.processing.max_attempts = 1
     translator = TextUnitTranslator(config, show_progress=False)
     return translator, fake_chain
 
@@ -202,6 +204,9 @@ class TestTranslateTextUnits:
         assert tr.stats.num_failed_translations == 1
         # Its document is recorded FAILED and retried, not left half-translated.
         assert tr.stats.failed_text_unit_ids == ["t2"]
+        # An error of the unit's own: counted, and its (empty) response is
+        # not kept by the run's response cache for a re-run to replay.
+        assert tr.stats.item_failed_text_unit_ids == ["t2"]
 
     def test_a_unit_failing_in_two_languages_is_listed_once(self, mocker) -> None:
         tr, _ = _make_translator(

@@ -797,6 +797,9 @@ class TranslationStage(PipelineStage):
         context.failed_text_unit_ids[self.name] = (
             list(stats.failed_text_unit_ids) if stats else []
         )
+        context.item_failed_text_unit_ids[self.name] = (
+            list(stats.item_failed_text_unit_ids) if stats else []
+        )
 
         translation_stats = stats.model_dump() if stats else {}
 
