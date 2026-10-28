@@ -1497,10 +1497,10 @@ changed once with the full-config keys (#332).
   again without a model call. Such an element is now skipped with a
   warning. A unit whose record still fails to build after its response
   parsed (graph or claim extraction) now also drops that response from the
-  cache, so a re-run asks the model again (#PR).
+  cache, so a re-run asks the model again (#452).
 - Gleaning: an issue without fields (`<issue>none</issue>`) or with text
   `<details>` dropped the whole refinement answer, losing its other
-  additions; such an issue is now ignored (#PR).
+  additions; such an issue is now ignored (#452).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
