@@ -1434,6 +1434,13 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
+  `batch`) still running on another thread waited forever, because the
+  close stopped the chain's loop with the call's task still pending on it.
+  The close now cancels the calls in flight and waits for them to unwind
+  before stopping the loop; each raises `StoreConnectionError` ("closed
+  while this call was in flight"). A later call reconnects, as before
+  (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket

@@ -1767,7 +1767,9 @@ finally:
   size the loop's executor once at startup:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
 - Always `close()` / `aclose()` what you build: both classes open connections
-  on first use and keep them until garbage collection otherwise.
+  on first use and keep them until garbage collection otherwise. A sync call
+  still running on another thread when the chain closes raises
+  `StoreConnectionError`; a later call reconnects.
 - Importing the package configures no logging handler;
   `unified_kg_rag.setup_logging(config)` gives the CLI's logging. Without it,
   structured fields (including `structlog.contextvars` bindings) reach your

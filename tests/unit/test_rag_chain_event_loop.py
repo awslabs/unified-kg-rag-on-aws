@@ -13,6 +13,7 @@ in-flight query on another loop is using.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import gc
 import threading
 import time
@@ -29,6 +30,7 @@ from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     StrategySelectionPrompt,
 )
+from unified_kg_rag.shared import StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -369,3 +371,100 @@ def test_prompt_chains_are_built_once_per_prompt_model_and_flags(mocker) -> None
     assert first is again
     assert len({id(first), id(thinking), id(router)}) == 3
     assert setup.call_count == 3
+
+
+def test_close_fails_sync_calls_in_flight_instead_of_hanging() -> None:
+    # Regression: close() stopped the loop with the sync calls of other threads
+    # still pending on it, so each of them waited forever for its result.
+    chain, _ = _chain()
+    chain.invoke({"query": "q"})  # type: ignore[arg-type]
+    started = threading.Semaphore(0)
+    unwound: list[str] = []
+
+    async def stuck(input: Any, config: Any = None, **kwargs: Any) -> Any:
+        started.release()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.05)  # cleanup that awaits (a client's aclose)
+            unwound.append("cancelled")
+            raise
+
+    chain.ainvoke = stuck  # type: ignore[method-assign]
+    outcomes: list[BaseException | None] = []
+
+    def call() -> None:
+        try:
+            chain.invoke({"query": "q"})  # type: ignore[arg-type]
+            outcomes.append(None)
+        except BaseException as e:  # noqa: BLE001 - recorded for the assertion
+            outcomes.append(e)
+
+    threads = [threading.Thread(target=call, daemon=True) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for _ in threads:
+        assert started.acquire(timeout=5)
+    loop_thread = chain._loop_runner._thread
+
+    chain.close()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert len(outcomes) == 3
+    assert all(isinstance(e, StoreConnectionError) for e in outcomes), outcomes
+    assert all("closed" in str(e) for e in outcomes)
+    # The calls' tasks were cancelled and unwound before the loop stopped.
+    assert unwound == ["cancelled"] * 3
+    assert loop_thread is not None and not loop_thread.is_alive()
+
+
+def test_sync_call_after_close_is_served_on_a_new_loop() -> None:
+    # Closing fails only the calls in flight: the chain reconnects if used again.
+    chain, _ = _chain()
+    chain.invoke({"query": "q"})  # type: ignore[arg-type]
+    chain.close()
+    assert chain.invoke({"query": "q"})["loop"].is_running()  # type: ignore[arg-type]
+    chain.close()
+
+
+def test_runner_cancellation_inside_the_call_is_not_reported_as_close() -> None:
+    runner = _LoopRunner()
+
+    async def cancelled() -> None:
+        raise asyncio.CancelledError
+
+    try:
+        with pytest.raises(concurrent.futures.CancelledError):
+            runner.run(cancelled())
+    finally:
+        runner.stop()
+
+
+def test_stream_stopped_by_close_does_not_restart_the_loop() -> None:
+    runner = _LoopRunner()
+    started = threading.Event()
+
+    async def agen() -> Any:
+        started.set()
+        await asyncio.Event().wait()
+        yield 1  # pragma: no cover - never reached
+
+    outcome: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(rag_chain_module._iterate_async_generator(agen(), runner))
+        except BaseException as e:  # noqa: BLE001 - recorded for the assertion
+            outcome.append(e)
+
+    thread = threading.Thread(target=consume, daemon=True)
+    thread.start()
+    assert started.wait(timeout=5)
+    runner.stop()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(outcome) == 1 and isinstance(outcome[0], StoreConnectionError)
+    assert runner._loop is None  # the iterator's finally did not restart it

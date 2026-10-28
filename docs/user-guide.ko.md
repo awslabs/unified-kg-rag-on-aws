@@ -1573,7 +1573,8 @@ finally:
   때 이벤트 루프의 실행기 크기를 한 번 지정하세요:
   `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
 - 만든 객체는 항상 `close()` / `aclose()`로 닫으세요. 두 클래스 모두 처음 쓸 때 연결을
-  열고, 닫지 않으면 가비지 컬렉션 때까지 유지합니다.
+  열고, 닫지 않으면 가비지 컬렉션 때까지 유지합니다. 체인을 닫을 때 다른 스레드에서
+  실행 중인 동기 호출은 `StoreConnectionError`를 일으키고, 그 뒤의 호출은 다시 연결합니다.
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅은
   `unified_kg_rag.setup_logging(config)`로 켭니다. 호출하지 않으면 구조화 필드
   (`structlog.contextvars`로 바인딩한 값 포함)가 레코드 속성으로 호스트 핸들러에

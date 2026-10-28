@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import concurrent.futures
 import re
 import threading
 import time
@@ -100,6 +101,7 @@ from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
     InvalidFilterError,
     LanguageModelError,
+    StoreConnectionError,
     get_logger,
     observability,
 )
@@ -2088,6 +2090,10 @@ def _release_cached_resources(
         runner.stop()
 
 
+class _LoopStoppedError(StoreConnectionError):
+    """A sync call was in flight when its chain's loop was stopped."""
+
+
 class _LoopRunner:
     """One event loop on a daemon thread, started on first use.
 
@@ -2102,21 +2108,34 @@ class _LoopRunner:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        # Calls in flight, and those stop() cancelled (so run() can tell a
+        # close from a cancellation inside the call).
+        self._pending: set[concurrent.futures.Future[Any]] = set()
+        self._stopped: set[concurrent.futures.Future[Any]] = set()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         with self._lock:
-            if self._loop is None:
-                loop = asyncio.new_event_loop()
-                if self._io_workers is not None:
-                    configure_event_loop(loop, self._io_workers)
-                thread = threading.Thread(
-                    target=loop.run_forever, name="graphrag-chain-loop", daemon=True
-                )
-                thread.start()
-                self._loop, self._thread = loop, thread
-            return self._loop
+            return self._ensure_loop_locked()
+
+    def _ensure_loop_locked(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            loop = asyncio.new_event_loop()
+            if self._io_workers is not None:
+                configure_event_loop(loop, self._io_workers)
+            thread = threading.Thread(
+                target=loop.run_forever, name="graphrag-chain-loop", daemon=True
+            )
+            thread.start()
+            self._loop, self._thread = loop, thread
+        return self._loop
 
     def run(self, awaitable: Awaitable[_T]) -> _T:
+        """Run ``awaitable`` on the loop and block for its result.
+
+        Raises:
+            StoreConnectionError: :meth:`stop` closed the loop while the call
+                was in flight (the chain was closed under it).
+        """
         loop = self._ensure_loop()
         if threading.current_thread() is self._thread:
             raise RuntimeError(
@@ -2127,21 +2146,68 @@ class _LoopRunner:
         async def _await() -> _T:
             return await awaitable
 
-        return asyncio.run_coroutine_threadsafe(_await(), loop).result()
+        with self._lock:
+            if self._loop is not loop:
+                # stop() ran since _ensure_loop: submit to the restarted loop,
+                # never to the stopped one (where the call would never finish).
+                loop = self._ensure_loop_locked()
+            future = asyncio.run_coroutine_threadsafe(_await(), loop)
+            self._pending.add(future)
+        try:
+            return future.result()
+        except concurrent.futures.CancelledError:
+            if future in self._stopped:
+                raise _LoopStoppedError(
+                    "GraphRAGChain was closed while this call was in flight"
+                ) from None
+            raise
+        finally:
+            with self._lock:
+                self._pending.discard(future)
+                self._stopped.discard(future)
 
     def stop(self) -> None:
-        """Stop and close the loop (idempotent; restarted on next use)."""
+        """Stop and close the loop (idempotent; restarted on next use).
+
+        Calls still in flight are cancelled first: their callers raise
+        :class:`StoreConnectionError` instead of waiting forever on a loop
+        that no longer runs.
+        """
         with self._lock:
             loop, thread = self._loop, self._thread
             self._loop = self._thread = None
+            pending, self._pending = self._pending, set()
+            self._stopped |= pending
         if loop is None or thread is None:
             return
-        loop.call_soon_threadsafe(loop.stop)
+        # Wakes the waiting callers and cancels their tasks on the loop.
+        for future in pending:
+            future.cancel()
         if thread is threading.current_thread():
+            loop.call_soon_threadsafe(loop.stop)
             return  # stopping from inside the loop: it closes once unwound
+        try:
+            asyncio.run_coroutine_threadsafe(_cancel_other_tasks(), loop).result(
+                timeout=_TEARDOWN_TIMEOUT_SECONDS
+            )
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error cancelling the chain loop's tasks: %s", e)
+        loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
         if not thread.is_alive():
             loop.close()
+
+
+async def _cancel_other_tasks() -> None:
+    """Cancel every other task on the running loop and wait for them to end."""
+    current = asyncio.current_task()
+    tasks = [task for task in asyncio.all_tasks() if task is not current]
+    for task in tasks:
+        # Not twice: a second cancel would interrupt a task's own cleanup.
+        if not task.cancelling():
+            task.cancel()
+    if tasks:
+        await asyncio.wait(tasks, timeout=_TEARDOWN_TIMEOUT_SECONDS)
 
 
 def _iterate_async_generator(
@@ -2156,17 +2222,23 @@ def _iterate_async_generator(
     """
     owned = runner is None
     loop_runner = runner if runner is not None else _LoopRunner()
+    stopped = False
     try:
         while True:
             try:
                 item = loop_runner.run(agen.__anext__())
             except StopAsyncIteration:
                 return
+            except _LoopStoppedError:
+                # The close cancelled the step, which ended the iterator; an
+                # aclose would only restart the stopped loop.
+                stopped = True
+                raise
             yield item
     finally:
         try:
             aclose = getattr(agen, "aclose", None)
-            if aclose is not None:
+            if aclose is not None and not stopped:
                 loop_runner.run(aclose())
         finally:
             if owned:
