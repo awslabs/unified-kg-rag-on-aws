@@ -302,6 +302,25 @@ class TestProcessExtractionResults:
         assert claims == {}
         assert extractor.stats.num_failed_extractions == 1
 
+    def test_a_parse_failure_discards_the_unit_s_response(
+        self, extractor, mocker
+    ) -> None:
+        # Raised after the response parsed: its response leaves the LLM
+        # response cache, so a re-run asks the model again.
+        units = [TextUnit(id="t0", text="x"), TextUnit(id="t1", text="y")]
+        mocker.patch.object(
+            extractor,
+            "_parse_extraction_result",
+            side_effect=lambda result, unit: [] if unit.id == "t0" else 1 / 0,
+        )
+        dropped: list[int] = []
+        discards = {idx: lambda idx=idx: dropped.append(idx) for idx in range(2)}
+        claims = extractor._process_extraction_results(
+            units, [{"claims": {}}, {"claims": {}}], discards
+        )
+        assert claims == {"t0": []} and dropped == [1]
+        assert extractor.stats.item_failed_text_unit_ids == ["t1"]
+
 
 # --------------------------------------------------------------------------- #
 # _parse_claim_data — exception path

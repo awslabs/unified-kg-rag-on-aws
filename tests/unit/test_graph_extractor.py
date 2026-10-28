@@ -824,6 +824,34 @@ class TestExtractFromTextUnits:
         assert stats.num_successful_extractions == 1
         assert stats.failed_text_unit_ids == ["t0", "t1"]
 
+    def test_a_record_that_fails_to_build_discards_its_response(
+        self, extractor, mocker
+    ) -> None:
+        # Raised after the response parsed: the unit fails as its own error,
+        # and its response leaves the LLM response cache (a re-run asks the
+        # model again rather than replaying it into the same failure).
+        dropped: list[int] = []
+
+        def execute(**kwargs):
+            for idx in range(2):
+                kwargs["discards"][idx] = lambda idx=idx: dropped.append(idx)
+            return [{"entities": {}}, {"entities": {}}]
+
+        extractor.batch_processor = mocker.Mock()
+        extractor.batch_processor.execute_with_fallback.side_effect = execute
+        build = extractor._parse_extraction_result
+        mocker.patch.object(
+            extractor,
+            "_parse_extraction_result",
+            side_effect=lambda result, unit: (
+                build(result, unit) if unit.id == "t0" else 1 / 0
+            ),
+        )
+        units = [TextUnit(id=f"t{i}", text="x") for i in range(2)]
+        _, _, stats = _extracted(extractor, units)
+        assert dropped == [1]
+        assert stats.item_failed_text_unit_ids == ["t1"]
+
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker
     ) -> None:

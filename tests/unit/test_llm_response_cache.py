@@ -365,3 +365,85 @@ def test_a_dropped_response_already_written_is_removed(tmp_path: Path) -> None:
     rerun.open(tmp_path)
     _ask(_model(rerun, respond), "bad")
     assert respond.calls == 2
+
+
+@pytest.mark.parametrize("flush_every", [1, 100])
+def test_an_answered_item_s_responses_are_dropped_when_its_caller_rejects_it(
+    tmp_path: Path, flush_every: int
+) -> None:
+    # The answer parsed, but the record it makes failed to build: the
+    # caller's discard drops it, so a re-run asks the model again (and only
+    # for that item) instead of replaying it into the same failure; whether
+    # the response was already written (a removal entry) or still pending.
+    respond = _Counter()
+    first = LLMResponseCache(flush_every=flush_every)
+    first.open(tmp_path)
+    model = _model(first, respond)
+    discards: dict[int, Any] = {}
+    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+        ["good", "rejected"],
+        lambda items: [{"text": text} for text in items],
+        lambda request: _ask(model, request["text"]),
+        "test",
+        show_progress=False,
+        discards=discards,
+    )
+    assert results == ["answer to good", "answer to rejected"]
+    assert sorted(discards) == [0, 1]
+    discards[1]()
+    first.close()
+
+    second = LLMResponseCache()
+    second.open(tmp_path)
+    asked = respond.calls
+    _batch(_model(second, respond), ["good", "rejected"], lambda answer: answer)
+    assert respond.calls == asked + 1
+    assert (second.hits, second.misses) == (1, 1)
+
+
+def test_a_failed_item_gets_no_discard_to_call() -> None:
+    discards: dict[int, Any] = {}
+
+    def fail(request: dict[str, Any]) -> str:
+        raise OutputParserException("cannot parse")
+
+    results = BatchProcessor(max_attempts=1).execute_with_fallback(
+        ["bad"],
+        lambda items: [{"text": text} for text in items],
+        fail,
+        "test",
+        show_progress=False,
+        discards=discards,
+    )
+    assert results == [BATCH_ITEM_FAILED] and discards == {}
+
+
+def test_a_served_response_its_caller_rejects_is_dropped(tmp_path: Path) -> None:
+    # Served from an earlier run's segment, then rejected after the batch:
+    # removed for the next run, which asks the model again.
+    respond = _Counter()
+    first = LLMResponseCache()
+    first.open(tmp_path)
+    _ask(_model(first, respond), "rejected")
+    first.close()
+
+    second = LLMResponseCache()
+    second.open(tmp_path)
+    model = _model(second, respond)
+    discards: dict[int, Any] = {}
+    BatchProcessor(max_attempts=1).execute_with_fallback(
+        ["rejected"],
+        lambda items: [{"text": text} for text in items],
+        lambda request: _ask(model, request["text"]),
+        "test",
+        show_progress=False,
+        discards=discards,
+    )
+    assert respond.calls == 1 and second.hits == 1
+    discards[0]()
+    second.close()
+
+    third = LLMResponseCache()
+    third.open(tmp_path)
+    _ask(_model(third, respond), "rejected")
+    assert respond.calls == 2

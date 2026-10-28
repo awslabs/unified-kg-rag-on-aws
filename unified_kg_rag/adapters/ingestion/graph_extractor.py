@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.exceptions import OutputParserException
@@ -186,6 +187,7 @@ class GraphExtractor(BaseProcessor):
         logger.info("Starting graph extraction from %s text units", len(text_units))
 
         errors: dict[int, BaseException] = {}
+        discards: dict[int, Callable[[], None]] = {}
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=text_units,
@@ -194,6 +196,7 @@ class GraphExtractor(BaseProcessor):
                 task_name="Graph Extraction",
                 show_progress=self.show_progress,
                 errors=errors,
+                discards=discards,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -203,7 +206,9 @@ class GraphExtractor(BaseProcessor):
             self.stats.failed_text_unit_ids = [unit.id for unit in text_units]
             return [], self.stats
 
-        records = self._process_extraction_results(text_units, extraction_results)
+        records = self._process_extraction_results(
+            text_units, extraction_results, discards
+        )
         self.stats.item_failed_text_unit_ids.extend(
             text_units[idx].id
             for idx in item_failed_indices(
@@ -316,10 +321,18 @@ class GraphExtractor(BaseProcessor):
         return inputs
 
     def _process_extraction_results(
-        self, text_units: list[TextUnit], extraction_results: list[Any]
+        self,
+        text_units: list[TextUnit],
+        extraction_results: list[Any],
+        discards: dict[int, Callable[[], None]] | None = None,
     ) -> list[TextUnitExtraction]:
+        """The units' records; a unit whose record fails to build fails as
+        its own error, and its response is discarded from the LLM response
+        cache (``discards``, from the batch) so a re-run asks again."""
         records: list[TextUnitExtraction] = []
-        for text_unit, result in zip(text_units, extraction_results, strict=True):
+        for idx, (text_unit, result) in enumerate(
+            zip(text_units, extraction_results, strict=True)
+        ):
             if result is BATCH_ITEM_FAILED:
                 self.stats.num_failed_extractions += 1
                 self.stats.failed_text_unit_ids.append(text_unit.id)
@@ -329,6 +342,8 @@ class GraphExtractor(BaseProcessor):
                 records.append(self._parse_extraction_result(result, text_unit))
                 self.stats.num_successful_extractions += 1
             except Exception as e:
+                if discard := (discards or {}).get(idx):
+                    discard()
                 self.stats.num_failed_extractions += 1
                 self.stats.failed_text_unit_ids.append(text_unit.id)
                 self.stats.item_failed_text_unit_ids.append(text_unit.id)
