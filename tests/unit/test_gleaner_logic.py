@@ -390,3 +390,39 @@ class TestGleanerGrounding:
             [],
         )
         assert "_source_text" not in (new_e[0].attributes or {})
+
+
+def test_an_issue_without_fields_keeps_the_others(gleaner) -> None:
+    # <issue>none</issue> parses to a string: skipped, not an error that
+    # dropped the answer's other additions.
+    record = TextUnitExtraction(text_unit_id=UNIT.id)
+    added = _answer(
+        gleaner,
+        record,
+        _issue("MISSING_ENTITY", name="Alice", type="PERSON", description="d"),
+        "none",
+    )
+    assert added
+    assert [e.name for e in record.entities] == ["Alice"]
+
+
+@pytest.mark.parametrize(
+    "issue_type",
+    [
+        "MISSING_ENTITY",
+        "MISSING_RELATIONSHIP",
+        "ENTITY_CORRECTION",
+        "RELATIONSHIP_CORRECTION",
+    ],
+)
+def test_an_issue_with_text_details_keeps_the_others(gleaner, issue_type) -> None:
+    # <details>none</details> parses to a string: that issue is ignored.
+    record = TextUnitExtraction(text_unit_id=UNIT.id)
+    added = _answer(
+        gleaner,
+        record,
+        {"issue_type": issue_type, "details": "none"},
+        _issue("MISSING_ENTITY", name="Alice", type="PERSON", description="d"),
+    )
+    assert added
+    assert [e.name for e in record.entities] == ["Alice"]

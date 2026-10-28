@@ -447,6 +447,9 @@ class GraphGleaner(BaseProcessor):
             new_relationships: list[Relationship] = []
             penalized: list[Relationship] = []
             for issue in issues:
+                if not isinstance(issue, dict):
+                    # <issue>none</issue>: nothing to apply.
+                    continue
                 self._process_issue(
                     issue, unit, record, new_entities, new_relationships, penalized
                 )
@@ -507,6 +510,9 @@ class GraphGleaner(BaseProcessor):
         it, and its key is held for the unit like a filtered entity's.
         """
         details = issue.get("details", {})
+        if not isinstance(details, dict):
+            # <details>none</details>: no fields to apply.
+            details = {}
         # coerce: an empty <issue_type/> parses to {} (no .upper()).
         issue_type = coerce_llm_text(issue.get("issue_type")).upper()
         grounding = self.extraction_config.entity_grounding
@@ -536,7 +542,7 @@ class GraphGleaner(BaseProcessor):
                     issue_type or "issue",
                     unit.short_id,
                 )
-                if issue_type == "MISSING_ENTITY" and isinstance(details, dict):
+                if issue_type == "MISSING_ENTITY":
                     name = clean_display_name(coerce_llm_text(details.get("name")))
                     if name:
                         record.reject(entity_key(name), "ungrounded")

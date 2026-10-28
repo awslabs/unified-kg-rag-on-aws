@@ -211,6 +211,16 @@ class TestParseExtractionResult:
         claims = extractor._parse_extraction_result(result, text_unit)
         assert len(claims) == 1
 
+    def test_a_claim_without_fields_is_skipped(self, extractor, text_unit) -> None:
+        # <claim>none</claim> parses to a string: skipped, the others kept.
+        result = {
+            "claims": {
+                "claim": [{"subject": "A", "object": "B", "claim_type": "X"}, "none"]
+            }
+        }
+        claims = extractor._parse_extraction_result(result, text_unit)
+        assert [c.subject_name for c in claims] == ["A"]
+
 
 _TWO_CLAIMS = (
     "<claims><claim><subject>A</subject><object>B</object>"

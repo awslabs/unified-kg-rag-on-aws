@@ -531,6 +531,18 @@ class TestParseExtractionResult:
         with pytest.raises(LLMOutputTruncatedError, match="has a name"):
             _parsed(extractor, {"entities": entities}, text_unit)
 
+    def test_an_element_without_fields_is_skipped(self, extractor, text_unit) -> None:
+        # <entity>Bob</entity> parses to a string: skipped with the unit's
+        # other elements kept, not an error raised after the item answered
+        # (which failed the unit on every re-run of the cached response).
+        result = {
+            "entities": {"entity": [{"name": "Alice"}, "Bob"]},
+            "relationships": {"relationship": ["Alice works with Bob"]},
+        }
+        ents, rels = _parsed(extractor, result, text_unit)
+        assert [e.name for e in ents] == ["Alice"]
+        assert rels == []
+
     def test_a_cut_after_a_named_entity_keeps_it(self, extractor, text_unit) -> None:
         # Cut later, the output keeps the entities before the cut.
         result = {"entities": {"entity": [{"name": "Bob"}, {"name": {}}]}}
