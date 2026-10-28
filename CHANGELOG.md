@@ -1447,7 +1447,7 @@ changed once with the full-config keys (#332).
   was started, and the close joined it in between. The close then left the
   chain's loop running and its in-flight calls waiting. The worker is now
   started under the lock it is registered with, and the loop is stopped
-  whatever the retriever closes did, so the close never raises (#PR).
+  whatever the retriever closes did, so the close never raises (#453).
 - Neptune retriever: a traversal whose worker started only after the close
   opened a Neptune connection and closed it again, and one waiting for a
   traversal slot at the close built a new worker pool that nothing shut
