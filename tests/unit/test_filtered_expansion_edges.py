@@ -1502,3 +1502,21 @@ async def test_the_walk_crosses_edges_without_the_callers_id_keys(
     )
     reads = [f for prefix, f in index.calls if prefix == index.o.entities_index_prefix]
     assert reads and all(f.get(k) is not None for f in reads for k in scoped)
+
+
+async def test_the_walk_stops_once_every_caller_id_is_reached(config: Config) -> None:
+    # The entity read keeps only the caller's ids and a vertex's path is
+    # fixed once reached: with S and B reached at the first hop, the next
+    # hop (from B to D) cannot change the result, so it is not asked.
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", "id": ["S", "B"]})
+    assert _paths(kept) == {"S": "S", "B": "S -> B"}
+    edge_calls = [
+        f for prefix, f in index.calls if prefix == index.o.relationships_index_prefix
+    ]
+    assert len(edge_calls) == 2  # one hop: a request per endpoint
+    # An id not reached yet keeps the walk going (D is two hops away).
+    index = _Index(config)
+    kept = await _expand(config, index, {"attr_grp": "a", "id": ["S", "D"]})
+    assert _paths(kept) == {"S": "S", "D": "S -> B -> D"}
+    assert sum(p == index.o.relationships_index_prefix for p, _ in index.calls) > 1

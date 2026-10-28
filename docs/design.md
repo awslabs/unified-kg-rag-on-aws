@@ -819,6 +819,8 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   take, and a wave leaves out what the waves before it reached. A hop costs
   one request per side, one more per full side, then one per open vertex
   and full side; under two or more keys each page adds a text-unit check.
+  Under a caller `id` list the walk stops once it has reached every listed
+  id (the results keep only those, and a reached vertex's path is fixed).
   Edges back to a vertex already reached are left out by the store (a
   `must_not` on the other endpoint), so they cannot fill a page; past
   `max_terms_count` the exclusion keeps the vertices reached last, so edges

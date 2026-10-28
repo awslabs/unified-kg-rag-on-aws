@@ -872,6 +872,12 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Graph expansion under a document filter and a caller `id` list stops
+  walking the relationships index once it has reached every listed id: the
+  results keep only those ids and a reached entity's path does not change,
+  so the rest of the walk only cost requests (a synthetic 800-entity graph,
+  `top_k` 100: 319 edge requests to 61 for `local`, 208 to 1 for `mix`,
+  `hybrid` and `drift`; results identical) (#PR).
 - Queries with `auto` and filters: an INFO line names the strategies the
   filters leave out of the route (`auto routes only among local, mix: the
   filters leave out global`) (#443).
