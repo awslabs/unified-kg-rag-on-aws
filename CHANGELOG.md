@@ -1505,7 +1505,9 @@ changed once with the full-config keys (#332).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
-  pipeline summary; only a warning named them (#446).
+  pipeline summary; only a warning named them (#446). A re-run with the
+  same pipeline id counts only its own: it repeated the earlier run's
+  documents after their claims were extracted (#PR).
 - Claim extraction: the warnings on output or a rejection failing alike
   say the documents are indexed without those claims and counted for
   none; they said "counted against their documents", true of the graph

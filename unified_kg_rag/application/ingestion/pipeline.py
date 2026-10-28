@@ -1290,6 +1290,7 @@ class DataIngestionPipeline:
             # What an earlier run recorded is not this run's.
             context.recorded_failed_doc_ids = []
             context.retrying_doc_ids = []
+            context.claims_missing_doc_ids = []
 
             logger.info(
                 "Pipeline resume prepared successfully - will start from stage: '%s'",

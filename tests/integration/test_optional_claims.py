@@ -225,3 +225,20 @@ def _records(providers: Any) -> dict[str, tuple]:
         r.file_path: (r.status, r.error_info, r.failure_count)
         for r in providers.build_doc_status().list_all()
     }
+
+
+def test_a_same_pid_rerun_after_the_fix_reports_no_documents_without_claims(
+    tmp_path: Path,
+) -> None:
+    # documents_without_claims is the run's own: the rerun of the pipeline
+    # id that reported z1 extracts its claims and reports none.
+    mode = {"m": "rejected"}
+    config, providers, source, _ = _setup(tmp_path, mode)
+    context = e2e._ingest(config, providers, source, tmp_path / "P1")
+    assert context.claims_missing_doc_ids
+    mode["m"] = ""
+    context = e2e._ingest(config, providers, source, tmp_path / "P1")
+    assert context.claims_missing_doc_ids == []
+    assert {status for status, _, _ in _state(providers).values()} == {
+        DocStatus.PROCESSED
+    }
