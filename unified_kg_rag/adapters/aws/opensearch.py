@@ -374,7 +374,10 @@ class OpenSearchClient:
         # and lets a rotated client be closed (awaited) on its own loop.
         self._bound_loop: asyncio.AbstractEventLoop | None = None
         # Set by close()/aclose(): no async client is built after it (one
-        # built by a query racing the close would never be closed).
+        # built by a query racing the close would never be closed). Async
+        # only: the sync ``client`` is still rebuilt on use after a close
+        # (close() drops it; a later use opens a fresh pool, which the
+        # owner's next close() releases).
         self._closed = False
 
     @cached_property
