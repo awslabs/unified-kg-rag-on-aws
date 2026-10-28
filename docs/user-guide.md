@@ -672,7 +672,8 @@ prompt plus the model id, max tokens, temperature and reasoning.
   response cut off at the output-token limit is not kept. Above temperature 0
   a re-run replays the earlier sample. The responses of a call that failed
   every attempt (one that never parsed) are dropped, so a re-run asks the
-  model again for those units only.
+  model again for those units only; the late answer of a call abandoned on
+  its timeout is not kept either.
 - `--force-rebuild` serves nothing; query and evaluation calls are never
   cached.
 - The cache grows by a few KB per model call and is read into memory at

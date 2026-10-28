@@ -440,7 +440,9 @@ gets its models and stores from the run's `Providers` bundle.
   kept, so a retry after a bad response asks the model again. A
   `BatchProcessor` item that failed every attempt drops the responses its
   calls were served or stored (`discard_if_item_fails`), so a re-run asks
-  again for that item only instead of replaying them.
+  again for that item only instead of replaying them. A call abandoned on
+  its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
+  is not its item's, which was retried or failed meanwhile.
 - **Output fixing.** Structured outputs are parsed with a
   `FixingConfig`-based output-fixing parser.
 - **Resources.** The pipeline releases indexer and client resources in

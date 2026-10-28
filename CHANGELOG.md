@@ -1472,6 +1472,14 @@ changed once with the full-config keys (#332).
   checkpoint writes do, and a stop that still surfaces wrapped in another
   error ends the run as a stop (exit 128 + signal), its checkpoint uploaded
   (#PR).
+- LLM response cache: a model call abandoned on its call timeout
+  (`BatchProcessor.call_timeout_seconds`) stored its late answer after its
+  item's retry, so a re-run with the same pipeline id was served that answer
+  (one that may not parse) over the retry's, or kept it although the item
+  had failed and its responses were dropped. An abandoned call is now
+  neither served nor stored. A response dropped before it was written
+  leaves no entry at all (it wrote the response and a removal entry, a third
+  more segments on a run with failing units) (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
