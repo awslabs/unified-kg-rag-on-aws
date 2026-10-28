@@ -518,6 +518,9 @@ class EvaluationRunner:
                     "top_k": self.args.top_k,
                     "retrieval_multiplier": self.args.retrieval_multiplier,
                 },
+                # The keys the chain would refuse per query, refused now.
+                check_filter_keys=getattr(self.rag_chain, "check_filter_keys", None),
+                run_strategies=strategies if comparing else None,
             )
         except FileNotFoundError as e:
             raise InvalidDatasetError(

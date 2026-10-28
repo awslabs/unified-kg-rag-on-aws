@@ -7,7 +7,7 @@ import statistics
 import subprocess
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     ModelRole,
     RetrieverRole,
+    SearchStrategy,
     model_id_value,
 )
 from unified_kg_rag.ports.guardrail import GuardAction
@@ -64,6 +65,10 @@ _PACKAGE_DIR = Path(__file__).resolve().parents[1]
 # Per reported source, in rank order: (file names it names directly,
 # text-unit ids whose files it derives from).
 SourceProvenance = list[tuple[list[str], list[str]]]
+
+# Raises ``InvalidFilterError`` for filter keys a strategy refuses
+# (``GraphRAGChain.check_filter_keys``).
+FilterKeyCheck = Callable[[dict[str, Any] | None, SearchStrategy], None]
 
 
 class EvaluationManager:
@@ -195,7 +200,11 @@ class EvaluationManager:
 
     @staticmethod
     def load_data(
-        eval_data_path: str | Path, base_metadata: dict[str, Any] | None = None
+        eval_data_path: str | Path,
+        base_metadata: dict[str, Any] | None = None,
+        *,
+        check_filter_keys: FilterKeyCheck | None = None,
+        run_strategies: Sequence[SearchStrategy | str] | None = None,
     ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
         """Load and validate an evaluation dataset (a JSON array of objects).
 
@@ -205,6 +214,11 @@ class EvaluationManager:
         would reject (e.g. an unknown ``search_strategy`` or a malformed
         filter value such as an empty list) — instead of
         skipping it or failing per query mid-run. An empty dataset is an error.
+
+        With ``check_filter_keys`` (the chain's
+        :meth:`GraphRAGChain.check_filter_keys`), an item's filter keys are
+        checked too, under each of ``run_strategies`` (the strategies a
+        comparison runs every item with) or else the item's own strategy.
         """
         if not eval_data_path:
             raise ValueError("Evaluation data path is required.")
@@ -237,7 +251,9 @@ class EvaluationManager:
         seen_ids: set[str] = set()
 
         for i, item in enumerate(data):
-            query, gt = EvaluationManager._parse_item(i, item, cleaned_base_metadata)
+            query, gt = EvaluationManager._parse_item(
+                i, item, cleaned_base_metadata, check_filter_keys, run_strategies
+            )
             if query.query_id in seen_ids:
                 raise EvaluationException(
                     f"Invalid evaluation item at index {i}: duplicate query_id "
@@ -258,7 +274,11 @@ class EvaluationManager:
 
     @staticmethod
     def _parse_item(
-        index: int, item: Any, base_metadata: dict[str, Any]
+        index: int,
+        item: Any,
+        base_metadata: dict[str, Any],
+        check_filter_keys: FilterKeyCheck | None = None,
+        run_strategies: Sequence[SearchStrategy | str] | None = None,
     ) -> tuple[EvaluationQuery, EvaluationGroundTruth | None]:
         """Validate one dataset item; raise with its index and query id."""
         if not isinstance(item, dict):
@@ -302,6 +322,10 @@ class EvaluationManager:
             rag_input = RAGInput.model_validate({**rag_fields, "query": question})
             # The chain refuses these per query (an empty list included).
             check_filter_values(rag_input.filters)
+            if check_filter_keys is not None and rag_input.filters:
+                # ... and these by key, under each strategy the item runs with.
+                for strategy in run_strategies or (rag_input.search_strategy,):
+                    check_filter_keys(rag_input.filters, SearchStrategy(strategy))
             query = EvaluationQuery(
                 query_id=query_id,
                 question=question,

@@ -1308,7 +1308,9 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   an empty or non-array dataset, a missing `question`, a duplicate id, a field
   of the wrong type (a non-list `expected_entities`, an `answer_aliases` that
   is not a string or a list of strings) or `metadata` the RAG chain rejects
-  (an unknown `search_strategy`) stops the run with
+  (an unknown `search_strategy`, or `filters` it refuses: a malformed value
+  such as an empty list, or a key the item's strategy refuses, checked under
+  every compared strategy in a comparison) stops the run with
   `Error: invalid evaluation dataset:`, the item index and id, and exit code 2.
 
 ### Examples

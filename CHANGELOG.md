@@ -1455,6 +1455,14 @@ changed once with the full-config keys (#332).
   returned no hits. Such a search returns no hits without a request on
   every engine; the text-less searches that send one today were not
   affected (#PR).
+- `run-eval` checks each item's filter keys when loading, under the item's
+  strategy (under every compared strategy in a comparison), so a key the
+  chain refuses (unknown to the indexes the strategy reads, a range on
+  `id`, a key `global` scopes itself) fails loading with the item's index
+  and query id instead of every such query mid-run, as the user guide
+  said. A query with an explicit strategy (`local`, `mix`, ...) refuses
+  such a key before any model call; it was refused after the follow-up
+  rewrite and the query processing had run (1 model call each) (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket

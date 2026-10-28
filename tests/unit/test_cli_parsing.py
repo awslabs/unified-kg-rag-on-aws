@@ -715,6 +715,51 @@ async def test_eval_runner_exit_code_and_manifest(
     assert len(manifest["dataset"]["sha256"]) == 64
 
 
+@pytest.mark.parametrize(
+    ("strategies", "checked"),
+    [("mix", ["local"]), ("local,mix", ["local", "mix"])],
+    ids=["item-strategy", "comparison"],
+)
+async def test_eval_runner_checks_filter_keys_when_loading(
+    config, mocker, tmp_path, strategies: str, checked: list[str]
+) -> None:
+    # The keys are checked under the strategy each run asks the item with:
+    # its own (it overrides --search-strategy), or every compared one.
+    import json
+
+    from unified_kg_rag.shared import InvalidFilterError
+
+    seen: list[str] = []
+
+    class _Checked(_DictChain):
+        def check_filter_keys(self, filters, strategy) -> None:
+            seen.append(strategy.value)
+            if "bogus" in filters:
+                raise InvalidFilterError("Unknown filter key(s): bogus")
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    item = {"question": "Who ships?", "answer": "Vendor"}
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [{**item, "metadata": {"search_strategy": "local", "filters": {"g": "a"}}}]
+        )
+    )
+    args = _eval_parser().parse_args(
+        ["--data-path", str(data), "--output-directory", str(tmp_path / "out")]
+        + ["--search-strategy", strategies]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _Checked(False), config).run() == 0
+    )
+    assert seen == checked
+    data.write_text(json.dumps([{**item, "metadata": {"filters": {"bogus": "x"}}}]))
+    runner = run_evaluation.EvaluationRunner(args, _Checked(False), config)
+    with pytest.raises(run_evaluation.InvalidDatasetError, match="bogus"):
+        await runner.run()
+
+
 def test_eval_parser_takes_a_strategy_list() -> None:
     args = _eval_parser().parse_args(
         ["--data-path", "d", "--search-strategy", "local, mix,global"]

@@ -1552,6 +1552,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         search: bool,
     ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
+        self._check_requested_filter_keys(rag_input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -1787,6 +1788,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
+    def _check_requested_filter_keys(self, rag_input: RAGInput) -> None:
+        """Refuse filter keys an explicit strategy refuses, before any model
+        call (a follow-up rewrite, query processing); ``auto`` checks them
+        before routing (``_resolve_strategy``)."""
+        if rag_input.filters and rag_input.search_strategy is not SearchStrategy.AUTO:
+            self._check_strategy_filter_keys(
+                rag_input.filters, rag_input.search_strategy
+            )
+
     async def _save_memory(self, output: RAGOutput, rag_input: RAGInput) -> None:
         if not output.conversation_id:
             return
@@ -1853,6 +1863,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         is generated in full, screened, and yielded as one chunk.
         """
         rag_input, input_dict = self._prepare_invoke(input)
+        self._check_requested_filter_keys(rag_input)
         chunks: list[str] = []
         delivered = False
         guard_records: list[dict[str, Any]] = []

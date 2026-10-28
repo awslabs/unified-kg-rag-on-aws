@@ -1169,8 +1169,9 @@ F1은 내지 않습니다.
 - 파일은 질의를 실행하기 전에 검증합니다. 읽을 수 없는 파일, 비어 있거나 배열이 아닌
   데이터셋, `question` 누락, 중복 ID, 타입이 틀린 필드(목록이 아닌 `expected_entities`,
   문자열이나 문자열 목록이 아닌 `answer_aliases`), RAG 체인이 거부하는 `metadata`(알 수
-  없는 `search_strategy`)가 있으면 `Error: invalid evaluation dataset:`과 항목 번호,
-  ID를 출력하고 종료 코드 2로 멈춥니다.
+  없는 `search_strategy`, 또는 체인이 거부하는 `filters`: 빈 목록 같은 잘못된 값이나
+  항목의 전략이 거부하는 키. 비교 실행이면 비교하는 모든 전략으로 확인)가 있으면
+  `Error: invalid evaluation dataset:`과 항목 번호, ID를 출력하고 종료 코드 2로 멈춥니다.
 
 ### 예시
 
