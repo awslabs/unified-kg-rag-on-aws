@@ -355,6 +355,31 @@ def test_a_delta_whose_documents_name_no_entity_still_commits(
     assert harness.run() == 0
 
 
+def test_a_claims_failure_on_a_delta_naming_no_entity_still_commits(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claims are optional: a unit whose claims failed still had its entities
+    # extracted, so an empty graph is not taken for a failed extraction
+    # (which would stop every later run at the same document).
+    harness.config.processing.claim_extraction.enabled = True
+    assert harness.run() == 0
+    respond = stages_test._respond
+
+    def answer(system: str, human: str) -> str:
+        if "claim extraction specialist" in system:
+            return "<claims><claim><subj"
+        return respond(system, human)
+
+    monkeypatch.setattr(stages_test, "_respond", answer)
+    (harness.source / "contract.txt").write_text("Nothing notable is written here.")
+    (harness.source / "logistics.txt").unlink()
+
+    assert harness.run() == 0
+    (record,) = harness.registry.list_all()
+    assert Path(record.file_path).name == "contract.txt"
+    assert not harness.graph.ids("entities")
+
+
 @pytest.mark.parametrize(
     ("block", "stage"),
     [("gleaning", "gleaning"), ("claim_extraction", "claim_extraction")],
@@ -487,3 +512,75 @@ def test_a_failed_run_says_which_stage_failed(
         r.levelname == "WARNING" and "finished with failed stages" in r.getMessage()
         for r in caplog.records
     )
+
+
+def _answer_badly_once(
+    monkeypatch: pytest.MonkeyPatch, task: str, bad: str
+) -> list[str]:
+    """Answer ``task``'s first call for the logistics text with ``bad``.
+
+    Returns the source texts of every ``task`` call, in order.
+    """
+    calls: list[str] = []
+    respond = stages_test._respond
+
+    def answer(system: str, human: str) -> str:
+        if task not in system:
+            return respond(system, human)
+        text = stages_test._source_text(human)
+        calls.append(text)
+        if "Depot" in text and calls.count(text) == 1:
+            return bad
+        if task == "claim extraction specialist":
+            return (
+                "<claims><claim><subject>Depot</subject><object>Vendor</object>"
+                "<claim_type>OBLIGATION</claim_type><claim_status>TRUE"
+                "</claim_status><description>Depot stores for Vendor"
+                f"</description><source_text>{text}</source_text></claim></claims>"
+                if "Depot" in text
+                else "<claims></claims>"
+            )
+        return respond(system, human)
+
+    monkeypatch.setattr(stages_test, "_respond", answer)
+    return calls
+
+
+def test_a_rerun_asks_again_for_the_claims_a_bad_response_failed(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The response cache stores a response that does not parse. A rerun with
+    # the same pipeline id must not replay it: the unit's claims would be
+    # given up (PROCESSED without them) without asking the model.
+    harness.config.processing.claim_extraction.enabled = True
+    calls = _answer_badly_once(
+        monkeypatch, "claim extraction specialist", "<claims><claim><subj"
+    )
+    assert harness.run("--pipeline-id", "p1") == 0
+    status = {Path(r.file_path).name: r.status for r in harness.registry.list_all()}
+    assert status["logistics.txt"] == DocStatus.FAILED
+    assert not harness.vectors.ids("claims")
+    asked = len(calls)
+
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert [t for t in calls[asked:] if "Depot" in t]
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert harness.vectors.ids("claims")
+
+
+def test_a_rerun_asks_again_for_the_graph_a_bad_response_failed(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Replaying the cached response would count the document's failure once
+    # more (toward indexing.max_document_failures) without a model call.
+    calls = _answer_badly_once(
+        monkeypatch, "knowledge graph extraction expert", "garbage"
+    )
+    assert harness.run("--pipeline-id", "p1") == 0
+    (failed,) = [r for r in harness.registry.list_all() if r.status is DocStatus.FAILED]
+    assert failed.failure_count == 1
+    asked = len(calls)
+
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert [t for t in calls[asked:] if "Depot" in t]
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}

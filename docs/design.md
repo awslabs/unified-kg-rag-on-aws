@@ -437,7 +437,9 @@ gets its models and stores from the run's `Providers` bundle.
   `BaseCache` on every ingestion model, keyed by the rendered messages and the
   model and generation settings, stored with the stage cache. An earlier
   run's entry is served at most once per run and truncated responses are not
-  kept, so a retry after a bad response asks the model again.
+  kept, so a retry after a bad response asks the model again. A stage whose
+  earlier attempt failed units for errors of their own runs under
+  `uncached_responses()`, so a re-run does not replay those responses.
 - **Output fixing.** Structured outputs are parsed with a
   `FixingConfig`-based output-fixing parser.
 - **Resources.** The pipeline releases indexer and client resources in
@@ -637,7 +639,8 @@ whose processing kills the task would stop every later run the same way.
   delta names a document whose record is gone, holds other content, reached
   the limit or was written by another pipeline id since (`written_by`; a
   record written before the field has none and counts as another pipeline
-  id's unless it is `PROCESSED` without an open attempt, and even then when
+  id's unless it is `PROCESSED` at the delta's content without an open
+  attempt, and even then when
   it was committed under other extraction settings for a document the delta
   re-extracts for a settings change), or deletes a document another
   pipeline id (or a record without a writer) has recorded in another scope

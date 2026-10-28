@@ -1428,6 +1428,34 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- A re-run or resume with the same pipeline id replayed, from the LLM
+  response cache, the response that had failed a text unit for an error of
+  its own (one that does not parse): the failure was recorded again without
+  a model call, so the document's claims were given up for good (PROCESSED
+  without them) or its failure counted toward
+  `indexing.max_document_failures` with no real attempt. A stage whose
+  earlier attempt failed such units now runs uncached (#447).
+- An incremental delta whose new or changed documents name no entity
+  stopped every run (`graph_analysis` "received 0 inputs") when only their
+  claim extraction failed: such a failure no longer counts as an extraction
+  that may explain the empty graph, since claims are optional and the
+  units' entities were extracted (#447).
+- Claim extraction failed a unit as cut-off output when its closed
+  `<claims>` section listed only claims missing a subject, object or type.
+  Only a section without its `</claims>` is taken for cut-off output now;
+  such claims are dropped as invalid (#447).
+- Incremental indexing: an entity could lose a text unit for good after a
+  run killed while removing documents. A stored entity kept as it was (a
+  unit it cites had no record yet) took the text units of the part it held
+  but not that part's name keys, so once a later run resolved that part
+  apart again, no entity was derived for it and nothing cited its unit
+  (#447).
+- Incremental indexing across an upgrade: a finished pipeline id run again
+  restored its delta although a run of a release before `written_by` had
+  since committed another version of one of its documents (a record
+  without a writer, `PROCESSED` at other content). The delta indexed its
+  version over that one's artifacts, which stayed. Such a record now makes
+  the run diff again from document_loading (#447).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

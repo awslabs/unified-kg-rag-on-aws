@@ -416,6 +416,29 @@ def test_a_settings_change_recommitted_by_a_run_without_a_writer_is_stale() -> N
     assert check(pipeline_id="P1")
 
 
+def test_another_version_committed_by_a_run_without_a_writer_is_stale() -> None:
+    # Upgrade window: P0 indexed a.txt at "ha"; a run of a release before
+    # written_by committed another version ("hb") after an attempt at "ha"
+    # (attempted_hash left at "ha"). Run again at "ha", P0's restored delta
+    # has a.txt as new: indexed over that version's artifacts, they stay.
+    store = FakeDocStatusStore()
+    record = DocStatusRecord(
+        doc_id="default#a",
+        content_hash="hb",
+        attempted_hash="ha",
+        status=DocStatus.PROCESSED,
+    )
+    store.put(record)
+    delta = DocumentDelta(new=[record.doc_id])
+    check = functools.partial(
+        delta_still_applies, store, delta, {record.doc_id: "ha"}, 3, pipeline_id="P0"
+    )
+    assert not check()
+    # Committed at this delta's content: left to the other checks.
+    store.put(record.model_copy(update={"content_hash": "ha"}))
+    assert check()
+
+
 def _resumable_delta() -> tuple[IncrementalRun, list, DocumentDelta, dict[str, str]]:
     """a.txt indexed; the delta of a.txt + b.txt (b.txt new) computed and
     its attempts opened, as a pipeline id that is resumed later."""
