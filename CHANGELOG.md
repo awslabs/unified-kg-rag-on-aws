@@ -1434,6 +1434,12 @@ changed once with the full-config keys (#332).
   (#300).
 
 ### Fixed
+- Neptune retriever: a traversal still running when its chain was closed
+  (its worker waiting for the connection while the close held it) opened
+  a new Neptune connection afterwards, which nothing closed: its websocket
+  and threads stayed for the life of the process. A closed retriever now
+  opens no connection or worker pool; such a traversal fails with
+  `StoreConnectionError` (#PR).
 - `run-eval`: a dataset item whose `filters` the RAG chain refuses (an
   empty list of values, a `None` value) now fails loading with the item's
   index and query id, as the other malformed fields do, instead of failing

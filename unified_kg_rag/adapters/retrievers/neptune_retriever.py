@@ -59,6 +59,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # does hang then holds one of these, not a thread the model calls,
         # reranking and every other strategy need. Created on first use.
         self._executor: ThreadPoolExecutor | None = None
+        self._closed = False
 
     def _traversal_executor(self) -> ThreadPoolExecutor:
         if self._executor is None:
@@ -74,11 +75,13 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
+        self._closed = True
         self._neptune_client.close()
         self._shutdown_executor()
 
     async def aclose(self) -> None:
         """Async teardown: the blocking Neptune close runs off the loop thread."""
+        self._closed = True
         await asyncio.to_thread(self._neptune_client.close)
         self._shutdown_executor()
 
@@ -248,6 +251,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
         connection the source the request used is dropped, so the next query
         reconnects.
         """
+        closed = StoreConnectionError("The Neptune retriever is closed.")
+        if self._closed:
+            # No new worker pool or connection for a closed retriever.
+            raise closed
         loop = asyncio.get_running_loop()
         slots = self._traversal_slots.get(loop)
         if slots is None:
@@ -261,6 +268,12 @@ class NeptuneRetriever(GraphExpansionRetriever):
             # websocket handshake with run_until_complete on a private loop,
             # which fails on a thread that already runs one.
             g = self._neptune_client.g
+            if self._closed:
+                # Closed while this worker waited for the client (close()
+                # holds its lock): ``g`` may be a connection opened after
+                # the close, which nothing would close.
+                self._neptune_client.close()
+                raise closed
             used.append(g)
             return list(build(g).to_list())
 
