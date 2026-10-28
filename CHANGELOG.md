@@ -1460,17 +1460,17 @@ changed once with the full-config keys (#332).
   `indexing.max_document_failures`, and its response was replayed from the
   LLM response cache by a re-run with the same pipeline id. It is now
   retried like output that does not parse, counted, and dropped from the
-  cache (#PR).
+  cache (#449).
 - Incremental indexing: a document removal killed after its strip wrote
   the stripped items but before the retired ids were deleted, then resumed
   (or retried by a new pipeline id), ranked the stripped entities and edges
   over the links of the edges its derivation drops (still stored until
   then): their `rank` stayed one higher than a full build's. Those links no
-  longer count (#PR).
+  longer count (#449).
 - CLIs in text mode: a stop whose teardown (a tracing flush, say) outlasted
   the grace period printed `Stopped by SIGTERM.` twice, once at the run's
   exit and once when the watchdog ended the process. It is printed once
-  (#PR).
+  (#449).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction
@@ -1526,13 +1526,13 @@ changed once with the full-config keys (#332).
   depended on the statements' order; it keeps the smallest. A claim id
   keys on its dates, so a stored claim whose date now reads differently
   keeps its old id until its documents are indexed again (`indexing.reset`
-  re-indexes them all) (#PR).
+  re-indexes them all) (#449).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
   pipeline summary; only a warning named them (#446). A re-run with the
   same pipeline id counts only its own: it repeated the earlier run's
-  documents after their claims were extracted (#PR).
+  documents after their claims were extracted (#449).
 - Claim extraction: the warnings on output or a rejection failing alike
   say the documents are indexed without those claims and counted for
   none; they said "counted against their documents", true of the graph
@@ -1634,7 +1634,7 @@ changed once with the full-config keys (#332).
   `indexing.lease_seconds`, so the next run failed with `... is being
   written by` (103 of 150 signals sent at `Holding the write lease`). The
   stop is now held until the lease is taken, then raised, and the lease
-  released (#PR).
+  released (#449).
 - `run-ingestion`: a SIGTERM or Ctrl-C that lands while the run gives up
   its namespace lease (most often while it waits for the heartbeat thread)
   still gives the lease up. It stayed held for `indexing.lease_seconds`
