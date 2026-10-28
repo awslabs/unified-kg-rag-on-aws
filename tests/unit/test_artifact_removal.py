@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Document,
     Entity,
+    Relationship,
     TextUnit,
 )
 
@@ -515,8 +516,6 @@ def test_a_stored_edge_of_a_written_edges_key_is_retired_only_if_it_adds_nothing
     # A stored edge between the same entities with the same type under
     # another id is the written edge under an earlier id, unless it cites a
     # unit the written one does not (another statement a full build keeps).
-    from unified_kg_rag.domain.models import Relationship
-
     manager, graph, _ = _manager()
     entities = [
         Entity(id="a", name="A", type="ORGANIZATION", text_unit_ids=["t1", "t9"]),
@@ -860,3 +859,25 @@ def test_a_strip_derives_claims_with_the_stored_spellings_of_derived_names() -> 
 
     assert keys == [sorted({compact_name_key("Acme"), compact_name_key("Globex Ltd")})]
     assert reads == [["a"], ["g"]]
+
+
+def test_a_dropped_edge_still_stored_does_not_rank_its_endpoints(mocker) -> None:
+    # A strip killed before the retired ids were deleted leaves the edge its
+    # derivation dropped in the graph store: the resumed strip reads it back
+    # among the stored links, and ranked the entity over it too.
+    manager, graph, _ = _manager()
+    mocker.patch.object(
+        graph, "read_neighbor_ids", return_value={"a": ["b", "c"], "c": ["a"]}
+    )
+    mocker.patch.object(graph, "find_incident_relationship_ids", return_value=[])
+    dropped = Relationship(
+        id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
+    )
+    entities, _ = manager._finish(
+        "default",
+        [Entity(id="a", name="A", type="ORG", description="A")],
+        [],
+        stored_relationships=[dropped],
+        dropped=[dropped.id],
+    )
+    assert [e.rank for e in entities] == [1]

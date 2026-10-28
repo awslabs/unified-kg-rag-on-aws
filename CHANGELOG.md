@@ -1461,6 +1461,12 @@ changed once with the full-config keys (#332).
   LLM response cache by a re-run with the same pipeline id. It is now
   retried like output that does not parse, counted, and dropped from the
   cache (#PR).
+- Incremental indexing: a document removal killed after its strip wrote
+  the stripped items but before the retired ids were deleted, then resumed
+  (or retried by a new pipeline id), ranked the stripped entities and edges
+  over the links of the edges its derivation drops (still stored until
+  then): their `rank` stayed one higher than a full build's. Those links no
+  longer count (#PR).
 - An incremental delta whose new or changed documents name no entity
   stopped every run (`graph_analysis` "received 0 inputs") when only their
   claim extraction failed: such a failure no longer counts as an extraction

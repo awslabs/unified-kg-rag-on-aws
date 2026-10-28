@@ -1428,8 +1428,16 @@ class IndexingManager:
             relationships = self.description_summarizer.summarize_relationships(
                 relationships
             )
+        # A dropped edge is still stored until the retired ids are deleted
+        # (a resumed strip reads it back): its link does not count either.
+        dropped_ids = set(dropped)
+        dropped_links = {
+            frozenset((r.source_id, r.target_id))
+            for r in stored_relationships
+            if r.id in dropped_ids
+        }
         entities, relationships = self._rank_with_stored_graph(
-            suffix, entities, relationships, rekey, rewired
+            suffix, entities, relationships, rekey, rewired, dropped_links
         )
         # The edges the derivation dropped go with the retired ids: they are
         # not rewritten as other stored edges of the touched entities.
@@ -1486,7 +1494,7 @@ class IndexingManager:
         _, ranked = with_graph_ranks(
             [],
             [*relationships, *extra],
-            self._stored_neighbors(suffix, endpoints, rekey, rewired),
+            self._stored_neighbors(suffix, endpoints, rekey, rewired, dropped_links),
         )
         ranks = {r.id: r.rank for r in ranked}
         for rel in extra:
@@ -1581,6 +1589,7 @@ class IndexingManager:
         relationships: list[Relationship],
         rekey: Mapping[str, str],
         rewired: Collection[str] = (),
+        dropped_links: Collection[frozenset[str]] = (),
     ) -> tuple[list[Entity], list[Relationship]]:
         """Recompute the ranks (degrees) of the items the delta writes over the
         stored graph plus the delta's relationships.
@@ -1595,7 +1604,7 @@ class IndexingManager:
         return with_graph_ranks(
             entities,
             relationships,
-            self._stored_neighbors(suffix, ids, rekey, rewired),
+            self._stored_neighbors(suffix, ids, rekey, rewired, dropped_links),
         )
 
     def _stored_neighbors(
@@ -1604,11 +1613,12 @@ class IndexingManager:
         ids: Sequence[str],
         rekey: Mapping[str, str],
         rewired: Collection[str] = (),
+        dropped_links: Collection[frozenset[str]] = (),
     ) -> dict[str, list[str]]:
         """``read_neighbor_ids`` of ``ids``, some of which may be re-keyed
         (``rekey``: stored id -> new id), stated in the new ids, without the
         links of the ``rewired`` stored entities (the caller holds all their
-        edges)."""
+        edges) or the ``dropped_links`` (stored id pairs of dropped edges)."""
         stored = self.neptune_indexer.read_neighbor_ids(
             _with_old_ids(ids, rekey), suffix=suffix
         )
@@ -1617,7 +1627,9 @@ class IndexingManager:
             if i in rewired:
                 continue
             merged[rekey.get(i, i)].update(
-                rekey.get(n, n) for n in neighbors if n not in rewired
+                rekey.get(n, n)
+                for n in neighbors
+                if n not in rewired and frozenset((i, n)) not in dropped_links
             )
         return {i: sorted(neighbors - {i}) for i, neighbors in merged.items()}
 
