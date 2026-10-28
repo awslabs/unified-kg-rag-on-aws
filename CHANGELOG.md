@@ -1471,7 +1471,7 @@ changed once with the full-config keys (#332).
   ended. Every metadata save now defers a stop until it is written, as the
   checkpoint writes do, and a stop that still surfaces wrapped in another
   error ends the run as a stop (exit 128 + signal), its checkpoint uploaded
-  (#PR).
+  (#451).
 - LLM response cache: a model call abandoned on its call timeout
   (`BatchProcessor.call_timeout_seconds`) stored its late answer after its
   item's retry, so a re-run with the same pipeline id was served that answer
@@ -1479,7 +1479,7 @@ changed once with the full-config keys (#332).
   had failed and its responses were dropped. An abandoned call is now
   neither served nor stored. A response dropped before it was written
   leaves no entry at all (it wrote the response and a removal entry, a third
-  more segments on a run with failing units) (#PR).
+  more segments on a run with failing units) (#451).
 - Incremental indexing warnings: a document whose translation failed was
   reported as "Extraction failed"; claims given up after a second failure
   were said not to be extracted again until the content or settings change,
@@ -1487,7 +1487,7 @@ changed once with the full-config keys (#332).
   retrying-documents warning said an outage or a setting "never counts"; it
   now says such a failure does not count toward
   `indexing.max_document_failures`, so the document is retried every run
-  (#PR).
+  (#451).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
@@ -1586,7 +1586,7 @@ changed once with the full-config keys (#332).
   `2022-Q3`), a month (`March 2024`, `2024-03`) or a year (`2024`) as its
   first day; `Sept.` and `Dec.31` read as dates too. An all-numeric date
   whose day and month order is unknown (`10/08/2024`) is still stored as
-  written (#PR).
+  written (#451).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the
