@@ -257,6 +257,38 @@ def test_a_part_split_off_under_an_underived_entitys_id_keeps_its_units() -> Non
     assert by_id[stored.id].text_unit_ids == ["u1", "u0"]
 
 
+def test_an_underived_holder_keeps_the_keys_of_the_units_it_takes() -> None:
+    # Regression: the holder took the part's units (u1 "Acme Inc", u2 "Acme
+    # LLC") but not its keys. Once the removal completed and "Acme LLC" no
+    # longer resolved into "Acme Inc", the holder's derivation found no
+    # candidate under "acme llc": no entity cited u2 and what it states was
+    # lost (a full build has "Acme LLC" citing u2).
+    stored, records = _merged_acme()
+    records["u2"] = _record("u2", _entity("Acme LLC", "u2", "PERSON"))
+    stored.text_unit_ids = [*(stored.text_unit_ids or []), "u2"]
+    stored.attributes = {ENTITY_KEYS_ATTRIBUTE: ["acme", "acme inc", "acme llc"]}
+    holder = _stored("Acme Inc", ["u9"], type="person")
+
+    derived = derive(Config(), [stored, holder], [], [], records)
+
+    (kept,) = [e for e in derived.entities if e.id == holder.id]
+    assert kept.text_unit_ids == ["u9", "u1", "u2"]
+    assert kept.attributes[ENTITY_KEYS_ATTRIBUTE] == ["acme inc", "acme llc"]
+
+    # The removal completes (u9 is gone) and u1 now states an ORG "Acme Inc".
+    kept.text_unit_ids = ["u1", "u2"]
+    records = {
+        "u1": _record("u1", _entity("Acme Inc", "u1")),
+        "u2": records["u2"],
+    }
+    derived = derive(Config(), [kept], [], [], records)
+
+    assert sorted((e.name, tuple(e.text_unit_ids or [])) for e in derived.entities) == [
+        ("Acme Inc", ("u1",)),
+        ("Acme LLC", ("u2",)),
+    ]
+
+
 def test_a_split_keeps_the_stored_name_under_its_id() -> None:
     # Regression: the stored entity matched the part sharing most of its
     # units ("Acme Inc"), so the part under its own id ("Acme") was "held by

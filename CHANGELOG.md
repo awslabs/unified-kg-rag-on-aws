@@ -1444,6 +1444,12 @@ changed once with the full-config keys (#332).
   `<claims>` section listed only claims missing a subject, object or type.
   Only a section without its `</claims>` is taken for cut-off output now;
   such claims are dropped as invalid (#PR).
+- Incremental indexing: an entity could lose a text unit for good after a
+  run killed while removing documents. A stored entity kept as it was (a
+  unit it cites had no record yet) took the text units of the part it held
+  but not that part's name keys, so once a later run resolved that part
+  apart again, no entity was derived for it and nothing cited its unit
+  (#PR).
 - Filters: an empty list of values (`{"id": []}`, `{"attr_<key>": []}`) is
   refused (`InvalidFilterError`) before the search. OpenSearch refused
   every search with query text under one, while the embedded engine

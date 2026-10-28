@@ -257,9 +257,10 @@ def derive(
         entities, entity_candidates, entity_complete
     )
     taken = {entity.id for entity in entities} | set(blocked)
-    # The text units of a part split off under the id of a given entity kept
-    # as stored (see below), by that id.
+    # The text units and keys of a part split off under the id of a given
+    # entity kept as stored (see below), by that id.
     gained: dict[str, list[str]] = defaultdict(list)
+    gained_keys: dict[str, set[str]] = defaultdict(set)
     # Resolved id -> the derived id, and every id a given claim may name
     # the entity by (its stored copies' ids, its derived id, the id an
     # earlier re-key of this run replaced or it was split off from).
@@ -288,10 +289,12 @@ def derive(
                 # Split off under an id another item holds: kept merged. A
                 # given holder kept as stored (a unit of it has no record:
                 # a removal killed between the stores) takes the part's text
-                # units, which the match no longer cites, so a later
-                # derivation of the holder finds them.
+                # units, which the match no longer cites, and its keys (the
+                # names those units state), so a later derivation of the
+                # holder finds them and the entities they resolve to.
                 if match.id in entity_complete and not entity_complete[match.id]:
                     gained[match.id].extend(match.text_unit_ids or [])
+                    gained_keys[match.id] |= entity_keys(match)
                 continue
             else:
                 new_id = match.id
@@ -333,6 +336,12 @@ def derive(
                     [*(derived_entity.text_unit_ids or []), *gained[derived_entity.id]]
                 )
             )
+            derived_entity.attributes = {
+                **(derived_entity.attributes or {}),
+                ENTITY_KEYS_ATTRIBUTE: sorted(
+                    entity_keys(derived_entity) | gained_keys[derived_entity.id]
+                ),
+            }
     names = {e.id: e.name for e in derived_entities}
     # Each part a stored entity lost (split off on its own, or into another
     # derived entity) -> that stored entity (the first, when several did),
