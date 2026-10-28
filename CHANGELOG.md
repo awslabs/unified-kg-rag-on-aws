@@ -1440,21 +1440,21 @@ changed once with the full-config keys (#332).
   The close now cancels the calls in flight and waits for them to unwind
   before stopping the loop; each raises `StoreConnectionError` ("closed
   while this call was in flight"). A later call reconnects, as before
-  (#PR).
+  (#450).
 - Neptune retriever: a traversal whose worker started only after the close
   opened a Neptune connection and closed it again, and one waiting for a
   traversal slot at the close built a new worker pool that nothing shut
-  down. Both now fail with `StoreConnectionError` before either (#PR).
+  down. Both now fail with `StoreConnectionError` before either (#450).
 - OpenSearch: a query racing a retriever's close rebuilt the async client
   after it, an aiohttp pool nothing closed. A closed `OpenSearchClient`
   builds no async client; the query fails with `StoreConnectionError`
-  (#PR).
+  (#450).
 - OpenSearch retriever: a vector or hybrid search with query text under
   a strategy scope that allows nothing (an empty id list) was refused with
   a 400 ("query must be rewritten first"), where the embedded engine
   returned no hits. Such a search returns no hits without a request on
   every engine; the text-less searches that send one today were not
-  affected (#PR).
+  affected (#450).
 - `run-eval` checks each item's filter keys when loading, under the item's
   strategy (under every compared strategy in a comparison), so a key the
   chain refuses (unknown to the indexes the strategy reads, a range on
@@ -1462,7 +1462,7 @@ changed once with the full-config keys (#332).
   and query id instead of every such query mid-run, as the user guide
   said. A query with an explicit strategy (`local`, `mix`, ...) refuses
   such a key before any model call; it was refused after the follow-up
-  rewrite and the query processing had run (1 model call each) (#PR).
+  rewrite and the query processing had run (1 model call each) (#450).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
