@@ -326,6 +326,12 @@ processing:
     # and is ~2K English tokens. fallback_chunk_size 4800 ~= 1,200 English
     # tokens, the MS GraphRAG / LightRAG default chunk size. pre_chunk_size is
     # the intelligent chunker's LLM window and is not embedded.
+    # length_unit: what the six sizes count. "chars" (default) or "tokens", a
+    # local script-aware estimate (no model call) that fits the token limits
+    # in any language, e.g. for CJK corpora. With "tokens" set the sizes in
+    # tokens, e.g. min 250, max 2000, overlap 125, pre-chunk 12500 / 125,
+    # fallback 1200. Switching re-chunks and re-extracts the corpus.
+    length_unit: "chars"
     min_chunk_size: 1000
     max_chunk_size: 8000
     chunk_overlap: 500

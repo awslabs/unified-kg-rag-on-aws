@@ -6,6 +6,7 @@ from .community import Community, CommunityMetrics, HierarchicalCommunity
 from .community_report import CommunityFinding, CommunityReport
 from .config import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Config,
     Constants,
     EmbeddingModelId,
@@ -81,6 +82,7 @@ __all__ = [
     "CacheStats",
     "CacheStrategy",
     "ChunkingStrategy",
+    "ChunkLengthUnit",
     "Claim",
     "Community",
     "CommunityFinding",

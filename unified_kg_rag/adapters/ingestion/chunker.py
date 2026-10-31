@@ -3,6 +3,7 @@
 import statistics
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -10,6 +11,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
+from unified_kg_rag.adapters.ingestion.length_units import (
+    TokenBudgetTextSplitter,
+    chunk_length_function,
+    max_chars,
+)
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -20,6 +26,7 @@ from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
+    ChunkLengthUnit,
     Config,
     Document,
     ModelPurpose,
@@ -110,9 +117,17 @@ class ChunkingStats(BaseModel):
 
 
 class ChunkQualityValidator:
-    def __init__(self, min_chunk_size: int = 50, max_chunk_size: int = 5000) -> None:
+    def __init__(
+        self,
+        min_chunk_size: int = 50,
+        max_chunk_size: int = 5000,
+        length_function: Callable[[str], int] = len,
+    ) -> None:
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
+        # The measure the size limits are in; the *_num_chars metrics count
+        # characters whatever it is.
+        self.length_function = length_function
 
     def validate_chunks(self, chunks: list[str]) -> dict[str, Any]:
         if not chunks:
@@ -126,12 +141,18 @@ class ChunkQualityValidator:
             "max_num_chars": max(len(chunk) for chunk in chunks),
             "empty_chunks": sum(1 for chunk in chunks if not chunk.strip()),
             "oversized_chunks": sum(
-                1 for chunk in chunks if len(chunk) > self.max_chunk_size
+                1
+                for chunk in chunks
+                if self.length_function(chunk) > self.max_chunk_size
             ),
             # A document's only chunk cannot be merged with anything, so a
             # short document is not an undersized-chunk problem.
             "undersized_chunks": (
-                sum(1 for chunk in chunks if len(chunk) < self.min_chunk_size)
+                sum(
+                    1
+                    for chunk in chunks
+                    if self.length_function(chunk) < self.min_chunk_size
+                )
                 if len(chunks) > 1
                 else 0
             ),
@@ -298,6 +319,9 @@ class ChunkProcessor:
     cannot be located in it, the overlap of the next chunk with the previous
     one (at most ``chunk_overlap`` characters) is dropped and the pieces are
     joined with a separator, so words at the seam are never fused.
+
+    ``min_chunk_size``/``max_chunk_size`` are in ``length_function``'s unit;
+    ``chunk_overlap`` bounds the shared text in characters.
     """
 
     _JOIN_SEPARATOR = "\n"
@@ -308,11 +332,13 @@ class ChunkProcessor:
         max_chunk_size: int,
         fallback_splitter: RecursiveCharacterTextSplitter | None = None,
         chunk_overlap: int = 0,
+        length_function: Callable[[str], int] = len,
     ):
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.fallback_splitter = fallback_splitter
         self.chunk_overlap = chunk_overlap
+        self.length_function = length_function
 
     def merge_small_chunks(
         self,
@@ -342,14 +368,15 @@ class ChunkProcessor:
                 text = self._join_pair(text, chunks[k], max_overlap)
             return text
 
+        size = self.length_function
         groups: list[tuple[int, int]] = []
         i = 0
         while i < len(chunks):
             last = i
             current = chunks[i]
-            while last + 1 < len(chunks) and len(current) < self.min_chunk_size:
+            while last + 1 < len(chunks) and size(current) < self.min_chunk_size:
                 candidate = joined(i, last + 1)
-                if len(candidate) > self.max_chunk_size:
+                if size(candidate) > self.max_chunk_size:
                     break
                 current = candidate
                 last += 1
@@ -358,9 +385,9 @@ class ChunkProcessor:
 
         if len(groups) > 1:
             tail_first, tail_last = groups[-1]
-            if len(joined(tail_first, tail_last)) < self.min_chunk_size:
+            if size(joined(tail_first, tail_last)) < self.min_chunk_size:
                 prev_first = groups[-2][0]
-                if len(joined(prev_first, tail_last)) <= self.max_chunk_size:
+                if size(joined(prev_first, tail_last)) <= self.max_chunk_size:
                     groups[-2:] = [(prev_first, tail_last)]
 
         return [joined(first, last) for first, last in groups]
@@ -428,19 +455,29 @@ class BaseChunker(ABC):
         self.chunking_config = self.config.processing.chunking
         self.show_progress = show_progress
         self.stats = ChunkingStats()
+        # Every size setting is in this unit; positions and overlaps inside
+        # the text stay in characters.
+        self.length_unit = self.chunking_config.length_unit
+        self.length_function = chunk_length_function(self.length_unit)
 
         self.fallback_splitter = self._create_splitter(
-            self.chunking_config.fallback_chunk_size, self.chunking_config.chunk_overlap
+            self.chunking_config.fallback_chunk_size,
+            self.chunking_config.chunk_overlap,
+            length_unit=self.length_unit,
         )
         self.chunk_processor = ChunkProcessor(
             self.chunking_config.min_chunk_size,
             self.chunking_config.max_chunk_size,
             fallback_splitter=self.fallback_splitter,
-            chunk_overlap=self.chunking_config.chunk_overlap,
+            chunk_overlap=max_chars(
+                self.chunking_config.chunk_overlap, self.length_unit
+            ),
+            length_function=self.length_function,
         )
         self.quality_validator = ChunkQualityValidator(
             min_chunk_size=self.chunking_config.min_chunk_size,
             max_chunk_size=self.chunking_config.max_chunk_size,
+            length_function=self.length_function,
         )
 
     @abstractmethod
@@ -448,8 +485,20 @@ class BaseChunker(ABC):
         pass
 
     @staticmethod
-    def _create_splitter(size: int, overlap: int) -> RecursiveCharacterTextSplitter:
+    def _create_splitter(
+        size: int,
+        overlap: int,
+        *,
+        length_unit: ChunkLengthUnit = ChunkLengthUnit.CHARS,
+    ) -> RecursiveCharacterTextSplitter:
         try:
+            if length_unit is ChunkLengthUnit.TOKENS:
+                return TokenBudgetTextSplitter(
+                    chunk_size=size,
+                    chunk_overlap=overlap,
+                    separators=_SPLITTER_SEPARATORS,
+                    is_separator_regex=True,
+                )
             return RecursiveCharacterTextSplitter(
                 chunk_size=size,
                 chunk_overlap=overlap,
@@ -671,7 +720,9 @@ class IntelligentTextChunker(BaseChunker):
         )
 
         self.pre_splitter = self._create_splitter(
-            self.chunking_config.pre_chunk_size, self.chunking_config.pre_chunk_overlap
+            self.chunking_config.pre_chunk_size,
+            self.chunking_config.pre_chunk_overlap,
+            length_unit=self.length_unit,
         )
         self.line_boundary_processor = LineBasedBoundaryProcessor(
             max_line_miss_rate=self.chunking_config.max_marker_miss_rate,
@@ -754,10 +805,8 @@ class IntelligentTextChunker(BaseChunker):
         and must be split anyway).
         """
         processor = self.chunk_processor
-        return (
-            len(pre_chunk) >= 2 * processor.min_chunk_size
-            or len(pre_chunk) > processor.max_chunk_size
-        )
+        size = self.length_function(pre_chunk)
+        return size >= 2 * processor.min_chunk_size or size > processor.max_chunk_size
 
     def _request_boundaries(
         self, pre_chunk_lists: list[list[str]], label: str
@@ -866,7 +915,7 @@ class IntelligentTextChunker(BaseChunker):
         max_size = self.chunking_config.max_chunk_size
 
         for chunk in chunks:
-            if len(chunk) > max_size:
+            if self.length_function(chunk) > max_size:
                 split_chunks = self.fallback_splitter.split_text(chunk)
                 final_chunks.extend(split_chunks)
             else:
@@ -956,7 +1005,6 @@ class IntelligentTextChunker(BaseChunker):
         return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
 
     def _create_chain_inputs(self, chunks: list[str]) -> list[dict[str, Any]]:
-        config = self.config.processing.chunking
         inputs = []
 
         for chunk in chunks:
@@ -966,16 +1014,34 @@ class IntelligentTextChunker(BaseChunker):
                 numbered_lines.append(f"{i}: {line}")
 
             numbered_text = "\n".join(numbered_lines)
+            min_size, max_size = self._prompt_sizes(chunk)
 
             inputs.append(
                 {
                     "numbered_text": numbered_text,
-                    "min_chunk_size": config.min_chunk_size,
-                    "max_chunk_size": config.max_chunk_size,
+                    "min_chunk_size": min_size,
+                    "max_chunk_size": max_size,
                 }
             )
 
         return inputs
+
+    def _prompt_sizes(self, chunk: str) -> tuple[int, int]:
+        """The chunk size range for the boundary prompt, in characters.
+
+        The prompt asks for characters (the model sees lines and text, not
+        token counts), so a token range is converted at this pre-chunk's own
+        characters-per-token ratio. The pieces are measured in tokens again
+        afterwards (merge and oversize split).
+        """
+        config = self.chunking_config
+        if self.length_unit is not ChunkLengthUnit.TOKENS:
+            return config.min_chunk_size, config.max_chunk_size
+        ratio = len(chunk) / max(estimate_token_count(chunk), 1)
+        return (
+            max(1, round(config.min_chunk_size * ratio)),
+            max(1, round(config.max_chunk_size * ratio)),
+        )
 
     def _log_completion_summary(self, total_time: float) -> None:
         super()._log_completion_summary(total_time)

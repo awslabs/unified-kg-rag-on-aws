@@ -30,6 +30,15 @@ _DENSE_SCRIPT_RE = re.compile(
 )
 
 
+# Characters per token of the text outside the dense scripts.
+LATIN_CHARS_PER_TOKEN = 4
+
+
+def dense_char_count(text: str) -> int:
+    """How many characters of ``text`` are in a dense script (~1 token each)."""
+    return len(_DENSE_SCRIPT_RE.findall(text))
+
+
 def estimate_token_count(text: str) -> int:
     """Script-aware token-count estimate for the API-unavailable fallback.
 
@@ -46,9 +55,9 @@ def estimate_token_count(text: str) -> int:
     """
     if not text:
         return 0
-    dense_chars = len(_DENSE_SCRIPT_RE.findall(text))
+    dense_chars = dense_char_count(text)
     other_chars = len(text) - dense_chars
     # ~1 token per dense-script char + ~4 chars per token for the rest.
-    char_estimate = dense_chars + (other_chars // 4)
+    char_estimate = dense_chars + (other_chars // LATIN_CHARS_PER_TOKEN)
     word_count = len(text.split())
     return max(word_count, char_estimate, 1)

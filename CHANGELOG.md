@@ -685,6 +685,17 @@ changed once with the full-config keys (#332).
   again (#442).
 
 ### Added
+- `processing.chunking.length_unit: tokens` counts the six chunk sizes in a
+  local, script-aware token estimate (a Hangul, Han or Kana character ~1
+  token, other text ~4 characters per token; no model call) instead of
+  characters, so one setting keeps chunks inside the embedding and reranker
+  token limits in any language: an 8,000-character Korean chunk is ~6,000
+  tokens, over Cohere Rerank 3.5's 4,096. The splitter measures each chunk as
+  a whole (summing per-piece estimates let a chunk overshoot by up to ~75%),
+  merging, the oversize split and the quality check use the same measure,
+  and the boundary prompt gets the range converted to characters. The
+  default `chars` keeps every chunk, text-unit id and content hash of earlier
+  releases; switching re-chunks and re-extracts the corpus (#PR).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
