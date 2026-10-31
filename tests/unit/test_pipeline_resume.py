@@ -13,14 +13,14 @@ from pathlib import Path
 
 import pytest
 
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    PipelineResumeManager,
+    PipelineStateManager,
+)
 from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
-)
-from unified_kg_rag.shared.pipeline_manager import (
-    PipelineResumeManager,
-    PipelineStateManager,
 )
 
 pytestmark = pytest.mark.unit

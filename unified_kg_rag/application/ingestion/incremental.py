@@ -38,6 +38,10 @@ from unified_kg_rag.domain.ingestion.attempts import (
     settled_attempts,
     unproductive_attempt,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    changed_settings,
+    extraction_settings,
+)
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
@@ -55,6 +59,15 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     scope_namespace,
 )
 from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
+from unified_kg_rag.domain.ingestion.document_identity import (
+    DEFAULT_NAMESPACE,
+    RELATIVE_PATH_KEY,
+    compute_doc_id,
+    config_registry_namespace,
+    normalize_source_path,
+    normalize_source_scope,
+    relative_source_path,
+)
 from unified_kg_rag.domain.ingestion.merge import merge_claims
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
@@ -84,19 +97,6 @@ from unified_kg_rag.shared import (
     DocStatusRegistryError,
     PipelineStageError,
     get_logger,
-)
-from unified_kg_rag.shared.utils.cache_keys import (
-    changed_settings,
-    extraction_settings,
-)
-from unified_kg_rag.shared.utils.document_identity import (
-    DEFAULT_NAMESPACE,
-    RELATIVE_PATH_KEY,
-    compute_doc_id,
-    config_registry_namespace,
-    normalize_source_path,
-    normalize_source_scope,
-    relative_source_path,
 )
 from unified_kg_rag.shared.write_fence import check_write_fence
 

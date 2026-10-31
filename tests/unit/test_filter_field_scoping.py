@@ -1168,6 +1168,16 @@ def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> An
     return path
 
 
+def test_run_eval_refuses_malformed_filter_values_when_loading(tmp_path) -> None:
+    # Without a chain too: the chain's value check is a static method.
+    from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
+    from unified_kg_rag.shared import EvaluationException
+
+    bad = _eval_dataset(tmp_path, {"type": None}, search_strategy="local")
+    with pytest.raises(EvaluationException, match="index 0 .*no value"):
+        EvaluationManager.load_data(bad)
+
+
 def test_run_eval_refuses_filter_keys_when_loading(config: Config, tmp_path) -> None:
     # Regression: load_data checked filter values only, so an item whose
     # keys every query of the run refused loaded fine and failed mid-run.

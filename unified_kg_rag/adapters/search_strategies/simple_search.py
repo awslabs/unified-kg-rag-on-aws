@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
 )
+from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.domain.models import (
     RetrievalResult,
     RetrieverRole,
@@ -18,7 +19,6 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     all_index_prefixes,
     configured_index_prefixes,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 

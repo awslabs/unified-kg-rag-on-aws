@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.renderers import (
     registered_renderers,
     render_all,
 )
-from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -49,18 +48,20 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
+from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
     GraphAnalyzer,
 )
+from unified_kg_rag.domain.ingestion.visualization_data import spring_layout
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
+from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     get_logger,
     setup_logging,
 )
-from unified_kg_rag.shared.config import load_cli_dotenv
 
 logger = get_logger(__name__)
 
@@ -172,9 +173,12 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
             "No layout in the data (exported without rendering); using a spring "
             "layout from the graph topology."
         )
-        context.layout = InteractiveRenderer(
-            config.graph.visualization.interactive
-        ).spring_layout(context.graph)
+        context.layout = spring_layout(
+            context.graph,
+            InteractiveGraphSettings.model_validate(
+                config.graph.visualization.interactive
+            ).max_nodes,
+        )
     if not context.centrality:
         context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()
 

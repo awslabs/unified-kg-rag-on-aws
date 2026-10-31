@@ -39,6 +39,7 @@ from opentelemetry.trace import SpanKind, StatusCode
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.observability.langchain_callback import (
     GenAITracingCallbackHandler,
 )
@@ -66,7 +67,6 @@ from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import ConfigurationError, PipelineInterrupted, observability
 from unified_kg_rag.shared.logging import _SHARED_PROCESSORS, add_trace_ids
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 
@@ -149,7 +149,7 @@ def test_disabled_path_never_imports_the_otel_adapter() -> None:
         from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
         from unified_kg_rag.domain.models import Config
         from unified_kg_rag.shared import observability
-        from unified_kg_rag.shared.utils.langchain import BatchProcessor
+        from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 
         assert configure_observability(Config().observability) is False
         with observability.span("kg_rag.x", a=1) as span:

@@ -28,8 +28,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
+from unified_kg_rag.application.config import _nested_model
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.config import _nested_model
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "config-template.yaml"
 

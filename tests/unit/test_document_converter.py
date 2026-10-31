@@ -7,10 +7,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.documents import Document as LangChainDocument
 
-from unified_kg_rag.domain.models import Document
-from unified_kg_rag.shared.utils.document_converter import (
+from unified_kg_rag.adapters.ingestion.document_converter import (
     convert_langchain_to_document,
 )
+from unified_kg_rag.domain.models import Document
 
 pytestmark = pytest.mark.unit
 

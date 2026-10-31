@@ -46,9 +46,9 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
+from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
 from unified_kg_rag.shared import observability
-from unified_kg_rag.shared.utils.display import console
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")

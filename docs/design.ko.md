@@ -55,28 +55,71 @@
 
 ### 2.1 의존성 규칙과 레이어 맵
 
-import는 **안쪽을 향합니다**: `application → adapters → ports → domain`이며, 어느 레이어든
-공통 커널 `shared/`를 import할 수 있습니다. 어떤 `domain/` 모듈도 LangChain, LangSmith,
-boto3/botocore, lxml, opensearch-py, gremlin-python을 간접적으로도 로드하면 안 되므로
-`shared/`와 `shared/utils/`는 가볍게 유지합니다(LangChain에 묶인 도우미는
-`shared.utils.langchain`과 `shared.utils.document_converter`, rich 도우미는
-`shared.utils.display`). `tests/unit/test_domain_purity.py`가 새 인터프리터에서 이를 검사합니다.
+import는 **안쪽을 향합니다**. 레이어는 바깥쪽부터 다음과 같으며, 모듈은 자기 레이어와 그
+뒤의 레이어만 import하고 앞의 레이어는 import하지 않습니다.
+
+| 레이어 | 패키지 | 역할 |
+|---|---|---|
+| 진입점 | `application/cli/` | 콘솔 스크립트: 플래그 해석, 설정 로드, 연결, 실행 |
+| 평가 | `evaluation/` | 데이터셋에 대해 RAG 체인을 실행합니다. 애플리케이션 중에서는 체인(`application/retrieval/`)과 composition root(`application/bootstrap.py`)만 import합니다 |
+| 애플리케이션 | `application/` | 오케스트레이션: 수집 파이프라인, 인덱싱 매니저, RAG 체인, 프롬프트 튜너, 설정 로드, composition root |
+| 시각화 | `visualization/` | 만들어진 그래프를 렌더링합니다(수집의 커뮤니티 단계와 `run-visualization`이 호출) |
+| 어댑터 | `adapters/` | 기술 바인딩과 포트 구현 |
+| 포트 | `ports/` | 애플리케이션이 연결하고 어댑터가 구현하는 인터페이스 |
+| 도메인 | `domain/` | 모델, 순수 알고리즘, 프롬프트 |
+| 공통 커널 | `shared/` | 로깅, 오류, 메트릭, 추적 훅, 쓰기 차단 장치, 순수 도우미 |
+
+이 규칙은 모듈 최상위, 함수 안, `TYPE_CHECKING` 아래 등 모든 import에 적용됩니다(타입 전용
+import도 의존성입니다). 패키지 안에서 루트 파사드는 `__version__`을 가져올 때만 import합니다.
 
 ```mermaid
 flowchart TB
-    application["<b>application/</b><br/>CLIs, ingestion pipeline, indexing manager, RAG chain"]
+    cli["<b>application/cli/</b><br/>entry points"]
+    evaluation["<b>evaluation/</b><br/>evaluators, strategy comparison"]
+    application["<b>application/</b><br/>ingestion pipeline, indexing manager, RAG chain, bootstrap"]
+    visualization["<b>visualization/</b><br/>render loop"]
     adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
     ports["<b>ports/</b><br/>abstract interfaces"]
     domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
-    shared["<b>shared/</b><br/>config, logging, exceptions, utils"]
-    application --> adapters --> ports --> domain
-    application -.-> shared
-    adapters -.-> shared
-    domain -.-> shared
+    shared["<b>shared/</b><br/>logging, errors, metrics, pure helpers"]
+    cli --> evaluation --> application --> visualization --> adapters --> ports --> domain --> shared
 ```
 
-점선 화살표는 어느 레이어든 `shared/`를 import할 수 있다는 뜻입니다. 검색 전략은 어댑터이고
-도메인에는 그 레지스트리만 있으므로 두 방법론이 같은 포트에 연결됩니다.
+화살표는 "import할 수 있다"는 뜻이며, 더 아래에 있는 레이어도 모두 import할 수 있습니다
+(애플리케이션은 도메인을 직접 import하고, 모든 레이어가 커널을 import합니다).
+
+- **포트는 도메인 밖에 있습니다.** 포트는 도메인 모델로 정의되므로(`DocStatusPort.diff`는
+  `DocumentDelta`를 반환) 도메인이 포트를 다시 import할 수 없습니다. 저장소를 읽는 도메인
+  코드는 읽는 부분만 자체 `Protocol`로 선언합니다(`domain.ingestion.delta_detector.
+  DocStatusReader`, `DocStatusPort`의 읽기 부분). 모든 포트 구현은 구조적으로 이를 만족하고,
+  mypy가 호출부마다 검사하며, `tests/unit/test_fake_port_signatures.py`가 두 시그니처를 함께
+  고정합니다. 포트는 애플리케이션이 넘겨줍니다.
+- **`shared/`는 다른 레이어에 의존하지 않는 커널입니다.** 다른 레이어를 import하지 않으므로
+  도메인을 포함한 모든 레이어가 순환 없이 씁니다. 도메인 모델이 필요한 코드는 해당 레이어에
+  둡니다. 설정 로드는 `application/config.py`, 단계 캐시와 재개 매니저는
+  `application/ingestion/`, 단계 캐시 키와 문서 식별자는 `domain/ingestion/`, 저장소 이름은
+  `domain/retrieval/`, LangChain 도우미는 `adapters/llm/langchain.py`와
+  `adapters/ingestion/document_converter.py`, rich 콘솔 도우미는
+  `application/cli/display.py`에 있습니다. `setup_logging`은 설정을 구조적 타입
+  (`shared.logging.HasLoggingSettings`)으로 받습니다.
+- **평가는 체인을 통해 저장소에 닿고**(체인의 리트리버,
+  `GraphRAGChain.check_filter_values` / `check_filter_keys`), **시각화는 레지스트리를 통해
+  렌더러에 닿습니다**. 렌더러에 묶이지 않은 레이아웃 도우미(`displayed_graph`,
+  `spring_layout`)는 `domain/ingestion/visualization_data.py`에 있습니다. 둘 다 저장소
+  어댑터를 import하지 않습니다.
+- **백엔드는 주입합니다.** 벤더 바인딩(`adapters/aws/`, `adapters/local/`)과 포트
+  구현(`storage/` 인덱서, `retrievers/`, `doc_status/`, `guardrail/`)은 공급자 빌더와
+  composition root가 만듭니다. composition root는 `application/bootstrap.py`
+  (`build_providers`, `build_query_guard`, `build_checkpoint_sync`)와 CLI입니다.
+  오케스트레이터는 이를 받아서 씁니다(`Providers`, 위 빌더, 또는 생성자 인자).
+- **플러그인은 레지스트리를 통합니다.** 렌더러, 검색 전략, 평가기는 자기 패키지 밖에서
+  패키지 루트나 베이스·레지스트리 모듈로만 접근합니다(§2.4). 검색 전략 레지스트리는
+  공급자·렌더러 레지스트리처럼 등록 대상 옆, 즉 전략 베이스와 같은 곳
+  (`adapters/retrieval/strategy_registry.py`)에 있습니다.
+
+어떤 `domain/` 모듈도 LangChain, LangSmith, boto3/botocore, lxml, opensearch-py,
+gremlin-python을 간접적으로도 로드하면 안 되므로 `shared/utils/`에는 가벼운 도우미만 둡니다.
+`tests/unit/test_domain_purity.py`가 새 인터프리터에서 이를 검사합니다.
 
 
 ```
@@ -85,41 +128,49 @@ unified_kg_rag/
 ├─ domain/              # 기술 중립 코어 (boto3/LangChain/백엔드 import 없음)
 │  ├─ models/           #   Pydantic 도메인 모델
 │  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_builder/resolver/analyzer,
-│  │  └─ merge/         #   claim_resolver, contributions, derivation; merge/ = 실행 간 병합
-│  ├─ retrieval/        #   strategy_registry, index_prefixes, hybrid_normalization
+│  │  │                 #   claim_resolver, contributions, derivation, cache_keys,
+│  │  │                 #   document_identity, visualization_data (+ 레이아웃 도우미)
+│  │  └─ merge/         #   실행 간 병합
+│  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
-├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
+├─ ports/               # 애플리케이션이 연결하고 어댑터가 구현하는 인터페이스 (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
 │                       #   ContentGuardPort — ports/__init__이 포트 카탈로그)
 ├─ adapters/            # 구체적인 기술 바인딩
 │  ├─ aws/              #   Bedrock 모델 팩토리, Neptune/OpenSearch 클라이언트, S3 전송과 캐시
 │  ├─ local/            #   Ollama/OpenAI 호환 모델, 크로스 인코더, 내장 SQLite 그래프·검색 저장소
-│  ├─ llm/              #   공급자 중립 체인 조립, 일시적 오류 재시도, 토큰 추정
+│  ├─ llm/              #   공급자 중립 체인 조립, 일시적 오류 재시도, 토큰 추정,
+│  │                    #   LangChain 배치/XML 도우미 (langchain.py)
 │  ├─ observability/    #   OpenTelemetry 트레이서, 내보내기, LangChain 콜백
 │  ├─ storage/          #   Neptune/OpenSearch/SQLite 그래프 인덱서 (쓰기 측 포트 구현)
 │  ├─ retrievers/       #   Neptune/OpenSearch/SQLite 그래프 리트리버
 │  ├─ doc_status/       #   DynamoDB/SQLite 문서 상태 레지스트리 (DocStatusPort)
 │  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
-│  ├─ retrieval/        #   추상 리트리버/전략 베이스, hybrid scorer, 토큰/메모리 매니저
+│  ├─ retrieval/        #   추상 리트리버/전략 베이스, strategy_registry, hybrid scorer,
+│  │                    #   토큰/메모리 매니저
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
-│  │                    #   translator, gleaner, community_detector
+│  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   그래프 시각화 렌더러
 │  ├─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: 치명 오류와 부분 실패를 가르는 정책 (§8.1)
 │  ├─ providers.py      #   Providers: 실행마다 쓰는 모델·저장소 공급자 묶음
 │  └─ provider_registry.py # @register_provider: 역할과 kind별 빌더
 ├─ application/         # 오케스트레이션 + 진입점
-│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark
+│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark,
+│  │                    #   display (rich 콘솔 도우미)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
-│  │                    #   네임스페이스 쓰기 임대, 추출 레코드 저장소
+│  │                    #   네임스페이스 쓰기 임대, 추출 레코드 저장소, 단계 캐시
+│  │                    #   (cache_manager)와 재개 (pipeline_manager)
 │  ├─ storage/          #   IndexingManager (인덱서 fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
 │  ├─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
-│  ├─ bootstrap.py      #   build_providers: composition root
+│  ├─ bootstrap.py      #   composition root: build_providers, build_query_guard,
+│  │                    #   build_checkpoint_sync
+│  ├─ config.py         #   get_config / ConfigLoader: 파일 + 환경 변수 -> Config
 │  └─ observability.py  #   configure_observability: 추적 백엔드 설치
-├─ shared/              # 공통 커널 (config, logging, exceptions, metrics,
-│                       #   cache/pipeline manager, utils)
+├─ shared/              # 다른 레이어에 의존하지 않는 커널 (logging, exceptions, metrics,
+│                       #   observability 훅, write fence, utils/: 해시, ID, 동시성, 문자 체계)
 ├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match, 전략 비교 + 쌍대 평가,
 │                       #   benchmarks/ (MuSiQue)
@@ -127,19 +178,21 @@ unified_kg_rag/
 ```
 
 - **실제 로직 패키지.** `evaluation/`(매니저와 LLM을 쓰지 않는 평가기)과
-  `visualization/`(렌더 루프, `embeddings/`, `exporters/`. 렌더러는 `adapters/renderers/`).
-  그 밖의 모듈은 실제 위치(`application.*`, `adapters.*`, `domain.*`)에서 import합니다.
+  `visualization/`(렌더 루프, `embeddings/`, `exporters/`. 렌더러는 `adapters/renderers/`)이며,
+  각각 하나의 레이어입니다(위 표). 그 밖의 모듈은 실제 위치(`application.*`, `adapters.*`, `domain.*`)에서 import합니다.
 - **벤더 패키지와 역할 패키지.** 벤더 패키지(`adapters/aws/`, `adapters/local/`)에는 기술
   바인딩(클라이언트, 내장 엔진과 저장소, 모델 팩토리, 토큰 카운터, 캐시)이, 역할
   패키지(`storage/`, `retrievers/`, `doc_status/`, `guardrail/`)에는 애플리케이션이 연결하는
   포트 구현이 있습니다. 역할 패키지는 벤더 패키지를 import할 수 있지만 그 반대는 안 됩니다.
   `NeptuneIndexer`가 `NeptuneClient`로 쓰듯 `SQLiteGraphIndexer`는 `SQLiteGraphStore`에 씁니다.
+  벤더 패키지는 어댑터 중에서 다른 벤더 패키지와 벤더 중립 커널(`adapters/llm/`,
+  `adapters/observability/`)만 import하며, 이 커널은 다른 어댑터 패키지를 import하지 않습니다.
 
 ### 2.2 포트(추상 인터페이스)
 
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py`, `sqlite.py`. 테스트용 `FakeDocStatusStore` | 문서 상태와 문서별 텍스트 단위. 인덱스 네임스페이스별로 나뉨 |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py`, `sqlite.py`. 테스트용 `FakeDocStatusStore` | 문서 상태와 문서별 텍스트 단위. 인덱스 네임스페이스별로 나뉨. 도메인의 델타 탐지는 그 일부인 `DocStatusReader`로 읽음 |
 | `ContentGuardPort` | `ports/guardrail.py`(`GuardVerdict` 포함) | `adapters/guardrail/bedrock.py`(Bedrock `ApplyGuardrail`) | 원본 질의와 최종 답변을 검사(§14) |
 | `GraphIndexer`(쓰기) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`, 로컬 `sqlite_graph_indexer.py` | 전체 빌드와 델타의 단일 계약(`upsert_*` / `delete_by_id`) |
 | `VectorIndexer`(쓰기) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py`(OpenSearch, 또는 `SearchEngineClient`를 통한 내장 엔진) | 위와 같음 |
@@ -159,7 +212,7 @@ unified_kg_rag/
 백엔드를 바꿔도 전략 코드는 바뀌지 않습니다.
 
 ```python
-# domain/retrieval/strategy_registry.py
+# adapters/retrieval/strategy_registry.py
 @register_strategy(SearchStrategy.LOCAL, required_roles=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH))
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
@@ -171,7 +224,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.4 레지스트리
 
-- **검색 전략**: `@register_strategy(...)`(`domain/retrieval/strategy_registry.py`).
+- **검색 전략**: `@register_strategy(...)`(`adapters/retrieval/strategy_registry.py`).
   클래스, 필요한 역할, 질의 입력을 `SearchStrategy`를 키로 등록합니다.
 - **공급자**: `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`).
   모든 모델, 저장소, 레지스트리 역할에서 `providers.<role>.kind`가 고르는 빌더입니다.
@@ -182,13 +235,12 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.5 의존성 규칙 검증과 공개 API
 
-`tests/unit/test_domain_purity.py`는 `TYPE_CHECKING` import까지 포함해 모든 import에서 레이어
-계약을 강제합니다. `domain/`은 `ports`/`adapters`/`application` 모듈을 import하지 않고,
-`ports/`와 `shared/`는 다른 레이어를 import하지 않으며, `adapters/`는 `application`,
-`evaluation`, `visualization` 모듈을 import하지 않고, `evaluation/`은 체인을 통해서만
-애플리케이션에 닿습니다. 타입 전용 참조 둘이 `TYPE_CHECKING` 아래에 있는지도 확인합니다.
-전략 레지스트리의 `BaseSearchStrategy`와 델타 탐지기의 `DocStatusPort` 타입 표기입니다(런타임
-import는 순환이 됨).
+`tests/unit/test_layering.py`는 모든 모듈의 모든 import(지연 import와 `TYPE_CHECKING`
+import 포함, 상대 import는 풀어서)에 §2.1을 강제합니다. 레이어 순서, 평가가 닿는 애플리케이션
+범위, 백엔드 주입, 저장소 어댑터를 쓰지 않는 평가와 시각화, 벤더 패키지의 독립성, 레지스트리를
+통한 플러그인 접근, `__version__`만 가져오는 루트 파사드 import입니다. 허용 예외 목록은 비어
+있으며, 규칙마다 반드시 잡아야 하는 합성 사례가 있습니다. `tests/unit/test_domain_purity.py`는
+서드파티 측면을 검사합니다. 어떤 도메인 모듈도 인프라 패키지를 간접적으로도 로드하지 않습니다.
 
 **공개 API.** 패키지 밖의 호출자는 `unified_kg_rag`에서 import하며, 그 `__all__`이 지원하는
 표면입니다. 프레임워크를 쓰는 이름(`Config`, `get_config`, `DataIngestionPipeline`,
@@ -374,7 +426,7 @@ import는 순환이 됨).
 ### 4.4 파이프라인 인프라
 
 - **재개.** 각 단계의 출력은 실행의 pipeline id 아래에 체크포인트로 남습니다
-  (`shared/pipeline_manager.py`, `shared/cache_manager.py`). 단계 캐시 키는 §12에 있습니다.
+  (`application/ingestion/pipeline_manager.py`, `application/ingestion/cache_manager.py`). 단계 캐시 키는 §12에 있습니다.
 - **S3 동기화**(`adapters/aws/s3_cache.py`)는 단계가 끝날 때마다 바뀐 파일을 업로드하며,
   데이터를 그것을 가리키는 메타데이터보다 먼저 올립니다. SIGTERM을 받으면 `run-ingestion`은
   실행 중인 단계를 멈추고(`request_stop`: 체크포인트를 쓰는 중이면 미루며 핸들러는 I/O를 하지
@@ -560,7 +612,7 @@ import는 순환이 됨).
 
 ### 5.4 식별, 도출한 내용, 병합 규칙
 
-- **문서 식별**(`shared/utils/document_identity.py`). 문서 버전의 ID는 코퍼스 루트 기준 상대
+- **문서 식별**(`domain/ingestion/document_identity.py`). 문서 버전의 ID는 코퍼스 루트 기준 상대
   경로와 전체 텍스트의 해시이므로 레지스트리 없이는 코퍼스를 어디에 체크아웃하든 같은 ID를
   냅니다. 증분 실행은 텍스트 단위를 레지스트리 `doc_id`로 키를 잡고 이 키는 소스 범위
   (`document_parsing.source_scope`, 없으면 확인한 소스 디렉터리)도 담으므로, 텍스트 단위는
@@ -958,7 +1010,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 
 ## 12. 설정 시스템
 
-설정은 `shared/config.py`(`get_config`)가 읽는 중첩 Pydantic 트리(`domain/models/config.py`,
+설정은 `application/config.py`(`get_config`)가 읽는 중첩 Pydantic 트리(`domain/models/config.py`,
 루트 `Config`) 하나입니다. [docs/configuration.md](./configuration.md)는
 `scripts/gen_config_reference.py`가 이 트리에서 생성하며(오래되면
 `tests/unit/test_config_reference.py`가 실패), `config-template.yaml`은 주석이 달린 시작
@@ -977,7 +1029,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
   `providers.<family>.kind`이고 `Config._check_models`가 ID를 그 공급자 기준으로 검사합니다.
   값은 적은 그대로 두고 읽을 때 해석하며(`Config.model_id`, `embedding_model_id`,
   `rerank_model_id`), 선택하지 않은 공급자의 설정은 로드할 때 알립니다.
-- **단계 캐시 키**(`shared/utils/cache_keys.py`). `CONFIG_KEYING`이 모든 필드를 분류합니다.
+- **단계 캐시 키**(`domain/ingestion/cache_keys.py`). `CONFIG_KEYING`이 모든 필드를 분류합니다.
   출력에 영향을 주는 첫 단계부터 키에 들어가거나, 이유와 함께 키에서 빠집니다. 단계의 키는
   그 단계와 모든 앞 단계에 적용되는 키 필드(꺼진 블록은 스위치만), 패키지 버전, 코퍼스 목록을
   해시합니다. 분류되지 않은 필드는

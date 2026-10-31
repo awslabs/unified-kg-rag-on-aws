@@ -17,6 +17,7 @@ import yaml
 from pydantic import ValidationError
 
 from tests.fixtures.config_template import commented_key_paths, uncommented_template
+from unified_kg_rag.application.config import ConfigLoader
 from unified_kg_rag.domain.models import (
     Backend,
     Config,
@@ -26,7 +27,6 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.provider_config import LOCAL_PRESET
-from unified_kg_rag.shared.config import ConfigLoader
 
 pytestmark = pytest.mark.unit
 

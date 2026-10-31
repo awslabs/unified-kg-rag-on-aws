@@ -35,12 +35,12 @@ from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
     scope_namespace,
 )
-from unified_kg_rag.domain.models import Config
-from unified_kg_rag.ports import DocStatusPort
-from unified_kg_rag.shared.utils.document_identity import (
+from unified_kg_rag.domain.ingestion.document_identity import (
     config_registry_namespace,
     store_namespace_tag,
 )
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.ports import DocStatusPort
 
 pytestmark = pytest.mark.integration
 

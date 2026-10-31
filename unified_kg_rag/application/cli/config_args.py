@@ -15,8 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from unified_kg_rag.application.cli.conventions import usage_error
+from unified_kg_rag.application.config import get_config
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.config import get_config
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 

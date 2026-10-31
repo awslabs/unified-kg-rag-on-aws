@@ -14,10 +14,10 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from unified_kg_rag.application.config import ConfigLoader
 from unified_kg_rag.application.prompts.tuner import CorpusProfile, PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import CustomPromptConfig
-from unified_kg_rag.shared.config import ConfigLoader
 
 pytestmark = pytest.mark.unit
 

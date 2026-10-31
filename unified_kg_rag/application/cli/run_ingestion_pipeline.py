@@ -32,12 +32,19 @@ from unified_kg_rag.application.cli.conventions import (
     print_status,
     usage_error,
 )
+from unified_kg_rag.application.cli.display import (
+    console,
+    display_ascii_art,
+    display_pipeline_results,
+    markup_safe,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_endpoints_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
+from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     PipelineConfig,
@@ -57,13 +64,6 @@ from unified_kg_rag.shared import (
     StoreConnectionError,
     get_logger,
     setup_logging,
-)
-from unified_kg_rag.shared.config import load_cli_dotenv
-from unified_kg_rag.shared.utils.display import (
-    console,
-    display_ascii_art,
-    display_pipeline_results,
-    markup_safe,
 )
 
 logger = get_logger(__name__)

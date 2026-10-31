@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.ingestion.chunker import (
     LineBasedBoundaryProcessor,
     SimpleTextChunker,
 )
+from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -33,7 +34,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts.data_processing import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError
-from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 

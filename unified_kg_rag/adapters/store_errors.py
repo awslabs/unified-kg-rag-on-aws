@@ -13,7 +13,6 @@ then by type alone; no error message is matched.
 """
 
 import sys
-from collections.abc import Iterator
 
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -34,16 +33,6 @@ _FATAL_TYPES = (
     IndexNotFoundError,
     InvalidFilterError,
 )
-
-
-def causes(exc: BaseException) -> Iterator[BaseException]:
-    """``exc`` and the exceptions it was raised from, innermost last."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        yield current
-        current = current.__cause__ or current.__context__
 
 
 def is_fatal_retrieval_error(exc: BaseException) -> bool:

@@ -9,21 +9,32 @@ incremental-indexing state.
 The package is laid out in explicit hexagonal layers so the two RAG
 methodologies (GraphRAG community-summary, LightRAG dual-level keyword) share
 one ingestion/indexing/caching/hybrid-search infrastructure and only differ at
-the algorithm layer. Dependencies point **inward**: `application → adapters →
-ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
+the algorithm layer. Dependencies point **inward**. Layers, outermost first —
+a module imports its own layer and later ones, never an earlier one, and
+that includes lazy and `TYPE_CHECKING` imports:
+`application/cli` → `evaluation` → `application` → `visualization` →
+`adapters` → `ports` → `domain` → `shared`.
+`tests/unit/test_layering.py` enforces this and the rules below (its
+allowlist of exceptions is empty; keep it so).
 
 - **Root facade (`unified_kg_rag/__init__.py`)**: the public API. It lazily
   re-exports the names users and extenders import (`from unified_kg_rag import
   GraphRAGChain, Providers, ...`); everything else is internal. Adding or
   removing a name means editing `tests/unit/test_public_api.py` (and a
-  CHANGELOG "Breaking" entry for a removal or rename).
+  CHANGELOG "Breaking" entry for a removal or rename). Inside the package,
+  import from it only `__version__`.
 - **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
-  algorithms (`ingestion/` merge/delta/resolve/analyze, `retrieval/`
-  strategy registry, index prefixes, hybrid normalization), and `prompts/` templates. No boto3/LangChain/
-  backend imports, direct or transitive (`tests/unit/test_domain_purity.py`
-  imports every domain module in a clean interpreter and checks
-  `sys.modules`).
-- **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`,
+  algorithms (`ingestion/` merge/delta/resolve/analyze, stage cache keys,
+  document identity, visualization data and layout; `retrieval/` store names,
+  index prefixes, hybrid normalization), and `prompts/` templates. Imports
+  only `shared`: no port or adapter, not even for typing — domain code that
+  reads a store declares the subset it needs as its own `Protocol`
+  (`delta_detector.DocStatusReader`, pinned to `DocStatusPort` by
+  `tests/unit/test_fake_port_signatures.py`). No boto3/LangChain/backend
+  imports, direct or transitive (`tests/unit/test_domain_purity.py` imports
+  every domain module in a clean interpreter and checks `sys.modules`).
+- **`ports/`**: the interfaces the application wires and the adapters
+  implement, written in terms of the domain models — `DocStatusPort`,
   `ContentGuardPort`, `ModelFactoryPort` (+ `LLMFactoryPort`/
   `EmbeddingFactoryPort`/`RerankFactoryPort`)/`TokenCounterPort`
   (`Protocol`s) and the
@@ -34,33 +45,45 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   them from `adapters.retrieval.base` / `adapters.evaluators.base`.
 - **`adapters/`**: concrete technology bindings. Rule: vendor packages hold
   clients/engines/model factories/caches, role packages hold port impls
-  (a role package may import a vendor one, not the reverse). Vendor: `aws/`
-  (Bedrock, Neptune/OpenSearch clients, S3), `local/` (Ollama/OpenAI-compatible,
-  graph store `sqlite_graph.py`, vector engine `search_engine/`). Role:
-  `storage/` (indexers, incl. `sqlite_graph_indexer.py`), `retrievers/`,
-  `doc_status/` (DynamoDB/SQLite `DocStatusPort` impls), `guardrail/`
-  (Bedrock `ContentGuardPort` impl). Also
-  `llm/` (provider-neutral chain assembly, retry, token estimate),
-  `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
+  (a role package may import a vendor one, not the reverse; of the adapters a
+  vendor package imports only the other vendor and the vendor-neutral kernel
+  `llm/` + `observability/`, which import no other adapter package). Vendor:
+  `aws/` (Bedrock, Neptune/OpenSearch clients, S3), `local/`
+  (Ollama/OpenAI-compatible, graph store `sqlite_graph.py`, vector engine
+  `search_engine/`). Role: `storage/` (indexers, incl.
+  `sqlite_graph_indexer.py`), `retrievers/`, `doc_status/` (DynamoDB/SQLite
+  `DocStatusPort` impls), `guardrail/` (Bedrock `ContentGuardPort` impl).
+  Also `llm/` (provider-neutral chain assembly, retry, token estimate, the
+  LangChain batch/XML helpers in `llm/langchain.py`), `search_strategies/`,
+  `retrieval/` (bases + strategy registry + hybrid scorer + token/memory
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
-  translator), `renderers/`, `evaluators/` (incl. the evaluator bases).
-- **`application/`**: orchestration + entry points — `cli/` (pyproject scripts
-  resolve to `unified_kg_rag.application.cli.*`), `ingestion/` (pipeline + stages),
-  `storage/indexing_manager`, `retrieval/rag_chain`.
-- **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
-  cache/pipeline managers, `utils/`. Keep `shared/__init__` and
-  `shared/utils/__init__` dependency-light: import LangChain-coupled helpers
-  from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
-  helpers from `shared.utils.display`), not from the package root.
-- **`evaluation/` and `visualization/`**: real logic packages (evaluators +
-  manager; render loop + `embeddings/`/`exporters/`). Code inside the
-  package imports everything else from its real location (`application.retrieval.rag_chain`,
-  `application.storage.indexing_manager`, `application.ingestion.pipeline`,
-  `adapters.*`, `domain.*`).
+  translator/document converter), `renderers/`, `evaluators/` (incl. the
+  evaluator bases).
+- **`application/`**: orchestration — `ingestion/` (pipeline + stages, stage
+  cache and resume managers), `storage/indexing_manager`,
+  `retrieval/rag_chain`, `prompts/`, `config.py` (`get_config`), and the
+  composition root `bootstrap.py`. Only `bootstrap.py` and `cli/` (the entry
+  points; pyproject scripts resolve to `unified_kg_rag.application.cli.*`)
+  import vendor bindings or port implementations; everything else receives
+  them (`Providers`, `build_query_guard`, `build_checkpoint_sync`).
+- **`shared/`**: leaf kernel — logging, exceptions, metrics, observability
+  hooks, write fence, pure `utils/`. It imports no other layer, so anything
+  that needs domain models belongs in another layer; `setup_logging` takes
+  the config structurally. Keep `shared/__init__` and `shared/utils/__init__`
+  dependency-light (the domain imports them).
+- **`evaluation/` and `visualization/`**: real logic packages, each its own
+  layer. Evaluation (evaluators + manager, driven by the CLIs) imports of the
+  application only `application.retrieval` and `application.bootstrap`, and
+  reaches the stores only through the chain (`GraphRAGChain.check_filter_*`).
+  Visualization (render loop + `embeddings/`/`exporters/`, driven by the
+  ingestion stage and `run-visualization`) imports no application module and
+  reaches renderers only through the registry. Neither imports a store
+  adapter.
 - **Registries over hardcoded dispatch**: search strategies register via
-  `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
+  `@register_strategy` (`adapters/retrieval/strategy_registry.py`). Follow this
   pattern — and `ParserFactory.register_loader` / `@register_renderer` —
-  instead of `if/elif` dispatch. `EvaluationManager._resolve_evaluator_class`
+  instead of `if/elif` dispatch, and outside a plugin package import only its
+  root or base/registry module. `EvaluationManager._resolve_evaluator_class`
   is the one explicit type → class map (a new evaluator adds a branch there).
 
 See `docs/design.md` §2 for the full layer map and dependency rule.

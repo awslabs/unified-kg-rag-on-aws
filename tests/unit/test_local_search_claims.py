@@ -16,13 +16,13 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from tests.fixtures.fakes.retrievers import FakeRetriever
+from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.domain.models import (
     Config,
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.unit
 

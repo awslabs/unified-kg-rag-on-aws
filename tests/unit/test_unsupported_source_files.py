@@ -11,13 +11,13 @@ from pathlib import Path
 import pytest
 
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentParsingStage
+from unified_kg_rag.domain.ingestion.cache_keys import corpus_manifest_fingerprint
 from unified_kg_rag.domain.models import (
     Config,
     PipelineContext,
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import PipelineStageError
-from unified_kg_rag.shared.utils.cache_keys import corpus_manifest_fingerprint
 
 pytestmark = pytest.mark.unit
 

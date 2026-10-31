@@ -8,6 +8,10 @@ layout and centrality; otherwise (``export_data``, the default) it holds the
 graph and the community hierarchy only, built here in one pass over the nodes
 and edges (no embedding or model call, no centrality, no layout), and
 ``run-visualization`` computes the missing parts when it renders.
+
+The layout helpers (:func:`displayed_graph`, :func:`spring_layout`) are
+renderer-neutral: the visualization manager and ``run-visualization`` lay
+out the nodes the interactive page will draw without depending on it.
 """
 
 from __future__ import annotations
@@ -21,7 +25,9 @@ from unified_kg_rag.shared.utils import strip_embedding_fields
 __all__ = [
     "DEFAULT_OUTPUTS_DIRECTORY",
     "VISUALIZATION_DATA_FILENAME",
+    "displayed_graph",
     "graph_data",
+    "spring_layout",
     "strip_heavy_attributes",
 ]
 
@@ -90,3 +96,24 @@ def graph_data(
         "layout": {},
         "communities": communities,
     }
+
+
+def displayed_graph(graph: nx.Graph, max_nodes: int | None) -> nx.Graph:
+    """The part of ``graph`` the interactive page draws: its top ``max_nodes``
+    by degree (``graph.visualization.interactive.max_nodes``; None or 0 draws
+    every node)."""
+    if not max_nodes or graph.number_of_nodes() <= max_nodes:
+        return graph
+    ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
+    return graph.subgraph(node for node, _ in ranked[:max_nodes])
+
+
+def spring_layout(graph: nx.Graph, max_nodes: int | None) -> dict[str, list[float]]:
+    """Seeded spring layout of the drawn nodes only (:func:`displayed_graph`).
+
+    A spring layout is quadratic in the node count, so laying out a large
+    graph and then drawing its top ``max_nodes`` spent minutes on nodes
+    the page never shows. A graph within the cap is laid out whole.
+    """
+    positions = nx.spring_layout(displayed_graph(graph, max_nodes), seed=42)
+    return {str(node): pos.tolist() for node, pos in positions.items()}

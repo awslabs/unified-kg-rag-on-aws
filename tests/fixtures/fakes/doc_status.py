@@ -14,6 +14,7 @@ import time
 from collections.abc import Iterable
 
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
+from unified_kg_rag.domain.ingestion.document_identity import doc_id_namespace
 from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
@@ -21,7 +22,6 @@ from unified_kg_rag.domain.models import (
     StoredDocument,
 )
 from unified_kg_rag.shared import DataProcessingError
-from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
 
 
 class FakeDocStatusStore:

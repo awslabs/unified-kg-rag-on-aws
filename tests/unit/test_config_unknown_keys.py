@@ -17,9 +17,9 @@ import pytest
 import yaml
 
 from tests.fixtures.config_template import uncommented_template
+from unified_kg_rag.application.config import ConfigLoader, unknown_keys
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError
-from unified_kg_rag.shared.config import ConfigLoader, unknown_keys
 
 pytestmark = pytest.mark.unit
 

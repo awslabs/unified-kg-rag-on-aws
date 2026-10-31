@@ -42,6 +42,11 @@ from unified_kg_rag.application.cli.conventions import (
     stoppable,
     usage_error,
 )
+from unified_kg_rag.application.cli.display import (
+    console,
+    display_ascii_art,
+    markup_safe,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -55,6 +60,7 @@ from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     positive_int,
 )
+from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
@@ -74,13 +80,7 @@ from unified_kg_rag.shared import (
     observability,
     setup_logging,
 )
-from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.display import (
-    console,
-    display_ascii_art,
-    markup_safe,
-)
 
 nest_asyncio.apply()
 logger = get_logger(__name__)

@@ -10,6 +10,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
@@ -44,7 +45,6 @@ from unified_kg_rag.shared.utils import (
     ensure_list,
     entity_key,
 )
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
 

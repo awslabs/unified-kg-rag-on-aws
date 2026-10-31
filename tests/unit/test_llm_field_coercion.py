@@ -8,12 +8,12 @@ import pytest
 
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
+from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
 )
 from unified_kg_rag.domain.models import Config, TextUnit
-from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 

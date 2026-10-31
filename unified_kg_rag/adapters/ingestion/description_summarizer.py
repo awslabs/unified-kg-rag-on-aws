@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, TypeVar
 from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
@@ -45,7 +46,6 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig

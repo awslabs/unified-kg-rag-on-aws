@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     setup_chain,
     with_transient_retry,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -43,7 +44,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 

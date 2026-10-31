@@ -16,6 +16,7 @@ from datetime import datetime
 
 import pytest
 
+from unified_kg_rag.application.cli import display
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -29,7 +30,6 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
-from unified_kg_rag.shared.utils import display
 
 pytestmark = pytest.mark.unit
 

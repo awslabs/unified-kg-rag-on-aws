@@ -46,7 +46,7 @@ _EXPORTS: dict[str, str] = {
     "Config": "unified_kg_rag.domain.models",
     "ModelRole": "unified_kg_rag.domain.models",
     "ModelPurpose": "unified_kg_rag.domain.models",
-    "get_config": "unified_kg_rag.shared.config",
+    "get_config": "unified_kg_rag.application.config",
     "setup_logging": "unified_kg_rag.shared.logging",
     "configure_event_loop": "unified_kg_rag.shared.utils.event_loop",
     # Ingestion and indexing
@@ -103,8 +103,8 @@ _EXPORTS: dict[str, str] = {
     # Extension: search strategies and retrievers
     "BaseSearchStrategy": "unified_kg_rag.adapters.retrieval.base",
     "BaseGraphRAGRetriever": "unified_kg_rag.adapters.retrieval.base",
-    "register_strategy": "unified_kg_rag.domain.retrieval.strategy_registry",
-    "QueryInput": "unified_kg_rag.domain.retrieval.strategy_registry",
+    "register_strategy": "unified_kg_rag.adapters.retrieval.strategy_registry",
+    "QueryInput": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "RetrieverRole": "unified_kg_rag.domain.models",
     # Extension: parsers and renderers
     "ParserFactory": "unified_kg_rag.adapters.ingestion.parser",
@@ -130,7 +130,12 @@ if TYPE_CHECKING:
         ConversationKey,
         MemoryManager,
     )
+    from unified_kg_rag.adapters.retrieval.strategy_registry import (
+        QueryInput,
+        register_strategy,
+    )
     from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (
         GraphRAGChain,
@@ -153,10 +158,6 @@ if TYPE_CHECKING:
         SearchStrategy,
         SearchType,
     )
-    from unified_kg_rag.domain.retrieval.strategy_registry import (
-        QueryInput,
-        register_strategy,
-    )
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
         ContentGuardPort,
@@ -172,7 +173,6 @@ if TYPE_CHECKING:
         TokenCounterPort,
         VectorIndexer,
     )
-    from unified_kg_rag.shared.config import get_config
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         GraphRAGException,

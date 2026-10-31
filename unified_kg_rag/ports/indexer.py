@@ -19,8 +19,8 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     validate_safe_name,
 )
+from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
 

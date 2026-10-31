@@ -24,6 +24,7 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     record_key,
@@ -36,7 +37,6 @@ from unified_kg_rag.shared.exceptions import (
     StoreConnectionError,
     StoreRequestRejectedError,
 )
-from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports.indexer import VectorIndexer

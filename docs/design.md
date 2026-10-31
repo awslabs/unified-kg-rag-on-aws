@@ -57,30 +57,80 @@ DynamoDB). Its design principles:
 
 ### 2.1 Dependency Rule and Layer Map
 
-Imports point **inward**: `application → adapters → ports → domain`, and any
-layer may import the cross-cutting `shared/` kernel. No `domain/` module may
-load LangChain, LangSmith, boto3/botocore, lxml, opensearch-py or
-gremlin-python, even transitively, so `shared/` and `shared/utils/` stay
-dependency-light (LangChain-coupled helpers in `shared.utils.langchain` and
-`shared.utils.document_converter`, rich ones in `shared.utils.display`);
-`tests/unit/test_domain_purity.py` checks this in a clean interpreter.
+Imports point **inward**. The layers, outermost first; a module imports its
+own layer and the layers after it, never one before it:
+
+| Layer | Package | Role |
+|---|---|---|
+| Entry points | `application/cli/` | the console scripts: parse flags, load config, wire, run |
+| Evaluation | `evaluation/` | drives the RAG chain over a dataset; of the application it imports only the chain (`application/retrieval/`) and the composition root (`application/bootstrap.py`) |
+| Application | `application/` | orchestration: ingestion pipeline, indexing manager, RAG chain, prompt tuner, config loading, composition root |
+| Visualization | `visualization/` | renders a built graph (the ingestion community stage and `run-visualization` drive it) |
+| Adapters | `adapters/` | technology bindings and port implementations |
+| Ports | `ports/` | the interfaces the application wires and the adapters implement |
+| Domain | `domain/` | models, pure algorithms, prompts |
+| Shared kernel | `shared/` | logging, errors, metrics, tracing hooks, write fence, pure helpers |
+
+The rule holds for every import: at module level, inside a function, and
+under `TYPE_CHECKING` (a type-only import is still a dependency). Inside the
+package the root facade is imported only for `__version__`.
 
 ```mermaid
 flowchart TB
-    application["<b>application/</b><br/>CLIs, ingestion pipeline, indexing manager, RAG chain"]
+    cli["<b>application/cli/</b><br/>entry points"]
+    evaluation["<b>evaluation/</b><br/>evaluators, strategy comparison"]
+    application["<b>application/</b><br/>ingestion pipeline, indexing manager, RAG chain, bootstrap"]
+    visualization["<b>visualization/</b><br/>render loop"]
     adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
     ports["<b>ports/</b><br/>abstract interfaces"]
     domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
-    shared["<b>shared/</b><br/>config, logging, exceptions, utils"]
-    application --> adapters --> ports --> domain
-    application -.-> shared
-    adapters -.-> shared
-    domain -.-> shared
+    shared["<b>shared/</b><br/>logging, errors, metrics, pure helpers"]
+    cli --> evaluation --> application --> visualization --> adapters --> ports --> domain --> shared
 ```
 
-Dotted arrows: any layer may import `shared/`. Search strategies are
-adapters; the domain holds only their registry, so both methodologies plug
-into the same ports.
+An arrow reads "may import"; a layer may also import every layer further
+down (the application imports the domain directly, every layer the kernel).
+
+- **Ports sit outside the domain.** A port is written in terms of the domain
+  models (`DocStatusPort.diff` returns a `DocumentDelta`), so the domain
+  cannot import it back. Domain code that reads a store declares the subset
+  it reads as its own `Protocol` (`domain.ingestion.delta_detector.
+  DocStatusReader`, the read half of `DocStatusPort`); every port
+  implementation satisfies it structurally, mypy checks each caller, and
+  `tests/unit/test_fake_port_signatures.py` pins the two shapes together.
+  The application hands the port in.
+- **`shared/` is a leaf kernel.** It imports no other layer, so every layer,
+  the domain included, uses it without a cycle. Code that needs the domain
+  models lives in the layer it belongs to: config loading in
+  `application/config.py`, the stage cache and resume managers in
+  `application/ingestion/`, stage cache keys and document identity in
+  `domain/ingestion/`, store names in `domain/retrieval/`, the LangChain
+  helpers in `adapters/llm/langchain.py` and
+  `adapters/ingestion/document_converter.py`, the rich console helpers in
+  `application/cli/display.py`. `setup_logging` takes the configuration
+  structurally (`shared.logging.HasLoggingSettings`).
+- **Evaluation reaches the stores through the chain** (its retrievers,
+  `GraphRAGChain.check_filter_values` / `check_filter_keys`), and
+  **visualization reaches renderers through the registry**: the
+  renderer-neutral layout helpers (`displayed_graph`, `spring_layout`) are in
+  `domain/ingestion/visualization_data.py`. Neither imports a store adapter.
+- **Backends are injected.** Vendor bindings (`adapters/aws/`,
+  `adapters/local/`) and port implementations (the `storage/` indexers,
+  `retrievers/`, `doc_status/`, `guardrail/`) are built by the provider
+  builders and the composition roots: `application/bootstrap.py`
+  (`build_providers`, `build_query_guard`, `build_checkpoint_sync`) and the
+  CLIs. The orchestrators receive them (`Providers`, those builders, or a
+  constructor argument).
+- **Plugins through their registry.** Outside its package, a renderer,
+  search strategy or evaluator is reached through the package root or its
+  base/registry module (§2.4). The search-strategy registry lives with the
+  strategy bases it stores (`adapters/retrieval/strategy_registry.py`), as
+  the provider and renderer registries live with what they register.
+
+No `domain/` module may load LangChain, LangSmith, boto3/botocore, lxml,
+opensearch-py or gremlin-python, even transitively, so `shared/utils/`
+holds only dependency-light helpers; `tests/unit/test_domain_purity.py`
+checks this in a clean interpreter.
 
 
 ```
@@ -89,41 +139,49 @@ unified_kg_rag/
 ├─ domain/              # technology-agnostic core (no boto3/LangChain/backend imports)
 │  ├─ models/           #   Pydantic domain models
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_builder/resolver/analyzer,
-│  │  └─ merge/         #   claim_resolver, contributions, derivation; merge/ = cross-run merger
-│  ├─ retrieval/        #   strategy_registry, index_prefixes, hybrid_normalization
+│  │  │                 #   claim_resolver, contributions, derivation, cache_keys,
+│  │  │                 #   document_identity, visualization_data (+ layout helpers)
+│  │  └─ merge/         #   cross-run merger
+│  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   version-controlled prompt templates
-├─ ports/               # abstract interfaces the domain depends on (DocStatusPort,
+├─ ports/               # interfaces the application wires, adapters implement (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
 │                       #   ContentGuardPort — ports/__init__ is the port catalog)
 ├─ adapters/            # concrete technology bindings
 │  ├─ aws/              #   Bedrock model factories, Neptune/OpenSearch clients, S3 transfer and caches
 │  ├─ local/            #   Ollama/OpenAI-compatible models, cross-encoder, embedded SQLite graph/search stores
-│  ├─ llm/              #   provider-neutral chain assembly, transient retry, token estimate
+│  ├─ llm/              #   provider-neutral chain assembly, transient retry, token estimate,
+│  │                    #   LangChain batch/XML helpers (langchain.py)
 │  ├─ observability/    #   OpenTelemetry tracer, exporters, LangChain callback
 │  ├─ storage/          #   Neptune/OpenSearch/SQLite-graph indexers (write-side port implementations)
 │  ├─ retrievers/       #   Neptune/OpenSearch/SQLite-graph retrievers
 │  ├─ doc_status/       #   DynamoDB/SQLite document-status registries (DocStatusPort)
 │  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
-│  ├─ retrieval/        #   abstract retriever/strategy bases, hybrid scorer, token/memory managers
+│  ├─ retrieval/        #   abstract retriever/strategy bases, strategy_registry, hybrid scorer,
+│  │                    #   token/memory managers
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
-│  │                    #   translator, gleaner, community_detector
+│  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
 │  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
 ├─ application/         # orchestration + entry points
-│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark
+│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark,
+│  │                    #   display (rich console helpers)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
-│  │                    #   namespace lease, extraction-record store
+│  │                    #   namespace lease, extraction-record store, stage cache
+│  │                    #   (cache_manager) and resume (pipeline_manager)
 │  ├─ storage/          #   IndexingManager (indexer fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
-│  ├─ bootstrap.py      #   build_providers: the composition root
+│  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
+│  │                    #   build_checkpoint_sync
+│  ├─ config.py         #   get_config / ConfigLoader: file + environment -> Config
 │  └─ observability.py  #   configure_observability: installs the tracing backend
-├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
-│                       #   cache/pipeline manager, utils)
+├─ shared/              # leaf kernel (logging, exceptions, metrics, observability hooks,
+│                       #   write fence, utils/: hashing, ids, concurrency, scripts)
 ├─ evaluation/          # real logic package: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match, strategy comparison + pairwise
 │                       #   judge, benchmarks/ (MuSiQue)
@@ -132,22 +190,25 @@ unified_kg_rag/
 
 - **Real logic packages.** `evaluation/` (the manager and the LLM-free
   evaluators) and `visualization/` (the render loop, `embeddings/`,
-  `exporters/`; renderers are in `adapters/renderers/`). Everything else is
-  imported from its real location (`application.*`, `adapters.*`,
-  `domain.*`).
+  `exporters/`; renderers are in `adapters/renderers/`), each a layer of its
+  own (above). Everything else is imported from its real location
+  (`application.*`, `adapters.*`, `domain.*`).
 - **Vendor and role packages.** Vendor packages (`adapters/aws/`,
   `adapters/local/`) hold technology bindings (clients, embedded engines and
   stores, model factories, token counters, caches); role packages
   (`storage/`, `retrievers/`, `doc_status/`, `guardrail/`) hold the port
   implementations the application wires. A role package imports a vendor
   package, never the reverse: `SQLiteGraphIndexer` writes to
-  `SQLiteGraphStore` as `NeptuneIndexer` writes through `NeptuneClient`.
+  `SQLiteGraphStore` as `NeptuneIndexer` writes through `NeptuneClient`. Of
+  the adapters, a vendor package imports only the other vendor package and
+  the vendor-neutral kernel (`adapters/llm/`, `adapters/observability/`),
+  which imports no other adapter package.
 
 ### 2.2 Ports (Abstract Interfaces)
 
 | Port | Location | Adapters | Notes |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py`, `sqlite.py`; `FakeDocStatusStore` for tests | Document status and each document's text units, partitioned by index namespace |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/doc_status/dynamodb.py`, `sqlite.py`; `FakeDocStatusStore` for tests | Document status and each document's text units, partitioned by index namespace; the domain's delta reads its `DocStatusReader` subset |
 | `ContentGuardPort` | `ports/guardrail.py` (with `GuardVerdict`) | `adapters/guardrail/bedrock.py` (Bedrock `ApplyGuardrail`) | Screens the raw query and the final answer (§14) |
 | `GraphIndexer` (write) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local `sqlite_graph_indexer.py` | One contract for full builds and deltas (`upsert_*` / `delete_by_id`) |
 | `VectorIndexer` (write) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on the embedded engine through `SearchEngineClient`) | Same |
@@ -169,7 +230,7 @@ builder map binds the implementation, so swapping the graph backend changes
 no strategy code.
 
 ```python
-# domain/retrieval/strategy_registry.py
+# adapters/retrieval/strategy_registry.py
 @register_strategy(SearchStrategy.LOCAL, required_roles=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH))
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
@@ -183,7 +244,7 @@ backend fills each role is open (`providers.graph.kind` /
 ### 2.4 Registries
 
 - **Search strategies**: `@register_strategy(...)`
-  (`domain/retrieval/strategy_registry.py`): a class, its required roles and
+  (`adapters/retrieval/strategy_registry.py`): a class, its required roles and
   query inputs, keyed by `SearchStrategy`.
 - **Providers**: `@register_provider(ProviderRole.X, "kind")`
   (`adapters/provider_registry.py`): the builder `providers.<role>.kind`
@@ -195,14 +256,15 @@ backend fills each role is open (`providers.graph.kind` /
 
 ### 2.5 Dependency Rule Verification and Public API
 
-`tests/unit/test_domain_purity.py` enforces the layer contracts on every
-import, `TYPE_CHECKING` ones included: `domain/` imports no
-`ports`/`adapters`/`application` module, `ports/` and `shared/` import no other
-layer, `adapters/` import no `application`, `evaluation` or `visualization`
-module, and `evaluation/` reaches the application only through the chain. It
-also checks that the two type-only references stay under `TYPE_CHECKING`: the
-strategy registry naming `BaseSearchStrategy` and the delta detector's
-`DocStatusPort` annotation (a runtime import would be a cycle).
+`tests/unit/test_layering.py` enforces §2.1 on every import of every
+module (lazy and `TYPE_CHECKING` ones included, relative ones resolved):
+the layer order, evaluation's reach into the application, injected
+backends, store-free evaluation and visualization, vendor packages as
+leaves, plugins through their registries, and the root facade imported only
+for `__version__`. Its list of allowed exceptions is empty, and each rule
+has a synthetic case it must catch. `tests/unit/test_domain_purity.py`
+checks the third-party side: no domain module loads an infrastructure
+package, even transitively.
 
 **Public API.** Callers outside the package import from `unified_kg_rag`,
 whose `__all__` is the supported surface: the names for using the framework
@@ -427,7 +489,7 @@ gets its models and stores from the run's `Providers` bundle.
 ### 4.4 Pipeline infrastructure
 
 - **Resume.** Each stage's output is checkpointed under the run's pipeline id
-  (`shared/pipeline_manager.py`, `shared/cache_manager.py`); the stage cache
+  (`application/ingestion/pipeline_manager.py`, `application/ingestion/cache_manager.py`); the stage cache
   key is described in §12.
 - **S3 sync** (`adapters/aws/s3_cache.py`) uploads the changed files after
   every stage, data before the metadata that refers to it. On SIGTERM,
@@ -665,7 +727,7 @@ every write and check that the next run converges to a fresh full build.
 
 ### 5.4 Identity, derived content and merge rules
 
-- **Document identity** (`shared/utils/document_identity.py`). A document
+- **Document identity** (`domain/ingestion/document_identity.py`). A document
   version's id hashes its path relative to the corpus root and its full text,
   so without the registry a corpus yields the same ids wherever it is checked
   out; an incremental run keys text units by the registry `doc_id`, which
@@ -1166,7 +1228,7 @@ default.
 ## 12. Configuration System
 
 The configuration is one nested Pydantic tree (`domain/models/config.py`,
-root `Config`) loaded by `shared/config.py` (`get_config`).
+root `Config`) loaded by `application/config.py` (`get_config`).
 [docs/configuration.md](./configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
 fails when it is stale; `config-template.yaml` is the commented starting file.
@@ -1190,7 +1252,7 @@ fails when it is stale; `config-template.yaml` is the commented starting file.
   against it. Values stay as written and resolve on read (`Config.model_id`,
   `embedding_model_id`, `rerank_model_id`); a setting of a provider the config
   does not select is reported at load.
-- **Stage cache keys** (`shared/utils/cache_keys.py`). `CONFIG_KEYING`
+- **Stage cache keys** (`domain/ingestion/cache_keys.py`). `CONFIG_KEYING`
   classifies every field: keyed from the first stage whose output it shapes,
   or unkeyed with the reason. A stage's key hashes the keyed fields in effect
   for it and every upstream stage (a disabled block contributes its switch

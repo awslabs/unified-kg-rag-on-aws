@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.ingestion import claim_extractor as claim_module
 from unified_kg_rag.adapters.ingestion import gleaner as gleaner_module
 from unified_kg_rag.adapters.ingestion import graph_extractor as graph_module
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
@@ -40,7 +41,6 @@ from unified_kg_rag.adapters.local.models import (
 )
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 openai = pytest.importorskip("openai")
 ollama = pytest.importorskip("ollama")

@@ -40,12 +40,12 @@ from unified_kg_rag.application.cli.provider_args import (
     apply_provider_arguments,
 )
 from unified_kg_rag.application.cli.query_args import positive_int
+from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.prompts.tuner import PromptTuner
+from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
-from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 logger = get_logger(__name__)
 

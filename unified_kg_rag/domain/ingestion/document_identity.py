@@ -43,8 +43,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.models.config import Constants
-
-from .common import compute_hash, generate_stable_id
+from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import IndexingConfig

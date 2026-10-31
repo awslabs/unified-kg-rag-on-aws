@@ -18,11 +18,11 @@ from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.ports.model_factory import LanguageModelInfo
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

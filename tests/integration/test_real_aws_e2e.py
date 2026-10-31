@@ -35,7 +35,7 @@ def _require_config():
             f"set {_CONFIG_ENV} to a config.yaml with real AWS endpoints to run "
             "the real-AWS E2E smoke tests"
         )
-    from unified_kg_rag.shared import get_config
+    from unified_kg_rag.application.config import get_config
 
     return get_config(path)
 

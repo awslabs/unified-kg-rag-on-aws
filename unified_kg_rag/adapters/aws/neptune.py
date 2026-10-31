@@ -15,7 +15,6 @@ from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversalSource
 from gremlin_python.process.traversal import Traversal
 
-from unified_kg_rag.adapters.store_errors import causes
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -27,6 +26,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreAccessDeniedError,
     StoreConfigurationError,
     StoreTimeoutError,
+    causes,
 )
 
 if TYPE_CHECKING:

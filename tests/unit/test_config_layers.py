@@ -26,8 +26,8 @@ from unified_kg_rag.application.cli import (
     run_visualization,
 )
 from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
+from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ConfigLoader, _env_path
 from unified_kg_rag.domain.models import Backend, Config
-from unified_kg_rag.shared.config import AWS_ENV_FALLBACKS, ConfigLoader, _env_path
 
 pytestmark = pytest.mark.unit
 

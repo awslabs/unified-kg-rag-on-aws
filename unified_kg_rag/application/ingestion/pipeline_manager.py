@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from unified_kg_rag.domain.ingestion.cache_keys import stage_cache_key
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -21,10 +22,9 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-
-from .exceptions import PipelineResumeError, PipelineStateError
-from .logging import get_logger
-from .utils.cache_keys import stage_cache_key
+from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
+from unified_kg_rag.shared.exceptions import PipelineResumeError, PipelineStateError
+from unified_kg_rag.shared.logging import get_logger
 
 if TYPE_CHECKING:
     from .cache_manager import CacheManager
@@ -49,7 +49,7 @@ def _canonical_index(stage_name: str) -> int:
 
 
 class PipelineStateManager:
-    PIPELINE_METADATA_FILE = "pipeline_metadata.json"
+    PIPELINE_METADATA_FILE = PIPELINE_METADATA_FILE
     # Every stage output (STAGE_OUTPUTS below) lives in the stage cache, so the
     # metadata file — rewritten after each stage and synced to S3 — must not
     # duplicate it. The rest are derived graph payloads, equally heavy.

@@ -154,8 +154,8 @@ def test_registry_default_namespace_is_the_default_index_suffix() -> None:
     import inspect
 
     from unified_kg_rag.application.ingestion import incremental
+    from unified_kg_rag.domain.ingestion.document_identity import DEFAULT_NAMESPACE
     from unified_kg_rag.domain.models import Constants
-    from unified_kg_rag.shared.utils.document_identity import DEFAULT_NAMESPACE
 
     assert DEFAULT_NAMESPACE is Constants.DEFAULT_SUFFIX.value
     for fn in (incremental.build_document_lineage, incremental.IncrementalIndexer):

@@ -10,7 +10,9 @@ strategy no longer requires editing dispatch code.
 
 This mirrors the declarative-factory pattern already used by
 ``ParserFactory._loader_configs`` and
-``EvaluationManager._resolve_evaluator_class``.
+``EvaluationManager._resolve_evaluator_class``. Like the provider and
+renderer registries it lives with what it registers: the strategies are
+``BaseSearchStrategy`` adapters, so the registry is an adapter module too.
 """
 
 from __future__ import annotations

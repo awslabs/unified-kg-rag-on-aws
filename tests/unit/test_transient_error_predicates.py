@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.llm.retry import (
     looks_transient,
     transient_error_predicate,
@@ -32,7 +33,6 @@ from unified_kg_rag.adapters.local.models import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 openai = pytest.importorskip("openai")
 ollama = pytest.importorskip("ollama")

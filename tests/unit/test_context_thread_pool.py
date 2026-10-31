@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 from structlog.contextvars import bound_contextvars, get_contextvars
 
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 

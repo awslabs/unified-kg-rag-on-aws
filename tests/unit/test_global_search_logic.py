@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -34,7 +35,6 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
 )
 from unified_kg_rag.shared import ConfigurationError, InvalidFilterError
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 

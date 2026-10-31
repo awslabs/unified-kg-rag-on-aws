@@ -6,6 +6,10 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    QueryInput,
+    get_strategy_spec,
+)
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     LightRAGSearchStrategy,
 )
@@ -19,10 +23,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
-)
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    QueryInput,
-    get_strategy_spec,
 )
 from unified_kg_rag.shared import LanguageModelError
 

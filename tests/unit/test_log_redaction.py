@@ -23,6 +23,7 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strat
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.aws import neptune as neptune_module
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
+from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -40,7 +41,6 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared.utils import text_digest
-from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 

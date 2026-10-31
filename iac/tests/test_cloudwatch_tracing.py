@@ -146,7 +146,7 @@ def test_enabled_runs_a_non_essential_collector_the_app_waits_for() -> None:
 def test_enabled_points_the_app_at_the_sidecar_without_content_capture() -> None:
     _, compute = _stacks(_ON)
     env = _env(_containers(compute)["app"])
-    # Names must match the unified_kg_rag.shared.config env overrides.
+    # Names must match the unified_kg_rag.application.config env overrides.
     assert env["UKR__OBSERVABILITY__ENABLED"] == "true"
     assert env["UKR__OBSERVABILITY__BACKEND"] == "otlp"
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"

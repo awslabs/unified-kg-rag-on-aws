@@ -17,6 +17,7 @@ from datetime import datetime
 
 import pytest
 
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     NO_CONTEXT_ANSWER,
@@ -40,7 +41,6 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import EvaluationException
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

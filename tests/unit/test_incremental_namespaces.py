@@ -20,14 +20,14 @@ import pytest
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     DocumentLoadingStage,
 )
+from unified_kg_rag.domain.ingestion.document_identity import (
+    REGISTRY_NAMESPACE_KEY,
+    store_namespace_tag,
+)
 from unified_kg_rag.domain.models import (
     Config,
     PipelineContext,
     PipelineStageStatus,
-)
-from unified_kg_rag.shared.utils.document_identity import (
-    REGISTRY_NAMESPACE_KEY,
-    store_namespace_tag,
 )
 
 pytestmark = pytest.mark.unit

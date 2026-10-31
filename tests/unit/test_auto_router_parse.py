@@ -159,10 +159,10 @@ async def test_auto_never_routes_to_report_strategies_without_communities() -> N
 
 def test_routable_set_follows_what_the_pipeline_builds() -> None:
     import unified_kg_rag.adapters.search_strategies  # noqa: F401
-    from unified_kg_rag.domain.models import Config
-    from unified_kg_rag.domain.retrieval.strategy_registry import (
+    from unified_kg_rag.adapters.retrieval.strategy_registry import (
         routable_strategies,
     )
+    from unified_kg_rag.domain.models import Config
 
     config = Config()
     assert routable_strategies(config) == tuple(config.search.auto_routable_strategies)

@@ -9,6 +9,12 @@ from collections.abc import Callable
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    changed_settings,
+    extraction_fingerprint,
+    extraction_settings,
+    stage_input_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     detect_delta,
@@ -22,12 +28,6 @@ from unified_kg_rag.domain.models import (
     ExtractionSettings,
     LanguageCode,
     PipelineStageType,
-)
-from unified_kg_rag.shared.utils.cache_keys import (
-    changed_settings,
-    extraction_fingerprint,
-    extraction_settings,
-    stage_input_fingerprint,
 )
 
 pytestmark = pytest.mark.unit

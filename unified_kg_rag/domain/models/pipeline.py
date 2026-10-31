@@ -19,6 +19,10 @@ from .extraction import TextUnitExtraction
 from .relationship import Relationship
 from .text_unit import TextUnit
 
+# The run's metadata file in its stage-cache directory (the stage results and
+# context); the S3 sync uploads it last.
+PIPELINE_METADATA_FILE = "pipeline_metadata.json"
+
 
 class PipelineStageStatus(str, Enum):
     CACHED = "cached"

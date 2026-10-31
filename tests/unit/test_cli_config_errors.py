@@ -21,7 +21,7 @@ from unified_kg_rag.application.cli import (
     run_rag_chain,
     run_visualization,
 )
-from unified_kg_rag.shared.config import ConfigLoader
+from unified_kg_rag.application.config import ConfigLoader
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit

@@ -114,7 +114,7 @@ def _ticking_clock(monkeypatch: pytest.MonkeyPatch) -> None:
         def now() -> datetime:
             return start + timedelta(seconds=next(ticks))
 
-    monkeypatch.setattr("unified_kg_rag.shared.utils.store_names.datetime", _Clock)
+    monkeypatch.setattr("unified_kg_rag.domain.retrieval.store_names.datetime", _Clock)
 
 
 def _indexer(config: Config, client: _FakeCluster) -> OpenSearchIndexer:
@@ -403,7 +403,7 @@ def _pin_clock(monkeypatch: pytest.MonkeyPatch) -> None:
         def now() -> datetime:
             return datetime(2026, 10, 11, 12, 0, 0)
 
-    monkeypatch.setattr("unified_kg_rag.shared.utils.store_names.datetime", _Pinned)
+    monkeypatch.setattr("unified_kg_rag.domain.retrieval.store_names.datetime", _Pinned)
 
 
 def test_two_rebuilds_in_one_millisecond_get_separate_indices(

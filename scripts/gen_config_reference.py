@@ -27,8 +27,8 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
+from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ENV_PREFIX
 from unified_kg_rag.domain.models.config import MOVED_KEYS, Config
-from unified_kg_rag.shared.config import AWS_ENV_FALLBACKS, ENV_PREFIX
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "configuration.md"

@@ -10,8 +10,8 @@ from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 from unified_kg_rag.domain.models import Config, S3EncryptionType
+from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared import CacheSyncError, ConfigurationError, get_logger
-from unified_kg_rag.shared.pipeline_manager import PipelineStateManager
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -253,7 +253,7 @@ class S3CacheManager:
         """The cache files, stage data first, then the cache index, then the
         run metadata: an upload cut short never leaves S3 holding an index
         entry or a completed stage whose data was not uploaded."""
-        metadata = PipelineStateManager.PIPELINE_METADATA_FILE
+        metadata = PIPELINE_METADATA_FILE
         return sorted(
             local_cache_dir.rglob("*.json"),
             key=lambda path: (

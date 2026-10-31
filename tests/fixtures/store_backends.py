@@ -39,6 +39,7 @@ import pytest
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.config import get_config
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -47,7 +48,6 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
 )
 from unified_kg_rag.ports.indexer import BaseIndexer
-from unified_kg_rag.shared import get_config
 
 LOCAL_CONFIG = Path(__file__).parents[2] / "docker" / "config.local.yaml"
 DEFAULT_SUFFIX = Constants.DEFAULT_SUFFIX.value
