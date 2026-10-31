@@ -885,6 +885,11 @@ changed once with the full-config keys (#332).
   `spot_retry_wait_seconds` (default 600, the default lease term), up to
   `spot_interruption_retries` times (default 2), and resumes from its S3
   checkpoint; every other failure is notified as before (#PR).
+- IaC: `-c fargate_cpu_architecture=arm64` runs the ingestion and query
+  tasks on Graviton (ARM64) Fargate, for an image built with
+  `--platform linux/arm64`; the default `x86_64` leaves the task
+  definitions as they were. The Dockerfile builds for both platforms and
+  the collector sidecar's pinned digest covers both (#PR).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and

@@ -147,6 +147,7 @@ did-you-mean hint.
 | `fargate_cpu` | `2048` | Task vCPU units (`256` to `16384`) |
 | `fargate_memory` | `8192` | Task memory (MiB), a size Fargate offers for `fargate_cpu` |
 | `ingestion_ephemeral_storage_gib` | `40` | Ingestion task disk (21-200 GiB): about twice the corpus plus the stage cache |
+| `fargate_cpu_architecture` | `x86_64` | CPU architecture of both task definitions: `x86_64`, or `arm64` (Graviton) for an image built with `--platform linux/arm64` ([Build and push](#2-build-and-push-the-app-image)) |
 | `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images) |
 | `sfn_timeout_hours` | `6` | State machine timeout for a whole run, re-runs and their waits included |
 | `ingestion_fargate_spot` | `false` | Run the ingestion task on Fargate Spot; a task Spot interrupted runs again ([Fargate Spot](#fargate-spot)) |
@@ -285,7 +286,7 @@ for your region and sizes. What scales each service's cost:
 | Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
 | Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
-| Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage) |
+| Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
 | Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
 | S3 | Checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
@@ -338,6 +339,14 @@ aws ecr get-login-password --region "$REGION" \
 docker build --platform linux/amd64 -f docker/Dockerfile -t "$REGISTRY/graphrag-app:latest" .
 docker push "$REGISTRY/graphrag-app:latest"
 ```
+
+- With `-c fargate_cpu_architecture=arm64`, build with
+  `--platform linux/arm64` instead (on a Graviton host, or through
+  `docker buildx` with QEMU emulation, which is much slower). The platform
+  must match the task's: an x86_64 image on an ARM64 task, or the reverse,
+  stops at start with `exec format error`. Switch the architecture by
+  pushing the new image under a new tag and deploying both together
+  (`-c image_tag=<tag> -c fargate_cpu_architecture=arm64`).
 
 - Outside dev, push a unique version tag and deploy with `-c image_tag=<tag>`,
   so a pushed image cannot be swapped under the running task definition.

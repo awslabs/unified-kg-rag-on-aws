@@ -6,6 +6,10 @@
 # cannot change the build. Bump both together, and re-check the apt pins below.
 # BASE_IMAGE only lets a build pull the same digest from another registry (CI
 # falls back to Docker Hub when public.ecr.aws rate-limits); keep the digest.
+# The image builds for linux/amd64 and linux/arm64 (Graviton, the CDK stack's
+# fargate_cpu_architecture=arm64) alike: the base and uv digests are
+# multi-arch indexes, the apt pins exist for both architectures, and every
+# locked package has an aarch64 wheel or is pure Python. Keep a new pin so.
 ARG BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 # checkov:skip=CKV_DOCKER_7: BASE_IMAGE defaults to a tag+digest pin; Checkov cannot resolve ARGs
 FROM ${BASE_IMAGE} AS base

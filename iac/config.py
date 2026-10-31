@@ -94,6 +94,9 @@ cannot leave its setting at the default:
                                        extractors scale with vCPU count)
   fargate_memory      8192             task memory (MiB)
   image_tag           latest           container image tag (pin a version for immutable ECR tags)
+  fargate_cpu_architecture "x86_64"    CPU architecture of both task definitions:
+                                       "x86_64", or "arm64" (Graviton) for an
+                                       image built with --platform linux/arm64
   ingestion_ephemeral_storage_gib 40   ingestion task disk (GiB, 21-200): holds the
                                        synced corpus, the parsed documents and
                                        the run's stage cache
@@ -344,6 +347,9 @@ class DeploymentConfig:
     ingestion_fargate_spot: bool = False
     spot_interruption_retries: int = 2
     spot_retry_wait_seconds: int = 600
+    # CPU architecture of the Fargate tasks ("x86_64" | "arm64"). x86_64
+    # sets no runtime platform, so the templates are as without the key.
+    fargate_cpu_architecture: str = "x86_64"
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -450,6 +456,13 @@ class DeploymentConfig:
             raise ValueError(
                 f"{', '.join(spot_keys)} only apply with ingestion_fargate_spot=true"
             )
+        fargate_cpu_architecture = str(ctx("fargate_cpu_architecture", "x86_64"))
+        fargate_cpu_architecture = fargate_cpu_architecture.lower()
+        if fargate_cpu_architecture not in ("x86_64", "arm64"):
+            raise ValueError(
+                "fargate_cpu_architecture must be 'x86_64' or 'arm64', got "
+                f"{fargate_cpu_architecture!r}"
+            )
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
@@ -532,6 +545,7 @@ class DeploymentConfig:
             spot_retry_wait_seconds=as_int(
                 "spot_retry_wait_seconds", 600, minimum=0, maximum=86400
             ),
+            fargate_cpu_architecture=fargate_cpu_architecture,
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:
