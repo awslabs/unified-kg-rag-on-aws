@@ -2186,6 +2186,100 @@ class OpenSearchIndexingConfig(BaseModel):
             "read at query time."
         ),
     )
+    vector_mode: Literal["in_memory", "on_disk"] = Field(
+        default="in_memory",
+        description=(
+            "Vector workload mode of the knn_vector fields (OpenSearch 2.17+). "
+            "on_disk keeps quantized vectors in memory and the full-precision "
+            "ones on disk, and rescores each kNN search's candidates with "
+            "them: far less memory at slightly more latency and a little "
+            "recall, which pays off only at millions of vectors. in_memory "
+            "(the default) sends no mode key. A changed mode applies to "
+            "indices created afterwards: an incremental run refuses a live "
+            "index built otherwise, so run once with indexing.reset: true. "
+            "With the lucene engine set compression_level (4x); the embedded "
+            "engine of local mode ignores it (exact search)."
+        ),
+    )
+    compression_level: Literal["1x", "2x", "4x", "8x", "16x", "32x"] | None = Field(
+        default=None,
+        description=(
+            "Quantization of the knn_vector fields as a memory reduction "
+            "factor (OpenSearch 2.17+). Unset: the mode's own (on_disk: 32x "
+            "on faiss; in_memory: 1x, no key sent). faiss takes 1x, 2x, 8x, "
+            "16x and 32x, lucene 1x and 4x (lucene 8x-32x need a later "
+            "OpenSearch); on_disk refuses 1x. faiss with cosinesimil needs "
+            "OpenSearch 2.19. Needs the l2, innerproduct or cosinesimil space "
+            "type and the hnsw method. on_disk rescores with OpenSearch's "
+            "default oversampling; in_memory above 1x does not rescore. "
+            "Applies to indices created afterwards (reset to change it on a "
+            "live namespace)."
+        ),
+    )
+
+    def vector_storage(self) -> dict[str, str]:
+        """The ``mode`` / ``compression_level`` keys of a knn_vector mapping:
+        empty for the default (in_memory, unquantized)."""
+        storage: dict[str, str] = {}
+        if self.vector_mode != "in_memory":
+            storage["mode"] = self.vector_mode
+        if self.compression_level is not None:
+            storage["compression_level"] = self.compression_level
+        return storage
+
+    @model_validator(mode="after")
+    def _check_vector_storage(self) -> "OpenSearchIndexingConfig":
+        # Refused by every OpenSearch version: fail at config load instead
+        # of at the probe. What one version takes and another does not
+        # (2.17 for the keys, lucene 8x-32x, faiss + cosinesimil) is left to
+        # the creation probe, which asks the live cluster.
+        if not self.vector_storage():
+            return self
+        method = self.vector_search
+        engine = method.get("engine", "lucene")
+        space = method.get("space_type", "cosinesimil")
+        name = method.get("name", "hnsw")
+        prefix = "indexing.opensearch"
+        if engine not in ("lucene", "faiss"):
+            raise ValueError(
+                f"{prefix}.vector_mode / compression_level need the lucene or "
+                f"faiss engine (vector_search.engine is '{engine}')"
+            )
+        if name != "hnsw":
+            raise ValueError(
+                f"{prefix}.vector_mode / compression_level need the hnsw method "
+                f"(vector_search.name is '{name}')"
+            )
+        if space not in ("l2", "innerproduct", "cosinesimil"):
+            raise ValueError(
+                f"{prefix}.vector_mode / compression_level need the l2, "
+                f"innerproduct or cosinesimil space type (vector_search."
+                f"space_type is '{space}')"
+            )
+        level = self.compression_level
+        if self.vector_mode == "on_disk" and level == "1x":
+            raise ValueError(
+                f"{prefix}.compression_level 1x is refused with vector_mode "
+                "on_disk: on_disk quantizes (leave compression_level unset for "
+                "32x, or pick 2x-32x)"
+            )
+        if engine == "lucene" and level == "2x":
+            raise ValueError(
+                f"{prefix}.compression_level 2x needs the faiss engine (lucene "
+                "takes 1x and 4x)"
+            )
+        if engine == "faiss" and level == "4x":
+            raise ValueError(
+                f"{prefix}.compression_level 4x needs the lucene engine (faiss "
+                "takes 1x, 2x, 8x, 16x and 32x)"
+            )
+        if engine == "lucene" and self.vector_mode == "on_disk" and level is None:
+            raise ValueError(
+                f"{prefix}.vector_mode on_disk with the lucene engine needs "
+                "compression_level (4x): the on_disk default, 32x, is a faiss "
+                "quantization"
+            )
+        return self
 
     @field_validator(
         "text_units_index_prefix",
