@@ -721,7 +721,7 @@ changed once with the full-config keys (#332).
   rewrites the graph in place, and a build that did not finish its sweep
   stays refused until one does. The local Gremlin Server
   (`docker/compose.local.yaml`) now accepts string vertex ids
-  (`vertexIdManager=ANY`) (#PR).
+  (`vertexIdManager=ANY`) (#466).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
