@@ -5177,6 +5177,17 @@ changed once with the full-config keys (#332).
   instead of frozen dataclasses; they were never instantiated (#300).
 
 ### Security
+- Every install, including the container image, gets pypdf 6.21.4, tornado
+  6.6 and filelock 4.2.5. pypdf 6.21.2 had seven high-severity
+  denial-of-service advisories that a crafted PDF reaches through the PDF
+  parser (for example GHSA-5849-834g-hvw5: an xref section cut off before its
+  trailer looped forever; it now fails as a parse error); the floor is now
+  `pypdf>=6.21.4`. Tornado, which Bokeh pulls in, is constrained to `>=6.6`
+  (GHSA-pcg2-g6cj-q92c, GHSA-r4j5-9xpp-3985, GHSA-pw9p-v7r6-gx4p). filelock
+  3.29.4 had nine advisories (GHSA-v4x8-3wr5-3wq8 high) fixed in 4.2.1, held
+  back only by the optional `unstructured` extra's `filelock<4` cap; the lock
+  overrides that cap, since unstructured only takes a blocking `FileLock`,
+  and `SECURITY.md` drops the filelock residual (#PR).
 - Every install, including the container image, gets Pillow 13.0.0, which
   fixes the critical and high Pillow 12.3.0 advisories (for example
   GHSA-p4wg-p73j-c528). #426 split the Pillow requirement by Python version,

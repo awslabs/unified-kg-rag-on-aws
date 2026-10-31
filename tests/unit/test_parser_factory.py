@@ -57,6 +57,18 @@ def test_core_parser_constructs() -> None:
     assert parser is not None
 
 
+@pytest.mark.timeout(10)
+def test_truncated_pdf_xref_fails_fast(tmp_path) -> None:
+    # Upstream fixture of GHSA-5849-834g-hvw5: an xref section that hits EOF
+    # before its trailer. pypdf before 6.21.4 loops on it forever; the parser
+    # must reject it as a parse error instead.
+    pdf = tmp_path / "truncated.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nstartxref\n28\n%%EOF\nxref\n1 0\naaa")
+    parser = ParserFactory.create_parser(pdf, Config())
+    with pytest.raises(DataProcessingError, match="Xref parsing stuck"):
+        parser.parse_file(pdf)
+
+
 # --- register_loader: custom-format extension seam --------------------------
 
 from langchain_community.document_loaders.base import BaseLoader  # noqa: E402
