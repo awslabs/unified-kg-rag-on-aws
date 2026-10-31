@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -194,6 +196,30 @@ class TestExtractDualKeywords:
             lambda *a, **k: _StubChain('{"low_level_keywords": ["Alice"]}'),
         )
         assert await chain._extract_dual_keywords("q", "English") == ([], ["Alice"])
+
+    async def test_ignored_failure_keeps_model_output_out_of_warnings(
+        self,
+        chain: GraphRAGChain,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # A parse error can quote the model's answer; that stays at DEBUG.
+        class _Failing:
+            async def ainvoke(self, _inputs: dict, config=None) -> str:
+                raise LanguageModelError("bad payload: Vendor owes Buyer 42")
+
+        chain.ignore_errors = True
+        monkeypatch.setattr(chain, "_get_chain_for_prompt", lambda *a, **k: _Failing())
+        with caplog.at_level(logging.DEBUG):
+            assert await chain._extract_dual_keywords("q", "English") == ([], [])
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert [r.getMessage() for r in warnings] == [
+            "Dual-keyword extraction failed: LanguageModelError"
+        ]
+        assert any(
+            r.levelno == logging.DEBUG and "Vendor owes Buyer" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 class TestSearchStepThreading:

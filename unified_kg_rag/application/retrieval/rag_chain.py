@@ -809,7 +809,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Dual-keyword extraction failed: %s", e)
+            # The error text can quote the model's answer: DEBUG only.
+            logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
+            logger.debug("Dual-keyword extraction error: %s", e)
             return [], []
 
     _KEYWORD_LEVELS: ClassVar[tuple[str, str]] = (
