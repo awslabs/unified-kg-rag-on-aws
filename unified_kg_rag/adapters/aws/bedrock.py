@@ -29,6 +29,8 @@ from unified_kg_rag.adapters.aws.bedrock_models import (
     _RERANK_MODEL_INFO,
     base_model_id,
     get_language_model_info,
+    profile_target_model_id,
+    requires_embedding_profile,
 )
 from unified_kg_rag.adapters.aws.bedrock_retry import (
     is_bedrock_item_error,
@@ -278,8 +280,9 @@ class BedrockCrossRegionModelHelper:
         enable_global_profile: bool = False,
     ) -> str:
         model_id = str(model_id)
-        if base_model_id(model_id) != model_id:
-            # Already an inference-profile id (e.g. 'us.anthropic.…').
+        if base_model_id(model_id) != model_id or model_id.startswith("arn:"):
+            # Already an inference-profile id (e.g. 'us.anthropic.…') or an
+            # ARN (inference profile or provisioned model): invoked as given.
             return model_id
         try:
             boto_session = get_assumed_role_boto_session(
@@ -470,23 +473,54 @@ class BedrockEmbeddingModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
+    @staticmethod
+    def _catalog_id(model_id: EmbeddingModelId | str) -> EmbeddingModelId | None:
+        """The catalog member behind a model id, profile id or profile ARN."""
+        try:
+            return EmbeddingModelId(profile_target_model_id(model_id_value(model_id)))
+        except ValueError:
+            return None
+
     def get_model_info(
         self, model_id: EmbeddingModelId | str
     ) -> EmbeddingModelInfo | None:
-        try:
-            return _EMBEDDING_MODEL_INFO.get(EmbeddingModelId(model_id))
-        except ValueError:
-            return None
+        catalog_id = self._catalog_id(model_id)
+        return None if catalog_id is None else _EMBEDDING_MODEL_INFO.get(catalog_id)
+
+    def _resolve_invocation_id(self, catalog_id: EmbeddingModelId, given: str) -> str:
+        """The id to invoke: ``given`` when it is already a profile id or ARN,
+        else the cross-region profile the chat path would pick, failing fast
+        when the model has no on-demand throughput here and no profile
+        resolved."""
+        region = self.region_name or ""
+        resolved = BedrockCrossRegionModelHelper.get_cross_region_model_id(
+            self.boto_session,
+            given,
+            region,
+            assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
+            enable_global_profile=self.config.aws.bedrock.enable_global_profile,
+        )
+        if resolved == catalog_id.value and requires_embedding_profile(
+            catalog_id, region
+        ):
+            raise EmbeddingModelError(
+                f"Embedding model '{catalog_id.value}' has no on-demand "
+                f"throughput in region '{region}' and no cross-region inference "
+                f"profile resolved for it. Enable aws.bedrock.enable_global_profile, "
+                f"grant bedrock:ListInferenceProfiles, or choose a region where "
+                f"the model is offered in-region."
+            )
+        return resolved
 
     def get_model(
         self, model_id: EmbeddingModelId | str, **kwargs: Any
     ) -> BedrockEmbeddingsWrapper:
-        model_info = self.get_model_info(model_id)
-        if not model_info:
-            raise EmbeddingModelError(
-                f"Unsupported embedding model ID: '{model_id_value(model_id)}'"
-            )
-        model_id = EmbeddingModelId(model_id)
+        given = model_id_value(model_id)
+        catalog_id = self._catalog_id(model_id)
+        model_info = None if catalog_id is None else self.get_model_info(catalog_id)
+        if catalog_id is None or not model_info:
+            raise EmbeddingModelError(f"Unsupported embedding model ID: '{given}'")
+        model_id = catalog_id
 
         model_kwargs = {}
         dimensions = kwargs.pop("dimensions", None)
@@ -511,9 +545,13 @@ class BedrockEmbeddingModelFactory(
         # not accept: without a client the counter uses the script-aware
         # estimate instead of paying a failing round trip per text.
         token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
+        invocation_id = self._resolve_invocation_id(model_id, given)
         model = BedrockEmbeddingsWrapper(
             client=self._client,
-            model_id=model_id.value,
+            model_id=invocation_id,
+            # The request body is the provider's (cohere/amazon); name it from
+            # the catalog id, since a profile ARN does not carry it.
+            provider=model_id.value.split(".", 1)[0],
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
@@ -523,7 +561,7 @@ class BedrockEmbeddingModelFactory(
             token_counter=token_counter,  # type: ignore[call-arg]
             **kwargs,
         )
-        logger.debug("Created embedding model: '%s'", model_id.value)
+        logger.debug("Created embedding model: '%s'", invocation_id)
         return model
 
 

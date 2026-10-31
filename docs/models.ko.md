@@ -47,6 +47,17 @@ aws:
 (`domain/models/config.py`)에 멤버를, `adapters/aws/bedrock_models.py`에 레코드를
 추가합니다.
 
+임베딩 모델도 언어 모델과 같은 방식으로 교차 리전 추론 프로필(inference profile)을
+해석합니다. `models.embedding.model_id`의 기본 ID는 리전에 프로필이 있으면
+`global.` 프로필(`enable_global_profile` 사용 시) 또는 지역(geo) 프로필로, 없으면
+온디맨드로 호출합니다. `cohere.embed-v4:0`은 `us-east-1`, `eu-west-1`,
+`ap-northeast-1`에만 온디맨드 처리량이 있으므로 `us-west-2`에서는 `us.`/`global.`
+프로필로, `ap-northeast-2`에서는 `global.` 프로필로만 호출됩니다. 이 리전에서
+프로필이 해석되지 않으면(전역 프로필 꺼짐, `bedrock:ListInferenceProfiles` 권한 없음)
+첫 임베딩 호출이 아니라 모델 생성 시점에 해결 방법을 담은 오류로 실패합니다. 인덱스
+메타데이터에는 기본 ID가 남으므로 프로필과 온디맨드 호출을 바꿔도 재색인할 필요가
+없습니다.
+
 ## 선별된 언어 모델
 
 | 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |

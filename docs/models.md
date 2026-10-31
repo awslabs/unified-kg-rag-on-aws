@@ -47,6 +47,18 @@ uses the largest). Adding a model is a code change: a member in
 `EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
 `adapters/aws/bedrock_models.py`.
 
+Embedding models resolve cross-region inference profiles the same way language
+models do: the bare id in `models.embedding.model_id` is invoked through the
+`global.` profile (with `enable_global_profile`) or the geography profile when
+one exists in the region, else on demand. This matters for
+`cohere.embed-v4:0`, which has on-demand throughput only in `us-east-1`,
+`eu-west-1` and `ap-northeast-1`: in `us-west-2` it runs through `us.`/`global.`,
+and in `ap-northeast-2` only through `global.`. When no profile resolves there
+(global profile off, or no `bedrock:ListInferenceProfiles` grant) the factory
+fails at model creation with the remedy instead of on the first embed call.
+The index metadata keeps the bare id, so switching between profile and
+on-demand invocation needs no reindex.
+
 ## Curated language models
 
 | Model id | Provider | Context / max output | Reasoning control |

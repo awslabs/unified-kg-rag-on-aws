@@ -1480,6 +1480,14 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- Bedrock embeddings now resolve cross-region inference profiles like the
+  chat models: `cohere.embed-v4:0`, which has on-demand throughput only in
+  `us-east-1`, `eu-west-1` and `ap-northeast-1`, was invoked by its bare id
+  and failed on the first embed call in `us-west-2` (and every other
+  region). It now runs through the `global.`/geography profile, a profile id
+  or inference-profile ARN passes through as given, and with no profile in
+  such a region the embedding factory fails at model creation with the
+  remedy (#PR).
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
   `batch`) still running on another thread waited forever, because the
   close stopped the chain's loop with the call's task still pending on it.
