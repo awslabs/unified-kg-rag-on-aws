@@ -156,7 +156,9 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.assumed_role_arn": _neutral(_WHERE),
     "aws.bedrock.enable_global_profile": _neutral(_WHERE),
     "aws.bedrock.transient_retry": _neutral(_THROUGHPUT),
-    "aws.bedrock.query_prompt_cache_ttl": Unkeyed(
+    # How long Bedrock keeps a query prompt cached: cost and latency, never
+    # the answer, so the run-eval manifest leaves it out.
+    "aws.bedrock.query_prompt_cache_ttl": _neutral(
         "query chains only; ingestion checkpoints keep the 5-minute TTL"
     ),
     "aws.bedrock.guardrail": Unkeyed("screens the user query and the answer only"),

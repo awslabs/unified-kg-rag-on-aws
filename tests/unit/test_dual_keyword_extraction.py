@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     LightRAGSearchStrategy,
 )
+from unified_kg_rag.application.retrieval import rag_chain as rag_chain_module
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -194,6 +195,26 @@ class TestExtractDualKeywords:
             lambda *a, **k: _StubChain('{"low_level_keywords": ["Alice"]}'),
         )
         assert await chain._extract_dual_keywords("q", "English") == ([], ["Alice"])
+
+    async def test_ignored_failure_keeps_model_output_out_of_warnings(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, mocker
+    ) -> None:
+        # A parse error can quote the model's answer; that stays at DEBUG.
+        class _Failing:
+            async def ainvoke(self, _inputs: dict, config=None) -> str:
+                raise LanguageModelError("bad payload: Vendor owes Buyer 42")
+
+        chain.ignore_errors = True
+        monkeypatch.setattr(chain, "_get_chain_for_prompt", lambda *a, **k: _Failing())
+        logger = mocker.patch.object(rag_chain_module, "logger")
+        assert await chain._extract_dual_keywords("q", "English") == ([], [])
+        logger.warning.assert_called_once_with(
+            "Dual-keyword extraction failed: %s", "LanguageModelError"
+        )
+        assert any(
+            "Vendor owes Buyer" in str(call.args[1:])
+            for call in logger.debug.call_args_list
+        )
 
 
 class TestSearchStepThreading:

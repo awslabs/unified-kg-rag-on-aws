@@ -718,12 +718,14 @@ changed once with the full-config keys (#332).
   out for requests that carry the reasoning effort (`output_config`, Claude
   4.6+) until the combination is verified (#458).
 - `aws.bedrock.query_prompt_cache_ttl: 1h` keeps the system-prompt cache
-  checkpoint of query chains (answers, query rewriting, keyword extraction)
-  for an hour instead of 5 minutes, for low query rates where most queries
-  would rewrite the cache. Off by default: a 1-hour cache write costs 2x the
+  checkpoint of query-time chains for an hour instead of 5 minutes, for low
+  query rates where most queries would rewrite the cache. With the shipped
+  prompts the chains with a checkpoint are answer generation, query entity
+  extraction and the global-search reduce step, on models with a 512-token
+  cache minimum. Off by default: a 1-hour cache write costs 2x the
   input-token price (5 minutes: 1.25x). It applies to Claude 4.5+ on the
   Converse API (new capability field `supports_1h_cache_ttl`); ingestion and
-  evaluation keep 5 minutes (#458).
+  evaluation judges keep 5 minutes (#458, #PR).
 - Incremental indexing: a document failing consecutive runs for an error
   that is not its own (an outage, credentials, a rejected setting, a failed
   write; never counted toward `indexing.max_document_failures`) is no
@@ -1543,14 +1545,33 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- `GraphRAGChain`'s sync-API loop, stopped from a task running on it (a
+  close from inside the loop), halted with the tasks it had cancelled still
+  pending, which were later destroyed mid-cleanup ("Task was destroyed but
+  it is pending"), and was never closed. The loop thread now lets the
+  remaining tasks unwind and closes the loop, as `asyncio.run` does (#463).
+- A boolean environment variable (`UKR__…`) that is not one of
+  `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off` (any case) is now a
+  configuration error naming the variable; a typo such as `ture` used to
+  read as `false` and turn the setting off silently (#463).
+- Cohere Embed v3 (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`)
+  embedded every text as an empty string: the embeddings' 512-token
+  estimate buffer was subtracted from the models' 512-token window, leaving
+  a limit of 0. The buffer is now capped at an eighth of a model's limit,
+  so these models keep up to 448 estimated tokens of each text; Titan,
+  Embed v4 and the rerank models keep their limits. Rebuild any index
+  built with Embed v3: its vectors do not encode the texts (#463).
 - Bedrock embeddings now resolve cross-region inference profiles like the
-  chat models: `cohere.embed-v4:0`, which has on-demand throughput only in
-  `us-east-1`, `eu-west-1` and `ap-northeast-1`, was invoked by its bare id
-  and failed on the first embed call in `us-west-2` (and every other
-  region). It now runs through the `global.`/geography profile, a profile id
-  or inference-profile ARN passes through as given, and with no profile in
-  such a region the embedding factory fails at model creation with the
-  remedy (#458).
+  chat models where a model has no on-demand throughput: `cohere.embed-v4:0`,
+  which has it only in `us-east-1`, `eu-west-1` and `ap-northeast-1`, was
+  invoked by its bare id and failed on the first embed call in `us-west-2`
+  (and every other region). There it now runs through the
+  `global.`/geography profile, and with no profile the embedding factory
+  fails at model creation with the remedy (#458). In the three on-demand
+  regions, and for every other embedding model, the bare id is invoked as
+  before (#463). `models.embedding.model_id` takes catalog ids only; a
+  profile id or inference-profile ARN passed straight to
+  `BedrockEmbeddingModelFactory.get_model` is invoked as given (#458).
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
   `batch`) still running on another thread waited forever, because the
   close stopped the chain's loop with the call's task still pending on it.

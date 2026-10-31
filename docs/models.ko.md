@@ -47,14 +47,16 @@ aws:
 (`domain/models/config.py`)에 멤버를, `adapters/aws/bedrock_models.py`에 레코드를
 추가합니다.
 
-임베딩 모델도 언어 모델과 같은 방식으로 교차 리전 추론 프로파일(inference profile)을
-해석합니다. `models.embedding.model_id`의 기본 ID는 리전에 프로파일이 있으면
-`global.` 프로파일(`enable_global_profile` 사용 시) 또는 지역(geo) 프로파일로, 없으면
-온디맨드로 호출합니다. `cohere.embed-v4:0`은 `us-east-1`, `eu-west-1`,
-`ap-northeast-1`에만 온디맨드 처리량이 있으므로 `us-west-2`에서는 `us.`/`global.`
-프로파일로, `ap-northeast-2`에서는 `global.` 프로파일로만 호출됩니다. 이 리전에서
-프로파일이 해석되지 않으면(전역 프로파일 꺼짐, `bedrock:ListInferenceProfiles` 권한 없음)
-첫 임베딩 호출이 아니라 모델 생성 시점에 해결 방법을 담은 오류로 실패합니다. 인덱스
+임베딩 모델은 온디맨드 처리량이 있는 리전에서는 `models.embedding.model_id`의 ID
+그대로 온디맨드로 호출합니다. 온디맨드 처리량이 없는 리전에서만 언어 모델과 같은 방식으로
+교차 리전 추론 프로파일(inference profile)을 해석해 `global.` 프로파일
+(`enable_global_profile` 사용 시) 또는 지역(geo) 프로파일로 호출합니다.
+`cohere.embed-v4:0`은 `us-east-1`, `eu-west-1`, `ap-northeast-1`에만 온디맨드
+처리량이 있으므로 이 세 리전에서는 기본 ID를 그대로 쓰고, `us-west-2`에서는
+`us.`/`global.` 프로파일로, `ap-northeast-2`에서는 `global.` 프로파일로만 호출됩니다.
+프로파일이 필요한 리전에서 프로파일이 해석되지 않으면(전역 프로파일 꺼짐,
+`bedrock:ListInferenceProfiles` 권한 없음) 첫 임베딩 호출이 아니라 모델 생성 시점에
+해결 방법을 담은 오류로 실패합니다. 인덱스
 메타데이터에는 기본 ID가 남으므로 프로파일과 온디맨드 호출을 바꿔도 재색인할 필요가
 없습니다.
 
@@ -132,10 +134,13 @@ Haiku는 2048토큰, Claude Haiku 4.5와 Opus 4.5-4.7은 4096토큰)보다 짧�
 `usage_metadata.input_token_details`에 `cache_read`로 나타나며, 캐시된 입력 토큰은
 분당 토큰 할당량에 포함되지 않습니다.
 
-질의 체인(답변 생성, 질의 재작성, 키워드 추출)은 `aws.bedrock.query_prompt_cache_ttl: 1h`로
-체크포인트 수명을 1시간으로 늘릴 수 있습니다(기본값 `5m`). 1시간 캐시 쓰기는 입력 토큰
-단가의 2배(5분은 1.25배)로 과금되고 읽기 단가는 같으므로, 질의 간격이 5분을 자주 넘는 낮은
-질의량에서만 이득입니다. 수집과 평가 체인은 몇 초 안에 같은 프롬프트를 재사용하므로 늘 5분을
-씁니다. 1시간 TTL은 Claude 4.5 이후 모델(capability 레코드의 `supports_1h_cache_ttl`)의
+`aws.bedrock.query_prompt_cache_ttl: 1h`(기본값 `5m`)는 질의 시점 체인의 체크포인트
+수명을 1시간으로 늘립니다. 체크포인트는 시스템 프롬프트가 위의 최소 크기에 이르는 체인에만
+붙습니다. 기본 제공 프롬프트로는 최소 크기가 512토큰인 모델에서 답변 생성, 질의 엔터티 추출,
+전역 검색의 축약(reduce) 단계가 여기에 해당하며, 최소 크기가 1024토큰이나 4096토큰인
+모델에서는 이 크기에 이르는 기본 질의 프롬프트가 없습니다. `run-eval`이 생성하는 답변도 질의
+체인입니다. 수집 체인과 평가 판정(judge) 체인은 몇 초 안에 같은 프롬프트를 재사용하므로 늘
+5분을 씁니다. 1시간 캐시 쓰기는 입력 토큰 단가의 2배(5분은 1.25배)로 과금되고 읽기 단가는
+같으므로, 질의 간격이 5분을 자주 넘는 낮은 질의량에서만 이득입니다. 1시간 TTL은 Claude 4.5 이후 모델(capability 레코드의 `supports_1h_cache_ttl`)의
 Converse 요청에만 붙습니다. InvokeModel 요청은 langchain-aws가 `cache_control`을
 `{"type": "ephemeral"}`로 바꿔 TTL을 버리므로 5분 체크포인트를 유지합니다.

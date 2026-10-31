@@ -512,7 +512,8 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 `UKR__AWS__NEPTUNE__ENDPOINT`는 `aws.neptune.endpoint`를 지정하며, 자유 형식 매핑
 다음 마디는 그 매핑의 키를 가리킵니다(`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`).
 환경 변수는 설정 파일과 기본값보다 우선합니다. 값은 파일에 같은 값을 쓴 경우처럼
-변환하고 검증합니다(불리언은 `true`/`1`/`yes`/`on`, 목록이나 매핑은 JSON, 예:
+변환하고 검증합니다(불리언은 대소문자 구분 없이 `true`/`1`/`yes`/`on` 또는
+`false`/`0`/`no`/`off`, 목록이나 매핑은 JSON, 예:
 `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`). 값이 잘못되었거나 어떤
 키도 가리키지 않는 `UKR__` 변수는 그 변수를 밝힌 사용법 오류(종료 코드 2)이며,
 `--allow-unknown-keys`를 주면 알 수 없는 변수는 WARNING만 남깁니다.
@@ -765,16 +766,6 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
 이하).
-
-`search.lightrag_search.structured_keyword_output: true`(시범 기능, 기본값 꺼짐)는 자유
-텍스트에서 JSON을 파싱하는 대신 키워드 모델에 JSON 스키마로 제약된 응답을 요청합니다.
-Bedrock에서는 Converse `outputConfig.textFormat`, Ollama에서는 `format`,
-OpenAI 호환 서버에서는 `response_format`을 씁니다. Bedrock에서는 Claude 4.5 이후 모델의
-요청에 추론 effort가 없을 때만 적용합니다. Claude 4.6 이후 모델은 `output_config.effort`를
-보내는데, Bedrock이 이것과 출력 형식을 함께 받는지 아직 검증하지 않았으므로 이 모델들(기본
-모델 포함)은 텍스트 파서를 유지합니다. 그 밖의 모델이거나 구조화 호출이 실패하면 해당
-질의는 텍스트 파서로 돌아갑니다. 스키마를 쓰는 첫 Bedrock 요청은 스키마를 컴파일하므로
-최대 약 90초가 걸립니다(24시간 캐시).
 
 ### 예시
 

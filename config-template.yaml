@@ -35,6 +35,13 @@ aws:
     #   "amazon.nova-pro-v1:0":
     #     context_window_size: 300000
     #     max_output_tokens: 10000
+    # Prompt-cache lifetime on query-time chains whose system prompt reaches
+    # the model's minimum cacheable size (answer generation, query entity
+    # extraction and the global-search reduce step on Claude 5.5 / Opus 5).
+    # "1h" (Claude 4.5+ on Converse) pays off at low query rates only: a 1-hour
+    # cache write costs 2x the input price (5m: 1.25x). Ingestion and
+    # evaluation judges keep 5m.
+    # query_prompt_cache_ttl: "5m"
     # Opt into the 1M-token context window on models that offer it as a beta
     # (Sonnet 4/4.5, Opus 4/4.1/4.5). Off by default — long-context requests are
     # billed at a premium there. Claude 5 has a native 1M window and ignores
@@ -669,12 +676,12 @@ indexing:
       ef_search: 100
       space_type: "cosinesimil"
       # Engine choice is constrained by space_type + OpenSearch version:
-      #   lucene HNSW  -> supports cosinesimil on all versions; max 1024 dims
-      #                   (covers the default Titan Embed V2 at 1024).
+      #   lucene HNSW  -> supports cosinesimil on all versions; up to 16,000
+      #                   dims from OpenSearch 2.12 (1,024 before), the same
+      #                   cap as faiss and nmslib.
       #   faiss  HNSW  -> supports only l2/innerproduct until OpenSearch 2.19;
       #                   faiss + cosinesimil is REJECTED at index creation on
-      #                   2.13. For >1024-dim models, use engine: faiss with
-      #                   space_type: innerproduct (embeddings are normalized).
+      #                   2.13.
       engine: "lucene"
 
   # Neptune Indexing

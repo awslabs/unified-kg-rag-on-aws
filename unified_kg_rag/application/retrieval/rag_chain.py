@@ -29,10 +29,7 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.llm.chain_factory import (
-    setup_chain,
-    setup_structured_chain,
-)
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     SCOPED_FILTER_KEYS,
@@ -409,8 +406,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
-        # Structured-output chains; None where the model cannot take the format.
-        self._structured_chains: dict[tuple[Any, ...], Runnable | None] = {}
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
@@ -800,10 +795,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         Robust to the LLM wrapping the JSON in prose or code fences. Returns
         empty lists on failure when ``ignore_errors`` is set.
         """
-        if self.config.search.lightrag_search.structured_keyword_output:
-            keywords = await self._structured_keywords(query, target_language, config)
-            if keywords is not None:
-                return keywords
         try:
             extractor = self._get_chain_for_prompt(
                 KeywordsExtractionPrompt, StrOutputParser()
@@ -818,68 +809,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Dual-keyword extraction failed: %s", e)
+            # The error text can quote the model's answer: DEBUG only.
+            logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
+            logger.debug("Dual-keyword extraction error: %s", e)
             return [], []
 
     _KEYWORD_LEVELS: ClassVar[tuple[str, str]] = (
         "high_level_keywords",
         "low_level_keywords",
     )
-
-    # The keyword payload as a JSON schema for constrained decoding. Bedrock
-    # requires additionalProperties: false on every object.
-    _KEYWORD_SCHEMA: ClassVar[dict[str, Any]] = {
-        "title": "dual_level_keywords",
-        "description": "High-level and low-level keywords of the query",
-        "type": "object",
-        "properties": {
-            level: {"type": "array", "items": {"type": "string"}}
-            for level in ("high_level_keywords", "low_level_keywords")
-        },
-        "required": ["high_level_keywords", "low_level_keywords"],
-        "additionalProperties": False,
-    }
-
-    async def _structured_keywords(
-        self,
-        query: str,
-        target_language: str,
-        config: RunnableConfig | None,
-    ) -> tuple[list[str], list[str]] | None:
-        """The keyword lists from a JSON-schema constrained call, or None to
-        use the text parser: the model cannot take the format, or the call or
-        its payload failed (the fallback then pays a second call)."""
-        model_id = self.config.model_id(ModelRole.ENTITY_EXTRACTION)
-        key = (KeywordsExtractionPrompt, model_id)
-        try:
-            with self._cache_lock:
-                if key not in self._structured_chains:
-                    # None (the model cannot take the format) is kept too,
-                    # so the check runs once per model.
-                    self._structured_chains[key] = setup_structured_chain(
-                        factory=self.factory,
-                        model_id=model_id,
-                        prompt_class=KeywordsExtractionPrompt,
-                        schema=self._KEYWORD_SCHEMA,
-                        custom_prompts=self.config.custom_prompts,
-                    )
-                chain = self._structured_chains[key]
-            if chain is None:
-                return None
-            payload = await chain.ainvoke(
-                {"query": query, "target_language": target_language}, config
-            )
-            if not isinstance(payload, dict):
-                raise LanguageModelError(
-                    "Structured keyword output is not an object: "
-                    f"{type(payload).__name__}"
-                )
-            return self._keyword_lists(payload)
-        except Exception as e:
-            logger.warning(
-                "Structured keyword extraction failed; using the text parser: %s", e
-            )
-            return None
 
     @classmethod
     def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -2302,7 +2240,7 @@ class _LoopRunner:
             if self._io_workers is not None:
                 configure_event_loop(loop, self._io_workers)
             thread = threading.Thread(
-                target=loop.run_forever, name="graphrag-chain-loop", daemon=True
+                target=_run_loop, args=(loop,), name="graphrag-chain-loop", daemon=True
             )
             thread.start()
             self._loop, self._thread = loop, thread
@@ -2362,8 +2300,10 @@ class _LoopRunner:
         for future in pending:
             future.cancel()
         if thread is threading.current_thread():
+            # Stopping from inside the loop: _run_loop cancels the remaining
+            # tasks and closes the loop once run_forever returns.
             loop.call_soon_threadsafe(loop.stop)
-            return  # stopping from inside the loop: it closes once unwound
+            return
         try:
             asyncio.run_coroutine_threadsafe(_cancel_other_tasks(), loop).result(
                 timeout=_TEARDOWN_TIMEOUT_SECONDS
@@ -2372,7 +2312,22 @@ class _LoopRunner:
             logger.debug("Error cancelling the chain loop's tasks: %s", e)
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
-        if not thread.is_alive():
+
+
+def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """The loop thread: run ``loop`` until stopped, then end what is left on
+    it and close it, as ``asyncio.run`` does. A stop from inside the loop
+    returns before the tasks it cancelled have unwound; closing with them
+    pending would destroy them mid-flight."""
+    try:
+        loop.run_forever()
+    finally:
+        try:
+            loop.run_until_complete(_cancel_other_tasks())
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error ending the chain loop's tasks: %s", e)
+        finally:
             loop.close()
 
 

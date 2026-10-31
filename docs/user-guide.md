@@ -556,8 +556,8 @@ path, with double underscores between the segments, in any case:
 a free-form mapping names one of its keys
 (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). A variable wins over the
 config file and the defaults. Values are converted and validated as the same
-value in the file would be (`true`/`1`/`yes`/`on` for booleans, JSON for a list
-or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
+value in the file would be (`true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`,
+in any case, for booleans; JSON for a list or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
 An invalid value, or a `UKR__` variable that names no key, is a usage error
 (exit 2) naming the variable; `--allow-unknown-keys` turns the unknown name
 into a WARNING.
@@ -830,18 +830,6 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 `mix` and `hybrid` read the relationships index ingestion builds; a short
 query that yields no keywords is used as a low-level keyword itself (up to
 `search.lightrag_search.raw_query_fallback_max_len`).
-
-`search.lightrag_search.structured_keyword_output: true` (a pilot, off by
-default) asks the keyword model for a JSON-schema constrained answer instead of
-parsing JSON out of free text: Converse `outputConfig.textFormat` on Bedrock,
-`format` on Ollama, `response_format` on an OpenAI-compatible server. On
-Bedrock it applies to Claude 4.5 and later only when the request carries no
-reasoning effort: Claude 4.6+ send `output_config.effort`, and whether Bedrock
-accepts it together with the output format is not yet verified, so those
-models (the shipped defaults included) keep the text parser. Any other model,
-and any structured call that fails, falls back to the text parser for that
-query. The first Bedrock request with the schema compiles it (up to about
-90 s; cached for 24 hours).
 
 ### Examples
 

@@ -420,6 +420,10 @@ def _is_set(data: Any, path: tuple[str, ...]) -> bool:
     return True
 
 
+_ENV_TRUE = frozenset({"true", "1", "yes", "on"})
+_ENV_FALSE = frozenset({"false", "0", "no", "off"})
+
+
 def _set_env_value(
     layer: dict[str, Any], config: Config, path_tuple: tuple[str, ...], value: str
 ) -> None:
@@ -433,7 +437,8 @@ def _set_env_value(
     the input replaces the default rather than merging into it.
 
     Raises:
-        ValueError: ``value`` is not a number for a numeric setting.
+        ValueError: ``value`` is not a number for a numeric setting, or not
+            a boolean word for a boolean one.
         ValidationError: ``value`` breaks the field's constraints.
     """
     current: Any = config
@@ -477,7 +482,11 @@ def _set_env_value(
     if is_secret:
         parsed_value = SecretStr(value)
     elif isinstance(current_value, bool):
-        parsed_value = value.lower() in ("true", "1", "yes", "on")
+        # Anything else fails: a typo ("ture") must not read as false.
+        word = value.strip().lower()
+        if word not in _ENV_TRUE | _ENV_FALSE:
+            raise ValueError("expected true/false, 1/0, yes/no or on/off")
+        parsed_value = word in _ENV_TRUE
     elif isinstance(current_value, int):
         parsed_value = int(value)
     elif isinstance(current_value, float):

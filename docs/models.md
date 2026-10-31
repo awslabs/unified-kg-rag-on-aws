@@ -47,17 +47,19 @@ uses the largest). Adding a model is a code change: a member in
 `EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
 `adapters/aws/bedrock_models.py`.
 
-Embedding models resolve cross-region inference profiles the same way language
-models do: the bare id in `models.embedding.model_id` is invoked through the
-`global.` profile (with `enable_global_profile`) or the geography profile when
-one exists in the region, else on demand. This matters for
+An embedding model is invoked on demand by the id in
+`models.embedding.model_id` wherever it has on-demand throughput. Only in a
+region without it does the factory resolve a cross-region inference profile,
+the way language models do: the `global.` profile (with
+`enable_global_profile`) or the geography profile. This applies to
 `cohere.embed-v4:0`, which has on-demand throughput only in `us-east-1`,
-`eu-west-1` and `ap-northeast-1`: in `us-west-2` it runs through `us.`/`global.`,
-and in `ap-northeast-2` only through `global.`. When no profile resolves there
-(global profile off, or no `bedrock:ListInferenceProfiles` grant) the factory
-fails at model creation with the remedy instead of on the first embed call.
-The index metadata keeps the bare id, so switching between profile and
-on-demand invocation needs no reindex.
+`eu-west-1` and `ap-northeast-1`: there it keeps the bare id, in `us-west-2`
+it runs through `us.`/`global.`, and in `ap-northeast-2` only through
+`global.`. When no profile resolves where one is needed (global profile off,
+or no `bedrock:ListInferenceProfiles` grant) the factory fails at model
+creation with the remedy instead of on the first embed call. The index
+metadata keeps the bare id, so switching between profile and on-demand
+invocation needs no reindex.
 
 ## Curated language models
 
@@ -137,12 +139,17 @@ it but cache nothing. Cache reads show up as `cache_read` in the response's
 `usage_metadata.input_token_details`, and cached input tokens do not count
 against the tokens-per-minute quota.
 
-Query chains (answer generation, query rewriting, keyword extraction) can keep
-their checkpoint for an hour with `aws.bedrock.query_prompt_cache_ttl: 1h`
-(default `5m`). A 1-hour cache write is billed at 2x the input-token price
-(5 minutes: 1.25x) and a read costs the same, so it pays off only at low query
-rates, where the gap between queries often exceeds 5 minutes. Ingestion and
-evaluation chains reuse each prompt within seconds and always use 5 minutes.
+`aws.bedrock.query_prompt_cache_ttl: 1h` (default `5m`) keeps the checkpoint
+of query-time chains for an hour. Only a chain whose system prompt reaches the
+minimum size above has a checkpoint: with the shipped prompts, answer
+generation, query entity extraction and the global-search reduce step on the
+models with a 512-token minimum; on a 1,024- or 4,096-token model no shipped
+query prompt is long enough. Answers that `run-eval` generates are query
+chains too. Ingestion chains and evaluation judges reuse each prompt within
+seconds and always use 5 minutes. A 1-hour cache write is billed at 2x the
+input-token price (5 minutes: 1.25x) and a read costs the same, so it pays off
+only at low query rates, where the gap between queries often exceeds 5
+minutes.
 The 1-hour TTL is sent only on Converse requests to Claude 4.5 and later
 (`supports_1h_cache_ttl` in the capability record); an InvokeModel request
 keeps the 5-minute checkpoint, because langchain-aws rewrites its
