@@ -879,6 +879,17 @@ changed once with the full-config keys (#332).
   logged at ERROR instead of WARNING. Opt-in `search.reranking.required`
   fails the query with `RerankModelError` instead of answering from the
   fused order. Reported by @vibhupb (#83) (#284).
+- IaC: `-c ingestion_fargate_spot=true` (off by default) runs the ingestion
+  task on Fargate Spot. A task Spot interrupted (stop code
+  `SpotInterruption`) runs again with the same input after
+  `spot_retry_wait_seconds` (default 600, the default lease term), up to
+  `spot_interruption_retries` times (default 2), and resumes from its S3
+  checkpoint; every other failure is notified as before (#457).
+- IaC: `-c fargate_cpu_architecture=arm64` runs the ingestion and query
+  tasks on Graviton (ARM64) Fargate, for an image built with
+  `--platform linux/arm64`; the default `x86_64` leaves the task
+  definitions as they were. The Dockerfile builds for both platforms and
+  the collector sidecar's pinned digest covers both (#457).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and
@@ -1460,6 +1471,13 @@ changed once with the full-config keys (#332).
   at the neutral importance 0.5 without reading an `importance` vertex
   property: entity vertices never store one, so the result is unchanged
   (#300).
+- IaC: the OpenSearch domain carries the `EnableVersionUpgrade` update
+  policy, so a later engine version change (2.13 to 2.19, say) upgrades the
+  deployed domain in place, as a blue/green deployment that keeps its
+  indices, instead of replacing it with an empty domain (and, outside dev,
+  retaining and billing the old one). The engine stays 2.13; adding the
+  policy changes no resource. The runbook's new "Upgrading OpenSearch"
+  section lists the steps (#457).
 
 ### Fixed
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,

@@ -18,6 +18,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Run two ingestions, or understand `NamespaceLeaseError` | [Concurrent runs](#concurrent-runs) |
 | Act on a CloudWatch alarm | [Alarms](#alarms) |
 | Restore the stores | [Backup and restore](#backup-and-restore) |
+| Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -180,6 +181,36 @@ common point or not at all. The corpus in S3 is the source of truth.
 ([Re-ingest](#re-ingest)); restore the table first only if other namespaces
 share it.
 
+### Upgrading OpenSearch
+
+The CDK domain runs OpenSearch 2.13 and carries the CloudFormation
+`EnableVersionUpgrade` update policy, so a changed engine version upgrades
+the domain in place: same endpoint, same indices, no reindex. Without the
+policy CloudFormation would replace the domain with a new, empty one.
+OpenSearch Service upgrades 2.13 to 2.19 in one step, as a blue/green
+deployment (every shard copied; latency and rejections may rise until it
+ends, from minutes to hours). An upgrade cannot be paused or rolled back.
+
+1. Stop ingestion (no `RUNNING` execution) and plan for slower queries.
+2. Take a manual snapshot: the way back to 2.13 is restoring it on a new
+   2.13 domain (a manual snapshot needs a registered S3 repository; see
+   [Creating index snapshots](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/managedomains-snapshots.html)).
+   The hourly automated snapshots stay with the domain.
+3. Run the eligibility check:
+   `aws opensearch upgrade-domain --domain-name <domain> --target-version OpenSearch_2.19 --perform-check-only`,
+   then `aws opensearch get-upgrade-status --domain-name <domain>`. With the
+   optional Nori package associated, also check that a Nori package for 2.19
+   exists (`aws opensearch describe-packages`): optional plugins are
+   version-specific.
+4. Set `version=opensearch.EngineVersion.OPENSEARCH_2_19` in
+   `iac/stacks/storage_stack.py` (and the local image in
+   `docker/compose.local.yaml`, so local runs test the same engine), then
+   `cdk diff GraphRagStorage`: the only change must be the domain's
+   `EngineVersion`, with no replacement. Deploy with
+   `cdk deploy GraphRagStorage`.
+5. When the stack update completes, run a query and one incremental
+   ingestion before the next large run.
+
 ## When a run fails
 
 ### Interrupted runs
@@ -202,6 +233,10 @@ restored meanwhile included, and removes what was written for one that is gone
   `attempt_count` ([Quarantined documents](#quarantined-documents)).
 - A custom registry policy needs `dynamodb:BatchWriteItem` and
   `BatchGetItem` (the CDK grant covers both).
+- On the CDK stack with `ingestion_fargate_spot`, the state machine re-runs
+  a task Spot interrupted by itself, after `spot_retry_wait_seconds`; the
+  execution history shows the `SpotInterrupted` and `WaitBeforeSpotRetry`
+  states ([Fargate Spot](../iac/README.md#fargate-spot)).
 
 ### Failed documents
 

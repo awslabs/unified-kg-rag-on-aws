@@ -42,8 +42,9 @@ from iac.stacks.storage_stack import StorageStack
 # and result files.
 EVAL_PREFIX = "eval/"
 
-# ADOT collector v0.50.0, pinned by the multi-arch index digest so a re-pushed
-# tag cannot change the sidecar. Bump both together (`docker buildx imagetools
+# ADOT collector v0.50.0, pinned by the multi-arch index digest (linux/amd64
+# and linux/arm64, so it runs with either fargate_cpu_architecture) so a
+# re-pushed tag cannot change the sidecar. Bump both together (`docker buildx imagetools
 # inspect public.ecr.aws/aws-observability/aws-otel-collector:<tag>`).
 COLLECTOR_REPOSITORY = "aws-observability/aws-otel-collector"
 COLLECTOR_VERSION = "v0.50.0"
@@ -133,6 +134,9 @@ class ComputeStack(Stack):
             cluster_name=f"{config.prefix}-cluster",
             vpc=networking.vpc,
             container_insights_v2=ecs.ContainerInsights.ENABLED,
+            # FARGATE and FARGATE_SPOT on the cluster, which a RunTask
+            # capacity provider strategy needs (ingestion_fargate_spot).
+            enable_fargate_capacity_providers=config.ingestion_fargate_spot or None,
         )
 
         self.log_group = logs.LogGroup(
@@ -444,6 +448,17 @@ class ComputeStack(Stack):
             memory_limit_mib=self.config.fargate_memory,
             task_role=role,
             ephemeral_storage_gib=ephemeral_storage_gib,
+            # ARM64 (Graviton) runs an image built for linux/arm64; the
+            # collector sidecar's pinned digest is a multi-arch index. Unset,
+            # Fargate runs x86_64.
+            runtime_platform=(
+                ecs.RuntimePlatform(
+                    cpu_architecture=ecs.CpuArchitecture.ARM64,
+                    operating_system_family=ecs.OperatingSystemFamily.LINUX,
+                )
+                if self.config.fargate_cpu_architecture == "arm64"
+                else None
+            ),
         )
         environment = {
             "AWS_REGION": self.region,

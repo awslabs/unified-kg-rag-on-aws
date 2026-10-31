@@ -19,6 +19,7 @@
 | 수집을 둘 실행하거나 `NamespaceLeaseError` 이해하기 | [동시 실행](#동시-실행) |
 | CloudWatch 경보에 대응하기 | [경보](#경보) |
 | 저장소 복원하기 | [백업과 복원](#백업과-복원) |
+| OpenSearch 엔진 버전 올리기 | [OpenSearch 업그레이드](#opensearch-업그레이드) |
 | 서비스 계층에 질의 권한을 주거나 테넌트를 격리하기 | [질의 권한과 테넌트 격리](#질의-권한과-테넌트-격리) |
 | 추적 켜기(Jaeger, Langfuse, Phoenix, CloudWatch) | [관측성](#관측성) |
 | 오류 메시지 찾아보기 | [자주 보는 오류](#자주-보는-오류) |
@@ -175,6 +176,32 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
 ([다시 수집하기](#다시-수집하기)). 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을
 먼저 복원합니다.
 
+### OpenSearch 업그레이드
+
+CDK 도메인은 OpenSearch 2.13으로 실행되고 CloudFormation `EnableVersionUpgrade` 업데이트
+정책을 갖습니다. 그래서 엔진 버전을 바꾸면 도메인을 제자리에서 업그레이드하며 엔드포인트와
+인덱스가 그대로이고 재색인하지 않습니다. 이 정책이 없으면 CloudFormation은 도메인을 비어 있는
+새 도메인으로 교체합니다. OpenSearch Service는 2.13에서 2.19로 한 번에 업그레이드하며,
+블루/그린 배포(blue/green deployment)로 진행합니다. 모든 샤드를 복사하므로 끝날 때까지(몇 분에서
+몇 시간) 지연과 요청 거부가 늘 수 있습니다. 업그레이드는 멈추거나 되돌릴 수 없습니다.
+
+1. 수집을 멈추고(`RUNNING` 실행이 없어야 함) 질의가 느려질 것에 대비합니다.
+2. 수동 스냅샷을 찍습니다. 2.13으로 돌아가려면 이 스냅샷을 새 2.13 도메인에 복원해야 합니다
+   (수동 스냅샷에는 등록된 S3 저장소가 필요함.
+   [Creating index snapshots](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/managedomains-snapshots.html) 참고).
+   매시간 자동 스냅샷은 도메인에 남습니다.
+3. 업그레이드 가능 여부를 검사합니다.
+   `aws opensearch upgrade-domain --domain-name <domain> --target-version OpenSearch_2.19 --perform-check-only`
+   다음에 `aws opensearch get-upgrade-status --domain-name <domain>`으로 결과를 봅니다.
+   선택 Nori 패키지를 연결했다면 2.19용 Nori 패키지가 있는지도 확인합니다
+   (`aws opensearch describe-packages`). 선택 플러그인은 엔진 버전마다 따로 있습니다.
+4. `iac/stacks/storage_stack.py`에서 `version=opensearch.EngineVersion.OPENSEARCH_2_19`로
+   바꾸고(로컬 실행도 같은 엔진을 시험하도록 `docker/compose.local.yaml`의 로컬 이미지도
+   함께 바꿈) `cdk diff GraphRagStorage`를 실행합니다. 바뀌는 것은 도메인의
+   `EngineVersion` 하나뿐이고 교체가 없어야 합니다. 그다음 `cdk deploy GraphRagStorage`로
+   배포합니다.
+5. 스택 업데이트가 끝나면 다음 대규모 실행 전에 질의 한 번과 증분 수집 한 번을 실행합니다.
+
 ## 실행이 실패할 때
 
 ### 중단된 실행
@@ -194,6 +221,10 @@ curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
   `attempt_count`로 셉니다([격리된 문서](#격리된-문서)).
 - 사용자 정의 레지스트리 정책에는 `dynamodb:BatchWriteItem`과 `BatchGetItem`이
   필요합니다(CDK 권한에는 둘 다 있음).
+- CDK 스택에서 `ingestion_fargate_spot`을 켜면 Spot이 중단한 태스크를 상태 머신이
+  `spot_retry_wait_seconds` 뒤에 스스로 다시 실행합니다. 실행 기록에
+  `SpotInterrupted`와 `WaitBeforeSpotRetry` 상태가 보입니다
+  ([Fargate Spot](../iac/README.md#fargate-spot)).
 
 ### 실패한 문서
 

@@ -274,6 +274,11 @@ class StorageStack(Stack):
             self,
             "OpenSearch",
             version=opensearch.EngineVersion.OPENSEARCH_2_13,
+            # A changed `version` upgrades the domain in place (a blue/green
+            # deployment, data kept) instead of replacing it with a new, empty
+            # domain; without the UpdatePolicy CloudFormation replaces it.
+            # See docs/operations.md "Upgrading OpenSearch".
+            enable_version_upgrade=True,
             vpc=self.vpc,
             vpc_subnets=[os_subnets],
             security_groups=[self.service_sg],

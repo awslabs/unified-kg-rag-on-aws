@@ -499,3 +499,38 @@ def test_ingestion_disk_outside_fargate_range_is_rejected(gib: int) -> None:
 def test_task_tags_its_metrics_with_the_environment(env: str) -> None:
     # Must match the CLI's env var and the observability stack's dimension.
     assert _task_environment({"env_name": env})["UKR_METRICS_ENVIRONMENT"] == env
+
+
+def _runtime_platforms(context: dict[str, Any]) -> dict[str, Any]:
+    task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
+    return {
+        logical_id: task_def["Properties"].get("RuntimePlatform")
+        for logical_id, task_def in task_defs.items()
+    }
+
+
+def test_tasks_run_x86_64_by_default() -> None:
+    # No RuntimePlatform at all: the default template is unchanged.
+    assert set(_runtime_platforms({}).values()) == {None}
+    assert set(_runtime_platforms({"fargate_cpu_architecture": "x86_64"}).values()) == {
+        None
+    }
+
+
+@pytest.mark.parametrize("value", ["arm64", "ARM64"])
+def test_arm64_runs_both_tasks_on_graviton(value: str) -> None:
+    platforms = _runtime_platforms(
+        {"fargate_cpu_architecture": value, "enable_cloudwatch_tracing": "true"}
+    )
+    assert len(platforms) == 2
+    assert all(
+        platform == {"CpuArchitecture": "ARM64", "OperatingSystemFamily": "LINUX"}
+        for platform in platforms.values()
+    )
+
+
+def test_unknown_cpu_architecture_fails() -> None:
+    with pytest.raises(ValueError, match="fargate_cpu_architecture must be"):
+        DeploymentConfig.from_context(
+            cdk.App(context={"fargate_cpu_architecture": "aarch64"})
+        )
