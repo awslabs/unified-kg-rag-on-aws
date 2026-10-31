@@ -83,6 +83,10 @@ ModelInfoT = TypeVar("ModelInfoT")
 WrapperT = TypeVar("WrapperT")
 
 
+# The truncation buffer is at most 1/8 of a model's token limit.
+_MAX_BUFFER_DIVISOR = 8
+
+
 class BaseBedrockWrapper:
     _token_counter: BedrockTokenCounter | None = PrivateAttr(default=None)
 
@@ -108,7 +112,12 @@ class BaseBedrockWrapper:
         final_text = text
 
         if max_tokens and self._token_counter is not None:
-            effective_tokens = max_tokens - self._buffer_tokens
+            # The buffer absorbs the token estimate's error. It is capped at a
+            # fraction of the limit: Cohere Embed v3's 512-token window minus
+            # the embeddings' 512-token default left no room, and every text
+            # was sent as "". The cap leaves every larger window's buffer as is.
+            buffer = min(self._buffer_tokens, max_tokens // _MAX_BUFFER_DIVISOR)
+            effective_tokens = max_tokens - buffer
             truncated, token_count = self._token_counter.truncate_to_token_limit(
                 text, effective_tokens
             )

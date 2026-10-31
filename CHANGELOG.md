@@ -1543,6 +1543,13 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- Cohere Embed v3 (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`)
+  embedded every text as an empty string: the embeddings' 512-token
+  estimate buffer was subtracted from the models' 512-token window, leaving
+  a limit of 0. The buffer is now capped at an eighth of a model's limit,
+  so these models keep up to 448 estimated tokens of each text; Titan,
+  Embed v4 and the rerank models keep their limits. Rebuild any index
+  built with Embed v3: its vectors do not encode the texts (#PR).
 - Bedrock embeddings now resolve cross-region inference profiles like the
   chat models: `cohere.embed-v4:0`, which has on-demand throughput only in
   `us-east-1`, `eu-west-1` and `ap-northeast-1`, was invoked by its bare id
