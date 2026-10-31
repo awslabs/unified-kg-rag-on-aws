@@ -11,7 +11,8 @@
 #   Version matches the IaC domain.
 # - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
 #   TinkerPop line (3.7) matches the gremlinpython client. Its init script
-#   indexes the "id" property the indexer looks vertices and edges up by.
+#   indexes the "id" property the indexer looks vertices and edges up by, and
+#   its graph takes string vertex ids (indexing.neptune.vertex_ids: custom).
 #
 # - Ollama (profile "models", so the stores alone start without it): serves
 #   the language and embedding models of local mode. No model is pulled
@@ -65,6 +66,10 @@ services:
       # entities and their communities: about 60 s instead of 20 s).
       - source: gremlin-init
         target: /opt/gremlin-server/scripts/empty-sample.groovy
+      # The image's graph takes Long vertex ids only; ANY also takes the
+      # string ids of vertex_ids: custom (and still generates Longs).
+      - source: gremlin-graph
+        target: /opt/gremlin-server/conf/tinkergraph-empty.properties
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/$$(hostname -i)/8182'"]
       interval: 5s
@@ -96,6 +101,10 @@ configs:
       graph.createIndex("id", Edge.class)
       def globals = [:]
       globals << [g : traversal().withEmbedded(graph)]
+  gremlin-graph:
+    content: |
+      gremlin.graph=org.apache.tinkerpop.gremlin.tinkergraph.structure.TinkerGraph
+      gremlin.tinkergraph.vertexIdManager=ANY
 
 volumes:
   opensearch-data:

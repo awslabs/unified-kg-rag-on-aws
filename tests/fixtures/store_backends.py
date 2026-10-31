@@ -14,6 +14,9 @@ so one test states a store contract once and runs it on each:
   ``LOCAL_STORES=1``. ``LOCAL_STORES_GREMLIN_PORT`` and
   ``LOCAL_STORES_OPENSEARCH_PORT`` point it at a stack published on other
   ports.
+- ``container+custom-ids`` / ``aws+custom-ids`` (graph suites only,
+  :data:`GRAPH_BACKENDS`): the same stores with
+  ``indexing.neptune.vertex_ids: custom``.
 - ``aws``: Neptune and OpenSearch Service (``pytest.mark.aws``). The config is
   ``UKR_TEST_CONFIG`` if set, else the defaults; ``UKR__AWS__NEPTUNE__ENDPOINT`` and
   ``UKR__AWS__OPENSEARCH__ENDPOINT`` override the endpoints. Skipped without both
@@ -357,13 +360,28 @@ BACKENDS = [
     pytest.param("aws", id="aws", marks=pytest.mark.aws),
 ]
 
+# A Neptune-only variant of a backend: ``<kind>+<variant>``.
+CUSTOM_IDS = "custom-ids"
+_VARIANTS: dict[str, Callable[[Config], None]] = {
+    CUSTOM_IDS: lambda config: setattr(config.indexing.neptune, "vertex_ids", "custom"),
+}
 
-def backends(*capabilities: str) -> list[Any]:
-    """The :data:`BACKENDS` that have every one of ``capabilities``."""
+# BACKENDS plus the Gremlin stores in custom vertex-id mode, for the suites
+# of graph contracts.
+GRAPH_BACKENDS = [
+    *BACKENDS,
+    pytest.param(f"container+{CUSTOM_IDS}", id=f"container-{CUSTOM_IDS}"),
+    pytest.param(f"aws+{CUSTOM_IDS}", id=f"aws-{CUSTOM_IDS}", marks=pytest.mark.aws),
+]
+
+
+def backends(*capabilities: str, graph: bool = False) -> list[Any]:
+    """The :data:`BACKENDS` (with ``graph``, :data:`GRAPH_BACKENDS`) that
+    have every one of ``capabilities``."""
     return [
         param
-        for param in BACKENDS
-        if set(capabilities) <= CAPABILITIES[param.values[0]]
+        for param in (GRAPH_BACKENDS if graph else BACKENDS)
+        if set(capabilities) <= CAPABILITIES[param.values[0].partition("+")[0]]
     ]
 
 
@@ -376,7 +394,11 @@ def open_harness(kind: str, tmp_path: Path) -> Iterator[StoreHarness]:
         def harness(request, tmp_path):
             yield from open_harness(request.param, tmp_path)
     """
-    harness = StoreHarness(kind, _harness_config(kind, tmp_path))
+    base, _, variant = kind.partition("+")
+    config = _harness_config(base, tmp_path)
+    if variant:
+        _VARIANTS[variant](config)
+    harness = StoreHarness(base, config)
     try:
         yield harness
     finally:

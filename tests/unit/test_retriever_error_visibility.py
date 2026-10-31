@@ -79,7 +79,7 @@ from unified_kg_rag.shared.exceptions import (
     StoreTimeoutError,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
 # Every strategy seeds Neptune graph expansion with entity ids.
 _SEEDED = SearchQuery(query="hello", filters={"id": ["e1"]})

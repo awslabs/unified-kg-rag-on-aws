@@ -320,8 +320,10 @@ Differences from Neptune:
   (or deleting the registry).
 - A list property written at vertex creation keeps duplicate values.
 - Writes look elements up by their `id` property, which the compose file's
-  server indexes (without the index it slows down as the graph grows). Use it
-  for development-sized corpora.
+  server indexes (without the index it slows down as the graph grows), or
+  with `indexing.neptune.vertex_ids: custom` vertices by their vertex id,
+  which the compose file's graph accepts as a string. Use it for
+  development-sized corpora.
 - The stores have no authentication or TLS; the compose file binds them to
   `127.0.0.1` and drops all Linux capabilities.
 
@@ -1757,7 +1759,9 @@ flight (this run's, or those of the run whose expired lease it took over),
   `indexing.opensearch.persist_embedding_cache` with `--s3-sync` saves
   re-runs the embedding work; the doc-status registry
   (`providers.doc_status.enabled`) makes later runs pay only for changed
-  documents.
+  documents. On Neptune, `indexing.neptune.vertex_ids: custom` looks vertices
+  up by vertex id rather than by the `id` property. Switching an existing
+  graph needs one full build ([Custom Neptune vertex ids](operations.md#custom-neptune-vertex-ids)).
 - **Multilingual:** see [Multilingual ingestion](#multilingual-ingestion).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](#index-suffix).

@@ -16,7 +16,7 @@ import pytest
 
 from unified_kg_rag.domain.models import Config, Relationship
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
 
 class RecordingTraversal:

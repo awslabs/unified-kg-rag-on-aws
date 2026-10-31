@@ -710,6 +710,18 @@ changed once with the full-config keys (#332).
   filters (`guardrail_grounding_threshold`, default 0.7) and turns the
   app's check on. `ContentGuardPort.acheck` takes a keyword-only
   `grounding`, passed only while the check is on (#462).
+- `indexing.neptune.vertex_ids: custom` (off by default): Neptune vertices
+  get the vertex id `<label>:<item id>`, and the indexer and the graph
+  retriever look them up by vertex id instead of filtering on the `id`
+  property, as Neptune's best practices recommend (faster lookups, fewer
+  `ConcurrentModificationException`s). Edges and the per-edge writes are
+  unchanged, and the SQLite graph store ignores the setting. A label built
+  in the other mode is refused with a `StoreConfigurationError`. Switching
+  an existing graph needs one full build (`indexing.reset: true`), which
+  rewrites the graph in place, and a build that did not finish its sweep
+  stays refused until one does. The local Gremlin Server
+  (`docker/compose.local.yaml`) now accepts string vertex ids
+  (`vertexIdManager=ANY`) (#466).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock

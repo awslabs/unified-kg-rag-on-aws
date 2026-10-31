@@ -241,6 +241,24 @@ def restore_renderer_registry() -> Iterator[None]:
 
 
 @pytest.fixture
+def skip_vertex_id_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the Neptune indexer's and retriever's vertex-id mode check.
+
+    For tests that script every Gremlin request (or count them): the check
+    reads each label once before its first use. It is pinned by
+    ``tests/unit/test_neptune_vertex_ids.py``.
+    """
+    from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+
+    async def unchecked(self: object, label: str) -> None:
+        return None
+
+    monkeypatch.setattr(NeptuneIndexer, "_check_vertex_ids", lambda self, label: None)
+    monkeypatch.setattr(NeptuneRetriever, "_check_vertex_ids", unchecked)
+
+
+@pytest.fixture
 def config() -> Config:
     """A default ``Config`` (all nested defaults, no external services)."""
     return Config()

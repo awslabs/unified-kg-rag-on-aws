@@ -30,7 +30,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 )
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
 
 class RecordingTraversal:
@@ -641,6 +641,8 @@ class _ClearTraversal:
 def _clearing(indexer, dropped: list[int], initial: int | None = None):
     fake = _ClearTraversal(dropped, initial)
     indexer.neptune_client.g = fake
+    # The clear's last request (the label's vertex-id switch) is not scripted.
+    indexer._drop_vertex_id_switch = lambda label: None
     return fake
 
 

@@ -3,6 +3,7 @@
 import logging
 import math
 import random
+import threading
 import time
 import uuid
 from collections.abc import Callable, Collection, Iterator
@@ -14,12 +15,22 @@ from gremlin_python.process.graph_traversal import (
     GraphTraversalSource,
     __,
 )
-from gremlin_python.process.traversal import Cardinality, P, TextP, Traversal
+from gremlin_python.process.traversal import Cardinality, P, T, TextP, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
+    CUSTOM_VERTEX_IDS,
+    VERTEX_ID_MODE_PROPERTY,
+    VERTEX_ID_SWITCH_LABEL,
     NeptuneClient,
     is_permanent_neptune_error,
     run_traversal,
+    sample_vertex_query,
+    stored_vertex_id_mode,
+    vertex_id,
+    vertex_id_mode_error,
+    vertex_id_switch_error,
+    vertex_id_switch_query,
+    vertex_ids,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
@@ -45,6 +56,7 @@ from unified_kg_rag.shared import (
     NamespaceLeaseError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import StoreConfigurationError
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import (
     INGESTION_REQUEST_TIMEOUT_SECONDS,
@@ -113,10 +125,130 @@ class NeptuneIndexer(GraphIndexer):
         )
         # Set between begin_rebuild and end_rebuild (see there).
         self._rebuild_tag: str | None = None
+        # indexing.neptune.vertex_ids: the labels found in this mode (or
+        # empty) and those a full build is switching to it
+        # (_check_vertex_ids).
+        self._custom_ids = self.neptune_config.vertex_ids == CUSTOM_VERTEX_IDS
+        self._checked_labels: set[str] = set()
+        self._switching_labels: set[str] = set()
+        self._labels_lock = threading.Lock()
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
         self.neptune_client.close()
+
+    # --- vertex ids (indexing.neptune.vertex_ids) ------------------------------
+
+    def _label(self, prefix: str, suffix: str | None) -> str:
+        """The label of ``prefix`` under ``suffix``, checked for this run's
+        vertex ids (:meth:`_check_vertex_ids`)."""
+        label = self._get_label(prefix, suffix)
+        self._check_vertex_ids(label)
+        return label
+
+    def _check_vertex_ids(self, label: str) -> None:
+        """Refuse ``label`` if its vertices are of the other vertex-id mode.
+
+        Checked once per label, before its first read or write. One stored
+        vertex shows the mode (its vertex id is ``<label>:<id>`` or not):
+        every write is checked first, so a label holds one mode, except
+        while a full build switches it. That build writes a switch vertex
+        first (``VERTEX_ID_SWITCH_LABEL``) and drops it after its sweep,
+        which drops every vertex the build did not write. A switch left
+        unfinished (a failed write, a kill) is therefore refused too, until
+        a full build finishes it. Unchecked, custom-mode lookups would find
+        no property-mode vertex (reads see nothing stored, writes add a
+        second copy), and property-mode writes would add vertices that
+        custom-mode lookups never find.
+
+        Raises:
+            StoreConfigurationError: ``label`` holds the other mode's
+                vertices, or a switch left unfinished, outside a full build.
+            AWSServiceError: The check's read failed.
+        """
+        if label in self._checked_labels:
+            return
+        with self._labels_lock:
+            if label in self._checked_labels:
+                return
+            mode = self.neptune_config.vertex_ids
+            try:
+                switching = self._execute_with_retries(
+                    vertex_id_switch_query(label),
+                    f"Reading the vertex-id switch of '{label}'",
+                    results=True,
+                    fenced=False,
+                )
+                stored = stored_vertex_id_mode(
+                    label,
+                    self._execute_with_retries(
+                        sample_vertex_query(label),
+                        f"Reading the vertex ids of '{label}'",
+                        results=True,
+                        fenced=False,
+                    ),
+                )
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:
+                if isinstance(e, GraphRAGException):
+                    raise
+                raise AWSServiceError(
+                    f"Neptune vertex-id check of '{label}' failed: {e}"
+                ) from e
+            if self._rebuild_tag is not None:
+                if switching or stored not in (None, mode):
+                    self._write_vertex_id_switch(label, mode)
+                    self._switching_labels.add(label)
+            elif switching:
+                raise StoreConfigurationError(
+                    vertex_id_switch_error(label, str(switching[0]))
+                )
+            elif stored is not None and stored != mode:
+                raise StoreConfigurationError(vertex_id_mode_error(label, stored, mode))
+            self._checked_labels.add(label)
+
+    def _write_vertex_id_switch(self, label: str, mode: str) -> None:
+        """Record that a full build is switching ``label`` to ``mode``."""
+        logger.warning(
+            "Neptune label '%s' holds vertices of the other vertex-id mode: "
+            "the full build rewrites it with vertex_ids '%s' (queries see "
+            "only what it has rewritten until it ends)",
+            label,
+            mode,
+        )
+        self._execute_with_retries(
+            lambda g: g.V()
+            .hasLabel(VERTEX_ID_SWITCH_LABEL)
+            .has("id", label)
+            .fold()
+            .coalesce(
+                __.unfold(),
+                __.add_v(VERTEX_ID_SWITCH_LABEL).property("id", label),
+            )
+            .property(Cardinality.single, VERTEX_ID_MODE_PROPERTY, mode)
+            .id_(),
+            f"Recording the vertex-id switch of '{label}'",
+        )
+
+    def _drop_vertex_id_switch(self, label: str) -> None:
+        self._execute_with_retries(
+            lambda g: g.V().hasLabel(VERTEX_ID_SWITCH_LABEL).has("id", label).drop(),
+            f"Dropping the vertex-id switch of '{label}'",
+        )
+
+    def _vertices(
+        self, t: Any, labels: tuple[str, ...], ids: list[str]
+    ) -> GraphTraversal:
+        """Continue ``t`` with the vertices of ``labels`` whose id is one of
+        ``ids`` (non-empty): looked up by vertex id in custom mode, else by
+        the ``id`` property."""
+        if self._custom_ids:
+            return cast(
+                GraphTraversal,
+                t.V(*(vid for label in labels for vid in vertex_ids(label, ids))),
+            )
+        return cast(GraphTraversal, t.V().hasLabel(*labels).has("id", P.within(ids)))
 
     def clear(self, suffixes: list[str]) -> None:
         labels_to_delete = {
@@ -147,14 +279,11 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not ids:
             return []
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 ids,
-                lambda g, batch: g.V()
-                .hasLabel(entity_label)
-                .has("id", P.within(batch))
-                .valueMap(),
+                lambda g, batch: self._vertices(g, (entity_label,), batch).valueMap(),
                 "read_entities",
             )
             entities = [entity_from_vertex(row) for row in rows]
@@ -176,7 +305,7 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not ids:
             return []
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             # source_id/target_id are edge TOPOLOGY (endpoint vertex ids) and
             # the type is the edge label, so neither is in valueMap().
@@ -225,7 +354,7 @@ class NeptuneIndexer(GraphIndexer):
             if communities
             else self.neptune_config.entity_label_prefix
         )
-        label = self._get_label(prefix, suffix)
+        label = self._label(prefix, suffix)
         try:
             rows = self._read_batches(
                 text_unit_ids,
@@ -259,7 +388,7 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not text_unit_ids:
             return {}
-        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 list(dict.fromkeys(text_unit_ids)),
@@ -299,7 +428,7 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not name_keys:
             return []
-        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 name_keys,
@@ -326,13 +455,11 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not entity_ids:
             return {}
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 entity_ids,
-                lambda g, batch: g.V()
-                .hasLabel(entity_label)
-                .has("id", P.within(batch))
+                lambda g, batch: self._vertices(g, (entity_label,), batch)
                 .project("id", "neighbors")
                 .by("id")
                 .by(__.both().hasLabel(entity_label).values("id").dedup().fold()),
@@ -354,7 +481,7 @@ class NeptuneIndexer(GraphIndexer):
         :class:`AWSServiceError` when the read fails."""
         if not entity_ids:
             return {}
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
 
         def neighbors() -> GraphTraversal:
             distinct = __.both().hasLabel(entity_label).values("id").dedup()
@@ -363,9 +490,7 @@ class NeptuneIndexer(GraphIndexer):
         try:
             rows = self._read_batches(
                 entity_ids,
-                lambda g, batch: g.V()
-                .hasLabel(entity_label)
-                .has("id", P.within(batch))
+                lambda g, batch: self._vertices(g, (entity_label,), batch)
                 .project("id", "count")
                 .by("id")
                 .by(neighbors().count()),
@@ -382,7 +507,7 @@ class NeptuneIndexer(GraphIndexer):
         old entities whose ids differ from a delta entity's. Requires real
         Neptune; validated under the ``aws`` test marker.
         """
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._execute_with_retries(
                 lambda g: g.V()
@@ -461,6 +586,8 @@ class NeptuneIndexer(GraphIndexer):
 
             if not upsert and self._rebuild_tag is None:
                 self._clear_existing_data_by_label(community_label)
+            else:
+                self._check_vertex_ids(community_label)
             if not comms:
                 continue
 
@@ -543,16 +670,41 @@ class NeptuneIndexer(GraphIndexer):
 
         return builder
 
-    @staticmethod
-    def _upsert_vertex(t: Any, label: str, vertex_id: str) -> GraphTraversal:
-        """Continue ``t`` with the vertex ``label``/``vertex_id``, created if missing."""
+    def _upsert_vertex(self, t: Any, label: str, item_id: str) -> GraphTraversal:
+        """Continue ``t`` with the vertex ``label``/``item_id``, created if missing.
+
+        In custom mode the vertex is found and created by its vertex id
+        (``V(id).fold().coalesce(unfold(), addV())``, the chained upsert
+        Neptune's guide gives; ``mergeV`` would need engine 1.2.1.0 and, with
+        the label in its map, matches less efficiently).
+        """
+        if self._custom_ids:
+            vid = vertex_id(label, item_id)
+            return cast(
+                GraphTraversal,
+                t.V(vid)
+                .fold()
+                .coalesce(
+                    __.unfold(),
+                    __.add_v(label).property(T.id, vid).property("id", item_id),
+                ),
+            )
         return cast(
             GraphTraversal,
-            t.V()
-            .has(label, "id", vertex_id)
+            self._rewritten(t.V().has(label, "id", item_id), label)
             .fold()
-            .coalesce(__.unfold(), __.add_v(label).property("id", vertex_id)),
+            .coalesce(__.unfold(), __.add_v(label).property("id", item_id)),
         )
+
+    def _rewritten(self, t: Any, label: str) -> Any:
+        """``t`` (property-mode lookups in ``label``), kept to the vertices
+        this build wrote when it is switching the label to property ids: a
+        custom-id vertex has the ``id`` property too, and rewritten in place
+        it would keep its custom vertex id. The new vertex is added instead
+        and the sweep drops the old one."""
+        if self._rebuild_tag is not None and label in self._switching_labels:
+            return t.has(BUILD_TAG_PROPERTY, self._rebuild_tag)
+        return t
 
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Idempotently merge relationship edges into the live graph.
@@ -595,23 +747,33 @@ class NeptuneIndexer(GraphIndexer):
         (the only sign of an edge not written).
         """
 
-        edge = (
+        stored = (
             g.E()
             .has("id", rel.id)
             .where(__.outV().hasLabel(entity_label))
             .fold()
             .as_("stored")
-            # Both endpoints first, each looked up once: without them nothing
-            # is dropped either.
-            .V()
-            .hasLabel(entity_label)
-            .has("id", rel.source_id)
-            .as_("source")
-            .V()
-            .hasLabel(entity_label)
-            .has("id", rel.target_id)
-            .as_("target")
-            .sideEffect(__.select("stored").unfold().drop())
+        )
+        # Both endpoints first, each looked up once: without them nothing is
+        # dropped either.
+        if self._custom_ids:
+            ends = (
+                stored.V(vertex_id(entity_label, rel.source_id))
+                .as_("source")
+                .V(vertex_id(entity_label, rel.target_id))
+                .as_("target")
+            )
+        else:
+            source = self._rewritten(
+                stored.V().hasLabel(entity_label).has("id", rel.source_id),
+                entity_label,
+            ).as_("source")
+            ends = self._rewritten(
+                source.V().hasLabel(entity_label).has("id", rel.target_id),
+                entity_label,
+            ).as_("target")
+        edge = (
+            ends.sideEffect(__.select("stored").unfold().drop())
             .addE(relationship_label(rel))
             .from_("source")
             .to("target")
@@ -644,9 +806,7 @@ class NeptuneIndexer(GraphIndexer):
         for suffix, rels in grouped_items.items():
             stats = IndexingStats(total_items=len(rels))
             start_time = time.time()
-            entity_label = self._get_label(
-                self.neptune_config.entity_label_prefix, suffix
-            )
+            entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
 
             logger.info(
                 "Indexing %s relationships for '%s'...", len(rels), entity_label
@@ -723,13 +883,11 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not entity_ids:
             return []
-        label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
         try:
             rows = self._read_batches(
                 entity_ids,
-                lambda g, batch: g.V()
-                .hasLabel(label)
-                .has("id", P.within(batch))
+                lambda g, batch: self._vertices(g, (label,), batch)
                 .bothE()
                 .values("id")
                 .dedup(),
@@ -754,8 +912,8 @@ class NeptuneIndexer(GraphIndexer):
         if not ids:
             return stats
 
-        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
-        community_label = self._get_label(
+        entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        community_label = self._label(
             self.neptune_config.community_label_prefix, suffix
         )
 
@@ -781,12 +939,9 @@ class NeptuneIndexer(GraphIndexer):
             def drop_vertices(
                 g: GraphTraversalSource, id_batch: list[str] = id_batch
             ) -> GraphTraversal:
-                return (
-                    g.V()
-                    .hasLabel(entity_label, community_label)
-                    .has("id", P.within(id_batch))
-                    .drop()
-                )
+                return self._vertices(
+                    g, (entity_label, community_label), id_batch
+                ).drop()
 
             try:
                 self._execute_with_retries(drop_edges, "Deleting edges by id")
@@ -858,6 +1013,8 @@ class NeptuneIndexer(GraphIndexer):
             label = self._get_label(label_prefix, suffix)
             if clear_first and self._rebuild_tag is None:
                 self._clear_existing_data_by_label(label)
+            else:
+                self._check_vertex_ids(label)
             if not chunk:
                 continue
 
@@ -880,12 +1037,17 @@ class NeptuneIndexer(GraphIndexer):
     def _clear_existing_data_by_label(
         self, label: str, batch_size: int = _DELETE_BATCH_SIZE
     ) -> None:
-        """Drop every vertex of ``label`` (see :meth:`_drop_in_batches`)."""
+        """Drop every vertex of ``label`` (see :meth:`_drop_in_batches`), and
+        a vertex-id switch it was left in: empty, it takes either mode."""
         self._drop_in_batches(
             lambda g: g.V().hasLabel(label),
             f"vertices with label '{label}'",
             batch_size,
         )
+        self._drop_vertex_id_switch(label)
+        with self._labels_lock:
+            self._switching_labels.discard(label)
+            self._checked_labels.add(label)
 
     def _drop_in_batches(
         self,
@@ -959,26 +1121,44 @@ class NeptuneIndexer(GraphIndexer):
     def end_rebuild(self, suffixes: Collection[str], sweep: bool = True) -> None:
         """Drop the suffixes' vertices and edges the build did not write
         (``sweep``; skipped when a write failed, so a retry still finds the
-        previous copies), and end the rebuild."""
+        previous copies), and end the rebuild.
+
+        A label the build switched to this run's vertex ids
+        (:meth:`_check_vertex_ids`) holds only them once swept: its switch
+        vertex is dropped. Unswept, it holds both modes and stays refused
+        until a full build finishes it.
+        """
         tag, self._rebuild_tag = self._rebuild_tag, None
-        if not sweep or tag is None:
-            return
-        for suffix in sorted(suffixes):
-            entity_label = self._get_label(
-                self.neptune_config.entity_label_prefix, suffix
-            )
-            # Edges first: they leave the entities.
-            self._drop_in_batches(
-                _stale_edges(entity_label, tag), f"stale edges of '{entity_label}'"
-            )
-            for prefix in (
-                self.neptune_config.entity_label_prefix,
-                self.neptune_config.community_label_prefix,
-            ):
-                label = self._get_label(prefix, suffix)
-                self._drop_in_batches(
-                    _stale_vertices(label, tag), f"stale vertices of '{label}'"
+        switching, self._switching_labels = self._switching_labels, set()
+        swept: set[str] = set()
+        try:
+            if not sweep or tag is None:
+                return
+            for suffix in sorted(suffixes):
+                entity_label = self._get_label(
+                    self.neptune_config.entity_label_prefix, suffix
                 )
+                # Edges first: they leave the entities.
+                self._drop_in_batches(
+                    _stale_edges(entity_label, tag),
+                    f"stale edges of '{entity_label}'",
+                )
+                for prefix in (
+                    self.neptune_config.entity_label_prefix,
+                    self.neptune_config.community_label_prefix,
+                ):
+                    label = self._get_label(prefix, suffix)
+                    self._drop_in_batches(
+                        _stale_vertices(label, tag), f"stale vertices of '{label}'"
+                    )
+                    swept.add(label)
+            for label in sorted(switching & swept):
+                self._drop_vertex_id_switch(label)
+                switching.discard(label)
+        finally:
+            # Checked again on their next use, and refused.
+            with self._labels_lock:
+                self._checked_labels -= switching
 
     def _execute_batch_traversal(
         self,

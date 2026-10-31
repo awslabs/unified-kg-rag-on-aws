@@ -153,6 +153,7 @@ jobs:
         run: >-
           uv run pytest tests/integration/test_*conformance*.py
           tests/integration/test_store_parity.py
+          tests/integration/test_neptune_vertex_ids.py
 
       - name: Store logs
         if: failure()

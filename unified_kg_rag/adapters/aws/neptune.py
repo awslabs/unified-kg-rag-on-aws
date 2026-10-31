@@ -12,7 +12,7 @@ from gremlin_python.driver.aiohttp.transport import AiohttpTransport
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
-from gremlin_python.process.graph_traversal import GraphTraversalSource
+from gremlin_python.process.graph_traversal import GraphTraversalSource, __
 from gremlin_python.process.traversal import Traversal
 
 from unified_kg_rag.domain.models import Config
@@ -298,6 +298,100 @@ def _close_connection(connection: DriverRemoteConnection) -> None:
         pool = getattr(getattr(connection, "_client", None), "_pool", None)
         if pool is not None:
             pool.put_nowait(_ClosedPooledConnection(pool))
+
+
+# --- vertex ids (indexing.neptune.vertex_ids) --------------------------------
+#
+# In "custom" mode a vertex's id (T.id) is "<label>:<item id>". The label is
+# part of it because T.id is unique across the whole graph while one entity
+# id is stored under several labels (one per suffix: tenant or version). A
+# label holds letters, digits, '-' and '_' only (graph_label), so the first
+# ':' splits the two. Neptune takes string ids only; the item ids are the
+# pipeline's stable hashes. Every vertex keeps its "id" property in both
+# modes, so the projections and filters on it are unchanged.
+
+CUSTOM_VERTEX_IDS = "custom"
+PROPERTY_VERTEX_IDS = "property"
+
+# The vertex a full build switching a label's vertex ids writes first (its
+# "id" property names the label) and drops once its sweep is done: until
+# then the label holds vertices of both modes.
+VERTEX_ID_SWITCH_LABEL = "VertexIdSwitch"
+VERTEX_ID_MODE_PROPERTY = "vertex_ids"
+
+
+def vertex_id(label: str, item_id: str) -> str:
+    """The custom vertex id of item ``item_id`` under ``label``."""
+    return f"{label}:{item_id}"
+
+
+def vertex_ids(label: str, item_ids: list[str]) -> list[str]:
+    """:func:`vertex_id` of each of ``item_ids``."""
+    return [vertex_id(label, item_id) for item_id in item_ids]
+
+
+def sample_vertex_query(label: str) -> Callable[[GraphTraversalSource], Traversal]:
+    """One vertex of ``label``: its vertex id and its ``id`` property."""
+
+    def build(g: GraphTraversalSource) -> Traversal:
+        return (
+            g.V()
+            .hasLabel(label)
+            .limit(1)
+            .project("vertex_id", "id")
+            .by(__.id_())
+            .by(__.values("id").fold())
+        )
+
+    return build
+
+
+def vertex_id_switch_query(label: str) -> Callable[[GraphTraversalSource], Traversal]:
+    """The mode a full build left unfinished was switching ``label`` to."""
+
+    def build(g: GraphTraversalSource) -> Traversal:
+        return (
+            g.V()
+            .hasLabel(VERTEX_ID_SWITCH_LABEL)
+            .has("id", label)
+            .values(VERTEX_ID_MODE_PROPERTY)
+        )
+
+    return build
+
+
+def stored_vertex_id_mode(label: str, rows: list[Any]) -> str | None:
+    """The mode of the vertex :func:`sample_vertex_query` read (``None``: the
+    label holds none)."""
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    ids = rows[0].get("id") or []
+    if ids and str(rows[0].get("vertex_id")) == vertex_id(label, str(ids[0])):
+        return CUSTOM_VERTEX_IDS
+    return PROPERTY_VERTEX_IDS
+
+
+def vertex_id_mode_error(label: str, stored: str, configured: str) -> str:
+    """Why ``label``, built with ``stored`` vertex ids, is refused."""
+    return (
+        f"The Neptune label '{label}' was built with "
+        f"indexing.neptune.vertex_ids: {stored}, but this run uses "
+        f"'{configured}'. A graph holds one kind of vertex id: run one full "
+        "build with vertex_ids: "
+        f"{configured} (indexing.reset: true when incremental indexing is on) "
+        f"to rewrite it, or set vertex_ids back to '{stored}'."
+    )
+
+
+def vertex_id_switch_error(label: str, target: str) -> str:
+    """Why ``label``, left half switched by a full build, is refused."""
+    return (
+        f"The Neptune label '{label}' holds vertices of both "
+        "indexing.neptune.vertex_ids modes: a full build switching it to "
+        f"'{target}' did not finish. Run one full build again "
+        "(indexing.reset: true when incremental indexing is on) to finish "
+        "rewriting it."
+    )
 
 
 def neptune_pool_size(config: Config) -> int:

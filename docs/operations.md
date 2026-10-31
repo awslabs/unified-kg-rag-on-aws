@@ -21,6 +21,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
 | Analyze Korean with Nori instead of `cjk` | [Korean with Nori](#korean-with-nori) |
 | Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
+| Look Neptune vertices up by custom vertex ids | [Custom Neptune vertex ids](#custom-neptune-vertex-ids) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -283,6 +284,45 @@ The switch is done when the cluster is `available` again with storage type
 - **Outside the stack.** The setting is not in the template, so CDK keeps
   it on stack updates, but a cluster the stack replaces (or a restore,
   which creates a new cluster) starts on Standard: run the command again.
+
+### Custom Neptune vertex ids
+
+`indexing.neptune.vertex_ids` (default `property`) picks how the indexer and
+the graph retriever find vertices. With `property`, Neptune assigns each
+vertex id and every lookup filters on the item's `id` property. With
+`custom`, each vertex id is `<label>:<item id>`, for example
+`Entity-default:3f2a...` or `Community-tenant1-v2:c12`. Neptune serves a
+lookup by vertex id faster than a property filter, and concurrent writes
+by vertex id raise fewer `ConcurrentModificationException`s
+([Neptune guide](https://docs.aws.amazon.com/neptune/latest/userguide/best-practices-content-15.html)).
+The label is part of the id because a vertex id is unique in the whole
+graph, while the same entity id is stored once per suffix. Labels hold
+only letters, digits, `-` and `_`, so the first `:` separates the two parts.
+The `id` property is still written. Edges keep their ids, and each edge is
+still written in its own request. The embedded SQLite graph store ignores
+the setting.
+
+When to enable: for a new graph, or a large or write-heavy one (many
+concurrent ingestion writers, `index_concurrency` above 1, or CME retries
+in the logs). On a small graph the gain is small.
+
+Switching an existing graph needs one full build:
+
+1. Set `vertex_ids` the same for ingestion and queries (`UKR__INDEXING__NEPTUNE__VERTEX_IDS`).
+   A run or query in one mode refuses a label built in the other mode,
+   with a `StoreConfigurationError` that names the label.
+2. Run ingestion once with `indexing.reset: true` (with incremental indexing
+   off, any run is a full build). The build first writes a
+   `VertexIdSwitch` vertex for the label and then writes the graph in the new
+   mode. At the end, the sweep drops the vertices of the old mode and the
+   switch vertex. Until the build finishes, queries see only the vertices it
+   has already rewritten.
+3. If a write fails, the build keeps the old vertices for a retry, and the
+   switch vertex stays. In that state both modes refuse incremental runs
+   ("did not finish") until a full build succeeds.
+
+Gremlin Server stores string vertex ids only when its graph uses
+`vertexIdManager=ANY`, which `docker/compose.local.yaml` sets.
 
 ## When a run fails
 
