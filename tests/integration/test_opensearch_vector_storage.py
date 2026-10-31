@@ -30,7 +30,7 @@ from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
     OpenSearchRetriever,
 )
-from unified_kg_rag.adapters.storage import OpenSearchIndexer
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError
 
