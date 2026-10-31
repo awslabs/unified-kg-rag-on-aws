@@ -103,8 +103,8 @@ _EXPORTS: dict[str, str] = {
     # Extension: search strategies and retrievers
     "BaseSearchStrategy": "unified_kg_rag.adapters.retrieval.base",
     "BaseGraphRAGRetriever": "unified_kg_rag.adapters.retrieval.base",
-    "register_strategy": "unified_kg_rag.domain.retrieval.strategy_registry",
-    "QueryInput": "unified_kg_rag.domain.retrieval.strategy_registry",
+    "register_strategy": "unified_kg_rag.adapters.retrieval.strategy_registry",
+    "QueryInput": "unified_kg_rag.adapters.retrieval.strategy_registry",
     "RetrieverRole": "unified_kg_rag.domain.models",
     # Extension: parsers and renderers
     "ParserFactory": "unified_kg_rag.adapters.ingestion.parser",
@@ -130,6 +130,10 @@ if TYPE_CHECKING:
         ConversationKey,
         MemoryManager,
     )
+    from unified_kg_rag.adapters.retrieval.strategy_registry import (
+        QueryInput,
+        register_strategy,
+    )
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -153,10 +157,6 @@ if TYPE_CHECKING:
         SearchResult,
         SearchStrategy,
         SearchType,
-    )
-    from unified_kg_rag.domain.retrieval.strategy_registry import (
-        QueryInput,
-        register_strategy,
     )
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (

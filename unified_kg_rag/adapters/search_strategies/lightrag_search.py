@@ -33,6 +33,10 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
@@ -42,10 +46,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
-)
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    QueryInput,
-    register_strategy,
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest

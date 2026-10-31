@@ -40,6 +40,11 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
     ConversationKey,
     MemoryManager,
 )
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    QueryInput,
+    get_strategy_spec,
+    routable_strategies,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
@@ -86,11 +91,6 @@ from unified_kg_rag.domain.prompts import (
     TranslationPrompt,
 )
 from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    QueryInput,
-    get_strategy_spec,
-    routable_strategies,
-)
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GuardAction,

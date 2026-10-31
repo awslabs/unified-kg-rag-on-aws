@@ -159,7 +159,7 @@ unified_kg_rag/
 백엔드를 바꿔도 전략 코드는 바뀌지 않습니다.
 
 ```python
-# domain/retrieval/strategy_registry.py
+# adapters/retrieval/strategy_registry.py
 @register_strategy(SearchStrategy.LOCAL, required_roles=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH))
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
@@ -171,7 +171,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.4 레지스트리
 
-- **검색 전략**: `@register_strategy(...)`(`domain/retrieval/strategy_registry.py`).
+- **검색 전략**: `@register_strategy(...)`(`adapters/retrieval/strategy_registry.py`).
   클래스, 필요한 역할, 질의 입력을 `SearchStrategy`를 키로 등록합니다.
 - **공급자**: `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`).
   모든 모델, 저장소, 레지스트리 역할에서 `providers.<role>.kind`가 고르는 빌더입니다.

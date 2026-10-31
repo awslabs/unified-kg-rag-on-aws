@@ -58,7 +58,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   `application.storage.indexing_manager`, `application.ingestion.pipeline`,
   `adapters.*`, `domain.*`).
 - **Registries over hardcoded dispatch**: search strategies register via
-  `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
+  `@register_strategy` (`adapters/retrieval/strategy_registry.py`). Follow this
   pattern — and `ParserFactory.register_loader` / `@register_renderer` —
   instead of `if/elif` dispatch. `EvaluationManager._resolve_evaluator_class`
   is the one explicit type → class map (a new evaluator adds a branch there).

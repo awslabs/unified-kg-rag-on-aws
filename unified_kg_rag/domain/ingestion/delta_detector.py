@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Cross-run delta detection for incremental indexing.
 
-Given the freshly loaded corpus and a :class:`DocStatusPort`, computes a stable
+Given the freshly loaded corpus and the document-status registry (a
+:class:`DocStatusReader`, which every ``DocStatusPort`` is), computes a stable
 ``doc_id`` and ``content_hash`` per document and classifies the corpus into
 new / changed / unchanged / deleted / failed (:class:`DocumentDelta`).
 
@@ -42,7 +43,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple, Protocol
 
 from unified_kg_rag.domain.ingestion.attempts import (
     plan_attempts,
@@ -72,6 +73,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
 __all__ = [
+    "DocStatusReader",
     "assign_document_identity",
     "assign_registry_source",
     "compute_content_hash",
@@ -88,11 +90,23 @@ __all__ = [
     "scope_namespace",
 ]
 
-if TYPE_CHECKING:
-    # Type only: the port module imports the domain models.
-    from unified_kg_rag.ports import DocStatusPort
-
 logger = get_logger(__name__)
+
+
+class DocStatusReader(Protocol):
+    """The registry reads the delta makes: the read subset of
+    ``ports.DocStatusPort``, which every registry satisfies structurally.
+    Declared here because the domain imports no port (the ports are written
+    in terms of the domain models)."""
+
+    def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]: ...
+
+    def diff(
+        self,
+        incoming: dict[str, str],
+        scope: str | None = None,
+        extraction_fingerprint: str | None = None,
+    ) -> DocumentDelta: ...
 
 
 def compute_content_hash(document: Document) -> str:
@@ -219,7 +233,7 @@ def fingerprint_documents(documents: list[Document]) -> dict[str, str]:
 
 def detect_delta(
     documents: list[Document],
-    doc_status: DocStatusPort,
+    doc_status: DocStatusReader,
     scope: str | None = None,
     failed_doc_ids: Iterable[str] = (),
     max_failures: int | None = None,
@@ -409,7 +423,7 @@ def _groups(retired_scopes: Iterable[str | RetiredScope]) -> list[RetiredScope]:
 
 
 def retire_source_scopes(
-    doc_status: DocStatusPort,
+    doc_status: DocStatusReader,
     delta: DocumentDelta,
     retired_scopes: Iterable[str | RetiredScope],
     own_scope: str | None = None,

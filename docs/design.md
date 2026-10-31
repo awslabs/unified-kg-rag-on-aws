@@ -169,7 +169,7 @@ builder map binds the implementation, so swapping the graph backend changes
 no strategy code.
 
 ```python
-# domain/retrieval/strategy_registry.py
+# adapters/retrieval/strategy_registry.py
 @register_strategy(SearchStrategy.LOCAL, required_roles=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH))
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
@@ -183,7 +183,7 @@ backend fills each role is open (`providers.graph.kind` /
 ### 2.4 Registries
 
 - **Search strategies**: `@register_strategy(...)`
-  (`domain/retrieval/strategy_registry.py`): a class, its required roles and
+  (`adapters/retrieval/strategy_registry.py`): a class, its required roles and
   query inputs, keyed by `SearchStrategy`.
 - **Providers**: `@register_provider(ProviderRole.X, "kind")`
   (`adapters/provider_registry.py`): the builder `providers.<role>.kind`

@@ -16,9 +16,9 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
-from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.unit
 

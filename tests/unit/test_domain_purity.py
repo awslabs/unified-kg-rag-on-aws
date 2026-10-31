@@ -139,15 +139,7 @@ _LAYER_FORBIDDEN: dict[str, tuple[str, ...]] = {
 
 # Deliberate type-only exceptions (TYPE_CHECKING imports), documented in
 # design.md §2.5.
-_ALLOWED: set[tuple[str, str]] = {
-    # The strategy registry stores BaseSearchStrategy subclasses.
-    (
-        "domain/retrieval/strategy_registry.py",
-        "unified_kg_rag.adapters.retrieval.base",
-    ),
-    # The delta functions take the DocStatusPort they diff against.
-    ("domain/ingestion/delta_detector.py", "unified_kg_rag.ports"),
-}
+_ALLOWED: set[tuple[str, str]] = set()
 
 
 def _layer_violations() -> list[str]:

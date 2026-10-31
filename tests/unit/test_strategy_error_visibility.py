@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -24,7 +25,6 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.shared import AWSServiceError
 from unified_kg_rag.shared.exceptions import (
     StoreAccessDeniedError,

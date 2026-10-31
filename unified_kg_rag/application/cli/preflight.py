@@ -17,11 +17,11 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_endpoint,
     provider_kind,
 )
-from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
-from unified_kg_rag.domain.retrieval.strategy_registry import (
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
     routable_strategies,
 )
+from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 
 
 def _role_endpoint(config: Config, role: RetrieverRole) -> tuple[str, str] | None:

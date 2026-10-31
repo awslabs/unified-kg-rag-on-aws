@@ -44,6 +44,7 @@ from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
+from unified_kg_rag.domain.ingestion.delta_detector import DocStatusReader
 from unified_kg_rag.ports import (
     DocStatusPort,
     GraphIndexer,
@@ -79,6 +80,8 @@ PAIRS = [
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
     (DynamoDBDocStatusStore, DocStatusPort),
+    # The domain's view of the registry is the port's read subset.
+    (DocStatusPort, DocStatusReader),
     (ScriptedLLMFactory, ModelFactoryPort),
     (HashingEmbeddingFactory, ModelFactoryPort),
     (OpenAICompatibleLanguageModelFactory, ModelFactoryPort),

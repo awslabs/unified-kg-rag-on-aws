@@ -8,6 +8,11 @@ import pytest
 
 # Importing the package triggers @register_strategy on every strategy module.
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    StrategySpec,
+    get_strategy_spec,
+    register_strategy,
+)
 from unified_kg_rag.adapters.search_strategies import (
     DriftSearchStrategy,
     GlobalSearchStrategy,
@@ -15,11 +20,6 @@ from unified_kg_rag.adapters.search_strategies import (
     SimpleSearchStrategy,
 )
 from unified_kg_rag.domain.models import RetrieverRole, SearchStrategy
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    StrategySpec,
-    get_strategy_spec,
-    register_strategy,
-)
 
 pytestmark = pytest.mark.unit
 
