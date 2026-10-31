@@ -918,6 +918,18 @@ changed once with the full-config keys (#332).
   25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
+- The parser reads `.txt`, `.csv`, `.pdf` and (with the `unstructured`
+  extra) `.md`/`.html` with its own loaders on langchain-core
+  (`adapters/ingestion/file_loaders.py`) instead of the langchain-community
+  ones, which are in sunset. They produce the same text and metadata, byte
+  for byte (CRLF and bare CR still read as newlines, the encoding still
+  detected only after a decode error), so an indexed corpus keeps its
+  content hashes and `document_id`s and an incremental rerun finds no changed
+  document. Importing the parser no longer loads langchain-community (about
+  440 fewer modules). `ParserFactory.register_loader` takes any
+  `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
+  given as a path. langchain-community stays a dependency only to hold the
+  copy ragas imports below 0.4 (#PR).
 - Package layout: the layers import only inward, now including lazy and
   `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
   rules of the design doc §2.1 on every import (no exceptions; 23 imports

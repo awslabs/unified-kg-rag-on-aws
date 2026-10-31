@@ -1096,7 +1096,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.
-- **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — LangChain `BaseLoader` 하위 클래스면 무엇이든 됩니다. 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
+- **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — `langchain_core` `BaseLoader` 하위 클래스면 무엇이든 됩니다(`adapters/ingestion/file_loaders.py`의 내장 로더가 예시입니다). 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
 - **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드를 설명하고 `docs/configuration.md`를 재생성한 뒤 `config-template.yaml`에 추가(§12 참고).
 
 

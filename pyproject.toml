@@ -67,10 +67,10 @@ dependencies = [
     # retrievers treat as fatal (store_errors.is_fatal_retrieval_error).
     "langchain-aws>=1.8.1,<2.0.0",
     "langchain-classic>=1.0.0,<2.0.0",
-    # Held at 0.3.x: ragas imports langchain_community.chat_models.vertexai
-    # unconditionally, and 0.4 removed that module — 0.4 also puts the whole
-    # package into sunset, so the document loaders used by the parser should move
-    # to standalone packages rather than follow it forward.
+    # Not imported by this package (the parser's loaders are its own); ragas
+    # depends on it without a bound and imports
+    # langchain_community.chat_models.vertexai unconditionally, which 0.4
+    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
     "langchain-community>=0.3.27,<0.4.0",
     "langchain-core>=1.5.3,<2.0.0",
     "langchain-text-splitters>=1.1.2,<2.0.0",
@@ -87,7 +87,7 @@ dependencies = [
     "pillow>=13.0.0",
     "pydantic>=2.11.7",
     # 6.21.4 fixes the high-severity DoS advisories (GHSA-5849-834g-hvw5 and
-    # six more) that crafted PDFs reach through PyPDFLoader.
+    # six more) that crafted PDFs reach through the PDF loader.
     "pypdf>=6.21.4",
     "python-dotenv>=1.1.1",
     "pyvis>=0.3.2",
