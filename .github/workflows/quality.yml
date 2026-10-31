@@ -64,7 +64,7 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked --extra otel --extra viz
+        run: uv sync --locked --extra otel --extra eval --extra viz
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
@@ -180,7 +180,7 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.11 --frozen --extra viz
+        run: uv sync --python 3.11 --frozen --extra eval --extra viz
 
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -m "not aws" -q
@@ -210,7 +210,7 @@ jobs:
           uv lock
 
       - name: Sync dependencies
-        run: uv sync --python 3.13 --frozen --extra otel --extra viz
+        run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz
 
       - name: pytest
         run: uv run --python 3.13 --frozen pytest -m "not aws" -q -n auto

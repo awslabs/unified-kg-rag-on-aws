@@ -35,10 +35,6 @@ dependencies = [
     "botocore>=1.43.66",
     # Encoding detection for non-UTF-8 text sources (parser + Document loader).
     "charset-normalizer>=3.4.0",
-    # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
-    # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
-    # langchain-community removed in 0.4 — see the ragas floor below.
-    "datasets>=4.0.0",
     "datasketch>=2.0.0",
     # Leiden is called here directly, as graspologic's wrapper does; graspologic
     # itself is not a dependency (its import loads its embed stack, and boto3
@@ -66,11 +62,6 @@ dependencies = [
     # retrievers treat as fatal (store_errors.is_fatal_retrieval_error).
     "langchain-aws>=1.8.1,<2.0.0",
     "langchain-classic>=1.0.0,<2.0.0",
-    # Not imported by this package (the parser's loaders are its own); ragas
-    # depends on it without a bound and imports
-    # langchain_community.chat_models.vertexai unconditionally, which 0.4
-    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
-    "langchain-community>=0.3.27,<0.4.0",
     "langchain-core>=1.5.3,<2.0.0",
     "langchain-text-splitters>=1.1.2,<2.0.0",
     # Imported directly to warn when LangSmith tracing is on (shared/logging.py).
@@ -79,21 +70,14 @@ dependencies = [
     "networkx>=3.4",
     "numpy>=1.26.4",
     "opensearch-py>=3.0.0",
-    "pandas>=2.3.1",
-    # 13.0.0 fixes the critical/high Pillow advisories. Not imported here:
-    # ragas depends on it.
-    "pillow>=13.0.0",
     "pydantic>=2.11.7",
     # 6.21.4 fixes the high-severity DoS advisories (GHSA-5849-834g-hvw5 and
     # six more) that crafted PDFs reach through the PDF loader.
     "pypdf>=6.21.4",
     "python-dotenv>=1.1.1",
     "pyyaml>=6.0.2",
-    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
-    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
-    # can requires datasets>=4.0.0.
-    "ragas>=0.4.3,<0.5.0",
-    # Instructor (via ragas) requires Rich <15 for OpenAI 2.x compatibility.
+    # Instructor (via ragas, the eval extra) requires Rich <15 for OpenAI 2.x
+    # compatibility.
     "rich>=14.3.3,<15.0.0",
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
@@ -116,6 +100,34 @@ unstructured = [
     # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
     "llvmlite>=0.48.0",
     "unstructured[md]>=0.24.1",
+]
+# Optional: the LLM-judge evaluators of `run-eval` (`langchain` and `ragas`,
+# both in the default evaluation.enabled_evaluators). The core package imports
+# none of these; the evaluation manager fails fast naming this extra when an
+# enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
+# retrieval, answer_match) need none of it.
+eval = [
+    # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
+    # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
+    # langchain-community removed in 0.4 — see the ragas floor below.
+    "datasets>=4.0.0",
+    # Not imported by this package (the parser's loaders are its own); ragas
+    # depends on it without a bound and imports
+    # langchain_community.chat_models.vertexai unconditionally, which 0.4
+    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
+    "langchain-community>=0.3.27,<0.4.0",
+    # Not imported here: langchain_classic's load_evaluator imports it for the
+    # langchain evaluator even when handed a Bedrock model. 1.1.14 fixes SSRF
+    # through image token counting (GHSA-r7w7-9xr2-qq2r).
+    "langchain-openai>=1.1.14,<2.0.0",
+    "pandas>=2.3.1",
+    # Not imported here: ragas depends on Pillow, and 13.0.0 fixes the
+    # critical/high Pillow advisories.
+    "pillow>=13.0.0",
+    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
+    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
+    # can requires datasets>=4.0.0.
+    "ragas>=0.4.3,<0.5.0",
 ]
 # Optional: graph visualization (`run-visualization`): the pyvis interactive
 # graph and the Bokeh static charts. The core package imports neither;
@@ -156,9 +168,6 @@ local = [
 
 [tool.uv]
 constraint-dependencies = [
-    # Ragas pulls in this package transitively; earlier releases allow SSRF
-    # through image token counting (GHSA-r7w7-9xr2-qq2r).
-    "langchain-openai>=1.1.14",
     # Bokeh pulls in Tornado; 6.6 fixes GHSA-pcg2-g6cj-q92c, GHSA-r4j5-9xpp-3985
     # and GHSA-pw9p-v7r6-gx4p.
     "tornado>=6.6",

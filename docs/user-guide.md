@@ -106,13 +106,16 @@ variables ([After deploy](../iac/README.md#after-deploy)).
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra viz  # or: pip install -e '.[viz]'
+uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync` alone installs ingestion and queries. **Visualization**
-(`run-visualization`) needs the `viz` extra (pyvis, Bokeh and the layout
-reducers); without it `run-visualization` stops with exit `2`, naming the
-extra.
+`uv sync` alone installs ingestion and queries. Two extras add the rest;
+without one, the command that needs it stops with exit `2`, naming it:
+
+- **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
+  pandas, langchain-openai), both enabled by default ([§6](#evaluators)).
+  The LLM-free evaluators need no extra.
+- **`viz`**: pyvis and Bokeh for `run-visualization` ([§7](#7-visualization-run-visualization)).
 
 **Markdown and HTML** need the `unstructured` extra
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
@@ -1253,8 +1256,11 @@ judge-free run set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 | `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 
-An enabled evaluator that cannot be built (no Bedrock access for the judge,
-say) or rejects its configuration stops the run; with
+The two judges need the `eval` extra (`uv sync --extra eval`, [§1](#install));
+without it `run-eval` stops before the first query with exit `2`, naming the
+extra, even with `processing.ignore_errors: true`. The judge-free run above
+needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
+access for the judge, say) or rejects its configuration stops the run; with
 `processing.ignore_errors: true` it is dropped and listed in
 `run_manifest.dropped_evaluators`. Scoring starts after every answer is
 generated, so an evaluator error never discards the run: the metric is

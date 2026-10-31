@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from datetime import datetime
 
 import pytest
@@ -40,7 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
-from unified_kg_rag.shared import EvaluationException
+from unified_kg_rag.shared import ConfigurationError, EvaluationException
 
 pytestmark = pytest.mark.unit
 
@@ -344,6 +345,58 @@ class TestInitialization:
         manifest = manager.build_run_manifest()
         assert manifest["dropped_evaluators"] == manager.dropped_evaluators
         assert manifest["enabled_evaluators"] == ["answer_match"]
+
+
+def _without_modules(monkeypatch: pytest.MonkeyPatch, *packages: str) -> None:
+    """Make each package unimportable, as on an install without it."""
+    for package in packages:
+        for name in [
+            m for m in sys.modules if m == package or m.startswith(f"{package}.")
+        ]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.setitem(sys.modules, package, None)
+
+
+class TestWithoutTheEvalExtra:
+    @pytest.mark.parametrize(
+        ("evaluator", "package"),
+        [
+            (EvaluatorType.LANGCHAIN, "langchain_openai"),
+            (EvaluatorType.RAGAS, "ragas"),
+            (EvaluatorType.RAGAS, "datasets"),
+        ],
+    )
+    @pytest.mark.parametrize("ignore_errors", [False, True])
+    def test_an_enabled_judge_fails_naming_the_extra(
+        self,
+        config: Config,
+        monkeypatch: pytest.MonkeyPatch,
+        evaluator: EvaluatorType,
+        package: str,
+        ignore_errors: bool,
+    ) -> None:
+        # Not dropped under ignore_errors: the summary would lack the metrics
+        # the config asks for, and installing the extra is the fix.
+        _without_modules(monkeypatch, package)
+        config.processing.ignore_errors = ignore_errors
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE, evaluator]
+        with pytest.raises(
+            ConfigurationError, match=rf"'{evaluator.value}'.*'{package}'.*--extra eval"
+        ):
+            EvaluationManager(config, rag_chain=object())
+
+    def test_the_llm_free_evaluators_need_no_extra(
+        self, config: Config, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _without_modules(monkeypatch, "ragas", "datasets", "pandas", "langchain_openai")
+        llm_free = [
+            EvaluatorType.ANSWER_MATCH,
+            EvaluatorType.RETRIEVAL,
+            EvaluatorType.GRAPH_AWARE,
+        ]
+        config.evaluation.enabled_evaluators = llm_free
+        manager = EvaluationManager(config, rag_chain=object())
+        assert set(manager.evaluators) == set(llm_free)
 
 
 class TestEvaluateResults:

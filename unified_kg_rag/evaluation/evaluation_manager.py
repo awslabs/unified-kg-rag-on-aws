@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
+import importlib.util
 import json
 import shutil
 import statistics
@@ -48,7 +49,12 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.ports.guardrail import GuardAction
-from unified_kg_rag.shared import EvaluationException, get_logger, observability
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    EvaluationException,
+    get_logger,
+    observability,
+)
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 from .answer_match_evaluator import AnswerMatchEvaluator
@@ -69,6 +75,37 @@ SourceProvenance = list[tuple[list[str], list[str]]]
 # (``GraphRAGChain.check_filter_keys``).
 FilterKeyCheck = Callable[[dict[str, Any] | None, SearchStrategy], None]
 
+EVAL_EXTRA_HINT = (
+    "install the eval extra (`uv sync --extra eval`, or `pip install -e "
+    "'.[eval]'` in a source checkout), or leave the evaluator out of "
+    "evaluation.enabled_evaluators"
+)
+
+# The LLM-judge evaluators -> the modules of the eval extra each needs.
+# langchain_classic's load_evaluator imports langchain_openai even when it is
+# handed a model, so the LangChain judge needs it although it calls Bedrock.
+_EVAL_EXTRA_MODULES: dict[EvaluatorType, tuple[str, ...]] = {
+    EvaluatorType.LANGCHAIN: ("langchain_openai",),
+    EvaluatorType.RAGAS: ("ragas", "datasets", "pandas"),
+}
+
+
+def _require_eval_extra(evaluator_type: EvaluatorType) -> None:
+    """Raise ``ConfigurationError`` naming the eval extra when a module the
+    ``evaluator_type`` judge needs is not installed."""
+    missing = [
+        module
+        for module in _EVAL_EXTRA_MODULES.get(evaluator_type, ())
+        if importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        raise ConfigurationError(
+            f"The '{evaluator_type.value}' evaluator needs "
+            f"{', '.join(repr(module) for module in missing)}, which "
+            f"{'is' if len(missing) == 1 else 'are'} not installed: "
+            f"{EVAL_EXTRA_HINT}"
+        )
+
 
 class EvaluationManager:
     @staticmethod
@@ -79,8 +116,15 @@ class EvaluationManager:
 
         The langchain and ragas evaluators are imported here, on use: ragas
         alone takes seconds to import, and every CLI imports this module
-        (``application.cli`` exports ``EvaluationRunner``).
+        (``application.cli`` exports ``EvaluationRunner``). Both need the
+        ``eval`` extra.
+
+        Raises:
+            ConfigurationError: The evaluator's part of the ``eval`` extra is
+                not installed (not dropped under ``processing.ignore_errors``:
+                a missing package is a setting to fix).
         """
+        _require_eval_extra(evaluator_type)
         if evaluator_type is EvaluatorType.LANGCHAIN:
             from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
                 LangChainEvaluator,

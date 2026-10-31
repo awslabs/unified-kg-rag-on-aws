@@ -45,16 +45,30 @@ Python. 3.11 or 3.12 is required (`requires-python` `>=3.11, <3.13`): 3.10
 reached end of life and is no longer supported. Upgrade: install on Python
 3.11 or 3.12 (#430).
 
-Installation. Visualization is an optional extra: `bokeh` and `pyvis` moved
-from the core dependencies to the `viz` extra, with the `pillow` security
-floor (Bokeh pulls Pillow in); `umap-learn` and `scikit-learn` are no longer
-dependencies (see Configuration), and the `llvmlite` floor moved to the
-`unstructured` extra, whose numba pulls it in. Without it
-`run-visualization` exits `2` with an error naming the extra, before reading
-the data, and `render_all` raises `ConfigurationError` instead of logging and
-skipping the renderer; `from unified_kg_rag import BaseRenderer,
-register_renderer` still works on a core install. Upgrade: install with
-`uv sync --extra viz` (or `pip install -e '.[viz]'`) where you render (#PR).
+Installation. Evaluation judges and visualization are optional extras, so a
+core install (`uv sync`, `pip install -e .`) is ingestion and queries, and
+shrinks from 145 to 83 packages (937 to 335 MB on Linux). Upgrade: install
+with `uv sync --extra eval --extra viz` (or `pip install -e '.[eval,viz]'`)
+where you evaluate or render (#PR).
+- `eval`: `ragas`, `datasets`, `pandas` and `langchain-community` moved out
+  of the core dependencies, and `langchain-openai` is declared (langchain's
+  `load_evaluator` imports it for the `langchain` judge even with a Bedrock
+  model). The `langchain` and `ragas` evaluators stay in the default
+  `evaluation.enabled_evaluators`; without the extra, `EvaluationManager`
+  (and so `run-eval`, exit `2`, before the first query) raises
+  `ConfigurationError` naming it, also under `processing.ignore_errors`.
+  The LLM-free evaluators need no extra. The container image installs
+  `eval`, as the CDK query task runs `run-eval` from it.
+- `viz`: `bokeh` and `pyvis` moved out of the core dependencies.
+  Without the extra `run-visualization` exits `2` naming it, before reading
+  the data, and `render_all` raises `ConfigurationError` instead of logging
+  and skipping the renderer; `from unified_kg_rag import BaseRenderer,
+  register_renderer` still works on a core install. `umap-learn` and
+  `scikit-learn` are no longer dependencies (see Configuration).
+- The security floors follow the packages that pull the pinned package in:
+  `pillow` is in `eval` and `viz` (ragas, Bokeh), `llvmlite` in
+  `unstructured` (its numba), and the `langchain-openai` floor in `eval`
+  and `local`.
 
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.

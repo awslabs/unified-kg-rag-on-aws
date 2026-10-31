@@ -56,11 +56,11 @@ test suite runs without AWS.
 ```bash
 git clone https://github.com/<your-username>/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra viz              # creates .venv with the package, the dev group and the extra the tests need
+uv sync --extra eval --extra viz # creates .venv with the package, the dev group and the extras the tests need
 uv run pre-commit install        # runs ruff, isort, black and mypy on every commit
 ```
 
-Without uv: create a virtual environment, activate it, and run `pip install -e '.[viz]' --group dev` (pip 25.1 or later).
+Without uv: create a virtual environment, activate it, and run `pip install -e '.[eval,viz]' --group dev` (pip 25.1 or later).
 
 ### Branches and pull requests
 
@@ -93,7 +93,7 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
 uv run pytest -m "not aws"                              # unit, property and integration suites
-uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run --extra otel --extra eval --extra viz pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 Add `-n auto` to run the suite on every CPU through pytest-xdist, as CI does; coverage still combines across the

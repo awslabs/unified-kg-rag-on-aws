@@ -67,11 +67,11 @@ Python 3.11–3.12와 [uv](https://docs.astral.sh/uv/)(`pip`도 가능)가 필�
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra viz                     # 또는: pip install -e '.[viz]'
+uv sync --extra eval --extra viz        # 또는: pip install -e '.[eval,viz]'
 cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포인트 입력
 ```
 
-OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. `uv sync`만으로는 수집과 질의만 설치되며 `run-visualization`에는 `viz` extra가 필요합니다. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(`uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
+OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. `uv sync`만으로는 수집과 질의만 설치되며, `run-eval`의 LangChain·RAGAS 심사 평가기에는 `eval` extra, `run-visualization`에는 `viz` extra가 필요합니다. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(`uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
 
 ### 수집, 질의, 평가
 

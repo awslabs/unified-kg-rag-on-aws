@@ -363,9 +363,10 @@ docker push "$REGISTRY/graphrag-app:latest"
 
 - Outside dev, push a unique version tag and deploy with `-c image_tag=<tag>`,
   so a pushed image cannot be swapped under the running task definition.
-- Extras: `--build-arg UV_EXTRAS="--extra unstructured"` to parse `.md` /
-  `.html` files, `--extra otel` with `enable_cloudwatch_tracing` (both:
-  `"--extra otel --extra unstructured"`).
+- Extras: the image always installs `eval` (the `run-eval` judges of the
+  query task). Add `--build-arg UV_EXTRAS="--extra unstructured"` to parse
+  `.md` / `.html` files, `--extra otel` with `enable_cloudwatch_tracing`
+  (both: `"--extra otel --extra unstructured"`).
 - The image bakes in the endpoint-free `docker/config.yaml` (it turns on
   `providers.doc_status.enabled`, so ingestion is incremental). The task
   injects the deployed values: `UKR__AWS__NEPTUNE__ENDPOINT`,

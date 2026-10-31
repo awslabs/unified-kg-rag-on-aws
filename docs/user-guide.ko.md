@@ -105,12 +105,16 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra viz  # or: pip install -e '.[viz]'
+uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync`만 실행하면 수집과 질의만 설치됩니다. **시각화**(`run-visualization`)에는
-`viz` extra(pyvis, Bokeh, 레이아웃 차원 축소기)가 필요하며, 없으면
-`run-visualization`이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
+`uv sync`만 실행하면 수집과 질의만 설치됩니다. 나머지는 extra 두 개로 추가하며, 필요한
+extra가 없으면 해당 명령이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
+
+- **`eval`**: `run-eval`의 LangChain·RAGAS 심사 평가기(ragas, datasets, pandas,
+  langchain-openai). 둘 다 기본으로 켜져 있습니다([§6](#평가기)). LLM을 쓰지 않는
+  평가기에는 extra가 필요 없습니다.
+- **`viz`**: `run-visualization`의 pyvis와 Bokeh([§7](#7-시각화-run-visualization)).
 
 **Markdown과 HTML**을 파싱하려면 `unstructured` extra가 필요합니다
 (`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
@@ -1113,8 +1117,11 @@ SQLite 레지스트리에는 이 한도가 없습니다.
 | `langchain` | 심사 | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 
-켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한 없음) 설정을 거부하면
-실행이 멈춥니다. `processing.ignore_errors: true`이면 그 평가기를 빼고
+심사 평가기 둘은 `eval` extra가 필요합니다(`uv sync --extra eval`, [§1](#설치)). extra가
+없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 상태 코드 `2`로 종료하며,
+`processing.ignore_errors: true`여도 같습니다. 위의 심사 모델 없는 실행에는 extra가
+필요 없습니다. 그 밖에 켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한
+없음) 설정을 거부하면 실행이 멈춥니다. `processing.ignore_errors: true`이면 그 평가기를 빼고
 `run_manifest.dropped_evaluators`에 기록합니다. 채점은 모든 답변을 생성한 뒤에
 시작하므로 평가기 오류가 나도 실행 결과는 버리지 않습니다. 해당 질의의 지표를 실패로
 기록하고(쓸 만한 점수가 없는 심사 응답도 0이 아니라 실패), 종료 코드는
