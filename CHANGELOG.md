@@ -695,7 +695,7 @@ changed once with the full-config keys (#332).
   merging, the oversize split and the quality check use the same measure,
   and the boundary prompt gets the range converted to characters. The
   default `chars` keeps every chunk, text-unit id and content hash of earlier
-  releases; switching re-chunks and re-extracts the corpus (#PR).
+  releases; switching re-chunks and re-extracts the corpus (#460).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
@@ -940,7 +940,7 @@ changed once with the full-config keys (#332).
   440 fewer modules). `ParserFactory.register_loader` takes any
   `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
   given as a path. langchain-community stays a dependency only to hold the
-  copy ragas imports below 0.4 (#PR).
+  copy ragas imports below 0.4 (#460).
 - Package layout: the layers import only inward, now including lazy and
   `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
   rules of the design doc §2.1 on every import (no exceptions; 23 imports
