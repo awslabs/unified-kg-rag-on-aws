@@ -988,7 +988,7 @@ changed once with the full-config keys (#332).
   kernel and the ingestion adapters off the backends, and refuses an
   `import_module`/`__import__` of a package module outside the facade and
   the console-script launcher; a clean-interpreter test pins that
-  evaluation and the RAG chain load no store backend (#PR).
+  evaluation and the RAG chain load no store backend (#464).
 - Graph expansion under a document filter and a caller `id` list stops
   walking the relationships index once it has reached every listed id: the
   results keep only those ids and a reached entity's path does not change,
@@ -1674,12 +1674,12 @@ changed once with the full-config keys (#332).
   date was not its month's last day. A claim stored under the written form
   is merged into the claim the date gives now, as for the other earlier
   readings (#454). The claim-date property tests run 500 examples and pin
-  the forms a random run found (#PR).
+  the forms a random run found (#464).
 - Incremental indexing: looking a derived claim up under the ids earlier
   readings of its dates gave it (#454) took about half of a claim
   derivation even when every date was ISO 8601, which reads the same in
   every build (2,000 units of 10 statements: 3.3 s to 1.5 s). A claim none
-  of whose statements has such a date is no longer looked up (#PR).
+  of whose statements has such a date is no longer looked up (#464).
 - Incremental indexing: a claim stored under an earlier reading of its
   dates (a period coarser than a day as written before #451, a written-out
   date before #449, a coarse end date as its first day, see above) kept
