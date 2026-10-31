@@ -1534,11 +1534,18 @@ changed once with the full-config keys (#332).
   ids those readings gave the dates its statements are written with, and
   merges it into the claim they give now (its text units joined, the old
   id deleted), as a full build has it (#PR).
+- Ingestion: a stop that surfaced wrapped in another error (#451) uploaded
+  its checkpoint after the run gave its namespace lease up, so a run taking
+  the lease in between could resume without it. It is now uploaded while
+  the lease is held (#PR).
 - LLM response cache: dropping a response rebuilt the list of pending
   responses, so a run with a large flush interval spent quadratic time in
   it (50,000 pending responses: 7.1 s of 8.2 s); the pending responses are
   kept by key, the last one for a key written, as a later segment's
   replaces an earlier one when loaded (#PR).
+- Incremental indexing: the warning on documents recorded FAILED for part
+  of their processing named translation or extraction also when a report
+  or a record save failed; it says "Processing failed" (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket

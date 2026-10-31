@@ -377,17 +377,65 @@ def test_a_stop_while_a_failed_stage_is_saved_waits_for_it(tmp_path, mocker) -> 
     ]
 
 
+def test_a_stop_while_a_crashed_stage_s_units_are_saved_waits_for_it(
+    tmp_path, mocker
+) -> None:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineStageType
+
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe.name_to_type_map = {"graph_extraction": PipelineStageType.GRAPH_EXTRACTION}
+    saved: list[str] = []
+
+    def save(context):  # type: ignore[no-untyped-def]
+        pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+        saved.append(context.pipeline_id)
+
+    pipe.state_manager.save_pipeline_metadata.side_effect = save
+    stage = mocker.MagicMock()
+    stage.name = "graph_extraction"
+    assert PipelineStageType.GRAPH_EXTRACTION in DataIngestionPipeline.ARTIFACT_STAGES
+    with pytest.raises(PipelineInterrupted):
+        pipe._mark_units_failed(stage, _stage_context(tmp_path))
+    assert saved == ["pid"]
+    assert pipe._checkpointing is False
+
+
+def test_a_stop_while_a_refused_stage_is_saved_waits_for_it(tmp_path, mocker) -> None:
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe._executed_stages = frozenset()
+    mocker.patch.object(pipe, "_failed_corpus_stage", return_value="translation")
+    saved: list[str] = []
+
+    def save(context, result):  # type: ignore[no-untyped-def]
+        pipe.request_stop(signal.SIGTERM)  # deferred: no raise here
+        saved.append(result.status.value)
+
+    pipe.state_manager.update_stage_result.side_effect = save
+    stage = mocker.MagicMock()
+    stage.name = "indexing"
+    with pytest.raises(PipelineInterrupted):
+        pipe._execute_stage(stage, _stage_context(tmp_path))
+    assert saved == [PipelineStageStatus.FAILED.value]
+    stage.execute.assert_not_called()
+
+
 def test_checkpoint_writes_nest(tmp_path, mocker) -> None:
-    # An inner write must not end the outer one's deferral.
+    # An inner write must not end the outer one's deferral, nor raise a stop
+    # requested inside it before the outer write is done.
     pipe = _pipeline_with_failing_sync(tmp_path, mocker)
     written: list[str] = []
     with pytest.raises(PipelineInterrupted):
         with pipe._checkpoint_write():
             with pipe._checkpoint_write():
+                pipe.request_stop(signal.SIGTERM)  # deferred
                 written.append("inner")
-            pipe.request_stop(signal.SIGTERM)  # still deferred
             written.append("outer")
-    assert written == ["inner", "outer"]
+            pipe.request_stop(signal.SIGTERM)  # still deferred
+            written.append("outer, after")
+    assert written == ["inner", "outer", "outer, after"]
     assert pipe._checkpointing is False
 
 
@@ -417,6 +465,52 @@ def test_a_stop_wrapped_by_a_failed_save_still_stops_the_run(tmp_path, mocker) -
     assert exc.value.signum == signal.SIGTERM
     assert isinstance(exc.value.__cause__, PipelineStateError)
     pipe.s3_cache_manager.sync_pipeline_to_s3.assert_called_once_with("pid", tmp_path)
+
+
+def test_a_wrapped_stop_uploads_its_checkpoint_before_the_lease_is_released(
+    tmp_path, mocker
+) -> None:
+    # The backstop ran in _run, after the lease was given up: another run
+    # could take the namespace and download the checkpoint before this one
+    # uploaded it.
+    from contextlib import contextmanager
+
+    from unified_kg_rag.shared.exceptions import PipelineStateError
+
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe.state_manager.pipeline_exists.return_value = False
+    pipe._prepare_new_run = mocker.MagicMock(return_value=(mocker.MagicMock(), None))
+    pipe.s3_cache_manager.sync_pipeline_from_s3.side_effect = None
+    mocker.patch.object(pipe, "_set_corpus_fingerprint")
+    mocker.patch.object(pipe, "_validate_retired_scopes")
+    mocker.patch.object(pipe, "_use_source_directory")
+    pipe.pipeline_config.force_rebuild = False
+    events: list[str] = []
+
+    @contextmanager
+    def lease():  # type: ignore[no-untyped-def]
+        events.append("lease taken")
+        try:
+            yield None
+        finally:
+            events.append("lease released")
+
+    mocker.patch.object(pipe, "_namespace_lease", side_effect=lease)
+    pipe.s3_cache_manager.sync_pipeline_to_s3.side_effect = lambda *args: events.append(
+        "checkpoint uploaded"
+    )
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        pipe._stop_signal = signal.SIGTERM  # the handler ran, its raise wrapped
+        raise PipelineStateError("Critical error saving pipeline metadata")
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    with pytest.raises(PipelineInterrupted) as exc:
+        pipe.run(tmp_path, pipeline_id="pid")
+    assert isinstance(exc.value.__cause__, PipelineStateError)
+    assert events == ["lease taken", "checkpoint uploaded", "lease released"]
+    assert pipe._checkpointing is False
 
 
 def test_a_stop_request_does_no_io(tmp_path, mocker) -> None:
