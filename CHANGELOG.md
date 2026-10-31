@@ -706,7 +706,7 @@ changed once with the full-config keys (#332).
   naming the version, and an incremental run into indices built with
   another mode or level is refused with the reset instruction. The
   embedded engine of local mode ignores both with one warning and keeps
-  searching exactly (#PR).
+  searching exactly (#461).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
