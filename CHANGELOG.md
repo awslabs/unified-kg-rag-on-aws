@@ -912,10 +912,10 @@ changed once with the full-config keys (#332).
   resource runs after the domain, so an engine upgrade finishes before the
   new version's package is associated; a stack update that removes it
   dissociates the package, a stack deletion leaves it. Switching the
-  analyzer needs one `indexing.reset: true` run (#PR).
+  analyzer needs one `indexing.reset: true` run (#459).
 - Runbook: "Neptune I/O-Optimized storage" gives the CLI switch for a
   deployed cluster (CloudFormation has no StorageType property), AWS's
-  25%-of-spend rule of thumb and the once-per-30-days limit (#PR).
+  25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and
