@@ -649,3 +649,58 @@ def test_a_claim_is_derived_with_the_spellings_of_its_stated_names_this_run_deri
 
     assert len(given) == 1
     assert {e.id for e in given[0]} == {"e-acme", "x-globex"}
+
+
+def test_a_claim_stored_under_an_earlier_date_reading_found_in_a_later_round_joins(
+    manager,
+) -> None:
+    # u1 states the claim with an ISO start date: the first round finds no
+    # earlier reading. The stored claim it derives to cites u2 too, whose
+    # statement writes the date "Q3 2022"; only the second round reads it,
+    # and finds the id that reading gave the claim before #451 (the date as
+    # written). The claim stored under that id must join the derivation and
+    # be merged, not be left as a second copy.
+    from tests.unit.test_derivation import _entity, _pays, _record, _stored
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+    from unified_kg_rag.shared.utils import generate_stable_id
+
+    mgr, _, _ = manager
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    records = {
+        u: _record(u, _entity("Acme", u), _entity("Buyer", u)) for u in ("u1", "u2")
+    }
+    statements = {
+        u: [_pays("Acme", "Buyer", [u], f"s-{u}").model_copy(update={"start_date": d})]
+        for u, d in (("u1", "2022-07-01"), ("u2", "Q3 2022"))
+    }
+    given = _pays("Acme", "Buyer", ["u1"], "stale").model_copy(
+        update={"subject_id": acme.id, "object_id": buyer.id}
+    )
+    current = given.model_copy(update={"start_date": "2022-07-01"})
+    held = current.model_copy(
+        update={"id": resolved_claim_id(current), "text_unit_ids": ["u2"]}
+    )
+    legacy_id = generate_stable_id(f"claim:{acme.id}:{buyer.id}:pays:q3 2022:")
+    legacy = held.model_copy(update={"id": legacy_id, "start_date": "Q3 2022"})
+    reads: list[list[str]] = []
+
+    def unit_records(suffix, unit_ids, text_units):
+        return (
+            {u: records[u] for u in unit_ids},
+            {u: statements[u] for u in unit_ids},
+        )
+
+    def read_held(suffix, ids):
+        reads.append(sorted(ids))
+        return [], [], [c for c in (held, legacy) if c.id in ids]
+
+    mgr._unit_records = unit_records
+    mgr._read_held = read_held
+
+    derived = mgr.derive("default", [acme, buyer], [], [given])
+
+    assert [legacy_id in ids for ids in reads[:2]] == [False, True]
+    assert derived.id_remap[legacy_id] == held.id
+    assert derived.earlier_claim_ids[legacy_id] == held.id
+    (claim,) = [c for c in derived.claims if c.id == held.id]
+    assert sorted(claim.text_unit_ids or []) == ["u1", "u2"]

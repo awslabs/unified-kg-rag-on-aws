@@ -558,3 +558,58 @@ def test_cli_exits_128_plus_the_signal_on_a_stop(mocker) -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 143
+
+
+def test_a_second_stop_while_a_wrapped_stop_closes_attempts_waits_for_it(
+    tmp_path, mocker
+) -> None:
+    # A second SIGTERM landing while the wrapped stop closes the processing
+    # attempts is deferred (``_checkpointing``): it must not raise out of the
+    # close and skip the checkpoint upload under the lease.
+    from contextlib import contextmanager
+
+    from unified_kg_rag.shared.exceptions import PipelineStateError
+
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    pipe.state_manager.pipeline_exists.return_value = False
+    pipe._prepare_new_run = mocker.MagicMock(return_value=(mocker.MagicMock(), None))
+    pipe.s3_cache_manager.sync_pipeline_from_s3.side_effect = None
+    mocker.patch.object(pipe, "_set_corpus_fingerprint")
+    mocker.patch.object(pipe, "_validate_retired_scopes")
+    mocker.patch.object(pipe, "_use_source_directory")
+    pipe.pipeline_config.force_rebuild = False
+    events: list[str] = []
+
+    @contextmanager
+    def lease():  # type: ignore[no-untyped-def]
+        events.append("lease taken")
+        try:
+            yield None
+        finally:
+            events.append("lease released")
+
+    mocker.patch.object(pipe, "_namespace_lease", side_effect=lease)
+    pipe.s3_cache_manager.sync_pipeline_to_s3.side_effect = lambda *args: events.append(
+        "checkpoint uploaded"
+    )
+
+    def execute(context, start):  # type: ignore[no-untyped-def]
+        pipe._stop_signal = signal.SIGTERM  # the handler ran, its raise wrapped
+        raise PipelineStateError("Critical error saving pipeline metadata")
+
+    def close(context, lease_):  # type: ignore[no-untyped-def]
+        if pipe._stop_signal is not None:
+            pipe.request_stop(signal.SIGTERM)  # the second stop, mid-close
+        events.append("attempts closed")
+
+    mocker.patch.object(pipe, "_execute_pipeline", side_effect=execute)
+    mocker.patch.object(pipe, "_close_attempts", side_effect=close)
+    with pytest.raises(PipelineInterrupted):
+        pipe.run(tmp_path, pipeline_id="pid")
+    assert events == [
+        "lease taken",
+        "attempts closed",
+        "checkpoint uploaded",
+        "lease released",
+    ]

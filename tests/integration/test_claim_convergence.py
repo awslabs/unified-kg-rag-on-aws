@@ -239,9 +239,33 @@ def _as_written_coarse_dates(value: str | None, *, end: bool = False) -> str | N
         return text
 
 
+@pytest.mark.parametrize(
+    ("stated", "restated"),
+    [
+        pytest.param(
+            "Acme Inc supplies Buyer.",
+            ["Acme Inc supplies Buyer twice."],
+            id="same-words",
+        ),
+        pytest.param(
+            "Acme Inc supplies Buyer.", ["Acme supplies Buyer."], id="other-spelling"
+        ),
+        # "Acme Inc", now in more units, becomes the entity's name: the
+        # stored "Acme" entity is re-keyed, and its claims with it.
+        pytest.param(
+            "Acme supplies Buyer.",
+            ["Acme Inc supplies Buyer twice.", "Acme Inc supplies Buyer again."],
+            id="rekeyed",
+        ),
+    ],
+)
 @pytest.mark.parametrize("legacy", ["as written", "end as first day"])
 def test_a_claim_stored_under_an_earlier_date_reading_merges_with_its_restatement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy: str,
+    stated: str,
+    restated: list[str],
 ) -> None:
     # Regression: a claim id keys on its dates. A claim an earlier build
     # stored under another reading of its dates ("Q3 2022" as written, a
@@ -293,14 +317,70 @@ def test_a_claim_stored_under_an_earlier_date_reading_merges_with_its_restatemen
         )
 
     # Restated in the same words: no entity is re-keyed, so nothing else
-    # derives the stored claim again.
-    first = {"a.txt": FIRST["a.txt"]}
-    final = {**first, "d.txt": "Acme Inc supplies Buyer twice."}
+    # derives the stored claim again. Restated by another spelling, the
+    # entity keeps its id ("Acme Inc" and "Acme" in one unit each: the
+    # smaller name) or is re-keyed with its claims ("rekeyed").
+    first = {"a.txt": stated}
+    final = {**first, **{f"d{i}.txt": text for i, text in enumerate(restated)}}
     full = stored(tmp_path / "full", [final], upgrade_at=0)
+    units = 1 + len(restated)
     assert sorted(row[1:] for row in full) == [
-        ("2022-07-01", "2024-12-31", 2),
-        ("2023-01-30", "2024-12-31", 2),
-        ("2023-09-01", None, 2),
+        ("2022-07-01", "2024-12-31", units),
+        ("2023-01-30", "2024-12-31", units),
+        ("2023-09-01", None, units),
     ]
     # Indexed by the earlier build, then the restating document by this one.
     assert stored(tmp_path / "inc", [first, final], upgrade_at=1) == full
+
+
+def _end_dated(system: str, human: str) -> str:
+    """``_respond`` with the claim ending in 2024: "2024" in one document,
+    "2024-01-01" in the one saying "twice"."""
+    answer = _respond(system, human)
+    end = "2024-01-01" if "twice" in human else "2024"
+    return answer.replace(
+        "<claim_status>",
+        f"<start_date>2023-01-01</start_date><end_date>{end}</end_date>"
+        "<claim_status>",
+    )
+
+
+def test_an_earlier_reading_id_that_is_another_claims_id_keeps_them_apart(
+    tmp_path: Path,
+) -> None:
+    # "until 2024" read its end as 2024-01-01 before #454 (as a start date
+    # reads): that earlier-reading id is the current id of the claim ending
+    # on 2024-01-01, a distinct fact. The earlier reading must not take it.
+    def stored(tmp: Path, corpora: list[dict[str, str]]) -> list[tuple]:
+        config = _config(tmp / "stores", tmp / "viz")
+        config.processing.claim_extraction.enabled = True
+        providers = _providers(
+            config, FakeOllama(_end_dated, "x", DIM), FakeCrossEncoder("r")
+        )
+        source = tmp / "corpus"
+        for run, corpus in enumerate(corpora):
+            if source.exists():
+                shutil.rmtree(source)
+            source.mkdir(parents=True)
+            for name, text in corpus.items():
+                (source / name).write_text(text)
+            context = _ingest(config, providers, source, tmp / f"run-{run}")
+            assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+        hits = _stored(
+            config, providers, config.indexing.opensearch.claims_index_prefix
+        )
+        return sorted(
+            (
+                h["_id"],
+                h["_source"].get("end_date"),
+                len(h["_source"]["text_unit_ids"]),
+            )
+            for h in hits
+        )
+
+    b = {"b.txt": "Acme Inc supplies Buyer twice."}
+    final = {**b, "a.txt": "Acme Inc supplies Buyer."}
+    full = stored(tmp_path / "full", [final])
+    assert sorted(row[1:] for row in full) == [("2024-01-01", 1), ("2024-12-31", 1)]
+    assert stored(tmp_path / "inc", [b, final]) == full
+    assert stored(tmp_path / "inc2", [{"a.txt": final["a.txt"]}, final]) == full

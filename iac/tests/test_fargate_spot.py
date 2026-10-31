@@ -313,6 +313,9 @@ def test_spot_retry_loop_reruns_the_same_task_after_the_wait(
             0,
             "NotifyFailure",
         ),
+        # Another error whose cause names a Spot interruption (a timeout of
+        # the state, say) is not the task's failure: not run again.
+        ({"Error": "States.Timeout", "Cause": _SPOT_CAUSE}, 0, "NotifyFailure"),
         ({"Error": "States.TaskFailed"}, 0, "NotifyFailure"),
         (
             {"Error": "States.TaskFailed", "Cause": {"not": "a string"}},
@@ -357,6 +360,17 @@ def test_retry_count_and_wait_follow_the_context() -> None:
     assert _next_state(choice, _state(error, 4)) == "NotifyFailure"
 
 
+def test_zero_retries_and_no_wait_are_accepted() -> None:
+    # 0 retries: Spot capacity without the re-run (an interruption fails).
+    _, orchestration = _stacks(
+        {**_SPOT, "spot_interruption_retries": "0", "spot_retry_wait_seconds": "0"}
+    )
+    states = _definition(orchestration)["States"]
+    assert states["WaitBeforeSpotRetry"]["Seconds"] == 0
+    error = {"Error": "States.TaskFailed", "Cause": _SPOT_CAUSE}
+    assert _next_state(states["SpotInterrupted"], _state(error, 0)) == "NotifyFailure"
+
+
 @pytest.mark.parametrize(
     "key", ["spot_interruption_retries", "spot_retry_wait_seconds"]
 )
@@ -367,7 +381,12 @@ def test_spot_settings_without_spot_fail(key: str) -> None:
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("spot_interruption_retries", "11"), ("spot_retry_wait_seconds", "-1")],
+    [
+        ("spot_interruption_retries", "11"),
+        ("spot_interruption_retries", "-1"),
+        ("spot_retry_wait_seconds", "-1"),
+        ("spot_retry_wait_seconds", "86401"),
+    ],
 )
 def test_spot_settings_out_of_range_fail(key: str, value: str) -> None:
     with pytest.raises(ValueError, match=key):
