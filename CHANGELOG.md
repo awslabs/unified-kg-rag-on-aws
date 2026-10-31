@@ -685,6 +685,20 @@ changed once with the full-config keys (#332).
   again (#442).
 
 ### Added
+- `search.lightrag_search.structured_keyword_output` (pilot, off by
+  default): LightRAG keyword extraction asks for a JSON-schema constrained
+  answer (`with_structured_output(method="json_schema")`) on Bedrock
+  Converse, Ollama and OpenAI-compatible servers, and falls back to the text
+  parser for an unsupported model or a failed call. On Bedrock it is left
+  out for requests that carry the reasoning effort (`output_config`, Claude
+  4.6+) until the combination is verified (#458).
+- `aws.bedrock.query_prompt_cache_ttl: 1h` keeps the system-prompt cache
+  checkpoint of query chains (answers, query rewriting, keyword extraction)
+  for an hour instead of 5 minutes, for low query rates where most queries
+  would rewrite the cache. Off by default: a 1-hour cache write costs 2x the
+  input-token price (5 minutes: 1.25x). It applies to Claude 4.5+ on the
+  Converse API (new capability field `supports_1h_cache_ttl`); ingestion and
+  evaluation keep 5 minutes (#458).
 - Incremental indexing: a document failing consecutive runs for an error
   that is not its own (an outage, credentials, a rejected setting, a failed
   write; never counted toward `indexing.max_document_failures`) is no
@@ -1480,6 +1494,14 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- Bedrock embeddings now resolve cross-region inference profiles like the
+  chat models: `cohere.embed-v4:0`, which has on-demand throughput only in
+  `us-east-1`, `eu-west-1` and `ap-northeast-1`, was invoked by its bare id
+  and failed on the first embed call in `us-west-2` (and every other
+  region). It now runs through the `global.`/geography profile, a profile id
+  or inference-profile ARN passes through as given, and with no profile in
+  such a region the embedding factory fails at model creation with the
+  remedy (#458).
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
   `batch`) still running on another thread waited forever, because the
   close stopped the chain's loop with the call's task still pending on it.

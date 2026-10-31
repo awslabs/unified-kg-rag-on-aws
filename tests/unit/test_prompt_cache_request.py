@@ -115,3 +115,79 @@ def test_gpt_request_has_no_cache_marker(mocker: Any) -> None:
     )
     _, system = _messages_to_bedrock(messages)
     assert system == [{"text": system[0]["text"]}]
+
+
+# --- query_prompt_cache_ttl --------------------------------------------------
+
+
+def _query_system(
+    mocker: Any,
+    model_id: str,
+    resolved_id: str,
+    *,
+    ttl: str,
+    purpose: ModelPurpose = ModelPurpose.QUERY,
+) -> Any:
+    mocker.patch.object(
+        BedrockCrossRegionModelHelper,
+        "get_cross_region_model_id",
+        return_value=resolved_id,
+    )
+    config = Config()
+    config.aws.bedrock.query_prompt_cache_ttl = ttl  # type: ignore[assignment]
+    factory = BedrockLanguageModelFactory(
+        config, boto_session=FakeBotoSession()  # type: ignore[arg-type]
+    )
+    chain = setup_chain(
+        factory,
+        model_id,
+        GraphRefinementPrompt,
+        StrOutputParser(),
+        model_purpose=purpose,
+    )
+    # A QUERY chain is wrapped in the transient retry; unwrap it.
+    inner = getattr(chain, "bound", chain)
+    prompt, llm = inner.first, inner.middle[0]
+    messages = prompt.format_messages(**dict.fromkeys(prompt.input_variables, "x"))
+    if type(llm).__name__ == "ChatBedrockConverse":
+        return _messages_to_bedrock(messages)[1]
+    return _format_anthropic_messages(messages)[0]
+
+
+def test_query_chain_gets_a_one_hour_cache_point_when_enabled(mocker: Any) -> None:
+    model = LanguageModelId.CLAUDE_V5_5_SONNET
+    system = _query_system(mocker, model, f"global.{model.value}", ttl="1h")
+    assert system[-1] == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_query_chain_keeps_the_default_ttl_by_default(mocker: Any) -> None:
+    model = LanguageModelId.CLAUDE_V5_5_SONNET
+    system = _query_system(mocker, model, f"global.{model.value}", ttl="5m")
+    assert system[-1] == _CACHE_POINT
+
+
+def test_ingestion_chain_never_gets_the_one_hour_ttl(mocker: Any) -> None:
+    model = LanguageModelId.CLAUDE_V5_5_SONNET
+    system = _query_system(
+        mocker,
+        model,
+        f"global.{model.value}",
+        ttl="1h",
+        purpose=ModelPurpose.INGESTION,
+    )
+    assert system[-1] == _CACHE_POINT
+
+
+def test_model_without_one_hour_ttl_keeps_the_default(mocker: Any) -> None:
+    # Claude 3.7 Sonnet lists only the 5-minute TTL.
+    model = LanguageModelId.CLAUDE_V3_7_SONNET
+    system = _query_system(mocker, model, f"us.{model.value}", ttl="1h")
+    assert system[-1] == _CACHE_POINT
+
+
+def test_invoke_model_path_sends_no_ttl(mocker: Any) -> None:
+    # langchain-aws rewrites an InvokeModel cache_control to ephemeral, so
+    # the TTL is not offered there; the request stays the 5-minute one.
+    model = LanguageModelId.CLAUDE_V3_7_SONNET
+    system = _query_system(mocker, model, model.value, ttl="1h")
+    assert system[0]["cache_control"] == {"type": "ephemeral"}

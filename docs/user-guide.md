@@ -777,6 +777,18 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 query that yields no keywords is used as a low-level keyword itself (up to
 `search.lightrag_search.raw_query_fallback_max_len`).
 
+`search.lightrag_search.structured_keyword_output: true` (a pilot, off by
+default) asks the keyword model for a JSON-schema constrained answer instead of
+parsing JSON out of free text: Converse `outputConfig.textFormat` on Bedrock,
+`format` on Ollama, `response_format` on an OpenAI-compatible server. On
+Bedrock it applies to Claude 4.5 and later only when the request carries no
+reasoning effort: Claude 4.6+ send `output_config.effort`, and whether Bedrock
+accepts it together with the output format is not yet verified, so those
+models (the shipped defaults included) keep the text parser. Any other model,
+and any structured call that fails, falls back to the text parser for that
+query. The first Bedrock request with the schema compiles it (up to about
+90 s; cached for 24 hours).
+
 ### Examples
 
 ```bash

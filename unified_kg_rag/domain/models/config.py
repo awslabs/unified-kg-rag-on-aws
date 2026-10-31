@@ -708,6 +708,21 @@ class BedrockConfig(BaseModel):
             "(EmbeddingModelId, RerankModelId)."
         ),
     )
+    query_prompt_cache_ttl: Literal["5m", "1h"] = Field(
+        default="5m",
+        description=(
+            "Lifetime of the system-prompt cache checkpoint on query chains "
+            "(answers, query rewriting, keyword extraction); ingestion and "
+            "evaluation keep 5m. '1h' keeps a query prompt cached across gaps "
+            "of more than 5 minutes between queries, at a cost: a 1-hour cache "
+            "write is billed at 2x the input-token price (5m: 1.25x), while a "
+            "read costs the same. It pays off only at low query rates, when "
+            "most queries would otherwise rewrite the cache. Applies to models "
+            "whose capability record has supports_1h_cache_ttl (Claude 4.5+) "
+            "on the Converse API (every inference profile); other models and "
+            "InvokeModel requests keep the 5-minute checkpoint."
+        ),
+    )
     enable_1m_context: bool = Field(
         default=False,
         description=(
@@ -2118,11 +2133,12 @@ class OpenSearchIndexingConfig(BaseModel):
             # supported OpenSearch versions. faiss HNSW does NOT: it accepts only
             # l2/innerproduct until OpenSearch 2.19 (cosine support) / 2.18
             # (auto-normalization), so faiss + cosinesimil is rejected at index
-            # creation with a mapper_parsing_exception on 2.13. lucene HNSW caps
-            # at 1024 dimensions, which covers the default Titan Embed V2 (1024);
-            # for >1024-dim models set engine: faiss with space_type:
-            # innerproduct (normalized embeddings) instead. Kept in sync with the
-            # index mapping default in OpenSearchIndexer.
+            # creation with a mapper_parsing_exception on 2.13. lucene takes
+            # up to 16,000 dimensions from OpenSearch 2.12 (1,024 before), the
+            # same cap as faiss and nmslib, so the 2.13 default needs no engine
+            # switch for wide models (tests/integration/test_local_stores.py
+            # creates a 3,072-dim index). Kept in sync with the index mapping
+            # default in OpenSearchIndexer.
             "engine": "lucene",
             "space_type": "cosinesimil",
             "ef_construction": 128,
@@ -2820,6 +2836,20 @@ class TokenManagerConfig(BaseModel):
 
 
 class LightRAGSearchConfig(BaseModel):
+    structured_keyword_output: bool = Field(
+        default=False,
+        description=(
+            "Pilot: ask the keyword-extraction model for a JSON-schema "
+            "constrained response (with_structured_output, method "
+            "json_schema) instead of parsing JSON out of free text. Used on "
+            "Bedrock Converse for Claude 4.5+ requests that carry no "
+            "reasoning effort (output_config), and on Ollama and "
+            "OpenAI-compatible servers; elsewhere, and whenever the "
+            "structured call fails, the text parser runs as before. The "
+            "first Bedrock request with the schema compiles it (up to about "
+            "90 s, then cached for 24 h)."
+        ),
+    )
     raw_query_fallback_max_len: int = Field(
         default=50,
         ge=0,

@@ -86,14 +86,46 @@ def _prompt_cache_marker(
     return "cache_control"
 
 
+# The TTL a cache checkpoint gets when none is asked for: Bedrock's default,
+# sent as no ``ttl`` key at all.
+_DEFAULT_CACHE_TTL = "5m"
+
+
+def _prompt_cache_ttl(
+    factory: Any,
+    model_info: Any,
+    cache_marker: PromptCacheMarker | None,
+    model_purpose: ModelPurpose,
+) -> str | None:
+    """The extended TTL for this chain's checkpoint, or None for the default.
+
+    Only query chains opt in (``query_prompt_cache_ttl`` on the factory):
+    ingestion reuses each prompt within seconds, so the 2x write price of a
+    1-hour entry would buy nothing. The TTL rides on the Converse
+    ``cachePoint`` only: langchain-aws rewrites an InvokeModel
+    ``cache_control`` to ``{"type": "ephemeral"}``, dropping any ``ttl``.
+    """
+    if model_purpose is not ModelPurpose.QUERY or cache_marker != "cache_point":
+        return None
+    ttl = getattr(factory, "query_prompt_cache_ttl", None)
+    if not ttl or ttl == _DEFAULT_CACHE_TTL:
+        return None
+    if not getattr(model_info, "supports_1h_cache_ttl", False):
+        return None
+    return str(ttl)
+
+
 def _build_chat_prompt(
-    resolved: ResolvedPrompt, cache_marker: PromptCacheMarker | None
+    resolved: ResolvedPrompt,
+    cache_marker: PromptCacheMarker | None,
+    cache_ttl: str | None = None,
 ) -> ChatPromptTemplate:
     """Assemble a LangChain ChatPromptTemplate from a backend-agnostic prompt.
 
     Lives in the adapter layer: turning the domain's ResolvedPrompt into
     LangChain message templates is a backend concern. ``cache_marker`` marks
-    the end of the system prompt as a prompt-cache checkpoint.
+    the end of the system prompt as a prompt-cache checkpoint, with
+    ``cache_ttl`` as its lifetime when set (else the 5-minute default).
     """
     system_template: str | list[str | dict[str, Any]]
     # Templated content blocks (not a literal SystemMessage) so system-side
@@ -109,9 +141,12 @@ def _build_chat_prompt(
             }
         ]
     elif cache_marker == "cache_point":
+        cache_point = {**_CACHE_POINT_BLOCK["cachePoint"]}
+        if cache_ttl is not None:
+            cache_point["ttl"] = cache_ttl
         system_template = [
             {"type": "text", "text": resolved.system_prompt_template},
-            dict(_CACHE_POINT_BLOCK),
+            {"cachePoint": cache_point},
         ]
     else:
         system_template = resolved.system_prompt_template
@@ -490,8 +525,11 @@ def setup_chain(
         )
         model_info = factory.get_model_info(model_id)
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
+        cache_marker = _prompt_cache_marker(llm, model_info, resolved)
         prompt = _build_chat_prompt(
-            resolved, _prompt_cache_marker(llm, model_info, resolved)
+            resolved,
+            cache_marker,
+            _prompt_cache_ttl(factory, model_info, cache_marker, model_purpose),
         )
         _serialize_once(prompt, llm)
         guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
@@ -515,3 +553,94 @@ def setup_chain(
         raise GraphRAGException(
             f"Failed to setup LLM chain with model '{model_id}': {e}"
         ) from e
+
+
+# Chat-model classes whose ``with_structured_output(method="json_schema")``
+# sends a native JSON-schema response format (constrained decoding):
+# Converse ``outputConfig.textFormat``, Ollama ``format``, OpenAI
+# ``response_format``. Matched by class name so the optional local
+# integrations are never imported here.
+_JSON_SCHEMA_CHAT_CLASSES = frozenset(
+    {"ChatBedrockConverse", "ChatOllama", "ChatOpenAI"}
+)
+
+
+def structured_output_unsupported_reason(llm: Any, model_info: Any) -> str | None:
+    """Why ``llm`` cannot take a native JSON-schema output format, or None.
+
+    - ``ChatBedrock`` (InvokeModel) offers only tool-based structured output,
+      which needs a forced tool choice that Claude 5.x rejects.
+    - On Converse, Bedrock documents the format for Claude 4.5 and later; an
+      Anthropic request that already carries ``output_config`` (the adaptive
+      effort, ``additional_model_request_fields``) is left out: the
+      Anthropic-native form of the format is ``output_config.format``, the
+      object the effort rides in, and whether Bedrock merges the two is
+      unverified.
+    """
+    names = {cls.__name__ for cls in type(llm).__mro__}
+    if not names & _JSON_SCHEMA_CHAT_CLASSES:
+        return f"{type(llm).__name__} has no JSON-schema output format"
+    if "ChatBedrockConverse" not in names:
+        return None
+    if not getattr(model_info, "supports_structured_output", False):
+        return "the model has no Bedrock structured-output support"
+    fields = getattr(llm, "additional_model_request_fields", None) or {}
+    if "output_config" in fields:
+        return (
+            "the request already carries output_config (reasoning effort); "
+            "combining it with outputConfig.textFormat is unverified"
+        )
+    return None
+
+
+def setup_structured_chain(
+    factory: LLMFactoryPort,
+    model_id: str,
+    prompt_class: type[BasePrompt],
+    schema: dict[str, Any],
+    custom_prompts: CustomPromptConfig | None = None,
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
+) -> Runnable | None:
+    """``prompt | llm.with_structured_output(schema, method="json_schema")``.
+
+    Returns None when the model cannot take the format
+    (:func:`structured_output_unsupported_reason`), so the caller keeps its
+    text-parsing chain. The chain yields the parsed object (a dict). Query
+    chains get the same transient-error retry as :func:`setup_chain`.
+    """
+    llm = factory.get_model(
+        model_id=model_id,
+        model_purpose=model_purpose,
+        min_output_tokens=prompt_class.min_output_tokens,
+    )
+    model_info = factory.get_model_info(model_id)
+    reason = structured_output_unsupported_reason(llm, model_info)
+    if reason is not None:
+        logger.info(
+            "Structured output off for %s on '%s': %s",
+            prompt_class.__name__,
+            model_id,
+            reason,
+        )
+        return None
+    resolved = prompt_class.resolve(custom_prompts=custom_prompts)
+    cache_marker = _prompt_cache_marker(llm, model_info, resolved)
+    prompt = _build_chat_prompt(
+        resolved,
+        cache_marker,
+        _prompt_cache_ttl(factory, model_info, cache_marker, model_purpose),
+    )
+    structured = llm.with_structured_output(schema, method="json_schema")
+    _serialize_once(prompt, llm)
+    chain: Runnable = (prompt | structured).with_config(
+        run_name=f"{prompt_class.__name__}Structured"
+    )
+    is_transient = getattr(factory, "is_transient_error", None)
+    if model_purpose is not ModelPurpose.QUERY or is_transient is None:
+        return chain
+    return with_transient_retry(
+        chain,
+        operation=prompt_class.__name__,
+        retry=getattr(factory, "transient_retry", None),
+        is_transient=is_transient,
+    )

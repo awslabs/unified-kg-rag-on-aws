@@ -74,6 +74,17 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     # NOTE: add new models here
 }
 
+# Regions where an embedding model has on-demand (In-Region) throughput, for
+# models that are elsewhere offered only through a cross-region inference
+# profile. A model absent from this map is taken as on-demand wherever it is
+# offered. Source: the model card's "Regional availability" table
+# (model-card-cohere-embed-v4.html): Embed v4 has In-Region throughput only in
+# these regions; us-west-2 and the other US/EU regions have Geo + Global
+# profiles, the remaining APAC regions, ca-central-1 and sa-east-1 Global only.
+_EMBEDDING_ON_DEMAND_REGIONS: dict[EmbeddingModelId, frozenset[str]] = {
+    EmbeddingModelId.EMBED_V4: frozenset({"us-east-1", "eu-west-1", "ap-northeast-1"}),
+}
+
 # Capability sources: the Amazon Bedrock model cards
 # (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html),
 # the adaptive-thinking guide (claude-messages-adaptive-thinking.html) and, for
@@ -435,6 +446,32 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     # NOTE: add new models here
 }
 
+# Claude 4.5 and later. Their prompt-cache checkpoints accept a 1-hour TTL
+# ("Supported TTL: 5 minutes, 1 hour" in the prompt-caching guide's model
+# table; every older curated Claude row lists 5 minutes only), and they take a
+# JSON-schema output format (structured-output.html; Claude 4.5+ per the
+# langchain-aws ``output_config`` field).
+_CLAUDE_4_5_AND_LATER: frozenset[str] = frozenset(
+    {
+        LanguageModelId.CLAUDE_V5_5_SONNET,
+        LanguageModelId.CLAUDE_V5_5_OPUS,
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V5_SONNET,
+        LanguageModelId.CLAUDE_V5_OPUS,
+        LanguageModelId.CLAUDE_V4_8_OPUS,
+        LanguageModelId.CLAUDE_V4_7_OPUS,
+        LanguageModelId.CLAUDE_V4_6_OPUS,
+        LanguageModelId.CLAUDE_V4_6_SONNET,
+        LanguageModelId.CLAUDE_V4_5_OPUS,
+        LanguageModelId.CLAUDE_V4_5_SONNET,
+        LanguageModelId.CLAUDE_V4_5_HAIKU,
+    }
+)
+for _model_id in _CLAUDE_4_5_AND_LATER:
+    _LANGUAGE_MODEL_INFO[_model_id] = _LANGUAGE_MODEL_INFO[_model_id].model_copy(
+        update={"supports_1h_cache_ttl": True, "supports_structured_output": True}
+    )
+
 _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
     RerankModelId.AMAZON_RERANK_V1: RerankModelInfo(
         max_documents=1000, max_query_tokens=2048, max_document_tokens=4096
@@ -478,6 +515,8 @@ _CLAUDE_ADAPTIVE_ONLY_DEFAULT = LanguageModelInfo(
     context_window_size=200000,
     max_output_tokens=64000,
     supports_prompt_caching=True,
+    supports_1h_cache_ttl=True,
+    supports_structured_output=True,
     supports_thinking=True,
     adaptive_thinking_only=True,
     token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
@@ -489,6 +528,8 @@ _CLAUDE_ADAPTIVE_DEFAULT = LanguageModelInfo(
     context_window_size=200000,
     max_output_tokens=64000,
     supports_prompt_caching=True,
+    supports_1h_cache_ttl=True,
+    supports_structured_output=True,
     supports_thinking=True,
     supports_adaptive_thinking=True,
     supports_count_tokens=False,
@@ -531,6 +572,28 @@ def base_model_id(model_id: str) -> str:
         if model_id.startswith(prefix):
             return model_id[len(prefix) :]
     return model_id
+
+
+_PROFILE_ARN_MARKER = ":inference-profile/"
+
+
+def profile_target_model_id(model_id: str) -> str:
+    """The foundation-model id a model id, profile id or profile ARN invokes.
+
+    A system-defined inference-profile ARN
+    (``arn:aws:bedrock:<region>:<account>:inference-profile/us.cohere…``)
+    names its profile id after the marker; an application inference profile
+    ARN carries an opaque id and is returned unchanged.
+    """
+    if model_id.startswith("arn:") and _PROFILE_ARN_MARKER in model_id:
+        model_id = model_id.split(_PROFILE_ARN_MARKER, 1)[1]
+    return base_model_id(model_id)
+
+
+def requires_embedding_profile(model_id: EmbeddingModelId, region_name: str) -> bool:
+    """Whether ``model_id`` has no on-demand throughput in ``region_name``."""
+    regions = _EMBEDDING_ON_DEMAND_REGIONS.get(model_id)
+    return regions is not None and region_name not in regions
 
 
 def _family_default(model_id: str) -> LanguageModelInfo:
