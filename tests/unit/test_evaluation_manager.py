@@ -18,6 +18,7 @@ from datetime import datetime
 
 import pytest
 
+from tests.fixtures.extras import requires_eval
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
@@ -258,6 +259,7 @@ class TestInitialization:
         with pytest.raises(EvaluationException):
             EvaluationManager(config, rag_chain=None)
 
+    @requires_eval
     def test_resolver_covers_all_types(self) -> None:
         # The lazy resolver returns a class for every evaluator type (langchain/
         # ragas are imported on demand to avoid a circular import at module load).
@@ -959,6 +961,7 @@ class TestComparability:
         manager.config.models.roles.evaluation = "judge.other-model-v1"
         assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is False
 
+    @requires_eval
     def test_run_manifest(self, config: Config, tmp_path) -> None:
         import hashlib
 

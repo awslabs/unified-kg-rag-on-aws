@@ -12,8 +12,11 @@ parsing are exercised with a fake token counter and a stubbed ragas
 
 from __future__ import annotations
 
-import pandas as pd
 import pytest
+
+pytest.importorskip("ragas", reason="needs the eval extra")
+
+import pandas as pd
 
 import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
 from tests.fixtures.fakes.chat_models import fake_model_info

@@ -9,6 +9,7 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
+from tests.fixtures.extras import requires_viz
 from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     InteractiveRendererAdapter,
@@ -87,6 +88,7 @@ class TestRenderContext:
         assert ctx.centrality == {"a": 1}
 
 
+@requires_viz
 class TestRendererAdaptersDriveRenderContext:
     def _ctx(self) -> RenderContext:
         g = nx.Graph()

@@ -16,6 +16,8 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
+pytest.importorskip("pyvis", reason="needs the viz extra")
+
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.models import HierarchicalCommunity
 

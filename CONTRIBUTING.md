@@ -101,7 +101,8 @@ workers.
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
 3.11 (and, as a non-blocking early warning, on 3.13 with the `requires-python` cap lifted), checks the optional
-parsers, runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
+parsers, checks a core install without the `eval` and `viz` extras (tests that need an extra skip there; mark a
+new one with `tests/fixtures/extras.py`), runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
 `cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the

@@ -22,6 +22,7 @@ import boto3
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.extras import requires_eval
 from unified_kg_rag.adapters import provider_registry
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
@@ -343,6 +344,7 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     pipeline.close()
 
 
+@requires_eval
 def test_local_backend_reaches_evaluators_and_prompt_tuning(no_aws, tmp_path) -> None:
     from unified_kg_rag.application.prompts.tuner import PromptTuner
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain

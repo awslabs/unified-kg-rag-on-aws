@@ -15,7 +15,6 @@ AWS nor a running service.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -26,6 +25,7 @@ import httpx
 import pytest
 import yaml
 
+from tests.fixtures.extras import LANGCHAIN_JUDGE_INSTALLED, VIZ_INSTALLED
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_ingestion_stages as stages
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -380,13 +380,14 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
         assert encoder.calls >= 1
         assert set(server.embed_models) == {"synthetic-embed"}
 
-        # The evaluators, with a LangChain judge on the same fake model and
+        # The evaluators, with a LangChain judge on the same fake model where
+        # its package is installed (the eval extra, or the dev group), and
         # sources resolved to file names through the SQLite vector store.
         config.evaluation.enabled_evaluators = [
             EvaluatorType.RETRIEVAL,
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.GRAPH_AWARE,
-            EvaluatorType.LANGCHAIN,
+            *([EvaluatorType.LANGCHAIN] if LANGCHAIN_JUDGE_INSTALLED else []),
         ]
         config.evaluation.outputs_directory = str(tmp_path / "eval")
         manager = EvaluationManager(config, rag_chain=chain)
@@ -423,8 +424,9 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     assert stats["hit_at_k"]["mean"] == 1.0
     assert stats["exact_match"]["mean"] == 1.0
     assert stats["entity_coverage"]["mean"] == 1.0
-    assert stats["correctness"]["mean"] == 1.0
-    assert stats["partial_correctness"]["mean"] == 1.0
+    if LANGCHAIN_JUDGE_INSTALLED:
+        assert stats["correctness"]["mean"] == 1.0
+        assert stats["partial_correctness"]["mean"] == 1.0
     cited = {name for rank in results[0].retrieved_source_ids for name in rank}
     assert cited == {"logistics.txt", "freight.txt"}
 
@@ -432,7 +434,7 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     # an install without the viz extra it stops with exit 2 instead.
     data = viz / "visualization_data.json"
     assert data.is_file()
-    if importlib.util.find_spec("pyvis") and importlib.util.find_spec("bokeh"):
+    if VIZ_INSTALLED:
         assert _render(tmp_path, monkeypatch, data) == 0
         assert sorted(p.name for p in (tmp_path / "rendered").iterdir())
     else:

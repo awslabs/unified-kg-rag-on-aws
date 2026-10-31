@@ -11,6 +11,7 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
+from tests.fixtures.extras import requires_viz
 from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     RenderContext,
@@ -130,6 +131,7 @@ class TestRunVisualization:
         assert written == [out_dir / "fake.txt"]
         assert (out_dir / "fake.txt").read_text() == "ok"
 
+    @requires_viz
     def test_data_only_export_gets_a_layout_and_centrality(
         self, tmp_path: Path, config: Config
     ) -> None:
@@ -240,6 +242,7 @@ def _write_empty_export(tmp_path: Path) -> Path:
     return path
 
 
+@requires_viz
 class TestBuiltinAdaptersReportOnlyWrittenFiles:
     @staticmethod
     def _empty_context() -> RenderContext:

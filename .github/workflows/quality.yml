@@ -66,6 +66,12 @@ jobs:
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
         run: uv sync --locked --extra otel --extra eval --extra viz
 
+      - name: Check the eval and viz extras are importable
+        # The tests that need them skip themselves without them
+        # (tests/fixtures/extras.py), which would let this job pass without
+        # running them.
+        run: uv run --frozen python -c "import bokeh, datasets, langchain_openai, pandas, pyvis, ragas"
+
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
 
@@ -108,6 +114,39 @@ jobs:
             coverage.xml
             report.xml
           if-no-files-found: ignore
+
+  core-install:
+    # The default install has neither the eval nor the viz extra: check the
+    # public API, the CLIs and an embedded end-to-end run work without them,
+    # and that run-eval and run-visualization fail naming the extra instead.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync without extras
+        run: uv sync --locked
+
+      - name: Check the extras are absent
+        run: >-
+          uv run --frozen python -c "import importlib.util as u, sys;
+          present = [m for m in ('bokeh', 'datasets', 'pandas', 'pyvis', 'ragas')
+          if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
+
+      - name: Public API, extra errors and embedded end to end
+        run: >-
+          uv run --frozen pytest -q -n auto
+          tests/unit/test_public_api.py
+          tests/unit/test_evaluation_manager.py
+          tests/unit/test_visualization_cli.py
+          tests/unit/test_layering.py
+          tests/integration/test_embedded_e2e.py
 
   local-stores:
     # The container backend of the store conformance suites, the SQLite vs
@@ -305,3 +344,7 @@ jobs:
         # entrypoint and the installed console script, so a missing runtime
         # dependency or a broken entrypoint fails here, not at deploy time.
         run: docker run --rm unified-kg-rag:ci
+
+      - name: Check the image has the eval extra
+        # The CDK query task runs run-eval, whose default judges need it.
+        run: docker run --rm unified-kg-rag:ci python -c "import datasets, langchain_openai, pandas, ragas"

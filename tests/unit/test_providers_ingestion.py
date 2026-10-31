@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from tests.fixtures.extras import requires_eval
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.llm.response_cache import CachingLLMFactory
@@ -143,6 +144,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
     assert all(stage.providers is pipeline.providers for stage in pipeline.stages)
 
 
+@requires_eval
 def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
     no_bedrock, mocker
 ) -> None:
