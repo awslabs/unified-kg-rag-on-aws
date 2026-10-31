@@ -99,6 +99,20 @@ class _ItemSpec(NamedTuple):
     prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]]
 
 
+# How OpenSearch before 2.17 refuses the knn_vector storage keys.
+_UNKNOWN_STORAGE_KEY = re.compile(r"unknown parameter \[(mode|compression_level)\]")
+# The embedded engine was warned of ignoring them (once per process).
+_storage_ignored_warned = False
+
+
+def _vector_storage_of(field: dict[str, Any]) -> tuple[str, str]:
+    """The workload mode and compression level a knn_vector mapping
+    ``field`` stores its vectors with, OpenSearch's defaults filled in."""
+    mode = field.get("mode") or "in_memory"
+    level = field.get("compression_level") or ("32x" if mode == "on_disk" else "1x")
+    return str(mode), str(level)
+
+
 def _creation_refused(
     e: StoreRequestRejectedError, index: str | None = None
 ) -> StoreRequestRejectedError:
@@ -109,11 +123,18 @@ def _creation_refused(
             "The cluster has no room for another index's shards: delete "
             "indices it no longer needs or raise cluster.max_shards_per_node."
         )
+    elif _UNKNOWN_STORAGE_KEY.search(str(e)):
+        hint = (
+            "indexing.opensearch.vector_mode and compression_level need "
+            "OpenSearch 2.17 or later (the CDK domain runs 2.13): upgrade the "
+            "domain (docs/operations.md, Upgrading OpenSearch) or unset them."
+        )
     else:
         hint = (
             "Every indexing.opensearch.index_settings key is passed to index "
-            "creation, and the mapping follows vector_search and the language "
-            "analyzers: fix or remove the setting it names."
+            "creation, and the mapping follows vector_search, vector_mode, "
+            "compression_level and the language analyzers: fix or remove the "
+            "setting it names."
         )
     target = f" (a probe of '{index}')" if index else ""
     return StoreRequestRejectedError(
@@ -191,6 +212,23 @@ class OpenSearchIndexer(VectorIndexer):
         # separate runs (each Fargate task is a fresh process). Loaded
         # lazily on first embed; best-effort (an S3 error leaves it in memory).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
+
+    def _resolve_vector_storage(self) -> dict[str, str]:
+        """The ``mode`` / ``compression_level`` keys of the knn_vector
+        mappings: none on the embedded engine, which searches exactly."""
+        global _storage_ignored_warned
+        storage = self.opensearch_config.vector_storage()
+        if storage and self.in_process:
+            if not _storage_ignored_warned:
+                _storage_ignored_warned = True
+                logger.warning(
+                    "indexing.opensearch.vector_mode / compression_level (%s) "
+                    "are ignored by the embedded search engine, which keeps "
+                    "full-precision vectors and searches them exactly",
+                    ", ".join(storage.values()),
+                )
+            return {}
+        return storage
 
     def _analyzer_for(self, language: str) -> str:
         return self.opensearch_config.language_analyzers.get(
@@ -301,6 +339,9 @@ class OpenSearchIndexer(VectorIndexer):
         - the analyzers of its text fields, which follow the translation
           languages and ``language_analyzers`` and cannot change on a live
           index (a newly translated language would be mapped as a keyword);
+        - the workload mode and compression level of its vector fields
+          (``vector_mode`` / ``compression_level``), fixed when the index was
+          created;
         - the doc-status registry: an index built by a run with the registry
           off holds documents the registry does not describe;
         - its keyword fields: one a dynamic mapping made a date (date
@@ -346,6 +387,7 @@ class OpenSearchIndexer(VectorIndexer):
                     "corpus, or restore the previous embedding model and dimension."
                 )
             expected_properties = mapping_funcs[prefix]()["mappings"]["properties"]
+            self._check_vector_storage(index_name, expected_properties, properties)
             mismatches = self._text_field_mismatches(expected_properties, properties)
             if META_MODEL not in meta and META_DIMENSION not in meta:
                 raise ConfigurationError(
@@ -376,6 +418,33 @@ class OpenSearchIndexer(VectorIndexer):
                     "keep the registry off for this suffix."
                 )
             self._add_missing_fields(index_name, mappings, expected_properties)
+
+    @staticmethod
+    def _check_vector_storage(
+        index_name: str, expected: dict[str, Any], live: dict[str, Any]
+    ) -> None:
+        """Raise when a knn_vector field of ``live`` stores its vectors with
+        another workload mode or compression level than ``expected``'s.
+
+        Raises:
+            ConfigurationError: A field's mode or compression level differs.
+        """
+        for name, field in expected.items():
+            stored = live.get(name)
+            if field.get("type") != "knn_vector" or not isinstance(stored, dict):
+                continue
+            wanted, built = _vector_storage_of(field), _vector_storage_of(stored)
+            if wanted != built:
+                raise ConfigurationError(
+                    f"The OpenSearch index '{index_name}' stores the vectors of "
+                    f"'{name}' as {built[0]} with {built[1]} compression, but "
+                    "indexing.opensearch.vector_mode / compression_level ask for "
+                    f"{wanted[0]} with {wanted[1]}. An incremental run writes "
+                    "only new and changed documents into the live index, whose "
+                    "vector mapping cannot change. Re-run once with "
+                    "indexing.reset: true to rebuild the indices, or restore the "
+                    "previous vector_mode and compression_level."
+                )
 
     def _add_missing_fields(
         self,
@@ -1974,6 +2043,9 @@ class OpenSearchIndexer(VectorIndexer):
         return {
             "type": "knn_vector",
             "dimension": self._embedding_dimension,
+            # Absent by default (in_memory, unquantized): OpenSearch before
+            # 2.17 refuses the keys.
+            **self._resolve_vector_storage(),
             "method": {
                 "name": vs_config.get("name", "hnsw"),
                 "space_type": vs_config.get("space_type", "cosinesimil"),

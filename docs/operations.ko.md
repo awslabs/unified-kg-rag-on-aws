@@ -22,6 +22,7 @@
 | OpenSearch 엔진 버전 올리기 | [OpenSearch 업그레이드](#opensearch-업그레이드) |
 | 한국어를 `cjk` 대신 Nori로 분석하기 | [Nori로 한국어 분석하기](#nori로-한국어-분석하기) |
 | Neptune을 I/O 최적화 스토리지로 바꾸기 | [Neptune I/O 최적화 스토리지](#neptune-io-최적화-스토리지) |
+| 큰 코퍼스의 벡터 메모리 줄이기 | [디스크 기반 벡터 저장](#디스크-기반-벡터-저장) |
 | 서비스 계층에 질의 권한을 주거나 테넌트를 격리하기 | [질의 권한과 테넌트 격리](#질의-권한과-테넌트-격리) |
 | 추적 켜기(Jaeger, Langfuse, Phoenix, CloudWatch) | [관측성](#관측성) |
 | 오류 메시지 찾아보기 | [자주 보는 오류](#자주-보는-오류) |
@@ -268,6 +269,37 @@ aws neptune describe-db-clusters --db-cluster-identifier <cluster> \
 - **스택 밖의 설정.** 템플릿에 없는 설정이므로 CDK 스택 업데이트는 이를 그대로 두지만,
   스택이 교체한 클러스터나 복원으로 새로 만든 클러스터는 Standard로 시작합니다. 그때는
   명령을 다시 실행합니다.
+
+### 디스크 기반 벡터 저장
+
+기본값에서는 모든 벡터 필드가 전체 정밀도 벡터를 메모리에 둡니다(OpenSearch의 `in_memory` 모드이며
+키를 보내지 않으므로 모든 버전이 받음). OpenSearch 2.17 이상에서는 벡터를 양자화해 저장할 수 있습니다.
+
+```yaml
+indexing:
+  opensearch:
+    vector_mode: on_disk     # in_memory(기본값) | on_disk
+    compression_level: 4x    # 1x 2x 4x 8x 16x 32x, 비우면 모드의 기본값
+```
+
+- **효과가 있을 때.** 데이터 노드 메모리가 코퍼스 규모를 제한할 때, 즉 벡터가 수백만 개일 때만
+  씁니다(문서 하나가 벡터 필드를 최대 8개 채움). `on_disk`는 압축한 벡터를 메모리에 두고, 검색마다
+  후보를 디스크에서 읽은 전체 정밀도 벡터로 다시 채점(rescoring)합니다. 메모리는 줄지만 지연이 조금
+  늘고 재현율이 조금 떨어지며 디스크는 줄지 않습니다. faiss는 2x, 8x, 16x, 32x(`on_disk`의 기본값),
+  lucene은 4x를 받습니다. 256차원 합성 벡터 50,000개(OpenSearch 2.19.3,
+  `tests/integration/test_opensearch_vector_storage.py`)에서 recall@10은 faiss 8x 0.95, lucene 4x
+  0.93, faiss 32x 0.78(양자화하지 않으면 1.0)이었고, faiss 네이티브 메모리는 61MB에서 17MB(8x)나
+  12MB(32x)로 줄었습니다. 압축률을 고르기 전에 자기 코퍼스로 재현율을 측정합니다.
+- **버전.** 이 키에는 OpenSearch 2.17 이상이 필요하고, faiss에 기본 `cosinesimil` 공간을 쓰려면
+  2.19가 필요합니다. CDK 도메인은 업그레이드하기 전까지 2.13입니다
+  ([OpenSearch 업그레이드](#opensearch-업그레이드)). 이 도메인에서는 첫 모델 호출 전 프로브가 실행을
+  거부하고 2.17 요구 사항을 밝힙니다. 어떤 버전도 받지 않는 조합(lucene 2x, faiss 4x, 1x를 쓴
+  `on_disk`, 압축률 없는 lucene `on_disk`, 다른 엔진·방식·공간 유형)은 설정을 읽을 때 실패합니다.
+- **재색인.** 두 값은 인덱스를 만들 때 정해집니다. 다른 값으로 만든 인덱스에 증분 실행을 하면 모델
+  호출 전에 멈춥니다(`... stores the vectors of '...' as ...`). `indexing.reset: true`로 한 번
+  실행합니다.
+- **로컬 모드.** 내장 엔진은 두 값을 무시하고(프로세스마다 경고 한 번) 계속 전체 정밀도로 정확히
+  검색합니다.
 
 ## 실행이 실패할 때
 
@@ -824,7 +856,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤([Nori로 한국어 분석하기](#nori로-한국어-분석하기)) 다시 실행 |
-| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함(오류의 `(a probe of '<별칭>')`이 대신한 인덱스를 밝힘): `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
+| `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함(오류의 `(a probe of '<별칭>')`이 대신한 인덱스를 밝힘): `indexing.opensearch.index_settings` 키, `vector_search` 방식, `vector_mode`·`compression_level`(`unknown parameter [mode]`: 2.17 이전 OpenSearch)이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
 
 ### 수집 실행과 문서 상태 레지스트리
 
@@ -839,6 +871,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `NamespaceLeaseError: This run lost the write lease ...` | 갱신이 계속 실패해 임대가 만료됐거나 다른 실행이 가져감 | 다른 실행이 끝난 뒤 다시 실행하고 레지스트리 연결을 확인 |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | `doc_id`만으로 키를 잡은 테이블 | `aws.dynamodb.table_name`을 새 테이블(또는 스택의 새 테이블)로 바꾸고 `indexing.reset: true`로 한 번 실행([증분 실행](#증분-실행)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | 이전 릴리스가 만든 인덱스 | `indexing.reset: true`로 한 번 실행 |
+| `ConfigurationError: The OpenSearch index '...' stores the vectors of '...' as ...`(종료 코드 2, 모델 호출 전) | 운영 중인 인덱스를 만든 뒤 `indexing.opensearch.vector_mode`·`compression_level`이 바뀜 | `indexing.reset: true`로 한 번 실행하거나 이전 값으로 되돌림([디스크 기반 벡터 저장](#디스크-기반-벡터-저장)) |
 | `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...`(종료 코드 2, 모델 호출 전) | 증분 실행의 임베딩 모델이나 차원, 번역 언어, `language_analyzers`가 현재 인덱스를 만든 설정과 다름(바뀐 문서가 없거나 삭제만 있는 실행도 해당) | `indexing.reset: true`로 한 번 실행(코퍼스 전체를 한 번 다시 임베딩하거나 번역함)하거나 이전 설정으로 되돌림 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold`(또는 `whose text units the vector store does not hold`) | 레지스트리가 기록한 내용을 저장소가 잃음(재시작한 Gremlin Server, `down -v`, 복원한 그래프, 삭제된 인덱스, 옮긴 `vector.sqlite3`), 또는 #383 이전 빌드가 쓴 인덱스에서 제거가 끝나기 전에 삭제 문서를 되살림, 또는 #410 이전 빌드에서 문서를 빼는 reset이 인덱스를 교체한 뒤 중단됨 | `indexing.reset: true`로 다시 실행하거나 네임스페이스의 레코드를 삭제. 로컬에서는 저장소 파일 세 개를 함께 지우거나 옮긴 파일을 되돌림. 되살린 문서는 그 문서의 레지스트리 레코드 하나만 지우면 다음 실행이 다시 인덱싱함 |
 

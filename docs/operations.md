@@ -21,6 +21,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
 | Analyze Korean with Nori instead of `cjk` | [Korean with Nori](#korean-with-nori) |
 | Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
+| Cut the vector memory of a large corpus | [On-disk vector storage](#on-disk-vector-storage) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -283,6 +284,43 @@ The switch is done when the cluster is `available` again with storage type
 - **Outside the stack.** The setting is not in the template, so CDK keeps
   it on stack updates, but a cluster the stack replaces (or a restore,
   which creates a new cluster) starts on Standard: run the command again.
+
+### On-disk vector storage
+
+By default every vector field keeps full-precision vectors in memory
+(OpenSearch's `in_memory` mode; no key is sent, so every version takes it).
+OpenSearch 2.17+ can store them quantized instead:
+
+```yaml
+indexing:
+  opensearch:
+    vector_mode: on_disk     # in_memory (default) | on_disk
+    compression_level: 4x    # 1x 2x 4x 8x 16x 32x; unset = the mode's default
+```
+
+- **When it pays off.** Only when data-node memory limits the corpus, at
+  millions of vectors (each document fills up to 8 vector fields). `on_disk`
+  keeps compressed vectors in memory and rescores each search's candidates
+  with the full-precision ones read from disk: less memory, slightly more
+  latency and a little recall, and no disk saved. faiss takes 2x, 8x, 16x and
+  32x (`on_disk`'s default), lucene 4x. On a synthetic 50,000-vector set
+  (256 dimensions, OpenSearch 2.19.3,
+  `tests/integration/test_opensearch_vector_storage.py`) recall@10 was 0.95
+  for faiss 8x, 0.93 for lucene 4x and 0.78 for faiss 32x (1.0
+  unquantized), and faiss's native memory fell from 61 MB to 17 MB (8x) or
+  12 MB (32x). Measure recall on your own corpus before choosing a level.
+- **Version.** The keys need OpenSearch 2.17 or later, and faiss with the
+  default `cosinesimil` space 2.19. The CDK domain runs 2.13 until upgraded
+  ([Upgrading OpenSearch](#upgrading-opensearch)); there the probe before the
+  first model call refuses the run and names the 2.17 requirement.
+  Combinations no version takes (lucene 2x, faiss 4x, `on_disk` with 1x,
+  lucene `on_disk` without a level, another engine, method or space type)
+  fail at config load.
+- **Reindex.** Both are fixed when an index is created. An incremental run
+  into indices built otherwise stops before any model call (`... stores the
+  vectors of '...' as ...`); run once with `indexing.reset: true`.
+- **Local mode.** The embedded engine ignores both (one warning per process)
+  and keeps searching exactly at full precision.
 
 ## When a run fails
 
@@ -916,7 +954,7 @@ model or credential error fails a query rather than answering from no context.
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
 | `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package ([Korean with Nori](#korean-with-nori)); re-run |
-| `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one (the error names the index it stood in for, `(a probe of '<alias>')`): an `indexing.opensearch.index_settings` key, the `vector_search` method or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
+| `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one (the error names the index it stood in for, `(a probe of '<alias>')`): an `indexing.opensearch.index_settings` key, the `vector_search` method, `vector_mode` / `compression_level` (`unknown parameter [mode]`: OpenSearch before 2.17) or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
 
 ### Ingestion runs and the doc-status registry
 
@@ -931,6 +969,7 @@ model or credential error fails a query rather than answering from no context.
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
+| `ConfigurationError: The OpenSearch index '...' stores the vectors of '...' as ...` (exit 2, before any model call) | `indexing.opensearch.vector_mode` / `compression_level` changed since the live index was built | Run once with `indexing.reset: true`, or restore the previous values ([On-disk vector storage](#on-disk-vector-storage)) |
 | `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with (also a run with nothing to extract: no change, or only deletions) | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #410 that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
 

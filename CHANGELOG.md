@@ -696,6 +696,17 @@ changed once with the full-config keys (#332).
   and the boundary prompt gets the range converted to characters. The
   default `chars` keeps every chunk, text-unit id and content hash of earlier
   releases; switching re-chunks and re-extracts the corpus (#460).
+- `indexing.opensearch.vector_mode` (`in_memory` | `on_disk`) and
+  `compression_level` (`1x`-`32x`): opt-in quantized vector storage of
+  OpenSearch 2.17+ for corpora whose vector memory is the constraint
+  (millions of vectors). The indexer adds `mode` / `compression_level` to
+  every knn_vector mapping; the default sends neither (mappings
+  byte-identical). Combinations no version takes fail at config load, a
+  cluster before 2.17 (the CDK domain runs 2.13) fails the creation probe
+  naming the version, and an incremental run into indices built with
+  another mode or level is refused with the reset instruction. The
+  embedded engine of local mode ignores both with one warning and keeps
+  searching exactly (#461).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
