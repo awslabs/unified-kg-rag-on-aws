@@ -28,7 +28,6 @@ import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from gremlin_python.driver.client import Client
@@ -546,15 +545,18 @@ def test_default_lucene_mapping_takes_vectors_wider_than_1024(
     # 2.13 accepts up to 16,000 dimensions (2.12+; 1,024 before), so a
     # 3,072-dimension model needs no engine switch.
     dimension = 3072
-    mapping = OpenSearchIndexer._get_knn_vector_mapping(
-        SimpleNamespace(  # type: ignore[arg-type]
-            opensearch_config=local_config.indexing.opensearch,
-            _embedding_dimension=dimension,
-        )
-    )
+    client = OpenSearchClient(local_config)
+    # A real indexer builds the mapping, as a run does (the vector storage
+    # keys included, none by default).
+    mapping = OpenSearchIndexer(
+        local_config,
+        embedding_factory=HashingEmbeddingFactory(dimensions=dimension),
+        opensearch_client=client,
+    )._get_knn_vector_mapping()
+    assert mapping["dimension"] == dimension
     assert mapping["method"]["engine"] == "lucene"
     assert mapping["method"]["space_type"] == "cosinesimil"
-    client = OpenSearchClient(local_config)
+    assert "mode" not in mapping and "compression_level" not in mapping
     name = f"wide-{uuid.uuid4().hex[:8]}"
     vector = [1.0 / dimension] * dimension
     try:
