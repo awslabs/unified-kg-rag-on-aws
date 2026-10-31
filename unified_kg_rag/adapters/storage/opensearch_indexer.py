@@ -706,14 +706,15 @@ class OpenSearchIndexer(VectorIndexer):
             "status": (claim.status or "").lower(),
             # Stored as claim_date_value reads them, which the claim's
             # identity keys on: YYYY-MM-DD for a calendar date, so a range
-            # filter orders them; another value as written, matched exactly.
-            # An unknown date is left out, so it matches no filter. Read back
-            # by read_claims, shown with the claim (``Claim: ... (status,
+            # filter orders them (a coarse end date as its period's last
+            # day); another value as written, matched exactly. An unknown
+            # date is left out, so it matches no filter. Read back by
+            # read_claims, shown with the claim (``Claim: ... (status,
             # start–end)``).
             **{
                 name: date
-                for name in ("start_date", "end_date")
-                if (date := claim_date_value(getattr(claim, name))) is not None
+                for name, end in (("start_date", False), ("end_date", True))
+                if (date := claim_date_value(getattr(claim, name), end=end)) is not None
             },
             "description": claim.description or "",
             "description_embedding": embeddings[0],

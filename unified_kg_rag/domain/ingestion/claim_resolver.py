@@ -1,11 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import calendar
 import functools
 import re
 import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Mapping
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -39,11 +40,12 @@ _UNKNOWN_DATE_VALUES = frozenset(
         "present",
     }
 )
-# An ISO 8601 week ("2024-W03"): fromisoformat reads it as its Monday.
-_ISO_WEEK = re.compile(r"\d{4}-?W\d{2}(-?\d)?", re.IGNORECASE)
-# A quarter ("Q3 2022", "2022-Q3"), read as its first day.
+# An ISO 8601 week ("2024-W03", or with its weekday "2024-W03-2"):
+# fromisoformat reads it as its Monday (or that weekday).
+_ISO_WEEK = re.compile(r"\d{4}-?W\d{2}(?P<day>-?\d)?", re.IGNORECASE)
+# A quarter ("Q3 2022", "Q4-2024", "2022-Q3").
 _QUARTER = re.compile(
-    r"Q(?P<q>[1-4])[\s,]*(?P<y>\d{4})|(?P<y2>\d{4})[\s-]*Q(?P<q2>[1-4])",
+    r"Q(?P<q>[1-4])[\s,-]*(?P<y>\d{4})|(?P<y2>\d{4})[\s,-]*Q(?P<q2>[1-4])",
     re.IGNORECASE,
 )
 # What a written-out date may carry that strptime does not read: an ordinal
@@ -56,8 +58,9 @@ _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
 
 
 # Written-out dates read as calendar dates besides ISO 8601 (which the claim
-# prompt asks for); a month or a year alone reads as its first day. An
-# all-numeric day/month order is ambiguous and stays as written.
+# prompt asks for); a month or a year alone reads as its first day (as an
+# end date, its last). An all-numeric day/month order is ambiguous and stays
+# as written.
 _DATE_FORMATS = (
     "%B %d, %Y",
     "%b %d, %Y",
@@ -78,23 +81,38 @@ _DATE_FORMATS = (
 )
 
 
+def _last_day(year: int, month: int) -> date:
+    return date(year, month, calendar.monthrange(year, month)[1])
+
+
 @functools.lru_cache(maxsize=1 << 16)
-def claim_date_value(value: str | None) -> str | None:
+def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     """A claim date as stored: None when absent or a placeholder such as
     UNKNOWN or TBD, ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
     as "January 15th, 2024", "Jan. 15, 2024" or "Sept. 3, 2024"), or as a
     coarser period, stored as its first day (an ISO week ``2024-W03`` as its
     Monday, ``Q3 2022`` as 2022-07-01, ``March 2024``/``2024-03`` as
-    2024-03-01, ``2024`` as 2024-01-01), else as written (whitespace
-    collapsed; ``10/08/2024``, whose day and month order is unknown, say).
-    Applied to its own result it returns it unchanged. Called for every
-    statement of every claim, often with the same values: memoised."""
+    2024-03-01, ``2024`` as 2024-01-01) or, as an ``end`` date, as its last
+    (the week's Sunday, 2022-09-30, 2024-03-31, 2024-12-31: the claim prompt
+    asks for ``YYYY-12-31`` for the end of a year), else as written
+    (whitespace collapsed; ``10/08/2024``, whose day and month order is
+    unknown, say). Applied to its own result (in the same mode) it returns
+    it unchanged. Called for every statement of every claim, often with the
+    same values: memoised (per mode)."""
     text = " ".join((value or "").split())
     if text.casefold() in _UNKNOWN_DATE_VALUES:
         return None
-    if _ISO_WEEK.fullmatch(text):
+    if week := _ISO_WEEK.fullmatch(text):
         text = text.upper()
+        try:
+            day = datetime.fromisoformat(text).date()
+        except ValueError:
+            pass
+        else:
+            if end and week["day"] is None:
+                day += timedelta(days=6)
+            return day.isoformat()
     try:
         return datetime.fromisoformat(text).date().isoformat()
     except ValueError:
@@ -102,22 +120,30 @@ def claim_date_value(value: str | None) -> str | None:
     if quarter := _QUARTER.fullmatch(text):
         year = int(quarter["y"] or quarter["y2"])
         month = 3 * (int(quarter["q"] or quarter["q2"]) - 1) + 1
+        if end:
+            return _last_day(year, month + 2).isoformat()
         return f"{year:04d}-{month:02d}-01"
     cleaned = " ".join(
         _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
     )
     for date_format in _DATE_FORMATS:
         try:
-            return datetime.strptime(cleaned, date_format).date().isoformat()
+            parsed = datetime.strptime(cleaned, date_format).date()
         except ValueError:
             continue
+        if end and "%d" not in date_format:
+            # A month, or (no month either) a year: its last day.
+            month = 12 if date_format == "%Y" else parsed.month
+            parsed = _last_day(parsed.year, month)
+        return parsed.isoformat()
     return text
 
 
-def claim_date_key(value: str | None) -> str:
-    """A claim date for identity: its stored value (``claim_date_value``)
-    casefolded, "" when unknown. A stored date keys as the date it was."""
-    return (claim_date_value(value) or "").casefold()
+def claim_date_key(value: str | None, *, end: bool = False) -> str:
+    """A claim date for identity: its stored value (``claim_date_value``,
+    in the same mode) casefolded, "" when unknown. A stored date keys as the
+    date it was."""
+    return (claim_date_value(value, end=end) or "").casefold()
 
 
 def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
@@ -127,9 +153,10 @@ def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
     (e.g. two delivery obligations due on different days) are distinct facts;
     keying on the dates keeps them apart instead of collapsing them and keeping
     only one date. Date-less claims keep a date-free identity, so restatements
-    of the same undated claim still merge.
+    of the same undated claim still merge. A coarse end date keys on the last
+    day of its period (``claim_date_value``).
     """
-    start, end = claim_date_key(start_date), claim_date_key(end_date)
+    start, end = claim_date_key(start_date), claim_date_key(end_date, end=True)
     return f":{start}:{end}" if start or end else ""
 
 
@@ -421,7 +448,7 @@ class ClaimResolver(BaseResolver):
                 default=primary_claim.start_date,
             ),
             end_date=min(
-                (v for c in claims if (v := claim_date_value(c.end_date))),
+                (v for c in claims if (v := claim_date_value(c.end_date, end=True))),
                 default=primary_claim.end_date,
             ),
             description=self._merge_descriptions(

@@ -1508,6 +1508,15 @@ changed once with the full-config keys (#332).
 - Gleaning: an issue without fields (`<issue>none</issue>`) or with text
   `<details>` dropped the whole refinement answer, losing its other
   additions; such an issue is now ignored (#452).
+- Claim dates: a coarse end date is stored, and keys the claim, as the
+  last day of its period, as the claim prompt asks (`YYYY-12-31` for the
+  end of a year): an ISO week as its Sunday (one with its weekday,
+  `2024-W03-2`, as that day), a quarter, a month or a year as its last
+  day. It was read as its first day, as a start date is, so a claim "until
+  2024" was stored ending on 2024-01-01: an `end_date` range missed the
+  rest of the year, the claim was shown ending on 1 January, and "until
+  2024" and "until 2024-12-31" were two claims. `Q4-2024` reads as a
+  quarter too (it was kept as written) (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
@@ -1602,7 +1611,7 @@ changed once with the full-config keys (#332).
   re-indexes them all) (#449). A coarser period is stored as its first
   day, so a range filter orders it with the calendar dates instead of
   comparing its text (`Q3 2022` sorted after every ISO date, `2024-W03`
-  inside 2024-03): an ISO week as its Monday, a quarter (`Q3 2022`,
+  after every 2024 date): an ISO week as its Monday, a quarter (`Q3 2022`,
   `2022-Q3`), a month (`March 2024`, `2024-03`) or a year (`2024`) as its
   first day; `Sept.` and `Dec.31` read as dates too. An all-numeric date
   whose day and month order is unknown (`10/08/2024`) is still stored as

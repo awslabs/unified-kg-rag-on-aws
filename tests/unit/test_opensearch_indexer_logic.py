@@ -234,43 +234,52 @@ def test_prepare_claim_doc_shape(indexer) -> None:
 
 
 @pytest.mark.parametrize(
-    ("given", "stored"),
+    ("given", "start", "end"),
     [
-        ("2020-01-01", "2020-01-01"),
-        (" 2020-01-01 ", "2020-01-01"),
-        ("2020-01-01T09:30:00Z", "2020-01-01"),
-        ("January 15, 2020", "2020-01-15"),
-        ("15 Jan 2020", "2020-01-15"),
-        ("03/04/2020", "03/04/2020"),  # day and month order unknown
-        ("10/08/2024", "10/08/2024"),
-        ("early 2024", "early 2024"),
-        ("2024-1-5", "2024-01-05"),
-        ("January 15th, 2024", "2024-01-15"),
-        ("Jan. 15, 2024", "2024-01-15"),
-        ("JAN. 15, 2024", "2024-01-15"),
-        ("Sept. 3, 2024", "2024-09-03"),
-        ("Sept 3rd, 2024", "2024-09-03"),
-        ("Dec.31, 2024", "2024-12-31"),
-        # A coarser period as its first day, so a range filter orders it.
-        ("2024-W03", "2024-01-15"),  # the week's Monday
-        ("2024-w03", "2024-01-15"),
-        ("2024W03", "2024-01-15"),
-        ("Q3 2022", "2022-07-01"),
-        ("q1  2024", "2024-01-01"),
-        ("2022-Q4", "2022-10-01"),
-        ("March 2024", "2024-03-01"),
-        ("Sept. 2024", "2024-09-01"),
-        ("2024-03", "2024-03-01"),
-        ("2024", "2024-01-01"),
-        ("UNKNOWN", None),
-        ("TBD", None),
-        ("present", None),
-        ("-", None),
-        ("", None),
+        ("2020-01-01", "2020-01-01", "2020-01-01"),
+        (" 2020-01-01 ", "2020-01-01", "2020-01-01"),
+        ("2020-01-01T09:30:00Z", "2020-01-01", "2020-01-01"),
+        ("January 15, 2020", "2020-01-15", "2020-01-15"),
+        ("15 Jan 2020", "2020-01-15", "2020-01-15"),
+        # Day and month order unknown: as written.
+        ("03/04/2020", "03/04/2020", "03/04/2020"),
+        ("10/08/2024", "10/08/2024", "10/08/2024"),
+        ("early 2024", "early 2024", "early 2024"),
+        ("2024-1-5", "2024-01-05", "2024-01-05"),
+        ("January 15th, 2024", "2024-01-15", "2024-01-15"),
+        ("Jan. 15, 2024", "2024-01-15", "2024-01-15"),
+        ("JAN. 15, 2024", "2024-01-15", "2024-01-15"),
+        ("Sept. 3, 2024", "2024-09-03", "2024-09-03"),
+        ("Sept 3rd, 2024", "2024-09-03", "2024-09-03"),
+        ("Dec.31, 2024", "2024-12-31", "2024-12-31"),
+        # A coarser period as its first day, so a range filter orders it; as
+        # an end date, as its last.
+        ("2024-W03", "2024-01-15", "2024-01-21"),  # Monday; Sunday
+        ("2024-w03", "2024-01-15", "2024-01-21"),
+        ("2024W03", "2024-01-15", "2024-01-21"),
+        ("2024-w03-2", "2024-01-16", "2024-01-16"),  # its weekday given
+        ("Q3 2022", "2022-07-01", "2022-09-30"),
+        ("q1  2024", "2024-01-01", "2024-03-31"),
+        ("2022-Q4", "2022-10-01", "2022-12-31"),
+        ("Q4-2024", "2024-10-01", "2024-12-31"),
+        ("Q2, 2024", "2024-04-01", "2024-06-30"),
+        ("March 2024", "2024-03-01", "2024-03-31"),
+        ("March, 2024", "2024-03-01", "2024-03-31"),
+        ("Mar, 2024", "2024-03-01", "2024-03-31"),
+        ("Sept. 2024", "2024-09-01", "2024-09-30"),
+        ("February 2024", "2024-02-01", "2024-02-29"),
+        ("2024-03", "2024-03-01", "2024-03-31"),
+        ("2024/11", "2024-11-01", "2024-11-30"),
+        ("2024", "2024-01-01", "2024-12-31"),
+        ("UNKNOWN", None, None),
+        ("TBD", None, None),
+        ("present", None, None),
+        ("-", None, None),
+        ("", None, None),
     ],
 )
 def test_prepare_claim_doc_stores_dates_as_the_claims_identity_reads_them(
-    indexer, given: str, stored: str | None
+    indexer, given: str, start: str | None, end: str | None
 ) -> None:
     # Statements of one claim (one id) may spell its dates apart: a calendar
     # date is stored as YYYY-MM-DD (a range filter orders those), another
@@ -287,10 +296,12 @@ def test_prepare_claim_doc_stores_dates_as_the_claims_identity_reads_them(
     doc = OpenSearchIndexer._prepare_claim_doc(
         claim.model_copy(update={"start_date": given, "end_date": given}), ([0.0],)
     )
-    assert (doc.get("start_date"), doc.get("end_date")) == (stored, stored)
+    assert (doc.get("start_date"), doc.get("end_date")) == (start, end)
     # Read back, a stored date keys the claim as the date it was.
-    assert claim_date_value(stored) == stored
-    assert claim_date_key(stored) == claim_date_key(given)
+    assert claim_date_value(start) == start
+    assert claim_date_value(end, end=True) == end
+    assert claim_date_key(start) == claim_date_key(given)
+    assert claim_date_key(end, end=True) == claim_date_key(given, end=True)
 
 
 def test_prepare_claim_doc_degrades_none(indexer) -> None:

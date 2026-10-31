@@ -697,12 +697,15 @@ def test_claim_filters_match_as_the_user_guide_says(harness: StoreHarness) -> No
 
     assert asyncio.run(matching({"status": "true"})) == set(dated)
     assert asyncio.run(matching({"type": "obligation"})) == set(dated)
-    # A quarter is stored as its first day.
+    # An end date in a quarter is stored as its last day: the claim lasts
+    # until 2024-03-31, so it ends after January.
     assert asyncio.run(matching({"end_date": {"lte": "2024-01-31"}})) == {
         "cl-iso",
         "cl-written",
-        "cl-quarter",
     }
+    assert asyncio.run(
+        matching({"end_date": {"gte": "2024-02-01", "lte": "2024-12-31"}})
+    ) == {"cl-quarter"}
     assert asyncio.run(matching({"end_date": "early 2024"})) == {"cl-text"}
 
 
