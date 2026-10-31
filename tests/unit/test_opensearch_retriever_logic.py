@@ -1334,12 +1334,15 @@ async def test_failed_embedding_with_every_waiter_cancelled_is_not_logged(
             retriever._get_query_vector("Vendor", SearchType.VECTOR, ["v"])
         )
         await started.wait()
+        shared = retriever._pending_embeddings["Vendor"]
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
-        while retriever._pending_embeddings:
-            await asyncio.sleep(0.005)
-        del waiter
+        # asyncio.wait does not retrieve the shared call's exception, so the
+        # retriever's own settle callback stays the only thing that could.
+        await asyncio.wait([shared])
+        assert retriever._pending_embeddings == {}
+        del waiter, shared
         gc.collect()
         await asyncio.sleep(0)
     finally:

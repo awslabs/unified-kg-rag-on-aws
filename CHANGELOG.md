@@ -957,6 +957,14 @@ changed once with the full-config keys (#332).
   `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
   given as a path. langchain-community stays a dependency only to hold the
   copy ragas imports below 0.4 (#460).
+- Lint and type checks: ruff also runs the flake8-async (`ASYNC`) and
+  flake8-logging (`LOG`) rules over `unified_kg_rag`, `tests`, `iac` and
+  `scripts`, and mypy loads the `pydantic.mypy` plugin (`init_typed`,
+  `init_forbid_extra`, `warn_required_dynamic_aliases`), so a model built
+  with a wrong field type, an unknown keyword or a dynamic alias fails the
+  type check, `model_construct` included. Five tests that polled with
+  `asyncio.sleep` in a loop or ran blocking `pathlib` calls on the event
+  loop now wait on a condition or event, or call `asyncio.to_thread` (#PR).
 - Package layout: the layers import only inward, now including lazy and
   `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
   rules of the design doc §2.1 on every import (no exceptions; 23 imports

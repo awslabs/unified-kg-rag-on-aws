@@ -220,6 +220,8 @@ select = [
     "C4", # flake8-comprehensions
     "UP", # pyupgrade
     "G",  # flake8-logging-format (enforce %-style lazy logging, no f-strings)
+    "LOG",  # flake8-logging (getLogger(__name__), no root logger, exc_info use)
+    "ASYNC",  # flake8-async (blocking calls and busy-wait loops in async code)
 ]
 ignore = [
     "E501",  # line too long, handled by black
@@ -235,6 +237,9 @@ ignore = [
 "tests/**/*.py" = ["B018"]
 
 [tool.mypy]
+# Type-checks Pydantic models' generated __init__ (field types, aliases, no
+# unknown keywords) instead of treating it as **kwargs: Any.
+plugins = ["pydantic.mypy"]
 # Type-check against the oldest supported interpreter, so stdlib symbols added
 # after it are reported here rather than at a user's import time.
 python_version = "3.11"
@@ -274,6 +279,11 @@ module = [
     "opentelemetry.exporter.*",
 ]
 ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -242,14 +242,17 @@ class GatedRetriever(LineageRetriever):
     time out.
     """
 
-    def __init__(self, tag: str, started: dict[str, int], release) -> None:
+    def __init__(self, tag: str, started: dict[str, int], release, progress) -> None:
         super().__init__(tag)
         self.started = started
         self.release = release
+        self.progress = progress
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         prefix = query.index_prefixes[0] if query.index_prefixes else self.tag
-        self.started[prefix] = self.started.get(prefix, 0) + 1
+        async with self.progress:
+            self.started[prefix] = self.started.get(prefix, 0) + 1
+            self.progress.notify_all()
         if self.tag == "graph":
             await self.release.wait()
         return await super().aretrieve(query)
@@ -270,17 +273,18 @@ async def test_independent_sections_run_concurrently_with_entity_chain(
     }
     started: dict[str, int] = {}
     release = asyncio.Event()
+    progress = asyncio.Condition()
     strategy, _, _ = _make_strategy(config)
-    os_r = GatedRetriever("document", started, release)
-    neptune_r = GatedRetriever("graph", started, release)
+    os_r = GatedRetriever("document", started, release, progress)
+    neptune_r = GatedRetriever("graph", started, release, progress)
     strategy.retrievers = {
         RetrieverRole.DOCUMENT.value: os_r,
         RetrieverRole.GRAPH.value: neptune_r,
     }
 
     async def _release_when_sides_started() -> None:
-        while not side_prefixes <= set(started):
-            await asyncio.sleep(0)
+        async with progress:
+            await progress.wait_for(lambda: side_prefixes <= set(started))
         release.set()
 
     result, _ = await asyncio.wait_for(
