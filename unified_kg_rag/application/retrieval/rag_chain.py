@@ -2240,7 +2240,7 @@ class _LoopRunner:
             if self._io_workers is not None:
                 configure_event_loop(loop, self._io_workers)
             thread = threading.Thread(
-                target=loop.run_forever, name="graphrag-chain-loop", daemon=True
+                target=_run_loop, args=(loop,), name="graphrag-chain-loop", daemon=True
             )
             thread.start()
             self._loop, self._thread = loop, thread
@@ -2300,8 +2300,10 @@ class _LoopRunner:
         for future in pending:
             future.cancel()
         if thread is threading.current_thread():
+            # Stopping from inside the loop: _run_loop cancels the remaining
+            # tasks and closes the loop once run_forever returns.
             loop.call_soon_threadsafe(loop.stop)
-            return  # stopping from inside the loop: it closes once unwound
+            return
         try:
             asyncio.run_coroutine_threadsafe(_cancel_other_tasks(), loop).result(
                 timeout=_TEARDOWN_TIMEOUT_SECONDS
@@ -2310,7 +2312,22 @@ class _LoopRunner:
             logger.debug("Error cancelling the chain loop's tasks: %s", e)
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
-        if not thread.is_alive():
+
+
+def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """The loop thread: run ``loop`` until stopped, then end what is left on
+    it and close it, as ``asyncio.run`` does. A stop from inside the loop
+    returns before the tasks it cancelled have unwound; closing with them
+    pending would destroy them mid-flight."""
+    try:
+        loop.run_forever()
+    finally:
+        try:
+            loop.run_until_complete(_cancel_other_tasks())
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error ending the chain loop's tasks: %s", e)
+        finally:
             loop.close()
 
 

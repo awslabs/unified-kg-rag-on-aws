@@ -1545,6 +1545,11 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- `GraphRAGChain`'s sync-API loop, stopped from a task running on it (a
+  close from inside the loop), halted with the tasks it had cancelled still
+  pending, which were later destroyed mid-cleanup ("Task was destroyed but
+  it is pending"), and was never closed. The loop thread now lets the
+  remaining tasks unwind and closes the loop, as `asyncio.run` does (#PR).
 - A boolean environment variable (`UKR__…`) that is not one of
   `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off` (any case) is now a
   configuration error naming the variable; a typo such as `ture` used to
