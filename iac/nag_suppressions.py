@@ -120,6 +120,16 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             "CMK ARN, granted by the framework.",
         )
 
+    # The provider-framework custom resource of opensearch_nori_package.
+    if storage.nori_package is not None:
+        _suppress_provider(storage.nori_package.handlers)
+        _suppress_iam5(
+            storage.nori_package.handlers.on_event,
+            ["Resource::*"],
+            "es:DescribePackages has no resource-level scoping; the function "
+            "only reads the package catalog.",
+        )
+
     # --- Compute ---
     NagSuppressions.add_stack_suppressions(
         compute,
@@ -244,6 +254,38 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
         "have no resource-level scoping, and RunTask is scoped to every revision "
         "of this one task definition. kms:GenerateDataKey* is the SNS-documented "
         "publisher permission, on the alarm topic key only.",
+    )
+
+
+def _suppress_provider(handlers: IConstruct) -> None:
+    """The CDK provider framework's generated functions and waiter state
+    machine of a custom resource."""
+    _suppress_iam5(
+        handlers,
+        [{"regex": r"/^Resource::<\w+\.Arn>:\*$/"}],
+        "CDK provider framework: lambda:InvokeFunction on every version of "
+        "this custom resource's own handler functions.",
+    )
+    waiter = handlers.node.find_child("Provider").node.find_child(
+        "waiter-state-machine"
+    )
+    _suppress_iam5(
+        waiter,
+        ["Resource::*"],
+        "Step Functions log delivery to CloudWatch Logs: logs:*LogDelivery "
+        "and the resource-policy actions have no resource-level scoping.",
+    )
+    NagSuppressions.add_resource_suppressions(
+        handlers,
+        [
+            {
+                "id": "AwsSolutions-SF2",
+                "reason": "CDK provider framework waiter state machine: the "
+                "construct offers no tracing option. It only polls this "
+                "resource's is_complete handler, and logs ALL events.",
+            }
+        ],
+        apply_to_children=True,
     )
 
 

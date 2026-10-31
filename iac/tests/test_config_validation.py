@@ -96,6 +96,25 @@ def test_korean_analyzer_must_be_an_analyzer_name(value: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("context", "analyzer"),
+    [
+        ({}, "cjk"),
+        ({"opensearch_nori_package": "true"}, "nori"),
+        (
+            {"opensearch_nori_package": "true", "opensearch_korean_analyzer": "cjk"},
+            "cjk",
+        ),
+        ({"opensearch_korean_analyzer": "nori"}, "nori"),
+    ],
+    ids=["default", "package", "package-staged", "associated-by-hand"],
+)
+def test_korean_analyzer_defaults_to_nori_with_the_package(
+    context: dict[str, Any], analyzer: str
+) -> None:
+    assert _config(context).opensearch_korean_analyzer == analyzer
+
+
+@pytest.mark.parametrize(
     ("value", "expected"),
     [("1-16", (1.0, 16.0)), ("2.5-32", (2.5, 32.0)), ([1, 128], (1.0, 128.0))],
 )

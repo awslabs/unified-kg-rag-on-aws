@@ -44,12 +44,16 @@ cannot leave its setting at the default:
   opensearch_master_instance "m6g.large.search"  dedicated master type when
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)
-  opensearch_korean_analyzer "cjk"    OpenSearch analyzer of Korean text
+  opensearch_nori_package False        associate the AWS-provided analysis-nori
+                                       plugin package of the domain's engine
+                                       version (a custom resource; each change
+                                       is a blue/green deployment)
+  opensearch_korean_analyzer "cjk" (or "nori" with opensearch_nori_package)
+                                       OpenSearch analyzer of Korean text
                                        (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO, overrides
                                        language_analyzers.ko): the domain has no
                                        nori unless its optional analysis-nori
-                                       package is associated; set "nori" once it
-                                       is
+                                       package is associated
   doc_status_table    dev:"graphrag-doc-status-v2"/else:"<env>-graphrag-doc-status-v2"
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
@@ -340,6 +344,9 @@ class DeploymentConfig:
     # domain has no nori unless the optional analysis-nori package is
     # associated with it; cjk (character bigrams) is built into OpenSearch.
     opensearch_korean_analyzer: str = "cjk"
+    # Associate the AWS-provided analysis-nori package with the domain (a
+    # custom resource). Off: the templates are exactly as without the feature.
+    opensearch_nori_package: bool = False
     # Neptune Serverless (min, max) NCU; None = provisioned neptune_instance.
     neptune_serverless_ncu: tuple[float, float] | None = None
     # Fargate Spot for the ingestion task, and the re-runs of a task Spot
@@ -432,7 +439,16 @@ class DeploymentConfig:
                 "flow_log_retention_days must be a CloudWatch Logs retention value "
                 f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
             )
-        opensearch_korean_analyzer = str(ctx("opensearch_korean_analyzer", "cjk"))
+        opensearch_nori_package = as_bool("opensearch_nori_package", default=False)
+        # With the package associated the domain has nori, so Korean maps to
+        # it unless the analyzer is set (cjk, say, until the ko indices are
+        # rebuilt).
+        opensearch_korean_analyzer = str(
+            ctx(
+                "opensearch_korean_analyzer",
+                "nori" if opensearch_nori_package else "cjk",
+            )
+        )
         if not _ANALYZER_NAME.fullmatch(opensearch_korean_analyzer):
             raise ValueError(
                 "opensearch_korean_analyzer must be an OpenSearch analyzer name "
@@ -537,6 +553,7 @@ class DeploymentConfig:
                 "enable_cloudwatch_tracing", default=False
             ),
             opensearch_korean_analyzer=opensearch_korean_analyzer,
+            opensearch_nori_package=opensearch_nori_package,
             neptune_serverless_ncu=neptune_serverless_ncu,
             ingestion_fargate_spot=ingestion_fargate_spot,
             spot_interruption_retries=as_int(

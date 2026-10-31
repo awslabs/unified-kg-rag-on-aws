@@ -675,9 +675,8 @@ processing:
   플러그인에서 오는데, [로컬 OpenSearch 컨테이너](#컨테이너로-띄운-로컬-저장소)에는 있고
   Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다(블루/그린 배포). 그래서
   [CDK 배포](../iac/README.md)는 `ko`를 기본 제공 `cjk` 분석기(문자 바이그램)에
-  매핑합니다. 도메인을 Nori로 바꾸는 방법은
-  [설정](../iac/README.md#configuration-cdkjson-context---c-keyvalue)(영문)의
-  `opensearch_korean_analyzer` 행에 있습니다.
+  매핑합니다. `-c opensearch_nori_package=true`로 배포하면 패키지를 연결하고 `ko`를
+  `nori`에 매핑합니다([Nori로 한국어 분석하기](./operations.ko.md#nori로-한국어-분석하기)).
 - **실패.** 번역에 실패한 텍스트 단위는 원문 언어로 추출합니다. 대상 언어 하나의 호출
   전체가 실패하면 `processing.ignore_errors: true`가 아닌 한 단계가 실패합니다. 증분
   실행은 `failed_units`의 문서를 실패로 기록하므로 다음 실행이 다시 시도합니다.

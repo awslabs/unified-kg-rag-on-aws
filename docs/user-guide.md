@@ -728,9 +728,9 @@ translation stage is skipped at no cost, even with `enabled: true`.
   OpenSearch Service domain only once its Nori package is associated (a
   blue/green deployment). The
   [CDK deployment](../iac/README.md) therefore maps `ko` to the built-in `cjk`
-  analyzer (character bigrams); switching a domain to Nori is the
-  `opensearch_korean_analyzer` row of its
-  [configuration](../iac/README.md#configuration-cdkjson-context---c-keyvalue).
+  analyzer (character bigrams); `-c opensearch_nori_package=true`
+  associates the package and maps `ko` to `nori`
+  ([Korean with Nori](./operations.md#korean-with-nori)).
 - **Failures.** A text unit whose translation fails is extracted in its
   source language; a failed call for a whole target language fails the stage
   unless `processing.ignore_errors: true`. An incremental run records the

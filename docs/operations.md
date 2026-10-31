@@ -19,6 +19,8 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Act on a CloudWatch alarm | [Alarms](#alarms) |
 | Restore the stores | [Backup and restore](#backup-and-restore) |
 | Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
+| Analyze Korean with Nori instead of `cjk` | [Korean with Nori](#korean-with-nori) |
+| Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -200,16 +202,87 @@ ends, from minutes to hours). An upgrade cannot be paused or rolled back.
    `aws opensearch upgrade-domain --domain-name <domain> --target-version OpenSearch_2.19 --perform-check-only`,
    then `aws opensearch get-upgrade-status --domain-name <domain>`. With the
    optional Nori package associated, also check that a Nori package for 2.19
-   exists (`aws opensearch describe-packages`): optional plugins are
-   version-specific.
-4. Set `version=opensearch.EngineVersion.OPENSEARCH_2_19` in
+   exists (`aws opensearch describe-packages --filters
+   Name=PackageName,Value=analysis-nori Name=EngineVersion,Value=OpenSearch_2.19`):
+   optional plugins are version-specific.
+4. Set `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` in
    `iac/stacks/storage_stack.py` (and the local image in
    `docker/compose.local.yaml`, so local runs test the same engine), then
    `cdk diff GraphRagStorage`: the only change must be the domain's
-   `EngineVersion`, with no replacement. Deploy with
-   `cdk deploy GraphRagStorage`.
+   `EngineVersion`, with no replacement, and with `opensearch_nori_package`
+   the `EngineVersion` of its `Custom::OpenSearchNoriPackage`. Deploy with
+   `cdk deploy GraphRagStorage`. The package resource updates after the
+   domain: it associates the 2.19 package unless the upgrade already did,
+   and the update's cleanup dissociates the 2.13 one if it is still there
+   ([Korean with Nori](#korean-with-nori)).
 5. When the stack update completes, run a query and one incremental
    ingestion before the next large run.
+
+### Korean with Nori
+
+The CDK deployment maps Korean (`ko`) to the built-in `cjk` analyzer
+(overlapping character pairs), because a domain has the morphological `nori`
+analyzer only once the AWS-provided `analysis-nori` plugin package is
+associated with it. `-c opensearch_nori_package=true` associates it: a
+custom resource looks up the package of the domain's engine version
+(`DescribePackages`), associates it (`AssociatePackage`, a blue/green
+deployment) and waits until it is `ACTIVE`, up to two hours; the compute
+stack, deployed after storage, then maps `ko` to `nori`.
+
+1. Stop ingestion (no `RUNNING` execution).
+2. `cdk deploy GraphRagStorage GraphRagCompute -c opensearch_nori_package=true`.
+   A large domain whose blue/green deployment takes longer than two hours
+   fails the resource: associate the package by hand first
+   (`aws opensearch associate-package --package-id <id> --domain-name <domain>`,
+   then wait for `ACTIVE` in `aws opensearch list-packages-for-domain`); the
+   resource finds it associated and does nothing.
+3. Run once with `indexing.reset: true` ([Re-ingest](#re-ingest)): the
+   field analyzers of a live index cannot change, so an incremental run
+   fails until then with `The OpenSearch index '<index>' was built for
+   other language settings: '<field>' uses 'cjk' (needs 'nori')`. Set it
+   back to `false` afterwards.
+
+To keep `cjk` while the package is associated (to rebuild later), deploy
+with `-c opensearch_korean_analyzer=cjk` as well.
+
+**Turning it off.** OpenSearch refuses to dissociate a package an index
+still uses, so move the Korean indices off `nori` first: deploy with
+`-c opensearch_korean_analyzer=cjk` (package still on), run one
+`indexing.reset: true`, then deploy without `opensearch_nori_package`. The
+resource dissociates the package (another blue/green deployment) only when
+a stack update removes or replaces it; deleting the stack leaves it
+associated, so a retained domain keeps its `nori` indices usable. A failed
+dissociation does not fail the update (CloudFormation ignores cleanup
+failures); `aws opensearch list-packages-for-domain` shows it.
+
+### Neptune I/O-Optimized storage
+
+Neptune bills Standard storage per I/O request; I/O-Optimized (`iopt1`)
+bills no I/O but costs more per instance-hour and per GiB-month. AWS's rule
+of thumb: switch when I/O is above 25% of the cluster's Neptune spend
+(compare the I/O line of the Neptune bill in Cost Explorer with its total;
+the `VolumeReadIOPs` and `VolumeWriteIOPs` metrics show when the I/O
+happens). The engine must be 1.3.0.0 or later. CloudFormation has no
+property for the storage type, so switch the deployed cluster with the CLI,
+with no ingestion running:
+
+```bash
+aws neptune modify-db-cluster --db-cluster-identifier <cluster> \
+  --storage-type iopt1 --apply-immediately
+aws neptune describe-db-clusters --db-cluster-identifier <cluster> \
+  --query 'DBClusters[0].[Status,StorageType,IOOptimizedNextAllowedModificationTime]'
+```
+
+The switch is done when the cluster is `available` again with storage type
+`iopt1`. `--storage-type standard` switches back.
+
+- **Once per 30 days.** A switch to I/O-Optimized is allowed once per 30
+  days (`IOOptimizedNextAllowedModificationTime`). AWS documents a switch
+  back to Standard as allowed at any time in one place and as limited to
+  once per 30 days in another, so plan either switch as a monthly decision.
+- **Outside the stack.** The setting is not in the template, so CDK keeps
+  it on stack updates, but a cluster the stack replaces (or a restore,
+  which creates a new cluster) starts on Standard: run the command again.
 
 ## When a run fails
 
@@ -842,7 +915,7 @@ model or credential error fails a query rather than answering from no context.
 | `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |
 | OpenSearch authentication fails with `use_iam: false` | No basic-auth credentials | Set `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` (for example in `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: a filter value of the wrong type. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count` below 1,024 | Fix the value, or keep the limit at 1,024 or more |
-| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package; re-run |
+| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'` (`mapper_parsing_exception`) | An analyzer in `indexing.opensearch.language_analyzers` is missing, typically `ko: nori` without the Nori package | Use one the cluster has (`ko: cjk`, the CDK default), or associate the package ([Korean with Nori](#korean-with-nori)); re-run |
 | `The search engine refused to create an index: ...` (exit 2, before any model call) | Before its first model call, `run-ingestion` creates and deletes a probe index per index the run will create (all of them on a full build or reset, the missing ones on an incremental run), named `<extraction-records alias>-settings-probe-<12 hex digits>`; the store refused one (the error names the index it stood in for, `(a probe of '<alias>')`): an `indexing.opensearch.index_settings` key, the `vector_search` method or an analyzer, or (`maximum shards open`) no room for the new indices' shards | Fix or remove the named setting, or delete unneeded indices or raise `cluster.max_shards_per_node`; re-run. A probe a stopped run left (an unaliased index of that name) is deleted by the namespace's next run |
 
 ### Ingestion runs and the doc-status registry

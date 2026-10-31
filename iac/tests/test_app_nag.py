@@ -78,6 +78,7 @@ def _synth_errors(context: dict[str, Any], outdir: Path) -> list[str]:
 
 
 _TRACING = {"enable_cloudwatch_tracing": "true"}
+_NORI = {"opensearch_nori_package": "true"}
 
 
 @pytest.mark.parametrize(
@@ -90,6 +91,8 @@ _TRACING = {"enable_cloudwatch_tracing": "true"}
         {**_TRACING, "network_mode": "public"},
         {**_PROD_HARDENED, "ingestion_fargate_spot": "true"},
         {**_TRACING, "fargate_cpu_architecture": "arm64"},
+        _NORI,
+        {**_PROD_HARDENED, **_NORI},
     ],
     ids=[
         "dev",
@@ -99,6 +102,8 @@ _TRACING = {"enable_cloudwatch_tracing": "true"}
         "public-tracing",
         "prod-hardened-spot",
         "tracing-arm64",
+        "nori",
+        "prod-hardened-nori",
     ],
 )
 def test_concrete_account_synth_has_no_nag_errors(

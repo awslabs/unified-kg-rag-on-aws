@@ -26,6 +26,7 @@ from constructs import Construct
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
+from iac.stacks.storage_custom_resources import NoriPackage
 
 # Cache-bucket prefixes the app writes and that are safe to expire: the stage
 # checkpoints of `run-ingestion --s3-sync` (PipelineConfig.s3_prefix /
@@ -33,6 +34,11 @@ from iac.stacks.networking_stack import NetworkingStack
 # cache (embedding_cache_s3_key, default "embedding-cache/cache.json"). Anything
 # else in the bucket, such as an uploaded corpus, is never expired.
 CACHE_EXPIRY_PREFIXES = ("pipeline-runs/", "embedding-cache/")
+
+# The domain's engine version. A change upgrades the domain in place
+# (enable_version_upgrade); with opensearch_nori_package the Nori package of
+# the new version is associated after the upgrade.
+OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13
 
 
 class StorageStack(Stack):
@@ -60,6 +66,18 @@ class StorageStack(Stack):
         self.doc_status_table = self._build_doc_status_table()
         self.neptune_cluster = self._build_neptune()
         self.opensearch_domain = self._build_opensearch()
+        # The Nori package association CloudFormation does not offer, as a
+        # custom resource (storage_custom_resources); off by default.
+        self.nori_package: NoriPackage | None = None
+        if config.opensearch_nori_package:
+            self.nori_package = NoriPackage(
+                self,
+                "NoriPackage",
+                domain=self.opensearch_domain,
+                engine_version=OPENSEARCH_VERSION.version,
+                kms_key=self.kms_key,
+                removal_policy=self.removal_policy,
+            )
         self._export_outputs()
 
     # ------------------------------------------------------------ outputs
@@ -273,7 +291,7 @@ class StorageStack(Stack):
         domain = opensearch.Domain(
             self,
             "OpenSearch",
-            version=opensearch.EngineVersion.OPENSEARCH_2_13,
+            version=OPENSEARCH_VERSION,
             # A changed `version` upgrades the domain in place (a blue/green
             # deployment, data kept) instead of replacing it with a new, empty
             # domain; without the UpdatePolicy CloudFormation replaces it.

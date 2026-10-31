@@ -940,8 +940,9 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 
 - **분석기.** `indexing.opensearch.language_analyzers`가 언어를 OpenSearch 분석기에
   매핑합니다(기본값 `en: english`, `ko: nori`). Amazon OpenSearch Service 도메인은 Nori
-  패키지를 연결해야 `nori`를 가지므로 CDK 배포는 `ko`를 기본 제공 `cjk`로 매핑하며, 클러스터에
-  없는 분석기는 그 이름을 밝힌 오류로 인덱스 생성을 실패시킵니다.
+  패키지를 연결해야 `nori`를 가지므로 CDK 배포는 `ko`를 기본 제공 `cjk`로 매핑합니다.
+  `opensearch_nori_package`를 켜면 커스텀 리소스가 패키지를 연결하고 `ko`를 `nori`로
+  매핑합니다. 클러스터에 없는 분석기는 그 이름을 밝힌 오류로 인덱스 생성을 실패시킵니다.
 - **식별 키**는 모든 문자 체계의 문자를 유지합니다(§3).
 - **번역**은 원본 언어와 대상 언어가 같고 다른 대상 언어가 없으면
   건너뜁니다(`TranslationConfig.is_noop`).

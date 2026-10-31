@@ -904,6 +904,18 @@ changed once with the full-config keys (#332).
   `--platform linux/arm64`; the default `x86_64` leaves the task
   definitions as they were. The Dockerfile builds for both platforms and
   the collector sidecar's pinned digest covers both (#457).
+- IaC: `-c opensearch_nori_package=true` (off by default) associates the
+  AWS-provided `analysis-nori` plugin package of the domain's engine
+  version through a custom resource (CloudFormation has no package
+  association), waits until it is `ACTIVE` and maps Korean to `nori`
+  instead of `cjk` (`opensearch_korean_analyzer` still overrides it). The
+  resource runs after the domain, so an engine upgrade finishes before the
+  new version's package is associated; a stack update that removes it
+  dissociates the package, a stack deletion leaves it. Switching the
+  analyzer needs one `indexing.reset: true` run (#PR).
+- Runbook: "Neptune I/O-Optimized storage" gives the CLI switch for a
+  deployed cluster (CloudFormation has no StorageType property), AWS's
+  25%-of-spend rule of thumb and the once-per-30-days limit (#PR).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and
