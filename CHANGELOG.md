@@ -1675,6 +1675,11 @@ changed once with the full-config keys (#332).
   is merged into the claim the date gives now, as for the other earlier
   readings (#454). The claim-date property tests run 500 examples and pin
   the forms a random run found (#PR).
+- Incremental indexing: looking a derived claim up under the ids earlier
+  readings of its dates gave it (#454) took about half of a claim
+  derivation even when every date was ISO 8601, which reads the same in
+  every build (2,000 units of 10 statements: 3.3 s to 1.5 s). A claim none
+  of whose statements has such a date is no longer looked up (#PR).
 - Incremental indexing: a claim stored under an earlier reading of its
   dates (a period coarser than a day as written before #451, a written-out
   date before #449, a coarse end date as its first day, see above) kept

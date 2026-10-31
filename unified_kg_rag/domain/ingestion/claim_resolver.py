@@ -192,6 +192,21 @@ def _earlier_date_keys(value: str | None, *, end: bool = False) -> set[str]:
     return keys
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _has_earlier_key(value: str | None, *, end: bool = False) -> bool:
+    return len(_earlier_date_keys(value, end=end)) > 1
+
+
+def has_earlier_date_reading(statement: Claim) -> bool:
+    """Whether an earlier build may have keyed a date of ``statement``
+    otherwise than it keys now (``_earlier_date_keys``). A claim none of
+    whose statements has one has no ``earlier_claim_ids`` (an ISO date
+    reads the same in every build)."""
+    return _has_earlier_key(statement.start_date) or _has_earlier_key(
+        statement.end_date, end=True
+    )
+
+
 def earlier_claim_ids(claim: Claim, statements: Iterable[Claim]) -> set[str]:
     """Ids an earlier build may have stored ``claim`` (resolved) under: the
     ids its subject, object and type give with the earlier keys
