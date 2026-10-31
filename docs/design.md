@@ -259,12 +259,19 @@ backend fills each role is open (`providers.graph.kind` /
 `tests/unit/test_layering.py` enforces §2.1 on every import of every
 module (lazy and `TYPE_CHECKING` ones included, relative ones resolved):
 the layer order, evaluation's reach into the application, injected
-backends, store-free evaluation and visualization, vendor packages as
-leaves, plugins through their registries, and the root facade imported only
-for `__version__`. Its list of allowed exceptions is empty, and each rule
-has a synthetic case it must catch. `tests/unit/test_domain_purity.py`
-checks the third-party side: no domain module loads an infrastructure
-package, even transitively.
+backends (also inside the adapters: the search strategies, the retrieval
+kernel and the ingestion adapters import none), store-free evaluation and
+visualization, vendor packages as leaves, plugins through their registries,
+and the root facade imported only for `__version__`. Importing `pkg.mod`
+runs `pkg/__init__.py`, so the imports a package's `__init__` makes count
+for every module that imports from the package; outside the facade and the
+console-script launcher, a package module is never imported by a name
+string (`importlib.import_module`, `__import__`). Its list of allowed
+exceptions is empty, and each rule has a synthetic case it must catch. A
+clean-interpreter check pins the runtime side: importing evaluation or the
+RAG chain loads no store adapter, gremlin-python or opensearch-py.
+`tests/unit/test_domain_purity.py` checks the third-party side: no domain
+module loads an infrastructure package, even transitively.
 
 **Public API.** Callers outside the package import from `unified_kg_rag`,
 whose `__all__` is the supported surface: the names for using the framework

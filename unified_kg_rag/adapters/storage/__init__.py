@@ -2,11 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Storage adapters: concrete graph/vector indexers behind the indexer ports.
 
-``NeptuneIndexer`` and ``OpenSearchIndexer`` are re-exported;
-``SQLiteGraphIndexer`` (``sqlite_graph_indexer``) is imported from its module.
+Nothing is re-exported: the RAG chain, the retrieval kernel and the
+retrievers import ``filter_schema`` from here, and an eager re-export would
+load every indexer (and gremlin-python, opensearch-py) with it. Import an
+indexer from its module (``neptune_indexer``, ``opensearch_indexer``,
+``sqlite_graph_indexer``).
 """
-
-from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
-from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-
-__all__ = ["NeptuneIndexer", "OpenSearchIndexer"]

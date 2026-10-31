@@ -976,6 +976,19 @@ changed once with the full-config keys (#332).
   instead of the interactive renderer. Behaviour is unchanged, and every
   public name keeps its `unified_kg_rag` import; only internal module paths
   moved (#456).
+- `adapters.storage` and `adapters.retrievers` no longer re-export their
+  indexers and retrievers: the RAG chain, the retrieval kernel and
+  evaluation import the filter schema from `adapters.storage`, and the
+  re-export loaded both store indexers, the Neptune and OpenSearch bindings
+  and gremlin-python and opensearch-py with it (local mode included).
+  Import them from their modules (`adapters.storage.neptune_indexer`,
+  `adapters.retrievers.opensearch_retriever`, ...). The layering test now
+  counts the imports a package's `__init__` makes for every module that
+  imports from the package, keeps the search strategies, the retrieval
+  kernel and the ingestion adapters off the backends, and refuses an
+  `import_module`/`__import__` of a package module outside the facade and
+  the console-script launcher; a clean-interpreter test pins that
+  evaluation and the RAG chain load no store backend (#PR).
 - Graph expansion under a document filter and a caller `id` list stops
   walking the relationships index once it has reached every listed id: the
   results keep only those ids and a reached entity's path does not change,

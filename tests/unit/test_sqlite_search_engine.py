@@ -37,8 +37,8 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     top_hits,
     vector_scores,
 )
-from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
-from unified_kg_rag.adapters.storage import OpenSearchIndexer
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,

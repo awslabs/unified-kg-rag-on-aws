@@ -13,7 +13,8 @@ from typing import Any
 
 import pytest
 
-from unified_kg_rag.adapters.retrievers import GraphExpansionRetriever, NeptuneRetriever
+from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError
 

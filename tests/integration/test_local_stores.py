@@ -45,7 +45,8 @@ from tests.integration.test_incremental_source_scopes import (
     write_corpus,
 )
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
-from unified_kg_rag.adapters.storage import NeptuneIndexer, OpenSearchIndexer
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import (
     Community,
     Config,

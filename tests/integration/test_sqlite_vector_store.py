@@ -19,8 +19,8 @@ import pytest
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.adapters.retrievers import OpenSearchRetriever
-from unified_kg_rag.adapters.storage import OpenSearchIndexer
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
