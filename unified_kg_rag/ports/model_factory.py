@@ -97,6 +97,13 @@ class LanguageModelInfo(BaseModel):
             "(aws.bedrock.query_prompt_cache_ttl). Claude 4.5 and later."
         ),
     )
+    supports_structured_output: bool = Field(
+        default=False,
+        description=(
+            "Whether the model accepts a JSON-schema output format on Bedrock "
+            "(Converse outputConfig.textFormat). Claude 4.5 and later."
+        ),
+    )
     supports_thinking: bool = Field(
         default=False,
         description="Whether the model supports thinking/reasoning capabilities.",

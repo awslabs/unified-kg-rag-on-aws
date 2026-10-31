@@ -685,6 +685,13 @@ changed once with the full-config keys (#332).
   again (#442).
 
 ### Added
+- `search.lightrag_search.structured_keyword_output` (pilot, off by
+  default): LightRAG keyword extraction asks for a JSON-schema constrained
+  answer (`with_structured_output(method="json_schema")`) on Bedrock
+  Converse, Ollama and OpenAI-compatible servers, and falls back to the text
+  parser for an unsupported model or a failed call. On Bedrock it is left
+  out for requests that carry the reasoning effort (`output_config`, Claude
+  4.6+) until the combination is verified (#PR).
 - `aws.bedrock.query_prompt_cache_ttl: 1h` keeps the system-prompt cache
   checkpoint of query chains (answers, query rewriting, keyword extraction)
   for an hour instead of 5 minutes, for low query rates where most queries

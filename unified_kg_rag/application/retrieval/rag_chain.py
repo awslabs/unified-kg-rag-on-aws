@@ -28,7 +28,10 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import (
+    setup_chain,
+    setup_structured_chain,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     SCOPED_FILTER_KEYS,
@@ -400,6 +403,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
+        # Structured-output chains; None where the model cannot take the format.
+        self._structured_chains: dict[tuple[Any, ...], Runnable | None] = {}
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
@@ -784,6 +789,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         Robust to the LLM wrapping the JSON in prose or code fences. Returns
         empty lists on failure when ``ignore_errors`` is set.
         """
+        if self.config.search.lightrag_search.structured_keyword_output:
+            keywords = await self._structured_keywords(query, target_language, config)
+            if keywords is not None:
+                return keywords
         try:
             extractor = self._get_chain_for_prompt(
                 KeywordsExtractionPrompt, StrOutputParser()
@@ -805,6 +814,61 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         "high_level_keywords",
         "low_level_keywords",
     )
+
+    # The keyword payload as a JSON schema for constrained decoding. Bedrock
+    # requires additionalProperties: false on every object.
+    _KEYWORD_SCHEMA: ClassVar[dict[str, Any]] = {
+        "title": "dual_level_keywords",
+        "description": "High-level and low-level keywords of the query",
+        "type": "object",
+        "properties": {
+            level: {"type": "array", "items": {"type": "string"}}
+            for level in ("high_level_keywords", "low_level_keywords")
+        },
+        "required": ["high_level_keywords", "low_level_keywords"],
+        "additionalProperties": False,
+    }
+
+    async def _structured_keywords(
+        self,
+        query: str,
+        target_language: str,
+        config: RunnableConfig | None,
+    ) -> tuple[list[str], list[str]] | None:
+        """The keyword lists from a JSON-schema constrained call, or None to
+        use the text parser: the model cannot take the format, or the call or
+        its payload failed (the fallback then pays a second call)."""
+        model_id = self.config.model_id(ModelRole.ENTITY_EXTRACTION)
+        key = (KeywordsExtractionPrompt, model_id)
+        try:
+            with self._cache_lock:
+                if key not in self._structured_chains:
+                    # None (the model cannot take the format) is kept too,
+                    # so the check runs once per model.
+                    self._structured_chains[key] = setup_structured_chain(
+                        factory=self.factory,
+                        model_id=model_id,
+                        prompt_class=KeywordsExtractionPrompt,
+                        schema=self._KEYWORD_SCHEMA,
+                        custom_prompts=self.config.custom_prompts,
+                    )
+                chain = self._structured_chains[key]
+            if chain is None:
+                return None
+            payload = await chain.ainvoke(
+                {"query": query, "target_language": target_language}, config
+            )
+            if not isinstance(payload, dict):
+                raise LanguageModelError(
+                    "Structured keyword output is not an object: "
+                    f"{type(payload).__name__}"
+                )
+            return self._keyword_lists(payload)
+        except Exception as e:
+            logger.warning(
+                "Structured keyword extraction failed; using the text parser: %s", e
+            )
+            return None
 
     @classmethod
     def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:

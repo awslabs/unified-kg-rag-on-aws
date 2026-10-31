@@ -446,10 +446,12 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     # NOTE: add new models here
 }
 
-# Models whose prompt-cache checkpoints accept a 1-hour TTL ("Supported TTL:
-# 5 minutes, 1 hour" in the prompt-caching guide's model table); every other
-# curated Claude row lists 5 minutes only.
-_ONE_HOUR_CACHE_TTL_MODELS: frozenset[str] = frozenset(
+# Claude 4.5 and later. Their prompt-cache checkpoints accept a 1-hour TTL
+# ("Supported TTL: 5 minutes, 1 hour" in the prompt-caching guide's model
+# table; every older curated Claude row lists 5 minutes only), and they take a
+# JSON-schema output format (structured-output.html; Claude 4.5+ per the
+# langchain-aws ``output_config`` field).
+_CLAUDE_4_5_AND_LATER: frozenset[str] = frozenset(
     {
         LanguageModelId.CLAUDE_V5_5_SONNET,
         LanguageModelId.CLAUDE_V5_5_OPUS,
@@ -465,9 +467,9 @@ _ONE_HOUR_CACHE_TTL_MODELS: frozenset[str] = frozenset(
         LanguageModelId.CLAUDE_V4_5_HAIKU,
     }
 )
-for _model_id in _ONE_HOUR_CACHE_TTL_MODELS:
+for _model_id in _CLAUDE_4_5_AND_LATER:
     _LANGUAGE_MODEL_INFO[_model_id] = _LANGUAGE_MODEL_INFO[_model_id].model_copy(
-        update={"supports_1h_cache_ttl": True}
+        update={"supports_1h_cache_ttl": True, "supports_structured_output": True}
     )
 
 _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
@@ -514,6 +516,7 @@ _CLAUDE_ADAPTIVE_ONLY_DEFAULT = LanguageModelInfo(
     max_output_tokens=64000,
     supports_prompt_caching=True,
     supports_1h_cache_ttl=True,
+    supports_structured_output=True,
     supports_thinking=True,
     adaptive_thinking_only=True,
     token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
@@ -526,6 +529,7 @@ _CLAUDE_ADAPTIVE_DEFAULT = LanguageModelInfo(
     max_output_tokens=64000,
     supports_prompt_caching=True,
     supports_1h_cache_ttl=True,
+    supports_structured_output=True,
     supports_thinking=True,
     supports_adaptive_thinking=True,
     supports_count_tokens=False,

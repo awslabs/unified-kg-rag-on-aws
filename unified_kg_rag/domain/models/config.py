@@ -2836,6 +2836,20 @@ class TokenManagerConfig(BaseModel):
 
 
 class LightRAGSearchConfig(BaseModel):
+    structured_keyword_output: bool = Field(
+        default=False,
+        description=(
+            "Pilot: ask the keyword-extraction model for a JSON-schema "
+            "constrained response (with_structured_output, method "
+            "json_schema) instead of parsing JSON out of free text. Used on "
+            "Bedrock Converse for Claude 4.5+ requests that carry no "
+            "reasoning effort (output_config), and on Ollama and "
+            "OpenAI-compatible servers; elsewhere, and whenever the "
+            "structured call fails, the text parser runs as before. The "
+            "first Bedrock request with the schema compiles it (up to about "
+            "90 s, then cached for 24 h)."
+        ),
+    )
     raw_query_fallback_max_len: int = Field(
         default=50,
         ge=0,
