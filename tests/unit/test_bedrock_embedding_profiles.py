@@ -148,6 +148,33 @@ def test_embed_v4_on_demand_region_keeps_bare_id_without_profile() -> None:
     assert factory.get_model(EmbeddingModelId.EMBED_V4).model_id == EMBED_V4
 
 
+@pytest.mark.parametrize("region", ["us-east-1", "eu-west-1", "ap-northeast-1"])
+def test_embed_v4_on_demand_region_ignores_listed_profiles(region: str, mocker) -> None:
+    # Embed v4 has on-demand throughput here: a profile in the list must not
+    # move its calls to the profile's quota, routing and IAM resources.
+    factory, session = _factory(
+        region, [f"us.{EMBED_V4}", f"eu.{EMBED_V4}", f"global.{EMBED_V4}"]
+    )
+    lister = mocker.spy(session.bedrock, "list_inference_profiles")
+    assert factory.get_model(EmbeddingModelId.EMBED_V4).model_id == EMBED_V4
+    lister.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("region", "profiles", "expected"),
+    [
+        ("us-west-2", [f"us.{EMBED_V4}"], f"us.{EMBED_V4}"),
+        ("ap-northeast-2", [f"global.{EMBED_V4}"], f"global.{EMBED_V4}"),
+    ],
+)
+def test_embed_v4_profile_only_region_uses_the_profile(
+    region: str, profiles: list[str], expected: str
+) -> None:
+    factory, session = _factory(region, profiles)
+    assert factory.get_model(EmbeddingModelId.EMBED_V4).model_id == expected
+    session.stubber.assert_no_pending_responses()
+
+
 def test_titan_v2_stays_on_demand() -> None:
     # Titan V2 has no system-defined profile: the bare id is invoked as before.
     factory, _ = _factory("us-west-2", [f"us.{EMBED_V4}"])

@@ -1551,13 +1551,16 @@ changed once with the full-config keys (#332).
   Embed v4 and the rerank models keep their limits. Rebuild any index
   built with Embed v3: its vectors do not encode the texts (#PR).
 - Bedrock embeddings now resolve cross-region inference profiles like the
-  chat models: `cohere.embed-v4:0`, which has on-demand throughput only in
-  `us-east-1`, `eu-west-1` and `ap-northeast-1`, was invoked by its bare id
-  and failed on the first embed call in `us-west-2` (and every other
-  region). It now runs through the `global.`/geography profile, a profile id
-  or inference-profile ARN passes through as given, and with no profile in
-  such a region the embedding factory fails at model creation with the
-  remedy (#458).
+  chat models where a model has no on-demand throughput: `cohere.embed-v4:0`,
+  which has it only in `us-east-1`, `eu-west-1` and `ap-northeast-1`, was
+  invoked by its bare id and failed on the first embed call in `us-west-2`
+  (and every other region). There it now runs through the
+  `global.`/geography profile, and with no profile the embedding factory
+  fails at model creation with the remedy (#458). In the three on-demand
+  regions, and for every other embedding model, the bare id is invoked as
+  before (#PR). `models.embedding.model_id` takes catalog ids only; a
+  profile id or inference-profile ARN passed straight to
+  `BedrockEmbeddingModelFactory.get_model` is invoked as given (#458).
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
   `batch`) still running on another thread waited forever, because the
   close stopped the chain's loop with the call's task still pending on it.
