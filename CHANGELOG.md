@@ -957,6 +957,10 @@ changed once with the full-config keys (#332).
   `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
   given as a path. langchain-community stays a dependency only to hold the
   copy ragas imports below 0.4 (#460).
+- CI: a non-blocking `python-3-13` job runs the test suite on Python 3.13,
+  lifting the `requires-python` cap in its own checkout (the lock keeps
+  every version and only gains the 3.13 wheels). Supported Pythons stay
+  3.11 and 3.12 (#PR).
 - CI runs the main test suite in parallel (`pytest -n auto`, pytest-xdist
   in the dev group); coverage combines across the workers and the floor
   is checked as before. Two tests that depended on running in one process

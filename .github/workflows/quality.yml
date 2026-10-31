@@ -184,6 +184,36 @@ jobs:
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -m "not aws" -q
 
+  python-3-13:
+    # Early warning for the next interpreter, not a support claim:
+    # requires-python stops below 3.13, so this job lifts the cap in its own
+    # checkout and re-locks (the lock keeps its versions and only gains their
+    # 3.13 wheels) before running the suite. Non-blocking until 3.13 is
+    # supported for real.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.23"
+          python-version: "3.13"
+
+      - name: Allow Python 3.13 in this checkout
+        run: |
+          sed -i 's/^requires-python = ">=3.11, <3.13"$/requires-python = ">=3.11, <3.14"/' pyproject.toml
+          grep -q '^requires-python = ">=3.11, <3.14"$' pyproject.toml
+          uv lock
+
+      - name: Sync dependencies
+        run: uv sync --python 3.13 --frozen --extra otel
+
+      - name: pytest
+        run: uv run --python 3.13 --frozen pytest -m "not aws" -q -n auto
+
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
     # posture (and the curated nag_suppressions) is enforced in CI — an
