@@ -766,16 +766,6 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
 이하).
 
-`search.lightrag_search.structured_keyword_output: true`(시범 기능, 기본값 꺼짐)는 자유
-텍스트에서 JSON을 파싱하는 대신 키워드 모델에 JSON 스키마로 제약된 응답을 요청합니다.
-Bedrock에서는 Converse `outputConfig.textFormat`, Ollama에서는 `format`,
-OpenAI 호환 서버에서는 `response_format`을 씁니다. Bedrock에서는 Claude 4.5 이후 모델의
-요청에 추론 effort가 없을 때만 적용합니다. Claude 4.6 이후 모델은 `output_config.effort`를
-보내는데, Bedrock이 이것과 출력 형식을 함께 받는지 아직 검증하지 않았으므로 이 모델들(기본
-모델 포함)은 텍스트 파서를 유지합니다. 그 밖의 모델이거나 구조화 호출이 실패하면 해당
-질의는 텍스트 파서로 돌아갑니다. 스키마를 쓰는 첫 Bedrock 요청은 스키마를 컴파일하므로
-최대 약 90초가 걸립니다(24시간 캐시).
-
 ### 예시
 
 ```bash

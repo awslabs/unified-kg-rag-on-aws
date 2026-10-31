@@ -695,7 +695,6 @@ LightRAG dual-level keyword search configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `structured_keyword_output` | boolean | `false` | Pilot: ask the keyword-extraction model for a JSON-schema constrained response (with_structured_output, method json_schema) instead of parsing JSON out of free text. Used on Bedrock Converse for Claude 4.5+ requests that carry no reasoning effort (output_config), and on Ollama and OpenAI-compatible servers; elsewhere, and whenever the structured call fails, the text parser runs as before. The first Bedrock request with the schema compiles it (up to about 90 s, then cached for 24 h). |
 | `raw_query_fallback_max_len` | integer (≥ 0) | `50` | When dual-level keyword extraction yields no keywords, a query whose length is below this (0 disables the gate) falls back to using the raw query as a low-level keyword, mirroring LightRAG. Longer queries skip the fallback to avoid an over-broad graph scan. |
 | `kg_stream_top_k` | integer (≥ 1) | `40` | Width of the entity and relationship vector queries (LightRAG's `QueryParam.top_k`, default 40). Separate from the chunk width: collapsing both onto the caller's single top_k starves the graph streams. Acts as a floor — a caller asking for a larger top_k gets it. |
 | `chunk_stream_top_k` | integer (≥ 1) | `20` | Width of the chunk stream, and the cap on the merged chunk pool (LightRAG's `QueryParam.chunk_top_k`, default 20). Acts as a floor against the caller's top_k. |
