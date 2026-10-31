@@ -197,3 +197,110 @@ def test_a_dated_claim_keeps_its_dates_through_incremental_runs(
     full = stored(tmp_path / "full", [FINAL])
     assert full == [("2024-01-01", 2)]
     assert stored(tmp_path / "inc", [FIRST, FINAL]) == full
+
+
+_COARSE_DATES = (
+    ("Q3 2022", "2024"),
+    ("Sept. 2023", "UNKNOWN"),
+    ("2023-w05", "Q4-2024"),
+)
+
+
+def _coarsely_dated(system: str, human: str) -> str:
+    """``_respond`` with claims of several types, dated by periods coarser
+    than a day, in each text unit."""
+    answer = _respond(system, human)
+    if "<claim>" not in answer:
+        return answer
+    claim = answer[answer.index("<claim>") : answer.index("</claims>")]
+    return "<claims>{}</claims>".format(
+        "".join(
+            claim.replace("OBLIGATION", f"OBLIGATION{i}").replace(
+                "<claim_status>",
+                f"<start_date>{start}</start_date><end_date>{end}</end_date>"
+                "<claim_status>",
+            )
+            for i, (start, end) in enumerate(_COARSE_DATES)
+        )
+    )
+
+
+def _as_written_coarse_dates(value: str | None, *, end: bool = False) -> str | None:
+    """Claim dates as builds before #451 read them: a period coarser than a
+    day as written."""
+    from datetime import datetime
+
+    text = " ".join((value or "").split())
+    if text.casefold() in {"", "unknown"}:
+        return None
+    try:
+        return datetime.fromisoformat(text).date().isoformat()
+    except ValueError:
+        return text
+
+
+@pytest.mark.parametrize("legacy", ["as written", "end as first day"])
+def test_a_claim_stored_under_an_earlier_date_reading_merges_with_its_restatement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: str
+) -> None:
+    # Regression: a claim id keys on its dates. A claim an earlier build
+    # stored under another reading of its dates ("Q3 2022" as written, a
+    # coarse end date as its first day) kept that id, and a document
+    # restating it after the upgrade stored a second copy beside it.
+    from tests.fixtures.fakes import stores
+    from unified_kg_rag.adapters.storage import opensearch_indexer
+    from unified_kg_rag.domain.ingestion import claim_resolver
+
+    current = claim_resolver.claim_date_value
+
+    def first_day_end(value: str | None, *, end: bool = False) -> str | None:
+        return current(value)
+
+    reading = _as_written_coarse_dates if legacy == "as written" else first_day_end
+
+    def stored(tmp: Path, corpora: list[dict[str, str]], upgrade_at: int) -> list:
+        config = _config(tmp / "stores", tmp / "viz")
+        config.processing.claim_extraction.enabled = True
+        providers = _providers(
+            config, FakeOllama(_coarsely_dated, "x", DIM), FakeCrossEncoder("r")
+        )
+        source = tmp / "corpus"
+        for run, corpus in enumerate(corpora):
+            for module in (claim_resolver, opensearch_indexer, stores):
+                monkeypatch.setattr(
+                    module,
+                    "claim_date_value",
+                    reading if run < upgrade_at else current,
+                )
+            if source.exists():
+                shutil.rmtree(source)
+            source.mkdir(parents=True)
+            for name, text in corpus.items():
+                (source / name).write_text(text)
+            context = _ingest(config, providers, source, tmp / f"run-{run}")
+            assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+        hits = _stored(
+            config, providers, config.indexing.opensearch.claims_index_prefix
+        )
+        return sorted(
+            (
+                h["_id"],
+                h["_source"].get("start_date"),
+                h["_source"].get("end_date"),
+                len(h["_source"]["text_unit_ids"]),
+            )
+            for h in hits
+        )
+
+    # Restated in the same words: no entity is re-keyed, so nothing else
+    # derives the stored claim again.
+    first = {"a.txt": FIRST["a.txt"]}
+    final = {**first, "d.txt": "Acme Inc supplies Buyer twice."}
+    full = stored(tmp_path / "full", [final], upgrade_at=0)
+    assert sorted(row[1:] for row in full) == [
+        ("2022-07-01", "2024-12-31", 2),
+        ("2023-01-30", "2024-12-31", 2),
+        ("2023-09-01", None, 2),
+    ]
+    # Indexed by the earlier build, then the restating document by this one.
+    assert stored(tmp_path / "inc", [first, final], upgrade_at=1) == full

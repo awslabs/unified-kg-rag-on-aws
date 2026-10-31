@@ -670,6 +670,15 @@ changed once with the full-config keys (#332).
   form fails to write. An incremental run turns date detection off on the
   live indices, so a field not mapped yet stays a keyword; one already
   mapped as a date needs a rebuild with `indexing.reset: true` (#446).
+- Claims: a claim indexed before coarse end dates were read as their
+  period's last day keeps its end date as the period's first day (and one
+  indexed before #451 a coarser period as written) until a run derives it
+  again: a claim a later document restates, or that a run derives again,
+  is then merged into the claim the current reading gives (#PR). Rebuild
+  once with `indexing.reset: true` for `end_date` ranges to match the
+  other claims, and to merge at once the copies an incremental run stored
+  beside a restated claim before this fix (a run deriving either merges
+  them too).
 - Claims: rebuild once with `indexing.reset: true` to apply #442's claim
   resolution (a claim links only to the entities its own text units state)
   to all claims; until then a stored claim changes only when it is derived
@@ -1517,6 +1526,14 @@ changed once with the full-config keys (#332).
   rest of the year, the claim was shown ending on 1 January, and "until
   2024" and "until 2024-12-31" were two claims. `Q4-2024` reads as a
   quarter too (it was kept as written) (#PR).
+- Incremental indexing: a claim stored under an earlier reading of its
+  dates (a period coarser than a day as written before #451, a written-out
+  date before #449, a coarse end date as its first day, see above) kept
+  that reading's id, and a document restating it after the upgrade stored a
+  second copy beside it. A derivation now also looks the claim up under the
+  ids those readings gave the dates its statements are written with, and
+  merges it into the claim they give now (its text units joined, the old
+  id deleted), as a full build has it (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
@@ -1607,15 +1624,16 @@ changed once with the full-config keys (#332).
   another case (`Early 2024`, `early 2024`) kept the first statement's spelling, which
   depended on the statements' order; it keeps the smallest. A claim id
   keys on its dates, so a stored claim whose date now reads differently
-  keeps its old id until its documents are indexed again (`indexing.reset`
-  re-indexes them all) (#449). A coarser period is stored as its first
-  day, so a range filter orders it with the calendar dates instead of
-  comparing its text (`Q3 2022` sorted after every ISO date, `2024-W03`
-  after every 2024 date): an ISO week as its Monday, a quarter (`Q3 2022`,
-  `2022-Q3`), a month (`March 2024`, `2024-03`) or a year (`2024`) as its
-  first day; `Sept.` and `Dec.31` read as dates too. An all-numeric date
-  whose day and month order is unknown (`10/08/2024`) is still stored as
-  written (#451).
+  had another id than its restatements (a derivation now merges it into
+  the current claim, see above; one no run derives again keeps its old id
+  and dates until a rebuild with `indexing.reset: true`) (#449). A coarser
+  period is stored as its first day, so a range filter orders it with the
+  calendar dates instead of comparing its text (`Q3 2022` sorted after
+  every ISO date, `2024-W03` after every 2024 date): an ISO week as its
+  Monday, a quarter (`Q3 2022`, `2022-Q3`), a month (`March 2024`,
+  `2024-03`) or a year (`2024`) as its first day; `Sept.` and `Dec.31`
+  read as dates too. An all-numeric date whose day and month order is
+  unknown (`10/08/2024`) is still stored as written (#451).
 - `run-ingestion`: documents indexed without the claims of some text units
   (claim extraction failing for an error of their own, counted for none)
   are counted in the JSON result (`documents_without_claims`) and the

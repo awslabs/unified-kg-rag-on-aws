@@ -1156,7 +1156,9 @@ class IndexingManager:
             given = {item.id for group in items for item in group}
             # Stored entities of a derived name's key (another spelling a
             # full build merges with it, that cites none of these units), and
-            # stored claims of a derived claim's id, are held too.
+            # stored claims of a derived claim's id, or of an id an earlier
+            # reading of its dates gave it (``Derived.earlier_claim_ids``),
+            # are held too.
             siblings = (
                 self.neptune_indexer.find_entity_ids_by_name_key(
                     sorted({compact_name_key(e.name) for e in derived.entities}),
@@ -1172,6 +1174,7 @@ class IndexingManager:
                     | set(derived.split_from)
                     | sibling_ids
                     | {c.id for c in derived.claims}
+                    | set(derived.earlier_claim_ids)
                 )
                 - given
                 - blocked
@@ -1258,6 +1261,12 @@ class IndexingManager:
                 # attempt maps to (found only once a late sibling joined).
                 joining = sibling_ids | set(derived.id_remap.values())
                 items[0].extend(e for e in held[0] if e.id in joining)
+                # And a claim stored under an earlier reading of its dates:
+                # it is the derived claim (found once its statements were
+                # read, a unit another held item cites).
+                earlier = set(derived.earlier_claim_ids)
+                items[2].extend(c for c in held[2] if c.id in earlier)
+                joining |= earlier
                 # Edges too: a re-key killed after writing an edge's copy at
                 # its new id, before retiring the old one, left that copy.
                 items[1].extend(r for r in held[1] if r.id in joining)
@@ -2405,7 +2414,9 @@ class IndexingManager:
             rekeyed=rekeyed,
             split_from=split_from,
         )
-        claim_ids = {c.id for c in claims}
+        # The stored claims derived with them as stored under an earlier
+        # reading of their dates are retired too.
+        claim_ids = {c.id for c in claims} | set(derived.earlier_claim_ids)
         self._retire(
             suffix,
             {old: new for old, new in derived.id_remap.items() if old in claim_ids},
