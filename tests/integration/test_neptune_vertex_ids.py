@@ -35,7 +35,7 @@ from tests.property.test_incremental_interruption_properties import (
     _follow_up,
 )
 from unified_kg_rag.adapters.aws.neptune import VERTEX_ID_SWITCH_LABEL, vertex_id
-from unified_kg_rag.adapters.storage import NeptuneIndexer
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
     Community,
