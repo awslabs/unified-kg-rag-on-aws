@@ -30,7 +30,6 @@ dependencies = [
     # (adapters/aws/neptune.py); gremlinpython pins its line.
     "aiohttp>=3.9.0,<4.0.0",
     "aws-assume-role-lib>=2.10.0",
-    "bokeh>=3.9.2",
     "boto3>=1.43.66",
     # Imported directly (exceptions, Config, retries); boto3 pins its line.
     "botocore>=1.43.66",
@@ -76,20 +75,19 @@ dependencies = [
     "langchain-text-splitters>=1.1.2,<2.0.0",
     # Imported directly to warn when LangSmith tracing is on (shared/logging.py).
     "langsmith>=0.3.45,<1.0.0",
-    "llvmlite>=0.48.0",
     "lxml>=6.0.0",
     "networkx>=3.4",
     "numpy>=1.26.4",
     "opensearch-py>=3.0.0",
     "pandas>=2.3.1",
-    # 13.0.0 fixes the critical/high Pillow advisories.
+    # 13.0.0 fixes the critical/high Pillow advisories. Not imported here:
+    # ragas depends on it.
     "pillow>=13.0.0",
     "pydantic>=2.11.7",
     # 6.21.4 fixes the high-severity DoS advisories (GHSA-5849-834g-hvw5 and
     # six more) that crafted PDFs reach through the PDF loader.
     "pypdf>=6.21.4",
     "python-dotenv>=1.1.1",
-    "pyvis>=0.3.2",
     "pyyaml>=6.0.2",
     # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
     # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
@@ -97,11 +95,9 @@ dependencies = [
     "ragas>=0.4.3,<0.5.0",
     # Instructor (via ragas) requires Rich <15 for OpenAI 2.x compatibility.
     "rich>=14.3.3,<15.0.0",
-    "scikit-learn>=1.7.1",
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
     "tqdm>=4.70.0",
-    "umap-learn>=0.5.6",
 ]
 
 [project.scripts]
@@ -118,6 +114,21 @@ prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
 unstructured = [
     "unstructured[md]>=0.24.1",
+]
+# Optional: graph visualization (`run-visualization`): the pyvis interactive
+# graph, the Bokeh static charts and the UMAP / t-SNE / PCA node layout. The
+# core package imports none of these; `run-visualization` and the renderers
+# fail fast naming this extra when they are missing.
+viz = [
+    "bokeh>=3.9.2",
+    # Not imported here: floors of packages the extra pulls in. 13.0.0 fixes
+    # the critical/high Pillow advisories (Bokeh depends on Pillow).
+    "pillow>=13.0.0",
+    "pyvis>=0.3.2",
+    "scikit-learn>=1.7.1",
+    "umap-learn>=0.5.6",
+    # umap-learn pulls in numba and llvmlite.
+    "llvmlite>=0.48.0",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when

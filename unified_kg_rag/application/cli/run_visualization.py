@@ -8,7 +8,9 @@ during ingestion: by ``GraphVisualizationManager.run`` with a layout and
 centrality when ``graph.visualization.enabled``, else as graph and communities
 only, ``export_data``) WITHOUT re-running ingestion. A data-only file gets a
 spring layout and the configured centrality metrics here. Drives the renderer registry, so any registered renderer
-(``--renderers interactive static``) can be produced independently.
+(``--renderers interactive static``) can be produced independently. The
+built-in renderers need the ``viz`` extra; without it the run stops before
+rendering (exit 2) naming the extra.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import networkx as nx
 
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
+    get_renderer_class,
     registered_renderers,
     render_all,
 )
@@ -186,7 +189,14 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
 def run_visualization(
     data_path: Path, output_dir: Path, renderer_names: list[str], config: Any
 ) -> list[Path]:
-    """Render the requested renderers from exported data; return written paths."""
+    """Render the requested renderers from exported data; return written paths.
+
+    Raises:
+        ConfigurationError: A renderer's dependency is not installed (the
+            ``viz`` extra), checked before the data is loaded.
+    """
+    for name in renderer_names:
+        get_renderer_class(name).check_dependencies()
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
     _fill_missing_analysis(context, config)

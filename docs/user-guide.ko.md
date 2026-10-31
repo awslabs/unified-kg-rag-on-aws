@@ -105,8 +105,12 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync              # or: pip install -e .
+uv sync --extra viz  # or: pip install -e '.[viz]'
 ```
+
+`uv sync`만 실행하면 수집과 질의만 설치됩니다. **시각화**(`run-visualization`)에는
+`viz` extra(pyvis, Bokeh, 레이아웃 차원 축소기)가 필요하며, 없으면
+`run-visualization`이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
 
 **Markdown과 HTML**을 파싱하려면 `unstructured` extra가 필요합니다
 (`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
@@ -1383,7 +1387,7 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-렌더러는 **`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개이며 `graph.visualization`
+`viz` extra가 필요합니다(`uv sync --extra viz`, [§1](#설치)). 렌더러는 **`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개이며 `graph.visualization`
 아래(`interactive.*`, `static.*`, `embedding_method`, `layout_method`)에서 설정합니다.
 
 - **입력.** `run-ingestion`의 커뮤니티 탐지 단계는 그래프가 코퍼스 전체를 담는

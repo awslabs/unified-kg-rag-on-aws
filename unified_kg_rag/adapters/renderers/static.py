@@ -5,7 +5,7 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
-from bokeh.models import (  # type: ignore[attr-defined]
+from bokeh.models import (  # type: ignore[attr-defined, unused-ignore]
     ColumnDataSource,
     HoverTool,
     NumeralTickFormatter,

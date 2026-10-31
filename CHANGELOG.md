@@ -45,6 +45,16 @@ Python. 3.11 or 3.12 is required (`requires-python` `>=3.11, <3.13`): 3.10
 reached end of life and is no longer supported. Upgrade: install on Python
 3.11 or 3.12 (#430).
 
+Installation. Visualization is an optional extra: `bokeh`, `pyvis`,
+`umap-learn` and `scikit-learn` moved from the core dependencies to the
+`viz` extra, with the security floors of what they pull in (`pillow`,
+`llvmlite`). Without it
+`run-visualization` exits `2` with an error naming the extra, before reading
+the data, and `render_all` raises `ConfigurationError` instead of logging and
+skipping the renderer; `from unified_kg_rag import BaseRenderer,
+register_renderer` still works on a core install. Upgrade: install with
+`uv sync --extra viz` (or `pip install -e '.[viz]'`) where you render (#PR).
+
 Configuration. An unknown key fails the load (see below); a moved key fails
 naming the key that replaces it.
 - `indexing.opensearch.index_settings` refuses the `knn` keys (`knn`,

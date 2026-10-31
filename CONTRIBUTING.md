@@ -56,11 +56,11 @@ test suite runs without AWS.
 ```bash
 git clone https://github.com/<your-username>/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync                          # creates .venv with the package and the dev dependency group
+uv sync --extra viz              # creates .venv with the package, the dev group and the extra the tests need
 uv run pre-commit install        # runs ruff, isort, black and mypy on every commit
 ```
 
-Without uv: create a virtual environment, activate it, and run `pip install -e . --group dev` (pip 25.1 or later).
+Without uv: create a virtual environment, activate it, and run `pip install -e '.[viz]' --group dev` (pip 25.1 or later).
 
 ### Branches and pull requests
 

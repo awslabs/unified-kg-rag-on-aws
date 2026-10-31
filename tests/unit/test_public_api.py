@@ -140,3 +140,31 @@ def test_importing_the_package_loads_none_of_it() -> None:
         timeout=120,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+# Top-level modules of the optional extras the public API must not need.
+_EXTRA_MODULES = ("bokeh", "pyvis", "sklearn", "umap")
+
+
+def test_the_public_api_loads_no_optional_extra() -> None:
+    # Every public name (BaseRenderer and register_renderer included) works on
+    # a core install: the built-in renderers load pyvis and Bokeh only when
+    # they render.
+    script = (
+        "import json, sys\n"
+        "import unified_kg_rag\n"
+        "for name in unified_kg_rag.__all__:\n"
+        "    getattr(unified_kg_rag, name)\n"
+        "import unified_kg_rag.adapters.renderers\n"
+        f"extras = {_EXTRA_MODULES!r}\n"
+        "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules} "
+        "& set(extras))))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []

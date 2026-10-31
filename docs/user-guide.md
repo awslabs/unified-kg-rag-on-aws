@@ -106,8 +106,13 @@ variables ([After deploy](../iac/README.md#after-deploy)).
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync              # or: pip install -e .
+uv sync --extra viz  # or: pip install -e '.[viz]'
 ```
+
+`uv sync` alone installs ingestion and queries. **Visualization**
+(`run-visualization`) needs the `viz` extra (pyvis, Bokeh and the layout
+reducers); without it `run-visualization` stops with exit `2`, naming the
+extra.
 
 **Markdown and HTML** need the `unstructured` extra
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
@@ -1558,8 +1563,9 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-The two renderers are **`interactive`** (pyvis) and **`static`** (Bokeh),
-configured under `graph.visualization` (`interactive.*`, `static.*`,
+It needs the `viz` extra (`uv sync --extra viz`, [§1](#install)). The two
+renderers are **`interactive`** (pyvis) and **`static`** (Bokeh), configured
+under `graph.visualization` (`interactive.*`, `static.*`,
 `embedding_method`, `layout_method`).
 
 - **The input.** The community-detection stage of `run-ingestion` writes
