@@ -113,22 +113,20 @@ prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
 unstructured = [
+    # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
+    "llvmlite>=0.48.0",
     "unstructured[md]>=0.24.1",
 ]
 # Optional: graph visualization (`run-visualization`): the pyvis interactive
-# graph, the Bokeh static charts and the UMAP / t-SNE / PCA node layout. The
-# core package imports none of these; `run-visualization` and the renderers
-# fail fast naming this extra when they are missing.
+# graph and the Bokeh static charts. The core package imports neither;
+# `run-visualization` and the renderers fail fast naming this extra when they
+# are missing.
 viz = [
     "bokeh>=3.9.2",
-    # Not imported here: floors of packages the extra pulls in. 13.0.0 fixes
-    # the critical/high Pillow advisories (Bokeh depends on Pillow).
+    # Not imported here: Bokeh depends on Pillow, and 13.0.0 fixes the
+    # critical/high Pillow advisories.
     "pillow>=13.0.0",
     "pyvis>=0.3.2",
-    "scikit-learn>=1.7.1",
-    "umap-learn>=0.5.6",
-    # umap-learn pulls in numba and llvmlite.
-    "llvmlite>=0.48.0",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when
@@ -276,9 +274,7 @@ module = [
     "pandas.*",
     "pyvis.*",
     "ragas.*",
-    "sklearn.*",
     "snowballstemmer",
-    "umap.*",
     "datasets.*",
     "lxml.*",
     "tqdm.*",
@@ -317,7 +313,7 @@ markers = [
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's
-# TinkerPop line; numba: transitive via umap; ragas: the
+# TinkerPop line; numba: transitive via unstructured; ragas: the
 # metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
 filterwarnings = [
     "ignore::DeprecationWarning:gremlin_python",

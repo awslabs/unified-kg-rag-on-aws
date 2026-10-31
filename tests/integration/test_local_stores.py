@@ -477,7 +477,6 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
     config.fixing.enabled = False
-    config.graph.visualization.enabled = False
     # The Ollama embedding model's dimension is the configured one.
     config.models.embedding.dimension = 64
     server = FakeOllama(_respond, answer, config.models.embedding.dimension)

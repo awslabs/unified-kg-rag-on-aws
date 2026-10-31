@@ -545,6 +545,14 @@ REMOVED_KEYS: dict[str, str] = {
         "an incremental run always merges its delta into the stored graph; "
         "turning that off overwrote entities other documents still cite"
     ),
+    **{
+        f"graph.visualization.{key}": (
+            "ingestion no longer renders visualizations; run-visualization "
+            "renders the visualization_data.json it writes "
+            "(graph.visualization.export_data), with a spring layout"
+        )
+        for key in ("enabled", "embedding_method", "layout_method", "layout")
+    },
 }
 
 
@@ -1814,42 +1822,6 @@ class CommunityDetectionConfig(BaseModel):
         return self
 
 
-class ReducerSettings(BaseModel):
-    """A dimensionality reduction of the node layout (PCA; the base of the others)."""
-
-    n_components: int = Field(default=2, ge=1, description="Output dimensions.")
-    metric: str = Field(default="euclidean", description="Distance metric.")
-    random_state: int | None = Field(
-        default=42,
-        description="Random seed, so a re-render gives the same layout; null "
-        "for a random one (UMAP then runs in parallel).",
-    )
-
-
-class UMAPSettings(ReducerSettings):
-    n_neighbors: int = Field(
-        default=15, ge=2, description="Neighbours of the local approximation."
-    )
-    min_dist: float = Field(
-        default=0.1, ge=0.0, description="Minimum distance between laid-out points."
-    )
-
-
-class TSNESettings(ReducerSettings):
-    perplexity: int = Field(
-        default=30, ge=1, description="Balance of local and global structure."
-    )
-    max_iter: int = Field(default=1000, ge=250, description="Optimization iterations.")
-
-
-class LayoutSettings(BaseModel):
-    """Parameters of each ``layout_method``."""
-
-    umap: UMAPSettings = Field(default_factory=UMAPSettings)
-    tsne: TSNESettings = Field(default_factory=TSNESettings)
-    pca: ReducerSettings = Field(default_factory=ReducerSettings)
-
-
 class InteractiveGraphSettings(BaseModel):
     """The interactive pyvis graph (``interactive_graph.html``)."""
 
@@ -1890,45 +1862,19 @@ class VisualizationConfig(BaseModel):
         description="Node centrality metrics the visualization sizes nodes and "
         "plots by (computed at render time; no ingestion stage reads them)",
     )
-    enabled: bool = Field(
-        default=False,
-        description=(
-            "Render visualizations during ingestion. Off by default: it adds "
-            "an embedding call per node (embedding_method) and a "
-            "dimensionality reduction to every ingest; render on demand with "
-            "run-visualization from the data export_data writes instead."
-        ),
-    )
     export_data: bool = Field(
         default=True,
         description="Write visualization_data.json (graph nodes, edges and the "
-        "community hierarchy) at ingestion when enabled is false, so "
-        "run-visualization can render on demand. One pass over the graph: no "
-        "embedding or model call, no layout or centrality (run-visualization "
-        "computes them). enabled: true always writes the file, with its layout.",
+        "community hierarchy) at ingestion, so run-visualization can render "
+        "it. One pass over the graph: no embedding or model call, no layout or "
+        "centrality (run-visualization computes them).",
     )
     outputs_directory: str | Path | None = Field(
         default=None,
-        description="Directory to save visualization files. When unset, "
-        "ingestion writes to '<cache directory>/<pipeline_id>/visualization' "
-        "(--cache-directory), so visualization_data.json is synced to S3 with the cache; other callers "
-        "fall back to 'outputs/visualization'.",
-    )
-    embedding_method: str = Field(
-        default="description",
-        pattern="^(description|none)$",
-        description="Node embedding for the layout: 'description' embeds each "
-        "node's 'name: description' with the embedding model; 'none' uses a "
-        "spring layout from the graph topology.",
-    )
-    layout_method: str = Field(
-        default="umap",
-        pattern="^(umap|tsne|pca)$",
-        description=("Dimensionality reduction of the node layout: umap, tsne or pca."),
-    )
-    layout: LayoutSettings = Field(
-        default_factory=LayoutSettings,
-        description="Parameters per layout_method.",
+        description="Directory ingestion writes visualization_data.json to. "
+        "When unset, '<cache directory>/<pipeline_id>/visualization' "
+        "(--cache-directory), so the file is synced to S3 with the cache, or "
+        "'outputs/visualization' without a cache directory.",
     )
     interactive: InteractiveGraphSettings = Field(
         default_factory=InteractiveGraphSettings,
@@ -3303,8 +3249,8 @@ class LoggingConfig(BaseModel):
             "langchain_aws": "WARNING",
             "botocore": "WARNING",
             "urllib3": "WARNING",
-            # At DEBUG: numba logs every JIT compile (UMAP, from
-            # run-visualization) and httpcore every connection step (httpx).
+            # At DEBUG: numba (of the unstructured extra) logs every JIT
+            # compile and httpcore every connection step (httpx).
             "numba": "WARNING",
             "httpcore": "WARNING",
             # At WARNING: every failed OpenSearch request, the 404s of an

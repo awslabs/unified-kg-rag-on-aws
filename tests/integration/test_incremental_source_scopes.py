@@ -119,7 +119,6 @@ def scope_test_config(base: Config | None = None) -> Config:
     config.processing.claim_extraction.enabled = False
     config.processing.max_attempts = 1
     config.fixing.enabled = False
-    config.graph.visualization.enabled = False
     return config
 
 

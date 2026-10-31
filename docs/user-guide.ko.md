@@ -77,7 +77,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 |---|---|---|
 | 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변, 판정 모델) | `anthropic.claude-sonnet-5-5` | `models.default` |
 | 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `models.fast` |
-| 임베딩(인덱싱, 질의, 평가, 시각화 레이아웃) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
+| 임베딩(인덱싱, 질의, 평가) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
 | 재순위화 | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **리전.** 모든 Bedrock 호출은 `aws.bedrock.region_name`(기본값은
@@ -399,7 +399,7 @@ models:
     query_rewrite: default                          # moved to the other tier
 ```
 
-- 임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS, 시각화 배치에 함께
+- 임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS에 함께
   쓰이며, 이 모델이나 `dimension`을 바꾸면 다시 인덱싱해야 합니다. Bedrock에서는 임베딩과
   재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./models.ko.md#모델-id와-기능-정보-레코드)),
   다른 공급자는 어떤 모델 이름이든 받습니다.
@@ -1387,8 +1387,10 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-`viz` extra가 필요합니다(`uv sync --extra viz`, [§1](#설치)). 렌더러는 **`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개이며 `graph.visualization`
-아래(`interactive.*`, `static.*`, `embedding_method`, `layout_method`)에서 설정합니다.
+`viz` extra가 필요합니다(`uv sync --extra viz`, [§1](#설치)). 렌더러는
+**`interactive`**(pyvis)와 **`static`**(Bokeh) 두 개이며 `graph.visualization`
+아래(`interactive.*`, `static.*`, `centrality.*`)에서 설정합니다. 수집 단계는 직접
+렌더링하지 않습니다.
 
 - **입력.** `run-ingestion`의 커뮤니티 탐지 단계는 그래프가 코퍼스 전체를 담는
   실행(전체 빌드, 초기화, 모든 문서가 새 문서이거나 변경된 증분 실행)마다
@@ -1399,18 +1401,10 @@ run-visualization --data-path visualization_data.json --renderers interactive --
   `<캐시 디렉터리>/<pipeline_id>/visualization/`입니다. S3 캐시 동기화는 `.json`만
   올리므로 HTML은 로컬에서 다시 렌더링하세요.
 - **내용.** 노드(레벨 0 `community_id`로 색을 정함), 간선, 커뮤니티 계층이며 벡터는
-  뺍니다. 기본값에서는 파일을 쓸 때 모델을 호출하지 않고 `run-visualization`이 렌더링할
-  때 시드를 고정한 spring 레이아웃을 계산합니다. `graph.visualization.enabled: true`이면
-  이 단계가 렌더링도 하고 임베딩 기반 레이아웃을 저장합니다(수집마다 노드당 임베딩 호출
-  한 번).
+  뺍니다. 파일을 쓸 때 모델을 호출하지 않으며, `run-visualization`이 렌더링할 때 그래프
+  구조로 시드를 고정한 spring 레이아웃과 `centrality` 지표를 계산합니다.
 - **크기.** 대화형 그래프는 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만
   남기고 그 노드만 배치합니다.
-- **레이아웃.** `embedding_method: "none"`은 임베딩 클라이언트 없이 spring 레이아웃을
-  쓰고, `"description"`은 노드마다 `name: description`을 임베딩해(`models.embedding`)
-  `layout_method`로 차원을 줄입니다. 임베딩이 실패하면 시각화 단계가 실패하며(수집은
-  계속함), `processing.ignore_errors: true`이면 ERROR를 남기고 spring 레이아웃으로
-  대체합니다. 차원 축소가 실패하면 항상 대체합니다. 대체하면 `"layout_degraded": true`를
-  기록합니다.
 - 간선 두께와 불투명도는 그래프 자체의 가중치 범위에 맞춰 로그 스케일로 조정합니다.
 - 렌더러가 실제로 쓴 파일만 보고하며(같은 이름의 기존 파일은 먼저 지움), 아무것도
   렌더링하지 못하면(예: 빈 그래프) 상태 코드 `1`로 종료합니다.

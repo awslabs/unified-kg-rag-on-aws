@@ -103,9 +103,8 @@ def test_injected_providers_reach_every_ingestion_stage(
     assert indexing.description_summarizer.factory is llm
 
 
-def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
+def test_translator_uses_the_bundle(no_bedrock) -> None:
     from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
-    from unified_kg_rag.visualization.base import GraphVisualizationManager
 
     config = Config()
     llm, embedding = _FakeLLMFactory(), MagicMock()
@@ -114,15 +113,8 @@ def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
     )
 
     translator = TextUnitTranslator(config, providers=providers)
-    viz = GraphVisualizationManager(
-        config=config,
-        graph_analyzer=MagicMock(),
-        community_detector=MagicMock(),
-        providers=providers,
-    )
 
     assert translator.factory is llm
-    assert viz.providers is providers
 
 
 def test_pipeline_without_providers_builds_one_default_bundle(

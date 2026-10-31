@@ -133,7 +133,7 @@ class TestRunVisualization:
     def test_data_only_export_gets_a_layout_and_centrality(
         self, tmp_path: Path, config: Config
     ) -> None:
-        # The file ingestion writes with graph.visualization.enabled false.
+        # The file ingestion writes (graph.visualization.export_data).
         from unified_kg_rag.domain.ingestion.visualization_data import graph_data
 
         graph = nx.Graph()

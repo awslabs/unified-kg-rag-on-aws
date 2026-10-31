@@ -426,7 +426,6 @@ def _data_export_stage(mocker, tmp_path, *, export_data: bool):
     detector.export_community_data.return_value = {"hierarchy": [{"nodes": ["e1"]}]}
     mocker.patch.object(ps, "CommunityDetector", return_value=detector)
     config = Config()
-    config.graph.visualization.enabled = False
     config.graph.visualization.export_data = export_data
     config.graph.visualization.outputs_directory = str(tmp_path / "viz")
     stage = ps.CommunityDetectionStage(config=config)
@@ -442,16 +441,14 @@ def _data_export_stage(mocker, tmp_path, *, export_data: bool):
 def test_community_stage_exports_visualization_data_without_rendering(
     mocker, tmp_path
 ) -> None:
-    # Rendering is off by default, but run-visualization needs the data file;
+    # Ingestion renders nothing, but run-visualization needs the data file;
     # writing it costs one pass over the graph and no embedding call.
     import json
 
     stage, ctx, _ = _data_export_stage(mocker, tmp_path, export_data=True)
-    manager = mocker.patch("unified_kg_rag.visualization.GraphVisualizationManager")
 
     stage._execute_core(ctx)
 
-    manager.assert_not_called()
     data = json.loads((tmp_path / "viz" / "visualization_data.json").read_text())
     assert [n["id"] for n in data["nodes"]] == ["e1", "e2"]
     assert "embedding" not in data["nodes"][0]["attributes"]
@@ -595,7 +592,6 @@ def _community_stage(mocker, failed: list[str], max_failure_rate: float):
     detector.get_community_metrics.return_value = None
     mocker.patch.object(ps, "CommunityDetector", return_value=detector)
     config = Config()
-    config.graph.visualization.enabled = False
     config.indexing.max_failure_rate = max_failure_rate
     stage = ps.CommunityDetectionStage(config=config)
     ctx = _context()

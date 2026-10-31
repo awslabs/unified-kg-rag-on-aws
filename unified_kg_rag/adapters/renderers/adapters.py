@@ -3,8 +3,8 @@
 """Registered renderer adapters wrapping the concrete renderers.
 
 These present the existing ``InteractiveRenderer`` / ``StaticRenderer`` (whose
-methods differ) behind the uniform :class:`BaseRenderer.render` interface so the
-manager and the standalone CLI drive them through the registry. The concrete
+methods differ) behind the uniform :class:`BaseRenderer.render` interface so
+``run-visualization`` drives them through the registry. The concrete
 renderers import pyvis and Bokeh (the ``viz`` extra), so each adapter imports
 its renderer on use: registering the adapters needs neither package.
 """

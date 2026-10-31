@@ -15,6 +15,7 @@ AWS nor a running service.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -163,7 +164,6 @@ def _config(stores: Path, viz: Path) -> Config:
     config.processing.claim_extraction.enabled = False
     config.processing.max_attempts = 1
     config.fixing.enabled = False
-    config.graph.visualization.enabled = False
     config.graph.visualization.outputs_directory = str(viz)
     return config
 
@@ -266,20 +266,12 @@ def _ask(chain: GraphRAGChain, strategy: SearchStrategy) -> RAGOutput:
     return out
 
 
-def _render(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path, method: str
-) -> list[Path]:
-    config_path = tmp_path / f"viz-{method}.yaml"
+def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
+    """Run ``run-visualization --backend local`` on ``data``; its exit code."""
+    config_path = tmp_path / "viz.yaml"
     config_path.write_text(
-        yaml.safe_dump(
-            {
-                "graph": {"visualization": {"embedding_method": method}},
-                "logging": {"log_to_file": False},
-            }
-        ),
-        encoding="utf-8",
+        yaml.safe_dump({"logging": {"log_to_file": False}}), encoding="utf-8"
     )
-    output = tmp_path / f"rendered-{method}"
     monkeypatch.setattr(
         sys,
         "argv",
@@ -288,15 +280,14 @@ def _render(
             "--data-path",
             str(data),
             "--output-directory",
-            str(output),
+            str(tmp_path / "rendered"),
             "--config-path",
             str(config_path),
             "--backend",
             "local",
         ],
     )
-    assert run_visualization.main() == 0
-    return sorted(output.iterdir())
+    return int(run_visualization.main())
 
 
 def test_local_mode_runs_end_to_end_on_the_embedded_stores(
@@ -437,12 +428,15 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     cited = {name for rank in results[0].retrieved_source_ids for name in rank}
     assert cited == {"logistics.txt", "freight.txt"}
 
-    # run-visualization renders the exported graph with either layout
-    # method under --backend local.
+    # run-visualization renders the exported graph under --backend local; on
+    # an install without the viz extra it stops with exit 2 instead.
     data = viz / "visualization_data.json"
     assert data.is_file()
-    for method in ("none", "description"):
-        assert _render(tmp_path, monkeypatch, data, method)
+    if importlib.util.find_spec("pyvis") and importlib.util.find_spec("bokeh"):
+        assert _render(tmp_path, monkeypatch, data) == 0
+        assert sorted(p.name for p in (tmp_path / "rendered").iterdir())
+    else:
+        assert _render(tmp_path, monkeypatch, data) == 2
 
 
 def _refusing(monkeypatch: pytest.MonkeyPatch, refused: Any) -> None:

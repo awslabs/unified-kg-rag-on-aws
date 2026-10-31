@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """The visualization-data JSON that ``run-visualization`` renders from.
 
-Ingestion writes it after community detection. With
-``graph.visualization.enabled`` the visualization manager adds the computed
-layout and centrality; otherwise (``export_data``, the default) it holds the
-graph and the community hierarchy only, built here in one pass over the nodes
-and edges (no embedding or model call, no centrality, no layout), and
-``run-visualization`` computes the missing parts when it renders.
+Ingestion writes it after community detection (``graph.visualization.
+export_data``): the graph and the community hierarchy, built here in one pass
+over the nodes and edges (no embedding or model call, no centrality, no
+layout). ``run-visualization`` computes the layout and centrality when it
+renders; a file that carries them (written by an earlier release) is drawn
+with its own.
 
 The layout helpers (:func:`displayed_graph`, :func:`spring_layout`) are
-renderer-neutral: the visualization manager and ``run-visualization`` lay
-out the nodes the interactive page will draw without depending on it.
+renderer-neutral: ``run-visualization`` lays out the nodes the interactive
+page will draw without depending on it.
 """
 
 from __future__ import annotations

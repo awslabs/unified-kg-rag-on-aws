@@ -45,10 +45,11 @@ Python. 3.11 or 3.12 is required (`requires-python` `>=3.11, <3.13`): 3.10
 reached end of life and is no longer supported. Upgrade: install on Python
 3.11 or 3.12 (#430).
 
-Installation. Visualization is an optional extra: `bokeh`, `pyvis`,
-`umap-learn` and `scikit-learn` moved from the core dependencies to the
-`viz` extra, with the security floors of what they pull in (`pillow`,
-`llvmlite`). Without it
+Installation. Visualization is an optional extra: `bokeh` and `pyvis` moved
+from the core dependencies to the `viz` extra, with the `pillow` security
+floor (Bokeh pulls Pillow in); `umap-learn` and `scikit-learn` are no longer
+dependencies (see Configuration), and the `llvmlite` floor moved to the
+`unstructured` extra, whose numba pulls it in. Without it
 `run-visualization` exits `2` with an error naming the extra, before reading
 the data, and `render_all` raises `ConfigurationError` instead of logging and
 skipping the renderer; `from unified_kg_rag import BaseRenderer,
@@ -110,6 +111,20 @@ naming the key that replaces it.
   (#335).
 - `graph.analysis.centrality` moved to `graph.visualization.centrality`: only
   the visualization computes centrality (#335).
+- Ingestion no longer renders visualizations: it writes
+  `visualization_data.json` (`graph.visualization.export_data`, default
+  `true`; graph and communities, no model call) and `run-visualization`
+  renders it with a seeded spring layout from the graph topology. The
+  embedding-based layout (one embedding call per node and a UMAP, t-SNE or
+  PCA reduction) is gone, and with it `umap-learn` and `scikit-learn`. The
+  keys of the removed path load with a WARNING each and are ignored (#PR):
+
+  | Removed key | Replacement |
+  |---|---|
+  | `graph.visualization.enabled` | `run-visualization --data-path <outputs_directory>/visualization_data.json` |
+  | `graph.visualization.embedding_method` | none: the layout is a spring layout |
+  | `graph.visualization.layout_method` | none: the layout is a spring layout |
+  | `graph.visualization.layout` (`umap`, `tsne`, `pca`) | none |
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
@@ -177,8 +192,6 @@ naming the key that replaces it.
   `max_attempts: N+1`).
 - The `"NONE"` alias of `aws.s3.encryption.encryption_type` is removed; use
   `BUCKET_DEFAULT` (#216).
-- `graph.visualization.embedding_method: "node2vec"` is now `"description"`
-  (the layout always embedded each node's description) (#210).
 - The post-retrieval context-building call is removed with
   `search.context_building_model_id` and `custom_prompts.context_building_*`;
   the query rewrite takes over its use of the history (#212).
@@ -246,11 +259,6 @@ naming the key that replaces it.
   raises `ConfigurationError` instead of answering from nothing (#318).
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
-- `graph.visualization.enabled` defaults to `false`; set it to `true` or
-  render on demand with `run-visualization` from the `visualization_data.json`
-  that ingestion still writes (`graph.visualization.export_data`, default
-  `true`: graph and communities, no model call; `run-visualization` computes
-  a spring layout and centrality) (#210, #219).
 - `backend: local` sets `search.token_manager.max_context_tokens` to 22000
   when the LLM is not Bedrock and sets no `context_window_size`: what the
   default local model's 32,768-token window accepts beside its output
@@ -608,9 +616,12 @@ Library API (Python callers and custom backends).
   on the sync path. A one-input `abatch(..., return_exceptions=True)` first
   call was the same `ainvoke` with the error returned in place; a caller
   still passing `batch_func=` gets a `TypeError` (#301).
-- `unified_kg_rag.visualization` exports only `GraphVisualizationManager`;
-  import the renderers from `unified_kg_rag.adapters.renderers` and the
-  embedder and reducer from `unified_kg_rag.visualization.embeddings` (#246).
+- The `unified_kg_rag.visualization` package is removed with ingestion-time
+  rendering (see Configuration): `GraphVisualizationManager`,
+  `BedrockNodeEmbedder`, `DimensionalityReducer` and `HTMLExporter` (the
+  `graph_analysis_report.html` summary page) are gone. Render with
+  `run-visualization`, or drive the renderers through
+  `unified_kg_rag.adapters.renderers` (`render_all`, `RenderContext`) (#PR).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
   `ENTITY_CANDIDATES_PER_FOCUS` (#247).

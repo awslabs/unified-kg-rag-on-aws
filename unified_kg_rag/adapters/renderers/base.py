@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Renderer abstraction + registry for graph visualization.
 
-Replaces the hardcoded renderer calls in ``GraphVisualizationManager`` with a
-registry of :class:`BaseRenderer` adapters. A new renderer (e.g. a Cytoscape or
-D3 exporter) is added by subclassing ``BaseRenderer`` and decorating it with
-``@register_renderer(...)`` — no edit to the manager.
+``run-visualization`` drives a registry of :class:`BaseRenderer` adapters. A
+new renderer (e.g. a Cytoscape or D3 exporter) is added by subclassing
+``BaseRenderer`` and decorating it with ``@register_renderer(...)`` — no edit
+to the CLI.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ VIZ_EXTRA_HINT = (
 
 @dataclass
 class RenderContext:
-    """Everything a renderer may need, assembled once by the manager."""
+    """Everything a renderer may need, assembled once by the caller."""
 
     graph: nx.Graph
     layout: dict[str, Any] = field(default_factory=dict)

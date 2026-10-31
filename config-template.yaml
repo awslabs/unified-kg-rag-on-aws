@@ -512,34 +512,15 @@ graph:
       eigenvector_max_iter: 1000
       eigenvector_tol: 0.001
 
-    # Off by default: rendering during ingestion embeds every node and reduces
-    # the embeddings to a layout on each run.
-    enabled: false
-    # With enabled: false, still write visualization_data.json (graph and
-    # communities; no embedding call, layout or centrality) so run-visualization
-    # can render on demand.
+    # Ingestion renders nothing: it writes visualization_data.json (graph and
+    # communities; no embedding call, layout or centrality) for
+    # run-visualization to render.
     export_data: true
     # Unset (default): ingestion writes to <cache dir>/<pipeline_id>/visualization,
     # so visualization_data.json is uploaded with the S3 cache sync (the sync
-    # copies .json only; re-render the HTML with run-visualization). Set a path
+    # copies .json only; render the HTML with run-visualization). Set a path
     # to write elsewhere.
     # outputs_directory: "outputs/visualization"
-    embedding_method: "description"
-    layout_method: "umap"
-
-    # Node embeddings come from the embedding model (models.embedding). Set
-    # embedding_method: "none" to skip embeddings and fall back to a spring
-    # layout.
-
-    # Dimensionality-reduction layout hyperparameters, keyed by method. Each
-    # also takes random_state (default 42, so a re-render gives the same
-    # layout; null for a random one, which lets UMAP run in parallel).
-    layout:
-      umap:
-        n_neighbors: 15
-        min_dist: 0.1
-      tsne: {}
-      pca: {}
 
     # Interactive (pyvis) renderer settings.
     interactive:
@@ -953,7 +934,7 @@ logging:
     langchain_aws: "WARNING"
     botocore: "WARNING"
     urllib3: "WARNING"
-    numba: "WARNING" # at DEBUG, a line per JIT compile (run-visualization)
+    numba: "WARNING" # at DEBUG, a line per JIT compile (unstructured extra)
     httpcore: "WARNING" # at DEBUG, a line per connection step (httpx)
     opensearch: "ERROR" # at WARNING, a line per failed request (expected 404s too)
     httpx: "WARNING" # at INFO, a line per Ollama / OpenAI-compatible request
