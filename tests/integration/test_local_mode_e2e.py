@@ -12,6 +12,7 @@ needs no AWS at all. No network, no model download.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from pathlib import Path
 from typing import Any
@@ -207,7 +208,7 @@ async def test_local_backend_ingests_and_answers_without_aws(
     assert isinstance(registry, SQLiteDocStatusStore)
     records = registry.list_all()
     assert len(records) == 2 and {r.status for r in records} == {DocStatus.PROCESSED}
-    assert Path(config.providers.doc_status.sqlite_path).exists()
+    assert await asyncio.to_thread(Path(config.providers.doc_status.sqlite_path).exists)
 
     chain = GraphRAGChain(config, providers=providers)
     try:

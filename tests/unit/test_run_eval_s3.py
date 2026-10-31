@@ -250,7 +250,9 @@ async def test_runner_local_paths_never_create_an_s3_client(
     assert args.data_path == data  # local paths still parse to a Path
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
     client.assert_not_called()
-    assert list(tmp_path.glob("evaluation_summary_*.json"))
+    assert await asyncio.to_thread(
+        lambda: list(tmp_path.glob("evaluation_summary_*.json"))
+    )
 
 
 def test_main_reports_s3_errors_and_exits_1(eval_config, mocker, monkeypatch) -> None:

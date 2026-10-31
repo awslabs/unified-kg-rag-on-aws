@@ -99,8 +99,7 @@ def _chain(config: Config | None = None) -> GraphRAGChain:
 
 
 def _run_on_fresh_loop(coro: Any) -> Any:
-    # Not asyncio.run, which nest_asyncio (applied by the CLI modules) turns
-    # into a reuse of one loop.
+    # A loop of the test's own, so the cache sees a second, distinct loop.
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)

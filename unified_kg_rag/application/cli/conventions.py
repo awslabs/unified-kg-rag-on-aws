@@ -131,8 +131,9 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     While an event loop runs the coroutine a CLI wrapped in :func:`stoppable`
     (outside an :func:`interruptible` call), either signal cancels that task
     instead of raising into the loop, where the ``SystemExit`` or
-    ``KeyboardInterrupt`` could land in the loop's own code and leave
-    nest_asyncio's ``run()`` waiting forever; its ``finally`` blocks run and
+    ``KeyboardInterrupt`` could land in the loop's own code instead of the
+    task (which, under the nest_asyncio patch the CLIs once applied, left
+    ``run()`` waiting forever); its ``finally`` blocks run and
     ``main`` then exits ``128 + signal``. Elsewhere SIGTERM raises
     ``SystemExit`` and SIGINT ``KeyboardInterrupt``, as Python's own handler
     does (a SIGINT the parent ignores stays ignored). A watchdog thread ends
@@ -153,8 +154,8 @@ def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     def _stop_signal(signum: int, frame: object) -> None:
         if _json["printed"]:
             # The result is out: end now. Raised into an event loop as its
-            # coroutine returns, the SystemExit could leave nest_asyncio's
-            # run() waiting forever on a task it cancelled.
+            # coroutine returns, the SystemExit could leave the loop's run()
+            # waiting on a task it cancelled.
             _stopped_in_teardown(signum, frame)
             raise SystemExit(128 + signum)
         if _stop["signum"] is not None:

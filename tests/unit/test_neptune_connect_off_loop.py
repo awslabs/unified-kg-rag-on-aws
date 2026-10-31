@@ -6,9 +6,9 @@ Regression: ``aretrieve`` read ``NeptuneClient.g`` on the loop thread. Opening
 the connection runs gremlinpython's websocket handshake with
 ``run_until_complete`` on a private loop, which raises "Cannot run the event
 loop while another loop is running" under plain asyncio; it only worked because
-the CLIs apply ``nest_asyncio``. The fake transport below fails the same way,
-and also asserts directly that no loop is running on the connecting thread (so
-the test holds even when another test module has applied ``nest_asyncio``).
+the CLIs applied ``nest_asyncio`` (they no longer do). The fake transport below
+fails the same way, and also asserts directly that no loop is running on the
+connecting thread.
 """
 
 from __future__ import annotations

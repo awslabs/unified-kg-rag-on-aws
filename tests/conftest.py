@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 
-import nest_asyncio
 import pytest
 from hypothesis import settings
 from langsmith.utils import get_env_var
@@ -35,15 +34,6 @@ from unified_kg_rag.domain.models import (
 # re-run; print_blob makes any failure replayable locally via @reproduce_failure.
 settings.register_profile("ci", deadline=None, derandomize=True, print_blob=True)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
-
-# The run-rag and run-eval CLI modules call nest_asyncio.apply() at import time.
-# That patches the event-loop class for the whole process, and its
-# run_until_complete skips the async-generator hooks, so in every later test a
-# loop's shutdown_asyncgens() can no longer close abandoned generators; they are
-# finalized by GC after their loop has closed and surface as
-# PytestUnraisableExceptionWarning in whichever test happens to be running.
-# Importing a CLI in a test must not change asyncio for the rest of the session.
-nest_asyncio.apply = lambda *args, **kwargs: None
 
 _PROFILE_PREFIXES = ("global", "us", "eu", "apac")
 

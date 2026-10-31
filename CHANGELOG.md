@@ -957,6 +957,25 @@ changed once with the full-config keys (#332).
   `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
   given as a path. langchain-community stays a dependency only to hold the
   copy ragas imports below 0.4 (#460).
+- CI: a non-blocking `python-3-13` job runs the test suite on Python 3.13,
+  lifting the `requires-python` cap in its own checkout (the lock keeps
+  every version and only gains the 3.13 wheels). Supported Pythons stay
+  3.11 and 3.12 (#465).
+- CI runs the main test suite in parallel (`pytest -n auto`, pytest-xdist
+  in the dev group); coverage combines across the workers and the floor
+  is checked as before. Two tests that depended on running in one process
+  are fixed: the prepare-benchmark output check no longer breaks when rich
+  folds a long worker `tmp_path`, and the truncated-PDF test imports pypdf
+  at collection, so its 10 s timeout no longer covers pypdf's first import
+  (#465).
+- Lint and type checks: ruff also runs the flake8-async (`ASYNC`) and
+  flake8-logging (`LOG`) rules over `unified_kg_rag`, `tests`, `iac` and
+  `scripts`, and mypy loads the `pydantic.mypy` plugin (`init_typed`,
+  `init_forbid_extra`, `warn_required_dynamic_aliases`), so a model built
+  with a wrong field type, an unknown keyword or a dynamic alias fails the
+  type check, `model_construct` included. Five tests that polled with
+  `asyncio.sleep` in a loop or ran blocking `pathlib` calls on the event
+  loop now wait on a condition or event, or call `asyncio.to_thread` (#465).
 - Package layout: the layers import only inward, now including lazy and
   `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
   rules of the design doc §2.1 on every import (no exceptions; 23 imports
@@ -5247,6 +5266,13 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- The `nest-asyncio` dependency: `run-rag` and `run-eval` no longer call
+  `nest_asyncio.apply()` when imported, which patched the event-loop class
+  for the whole process (an application importing a CLI module got a loop
+  whose `asyncio.run` reused one loop and skipped the async-generator
+  hooks). Nothing nests a loop any more: Neptune connects off the loop
+  thread and RAGAS runs in `asyncio.to_thread`. The package still arrives
+  through gremlinpython and ragas, which patch only on request (#465).
 - Unused code: `ClaimExtractor.merge_claims` and
   `contributions.merge_claim_contributions` (claim statements are no
   longer merged before resolution), and the capped-unit bookkeeping of the

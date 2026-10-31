@@ -253,4 +253,6 @@ def test_prepare_benchmark_prints_the_output_directory_literally(
     prepare_benchmark.main(
         ["musique", "--data-path", str(data), "--output-directory", str(target)]
     )
-    assert "[/red]out" in capsys.readouterr().out
+    # Joined: rich folds the path at the console width, and a long tmp_path
+    # (a pytest-xdist worker's, say) puts the fold inside "[/red]out".
+    assert "[/red]out" in "".join(capsys.readouterr().out.splitlines())

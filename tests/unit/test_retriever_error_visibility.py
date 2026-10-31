@@ -1103,11 +1103,13 @@ async def test_a_queued_traversal_uses_the_source_of_the_moment(
     # connection, whose pool.get() then blocked its thread for good.
     config.aws.neptune.pool_size = 1
     release = threading.Event()
+    first_sent = threading.Event()
     graphs: list[object] = []
 
     def _to_list(self) -> list:
         graphs.append(self.graph)
         if len(graphs) == 1:
+            first_sent.set()
             release.wait(5)
         return []
 
@@ -1115,8 +1117,7 @@ async def test_a_queued_traversal_uses_the_source_of_the_moment(
     client = _SwappableClient()
     retriever = _neptune_retriever(config, client)
     first = asyncio.ensure_future(retriever.aretrieve(_SEEDED))
-    while not graphs:
-        await asyncio.sleep(0.01)
+    assert await asyncio.to_thread(first_sent.wait, 5)
     queued = asyncio.ensure_future(retriever.aretrieve(_SEEDED))
     await asyncio.sleep(0.05)
     stale = client.current.graph
