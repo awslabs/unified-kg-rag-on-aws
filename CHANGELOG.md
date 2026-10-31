@@ -674,7 +674,7 @@ changed once with the full-config keys (#332).
   period's last day keeps its end date as the period's first day (and one
   indexed before #451 a coarser period as written) until a run derives it
   again: a claim a later document restates, or that a run derives again,
-  is then merged into the claim the current reading gives (#PR). Rebuild
+  is then merged into the claim the current reading gives (#454). Rebuild
   once with `indexing.reset: true` for `end_date` ranges to match the
   other claims, and to merge at once the copies an incremental run stored
   beside a restated claim before this fix (a run deriving either merges
@@ -1525,7 +1525,7 @@ changed once with the full-config keys (#332).
   2024" was stored ending on 2024-01-01: an `end_date` range missed the
   rest of the year, the claim was shown ending on 1 January, and "until
   2024" and "until 2024-12-31" were two claims. `Q4-2024` reads as a
-  quarter too (it was kept as written) (#PR).
+  quarter too (it was kept as written) (#454).
 - Incremental indexing: a claim stored under an earlier reading of its
   dates (a period coarser than a day as written before #451, a written-out
   date before #449, a coarse end date as its first day, see above) kept
@@ -1533,19 +1533,19 @@ changed once with the full-config keys (#332).
   second copy beside it. A derivation now also looks the claim up under the
   ids those readings gave the dates its statements are written with, and
   merges it into the claim they give now (its text units joined, the old
-  id deleted), as a full build has it (#PR).
+  id deleted), as a full build has it (#454).
 - Ingestion: a stop that surfaced wrapped in another error (#451) uploaded
   its checkpoint after the run gave its namespace lease up, so a run taking
   the lease in between could resume without it. It is now uploaded while
-  the lease is held (#PR).
+  the lease is held (#454).
 - LLM response cache: dropping a response rebuilt the list of pending
   responses, so a run with a large flush interval spent quadratic time in
   it (50,000 pending responses: 7.1 s of 8.2 s); the pending responses are
   kept by key, the last one for a key written, as a later segment's
-  replaces an earlier one when loaded (#PR).
+  replaces an earlier one when loaded (#454).
 - Incremental indexing: the warning on documents recorded FAILED for part
   of their processing named translation or extraction also when a report
-  or a record save failed; it says "Processing failed" (#PR).
+  or a record save failed; it says "Processing failed" (#454).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket
