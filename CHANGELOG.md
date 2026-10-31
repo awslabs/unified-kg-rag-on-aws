@@ -1534,6 +1534,11 @@ changed once with the full-config keys (#332).
   ids those readings gave the dates its statements are written with, and
   merges it into the claim they give now (its text units joined, the old
   id deleted), as a full build has it (#PR).
+- LLM response cache: dropping a response rebuilt the list of pending
+  responses, so a run with a large flush interval spent quadratic time in
+  it (50,000 pending responses: 7.1 s of 8.2 s); the pending responses are
+  kept by key, the last one for a key written, as a later segment's
+  replaces an earlier one when loaded (#PR).
 - Neptune retriever: a traversal still running when its chain was closed
   (its worker waiting for the connection while the close held it) opened
   a new Neptune connection afterwards, which nothing closed: its websocket

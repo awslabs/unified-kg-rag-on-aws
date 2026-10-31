@@ -107,7 +107,9 @@ class LLMResponseCache(BaseCache):
         self._lookups = True
         self._entries: dict[str, list[dict[str, Any]]] = {}
         self._served: set[str] = set()
-        self._pending: list[dict[str, Any]] = []
+        # The entries of the next segment, by key: a later one for a key
+        # replaces an earlier one, as a later segment's does when loaded.
+        self._pending: dict[str, dict[str, Any]] = {}
         # Keys whose responses a written segment holds: a dropped one needs
         # a removal entry (a pending one is dropped in place).
         self._written: set[str] = set()
@@ -153,7 +155,7 @@ class LLMResponseCache(BaseCache):
             self._lookups = lookups
             self._entries = entries
             self._served = set()
-            self._pending = []
+            self._pending = {}
             self._written = set(entries)
             self._on_segment = on_segment
             self._unsynced = []
@@ -210,7 +212,7 @@ class LLMResponseCache(BaseCache):
         with self._lock:
             if self._directory is None:
                 return
-            self._pending.append(entry)
+            self._pending[key] = entry
             full = len(self._pending) >= self.flush_every
         discard_if_item_fails(functools.partial(self._discard, key))
         if full:
@@ -224,19 +226,19 @@ class LLMResponseCache(BaseCache):
             if self._directory is None:
                 return
             self._entries.pop(key, None)
-            self._pending = [e for e in self._pending if e["key"] != key]
+            self._pending.pop(key, None)
             if key in self._written:
-                self._pending.append({"key": key, "generations": None})
+                self._pending[key] = {"key": key, "generations": None}
 
     def flush(self) -> None:
         """Write the pending responses as a new segment (no-op when none)
         and hand it, with any segment ``on_segment`` failed on before, to
         ``on_segment``."""
         with self._lock:
-            directory, pending = self._directory, self._pending
+            directory, pending = self._directory, list(self._pending.values())
             if directory is None or not pending:
                 return
-            self._pending = []
+            self._pending = {}
             on_segment = self._on_segment
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / f"{time.time_ns():020d}-{secrets.token_hex(4)}.json"
@@ -274,7 +276,7 @@ class LLMResponseCache(BaseCache):
         with self._lock:
             self._entries = {}
             self._served = set()
-            self._pending = []
+            self._pending = {}
 
 
 class CachingLLMFactory:
