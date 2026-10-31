@@ -3,7 +3,8 @@
 """One ``GraphIndexer`` contract for every graph backend.
 
 Runs on the fake (the reference), the embedded SQLite store, Gremlin Server
-(``LOCAL_STORES=1``) and Neptune (``-m aws``); see
+(``LOCAL_STORES=1``) and Neptune (``-m aws``), the last two also with custom
+vertex ids (``indexing.neptune.vertex_ids: custom``); see
 ``tests/fixtures/store_backends.py``. A difference between them is a bug in
 one of them, whichever is right.
 """
@@ -16,13 +17,13 @@ from typing import Any
 
 import pytest
 
-from tests.fixtures.store_backends import BACKENDS, StoreHarness, open_harness
+from tests.fixtures.store_backends import GRAPH_BACKENDS, StoreHarness, open_harness
 from unified_kg_rag.domain.models import Community, Entity, Relationship
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(params=BACKENDS)
+@pytest.fixture(params=GRAPH_BACKENDS)
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[StoreHarness]:
     yield from open_harness(request.param, tmp_path)
 

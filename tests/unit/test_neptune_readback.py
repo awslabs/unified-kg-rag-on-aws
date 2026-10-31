@@ -25,7 +25,7 @@ from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 from unified_kg_rag.shared import AWSServiceError
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
 _ENTITY_LABEL = "Entity-default"
 

@@ -47,6 +47,14 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[StoreHar
     yield from open_harness(request.param, tmp_path)
 
 
+# Graph expansion also runs with custom Neptune vertex ids.
+@pytest.fixture(params=backends(RETRIEVERS, graph=True))
+def graph_harness(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[StoreHarness]:
+    yield from open_harness(request.param, tmp_path)
+
+
 def _text_units() -> list[TextUnit]:
     return [
         TextUnit(
@@ -755,12 +763,12 @@ def _graph_retrieve(
 
 
 def test_graph_expansion_returns_seeds_first_then_distance_bands(
-    harness: StoreHarness,
+    graph_harness: StoreHarness,
 ) -> None:
     # Each seed has its own neighbours; one traversal-wide limit used to let
     # the first seeds' neighbourhoods consume it, and the seeds themselves
     # were never emitted.
-    h = harness.derive(
+    h = graph_harness.derive(
         lambda c: setattr(c.indexing.neptune, "traversal_fetch_multiplier", 1)
     )
     seeds = [f"seed{i}" for i in range(4)]
@@ -814,7 +822,7 @@ def test_graph_expansion_returns_seeds_first_then_distance_bands(
 
 
 def test_graph_expansion_budget_caps_each_seed_breadth_first(
-    harness: StoreHarness,
+    graph_harness: StoreHarness,
 ) -> None:
     # Neptune applied the per-seed budget (a limit() inside repeat()) to each
     # traverser of each hop: on this tree of fan-out 8 a budget of 5 fetched
@@ -823,7 +831,7 @@ def test_graph_expansion_budget_caps_each_seed_breadth_first(
         config.indexing.neptune.traversal_fetch_multiplier = 1  # no cut
         config.indexing.neptune.max_hops = 2
 
-    h = harness.derive(change)
+    h = graph_harness.derive(change)
     near = [f"n{i}" for i in range(8)]
     far = [f"{n}-f{j}" for n in near for j in range(8)]
     entities = [
@@ -866,7 +874,10 @@ def test_graph_expansion_budget_caps_each_seed_breadth_first(
     assert set(wide[1:9]) == set(near) and set(wide[9:]) <= set(far), wide
 
 
-def test_graph_expansion_filters_and_is_deterministic(harness: StoreHarness) -> None:
+def test_graph_expansion_filters_and_is_deterministic(
+    graph_harness: StoreHarness,
+) -> None:
+    harness = graph_harness
     entities = [
         Entity(id="a", name="A", type="ORG", rank=2, attributes={"role": "vendor"}),
         Entity(id="b", name="B", type="ORG", rank=1, attributes={"role": "buyer"}),

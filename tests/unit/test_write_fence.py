@@ -523,6 +523,7 @@ def test_a_lost_lease_stops_the_deletion_of_retired_ids() -> None:
     assert graph.ids("entities") == {"e-old"}
 
 
+@pytest.mark.usefixtures("skip_vertex_id_check")
 def test_a_lost_lease_stops_the_next_neptune_edge_write(mocker) -> None:
     # The relationship writes (endpoint check, drop, per-edge add) and the
     # drop by id do not go through the batch path.

@@ -301,7 +301,9 @@ Neptune과 다른 점은 다음과 같습니다.
   요청합니다.
 - 정점을 만들 때 쓴 목록 속성은 중복 값을 유지합니다.
 - 쓰기는 `id` 속성으로 요소를 찾으며 compose 파일의 서버는 이 속성에 인덱스를 만듭니다
-  (인덱스가 없으면 그래프가 커질수록 느려짐). 개발용 규모의 코퍼스에 쓰세요.
+  (인덱스가 없으면 그래프가 커질수록 느려짐). `indexing.neptune.vertex_ids: custom`이면
+  정점은 정점 id로 찾고, compose 파일의 그래프는 문자열 정점 id를 받습니다. 개발용 규모의
+  코퍼스에 쓰세요.
 - 저장소에는 인증도 TLS도 없으므로 compose 파일은 `127.0.0.1`에만 바인딩하고 Linux
   capability를 모두 버립니다.
 
@@ -1555,7 +1557,11 @@ custom_prompts:
   배치는 공유 정점에서 충돌해 재시도함). `indexing.opensearch.persist_embedding_cache`와
   `--s3-sync`를 켜면 다시 실행할 때 임베딩을 다시 계산하지 않고, 문서 상태
   레지스트리(`providers.doc_status.enabled`)를 켜면 다음 실행부터 바뀐 문서에만 비용이
-  듭니다.
+  듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
+  대신 정점 id(`<레이블>:<항목 id>`)로 찾습니다. 조회가 빨라지고 동시 쓰기의
+  `ConcurrentModificationException`도 줄어듭니다. 질의에도 같은 값을 설정하세요. 다른 방식으로 만든
+  그래프는 거부되므로, 기존 그래프를 전환하려면 `indexing.reset: true`로 전체 빌드를 한 번
+  실행해야 합니다([운영 문서](operations.md#custom-neptune-vertex-ids)).
 - **다국어:** [다국어 수집](#다국어-수집)을 참고하세요.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
   [인덱스 접미사](#인덱스-접미사)를 따로 두세요.

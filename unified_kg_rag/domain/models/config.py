@@ -2058,6 +2058,24 @@ class NeptuneIndexingConfig(BaseModel):
         ),
     )
 
+    vertex_ids: Literal["property", "custom"] = Field(
+        default="property",
+        description=(
+            "How Neptune vertices are identified. 'property': the vertex id "
+            "Neptune assigns, and the item id in an 'id' property that every "
+            "lookup filters on. 'custom': the vertex id is '<label>:<item "
+            "id>' (e.g. 'Entity-default:<entity id>'), so lookups go by "
+            "vertex id, which Neptune serves faster and with fewer "
+            "ConcurrentModificationExceptions than a property lookup; the "
+            "'id' property is still written. Edges are unchanged. A graph "
+            "is built in one mode: a run or query in the other mode is "
+            "refused, and switching needs one full build (indexing.reset: "
+            "true with incremental indexing on), which rewrites the graph. "
+            "Neptune and Gremlin Server only: the embedded SQLite graph "
+            "store ignores it."
+        ),
+    )
+
     @field_validator("entity_label_prefix", "community_label_prefix")
     @classmethod
     def _check_label_prefix(cls, value: str, info: ValidationInfo) -> str:

@@ -14,9 +14,15 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import P, Traversal
 
 from unified_kg_rag.adapters.aws.neptune import (
+    CUSTOM_VERTEX_IDS,
     NeptuneClient,
     neptune_pool_size,
     neptune_request_error,
+    sample_vertex_query,
+    stored_vertex_id_mode,
+    vertex_id_mode_error,
+    vertex_id_switch_query,
+    vertex_ids,
 )
 from unified_kg_rag.adapters.retrieval.base import seed_share
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
@@ -24,6 +30,7 @@ from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
+from unified_kg_rag.shared.exceptions import StoreConfigurationError
 
 logger = get_logger(__name__)
 
@@ -60,6 +67,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # reranking and every other strategy need. Created on first use.
         self._executor: ThreadPoolExecutor | None = None
         self._closed = False
+        # indexing.neptune.vertex_ids: the labels found built in this mode.
+        self._checked_labels: set[str] = set()
 
     def _is_closed(self) -> bool:
         """``_closed`` read through a call, so a re-read after an earlier
@@ -191,31 +200,35 @@ class NeptuneRetriever(GraphExpansionRetriever):
         )
         filters = self._scope_filters_to_label(entity_label, query.filters)
         with_degree = self._neptune_config.entity_importance_source == "degree"
+        if not seed_ids:
+            return []
+        await self._check_vertex_ids(entity_label)
+        custom_ids = self._neptune_config.vertex_ids == CUSTOM_VERTEX_IDS
+
+        def seeds(g: GraphTraversalSource) -> GraphTraversal:
+            if custom_ids:
+                return g.V(*vertex_ids(entity_label, [str(s) for s in seed_ids]))
+            return g.V().hasLabel(entity_label).has("id", P.within(seed_ids))
 
         def build(g: GraphTraversalSource) -> Traversal:
-            traversal = (
-                g.V()
-                .hasLabel(entity_label)
-                .has("id", P.within(seed_ids))
-                .union(
-                    __.identity(),
-                    __.local(
-                        __.repeat(
-                            __.local(
-                                __.both()
-                                .hasLabel(entity_label)
-                                .limit(self._max_results_per_hop)
-                            )
-                            .has("id", P.without(seed_ids))
-                            .dedup()
-                            .limit(per_seed_limit)
+            traversal = seeds(g).union(
+                __.identity(),
+                __.local(
+                    __.repeat(
+                        __.local(
+                            __.both()
+                            .hasLabel(entity_label)
+                            .limit(self._max_results_per_hop)
                         )
-                        .times(hops)
-                        .emit()
+                        .has("id", P.without(seed_ids))
                         .dedup()
                         .limit(per_seed_limit)
-                    ),
-                )
+                    )
+                    .times(hops)
+                    .emit()
+                    .dedup()
+                    .limit(per_seed_limit)
+                ),
             )
             traversal = self._apply_filters(traversal, filters)
             return self._with_projection(
@@ -223,6 +236,39 @@ class NeptuneRetriever(GraphExpansionRetriever):
             )
 
         return await self._execute_traversal(build)
+
+    async def _check_vertex_ids(self, label: str) -> None:
+        """Refuse a ``label`` built with the other vertex-id mode.
+
+        Checked on the first query that finds the label non-empty: its seeds
+        would be looked up the wrong way and found nowhere, a "no results"
+        for every query. While a full build switches the label (its switch
+        vertex is stored) the query goes on over what it has rewritten.
+
+        Raises:
+            StoreConfigurationError: ``label`` holds the other mode's vertices.
+        """
+        if label in self._checked_labels:
+            return
+        mode = self._neptune_config.vertex_ids
+        stored = stored_vertex_id_mode(
+            label, await self._execute_traversal(sample_vertex_query(label))
+        )
+        if stored is None:
+            return
+        if stored != mode:
+            switching = await self._execute_traversal(vertex_id_switch_query(label))
+            if not switching:
+                raise StoreConfigurationError(vertex_id_mode_error(label, stored, mode))
+            logger.warning(
+                "Neptune label '%s' is being rewritten with vertex_ids '%s': "
+                "graph expansion sees only its %s vertices",
+                label,
+                switching[0],
+                mode,
+            )
+            return
+        self._checked_labels.add(label)
 
     @staticmethod
     def _with_projection(
