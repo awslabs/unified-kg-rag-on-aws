@@ -86,7 +86,9 @@ dependencies = [
     # 13.0.0 fixes the critical/high Pillow advisories.
     "pillow>=13.0.0",
     "pydantic>=2.11.7",
-    "pypdf>=6.15.0",
+    # 6.21.4 fixes the high-severity DoS advisories (GHSA-5849-834g-hvw5 and
+    # six more) that crafted PDFs reach through PyPDFLoader.
+    "pypdf>=6.21.4",
     "python-dotenv>=1.1.1",
     "pyvis>=0.3.2",
     "pyyaml>=6.0.2",
@@ -145,9 +147,21 @@ local = [
 ]
 
 [tool.uv]
-# Ragas pulls in this package transitively; earlier releases allow SSRF through
-# image token counting (GHSA-r7w7-9xr2-qq2r).
-constraint-dependencies = ["langchain-openai>=1.1.14"]
+constraint-dependencies = [
+    # Ragas pulls in this package transitively; earlier releases allow SSRF
+    # through image token counting (GHSA-r7w7-9xr2-qq2r).
+    "langchain-openai>=1.1.14",
+    # Bokeh pulls in Tornado; 6.6 fixes GHSA-pcg2-g6cj-q92c, GHSA-r4j5-9xpp-3985
+    # and GHSA-pw9p-v7r6-gx4p.
+    "tornado>=6.6",
+]
+# The optional `unstructured` extra caps filelock below 4 (every release up to
+# 0.27.x), which would hold every install on a filelock with the 4.2.1-fixed
+# advisories (GHSA-v4x8-3wr5-3wq8 and eight more). unstructured only takes a
+# blocking `FileLock(path, timeout=-1)` around its spaCy model install, an API
+# filelock 4.x keeps, so the cap is overridden. Drop this once unstructured
+# lifts the cap.
+override-dependencies = ["filelock>=4.2.1"]
 
 [project.urls]
 Repository = "https://github.com/awslabs/unified-kg-rag-on-aws"

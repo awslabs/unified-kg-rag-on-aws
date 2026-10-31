@@ -37,19 +37,19 @@ in the GitHub Advisory Database and remain open for tracking:
   directory writable only by the trusted application identity and never load
   cache files from untrusted sources.
 
-The following advisories have a patched release that this project cannot use
-yet:
+The lockfile overrides one upstream version cap to reach a patched release:
 
-- [filelock ReadWriteLock (GHSA-v4x8-3wr5-3wq8)](https://github.com/advisories/GHSA-v4x8-3wr5-3wq8)
-  and two Windows-only filelock advisories (GHSA-9vhv-jxww-xfm5,
-  GHSA-567q-5qvw-pf92): the fix is filelock 4.2.1, but the optional
-  `unstructured` extra (every release from 0.24.1 up to the latest, 0.27.34)
-  caps filelock below 4. That cap is the only blocker; without the extra the
-  lock resolves filelock 4.x. The lock is shared by every install, so it holds
-  all of them, including the container image, at 3.29.4. The core path gets
-  filelock through `datasets` and `huggingface-hub`, which use
-  `FileLock`/`SoftFileLock`, not the affected SQLite-backed `ReadWriteLock`.
-  The soft-lock advisory applies on Windows only.
+- filelock is forced to `>=4.2.1` (`[tool.uv] override-dependencies` in
+  `pyproject.toml`), which fixes the nine filelock advisories present in 3.29.4,
+  including [GHSA-v4x8-3wr5-3wq8](https://github.com/advisories/GHSA-v4x8-3wr5-3wq8)
+  (`ReadWriteLock`) and [GHSA-69hj-f68j-2879](https://github.com/advisories/GHSA-69hj-f68j-2879)
+  (`UnixFileLock`, which `datasets` and `huggingface-hub` use). The optional
+  `unstructured` extra caps filelock below 4 in every release up to 0.27.x,
+  but uses only a blocking `FileLock(path, timeout=-1)` around its spaCy model
+  install; filelock 4.0's breaking change is limited to `SoftReadWriteLock`.
+  The override applies to installs from this lockfile (`uv sync`); a plain
+  `pip install` with the `unstructured` extra still resolves filelock 3.x.
+  Remove the override once `unstructured` lifts the cap.
 
 These usage restrictions do not patch the upstream packages. Reassess them when
 changing evaluation or caching behavior and update when fixes become available.
