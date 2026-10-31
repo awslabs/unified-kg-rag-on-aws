@@ -24,13 +24,13 @@ from unittest.mock import AsyncMock
 import pytest
 from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared import LanguageModelTimeoutError
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -138,7 +138,7 @@ def _strategy(
     strat.token_manager = _TokenCounter(cost=token_cost)
     # The stub assigns outputs in call order, so run the map calls serially.
     # Concurrency and result ordering have dedicated BatchProcessor tests.
-    from unified_kg_rag.shared.utils.langchain import BatchProcessor
+    from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 
     strat.batch_processor = BatchProcessor(max_concurrency=1)
     return strat

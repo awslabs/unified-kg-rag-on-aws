@@ -20,6 +20,10 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.ingestion.cache_manager import (
+    CacheManager,
+    CacheStrategy,
+)
 from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
     delta_still_applies,
@@ -30,6 +34,11 @@ from unified_kg_rag.application.ingestion.incremental import (
 from unified_kg_rag.application.ingestion.namespace_lease import (
     NamespaceLease,
     longest_write_request_seconds,
+)
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    STAGE_OUTPUTS,
+    PipelineResumeManager,
+    PipelineStateManager,
 )
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
@@ -48,8 +57,15 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     _with_record_keys,
 )
 from unified_kg_rag.application.observability import configure_observability
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    changed_settings,
+    corpus_manifest_fingerprint,
+    extraction_settings,
+    stage_cache_key,
+)
 from unified_kg_rag.domain.ingestion.contributions import record_keys
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
+from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
 from unified_kg_rag.domain.models import (
     Config,
     ExtractionSettings,
@@ -70,26 +86,13 @@ from unified_kg_rag.shared import (
     PipelineExecutionError,
     PipelineInterrupted,
     PipelineResumeError,
-    PipelineResumeManager,
     PipelineStateError,
-    PipelineStateManager,
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.cache_manager import CacheManager, CacheStrategy
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
-from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
-from unified_kg_rag.shared.utils import (
-    compute_hash,
-    corpus_manifest_fingerprint,
-    stage_cache_key,
-)
-from unified_kg_rag.shared.utils.cache_keys import (
-    changed_settings,
-    extraction_settings,
-)
-from unified_kg_rag.shared.utils.document_identity import config_registry_namespace
+from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
     install_write_fence,

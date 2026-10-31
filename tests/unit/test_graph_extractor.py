@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
     ExtractionStats,
     GraphExtractor,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import (
     merge_contributions,
@@ -38,7 +39,6 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
     GraphRefinementPrompt,
 )
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

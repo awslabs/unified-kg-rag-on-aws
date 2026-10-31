@@ -70,8 +70,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
 )
 from unified_kg_rag.domain.models.provider_config import BEDROCK
-
-from .common import compute_hash
+from unified_kg_rag.shared.utils.common import compute_hash
 
 FINGERPRINT_LENGTH = 12
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from unified_kg_rag.shared.config import ENV_PREFIX, _env_path
+from unified_kg_rag.application.config import ENV_PREFIX, _env_path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _STACKS = sorted((_ROOT / "iac" / "stacks").glob("*.py"))

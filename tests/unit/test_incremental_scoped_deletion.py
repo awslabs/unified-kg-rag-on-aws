@@ -43,6 +43,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     retire_source_scopes,
     retired_scope_groups,
 )
+from unified_kg_rag.domain.ingestion.document_identity import is_local_path_scope
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -53,7 +54,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import ConfigurationError
-from unified_kg_rag.shared.utils.document_identity import is_local_path_scope
 
 pytestmark = pytest.mark.unit
 

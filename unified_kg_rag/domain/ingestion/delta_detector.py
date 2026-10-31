@@ -48,16 +48,7 @@ from unified_kg_rag.domain.ingestion.attempts import (
     plan_attempts,
     release_quarantined,
 )
-from unified_kg_rag.domain.models import (
-    Constants,
-    DocStatus,
-    DocStatusRecord,
-    Document,
-    DocumentDelta,
-    settings_changed,
-)
-from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.utils.document_identity import (
+from unified_kg_rag.domain.ingestion.document_identity import (
     REGISTRY_NAMESPACE_KEY,
     REGISTRY_SOURCE_KEY,
     RELATIVE_PATH_KEY,
@@ -70,6 +61,15 @@ from unified_kg_rag.shared.utils.document_identity import (
     registry_namespace,
     relative_source_path,
 )
+from unified_kg_rag.domain.models import (
+    Constants,
+    DocStatus,
+    DocStatusRecord,
+    Document,
+    DocumentDelta,
+    settings_changed,
+)
+from unified_kg_rag.shared import ConfigurationError, get_logger
 
 __all__ = [
     "assign_document_identity",

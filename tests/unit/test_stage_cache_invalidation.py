@@ -18,7 +18,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from unified_kg_rag.application.ingestion.cache_manager import CacheManager
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    PipelineResumeManager,
+    PipelineStateManager,
+)
+from unified_kg_rag.domain.ingestion import cache_keys
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    stage_cache_key,
+    stage_input_fingerprint,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -30,16 +40,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     Relationship,
     TextUnitExtraction,
-)
-from unified_kg_rag.shared.cache_manager import CacheManager
-from unified_kg_rag.shared.pipeline_manager import (
-    PipelineResumeManager,
-    PipelineStateManager,
-)
-from unified_kg_rag.shared.utils import (
-    cache_keys,
-    stage_cache_key,
-    stage_input_fingerprint,
 )
 
 pytestmark = pytest.mark.unit
@@ -326,7 +326,7 @@ class TestFingerprintScope:
     def test_document_identity_settings_re_key_from_their_stage(
         self, path: str, value: str, first_rekeyed: PipelineStageType
     ) -> None:
-        from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
+        from unified_kg_rag.domain.ingestion.cache_keys import extraction_fingerprint
 
         changed = Config()
         section, _, attribute = path.rpartition(".")

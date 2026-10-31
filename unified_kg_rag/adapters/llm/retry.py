@@ -25,7 +25,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 if TYPE_CHECKING:
-    from unified_kg_rag.shared.utils.langchain import BatchProcessor
+    from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 
 logger = get_logger(__name__)
 

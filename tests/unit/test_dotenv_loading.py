@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from unified_kg_rag.shared.config import load_cli_dotenv
+from unified_kg_rag.application.config import load_cli_dotenv
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +31,7 @@ import unified_kg_rag.application.cli.run_rag_chain
 import unified_kg_rag.application.cli.run_evaluation
 import unified_kg_rag.application.cli.run_visualization
 import unified_kg_rag.application.cli.run_prompt_tuning
-from unified_kg_rag.shared import get_config
+from unified_kg_rag.application.config import get_config
 
 get_config()
 assert calls == [], calls

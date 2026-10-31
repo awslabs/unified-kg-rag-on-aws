@@ -59,8 +59,8 @@ import는 **안쪽을 향합니다**: `application → adapters → ports → do
 공통 커널 `shared/`를 import할 수 있습니다. 어떤 `domain/` 모듈도 LangChain, LangSmith,
 boto3/botocore, lxml, opensearch-py, gremlin-python을 간접적으로도 로드하면 안 되므로
 `shared/`와 `shared/utils/`는 가볍게 유지합니다(LangChain에 묶인 도우미는
-`shared.utils.langchain`과 `shared.utils.document_converter`, rich 도우미는
-`shared.utils.display`). `tests/unit/test_domain_purity.py`가 새 인터프리터에서 이를 검사합니다.
+`adapters.llm.langchain`과 `adapters.ingestion.document_converter`, rich 도우미는
+`application.cli.display`). `tests/unit/test_domain_purity.py`가 새 인터프리터에서 이를 검사합니다.
 
 ```mermaid
 flowchart TB
@@ -374,7 +374,7 @@ import는 순환이 됨).
 ### 4.4 파이프라인 인프라
 
 - **재개.** 각 단계의 출력은 실행의 pipeline id 아래에 체크포인트로 남습니다
-  (`shared/pipeline_manager.py`, `shared/cache_manager.py`). 단계 캐시 키는 §12에 있습니다.
+  (`application/ingestion/pipeline_manager.py`, `application/ingestion/cache_manager.py`). 단계 캐시 키는 §12에 있습니다.
 - **S3 동기화**(`adapters/aws/s3_cache.py`)는 단계가 끝날 때마다 바뀐 파일을 업로드하며,
   데이터를 그것을 가리키는 메타데이터보다 먼저 올립니다. SIGTERM을 받으면 `run-ingestion`은
   실행 중인 단계를 멈추고(`request_stop`: 체크포인트를 쓰는 중이면 미루며 핸들러는 I/O를 하지
@@ -560,7 +560,7 @@ import는 순환이 됨).
 
 ### 5.4 식별, 도출한 내용, 병합 규칙
 
-- **문서 식별**(`shared/utils/document_identity.py`). 문서 버전의 ID는 코퍼스 루트 기준 상대
+- **문서 식별**(`domain/ingestion/document_identity.py`). 문서 버전의 ID는 코퍼스 루트 기준 상대
   경로와 전체 텍스트의 해시이므로 레지스트리 없이는 코퍼스를 어디에 체크아웃하든 같은 ID를
   냅니다. 증분 실행은 텍스트 단위를 레지스트리 `doc_id`로 키를 잡고 이 키는 소스 범위
   (`document_parsing.source_scope`, 없으면 확인한 소스 디렉터리)도 담으므로, 텍스트 단위는
@@ -958,7 +958,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 
 ## 12. 설정 시스템
 
-설정은 `shared/config.py`(`get_config`)가 읽는 중첩 Pydantic 트리(`domain/models/config.py`,
+설정은 `application/config.py`(`get_config`)가 읽는 중첩 Pydantic 트리(`domain/models/config.py`,
 루트 `Config`) 하나입니다. [docs/configuration.md](./configuration.md)는
 `scripts/gen_config_reference.py`가 이 트리에서 생성하며(오래되면
 `tests/unit/test_config_reference.py`가 실패), `config-template.yaml`은 주석이 달린 시작
@@ -977,7 +977,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
   `providers.<family>.kind`이고 `Config._check_models`가 ID를 그 공급자 기준으로 검사합니다.
   값은 적은 그대로 두고 읽을 때 해석하며(`Config.model_id`, `embedding_model_id`,
   `rerank_model_id`), 선택하지 않은 공급자의 설정은 로드할 때 알립니다.
-- **단계 캐시 키**(`shared/utils/cache_keys.py`). `CONFIG_KEYING`이 모든 필드를 분류합니다.
+- **단계 캐시 키**(`domain/ingestion/cache_keys.py`). `CONFIG_KEYING`이 모든 필드를 분류합니다.
   출력에 영향을 주는 첫 단계부터 키에 들어가거나, 이유와 함께 키에서 빠집니다. 단계의 키는
   그 단계와 모든 앞 단계에 적용되는 키 필드(꺼진 블록은 스위치만), 패키지 버전, 코퍼스 목록을
   해시합니다. 분류되지 않은 필드는

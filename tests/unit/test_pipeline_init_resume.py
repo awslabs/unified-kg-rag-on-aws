@@ -441,6 +441,7 @@ def test_calculate_stage_performance_durations_and_throughput() -> None:
 def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
     tmp_path,
 ) -> None:
+    from unified_kg_rag.application.ingestion.cache_manager import CacheManager
     from unified_kg_rag.domain.models import (
         Config,
         Entity,
@@ -448,7 +449,6 @@ def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
         TextUnit,
         TextUnitExtraction,
     )
-    from unified_kg_rag.shared.cache_manager import CacheManager
 
     pipe = object.__new__(DataIngestionPipeline)
     # A real cache manager: three hits and a miss in this run.

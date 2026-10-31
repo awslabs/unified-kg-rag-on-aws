@@ -25,6 +25,7 @@ from tests.integration.test_ingestion_stages import _config, _respond
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.ingestion.cache_keys import extraction_fingerprint
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
 )
@@ -37,7 +38,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
 )
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 
 pytestmark = pytest.mark.integration
 

@@ -16,12 +16,12 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.response_cache import (
     CachingLLMFactory,
     LLMResponseCache,
 )
 from unified_kg_rag.domain.models import ModelPurpose
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 

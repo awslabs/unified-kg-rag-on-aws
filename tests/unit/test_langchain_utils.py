@@ -3,7 +3,7 @@
 """AWS-free unit tests for BatchProcessor and RobustXMLOutputParser.
 
 These exercise the pure orchestration / parsing surface of
-``unified_kg_rag.shared.utils.langchain`` with plain fake callables (no real LLM,
+``unified_kg_rag.adapters.llm.langchain`` with plain fake callables (no real LLM,
 no boto3). The wall-clock timeout / ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
 complementary branches: the per-item happy path, from_processing,
@@ -24,15 +24,15 @@ from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
-import unified_kg_rag.shared.utils.langchain as langchain_module
-from unified_kg_rag.domain.models.config import ProcessingConfig
-from unified_kg_rag.shared.utils import ensure_list
-from unified_kg_rag.shared.utils.langchain import (
+import unified_kg_rag.adapters.llm.langchain as langchain_module
+from unified_kg_rag.adapters.llm.langchain import (
     BATCH_ITEM_FAILED,
     BatchProcessor,
     ProgressLogger,
     RobustXMLOutputParser,
 )
+from unified_kg_rag.domain.models.config import ProcessingConfig
+from unified_kg_rag.shared.utils import ensure_list
 
 pytestmark = pytest.mark.unit
 
@@ -1000,7 +1000,7 @@ def test_concurrent_retries_of_one_batch_do_not_share_retry_state() -> None:
     # its item failed: ~3% of 3,000 items under a short switch interval.
     import sys
 
-    from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
+    from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 
     calls: Counter[int] = Counter()
     lock = threading.Lock()

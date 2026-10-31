@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.ingestion.gleaner import (
     format_relationships_with_limit_task,
     prepare_input,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -40,7 +41,6 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

@@ -668,12 +668,12 @@ def test_only_a_failed_base_level_report_marks_its_documents_failed() -> None:
 def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
     # Nothing downstream reads centrality, and betweenness takes minutes on
     # a large graph; the stage also caches nothing graph_resolution did not.
+    from unified_kg_rag.application.ingestion.pipeline_manager import STAGE_OUTPUTS
     from unified_kg_rag.application.ingestion.pipeline_stages import (
         GraphAnalysisStage,
     )
     from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
     from unified_kg_rag.domain.models import Entity, Relationship
-    from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 
     centrality = mocker.patch.object(GraphAnalyzer, "calculate_centrality")
     stage = GraphAnalysisStage(Config())

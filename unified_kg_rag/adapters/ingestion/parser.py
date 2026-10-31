@@ -14,11 +14,13 @@ from langchain_community.document_loaders import (
 )
 from langchain_community.document_loaders.base import BaseLoader
 
+from unified_kg_rag.adapters.ingestion.document_converter import (
+    convert_langchain_to_document,
+)
 from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.adapters.store_errors import causes
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.utils.document_converter import convert_langchain_to_document
 
 logger = get_logger(__name__)
 

@@ -197,10 +197,10 @@ def _tracing_callbacks(
     """``callbacks`` plus the GenAI tracing handler when tracing is enabled."""
     if not observability.is_enabled():
         return callbacks
+    from unified_kg_rag.adapters.llm.langchain import with_callback
     from unified_kg_rag.adapters.observability.langchain_callback import (
         GenAITracingCallbackHandler,
     )
-    from unified_kg_rag.shared.utils.langchain import with_callback
 
     handler: BaseCallbackHandler = GenAITracingCallbackHandler(
         model_id,

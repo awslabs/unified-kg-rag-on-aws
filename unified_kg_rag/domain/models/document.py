@@ -71,7 +71,7 @@ PENDING_CONTENT_HASH = "pending"
 class ExtractionSettings(BaseModel):
     """The settings that shaped what a document produced, field by field.
 
-    Built by ``shared.utils.cache_keys.extraction_settings``: ``values`` maps
+    Built by ``domain.ingestion.cache_keys.extraction_settings``: ``values`` maps
     a configuration path to the value in effect (long values by digest). A
     document's registry record holds the :attr:`fingerprint`; the record
     itself is kept once per index namespace, so a later run can tell which
@@ -376,7 +376,7 @@ class Document(BaseModel):
     """A parsed source document — a pure domain model (no LangChain base).
 
     LangChain loader output is converted into this model at the adapter/shared
-    boundary (``shared.utils.document_converter``). ``page_content`` keeps the
+    boundary (``adapters.ingestion.document_converter``). ``page_content`` keeps the
     field name LangChain's Document used and is the document's only copy of
     its text.
     """

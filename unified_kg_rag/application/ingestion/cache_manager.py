@@ -16,9 +16,8 @@ from unified_kg_rag.domain.models import (
     CacheStrategy,
     Config,
 )
+from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.utils import compute_hash
-
-from .logging import get_logger
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)

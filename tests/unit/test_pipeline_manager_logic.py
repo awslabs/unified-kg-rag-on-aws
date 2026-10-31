@@ -19,6 +19,11 @@ from typing import Any
 
 import pytest
 
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    PipelineResumeManager,
+    PipelineStateManager,
+)
+from unified_kg_rag.domain.ingestion.cache_keys import stage_cache_key
 from unified_kg_rag.domain.models import (
     Config,
     DocumentDelta,
@@ -32,11 +37,6 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared.exceptions import (
     PipelineResumeError,
 )
-from unified_kg_rag.shared.pipeline_manager import (
-    PipelineResumeManager,
-    PipelineStateManager,
-)
-from unified_kg_rag.shared.utils import stage_cache_key
 
 pytestmark = pytest.mark.unit
 
@@ -136,7 +136,7 @@ def test_save_excludes_heavy_data_fields(tmp_path) -> None:
 def test_every_cached_stage_output_is_excluded_from_metadata() -> None:
     # A stage output is already persisted in the stage cache; writing it into
     # pipeline_metadata.json too re-serializes (and re-syncs) it on every save.
-    from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
+    from unified_kg_rag.application.ingestion.pipeline_manager import STAGE_OUTPUTS
 
     cached = {attr for outputs in STAGE_OUTPUTS.values() for attr in outputs}
     assert cached <= PipelineStateManager.EXCLUDED_DATA_FIELDS

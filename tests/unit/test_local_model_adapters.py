@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     TransientRetryRunnable,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
@@ -61,7 +62,6 @@ from unified_kg_rag.ports import (
 )
 from unified_kg_rag.shared import ConfigurationError, EmbeddingModelError
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 

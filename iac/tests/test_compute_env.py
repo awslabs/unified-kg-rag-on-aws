@@ -68,7 +68,7 @@ def _actions(statements: list[dict[str, Any]]) -> set[str]:
 
 def test_doc_status_env_targets_iac_table_and_disables_auto_create() -> None:
     env = _task_environment()
-    # Both names must match unified_kg_rag.shared.config env overrides.
+    # Both names must match unified_kg_rag.application.config env overrides.
     assert env["UKR__AWS__DYNAMODB__TABLE_NAME"] == "graphrag-doc-status-v2"
     assert env["UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING"] == "false"
 
@@ -111,7 +111,7 @@ def test_corpus_bucket_is_granted_read_only() -> None:
 def test_opensearch_replicas_follow_node_count(
     context: dict[str, Any], replicas: str
 ) -> None:
-    # Name must match the unified_kg_rag.shared.config env override.
+    # Name must match the unified_kg_rag.application.config env override.
     assert (
         _task_environment(context)[
             "UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS"
@@ -130,7 +130,7 @@ def test_korean_analyzer_is_one_the_domain_has(
 ) -> None:
     # The domain has no nori unless its optional package is associated, so the
     # default maps Korean to the built-in cjk analyzer. Name must match the
-    # unified_kg_rag.shared.config env override.
+    # unified_kg_rag.application.config env override.
     assert (
         _task_environment(context)["UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO"]
         == analyzer

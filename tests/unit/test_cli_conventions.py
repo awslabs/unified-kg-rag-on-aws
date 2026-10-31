@@ -34,6 +34,7 @@ from unified_kg_rag.application.cli.conventions import (
     print_json,
     stoppable,
 )
+from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
@@ -42,7 +43,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
 )
 from unified_kg_rag.shared import ConfigurationError
-from unified_kg_rag.shared.utils.display import console
 
 pytestmark = pytest.mark.unit
 

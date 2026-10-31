@@ -18,6 +18,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -58,7 +59,6 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_bounded
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
 

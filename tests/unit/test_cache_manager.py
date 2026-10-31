@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
+from unified_kg_rag.application.ingestion.cache_manager import CacheManager
 from unified_kg_rag.domain.models import CacheStrategy, Config
-from unified_kg_rag.shared.cache_manager import CacheManager
 
 pytestmark = pytest.mark.unit
 

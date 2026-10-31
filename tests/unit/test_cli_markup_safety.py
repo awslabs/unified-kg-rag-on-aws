@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 from unified_kg_rag.application.cli import (
+    display,
     prepare_benchmark,
     run_evaluation,
     run_ingestion_pipeline,
@@ -30,7 +31,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.evaluation import EvaluationSummary
 from unified_kg_rag.evaluation.benchmarks import musique
-from unified_kg_rag.shared.utils import display
 
 pytestmark = pytest.mark.unit
 

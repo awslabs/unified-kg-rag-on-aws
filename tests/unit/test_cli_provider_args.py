@@ -109,7 +109,7 @@ def test_backend_local_flag_resolves_the_registry_against_the_config_file(
     # An aws config file switched to local by the flag: the SQLite registry
     # path the preset brings in is relative, and must not follow the working
     # directory (a run started elsewhere would read an empty registry).
-    from unified_kg_rag.shared import get_config
+    from unified_kg_rag.application.config import get_config
 
     config_dir = tmp_path / "project"
     config_dir.mkdir()

@@ -12,7 +12,7 @@ Two checks enforce it:
   re-export in ``shared``).
 
 There are no carve-outs: LangChain documents are converted to the domain
-``Document`` in ``shared.utils.document_converter``.
+``Document`` in ``adapters.ingestion.document_converter``.
 """
 
 from __future__ import annotations

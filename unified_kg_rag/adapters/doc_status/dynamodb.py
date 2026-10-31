@@ -23,6 +23,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 from unified_kg_rag.domain.ingestion.delta_detector import scope_namespace
+from unified_kg_rag.domain.ingestion.document_identity import doc_id_namespace
 from unified_kg_rag.domain.models import (
     Config,
     DocStatusRecord,
@@ -36,7 +37,6 @@ from unified_kg_rag.shared import (
     DocStatusRegistryError,
     get_logger,
 )
-from unified_kg_rag.shared.utils.document_identity import doc_id_namespace
 from unified_kg_rag.shared.write_fence import (
     REGISTRY_CONNECT_TIMEOUT_SECONDS,
     REGISTRY_READ_TIMEOUT_SECONDS,

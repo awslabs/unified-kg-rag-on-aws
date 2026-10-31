@@ -46,7 +46,7 @@ _EXPORTS: dict[str, str] = {
     "Config": "unified_kg_rag.domain.models",
     "ModelRole": "unified_kg_rag.domain.models",
     "ModelPurpose": "unified_kg_rag.domain.models",
-    "get_config": "unified_kg_rag.shared.config",
+    "get_config": "unified_kg_rag.application.config",
     "setup_logging": "unified_kg_rag.shared.logging",
     "configure_event_loop": "unified_kg_rag.shared.utils.event_loop",
     # Ingestion and indexing
@@ -131,6 +131,7 @@ if TYPE_CHECKING:
         MemoryManager,
     )
     from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (
         GraphRAGChain,
@@ -172,7 +173,6 @@ if TYPE_CHECKING:
         TokenCounterPort,
         VectorIndexer,
     )
-    from unified_kg_rag.shared.config import get_config
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         GraphRAGException,

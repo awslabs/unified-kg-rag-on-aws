@@ -57,6 +57,11 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     compact_name_key,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    extraction_settings,
+    is_excluded_source_path,
+    unit_record_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
@@ -73,6 +78,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
 )
+from unified_kg_rag.domain.ingestion.document_identity import store_namespace_tag
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -102,12 +108,6 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE
-from unified_kg_rag.shared.utils.cache_keys import (
-    extraction_settings,
-    is_excluded_source_path,
-    unit_record_fingerprint,
-)
-from unified_kg_rag.shared.utils.document_identity import store_namespace_tag
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 if TYPE_CHECKING:

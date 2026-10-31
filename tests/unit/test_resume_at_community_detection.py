@@ -19,7 +19,12 @@ from types import SimpleNamespace
 import networkx as nx
 import pytest
 
+from unified_kg_rag.application.ingestion.cache_manager import CacheManager
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    PipelineResumeManager,
+    PipelineStateManager,
+)
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     CommunityDetectionStage,
     GraphAnalysisStage,
@@ -33,11 +38,6 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     PipelineStageType,
     Relationship,
-)
-from unified_kg_rag.shared.cache_manager import CacheManager
-from unified_kg_rag.shared.pipeline_manager import (
-    PipelineResumeManager,
-    PipelineStateManager,
 )
 
 pytestmark = pytest.mark.unit

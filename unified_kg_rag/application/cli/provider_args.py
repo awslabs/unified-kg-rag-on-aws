@@ -15,8 +15,8 @@ from __future__ import annotations
 import argparse
 
 from unified_kg_rag.application.bootstrap import with_provider_overrides
+from unified_kg_rag.application.config import resolve_relative_paths
 from unified_kg_rag.domain.models import Backend, Config
-from unified_kg_rag.shared.config import resolve_relative_paths
 
 
 def add_provider_arguments(parser: argparse.ArgumentParser) -> None:

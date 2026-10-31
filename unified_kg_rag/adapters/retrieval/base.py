@@ -41,11 +41,11 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
-from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
 

@@ -25,7 +25,7 @@ import pytest
 from langchain_core.runnables import RunnableLambda
 
 from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 

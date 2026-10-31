@@ -25,7 +25,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from unified_kg_rag.application.ingestion.cache_manager import CacheManager
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.ingestion.pipeline_manager import (
+    PipelineResumeManager,
+    PipelineStateManager,
+)
+from unified_kg_rag.domain.ingestion.cache_keys import extraction_settings
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -38,13 +44,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnitExtraction,
 )
-from unified_kg_rag.shared.cache_manager import CacheManager
 from unified_kg_rag.shared.exceptions import PipelineExecutionError
-from unified_kg_rag.shared.pipeline_manager import (
-    PipelineResumeManager,
-    PipelineStateManager,
-)
-from unified_kg_rag.shared.utils.cache_keys import extraction_settings
 
 pytestmark = pytest.mark.unit
 

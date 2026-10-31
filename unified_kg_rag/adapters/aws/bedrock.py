@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     is_transient_bedrock_error,
 )
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
 from unified_kg_rag.domain.models import (
     Config,
@@ -68,7 +69,6 @@ from unified_kg_rag.shared.genai import (
     PROVIDER_AWS_BEDROCK,
     embedding_span,
 )
-from unified_kg_rag.shared.utils.langchain import with_callback
 
 logger = get_logger(__name__)
 

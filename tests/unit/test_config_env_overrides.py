@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from unified_kg_rag.application.config import ConfigLoader
 from unified_kg_rag.domain.models.config import ObservabilityBackend
-from unified_kg_rag.shared.config import ConfigLoader
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit

@@ -26,6 +26,7 @@ from unified_kg_rag.application.ingestion.extraction_store import (
     ExtractionStore,
     with_record_keys,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import (
     claims_from_payload,
     claims_payload,
@@ -48,7 +49,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt, GraphRefinementPrompt
 from unified_kg_rag.ports.indexer import IndexingStats
-from unified_kg_rag.shared.utils.cache_keys import unit_record_fingerprint
 
 pytestmark = pytest.mark.unit
 

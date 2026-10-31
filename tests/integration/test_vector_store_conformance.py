@@ -237,7 +237,7 @@ def test_full_reindex_keeps_one_index_per_alias(
         def now() -> datetime:
             return start + timedelta(seconds=next(ticks))
 
-    monkeypatch.setattr("unified_kg_rag.shared.utils.store_names.datetime", _Clock)
+    monkeypatch.setattr("unified_kg_rag.domain.retrieval.store_names.datetime", _Clock)
     indexer = harness.vector_indexer
     client = indexer.opensearch_client
     alias = indexer._get_name(
@@ -1226,8 +1226,8 @@ def test_the_build_record_is_read_back_by_the_retriever(
 ) -> None:
     import asyncio
 
+    from unified_kg_rag.domain.ingestion.cache_keys import extraction_settings
     from unified_kg_rag.domain.models import IndexBuildRecord
-    from unified_kg_rag.shared.utils.cache_keys import extraction_settings
 
     _write(harness, "text_units", "index", _text_units(None), suffixes=["default"])
     record = IndexBuildRecord(

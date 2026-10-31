@@ -15,13 +15,8 @@ from typing import Any, get_args, get_origin
 import pytest
 from pydantic import BaseModel
 
-from unified_kg_rag.domain.models import Config, PipelineStageType
-from unified_kg_rag.domain.models.config import (
-    NeptuneIndexingConfig,
-    OpenSearchIndexingConfig,
-)
-from unified_kg_rag.shared.utils import cache_keys
-from unified_kg_rag.shared.utils.cache_keys import (
+from unified_kg_rag.domain.ingestion import cache_keys
+from unified_kg_rag.domain.ingestion.cache_keys import (
     CONFIG_KEYING,
     Keyed,
     Unkeyed,
@@ -31,6 +26,11 @@ from unified_kg_rag.shared.utils.cache_keys import (
     shapes_answers,
     stage_input_fingerprint,
     unit_record_fingerprint,
+)
+from unified_kg_rag.domain.models import Config, PipelineStageType
+from unified_kg_rag.domain.models.config import (
+    NeptuneIndexingConfig,
+    OpenSearchIndexingConfig,
 )
 
 pytestmark = pytest.mark.unit

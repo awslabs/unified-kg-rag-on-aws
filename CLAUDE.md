@@ -50,8 +50,8 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 - **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
   cache/pipeline managers, `utils/`. Keep `shared/__init__` and
   `shared/utils/__init__` dependency-light: import LangChain-coupled helpers
-  from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
-  helpers from `shared.utils.display`), not from the package root.
+  from `adapters.llm.langchain` / `adapters.ingestion.document_converter` (and rich
+  helpers from `application.cli.display`), not from the package root.
 - **`evaluation/` and `visualization/`**: real logic packages (evaluators +
   manager; render loop + `embeddings/`/`exporters/`). Code inside the
   package imports everything else from its real location (`application.retrieval.rag_chain`,

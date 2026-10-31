@@ -24,11 +24,11 @@ from unified_kg_rag.application.cli.conventions import (
     print_json,
     usage_error,
 )
+from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared import EvaluationException
-from unified_kg_rag.shared.utils.display import console, markup_safe
 
 
 def _parser() -> argparse.ArgumentParser:

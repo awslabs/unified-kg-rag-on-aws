@@ -740,7 +740,7 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
     # Old behaviour: the batch's finally waited for the running calls, so a
     # SIGTERM waited for the slowest model call in flight (up to the call
     # timeout, past the task's stop timeout).
-    from unified_kg_rag.shared.utils.langchain import BatchProcessor
+    from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 
     def call(_: dict[str, Any]) -> str:
         time.sleep(3)

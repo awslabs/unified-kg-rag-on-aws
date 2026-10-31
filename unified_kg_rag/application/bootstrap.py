@@ -31,11 +31,11 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_kind,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.config import validation_summary
 
 if TYPE_CHECKING:
     import boto3

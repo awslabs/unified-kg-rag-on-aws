@@ -26,6 +26,7 @@ import pytest
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
+from unified_kg_rag.domain.ingestion.cache_keys import extraction_fingerprint
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
@@ -41,7 +42,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import ConfigurationError, PipelineStageError
-from unified_kg_rag.shared.utils.cache_keys import extraction_fingerprint
 
 pytestmark = pytest.mark.unit
 

@@ -3,15 +3,43 @@
 import logging
 import sys
 import threading
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Protocol, TextIO
 
 import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from . import observability
-from .config import Config
+
+
+class LoggingSettings(Protocol):
+    """The settings logging is configured from: the ``logging`` section of
+    the domain ``Config`` (``LoggingConfig``). Typed structurally, so the
+    kernel imports no other layer."""
+
+    @property
+    def level(self) -> str: ...
+
+    @property
+    def log_format(self) -> str: ...
+
+    @property
+    def log_to_file(self) -> bool: ...
+
+    @property
+    def log_file_path(self) -> str: ...
+
+    @property
+    def library_levels(self) -> Mapping[str, str]: ...
+
+
+class HasLoggingSettings(Protocol):
+    """A configuration with a ``logging`` section (the domain ``Config``)."""
+
+    @property
+    def logging(self) -> LoggingSettings: ...
 
 
 def add_trace_ids(
@@ -94,7 +122,7 @@ class LoggingSetup:
     @classmethod
     def setup_logging(
         cls,
-        config: Config,
+        config: HasLoggingSettings,
         config_override: dict[str, Any] | None = None,
         *,
         stream: TextIO | None = None,
@@ -206,7 +234,7 @@ def warn_once(logger: Any, key: str, message: str, *args: Any) -> None:
 
 
 def setup_logging(
-    config: Config,
+    config: HasLoggingSettings,
     config_override: dict[str, Any] | None = None,
     stream: TextIO | None = None,
 ) -> None:

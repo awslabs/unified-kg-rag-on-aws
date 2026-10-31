@@ -14,7 +14,7 @@ each at most once per run: a retry within the run (after a response failed to
 parse, say) calls the model again, and its response replaces the old one. A
 response cut off at the output-token limit is not stored, since its failure is
 not retried. The responses of a batch item that failed every attempt (one
-that never parsed, say) are dropped (``shared.utils.langchain.
+that never parsed, say) are dropped (``adapters.llm.langchain.
 discard_if_item_fails``): a re-run asks the model again for that item only,
 instead of replaying them and recording the same failure. A call made under
 ``uncached_responses``, or abandoned on its call timeout (its late answer is
@@ -41,13 +41,13 @@ from langchain_core.messages import message_to_dict, messages_from_dict
 from langchain_core.outputs import ChatGeneration, Generation
 
 from unified_kg_rag.adapters.llm.chain_factory import _truncation_reason
-from unified_kg_rag.domain.models import ModelPurpose
-from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils.langchain import (
+from unified_kg_rag.adapters.llm.langchain import (
     discard_if_item_fails,
     in_abandoned_attempt,
 )
+from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.ports.model_factory import LLMFactoryPort
+from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 

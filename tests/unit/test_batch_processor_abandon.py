@@ -13,8 +13,8 @@ from typing import Any
 import pytest
 from langchain_core.exceptions import OutputParserException
 
-from unified_kg_rag.shared.utils import langchain as langchain_utils
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm import langchain as langchain_utils
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 

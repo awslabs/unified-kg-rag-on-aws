@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
+from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -32,6 +33,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -49,8 +51,6 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
-from unified_kg_rag.shared.utils.cache_keys import answer_settings
-from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator

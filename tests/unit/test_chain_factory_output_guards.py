@@ -32,14 +32,14 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.domain.models import ModelPurpose
-from unified_kg_rag.domain.prompts import GraphExtractionPrompt
-from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.langchain import (
+from unified_kg_rag.adapters.llm.langchain import (
     BATCH_ITEM_FAILED,
     BatchProcessor,
     RobustXMLOutputParser,
 )
+from unified_kg_rag.domain.models import ModelPurpose
+from unified_kg_rag.domain.prompts import GraphExtractionPrompt
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 pytestmark = pytest.mark.unit
 

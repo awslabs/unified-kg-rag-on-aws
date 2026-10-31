@@ -5,7 +5,7 @@
 These build ``prompt | llm | parser`` chains from a language-model factory,
 so they live in the adapters layer rather than the shared kernel — keeping
 ``shared/`` free of any adapter dependency. The backend-agnostic
-``RobustXMLOutputParser`` stays in ``shared.utils.langchain``.
+``RobustXMLOutputParser`` stays in ``adapters.llm.langchain``.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 
+from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.adapters.llm.retry import (
     TransientErrorPredicate,
     acall_with_transient_retry,
@@ -44,7 +45,6 @@ from unified_kg_rag.shared import (
     LLMOutputTruncatedError,
     get_logger,
 )
-from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import (

@@ -5,12 +5,12 @@ from pathlib import Path
 
 from langchain_core.documents import Document as LangChainDocument
 
-from unified_kg_rag.domain.models import Constants, Document
-from unified_kg_rag.shared.utils.document_identity import (
+from unified_kg_rag.domain.ingestion.document_identity import (
     compute_document_id,
     compute_text_hash,
     normalize_source_path,
 )
+from unified_kg_rag.domain.models import Constants, Document
 
 
 def convert_langchain_to_document(

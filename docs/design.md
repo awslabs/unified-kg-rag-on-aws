@@ -61,8 +61,8 @@ Imports point **inward**: `application → adapters → ports → domain`, and a
 layer may import the cross-cutting `shared/` kernel. No `domain/` module may
 load LangChain, LangSmith, boto3/botocore, lxml, opensearch-py or
 gremlin-python, even transitively, so `shared/` and `shared/utils/` stay
-dependency-light (LangChain-coupled helpers in `shared.utils.langchain` and
-`shared.utils.document_converter`, rich ones in `shared.utils.display`);
+dependency-light (LangChain-coupled helpers in `adapters.llm.langchain` and
+`adapters.ingestion.document_converter`, rich ones in `application.cli.display`);
 `tests/unit/test_domain_purity.py` checks this in a clean interpreter.
 
 ```mermaid
@@ -427,7 +427,7 @@ gets its models and stores from the run's `Providers` bundle.
 ### 4.4 Pipeline infrastructure
 
 - **Resume.** Each stage's output is checkpointed under the run's pipeline id
-  (`shared/pipeline_manager.py`, `shared/cache_manager.py`); the stage cache
+  (`application/ingestion/pipeline_manager.py`, `application/ingestion/cache_manager.py`); the stage cache
   key is described in §12.
 - **S3 sync** (`adapters/aws/s3_cache.py`) uploads the changed files after
   every stage, data before the metadata that refers to it. On SIGTERM,
@@ -665,7 +665,7 @@ every write and check that the next run converges to a fresh full build.
 
 ### 5.4 Identity, derived content and merge rules
 
-- **Document identity** (`shared/utils/document_identity.py`). A document
+- **Document identity** (`domain/ingestion/document_identity.py`). A document
   version's id hashes its path relative to the corpus root and its full text,
   so without the registry a corpus yields the same ids wherever it is checked
   out; an incremental run keys text units by the registry `doc_id`, which
@@ -1166,7 +1166,7 @@ default.
 ## 12. Configuration System
 
 The configuration is one nested Pydantic tree (`domain/models/config.py`,
-root `Config`) loaded by `shared/config.py` (`get_config`).
+root `Config`) loaded by `application/config.py` (`get_config`).
 [docs/configuration.md](./configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
 fails when it is stale; `config-template.yaml` is the commented starting file.
@@ -1190,7 +1190,7 @@ fails when it is stale; `config-template.yaml` is the commented starting file.
   against it. Values stay as written and resolve on read (`Config.model_id`,
   `embedding_model_id`, `rerank_model_id`); a setting of a provider the config
   does not select is reported at load.
-- **Stage cache keys** (`shared/utils/cache_keys.py`). `CONFIG_KEYING`
+- **Stage cache keys** (`domain/ingestion/cache_keys.py`). `CONFIG_KEYING`
   classifies every field: keyed from the first stage whose output it shapes,
   or unkeyed with the reason. A stage's key hashes the keyed fields in effect
   for it and every upstream stage (a disabled block contributes its switch

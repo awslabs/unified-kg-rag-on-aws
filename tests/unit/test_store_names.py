@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from unified_kg_rag.shared.utils.store_names import graph_label, store_name
+from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 
 pytestmark = pytest.mark.unit
 
