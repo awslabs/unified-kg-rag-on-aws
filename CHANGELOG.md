@@ -1460,6 +1460,13 @@ changed once with the full-config keys (#332).
   at the neutral importance 0.5 without reading an `importance` vertex
   property: entity vertices never store one, so the result is unchanged
   (#300).
+- IaC: the OpenSearch domain carries the `EnableVersionUpgrade` update
+  policy, so a later engine version change (2.13 to 2.19, say) upgrades the
+  deployed domain in place, as a blue/green deployment that keeps its
+  indices, instead of replacing it with an empty domain (and, outside dev,
+  retaining and billing the old one). The engine stays 2.13; adding the
+  policy changes no resource. The runbook's new "Upgrading OpenSearch"
+  section lists the steps (#PR).
 
 ### Fixed
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,

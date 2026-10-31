@@ -171,6 +171,13 @@ did-you-mean hint.
 | `enable_cdk_nag` | `false` | Run the cdk-nag AwsSolutions checks at synth |
 | `owner`, `cost_center` | `aws-proserve`, `unified-kg-rag-on-aws` | Tags applied to every resource |
 
+**The OpenSearch engine version is pinned (2.13) and upgrades in place.**
+The domain carries the `EnableVersionUpgrade` update policy, so changing
+`version` in `storage_stack.py` (to 2.19, say) upgrades the deployed domain
+as a blue/green deployment, keeping its indices, instead of replacing it with
+an empty one. Snapshot it first: see
+[Upgrading OpenSearch](../docs/operations.md#upgrading-opensearch).
+
 **The Neptune engine version is not pinned.** A new cluster starts on
 Neptune's default engine version at creation; pinning one now would change the
 engine of every deployed cluster not on it. The client is pinned instead

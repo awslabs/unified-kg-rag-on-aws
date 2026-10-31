@@ -176,3 +176,13 @@ def test_neptune_is_provisioned_by_default() -> None:
     assert "ServerlessScalingConfiguration" not in cluster["Properties"]
     (instance,) = template.find_resources("AWS::Neptune::DBInstance").values()
     assert instance["Properties"]["DBInstanceClass"] == "db.r6g.large"
+
+
+@pytest.mark.parametrize("env_name", ["dev", "prod"])
+def test_opensearch_version_change_upgrades_in_place(env_name: str) -> None:
+    # Without the UpdatePolicy a changed EngineVersion replaces the domain
+    # (a new, empty one; the old one retained and billed outside dev).
+    template = _storage_template({"env_name": env_name})
+    (domain,) = template.find_resources("AWS::OpenSearchService::Domain").values()
+    assert domain["UpdatePolicy"] == {"EnableVersionUpgrade": True}
+    assert domain["Properties"]["EngineVersion"] == "OpenSearch_2.13"
