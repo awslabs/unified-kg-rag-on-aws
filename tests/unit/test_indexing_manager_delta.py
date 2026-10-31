@@ -586,7 +586,9 @@ def _deriving(mgr) -> list[list]:
 
     def derive(suffix, entities, relationships, claims, *args, **kwargs):
         given.append(list(entities))
-        return SimpleNamespace(claims=list(claims), id_remap={}, dropped=[])
+        return SimpleNamespace(
+            claims=list(claims), id_remap={}, dropped=[], earlier_claim_ids={}
+        )
 
     mgr.derive = derive
     return given

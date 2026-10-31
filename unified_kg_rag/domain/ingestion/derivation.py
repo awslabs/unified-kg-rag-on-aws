@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
+    earlier_claim_ids,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -90,6 +91,11 @@ class Derived(BaseModel):
     # entity (they were re-keyed or split): the caller derives those edges
     # with them.
     rewired: list[str] = Field(default_factory=list)
+    # Id an earlier build may have stored a derived claim under (its dates
+    # read otherwise then, see ``earlier_claim_ids``) -> the derived claim's
+    # id: the caller derives the stored claims of these ids with the given
+    # ones, and a given claim of such an id is that claim.
+    earlier_claim_ids: dict[str, str] = Field(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -526,6 +532,7 @@ def derive(
             )
 
     derived_claims: list[Claim] = []
+    earlier: dict[str, str] = {}
     if claims:
         claim_records = claim_records or {}
         statements = [
@@ -555,6 +562,24 @@ def derive(
                         update={"subject_id": subject, "object_id": obj}
                     )
                     by_id.setdefault(resolved_claim_id(stated), claim)
+        # And by the ids an earlier reading of their dates gave them: a
+        # claim stored before it changed is the claim its dates read as now.
+        for claim in resolved_claims:
+            stated_by = [
+                statement
+                for unit_id in dict.fromkeys(claim.text_unit_ids or [])
+                for statement in claim_records.get(unit_id, [])
+            ]
+            exact = with_entity_ids(claim, derived_of)
+            current_id = resolved_claim_id(exact)
+            # Under the stored entity ids too, as above.
+            for stale_id in sorted(
+                earlier_claim_ids(exact, stated_by)
+                | earlier_claim_ids(claim, stated_by)
+            ):
+                if stale_id not in by_id:
+                    by_id[stale_id] = claim
+                    earlier[stale_id] = current_id
         # The derived claim of each given one (None: dropped), in order.
         kept_for: list[Claim | None] = []
         for claim in claims:
@@ -714,6 +739,7 @@ def derive(
         id_remap=id_remap,
         split_from=parted_from,
         dropped=dropped,
+        earlier_claim_ids=earlier,
         rewired=sorted(
             {
                 *split_members,

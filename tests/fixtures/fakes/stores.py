@@ -543,7 +543,7 @@ class FakeVectorStore(_Recorder):
                 "type": (claim.type or "").lower(),
                 "status": claim.status.lower() if claim.status else None,
                 "start_date": claim_date_value(claim.start_date),
-                "end_date": claim_date_value(claim.end_date),
+                "end_date": claim_date_value(claim.end_date, end=True),
             }
 
         return [

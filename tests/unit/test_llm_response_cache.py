@@ -354,6 +354,48 @@ def test_a_dropped_response_still_pending_writes_nothing(tmp_path: Path) -> None
     assert [entry["generations"] is None for entry in entries] == [False]
 
 
+def test_a_pending_segment_holds_one_entry_per_key(tmp_path: Path) -> None:
+    # Pending entries are kept by key (a drop removed its key's entries by
+    # rebuilding the whole pending list, quadratic with a large
+    # flush_every): the last one for a key is written, as loading a later
+    # entry for a key replaces an earlier one, and a drop of a key a
+    # segment holds writes one removal entry.
+    from unified_kg_rag.adapters.llm.response_cache import _cache_key
+
+    def generation(text: str) -> list[ChatGeneration]:
+        return [ChatGeneration(message=AIMessage(content=text))]
+
+    written = LLMResponseCache()
+    written.open(tmp_path)
+    written.update("p-written", "llm", generation("old"))
+    written.close()
+
+    cache = LLMResponseCache()
+    cache.open(tmp_path)
+    cache.update("p", "llm", generation("first"))
+    cache.update("p", "llm", generation("second"))
+    cache.update("p-dropped", "llm", generation("dropped"))
+    cache._discard(_cache_key("p-dropped", "llm"))
+    cache._discard(_cache_key("p-written", "llm"))
+    cache._discard(_cache_key("p-written", "llm"))
+    cache.close()
+    newest = sorted(tmp_path.glob("*.json"))[-1]
+    entries = json.loads(newest.read_text(encoding="utf-8"))["entries"]
+    assert [
+        (
+            e["key"],
+            e["generations"] and e["generations"][0]["message"]["data"]["content"],
+        )
+        for e in entries
+    ] == [(_cache_key("p", "llm"), "second"), (_cache_key("p-written", "llm"), None)]
+
+    rerun = LLMResponseCache()
+    rerun.open(tmp_path)
+    assert rerun.lookup("p", "llm")[0].text == "second"  # type: ignore[index]
+    assert rerun.lookup("p-written", "llm") is None
+    assert rerun.lookup("p-dropped", "llm") is None
+
+
 def test_a_dropped_response_already_written_is_removed(tmp_path: Path) -> None:
     # Flushed (a full segment) before its item failed: a removal entry.
     respond = _Counter()

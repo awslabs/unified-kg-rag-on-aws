@@ -764,9 +764,21 @@ class DataIngestionPipeline:
             raise
         # Any other BaseException (SystemExit, or a test's simulated death)
         # leaves the attempts open, like a process that died.
-        except Exception:
-            self._close_attempts(context, lease)
-            raise
+        except Exception as e:
+            if self._stop_signal is None:
+                self._close_attempts(context, lease)
+                raise
+            # A stop that surfaced wrapped in the error (see
+            # _raise_if_stopped_by) ends the run as a stop here, its
+            # checkpoint uploaded while the lease is still held.
+            self._checkpointing = True
+            try:
+                self._close_attempts(context, lease)
+                self._checkpoint_on_stop()
+            finally:
+                self._checkpointing = False
+                self._checkpoint_id = None
+            raise PipelineInterrupted(self._stop_signal) from e
         self._close_attempts(context, lease)
         return context
 

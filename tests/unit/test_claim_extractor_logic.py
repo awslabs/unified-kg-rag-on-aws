@@ -425,6 +425,32 @@ class TestExtractUnits:
         assert stats.num_failed_extractions == 1
         assert stats.failed_text_unit_ids == ["t2"]
 
+    def test_a_unit_whose_claims_fail_to_build_discards_its_response(
+        self, extractor, mocker
+    ) -> None:
+        # extract_units hands the batch's discards on: without them the
+        # response a unit's claims failed to build from stayed cached, and a
+        # re-run with the same pipeline id was served it again.
+        dropped: list[int] = []
+
+        def execute(**kwargs):  # type: ignore[no-untyped-def]
+            for idx in range(2):
+                kwargs["discards"][idx] = lambda idx=idx: dropped.append(idx)
+            return [{"claims": {}}, {"claims": {}}]
+
+        extractor.batch_processor = mocker.Mock()
+        extractor.batch_processor.execute_with_fallback.side_effect = execute
+        mocker.patch.object(
+            extractor,
+            "_parse_extraction_result",
+            side_effect=lambda result, unit: [] if unit.id == "t0" else 1 / 0,
+        )
+        _, stats = extractor.extract_units(
+            [TextUnit(id=f"t{i}", text="x") for i in range(2)]
+        )
+        assert dropped == [1]
+        assert stats.item_failed_text_unit_ids == ["t1"]
+
     def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
         extractor.ignore_errors = False
         fake_bp = mocker.Mock()

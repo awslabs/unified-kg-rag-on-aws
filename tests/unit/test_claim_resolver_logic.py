@@ -439,6 +439,46 @@ class TestResolvedClaimId:
             base.model_copy(update={"start_date": "2024-01-01"})
         )
 
+    def test_a_coarse_end_date_keys_on_the_last_day_of_its_period(self) -> None:
+        # The claim prompt asks for YYYY-12-31 for the end of a year: "until
+        # 2024" and "until 2024-12-31" are one claim, and not one with
+        # "until 2024-01-01" (a coarse end read as its first day keyed both).
+        base = Claim(
+            id="x",
+            subject_id="e-acme",
+            subject_name="Acme",
+            object_id="e-buyer",
+            object_name="Buyer",
+            type="obligation",
+        )
+
+        def ending(end: str, start: str | None = None) -> str:
+            return resolved_claim_id(
+                base.model_copy(update={"start_date": start, "end_date": end})
+            )
+
+        assert ending("2024") == ending("2024-12-31") == ending("December 2024")
+        assert ending("2024") != ending("2024-01-01")
+        assert ending("Q3 2022") == ending("2022-09-30")
+        assert ending("2024-W03") == ending("2024-01-21")
+        # A start date still keys on its first day.
+        assert ending("2025", start="2024") == ending("2025", start="2024-01-01")
+
+        (merged,) = _resolver().resolve(
+            [
+                _claim(
+                    f"raw-{i}",
+                    "Acme",
+                    "Buyer",
+                    type_="OBLIGATION",
+                    text_unit_ids=["t-a"],
+                ).model_copy(update={"end_date": end})
+                for i, end in enumerate(("2024", "2024-12-31"))
+            ],
+            self._ENTITIES,
+        )[0]
+        assert merged.end_date == "2024-12-31"
+
     def test_merge_unions_document_filters(self) -> None:
         claims = [
             _claim(

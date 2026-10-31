@@ -990,7 +990,7 @@ class IncrementalIndexer:
                 if lineage.doc_id in failed_doc_ids
             )
             logger.warning(
-                "Translation or extraction failed on part of %d documents; "
+                "Processing failed on part of %d documents; "
                 "recording them FAILED so the next run processes them again (%d "
                 "counted toward "
                 "indexing.max_document_failures, failed for an error of their "
