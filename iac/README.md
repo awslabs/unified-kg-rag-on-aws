@@ -166,6 +166,8 @@ did-you-mean hint.
 | `create_guardrail` | `true` | Create and keep a baseline guardrail in `bedrock_region`; `false` brings your own ([Guardrail](#guardrail)) |
 | `guardrail_identifier` | — | Guardrail id the task uses (`UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`); the task role gets `bedrock:ApplyGuardrail` on it only |
 | `guardrail_version` | — | Published version the task applies (`UKR__AWS__BEDROCK__GUARDRAIL__VERSION`); unset applies the mutable `DRAFT` (synth warns) |
+| `guardrail_contextual_grounding` | `false` | Add a contextual grounding policy (GROUNDING and RELEVANCE filters, action `BLOCK`) to the created guardrail, and with `guardrail_identifier` set `UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED=true` so the task sends the retrieved context with each answer's check ([Guardrail](#guardrail)) |
+| `guardrail_grounding_threshold` | `0.7` | Minimum grounding and relevance score an answer needs (0-0.99); `guardrail_contextual_grounding` only |
 
 **Observability and tags**
 
@@ -247,6 +249,15 @@ cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
   `aws bedrock create-guardrail-version`); the stack then creates nothing.
   Setting only `guardrail_identifier` still creates the baseline guardrail
   (`create_guardrail` defaults to `true`), and synth warns.
+- **Contextual grounding (opt-in, English/French/Spanish only):**
+  `-c guardrail_contextual_grounding=true` on both steps adds GROUNDING and
+  RELEVANCE filters to the created guardrail (a policy change, so a new
+  version: pass the new `GuardrailVersion`) and turns the app's check on.
+  The guardrail is Classic tier, which scores English, French and Spanish
+  only: answers in any other language, Korean included, score low and are
+  blocked, so leave it off for such a corpus. With `create_guardrail=false`
+  the flag only turns the app's check on; your guardrail must have the
+  policy. Limits and cost: [user guide](../docs/user-guide.md#guardrail).
 - The created guardrail follows `removal_destroy`: deleted in dev, retained
   otherwise; delete a retained one by hand
   (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`)
@@ -294,6 +305,7 @@ for your region and sizes. What scales each service's cost:
 | DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |
 | CloudWatch | Log ingestion and retention, alarms, dashboard; Container Insights metrics and performance logs (always on: per-task CPU and memory, which the `IngestionTaskMemory` alarm reads) | `vpc_flow_logs`, `flow_log_retention_days` |
 | KMS | Keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
+| Bedrock Guardrails | Text units (1,000 characters) per enabled policy of every screened query and answer; with `guardrail_contextual_grounding`, also the retrieved context sent with each answer (up to 100 text units) | `check_input` / `check_output` in the image config, `guardrail_contextual_grounding`, `search.token_manager` context budget |
 | Step Functions | A few state transitions per run | — |
 | CloudWatch traces (`enable_cloudwatch_tracing`) | Spans ingested by Transaction Search and indexed beyond the free 1% | `observability.sample_rate` in the image config, the indexing percentage |
 

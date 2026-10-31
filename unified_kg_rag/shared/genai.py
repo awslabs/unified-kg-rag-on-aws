@@ -40,6 +40,12 @@ GUARDRAIL_ID = "aws.bedrock.guardrail.id"
 GUARDRAIL_SOURCE = "aws.bedrock.guardrail.source"
 GUARDRAIL_ACTION = "aws.bedrock.guardrail.action"
 GUARDRAIL_POLICIES = "aws.bedrock.guardrail.policies"
+# Contextual grounding check on an answer: whether it ran, which checks
+# failed, and the scores (0-1; the guardrail blocks below its thresholds).
+GUARDRAIL_GROUNDING_CHECKED = "aws.bedrock.guardrail.grounding.checked"
+GUARDRAIL_GROUNDING_FAILED = "aws.bedrock.guardrail.grounding.failed"
+GUARDRAIL_GROUNDING_SCORE = "aws.bedrock.guardrail.grounding.score"
+GUARDRAIL_RELEVANCE_SCORE = "aws.bedrock.guardrail.relevance.score"
 # General OpenTelemetry convention for the class of a failure.
 ERROR_TYPE = "error.type"
 

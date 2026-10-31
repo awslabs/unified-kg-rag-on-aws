@@ -35,6 +35,22 @@ def test_guardrail_identifier_from_env(monkeypatch) -> None:
     assert cfg.aws.bedrock.guardrail.enabled is True
 
 
+def test_contextual_grounding_from_env(monkeypatch) -> None:
+    # IaC's guardrail_contextual_grounding flag injects this (5-level path).
+    monkeypatch.setenv("UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER", "gr-from-env")
+    monkeypatch.setenv(
+        "UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED", "true"
+    )
+    from unified_kg_rag.application.config import ConfigLoader
+
+    cfg = ConfigLoader().load_config()
+    assert cfg.aws.bedrock.guardrail.contextual_grounding.enabled is True
+
+
+def test_contextual_grounding_is_off_by_default() -> None:
+    assert Config().aws.bedrock.guardrail.contextual_grounding.enabled is False
+
+
 # --- Call sites pass the right purpose ---------------------------------------
 
 

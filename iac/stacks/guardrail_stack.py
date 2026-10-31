@@ -32,6 +32,14 @@ policy in this file publishes a new version on the next deploy; versions are
 retained (they go with the guardrail), so a task still pinned to the previous
 one keeps working until compute is redeployed with the new number.
 
+``guardrail_contextual_grounding`` (default ``False``) adds a contextual
+grounding policy to the created guardrail: GROUNDING and RELEVANCE filters
+that block an answer scoring below ``guardrail_grounding_threshold``. It only scores an answer checked with the
+retrieved context (the app's ``contextual_grounding.enabled``, which compute
+turns on with the same flag); input checks are unaffected. Classic tier (the
+default, and the only one without a cross-Region guardrail profile) scores
+English, French and Spanish only.
+
 The removal policy follows ``removal_destroy``: ``DESTROY`` in dev (so a
 deploy -> destroy -> deploy cycle does not collide on the fixed guardrail name)
 and ``RETAIN`` otherwise as a safety net, because the id is consumed out-of-band
@@ -139,6 +147,10 @@ class GuardrailStack(Stack):
                 )
             ),
         )
+        if self.config.guardrail_contextual_grounding:
+            guardrail.contextual_grounding_policy_config = (
+                self._contextual_grounding_policy()
+            )
         # RETAIN outside dev: the id is wired to compute out-of-band, so a
         # CloudFormation-side delete (template drift, a mistaken synth,
         # `cdk destroy`) would silently leave compute pointing at a dead
@@ -151,6 +163,23 @@ class GuardrailStack(Stack):
             else RemovalPolicy.RETAIN
         )
         return guardrail
+
+    def _contextual_grounding_policy(
+        self,
+    ) -> bedrock.CfnGuardrail.ContextualGroundingPolicyConfigProperty:
+        """Block answers scoring below the threshold on either check (the app
+        sends the retrieved context and the question with each answer)."""
+        return bedrock.CfnGuardrail.ContextualGroundingPolicyConfigProperty(
+            filters_config=[
+                bedrock.CfnGuardrail.ContextualGroundingFilterConfigProperty(
+                    type=kind,
+                    threshold=self.config.guardrail_grounding_threshold,
+                    action="BLOCK",
+                    enabled=True,
+                )
+                for kind in ("GROUNDING", "RELEVANCE")
+            ]
+        )
 
     def _publish_version(
         self, guardrail: bedrock.CfnGuardrail

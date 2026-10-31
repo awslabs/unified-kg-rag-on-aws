@@ -505,6 +505,12 @@ class ComputeStack(Stack):
             environment["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] = (
                 self.config.guardrail_version
             )
+        if self.guardrail_identifier and self.config.guardrail_contextual_grounding:
+            # The guardrail's grounding policy only scores an answer checked
+            # with the retrieved context, which the app then sends.
+            environment[
+                "UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED"
+            ] = "true"
         if self.config.enable_cloudwatch_tracing:
             # Tracing on, backend otlp, pointed at the sidecar. Prompt and
             # completion capture stays at the config default (off).

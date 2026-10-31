@@ -568,6 +568,39 @@ def removed_keys(data: Any) -> list[str]:
 _ABSENT: Any = object()
 
 
+class ContextualGroundingConfig(BaseModel):
+    """Bedrock Guardrails contextual grounding and relevance check on answers.
+
+    Off by default. When on, the answer's ``ApplyGuardrail`` call (source
+    OUTPUT) also carries the retrieved context the answer model was given
+    (qualifier ``grounding_source``) and the question it answered
+    (``query``), so the guardrail scores whether the answer is grounded in
+    that context and relevant to the question, and blocks it below the
+    thresholds configured on the guardrail itself (its
+    ``contextualGroundingPolicyConfig``; ``iac`` adds one with
+    ``-c guardrail_contextual_grounding=true``). A blocked answer takes the
+    usual refusal path, with the failed checks in its guardrail record.
+
+    Bedrock limits the check to 100,000 characters of reference, 1,000 of
+    query and 5,000 of answer, and bills it per 1,000 characters of all
+    three. A longer context is cut to its highest-ranked sections and a
+    longer question to its head; a longer answer is screened without the
+    check (logged). The Classic tier scores English, French and Spanish
+    only: other languages, Korean included, score low and are blocked.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Send the retrieved context and the question with the answer's "
+            "guardrail check, so the guardrail's contextual grounding policy "
+            "scores and can block an ungrounded or irrelevant answer. The "
+            "guardrail must have that policy; its Classic tier scores only "
+            "English, French and Spanish. Needs check_output"
+        ),
+    )
+
+
 class GuardrailConfig(BaseModel):
     """Amazon Bedrock Guardrails on the user-facing query path.
 
@@ -619,10 +652,26 @@ class GuardrailConfig(BaseModel):
         description="Screen each final answer (ApplyGuardrail, source OUTPUT). "
         "A streamed answer is then delivered in one chunk, after the check",
     )
+    contextual_grounding: ContextualGroundingConfig = Field(
+        default_factory=ContextualGroundingConfig,
+        description="Contextual grounding and relevance check on each answer "
+        "against the retrieved context (off by default)",
+    )
 
     @property
     def enabled(self) -> bool:
         return bool(self.identifier)
+
+    @model_validator(mode="after")
+    def validate_contextual_grounding(self) -> "GuardrailConfig":
+        # The grounding check rides on the answer's check: without it, an
+        # enabled check would silently never run.
+        if self.contextual_grounding.enabled and not self.check_output:
+            raise ValueError(
+                "contextual_grounding.enabled requires check_output: the "
+                "grounding check runs on the answer's guardrail check"
+            )
+        return self
 
 
 class TransientRetryConfig(BaseModel):
