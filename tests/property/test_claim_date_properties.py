@@ -16,7 +16,7 @@ import calendar
 from datetime import date
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from unified_kg_rag.domain.ingestion.claim_resolver import (
@@ -86,7 +86,15 @@ def _periods(draw: st.DrawFn) -> tuple[str, date, date]:
     return text, monday, date.fromisocalendar(year, week, 7)
 
 
+# Examples a random run found: an abbreviation's dot before the comma.
+_JAN_1950 = ("Jan., 1950", date(1950, 1, 1), date(1950, 1, 31))
+_YEAR_1950 = ("1950", date(1950, 1, 1), date(1950, 12, 31))
+
+
+@settings(max_examples=500, deadline=None)
 @given(_periods())
+@example(_JAN_1950)
+@example(("Sept., 2024", date(2024, 9, 1), date(2024, 9, 30)))
 def test_a_period_starts_on_its_first_day_and_ends_on_its_last(
     period: tuple[str, date, date],
 ) -> None:
@@ -108,7 +116,10 @@ def test_an_iso_week_with_its_weekday_is_that_day_in_either_mode(
     assert claim_date_value(text) == claim_date_value(text, end=True) == day
 
 
+@settings(max_examples=500, deadline=None)
 @given(_periods(), _periods(), st.sampled_from(["as written", "end first day"]))
+@example(_YEAR_1950, _JAN_1950, "end first day")
+@example(_YEAR_1950, _JAN_1950, "as written")
 def test_a_claim_stored_under_an_earlier_reading_is_found(
     start: tuple[str, date, date],
     end: tuple[str, date, date],

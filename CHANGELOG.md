@@ -1668,6 +1668,13 @@ changed once with the full-config keys (#332).
   rest of the year, the claim was shown ending on 1 January, and "until
   2024" and "until 2024-12-31" were two claims. `Q4-2024` reads as a
   quarter too (it was kept as written) (#454).
+- Claim dates: a month abbreviation with its dot before a comma
+  (`Jan., 2024`, `Sept., 2024`) reads as that month, as `Jan, 2024` does;
+  it was kept as written, so a range filter missed the claim and an end
+  date was not its month's last day. A claim stored under the written form
+  is merged into the claim the date gives now, as for the other earlier
+  readings (#454). The claim-date property tests run 500 examples and pin
+  the forms a random run found (#PR).
 - Incremental indexing: a claim stored under an earlier reading of its
   dates (a period coarser than a day as written before #451, a written-out
   date before #449, a coarse end date as its first day, see above) kept
