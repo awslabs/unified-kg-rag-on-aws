@@ -5255,6 +5255,13 @@ changed once with the full-config keys (#332).
   class is defined, instead of failing every query at evaluation time (#305).
 
 ### Removed
+- The `nest-asyncio` dependency: `run-rag` and `run-eval` no longer call
+  `nest_asyncio.apply()` when imported, which patched the event-loop class
+  for the whole process (an application importing a CLI module got a loop
+  whose `asyncio.run` reused one loop and skipped the async-generator
+  hooks). Nothing nests a loop any more: Neptune connects off the loop
+  thread and RAGAS runs in `asyncio.to_thread`. The package still arrives
+  through gremlinpython and ragas, which patch only on request (#PR).
 - Unused code: `ClaimExtractor.merge_claims` and
   `contributions.merge_claim_contributions` (claim statements are no
   longer merged before resolution), and the capped-unit bookkeeping of the

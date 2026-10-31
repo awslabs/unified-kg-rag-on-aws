@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import nest_asyncio
 from langchain_core.runnables import Runnable
 from rich.panel import Panel
 from rich.table import Table
@@ -82,7 +81,6 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.utils import event_loop
 
-nest_asyncio.apply()
 logger = get_logger(__name__)
 
 

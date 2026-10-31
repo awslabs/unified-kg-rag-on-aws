@@ -51,8 +51,7 @@ class _Retriever:
 
 
 def _run_on_fresh_loop(coro: Any) -> Any:
-    # Not asyncio.run: once nest_asyncio is applied (the CLI modules do so at
-    # import), asyncio.run reuses one loop instead of creating a new one.
+    # A loop of the test's own, so the chain sees a second, distinct loop.
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)

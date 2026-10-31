@@ -7,7 +7,6 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-import nest_asyncio
 from rich.panel import Panel
 
 from unified_kg_rag import __version__
@@ -61,7 +60,6 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.utils import event_loop
 
-nest_asyncio.apply()
 logger = get_logger(__name__)
 
 
@@ -645,9 +643,8 @@ class RAGChainRunner:
 async def async_main(args: argparse.Namespace) -> int:
     """Run the CLI and return its exit code.
 
-    Never lets ``SystemExit`` escape: raised inside the task that
-    ``asyncio.run`` drives (under nest_asyncio), it is reported as
-    "Task exception was never retrieved" with a traceback.
+    Never lets ``SystemExit`` escape the task that ``asyncio.run`` drives:
+    the exit code is returned, so the loop ends normally.
     """
     try:
         runner = RAGChainRunner(args)

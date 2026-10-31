@@ -523,6 +523,40 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
     assert json.loads(capsys.readouterr().out) == {"ok": True}
 
 
+def test_importing_the_clis_leaves_asyncio_unpatched() -> None:
+    # run-rag and run-eval applied nest_asyncio at import, which patched the
+    # event-loop class for the whole process: asyncio.run reused one loop,
+    # abandoned async generators outlived it, and a stop raised into the
+    # loop's own code could leave run() waiting forever. A fresh interpreter,
+    # so no other test's imports are in the way.
+    import subprocess
+
+    script = (
+        "import asyncio\n"
+        "from unified_kg_rag.application.cli import run_evaluation, run_rag_chain\n"
+        "from unified_kg_rag.application.cli import run_prompt_tuning\n"
+        "assert not hasattr(asyncio, '_nest_patched')\n"
+        "assert not hasattr(asyncio.BaseEventLoop, '_nest_patched')\n"
+        "async def nested():\n"
+        "    coro = asyncio.sleep(0)\n"
+        "    try:\n"
+        "        asyncio.run(coro)\n"
+        "    except RuntimeError:\n"
+        "        coro.close()\n"
+        "        return 'refused'\n"
+        "    return 'nested'\n"
+        "print(asyncio.run(nested()))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "refused"
+
+
 @pytest.mark.parametrize("output_format", ["json", "text"])
 def test_a_sigterm_while_a_cli_loads_exits_143(
     tmp_path: Path, output_format: str
