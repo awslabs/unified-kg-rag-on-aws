@@ -1549,18 +1549,18 @@ changed once with the full-config keys (#332).
   close from inside the loop), halted with the tasks it had cancelled still
   pending, which were later destroyed mid-cleanup ("Task was destroyed but
   it is pending"), and was never closed. The loop thread now lets the
-  remaining tasks unwind and closes the loop, as `asyncio.run` does (#PR).
+  remaining tasks unwind and closes the loop, as `asyncio.run` does (#463).
 - A boolean environment variable (`UKR__…`) that is not one of
   `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off` (any case) is now a
   configuration error naming the variable; a typo such as `ture` used to
-  read as `false` and turn the setting off silently (#PR).
+  read as `false` and turn the setting off silently (#463).
 - Cohere Embed v3 (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`)
   embedded every text as an empty string: the embeddings' 512-token
   estimate buffer was subtracted from the models' 512-token window, leaving
   a limit of 0. The buffer is now capped at an eighth of a model's limit,
   so these models keep up to 448 estimated tokens of each text; Titan,
   Embed v4 and the rerank models keep their limits. Rebuild any index
-  built with Embed v3: its vectors do not encode the texts (#PR).
+  built with Embed v3: its vectors do not encode the texts (#463).
 - Bedrock embeddings now resolve cross-region inference profiles like the
   chat models where a model has no on-demand throughput: `cohere.embed-v4:0`,
   which has it only in `us-east-1`, `eu-west-1` and `ap-northeast-1`, was
@@ -1569,7 +1569,7 @@ changed once with the full-config keys (#332).
   `global.`/geography profile, and with no profile the embedding factory
   fails at model creation with the remedy (#458). In the three on-demand
   regions, and for every other embedding model, the bare id is invoked as
-  before (#PR). `models.embedding.model_id` takes catalog ids only; a
+  before (#463). `models.embedding.model_id` takes catalog ids only; a
   profile id or inference-profile ARN passed straight to
   `BedrockEmbeddingModelFactory.get_model` is invoked as given (#458).
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
