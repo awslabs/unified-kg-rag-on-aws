@@ -586,6 +586,11 @@ class BedrockLanguageModelFactory(
         """The retry policy ``setup_chain`` applies to query chains."""
         return self.config.aws.bedrock.transient_retry
 
+    @property
+    def query_prompt_cache_ttl(self) -> str:
+        """The cache-checkpoint TTL ``setup_chain`` asks for on query chains."""
+        return self.config.aws.bedrock.query_prompt_cache_ttl
+
     def get_model_info(self, model_id: str) -> LanguageModelInfo:
         """Capability record for any model id (see get_language_model_info)."""
         return get_language_model_info(

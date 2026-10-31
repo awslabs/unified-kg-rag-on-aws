@@ -86,14 +86,46 @@ def _prompt_cache_marker(
     return "cache_control"
 
 
+# The TTL a cache checkpoint gets when none is asked for: Bedrock's default,
+# sent as no ``ttl`` key at all.
+_DEFAULT_CACHE_TTL = "5m"
+
+
+def _prompt_cache_ttl(
+    factory: Any,
+    model_info: Any,
+    cache_marker: PromptCacheMarker | None,
+    model_purpose: ModelPurpose,
+) -> str | None:
+    """The extended TTL for this chain's checkpoint, or None for the default.
+
+    Only query chains opt in (``query_prompt_cache_ttl`` on the factory):
+    ingestion reuses each prompt within seconds, so the 2x write price of a
+    1-hour entry would buy nothing. The TTL rides on the Converse
+    ``cachePoint`` only: langchain-aws rewrites an InvokeModel
+    ``cache_control`` to ``{"type": "ephemeral"}``, dropping any ``ttl``.
+    """
+    if model_purpose is not ModelPurpose.QUERY or cache_marker != "cache_point":
+        return None
+    ttl = getattr(factory, "query_prompt_cache_ttl", None)
+    if not ttl or ttl == _DEFAULT_CACHE_TTL:
+        return None
+    if not getattr(model_info, "supports_1h_cache_ttl", False):
+        return None
+    return str(ttl)
+
+
 def _build_chat_prompt(
-    resolved: ResolvedPrompt, cache_marker: PromptCacheMarker | None
+    resolved: ResolvedPrompt,
+    cache_marker: PromptCacheMarker | None,
+    cache_ttl: str | None = None,
 ) -> ChatPromptTemplate:
     """Assemble a LangChain ChatPromptTemplate from a backend-agnostic prompt.
 
     Lives in the adapter layer: turning the domain's ResolvedPrompt into
     LangChain message templates is a backend concern. ``cache_marker`` marks
-    the end of the system prompt as a prompt-cache checkpoint.
+    the end of the system prompt as a prompt-cache checkpoint, with
+    ``cache_ttl`` as its lifetime when set (else the 5-minute default).
     """
     system_template: str | list[str | dict[str, Any]]
     # Templated content blocks (not a literal SystemMessage) so system-side
@@ -109,9 +141,12 @@ def _build_chat_prompt(
             }
         ]
     elif cache_marker == "cache_point":
+        cache_point = {**_CACHE_POINT_BLOCK["cachePoint"]}
+        if cache_ttl is not None:
+            cache_point["ttl"] = cache_ttl
         system_template = [
             {"type": "text", "text": resolved.system_prompt_template},
-            dict(_CACHE_POINT_BLOCK),
+            {"cachePoint": cache_point},
         ]
     else:
         system_template = resolved.system_prompt_template
@@ -490,8 +525,11 @@ def setup_chain(
         )
         model_info = factory.get_model_info(model_id)
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
+        cache_marker = _prompt_cache_marker(llm, model_info, resolved)
         prompt = _build_chat_prompt(
-            resolved, _prompt_cache_marker(llm, model_info, resolved)
+            resolved,
+            cache_marker,
+            _prompt_cache_ttl(factory, model_info, cache_marker, model_purpose),
         )
         _serialize_once(prompt, llm)
         guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)

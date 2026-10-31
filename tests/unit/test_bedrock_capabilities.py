@@ -750,3 +750,21 @@ def test_ingestion_effort_leaves_fast_tier_ingestion_calls_alone(
     assert summary_model == _THINKING_FAST
     _lang_factory(config).get_model(summary_model, model_purpose=ModelPurpose.INGESTION)
     assert _sent_effort(recorded_chat) == "low"
+
+
+def test_one_hour_cache_ttl_capability_follows_the_caching_guide() -> None:
+    # Claude 4.5+ list "5 minutes, 1 hour"; Claude 3.x lists 5 minutes only.
+    factory = _lang_factory()
+    for model_id in (
+        LanguageModelId.CLAUDE_V5_5_SONNET,
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V4_5_HAIKU,
+        "anthropic.claude-opus-9-9",  # family default (4.7+)
+    ):
+        assert factory.get_model_info(model_id).supports_1h_cache_ttl, model_id
+    for model_id in (
+        LanguageModelId.CLAUDE_V3_7_SONNET,
+        LanguageModelId.CLAUDE_V4_SONNET,
+        LanguageModelId.GPT_V6_SOL,
+    ):
+        assert not factory.get_model_info(model_id).supports_1h_cache_ttl, model_id

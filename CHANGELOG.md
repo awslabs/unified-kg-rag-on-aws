@@ -685,6 +685,13 @@ changed once with the full-config keys (#332).
   again (#442).
 
 ### Added
+- `aws.bedrock.query_prompt_cache_ttl: 1h` keeps the system-prompt cache
+  checkpoint of query chains (answers, query rewriting, keyword extraction)
+  for an hour instead of 5 minutes, for low query rates where most queries
+  would rewrite the cache. Off by default: a 1-hour cache write costs 2x the
+  input-token price (5 minutes: 1.25x). It applies to Claude 4.5+ on the
+  Converse API (new capability field `supports_1h_cache_ttl`); ingestion and
+  evaluation keep 5 minutes (#PR).
 - Incremental indexing: a document failing consecutive runs for an error
   that is not its own (an outage, credentials, a rejected setting, a failed
   write; never counted toward `indexing.max_document_failures`) is no

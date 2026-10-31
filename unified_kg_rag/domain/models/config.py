@@ -708,6 +708,21 @@ class BedrockConfig(BaseModel):
             "(EmbeddingModelId, RerankModelId)."
         ),
     )
+    query_prompt_cache_ttl: Literal["5m", "1h"] = Field(
+        default="5m",
+        description=(
+            "Lifetime of the system-prompt cache checkpoint on query chains "
+            "(answers, query rewriting, keyword extraction); ingestion and "
+            "evaluation keep 5m. '1h' keeps a query prompt cached across gaps "
+            "of more than 5 minutes between queries, at a cost: a 1-hour cache "
+            "write is billed at 2x the input-token price (5m: 1.25x), while a "
+            "read costs the same. It pays off only at low query rates, when "
+            "most queries would otherwise rewrite the cache. Applies to models "
+            "whose capability record has supports_1h_cache_ttl (Claude 4.5+) "
+            "on the Converse API (every inference profile); other models and "
+            "InvokeModel requests keep the 5-minute checkpoint."
+        ),
+    )
     enable_1m_context: bool = Field(
         default=False,
         description=(

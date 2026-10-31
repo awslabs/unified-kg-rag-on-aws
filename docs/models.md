@@ -136,3 +136,14 @@ InvokeModel. A system prompt shorter than the model's minimum checkpoint size
 it but cache nothing. Cache reads show up as `cache_read` in the response's
 `usage_metadata.input_token_details`, and cached input tokens do not count
 against the tokens-per-minute quota.
+
+Query chains (answer generation, query rewriting, keyword extraction) can keep
+their checkpoint for an hour with `aws.bedrock.query_prompt_cache_ttl: 1h`
+(default `5m`). A 1-hour cache write is billed at 2x the input-token price
+(5 minutes: 1.25x) and a read costs the same, so it pays off only at low query
+rates, where the gap between queries often exceeds 5 minutes. Ingestion and
+evaluation chains reuse each prompt within seconds and always use 5 minutes.
+The 1-hour TTL is sent only on Converse requests to Claude 4.5 and later
+(`supports_1h_cache_ttl` in the capability record); an InvokeModel request
+keeps the 5-minute checkpoint, because langchain-aws rewrites its
+`cache_control` to `{"type": "ephemeral"}` and drops the TTL.
