@@ -25,6 +25,7 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strat
 from unified_kg_rag.adapters import provider_registry
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
+from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 from unified_kg_rag.adapters.doc_status import dynamodb as dynamodb_module
 from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
@@ -41,6 +42,7 @@ from unified_kg_rag.adapters.provider_registry import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import (
+    build_checkpoint_sync,
     build_providers,
     check_providers,
     with_provider_overrides,
@@ -575,3 +577,21 @@ def test_invalid_provider_settings_read_like_a_config_error() -> None:
     assert message.startswith("Invalid provider settings: ")
     assert "models.embedding.dimension" in message
     assert "errors.pydantic.dev" not in message
+
+
+def test_the_composition_root_builds_the_checkpoint_sync_only_when_on() -> None:
+    # The pipeline gets its S3 sync from here, so it imports no AWS adapter.
+    config = Config()
+    session = MagicMock(spec=boto3.Session)
+    providers = Providers(config, session)
+    assert build_checkpoint_sync(config, PipelineConfig(), providers) is None
+    sync = build_checkpoint_sync(
+        config,
+        PipelineConfig(
+            s3_sync_enabled=True, s3_bucket_name="bucket", s3_prefix="/runs/"
+        ),
+        providers,
+    )
+    assert isinstance(sync, S3CacheManager)
+    assert (sync.bucket_name, sync.prefix) == ("bucket", "runs")
+    session.client.assert_not_called()  # built lazily, on the first transfer

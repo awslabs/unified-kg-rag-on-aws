@@ -19,7 +19,11 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.bootstrap import (
+    CheckpointSync,
+    build_checkpoint_sync,
+    build_providers,
+)
 from unified_kg_rag.application.ingestion.cache_manager import (
     CacheManager,
     CacheStrategy,
@@ -101,8 +105,6 @@ from unified_kg_rag.shared.write_fence import (
 
 if TYPE_CHECKING:
     import boto3
-
-    from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 
 logger = get_logger(__name__)
 
@@ -300,7 +302,7 @@ class DataIngestionPipeline:
     # Stop handling (see request_stop): the run's pipeline id once its S3
     # checkpoint is in place, whether a checkpoint is being written, and the
     # signal of a stop requested meanwhile.
-    s3_cache_manager: S3CacheManager | None = None
+    s3_cache_manager: CheckpointSync | None = None
     llm_response_cache: LLMResponseCache | None = None
     # Where the response cache keeps its segments, in the run's cache directory.
     LLM_CACHE_DIRECTORY = "llm-cache"
@@ -444,17 +446,9 @@ class DataIngestionPipeline:
         # keys the save path writes, so it needs the same config.
         self.resume_manager = PipelineResumeManager(self.state_manager, self.config)
 
-        self.s3_cache_manager = None
-        if self.pipeline_config.s3_sync_enabled:
-            # Imported here: a run without S3 sync never loads the AWS SDK.
-            from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
-
-            self.s3_cache_manager = S3CacheManager(
-                config=self.config,
-                boto_session=self.providers.boto_session,
-                bucket_name=self.pipeline_config.s3_bucket_name,
-                prefix=self.pipeline_config.s3_prefix,
-            )
+        self.s3_cache_manager = build_checkpoint_sync(
+            self.config, self.pipeline_config, self.providers
+        )
 
     def _initialize_stages(
         self,

@@ -10,6 +10,10 @@ registered builder (failing before any model is paid for) and returns the
 token manager, evaluator and store they build, so an injected bundle is the
 single place to override a role.
 
+``build_query_guard`` and ``build_checkpoint_sync`` build the other
+backends a run wires (the Bedrock guardrail, the S3 sync of the stage
+cache), so no orchestrator imports a vendor binding.
+
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
 and the model-id defaults as if the file had set them; switching the backend
@@ -21,7 +25,8 @@ made to the object since, so the flags are the last layer over all of them.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import ValidationError
 
@@ -32,7 +37,7 @@ from unified_kg_rag.adapters.provider_registry import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.config import validation_summary
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, PipelineConfig
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
@@ -100,6 +105,40 @@ def build_query_guard(config: Config, providers: Providers) -> ContentGuardPort 
     from unified_kg_rag.adapters.guardrail.bedrock import BedrockGuardrail
 
     return BedrockGuardrail(config, providers.boto_session)
+
+
+class CheckpointSync(Protocol):
+    """Remote storage of a run's stage cache (``pipeline.s3_sync_enabled``).
+
+    Each method raises ``CacheSyncError`` when a transfer fails.
+    """
+
+    def upload_file(
+        self, pipeline_id: str, local_cache_dir: Path, local_path: Path
+    ) -> None: ...
+
+    def sync_pipeline_to_s3(self, pipeline_id: str, local_cache_dir: Path) -> None: ...
+
+    def sync_pipeline_from_s3(
+        self, pipeline_id: str, local_cache_dir: Path
+    ) -> None: ...
+
+
+def build_checkpoint_sync(
+    config: Config, pipeline_config: PipelineConfig, providers: Providers
+) -> CheckpointSync | None:
+    """The S3 sync of the run's stage cache, or ``None`` when it is off."""
+    if not pipeline_config.s3_sync_enabled:
+        return None
+    # Imported here: a run without S3 sync never loads the AWS SDK.
+    from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
+
+    return S3CacheManager(
+        config=config,
+        boto_session=providers.boto_session,
+        bucket_name=pipeline_config.s3_bucket_name,
+        prefix=pipeline_config.s3_prefix,
+    )
 
 
 def with_provider_overrides(
