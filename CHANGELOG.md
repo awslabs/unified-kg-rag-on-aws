@@ -709,7 +709,7 @@ changed once with the full-config keys (#332).
   `-c guardrail_contextual_grounding=true` adds GROUNDING and RELEVANCE
   filters (`guardrail_grounding_threshold`, default 0.7) and turns the
   app's check on. `ContentGuardPort.acheck` takes a keyword-only
-  `grounding`, passed only while the check is on (#PR).
+  `grounding`, passed only while the check is on (#462).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
