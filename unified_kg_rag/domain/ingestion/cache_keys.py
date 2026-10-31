@@ -156,6 +156,9 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.assumed_role_arn": _neutral(_WHERE),
     "aws.bedrock.enable_global_profile": _neutral(_WHERE),
     "aws.bedrock.transient_retry": _neutral(_THROUGHPUT),
+    "aws.bedrock.query_prompt_cache_ttl": Unkeyed(
+        "query chains only; ingestion checkpoints keep the 5-minute TTL"
+    ),
     "aws.bedrock.guardrail": Unkeyed("screens the user query and the answer only"),
     "aws.bedrock.guardrail.identifier": _neutral(_WHERE),
     "aws.bedrock.guardrail.version": _neutral(_WHERE),
