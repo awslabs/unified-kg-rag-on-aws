@@ -5187,7 +5187,7 @@ changed once with the full-config keys (#332).
   3.29.4 had nine advisories (GHSA-v4x8-3wr5-3wq8 high) fixed in 4.2.1, held
   back only by the optional `unstructured` extra's `filelock<4` cap; the lock
   overrides that cap, since unstructured only takes a blocking `FileLock`,
-  and `SECURITY.md` drops the filelock residual (#PR).
+  and `SECURITY.md` drops the filelock residual (#455).
 - Every install, including the container image, gets Pillow 13.0.0, which
   fixes the critical and high Pillow 12.3.0 advisories (for example
   GHSA-p4wg-p73j-c528). #426 split the Pillow requirement by Python version,
