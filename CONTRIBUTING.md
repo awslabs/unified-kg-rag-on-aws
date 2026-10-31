@@ -96,6 +96,9 @@ uv run pytest -m "not aws"                              # unit, property and int
 uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
+Add `-n auto` to run the suite on every CPU through pytest-xdist, as CI does; coverage still combines across the
+workers.
+
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
 3.11, checks the optional parsers, runs the local-store smoke test, builds and runs the container image, and
 synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run

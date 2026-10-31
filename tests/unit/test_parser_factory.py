@@ -11,6 +11,9 @@ formats only when `unstructured` is importable.
 
 from __future__ import annotations
 
+# Imported here, not first inside the 10 s test below: pypdf's first import
+# takes seconds on a loaded runner (one pytest-xdist worker imports it there).
+import pypdf  # noqa: F401
 import pytest
 
 from unified_kg_rag.adapters.ingestion.parser import (

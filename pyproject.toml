@@ -354,6 +354,8 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "pytest-timeout>=2.4.0",
+    # Parallel runs (`pytest -n auto`, as CI runs the suite).
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16.1",
     # The embedded engine's english stemmer (a [local] extra), so its analyzer
     # tests run in CI instead of skipping.

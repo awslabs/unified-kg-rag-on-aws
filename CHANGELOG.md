@@ -957,6 +957,13 @@ changed once with the full-config keys (#332).
   `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
   given as a path. langchain-community stays a dependency only to hold the
   copy ragas imports below 0.4 (#460).
+- CI runs the main test suite in parallel (`pytest -n auto`, pytest-xdist
+  in the dev group); coverage combines across the workers and the floor
+  is checked as before. Two tests that depended on running in one process
+  are fixed: the prepare-benchmark output check no longer breaks when rich
+  folds a long worker `tmp_path`, and the truncated-PDF test imports pypdf
+  at collection, so its 10 s timeout no longer covers pypdf's first import
+  (#PR).
 - Lint and type checks: ruff also runs the flake8-async (`ASYNC`) and
   flake8-logging (`LOG`) rules over `unified_kg_rag`, `tests`, `iac` and
   `scripts`, and mypy loads the `pydantic.mypy` plugin (`init_typed`,

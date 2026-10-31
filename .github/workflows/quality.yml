@@ -90,8 +90,10 @@ jobs:
         # This one run also covers the property and integration suites. Keep
         # the coverage floor just under the measured level so new untested
         # code cannot silently regress it; ratchet it up as coverage grows.
+        # -n auto: pytest-xdist runs one worker per runner CPU; pytest-cov
+        # combines the workers' coverage before the floor is checked.
         run: >-
-          uv run pytest -m "not aws"
+          uv run pytest -m "not aws" -n auto
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
           --cov-fail-under=95
