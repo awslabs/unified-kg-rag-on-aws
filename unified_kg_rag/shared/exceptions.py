@@ -1,5 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Iterator
+
+
+def causes(exc: BaseException) -> Iterator[BaseException]:
+    """``exc`` and the exceptions it was raised from, innermost last."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
 class GraphRAGException(Exception):
     pass
 
