@@ -556,8 +556,8 @@ path, with double underscores between the segments, in any case:
 a free-form mapping names one of its keys
 (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). A variable wins over the
 config file and the defaults. Values are converted and validated as the same
-value in the file would be (`true`/`1`/`yes`/`on` for booleans, JSON for a list
-or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
+value in the file would be (`true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`,
+in any case, for booleans; JSON for a list or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
 An invalid value, or a `UKR__` variable that names no key, is a usage error
 (exit 2) naming the variable; `--allow-unknown-keys` turns the unknown name
 into a WARNING.

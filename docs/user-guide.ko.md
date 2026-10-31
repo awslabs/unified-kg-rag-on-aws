@@ -512,7 +512,8 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 `UKR__AWS__NEPTUNE__ENDPOINT`는 `aws.neptune.endpoint`를 지정하며, 자유 형식 매핑
 다음 마디는 그 매핑의 키를 가리킵니다(`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`).
 환경 변수는 설정 파일과 기본값보다 우선합니다. 값은 파일에 같은 값을 쓴 경우처럼
-변환하고 검증합니다(불리언은 `true`/`1`/`yes`/`on`, 목록이나 매핑은 JSON, 예:
+변환하고 검증합니다(불리언은 대소문자 구분 없이 `true`/`1`/`yes`/`on` 또는
+`false`/`0`/`no`/`off`, 목록이나 매핑은 JSON, 예:
 `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`). 값이 잘못되었거나 어떤
 키도 가리키지 않는 `UKR__` 변수는 그 변수를 밝힌 사용법 오류(종료 코드 2)이며,
 `--allow-unknown-keys`를 주면 알 수 없는 변수는 WARNING만 남깁니다.

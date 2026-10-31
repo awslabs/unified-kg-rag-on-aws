@@ -1545,6 +1545,10 @@ changed once with the full-config keys (#332).
   section lists the steps (#457).
 
 ### Fixed
+- A boolean environment variable (`UKR__…`) that is not one of
+  `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off` (any case) is now a
+  configuration error naming the variable; a typo such as `ture` used to
+  read as `false` and turn the setting off silently (#PR).
 - Cohere Embed v3 (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`)
   embedded every text as an empty string: the embeddings' 512-token
   estimate buffer was subtracted from the models' 512-token window, leaving
