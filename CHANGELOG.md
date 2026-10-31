@@ -881,6 +881,25 @@ changed once with the full-config keys (#332).
   fused order. Reported by @vibhupb (#83) (#284).
 
 ### Changed
+- Package layout: the layers import only inward, now including lazy and
+  `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
+  rules of the design doc §2.1 on every import (no exceptions; 23 imports
+  broke them before). `shared/` imports no other layer: config loading moved
+  to `application/config.py`, the stage cache and resume managers to
+  `application/ingestion/`, stage cache keys and document identity to
+  `domain/ingestion/`, store names to `domain/retrieval/`, the LangChain
+  helpers to `adapters/llm/langchain.py` and
+  `adapters/ingestion/document_converter.py`, the rich console helpers to
+  `application/cli/display.py`. The search-strategy registry moved to
+  `adapters/retrieval/strategy_registry.py`; the delta detector reads the
+  registry through its own `DocStatusReader` protocol; the pipeline gets its
+  S3 checkpoint sync from the composition root
+  (`bootstrap.build_checkpoint_sync`); evaluation checks filter values
+  through `GraphRAGChain.check_filter_values`; the visualization manager
+  lays out graphs with `domain.ingestion.visualization_data` helpers
+  instead of the interactive renderer. Behaviour is unchanged, and every
+  public name keeps its `unified_kg_rag` import; only internal module paths
+  moved (#PR).
 - Graph expansion under a document filter and a caller `id` list stops
   walking the relationships index once it has reached every listed id: the
   results keep only those ids and a reached entity's path does not change,
