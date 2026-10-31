@@ -11,14 +11,16 @@ from unified_kg_rag.adapters.renderers import (
     registered_renderers,
     render_all,
 )
-from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.visualization_data import (
     DEFAULT_OUTPUTS_DIRECTORY,
     VISUALIZATION_DATA_FILENAME,
+    displayed_graph,
+    spring_layout,
     strip_heavy_attributes,
 )
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import get_logger
 
 from .embeddings.dimensionality import DimensionalityReducer
@@ -121,7 +123,7 @@ class GraphVisualizationManager:
         # Only the interactive page uses positions, and it draws its top
         # max_nodes; embed just those (one embedding call per node).
         embeddings = self.embedder.generate_embeddings(
-            self._interactive().displayed_graph(self.analyzer.graph)
+            displayed_graph(self.analyzer.graph, self._max_drawn_nodes())
         )
         # Failed generation yields no embeddings (never random substitutes).
         if not embeddings.embeddings:
@@ -143,12 +145,15 @@ class GraphVisualizationManager:
         )
         return self._spring_layout()
 
-    def _interactive(self) -> InteractiveRenderer:
-        return InteractiveRenderer(self.viz_config.interactive)
+    def _max_drawn_nodes(self) -> int | None:
+        """The nodes the interactive page draws (its ``max_nodes``)."""
+        return InteractiveGraphSettings.model_validate(
+            self.viz_config.interactive
+        ).max_nodes
 
     def _spring_layout(self) -> dict[str, Any]:
         # Like the embeddings, the spring layout covers only the drawn nodes.
-        return self._interactive().spring_layout(self.analyzer.graph)
+        return spring_layout(self.analyzer.graph, self._max_drawn_nodes())
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]
