@@ -16,6 +16,8 @@ import pytest
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolutionStats,
     ClaimResolver,
+    claim_date_value,
+    earlier_claim_ids,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity
@@ -595,3 +597,53 @@ def test_a_reference_unmatched_in_one_statement_resolves_in_another() -> None:
     entities = [_entity("e1", "Vendor", ("u1",)), _entity("e2", "Buyer", ("u0", "u1"))]
     resolved, _ = _resolver().resolve(claims, entities)
     assert [c.subject_id for c in resolved] == ["e1"]
+
+
+def _coarse_statement(**update: str) -> Claim:
+    """A raw claim with coarse dates, and the claim it resolves to now."""
+    return Claim(
+        id="raw",
+        subject_id="",
+        subject_name="Vendor",
+        object_name="Net 30 Days",
+        type="OBLIGATION",
+        start_date="March 2024",
+        end_date="2025",
+    ).model_copy(update=update)
+
+
+def _resolved_from(statement: Claim, object_id: str = "e-buyer") -> Claim:
+    return statement.model_copy(
+        update={
+            "subject_id": "e-vendor",
+            "object_id": object_id,
+            "type": "obligation",
+            "start_date": claim_date_value(statement.start_date),
+            "end_date": claim_date_value(statement.end_date, end=True),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "update",
+    [{"start_date": "1900-01-01"}, {"end_date": "June 1900"}, {"type": "PAYMENT"}],
+)
+def test_earlier_claim_ids_count_only_statements_of_its_type_and_dates(
+    update: dict[str, str],
+) -> None:
+    statement = _coarse_statement()
+    claim = _resolved_from(statement)
+    assert earlier_claim_ids(claim, [statement])
+    assert earlier_claim_ids(claim, [statement.model_copy(update=update)]) == set()
+
+
+@pytest.mark.parametrize("object_id", ["e-buyer", ""])
+def test_an_earlier_reading_id_is_the_id_resolved_claim_id_gave_it(
+    object_id: str,
+) -> None:
+    # A literal object (no object entity) keys on its name, as in
+    # resolved_claim_id: the end-as-first-day id is found either way.
+    statement = _coarse_statement(start_date="2024-03-01")
+    claim = _resolved_from(statement, object_id)
+    stale = resolved_claim_id(claim.model_copy(update={"end_date": "2025-01-01"}))
+    assert stale in earlier_claim_ids(claim, [statement])

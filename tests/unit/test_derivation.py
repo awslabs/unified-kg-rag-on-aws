@@ -824,3 +824,82 @@ def test_a_claim_about_an_underived_entitys_spelling_keeps_its_unit(
         assert claim.object_id is None or claim.object_id in known, claim.object_name
     cited = [u for c in derived.claims for u in c.text_unit_ids or []]
     assert sorted(cited) == ["u1", "u2"]
+
+
+def test_a_claim_under_an_earlier_date_reading_takes_the_claim_its_dates_give() -> None:
+    # Three claims of one unit, stored under the ids their dates as written
+    # gave them: each is matched by that id to the claim of its own type,
+    # not to whichever claim sharing the unit has the largest id.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+    from unified_kg_rag.shared.utils import generate_stable_id
+
+    types = ("PAYS", "OWES", "SUPPLIES")
+    records = {"u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1"))}
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    statements = [
+        _pays("Acme", "Buyer", ["u1"], f"s-{t}").model_copy(
+            update={"type": t, "start_date": "Q3 2022", "end_date": "2024"}
+        )
+        for t in types
+    ]
+    given = [
+        s.model_copy(
+            update={
+                "id": generate_stable_id(
+                    f"claim:{acme.id}:{buyer.id}:{s.type.casefold()}:q3 2022:2024"
+                ),
+                "subject_id": acme.id,
+                "object_id": buyer.id,
+            }
+        )
+        for s in statements
+    ]
+
+    derived = derive(Config(), [acme, buyer], [], given, records, {"u1": statements})
+
+    own = {c.type.casefold(): c.id for c in derived.claims}
+    assert len(own) == 3
+    for claim in given:
+        assert derived.id_remap[claim.id] == own[claim.type.casefold()]
+        assert derived.earlier_claim_ids[claim.id] == own[claim.type.casefold()]
+    assert all(resolved_claim_id(c) == c.id for c in derived.claims)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "looked_up"),
+    [
+        ("2022-07-01", "2024-12-31", False),
+        (None, None, False),
+        ("Q3 2022", "2024-12-31", True),
+        ("2022-07-01", "2024", True),
+    ],
+)
+def test_earlier_readings_are_looked_up_only_for_dates_read_otherwise_before(
+    monkeypatch: pytest.MonkeyPatch, start: str | None, end: str | None, looked_up: bool
+) -> None:
+    # The lookup cost half a derivation of ISO-dated claims, which read the
+    # same in every build: a claim none of whose statements an earlier build
+    # keyed otherwise is not looked up.
+    from unified_kg_rag.domain.ingestion import derivation
+
+    calls: list[str] = []
+    real = derivation.earlier_claim_ids
+
+    def counted(claim, statements):  # type: ignore[no-untyped-def]
+        calls.append(claim.id)
+        return real(claim, statements)
+
+    monkeypatch.setattr(derivation, "earlier_claim_ids", counted)
+    records = {"u1": _record("u1", _entity("Acme", "u1"), _entity("Buyer", "u1"))}
+    acme, buyer = _stored("Acme", ["u1"]), _stored("Buyer", ["u1"])
+    statement = _pays("Acme", "Buyer", ["u1"], "s1").model_copy(
+        update={"start_date": start, "end_date": end}
+    )
+    given = statement.model_copy(
+        update={"id": "given", "subject_id": acme.id, "object_id": buyer.id}
+    )
+
+    derived = derive(Config(), [acme, buyer], [], [given], records, {"u1": [statement]})
+
+    assert len(derived.claims) == 1
+    assert bool(calls) is looked_up

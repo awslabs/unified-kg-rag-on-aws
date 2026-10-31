@@ -50,9 +50,10 @@ _QUARTER = re.compile(
 )
 # What a written-out date may carry that strptime does not read: an ordinal
 # suffix ("15th"), dropped, or an abbreviation's dot ("Jan.", "Dec.31"),
-# read as a space.
+# read as a space (none before a comma: "Jan., 2024" reads as "Jan, 2024").
 _ORDINAL = re.compile(r"(?<=\d)(st|nd|rd|th)\b", re.IGNORECASE)
 _ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\.")
+_SPACE_BEFORE_COMMA = re.compile(r"\s+,")
 # "Sept" is no %b abbreviation.
 _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
 
@@ -123,8 +124,11 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
         if end:
             return _last_day(year, month + 2).isoformat()
         return f"{year:04d}-{month:02d}-01"
-    cleaned = " ".join(
-        _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
+    cleaned = _SPACE_BEFORE_COMMA.sub(
+        ",",
+        " ".join(
+            _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
+        ),
     )
     for date_format in _DATE_FORMATS:
         try:
@@ -186,6 +190,21 @@ def _earlier_date_keys(value: str | None, *, end: bool = False) -> set[str]:
     if end:
         keys.add(claim_date_key(value))
     return keys
+
+
+@functools.lru_cache(maxsize=1 << 16)
+def _has_earlier_key(value: str | None, *, end: bool = False) -> bool:
+    return len(_earlier_date_keys(value, end=end)) > 1
+
+
+def has_earlier_date_reading(statement: Claim) -> bool:
+    """Whether an earlier build may have keyed a date of ``statement``
+    otherwise than it keys now (``_earlier_date_keys``). A claim none of
+    whose statements has one has no ``earlier_claim_ids`` (an ISO date
+    reads the same in every build)."""
+    return _has_earlier_key(statement.start_date) or _has_earlier_key(
+        statement.end_date, end=True
+    )
 
 
 def earlier_claim_ids(claim: Claim, statements: Iterable[Claim]) -> set[str]:

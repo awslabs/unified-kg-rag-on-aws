@@ -40,6 +40,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     earlier_claim_ids,
+    has_earlier_date_reading,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -564,7 +565,16 @@ def derive(
                     by_id.setdefault(resolved_claim_id(stated), claim)
         # And by the ids an earlier reading of their dates gave them: a
         # claim stored before it changed is the claim its dates read as now.
+        # Only a unit with a statement whose dates an earlier build keyed
+        # otherwise gives one; a claim stated in none is skipped.
+        reread = {
+            unit_id
+            for unit_id, unit_claims in claim_records.items()
+            if any(has_earlier_date_reading(s) for s in unit_claims)
+        }
         for claim in resolved_claims:
+            if reread.isdisjoint(claim.text_unit_ids or ()):
+                continue
             stated_by = [
                 statement
                 for unit_id in dict.fromkeys(claim.text_unit_ids or [])

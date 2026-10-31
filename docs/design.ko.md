@@ -237,9 +237,15 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 `tests/unit/test_layering.py`는 모든 모듈의 모든 import(지연 import와 `TYPE_CHECKING`
 import 포함, 상대 import는 풀어서)에 §2.1을 강제합니다. 레이어 순서, 평가가 닿는 애플리케이션
-범위, 백엔드 주입, 저장소 어댑터를 쓰지 않는 평가와 시각화, 벤더 패키지의 독립성, 레지스트리를
-통한 플러그인 접근, `__version__`만 가져오는 루트 파사드 import입니다. 허용 예외 목록은 비어
-있으며, 규칙마다 반드시 잡아야 하는 합성 사례가 있습니다. `tests/unit/test_domain_purity.py`는
+범위, 백엔드 주입(어댑터 안에서도 검색 전략, 검색 커널, 수집 어댑터는 백엔드를 import하지
+않음), 저장소 어댑터를 쓰지 않는 평가와 시각화, 벤더 패키지의 독립성, 레지스트리를 통한 플러그인
+접근, `__version__`만 가져오는 루트 파사드 import입니다. `pkg.mod`를 import하면
+`pkg/__init__.py`가 실행되므로, 패키지 `__init__`의 import는 그 패키지에서 import하는 모든
+모듈의 import로 셉니다. 파사드와 콘솔 스크립트 실행기(launcher) 밖에서는 패키지 모듈을 이름
+문자열로 import하지 않습니다(`importlib.import_module`, `__import__`). 허용 예외 목록은 비어
+있으며, 규칙마다 반드시 잡아야 하는 합성 사례가 있습니다. 깨끗한 인터프리터 검사가 런타임 측면을
+고정합니다. 평가나 RAG 체인을 import해도 저장소 어댑터, gremlin-python, opensearch-py가 로드되지
+않습니다. `tests/unit/test_domain_purity.py`는
 서드파티 측면을 검사합니다. 어떤 도메인 모듈도 인프라 패키지를 간접적으로도 로드하지 않습니다.
 
 **공개 API.** 패키지 밖의 호출자는 `unified_kg_rag`에서 import하며, 그 `__all__`이 지원하는
