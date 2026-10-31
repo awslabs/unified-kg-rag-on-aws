@@ -884,12 +884,12 @@ changed once with the full-config keys (#332).
   `SpotInterruption`) runs again with the same input after
   `spot_retry_wait_seconds` (default 600, the default lease term), up to
   `spot_interruption_retries` times (default 2), and resumes from its S3
-  checkpoint; every other failure is notified as before (#PR).
+  checkpoint; every other failure is notified as before (#457).
 - IaC: `-c fargate_cpu_architecture=arm64` runs the ingestion and query
   tasks on Graviton (ARM64) Fargate, for an image built with
   `--platform linux/arm64`; the default `x86_64` leaves the task
   definitions as they were. The Dockerfile builds for both platforms and
-  the collector sidecar's pinned digest covers both (#PR).
+  the collector sidecar's pinned digest covers both (#457).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and
@@ -1477,7 +1477,7 @@ changed once with the full-config keys (#332).
   indices, instead of replacing it with an empty domain (and, outside dev,
   retaining and billing the old one). The engine stays 2.13; adding the
   policy changes no resource. The runbook's new "Upgrading OpenSearch"
-  section lists the steps (#PR).
+  section lists the steps (#457).
 
 ### Fixed
 - `GraphRAGChain.close()`: a sync call (`invoke`, `search`, `stream`,
