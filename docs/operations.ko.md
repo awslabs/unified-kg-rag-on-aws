@@ -20,6 +20,8 @@
 | CloudWatch 경보에 대응하기 | [경보](#경보) |
 | 저장소 복원하기 | [백업과 복원](#백업과-복원) |
 | OpenSearch 엔진 버전 올리기 | [OpenSearch 업그레이드](#opensearch-업그레이드) |
+| 한국어를 `cjk` 대신 Nori로 분석하기 | [Nori로 한국어 분석하기](#nori로-한국어-분석하기) |
+| Neptune을 I/O 최적화 스토리지로 바꾸기 | [Neptune I/O 최적화 스토리지](#neptune-io-최적화-스토리지) |
 | 서비스 계층에 질의 권한을 주거나 테넌트를 격리하기 | [질의 권한과 테넌트 격리](#질의-권한과-테넌트-격리) |
 | 추적 켜기(Jaeger, Langfuse, Phoenix, CloudWatch) | [관측성](#관측성) |
 | 오류 메시지 찾아보기 | [자주 보는 오류](#자주-보는-오류) |
@@ -194,13 +196,78 @@ CDK 도메인은 OpenSearch 2.13으로 실행되고 CloudFormation `EnableVersio
    `aws opensearch upgrade-domain --domain-name <domain> --target-version OpenSearch_2.19 --perform-check-only`
    다음에 `aws opensearch get-upgrade-status --domain-name <domain>`으로 결과를 봅니다.
    선택 Nori 패키지를 연결했다면 2.19용 Nori 패키지가 있는지도 확인합니다
-   (`aws opensearch describe-packages`). 선택 플러그인은 엔진 버전마다 따로 있습니다.
-4. `iac/stacks/storage_stack.py`에서 `version=opensearch.EngineVersion.OPENSEARCH_2_19`로
-   바꾸고(로컬 실행도 같은 엔진을 시험하도록 `docker/compose.local.yaml`의 로컬 이미지도
-   함께 바꿈) `cdk diff GraphRagStorage`를 실행합니다. 바뀌는 것은 도메인의
-   `EngineVersion` 하나뿐이고 교체가 없어야 합니다. 그다음 `cdk deploy GraphRagStorage`로
-   배포합니다.
+   (`aws opensearch describe-packages --filters
+   Name=PackageName,Value=analysis-nori Name=EngineVersion,Value=OpenSearch_2.19`).
+   선택 플러그인은 엔진 버전마다 따로 있습니다.
+4. `iac/stacks/storage_stack.py`에서
+   `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19`로 바꾸고(로컬 실행도
+   같은 엔진을 시험하도록 `docker/compose.local.yaml`의 로컬 이미지도 함께 바꿈)
+   `cdk diff GraphRagStorage`를 실행합니다. 바뀌는 것은 도메인의 `EngineVersion`
+   하나뿐이고(`opensearch_nori_package`를 켰다면 `Custom::OpenSearchNoriPackage`의
+   `EngineVersion`도) 교체가 없어야 합니다. 그다음 `cdk deploy GraphRagStorage`로
+   배포합니다. 패키지 리소스는 도메인 다음에 업데이트되며, 업그레이드가 이미 연결하지
+   않았다면 2.19 패키지를 연결하고, 업데이트 정리 단계에서 2.13 패키지가 남아 있으면
+   연결을 해제합니다([Nori로 한국어 분석하기](#nori로-한국어-분석하기)).
 5. 스택 업데이트가 끝나면 다음 대규모 실행 전에 질의 한 번과 증분 수집 한 번을 실행합니다.
+
+### Nori로 한국어 분석하기
+
+도메인은 AWS가 제공하는 `analysis-nori` 플러그인 패키지를 연결해야 형태소 분석기 `nori`를
+가지므로, CDK 배포는 한국어(`ko`)를 기본 제공 `cjk` 분석기(서로 겹치는 두 글자 단위)에
+매핑합니다. `-c opensearch_nori_package=true`로 패키지를 연결합니다. 커스텀 리소스가
+도메인 엔진 버전의 패키지를 찾고(`DescribePackages`), 연결한 뒤(`AssociatePackage`,
+블루/그린 배포) `ACTIVE`가 될 때까지 최대 2시간 기다립니다. 스토리지 다음에 배포되는
+컴퓨트 스택은 그 뒤 `ko`를 `nori`에 매핑합니다.
+
+1. 수집을 멈춥니다(`RUNNING` 실행이 없어야 함).
+2. `cdk deploy GraphRagStorage GraphRagCompute -c opensearch_nori_package=true`를
+   실행합니다. 블루/그린 배포가 2시간을 넘는 큰 도메인에서는 리소스가 실패하므로 먼저
+   패키지를 직접 연결합니다(`aws opensearch associate-package --package-id <id>
+   --domain-name <domain>` 다음 `aws opensearch list-packages-for-domain`에서 `ACTIVE`가
+   될 때까지 기다림). 리소스는 이미 연결된 패키지를 그대로 둡니다.
+3. `indexing.reset: true`로 한 번 실행합니다([다시 수집하기](#다시-수집하기)). 운영 중인
+   인덱스의 필드 분석기는 바꿀 수 없으므로, 그 전까지 증분 실행은
+   `The OpenSearch index '<index>' was built for other language settings: '<field>' uses
+   'cjk' (needs 'nori')`로 실패합니다. 실행 뒤에는 다시 `false`로 돌려 둡니다.
+
+패키지를 연결한 채로 `cjk`를 유지하려면(재구축은 나중에) `-c opensearch_korean_analyzer=cjk`도
+함께 지정해 배포합니다.
+
+**끄기.** OpenSearch는 인덱스가 아직 쓰는 패키지의 연결 해제를 거부하므로 먼저 한국어
+인덱스를 `nori`에서 옮깁니다. 패키지를 켠 채 `-c opensearch_korean_analyzer=cjk`로 배포하고
+`indexing.reset: true`로 한 번 실행한 다음, `opensearch_nori_package` 없이 배포합니다.
+리소스는 스택 업데이트가 리소스를 없애거나 교체할 때만 패키지 연결을 해제합니다(블루/그린
+배포가 한 번 더 일어남). 스택을 삭제하면 연결을 그대로 두므로 보존된 도메인의 `nori`
+인덱스는 계속 쓸 수 있습니다. 연결 해제가 실패해도 업데이트는 실패하지 않으며
+(CloudFormation은 정리 단계 실패를 무시함) `aws opensearch list-packages-for-domain`에서
+확인할 수 있습니다.
+
+### Neptune I/O 최적화 스토리지
+
+Neptune Standard 스토리지는 I/O 요청마다 과금합니다. I/O 최적화(I/O-Optimized, `iopt1`)는
+I/O를 과금하지 않는 대신 인스턴스 시간과 GiB-월 단가가 더 높습니다. AWS의 경험칙은 I/O
+비용이 클러스터 Neptune 비용의 25%를 넘으면 바꾸라는 것입니다(Cost Explorer에서 Neptune
+청구의 I/O 항목을 전체와 비교하고, I/O가 언제 일어나는지는 `VolumeReadIOPs`와
+`VolumeWriteIOPs` 지표로 봄). 엔진은 1.3.0.0 이상이어야 합니다. CloudFormation에는 스토리지
+유형 속성이 없으므로 배포된 클러스터는 수집이 실행되지 않을 때 CLI로 바꿉니다.
+
+```bash
+aws neptune modify-db-cluster --db-cluster-identifier <cluster> \
+  --storage-type iopt1 --apply-immediately
+aws neptune describe-db-clusters --db-cluster-identifier <cluster> \
+  --query 'DBClusters[0].[Status,StorageType,IOOptimizedNextAllowedModificationTime]'
+```
+
+클러스터가 다시 `available`이 되고 스토리지 유형이 `iopt1`이면 전환이 끝난 것입니다.
+`--storage-type standard`로 되돌립니다.
+
+- **30일에 한 번.** I/O 최적화로의 전환은 30일에 한 번 허용됩니다
+  (`IOOptimizedNextAllowedModificationTime`). Standard로 되돌리는 전환은 AWS 문서 한
+  곳에서는 언제든 가능하다고, 다른 곳에서는 30일에 한 번이라고 설명하므로 어느 쪽 전환이든
+  한 달 단위 결정으로 계획합니다.
+- **스택 밖의 설정.** 템플릿에 없는 설정이므로 CDK 스택 업데이트는 이를 그대로 두지만,
+  스택이 교체한 클러스터나 복원으로 새로 만든 클러스터는 Standard로 시작합니다. 그때는
+  명령을 다시 실행합니다.
 
 ## 실행이 실패할 때
 
@@ -756,7 +823,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 | `Neptune refused the connection (HTTP 403)` | 클러스터에 대한 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | 권한(과 필요한 `neptune-db:*` 데이터 작업)을 부여하고 `aws.region_name`을 클러스터 리전으로 설정 |
 | `use_iam: false`에서 OpenSearch 인증 실패 | 기본 인증 자격 증명이 없음 | `UKR__AWS__OPENSEARCH__USERNAME` / `__PASSWORD` 설정(예: `.env`) |
 | `OpenSearch rejected the search on <index>: ...` | 400 `query_shard_exception`: 필터 값의 타입이 잘못됨. 500 `too_many_clauses` / `too_many_nested_clauses`: `indices.query.bool.max_clause_count`가 1,024보다 작음 | 값을 고치거나 한도를 1,024 이상으로 유지 |
-| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤 다시 실행 |
+| `Cannot create the OpenSearch index '<index>': the cluster has no analyzer '<name>'`(`mapper_parsing_exception`) | `indexing.opensearch.language_analyzers`의 분석기가 클러스터에 없음. 보통 Nori 패키지 없는 `ko: nori` | 클러스터에 있는 분석기(`ko: cjk`, CDK 기본값)를 쓰거나 패키지를 연결한 뒤([Nori로 한국어 분석하기](#nori로-한국어-분석하기)) 다시 실행 |
 | `The search engine refused to create an index: ...`(종료 코드 2, 모델 호출 전) | `run-ingestion`은 첫 모델 호출 전에 실행이 만들 인덱스마다(전체 구축이나 초기화는 전부, 증분 실행은 없는 것만) 프로브 인덱스 `<extraction-records 별칭>-settings-probe-<16진수 12자리>`를 만들었다가 지움. 저장소가 그중 하나를 거부함(오류의 `(a probe of '<별칭>')`이 대신한 인덱스를 밝힘): `indexing.opensearch.index_settings` 키, `vector_search` 방식이나 분석기, 또는(`maximum shards open`) 새 인덱스의 샤드를 둘 자리가 없음 | 메시지가 가리키는 설정을 고치거나 지우고, 또는 필요 없는 인덱스를 지우거나 `cluster.max_shards_per_node`를 올린 뒤 다시 실행. 중지된 실행이 남긴 프로브(그 이름의 별칭 없는 인덱스)는 네임스페이스의 다음 실행이 지움 |
 
 ### 수집 실행과 문서 상태 레지스트리

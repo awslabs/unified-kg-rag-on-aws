@@ -476,7 +476,9 @@ class ComputeStack(Stack):
             ),
             # Overrides language_analyzers.ko: the domain has no nori (Korean
             # morphological analyzer) unless its optional analysis-nori
-            # package is associated, and a mapping naming it fails to create.
+            # package is associated (opensearch_nori_package, which the
+            # storage stack completes before this stack updates), and a
+            # mapping naming it fails to create.
             "UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO": self.config.opensearch_korean_analyzer,
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so

@@ -78,7 +78,7 @@ several environments coexist in one account and region.
 | Stack | Resources |
 |---|---|
 | `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals |
-| `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket |
+| `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket; with `opensearch_nori_package`, the custom resource that associates the Nori package (Lambda handlers in `iac/custom_resources/`, roles scoped to the domain and the stack) |
 | `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
 | `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
 | `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health and capacity, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
@@ -135,7 +135,8 @@ did-you-mean hint.
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
 | `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count. Moving a deployed domain to more AZs (e.g. to 3) is a blue/green deployment (every shard copied, slower for hours on a large domain): deploy it with no ingestion running |
 | `opensearch_volume_gib` | `50` | gp3 volume per data node; the free-storage alarm fires at 40% free |
-| `opensearch_korean_analyzer` | `cjk` | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). The domain has `nori` only once its Nori package is associated; to use it, associate the package (a blue/green deployment), deploy with `nori` and re-run once with `indexing.reset: true` |
+| `opensearch_nori_package` | `false` | Associate the AWS-provided `analysis-nori` plugin package of the domain's engine version (a custom resource; associating and dissociating are blue/green deployments), so the domain has the `nori` analyzer. Re-run once with `indexing.reset: true` afterwards ([Korean with Nori](../docs/operations.md#korean-with-nori)) |
+| `opensearch_korean_analyzer` | `cjk` (`nori` with `opensearch_nori_package`) | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). `nori` needs the Nori package (`opensearch_nori_package`, or associated by hand); a change needs one `indexing.reset: true` run |
 | `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
 | `cache_bucket_name` | — | Reuse an S3 cache bucket |
 | `corpus_bucket_name` | — | A bucket the corpus (or an evaluation dataset) is read from: both task roles get read access and, in `private` mode, the S3 endpoint allows it |
@@ -177,7 +178,7 @@ did-you-mean hint.
 
 **The OpenSearch engine version is pinned (2.13) and upgrades in place.**
 The domain carries the `EnableVersionUpgrade` update policy, so changing
-`version` in `storage_stack.py` (to 2.19, say) upgrades the deployed domain
+`OPENSEARCH_VERSION` in `storage_stack.py` (to 2.19, say) upgrades the deployed domain
 as a blue/green deployment, keeping its indices, instead of replacing it with
 an empty one. Snapshot it first: see
 [Upgrading OpenSearch](../docs/operations.md#upgrading-opensearch).
@@ -284,7 +285,7 @@ for your region and sizes. What scales each service's cost:
 |---|---|---|
 | Bedrock models | Tokens per ingestion (extraction per chunk, up to `max_rounds` gleaning calls, a report per community, optional claims) and per query | Fast tier for light roles, `aws.bedrock.ingestion_effort`, `processing.gleaning.max_rounds`, claims off, incremental indexing |
 | Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
-| Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, `backup_retention_days`, tear down dev |
+| Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, I/O-Optimized storage when I/O is above about 25% of the Neptune bill ([Neptune I/O-Optimized storage](../docs/operations.md#neptune-io-optimized-storage)), `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
 | Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
 | Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |

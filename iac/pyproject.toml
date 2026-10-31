@@ -24,7 +24,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=9.1.1"]
+# boto3: the custom-resource handler tests (botocore Stubber, no AWS calls);
+# the Lambda runtime provides boto3 to the deployed handlers.
+dev = ["boto3>=1.40", "pytest>=9.1.1"]
 
 [tool.uv]
 # An application, not a distribution: install the dependencies only.

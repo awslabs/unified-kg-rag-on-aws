@@ -1144,8 +1144,10 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 - **Analyzers.** `indexing.opensearch.language_analyzers` maps a language to an
   OpenSearch analyzer (default `en: english`, `ko: nori`). An Amazon OpenSearch
   Service domain has `nori` only once its Nori package is associated, so the
-  CDK deployment maps `ko` to the built-in `cjk`; an analyzer the cluster
-  lacks fails index creation with an error naming it.
+  CDK deployment maps `ko` to the built-in `cjk` unless
+  `opensearch_nori_package` associates the package (a custom resource) and
+  maps `ko` to `nori`; an analyzer the cluster lacks fails index creation
+  with an error naming it.
 - **Identity keys** keep the letters of all scripts (§3).
 - **Translation** is skipped when the source and target languages match and
   no other target is set (`TranslationConfig.is_noop`).
