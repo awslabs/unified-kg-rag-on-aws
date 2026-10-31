@@ -670,6 +670,27 @@ processing:
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
   바뀌므로 텍스트 단위를 다시 인덱싱하세요.
 - **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
+- **청크 크기.** 청크 크기는 기본값으로 문자 수를 셉니다. 한글·한자·가나 한 글자는
+  토큰 하나쯤이므로 8,000자짜리 한국어 청크는 약 6,000토큰이 되어 Cohere Rerank 3.5의
+  문서당 한도 4,096토큰을 넘고, 넘은 뒷부분은 재순위화(rerank)되지 않습니다. 크기를
+  절반으로 줄이거나, `processing.chunking.length_unit: tokens`로 토큰 수를 세게 하고
+  모든 크기를 토큰 단위로 지정하세요. 토큰 수는 로컬 추정치이며 모델을 호출하지 않습니다.
+
+  ```yaml
+  processing:
+    chunking:
+      length_unit: tokens
+      min_chunk_size: 250
+      max_chunk_size: 2000
+      chunk_overlap: 125
+      fallback_chunk_size: 1200
+      pre_chunk_size: 12500
+      pre_chunk_overlap: 125
+  ```
+
+  단위를 바꾸면 코퍼스를 다시 청크로 나누고 문서를 다시 추출합니다(증분 실행은 범위의
+  모든 문서를 다시 추출합니다). 기본값 `chars`는 이전 릴리스와 같은 청크, 즉 같은 ID를
+  유지합니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`
   플러그인에서 오는데, [로컬 OpenSearch 컨테이너](#컨테이너로-띄운-로컬-저장소)에는 있고

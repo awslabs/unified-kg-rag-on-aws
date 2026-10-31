@@ -71,7 +71,7 @@ def test_truncated_pdf_xref_fails_fast(tmp_path) -> None:
 
 # --- register_loader: custom-format extension seam --------------------------
 
-from langchain_community.document_loaders.base import BaseLoader  # noqa: E402
+from langchain_core.document_loaders import BaseLoader  # noqa: E402
 
 
 @pytest.fixture

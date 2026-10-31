@@ -721,6 +721,28 @@ translation stage is skipped at no cost, even with `enabled: true`.
   mapping: re-index the text units.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
+- **Chunk sizes.** The chunk sizes count characters by default, and a
+  Hangul, Han or Kana character is about one token, so an 8,000-character
+  Korean chunk is ~6,000 tokens: over the 4,096-token document limit of Cohere
+  Rerank 3.5, which then never sees its tail. Halve the sizes, or count them
+  in tokens with `processing.chunking.length_unit: tokens` (a local estimate,
+  no model call) and give every size in tokens:
+
+  ```yaml
+  processing:
+    chunking:
+      length_unit: tokens
+      min_chunk_size: 250
+      max_chunk_size: 2000
+      chunk_overlap: 125
+      fallback_chunk_size: 1200
+      pre_chunk_size: 12500
+      pre_chunk_overlap: 125
+  ```
+
+  Switching the unit re-chunks the corpus and re-extracts its documents (an
+  incremental run re-extracts every document of the scope); the default
+  `chars` keeps the chunks, and so the ids, of earlier releases.
 - **The analyzer must exist on the cluster**, or the indexing stage fails
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the

@@ -48,6 +48,7 @@ jobs:
           tests/unit/test_optional_parser_security.py
           tests/unit/test_parser_factory.py
           tests/unit/test_loader_logic.py
+          tests/unit/test_file_loaders_golden.py
 
   quality:
     runs-on: ubuntu-latest

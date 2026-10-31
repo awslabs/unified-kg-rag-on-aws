@@ -10,13 +10,13 @@ import pytest
 
 pytest.importorskip("unstructured")
 
-from langchain_community.document_loaders import (  # noqa: E402
-    UnstructuredHTMLLoader,
-    UnstructuredMarkdownLoader,
-)
 from unstructured.partition.html import partition_html  # noqa: E402
 from unstructured.partition.md import partition_md  # noqa: E402
 from unstructured.safe_http import UnsafeURLError  # noqa: E402
+
+from unified_kg_rag.adapters.ingestion.file_loaders import (  # noqa: E402
+    UnstructuredPartitionLoader,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -38,14 +38,14 @@ def test_private_url_rejected_before_connection(partition, url, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("loader", "suffix", "content"),
+    ("partition", "suffix", "content"),
     [
-        (UnstructuredMarkdownLoader, ".md", "# Security smoke test\n"),
-        (UnstructuredHTMLLoader, ".html", "<h1>Security smoke test</h1>"),
+        ("md", ".md", "# Security smoke test\n"),
+        ("html", ".html", "<h1>Security smoke test</h1>"),
     ],
 )
-def test_local_document_still_parses(loader, suffix, content, tmp_path):
+def test_local_document_still_parses(partition, suffix, content, tmp_path):
     source = tmp_path / f"document{suffix}"
     source.write_text(content, encoding="utf-8")
-    documents = loader(str(source)).load()
+    documents = UnstructuredPartitionLoader(source, partition=partition).load()
     assert "Security smoke test" in "\n".join(d.page_content for d in documents)

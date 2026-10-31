@@ -5,17 +5,16 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from langchain_community.document_loaders import (
-    CSVLoader,
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredHTMLLoader,
-    UnstructuredMarkdownLoader,
-)
-from langchain_community.document_loaders.base import BaseLoader
+from langchain_core.document_loaders import BaseLoader
 
 from unified_kg_rag.adapters.ingestion.document_converter import (
     convert_langchain_to_document,
+)
+from unified_kg_rag.adapters.ingestion.file_loaders import (
+    CsvFileLoader,
+    PdfFileLoader,
+    TextFileLoader,
+    UnstructuredPartitionLoader,
 )
 from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.domain.models import Config, Document
@@ -24,9 +23,9 @@ from unified_kg_rag.shared.exceptions import causes
 
 logger = get_logger(__name__)
 
-# UnstructuredHTMLLoader / UnstructuredMarkdownLoader import fine but raise at
-# .load() time if the heavy optional `unstructured` package is absent (it is not
-# a runtime dependency). Detect it once so .md/.html/.htm are only advertised as
+# UnstructuredPartitionLoader imports fine but raises at .load() time if the
+# heavy optional `unstructured` package is absent (it is not a runtime
+# dependency). Detect it once so .md/.html/.htm are only advertised as
 # supported when they can actually be parsed — instead of failing mid-ingestion
 # with "No module named 'unstructured'".
 _UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
@@ -90,8 +89,9 @@ class FileParser(BaseParser):
 
     @staticmethod
     def _is_decode_error(exc: BaseException) -> bool:
-        # TextLoader/CSVLoader wrap a UnicodeDecodeError in a RuntimeError
-        # ("Error loading <path>"), so inspect the exception and its cause chain.
+        # A registered loader may wrap the UnicodeDecodeError (langchain-community
+        # loaders raise RuntimeError("Error loading <path>") from it), so inspect
+        # the exception and its cause chain.
         return any(isinstance(cause, UnicodeDecodeError) for cause in causes(exc))
 
     def parse_file(
@@ -129,31 +129,34 @@ class FileParser(BaseParser):
 # Text-based loaders accept an ``encoding`` kwarg. When a non-UTF-8 file
 # (e.g. cp949, latin-1) raises UnicodeDecodeError, FileParser re-detects the
 # encoding with charset-normalizer and retries with an explicit ``encoding=``.
-# We deliberately do NOT use LangChain's ``autodetect_encoding=True`` because it
-# imports ``chardet`` (an extra dependency); charset-normalizer is a declared
-# dependency and is reused here and in
-# ``Document._read_text_autodetect`` for one consistent detection path.
-_ENCODING_AWARE_LOADERS = (CSVLoader, JsonTextLoader, TextLoader)
+# Detection runs only after a decode error, so a file that decodes keeps the
+# text it always had (charset-normalizer is a declared dependency, reused in
+# ``Document._read_text_autodetect`` for one consistent detection path).
+_ENCODING_AWARE_LOADERS = (CsvFileLoader, JsonTextLoader, TextFileLoader)
 
 
 class ParserFactory:
     # Loaders with no heavy optional deps — always available.
     _loader_configs: dict[str, tuple[type[BaseLoader], dict, str]] = {
-        ".csv": (CSVLoader, {}, "CSV"),
+        ".csv": (CsvFileLoader, {}, "CSV"),
         # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
         ".json": (JsonTextLoader, {}, "JSON"),
-        ".pdf": (PyPDFLoader, {}, "PDF"),
-        ".txt": (TextLoader, {}, "Text"),
+        ".pdf": (PdfFileLoader, {}, "PDF"),
+        ".txt": (TextFileLoader, {}, "Text"),
     }
     # Markdown/HTML need the optional `unstructured` package; register them only
     # when it is importable so the supported-format list matches runtime reality.
     if _UNSTRUCTURED_AVAILABLE:
         _loader_configs.update(
             {
-                ".htm": (UnstructuredHTMLLoader, {}, "HTML"),
-                ".html": (UnstructuredHTMLLoader, {}, "HTML"),
-                ".markdown": (UnstructuredMarkdownLoader, {}, "Markdown"),
-                ".md": (UnstructuredMarkdownLoader, {}, "Markdown"),
+                ".htm": (UnstructuredPartitionLoader, {"partition": "html"}, "HTML"),
+                ".html": (UnstructuredPartitionLoader, {"partition": "html"}, "HTML"),
+                ".markdown": (
+                    UnstructuredPartitionLoader,
+                    {"partition": "md"},
+                    "Markdown",
+                ),
+                ".md": (UnstructuredPartitionLoader, {"partition": "md"}, "Markdown"),
             }
         )
 
@@ -167,12 +170,18 @@ class ParserFactory:
     ) -> None:
         """Register a custom loader for a file extension (extension seam).
 
-        Any LangChain ``BaseLoader`` subclass works — ``FileParser`` only calls
-        ``loader_class(file_path, **loader_kwargs).load()``. This lets a user add
-        a new format (or override a built-in one) without editing the factory::
+        Any ``langchain_core`` ``BaseLoader`` subclass works — ``FileParser``
+        only calls ``loader_class(file_path=..., **loader_kwargs).load()``. This
+        lets a user add a new format (or override a built-in one) without
+        editing the factory::
 
-            from langchain_community.document_loaders import UnstructuredXMLLoader
-            ParserFactory.register_loader(".xml", UnstructuredXMLLoader)
+            from langchain_core.document_loaders import BaseLoader
+
+            class XmlTextLoader(BaseLoader):
+                def __init__(self, file_path): ...
+                def lazy_load(self): ...  # yield langchain Documents
+
+            ParserFactory.register_loader(".xml", XmlTextLoader)
 
         The new extension is automatically picked up by
         ``get_supported_extensions()`` and by the loader's discovery filter, so
@@ -180,7 +189,7 @@ class ParserFactory:
 
         Args:
             extension: file extension including the leading dot (case-insensitive).
-            loader_class: a LangChain ``BaseLoader`` subclass.
+            loader_class: a ``langchain_core`` ``BaseLoader`` subclass.
             loader_kwargs: kwargs passed to the loader constructor (besides the
                 file path), e.g. ``{"text_mode": "strings"}`` for ``JsonTextLoader``.
             file_type_name: human-readable name for logs (defaults to the

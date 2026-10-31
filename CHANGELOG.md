@@ -685,6 +685,17 @@ changed once with the full-config keys (#332).
   again (#442).
 
 ### Added
+- `processing.chunking.length_unit: tokens` counts the six chunk sizes in a
+  local, script-aware token estimate (a Hangul, Han or Kana character ~1
+  token, other text ~4 characters per token; no model call) instead of
+  characters, so one setting keeps chunks inside the embedding and reranker
+  token limits in any language: an 8,000-character Korean chunk is ~6,000
+  tokens, over Cohere Rerank 3.5's 4,096. The splitter measures each chunk as
+  a whole (summing per-piece estimates let a chunk overshoot by up to ~75%),
+  merging, the oversize split and the quality check use the same measure,
+  and the boundary prompt gets the range converted to characters. The
+  default `chars` keeps every chunk, text-unit id and content hash of earlier
+  releases; switching re-chunks and re-extracts the corpus (#460).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock
@@ -918,6 +929,18 @@ changed once with the full-config keys (#332).
   25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
+- The parser reads `.txt`, `.csv`, `.pdf` and (with the `unstructured`
+  extra) `.md`/`.html` with its own loaders on langchain-core
+  (`adapters/ingestion/file_loaders.py`) instead of the langchain-community
+  ones, which are in sunset. They produce the same text and metadata, byte
+  for byte (CRLF and bare CR still read as newlines, the encoding still
+  detected only after a decode error), so an indexed corpus keeps its
+  content hashes and `document_id`s and an incremental rerun finds no changed
+  document. Importing the parser no longer loads langchain-community (about
+  440 fewer modules). `ParserFactory.register_loader` takes any
+  `langchain_core` `BaseLoader`; the PDF loader no longer downloads a URL
+  given as a path. langchain-community stays a dependency only to hold the
+  copy ragas imports below 0.4 (#460).
 - Package layout: the layers import only inward, now including lazy and
   `TYPE_CHECKING` imports, and `tests/unit/test_layering.py` enforces the
   rules of the design doc §2.1 on every import (no exceptions; 23 imports

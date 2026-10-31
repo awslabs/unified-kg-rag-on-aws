@@ -34,10 +34,19 @@ THINKING_HEADROOM_TOKENS = 8192
 TOKENS_PER_GRAPH_RECORD = 150
 
 
+# With ``chunking.length_unit: tokens`` the sizes count the local token
+# estimate, which counts at least one token per 4 characters (outside the
+# dense scripts, 1 per character): n tokens span at most 4n + 3 characters.
+_CHARS_PER_ESTIMATED_TOKEN = 4
+
+
 def max_chunk_chars(config: "Config") -> int:
     """Longest text unit the chunkers can emit, in characters."""
     chunking = config.processing.chunking
-    return max(chunking.max_chunk_size, chunking.fallback_chunk_size)
+    longest = max(chunking.max_chunk_size, chunking.fallback_chunk_size)
+    if chunking.length_unit == "tokens":
+        return longest * _CHARS_PER_ESTIMATED_TOKEN + _CHARS_PER_ESTIMATED_TOKEN - 1
+    return longest
 
 
 def chunk_output_floor(config: "Config", copies: int = 1) -> int:
