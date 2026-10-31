@@ -769,9 +769,14 @@ class BedrockConfig(BaseModel):
     query_prompt_cache_ttl: Literal["5m", "1h"] = Field(
         default="5m",
         description=(
-            "Lifetime of the system-prompt cache checkpoint on query chains "
-            "(answers, query rewriting, keyword extraction); ingestion and "
-            "evaluation keep 5m. '1h' keeps a query prompt cached across gaps "
+            "Lifetime of the system-prompt cache checkpoint on query-time "
+            "chains. A chain gets a checkpoint only when its system prompt "
+            "reaches the model's minimum cacheable size (512 tokens on Claude "
+            "Sonnet/Opus/Haiku 5.5 and Opus 5, 1,024 or 4,096 on other Claude "
+            "4.5+ models): with the shipped prompts, answer generation, query "
+            "entity extraction and the global-search reduce step on the "
+            "512-token models. Ingestion chains and evaluation judges keep "
+            "5m. '1h' keeps a query prompt cached across gaps "
             "of more than 5 minutes between queries, at a cost: a 1-hour cache "
             "write is billed at 2x the input-token price (5m: 1.25x), while a "
             "read costs the same. It pays off only at low query rates, when "
@@ -2917,20 +2922,6 @@ class TokenManagerConfig(BaseModel):
 
 
 class LightRAGSearchConfig(BaseModel):
-    structured_keyword_output: bool = Field(
-        default=False,
-        description=(
-            "Pilot: ask the keyword-extraction model for a JSON-schema "
-            "constrained response (with_structured_output, method "
-            "json_schema) instead of parsing JSON out of free text. Used on "
-            "Bedrock Converse for Claude 4.5+ requests that carry no "
-            "reasoning effort (output_config), and on Ollama and "
-            "OpenAI-compatible servers; elsewhere, and whenever the "
-            "structured call fails, the text parser runs as before. The "
-            "first Bedrock request with the schema compiles it (up to about "
-            "90 s, then cached for 24 h)."
-        ),
-    )
     raw_query_fallback_max_len: int = Field(
         default=50,
         ge=0,

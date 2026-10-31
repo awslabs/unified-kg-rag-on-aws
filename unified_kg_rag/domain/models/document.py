@@ -9,6 +9,10 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from unified_kg_rag.shared.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def _read_text_autodetect(path: Path) -> str:
     """Read a file as text, falling back to encoding detection.
@@ -17,13 +21,7 @@ def _read_text_autodetect(path: Path) -> str:
     Attempt UTF-8 first (the common case), then fall back to charset-normalizer
     detection so such files are recovered rather than dropped. We do not silently
     mojibake: the detected encoding is logged at debug level.
-
-    ``get_logger`` is imported lazily (function-local) to avoid a module-load
-    circular import: ``shared`` pulls in ``domain.models`` at import time.
     """
-    from unified_kg_rag.shared.logging import get_logger
-
-    logger = get_logger(__name__)
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:

@@ -306,6 +306,43 @@ def test_runner_stop_is_idempotent() -> None:
     runner.stop()
 
 
+def test_stop_from_inside_the_loop_ends_its_tasks_and_closes_it() -> None:
+    # Regression: a stop from a task on the loop only scheduled loop.stop, so
+    # the loop halted with the tasks it had cancelled still pending (each
+    # later destroyed mid-flight, "Task was destroyed but it is pending") and
+    # was never closed.
+    runner = _LoopRunner()
+    unwound = threading.Event()
+    seen: list[Any] = []
+
+    async def background() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)  # cleanup that awaits
+            unwound.set()
+            raise
+
+    async def stop_inside() -> None:
+        loop = asyncio.get_running_loop()
+        seen.extend([loop, threading.current_thread(), loop.create_task(background())])
+        await asyncio.sleep(0)
+        runner.stop()
+        await asyncio.sleep(0.01)
+
+    with pytest.raises(StoreConnectionError):
+        runner.run(stop_inside())
+    loop, thread, task = seen
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert unwound.is_set()
+    assert task.cancelled()
+    assert loop.is_closed()
+    # The runner starts a fresh loop on the next call.
+    assert runner.run(asyncio.sleep(0, result=7)) == 7
+    runner.stop()
+
+
 async def test_release_skips_retrievers_without_close() -> None:
     retriever = MagicMock(spec=[])  # no close/aclose attributes
     GraphRAGChain._release_retrievers([retriever], None, wait=True)

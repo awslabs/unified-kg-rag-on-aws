@@ -197,5 +197,15 @@ def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
     )
 
 
+def test_prompt_cache_ttl_shapes_no_answer() -> None:
+    # A cache checkpoint's lifetime changes what a query costs, not what it
+    # answers: two evaluations differing only in it hash alike.
+    path = "aws.bedrock.query_prompt_cache_ttl"
+    assert not shapes_answers(path)
+    one_hour = Config()
+    one_hour.aws.bedrock.query_prompt_cache_ttl = "1h"
+    assert answer_settings(one_hour) == answer_settings(Config())
+
+
 def test_location_fields_are_config_fields() -> None:
     assert cache_keys._LOCATION_FIELDS <= set(_FIELDS)

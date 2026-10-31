@@ -83,6 +83,10 @@ ModelInfoT = TypeVar("ModelInfoT")
 WrapperT = TypeVar("WrapperT")
 
 
+# The truncation buffer is at most 1/8 of a model's token limit.
+_MAX_BUFFER_DIVISOR = 8
+
+
 class BaseBedrockWrapper:
     _token_counter: BedrockTokenCounter | None = PrivateAttr(default=None)
 
@@ -108,7 +112,12 @@ class BaseBedrockWrapper:
         final_text = text
 
         if max_tokens and self._token_counter is not None:
-            effective_tokens = max_tokens - self._buffer_tokens
+            # The buffer absorbs the token estimate's error. It is capped at a
+            # fraction of the limit: Cohere Embed v3's 512-token window minus
+            # the embeddings' 512-token default left no room, and every text
+            # was sent as "". The cap leaves every larger window's buffer as is.
+            buffer = min(self._buffer_tokens, max_tokens // _MAX_BUFFER_DIVISOR)
+            effective_tokens = max_tokens - buffer
             truncated, token_count = self._token_counter.truncate_to_token_limit(
                 text, effective_tokens
             )
@@ -488,11 +497,17 @@ class BedrockEmbeddingModelFactory(
         return None if catalog_id is None else _EMBEDDING_MODEL_INFO.get(catalog_id)
 
     def _resolve_invocation_id(self, catalog_id: EmbeddingModelId, given: str) -> str:
-        """The id to invoke: ``given`` when it is already a profile id or ARN,
-        else the cross-region profile the chat path would pick, failing fast
-        when the model has no on-demand throughput here and no profile
+        """The id to invoke: ``given`` when it is already a profile id or ARN
+        or the model has on-demand throughput in this region, else the
+        cross-region profile the chat path would pick, failing fast when none
         resolved."""
         region = self.region_name or ""
+        if given != catalog_id.value or not requires_embedding_profile(
+            catalog_id, region
+        ):
+            # On-demand where it exists: a profile would move the calls to
+            # the profile's quota, routing and IAM resources.
+            return given
         resolved = BedrockCrossRegionModelHelper.get_cross_region_model_id(
             self.boto_session,
             given,
@@ -500,9 +515,7 @@ class BedrockEmbeddingModelFactory(
             assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
             enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
-        if resolved == catalog_id.value and requires_embedding_profile(
-            catalog_id, region
-        ):
+        if resolved == catalog_id.value:
             raise EmbeddingModelError(
                 f"Embedding model '{catalog_id.value}' has no on-demand "
                 f"throughput in region '{region}' and no cross-region inference "
