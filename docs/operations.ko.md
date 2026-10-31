@@ -221,6 +221,10 @@ CDK 도메인은 OpenSearch 2.13으로 실행되고 CloudFormation `EnableVersio
   `attempt_count`로 셉니다([격리된 문서](#격리된-문서)).
 - 사용자 정의 레지스트리 정책에는 `dynamodb:BatchWriteItem`과 `BatchGetItem`이
   필요합니다(CDK 권한에는 둘 다 있음).
+- CDK 스택에서 `ingestion_fargate_spot`을 켜면 Spot이 중단한 태스크를 상태 머신이
+  `spot_retry_wait_seconds` 뒤에 스스로 다시 실행합니다. 실행 기록에
+  `SpotInterrupted`와 `WaitBeforeSpotRetry` 상태가 보입니다
+  ([Fargate Spot](../iac/README.md#fargate-spot)).
 
 ### 실패한 문서
 

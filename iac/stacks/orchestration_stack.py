@@ -12,8 +12,12 @@ cache.
 
 The task is retried only when ECS fails to start it (a container that exits
 non-zero is a pipeline failure, and rerunning it repeats the same work); its
-error is caught and published, with the execution id, to an SNS topic. The
-state machine input carries only ``source_directory`` (an s3:// URI the
+error is caught and published, with the execution id, to an SNS topic. With
+``ingestion_fargate_spot`` the task runs on Fargate Spot, and a task that Spot
+interrupted (SIGTERM, then the checkpointed stop) is the one exception: it is
+run again with the same input, up to ``spot_interruption_retries`` times,
+after ``spot_retry_wait_seconds``, and the new task resumes from the S3
+checkpoint like any re-run with the same ``pipeline_id``. The state machine input carries only ``source_directory`` (an s3:// URI the
 container entrypoint syncs locally) and ``pipeline_id``. There is no
 full-vs-incremental switch: a run is incremental when
 ``providers.doc_status.enabled`` is set in the baked-in config.
@@ -193,7 +197,20 @@ class OrchestrationStack(Stack):
                 Fn.select(6, Fn.split(":", task_definition.task_definition_arn))
             ),
             launch_target=tasks.EcsFargateLaunchTarget(
-                platform_version=ecs.FargatePlatformVersion.LATEST
+                platform_version=ecs.FargatePlatformVersion.LATEST,
+                # Spot only: a capacity provider strategy replaces the
+                # FARGATE launch type (RunTask takes one or the other).
+                capacity_provider_options=(
+                    tasks.CapacityProviderOptions.custom(
+                        [
+                            ecs.CapacityProviderStrategy(
+                                capacity_provider="FARGATE_SPOT", weight=1
+                            )
+                        ]
+                    )
+                    if self.config.ingestion_fargate_spot
+                    else None
+                ),
             ),
             assign_public_ip=False,
             subnets=self.networking.app_subnets,
@@ -243,9 +260,83 @@ class OrchestrationStack(Stack):
             max_attempts=2,
             backoff_rate=2.0,
         )
-        run.add_catch(self.notify_failure, errors=["States.ALL"], result_path="$.error")
+        on_failure = (
+            self._spot_retry(run) if self.config.ingestion_fargate_spot else None
+        )
+        run.add_catch(
+            on_failure or self.notify_failure,
+            errors=["States.ALL"],
+            result_path="$.error",
+        )
         return run
+
+    def _spot_retry(self, run: tasks.EcsRunTask) -> sfn.Choice:
+        """The catch of a Spot ingestion task: a task Spot interrupted runs
+        again, up to ``spot_interruption_retries`` times; any other failure,
+        or one past the last retry, is notified as before.
+
+        A task that exits non-zero fails the state with States.TaskFailed
+        and the stopped task (DescribeTasks) as its JSON Cause, which names
+        the stop code (``SpotInterruption``) and the reason ("Your Spot Task
+        was interrupted."). Either is matched as a substring, which holds
+        whatever the key casing and spacing. The re-run passes the same
+        input, so the same ``pipeline_id`` resumes from its checkpoint; an
+        empty one would start a new pipeline, so it is not retried. The wait
+        before it lets the write lease of a task killed before it gave the
+        lease up expire (a task that stopped cleanly gave it up expired).
+        """
+        cause = "$.error.Cause"
+        retries = "$.spot_retries.count"
+        interrupted = sfn.Condition.and_(
+            sfn.Condition.string_equals("$.error.Error", "States.TaskFailed"),
+            sfn.Condition.is_present(cause),
+            sfn.Condition.is_string(cause),
+            sfn.Condition.or_(
+                sfn.Condition.string_matches(cause, "*SpotInterruption*"),
+                sfn.Condition.string_matches(cause, "*Your Spot Task was interrupted*"),
+            ),
+            sfn.Condition.is_string("$.pipeline_id"),
+            sfn.Condition.not_(sfn.Condition.string_equals("$.pipeline_id", "")),
+            sfn.Condition.is_present(retries),
+            sfn.Condition.number_less_than(
+                retries, self.config.spot_interruption_retries
+            ),
+        )
+        rerun = (
+            sfn.Pass(
+                self,
+                "CountSpotRetry",
+                parameters={
+                    "count.$": f"States.MathAdd({retries}, 1)",
+                },
+                result_path="$.spot_retries",
+            )
+            .next(
+                sfn.Wait(
+                    self,
+                    "WaitBeforeSpotRetry",
+                    time=sfn.WaitTime.duration(
+                        Duration.seconds(self.config.spot_retry_wait_seconds)
+                    ),
+                )
+            )
+            .next(run)
+        )
+        return (
+            sfn.Choice(self, "SpotInterrupted")
+            .when(interrupted, rerun)
+            .otherwise(self.notify_failure)
+        )
 
     # ---------------------------------------------------------- definition
     def _build_definition(self) -> sfn.IChainable:
-        return self._ingest_task().next(sfn.Succeed(self, "PipelineComplete"))
+        ingest = self._ingest_task().next(sfn.Succeed(self, "PipelineComplete"))
+        if not self.config.ingestion_fargate_spot:
+            return ingest
+        # The Spot re-run count, in the state (the input carries none).
+        return sfn.Pass(
+            self,
+            "InitSpotRetries",
+            result=sfn.Result.from_object({"count": 0}),
+            result_path="$.spot_retries",
+        ).next(ingest)

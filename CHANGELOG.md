@@ -879,6 +879,12 @@ changed once with the full-config keys (#332).
   logged at ERROR instead of WARNING. Opt-in `search.reranking.required`
   fails the query with `RerankModelError` instead of answering from the
   fused order. Reported by @vibhupb (#83) (#284).
+- IaC: `-c ingestion_fargate_spot=true` (off by default) runs the ingestion
+  task on Fargate Spot. A task Spot interrupted (stop code
+  `SpotInterruption`) runs again with the same input after
+  `spot_retry_wait_seconds` (default 600, the default lease term), up to
+  `spot_interruption_retries` times (default 2), and resumes from its S3
+  checkpoint; every other failure is notified as before (#PR).
 
 ### Changed
 - Package layout: the layers import only inward, now including lazy and

@@ -233,6 +233,10 @@ restored meanwhile included, and removes what was written for one that is gone
   `attempt_count` ([Quarantined documents](#quarantined-documents)).
 - A custom registry policy needs `dynamodb:BatchWriteItem` and
   `BatchGetItem` (the CDK grant covers both).
+- On the CDK stack with `ingestion_fargate_spot`, the state machine re-runs
+  a task Spot interrupted by itself, after `spot_retry_wait_seconds`; the
+  execution history shows the `SpotInterrupted` and `WaitBeforeSpotRetry`
+  states ([Fargate Spot](../iac/README.md#fargate-spot)).
 
 ### Failed documents
 

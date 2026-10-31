@@ -98,6 +98,17 @@ cannot leave its setting at the default:
                                        synced corpus, the parsed documents and
                                        the run's stage cache
   sfn_timeout_hours   6                ingestion state machine timeout
+  ingestion_fargate_spot False         run the ingestion task on Fargate Spot;
+                                       a Spot interruption re-runs it with the
+                                       same pipeline_id, which resumes from its
+                                       S3 checkpoint
+  spot_interruption_retries 2          re-runs after Spot interruptions (0-10;
+                                       ingestion_fargate_spot only)
+  spot_retry_wait_seconds 600          wait before each re-run (0-86400;
+                                       ingestion_fargate_spot only): at least
+                                       indexing.lease_seconds, so the lease of
+                                       a task killed before it gave it up has
+                                       expired
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
   owner               "aws-proserve"   `owner` tag on every resource
@@ -328,6 +339,11 @@ class DeploymentConfig:
     opensearch_korean_analyzer: str = "cjk"
     # Neptune Serverless (min, max) NCU; None = provisioned neptune_instance.
     neptune_serverless_ncu: tuple[float, float] | None = None
+    # Fargate Spot for the ingestion task, and the re-runs of a task Spot
+    # interrupted. Off: the templates are exactly as without the feature.
+    ingestion_fargate_spot: bool = False
+    spot_interruption_retries: int = 2
+    spot_retry_wait_seconds: int = 600
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -424,6 +440,16 @@ class DeploymentConfig:
                 "neptune_instance and neptune_serverless_ncu are exclusive: a "
                 "serverless cluster has no instance class"
             )
+        ingestion_fargate_spot = as_bool("ingestion_fargate_spot", default=False)
+        spot_keys = [
+            key
+            for key in ("spot_interruption_retries", "spot_retry_wait_seconds")
+            if ctx(key) is not None
+        ]
+        if spot_keys and not ingestion_fargate_spot:
+            raise ValueError(
+                f"{', '.join(spot_keys)} only apply with ingestion_fargate_spot=true"
+            )
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
@@ -499,6 +525,13 @@ class DeploymentConfig:
             ),
             opensearch_korean_analyzer=opensearch_korean_analyzer,
             neptune_serverless_ncu=neptune_serverless_ncu,
+            ingestion_fargate_spot=ingestion_fargate_spot,
+            spot_interruption_retries=as_int(
+                "spot_interruption_retries", 2, minimum=0, maximum=10
+            ),
+            spot_retry_wait_seconds=as_int(
+                "spot_retry_wait_seconds", 600, minimum=0, maximum=86400
+            ),
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:

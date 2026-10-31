@@ -80,7 +80,7 @@ several environments coexist in one account and region.
 | `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket |
 | `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
-| `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it, with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
+| `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
 | `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health and capacity, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
 | `GraphRagSecurity` | The shared customer-managed KMS key (`use_cmk`) |
 | `GraphRagGuardrail` | A baseline Bedrock Guardrail in `bedrock_region` ([Guardrail](#guardrail)) |
@@ -148,7 +148,10 @@ did-you-mean hint.
 | `fargate_memory` | `8192` | Task memory (MiB), a size Fargate offers for `fargate_cpu` |
 | `ingestion_ephemeral_storage_gib` | `40` | Ingestion task disk (21-200 GiB): about twice the corpus plus the stage cache |
 | `image_tag` | `latest` | Image tag the tasks pull; any other tag makes the repository's tags immutable (the ECR lifecycle keeps it and the 10 newest images) |
-| `sfn_timeout_hours` | `6` | State machine timeout for a whole run |
+| `sfn_timeout_hours` | `6` | State machine timeout for a whole run, re-runs and their waits included |
+| `ingestion_fargate_spot` | `false` | Run the ingestion task on Fargate Spot; a task Spot interrupted runs again ([Fargate Spot](#fargate-spot)) |
+| `spot_interruption_retries` | `2` | Re-runs after Spot interruptions per execution (0-10); `ingestion_fargate_spot` only |
+| `spot_retry_wait_seconds` | `600` | Wait before each re-run (0-86400); at least `indexing.lease_seconds` (default 600); `ingestion_fargate_spot` only |
 
 **Security**
 
@@ -184,6 +187,31 @@ engine of every deployed cluster not on it. The client is pinned instead
 (`gremlinpython` below 3.8 until Neptune supports TinkerPop 3.8). To fix a
 version for a new deployment, set `engine_version` in `storage_stack.py` before
 its first deploy.
+
+### Fargate Spot
+
+`-c ingestion_fargate_spot=true` runs the ingestion task on `FARGATE_SPOT`
+(the cluster gets the `FARGATE` and `FARGATE_SPOT` capacity providers; query
+tasks you start yourself are unchanged). Spot can reclaim the task: ECS sends
+SIGTERM, the task uploads its checkpoint and gives its write lease up within
+the 120 s stop timeout, and the state machine then runs the task again with
+the same input, so the same `pipeline_id` resumes at the stage that was
+running ([Resume](#3-upload-the-corpus-and-start-an-ingestion-run)).
+
+- **What is re-run.** Only a task whose stopped-task record names the Spot
+  interruption (stop code `SpotInterruption`, reason `Your Spot Task was
+  interrupted.`), at most `spot_interruption_retries` times per execution.
+  Every other failure, and an interruption past the last re-run, publishes
+  the failure notification as before. An empty `pipeline_id` is not re-run:
+  the CLI would start a new pipeline.
+- **The wait.** Each re-run starts `spot_retry_wait_seconds` after the
+  interruption. A task killed before it gave its lease up holds it until
+  the lease expires, up to `indexing.lease_seconds` later, and a re-run
+  before that stops with `NamespaceLeaseError`; keep the wait at least the
+  lease term. The waits count against `sfn_timeout_hours`.
+- **Capacity.** Every attempt runs on Spot. When Spot has no capacity,
+  RunTask fails to start the task, which the state machine retries twice as
+  for any start failure, then notifies.
 
 ### Guardrail
 
@@ -257,7 +285,7 @@ for your region and sizes. What scales each service's cost:
 | Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
 | Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
-| Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib` |
+| Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage) |
 | Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
 | S3 | Checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |

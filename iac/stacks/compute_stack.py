@@ -133,6 +133,9 @@ class ComputeStack(Stack):
             cluster_name=f"{config.prefix}-cluster",
             vpc=networking.vpc,
             container_insights_v2=ecs.ContainerInsights.ENABLED,
+            # FARGATE and FARGATE_SPOT on the cluster, which a RunTask
+            # capacity provider strategy needs (ingestion_fargate_spot).
+            enable_fargate_capacity_providers=config.ingestion_fargate_spot or None,
         )
 
         self.log_group = logs.LogGroup(
