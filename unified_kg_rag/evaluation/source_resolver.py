@@ -20,7 +20,6 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -42,10 +41,15 @@ class SourceFileResolver(Protocol):
         ...
 
 
+class _IndexLimits(Protocol):
+    @property
+    def id_batch_size(self) -> int: ...
+
+
 class _DocumentRetriever(Protocol):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
 
-    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits: ...
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> _IndexLimits: ...
 
 
 def file_name_of(payload: dict[str, Any]) -> str | None:

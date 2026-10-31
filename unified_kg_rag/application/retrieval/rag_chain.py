@@ -979,6 +979,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     span.set_attribute("kg_rag.rerank_status", rerank["status"])
             return result
 
+    @staticmethod
+    def check_filter_values(filters: dict[str, Any] | None) -> None:
+        """Raise ``InvalidFilterError`` if a value in ``filters`` is one a
+        search engine would refuse or misread (``None``, NaN, a nested list,
+        an empty list or range...), as every query checks before any model
+        call. Needs no chain: a caller validating a whole query file first
+        (``run-eval``) uses it before building one."""
+        check_filter_values(filters)
+
     def check_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
     ) -> None:

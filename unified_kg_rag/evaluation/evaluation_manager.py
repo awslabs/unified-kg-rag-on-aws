@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProces
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import check_filter_values
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
@@ -321,7 +320,7 @@ class EvaluationManager:
             # Validate what the RAG chain will receive now, not per query later.
             rag_input = RAGInput.model_validate({**rag_fields, "query": question})
             # The chain refuses these per query (an empty list included).
-            check_filter_values(rag_input.filters)
+            GraphRAGChain.check_filter_values(rag_input.filters)
             if check_filter_keys is not None and rag_input.filters:
                 # ... and these by key, under each strategy the item runs with.
                 for strategy in run_strategies or (rag_input.search_strategy,):
