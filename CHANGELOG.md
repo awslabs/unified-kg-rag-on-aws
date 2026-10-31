@@ -899,7 +899,7 @@ changed once with the full-config keys (#332).
   lays out graphs with `domain.ingestion.visualization_data` helpers
   instead of the interactive renderer. Behaviour is unchanged, and every
   public name keeps its `unified_kg_rag` import; only internal module paths
-  moved (#PR).
+  moved (#456).
 - Graph expansion under a document filter and a caller `id` list stops
   walking the relationships index once it has reached every listed id: the
   results keep only those ids and a reached entity's path does not change,
