@@ -722,7 +722,7 @@ CDK 스택에서는 `-c enable_cloudwatch_tracing=true`가 AWS Distro for OpenTe
 | `kg_rag.context_build` | query(`drift`: 해당 라운드의 actions 스팬) | 사용한 토큰과 토큰 예산 |
 | `kg_rag.global.select`, `kg_rag.global.map` | strategy(`global`) | select는 질의마다 하나: `kg_rag.depth`(설정한 깊이), `kg_rag.cut`(더 얕은 단면으로 내려간 뒤 실제로 map한 단면), `kg_rag.reports`, `kg_rag.dynamic`. map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
 | `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy(`drift`) | primer: `kg_rag.reports`, `kg_rag.answers`. 라운드마다 actions 스팬 하나(`kg_rag.depth`, `kg_rag.actions`)이며 그 라운드의 로컬 검색이 아래에 들어감 |
-| `kg_rag.guardrail` | query | 검사한 질의나 답변마다 하나: `aws.bedrock.guardrail.id`, `.source`(`input`, `output`), `.action`(`none`, `masked`, `blocked`), `.intervened`, `.policies` |
+| `kg_rag.guardrail` | query | 검사한 질의나 답변마다 하나: `aws.bedrock.guardrail.id`, `.source`(`input`, `output`), `.action`(`none`, `masked`, `blocked`), `.intervened`, `.policies`. 컨텍스트 근거 검사를 켜면 `aws.bedrock.guardrail.grounding.checked`, `.grounding.failed`, `.grounding.score`, `aws.bedrock.guardrail.relevance.score`도 남음 |
 | `kg_rag.evaluate` | 루트 | 평가기마다 하나: `kg_rag.evaluator`, `kg_rag.items`, `kg_rag.eval.strategy`, `kg_rag.eval.repeat`. 심사 모델의 스팬이 아래에 들어감 |
 | `chat <model>`, `embeddings <model>` | 호출한 스팬 | OpenTelemetry GenAI 규약, 스팬 종류 `CLIENT`(Bedrock 재순위화 스팬도 같음): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이 프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens`, 종료 사유, `error.type`. 비용은 기록하지 않음 |
 

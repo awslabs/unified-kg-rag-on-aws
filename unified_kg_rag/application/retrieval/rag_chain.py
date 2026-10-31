@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import concurrent.futures
+import contextvars
 import re
 import threading
 import time
@@ -96,6 +97,7 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
+    GroundingContext,
     GuardAction,
     GuardSource,
     GuardVerdict,
@@ -375,6 +377,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         guardrail = self.config.aws.bedrock.guardrail
         self._screen_inputs = self.guard is not None and guardrail.check_input
         self._screen_outputs = self.guard is not None and guardrail.check_output
+        # The answer's check also carries what the answer model was given.
+        self._ground_outputs = (
+            self._screen_outputs and guardrail.contextual_grounding.enabled
+        )
         # Conversation memory belongs to the chain unless a MemoryManager is
         # injected (to share histories between chains, e.g. one per request).
         # Within it a conversation is keyed by namespace, user and id.
@@ -450,10 +456,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # same step objects keeps stream and invoke behaviour in lockstep.
         self._stream_context_chain: Runnable = base_chain | context_step
 
+        answer_step: Runnable = RunnablePassthrough.assign(
+            answer=self._answer_generation_step
+        )
+        if self._ground_outputs:
+            # Keeps the context the answer was generated from for the
+            # answer's grounding check; wired only when that check is on.
+            answer_step = answer_step | RunnableLambda(self._capture_grounding_step)
         rag_branch = (
-            context_step
-            | RunnablePassthrough.assign(answer=self._answer_generation_step)
-            | RunnableLambda(self._format_output_step)
+            context_step | answer_step | RunnableLambda(self._format_output_step)
         )
 
         self._search_chain: Runnable = base_chain | RunnableLambda(
@@ -1405,6 +1416,30 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             | answer_chain
         )
 
+    def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
+        """The question and context the answer model was given, or ``None``
+        when it was given no context (the fixed no-context answer)."""
+        context = str(state.get("context") or "")
+        if not context.strip() or context.strip() == EMPTY_CONTEXT_PLACEHOLDER:
+            return None
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        return GroundingContext(
+            query=self._question(state),
+            source=context,
+            ranked_sources=(
+                self.token_manager.ranked_section_lines(optimized)
+                if optimized is not None
+                else []
+            ),
+        )
+
+    def _capture_grounding_step(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Hand the answer's grounding context to the invoking ``_ainvoke``."""
+        capture = _GROUNDING_CAPTURE.get()
+        if capture is not None:
+            capture.append(self._grounding_context(state))
+        return state
+
     @staticmethod
     def _format_output_step(state: dict[str, Any]) -> RAGOutput:
         sr: SearchResult = state["search_results"]
@@ -1711,6 +1746,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         guard_records: list[dict[str, Any]] = []
+        capture: list[GroundingContext | None] = []
+        capture_token = _GROUNDING_CAPTURE.set(
+            capture if self._ground_outputs else None
+        )
         try:
             blocking = await self._screen_input(rag_input, input_dict, guard_records)
             if blocking is not None:
@@ -1728,8 +1767,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 input_dict, config
             )
             if isinstance(output, RAGOutput):
-                verdict = await self._screen_output(output.answer, guard_records)
+                verdict = await self._screen_output(
+                    output.answer,
+                    guard_records,
+                    grounding=capture[-1] if capture else None,
+                )
                 output.answer = verdict.text
+                if verdict.grounding is not None:
+                    output.metadata["grounding"] = verdict.grounding.model_dump()
                 if verdict.action is GuardAction.BLOCKED:
                     # A refused answer keeps none of the evidence behind it.
                     output.sources = []
@@ -1764,6 +1809,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 search_metadata={"error": str(e)},
             )
         finally:
+            _GROUNDING_CAPTURE.reset(capture_token)
             reset_contextvars(**tokens)
 
     def _short_circuit_output(
@@ -1831,7 +1877,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return None
 
     async def _screen_output(
-        self, answer: str, records: list[dict[str, Any]]
+        self,
+        answer: str,
+        records: list[dict[str, Any]],
+        *,
+        grounding: GroundingContext | None = None,
     ) -> GuardVerdict:
         """The verdict on the answer; its text is what the user may see:
         unchanged, masked or refused.
@@ -1839,12 +1889,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         Only the answer is screened: the sources and search results are the
         caller's own indexed corpus text, returned as retrieved (a blocked
         answer drops them). The fixed no-context answer is not model output
-        and is not screened.
+        and is not screened. With the contextual grounding check on,
+        ``grounding`` (the question and context the answer was generated
+        from) goes with it.
         """
         if not self._screen_outputs or not answer or answer == NO_CONTEXT_ANSWER:
             return GuardVerdict(action=GuardAction.NONE, text=answer)
         assert self.guard is not None
-        verdict = await self.guard.acheck(answer, GuardSource.OUTPUT)
+        if self._ground_outputs:
+            verdict = await self.guard.acheck(
+                answer, GuardSource.OUTPUT, grounding=grounding
+            )
+        else:
+            verdict = await self.guard.acheck(answer, GuardSource.OUTPUT)
         if verdict.intervened:
             records.append(_guard_record(GuardSource.OUTPUT, verdict))
         return verdict
@@ -1996,7 +2053,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield text
             if self._screen_outputs:
                 # Nothing was delivered yet: the user sees only screened text.
-                verdict = await self._screen_output("".join(chunks), guard_records)
+                verdict = await self._screen_output(
+                    "".join(chunks),
+                    guard_records,
+                    grounding=(
+                        self._grounding_context(state) if self._ground_outputs else None
+                    ),
+                )
                 chunks = [verdict.text]
                 if chunks[0]:
                     delivered = True
@@ -2024,6 +2087,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         await self._save_memory(self._format_output_step(state), rag_input)
 
 
+# The grounding context of the answer an ``_ainvoke`` call generates, handed
+# from the chain's capture step (``None`` outside a grounded call).
+_GROUNDING_CAPTURE: contextvars.ContextVar[list[GroundingContext | None] | None] = (
+    contextvars.ContextVar("kg_rag_grounding_capture", default=None)
+)
+
+
 def _conversation_key(
     suffix: str | None, user_id: str | None, conversation_id: str
 ) -> ConversationKey:
@@ -2046,12 +2116,19 @@ def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None
 
 
 def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
-    """One guardrail intervention as reported in ``RAGOutput.metadata``."""
-    return {
+    """One guardrail intervention as reported in ``RAGOutput.metadata``.
+
+    An answer refused by the contextual grounding check carries the reason
+    ``contextual_grounding``, so it reads apart from a content-policy
+    refusal."""
+    record: dict[str, Any] = {
         "source": source.value,
         "action": verdict.action.value,
         "policies": verdict.policies,
     }
+    if any(p.startswith("contextualGroundingPolicy:") for p in verdict.policies):
+        record["reason"] = "contextual_grounding"
+    return record
 
 
 def _captured_content(

@@ -178,3 +178,49 @@ def test_bring_your_own_publishes_no_version() -> None:
         {"create_guardrail": "false", "guardrail_identifier": "gr-external456"}
     )
     template.resource_count_is(_VERSION, 0)
+
+
+_GROUNDING = {"guardrail_contextual_grounding": "true"}
+
+
+def test_contextual_grounding_is_off_by_default() -> None:
+    _, template = _synth({})
+    (guardrail,) = template.find_resources(_GUARDRAIL).values()
+    assert "ContextualGroundingPolicyConfig" not in guardrail["Properties"]
+
+
+def test_contextual_grounding_adds_blocking_filters() -> None:
+    _, template = _synth({**_GROUNDING, "guardrail_grounding_threshold": "0.8"})
+    (guardrail,) = template.find_resources(_GUARDRAIL).values()
+    policy = guardrail["Properties"]["ContextualGroundingPolicyConfig"]
+    assert {
+        f["Type"]: (f["Threshold"], f["Action"], f["Enabled"])
+        for f in policy["FiltersConfig"]
+    } == {"GROUNDING": (0.8, "BLOCK", True), "RELEVANCE": (0.8, "BLOCK", True)}
+    # The rest of the baseline policy is unchanged.
+    assert "SensitiveInformationPolicyConfig" in guardrail["Properties"]
+
+
+def test_contextual_grounding_publishes_a_new_version() -> None:
+    def description(context: dict[str, Any]) -> str:
+        (version,) = _synth(context)[1].find_resources(_VERSION).values()
+        return str(version["Properties"]["Description"])
+
+    assert description(_GROUNDING) != description({})
+    assert description({**_GROUNDING, "guardrail_grounding_threshold": "0.6"}) != (
+        description(_GROUNDING)
+    )
+
+
+def test_contextual_grounding_threshold_validation() -> None:
+    import pytest
+
+    for value in ("1", "-0.1", "high"):
+        with pytest.raises(ValueError, match="guardrail_grounding_threshold"):
+            DeploymentConfig.from_context(
+                cdk.App(context={**_GROUNDING, "guardrail_grounding_threshold": value})
+            )
+    with pytest.raises(ValueError, match="only applies with"):
+        DeploymentConfig.from_context(
+            cdk.App(context={"guardrail_grounding_threshold": "0.5"})
+        )

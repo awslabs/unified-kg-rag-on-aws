@@ -696,6 +696,20 @@ changed once with the full-config keys (#332).
   and the boundary prompt gets the range converted to characters. The
   default `chars` keeps every chunk, text-unit id and content hash of earlier
   releases; switching re-chunks and re-extracts the corpus (#460).
+- `aws.bedrock.guardrail.contextual_grounding.enabled` (off by default;
+  the Classic tier scores English, French and Spanish only): the answer's
+  `ApplyGuardrail` check also sends the context the answer model was given
+  and the question it answered, so the guardrail's contextual grounding
+  policy blocks an ungrounded or irrelevant answer through the usual refusal
+  path (`reason: contextual_grounding`); scores are in `metadata.grounding`
+  and on the `kg_rag.guardrail` span. A context over 100,000 characters
+  keeps its highest-ranked sections, a question over 1,000 its head; an
+  answer over 5,000 is screened without the check (logged,
+  `skipped_reason: answer_too_long`). IaC:
+  `-c guardrail_contextual_grounding=true` adds GROUNDING and RELEVANCE
+  filters (`guardrail_grounding_threshold`, default 0.7) and turns the
+  app's check on. `ContentGuardPort.acheck` takes a keyword-only
+  `grounding`, passed only while the check is on (#PR).
 - `search.lightrag_search.structured_keyword_output` (pilot, off by
   default): LightRAG keyword extraction asks for a JSON-schema constrained
   answer (`with_structured_output(method="json_schema")`) on Bedrock

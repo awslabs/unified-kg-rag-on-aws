@@ -467,7 +467,8 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   filter judges retrieved text as user input (false blocks, cost growing
   with context)
   ([prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
-  Contextual grounding checks are not run.
+  The contextual grounding check is opt-in and runs on the answer's check
+  only (below).
 - **Ingestion and the evaluation judges run unguarded** (`run-eval`'s answers
   come from the screened query path). A PII guardrail that anonymizes
   `NAME` would rewrite entity names to `{NAME}` (merging distinct people), and
@@ -475,6 +476,37 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   query path, `NAME` anonymization also strips the name a question retrieves
   by, so the baseline guardrail `iac/` creates anonymizes email, phone and
   card numbers but not `NAME` ([iac/README.md](../iac/README.md#guardrail)).
+- **Contextual grounding check (opt-in; English, French and Spanish
+  only).** `aws.bedrock.guardrail.contextual_grounding.enabled: true` sends
+  the context the answer model was given (`grounding_source`) and the
+  question it answered (`query`) with the answer's check, so the guardrail's
+  [contextual grounding policy](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)
+  scores whether the answer is grounded in that context and relevant to the
+  question, and blocks it below its threshold (`iac/`:
+  `-c guardrail_contextual_grounding=true`, `guardrail_grounding_threshold`,
+  default 0.7). Needs `check_output`.
+  - **Language.** The Classic tier (the default, and the one `iac/` creates)
+    scores English, French and Spanish only: answers in other languages,
+    Korean included, score low and are blocked. The Standard tier covers
+    more languages but needs a cross-Region guardrail profile and is offered
+    in fewer regions. Measure the threshold on your own questions first.
+  - A blocked answer takes the refusal path above, with
+    `reason: contextual_grounding` in its `metadata.guardrail` record. Each
+    checked answer carries `metadata.grounding` (`checked`, `scores`,
+    `failed`) and the `kg_rag.guardrail` span its scores. An answer that
+    fails without being blocked (a detect-only policy), and a guardrail that
+    returns no scores (no grounding policy), are logged at WARNING.
+  - **Limits.** Bedrock takes 100,000 characters of reference, 1,000 of
+    question and 5,000 of answer. A longer context keeps its highest-ranked
+    sections and a longer question its head. A longer answer is screened by
+    the other policies only: `metadata.grounding.skipped_reason` is
+    `answer_too_long`, with a WARNING.
+  - **Cost.** Billed per text unit (1,000 characters) of reference, question
+    and answer, on top of the other policies: a full context is about 100
+    text units per answer
+    ([pricing](https://aws.amazon.com/bedrock/pricing/)). `ApplyGuardrail`'s
+    per-second text-unit quota (Service Quotas, guardrail region) throttles
+    concurrent queries with long contexts first.
 - **Custom code** calling `setup_chain` or `get_model` for non-query work
   passes `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`;
   `from unified_kg_rag import ModelPurpose`). Unmarked

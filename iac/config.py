@@ -69,6 +69,13 @@ cannot leave its setting at the default:
                                        applies (UKR__AWS__BEDROCK__GUARDRAIL__VERSION):
                                        the GuardrailVersion output; unset = the
                                        app default, DRAFT (synth warns)
+  guardrail_contextual_grounding False  add a contextual grounding policy
+                                       (GROUNDING + RELEVANCE, BLOCK) to the
+                                       created guardrail and have the task send
+                                       the retrieved context with each answer's
+                                       check (UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED)
+  guardrail_grounding_threshold 0.7    minimum grounding and relevance score
+                                       (0-0.99)
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/DDB); the
                                        alarm topic always has its own CMK
@@ -235,6 +242,19 @@ def _as_ncu_range(key: str, value: Any) -> tuple[float, float] | None:
     return low, high
 
 
+def _as_threshold(key: str, value: Any, default: float) -> float:
+    """A contextual grounding threshold: Bedrock accepts 0 to 0.99."""
+    if value is None:
+        return default
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, got {value!r}") from None
+    if not 0 <= threshold <= 0.99:
+        raise ValueError(f"{key} must be between 0 and 0.99, got {threshold:g}")
+    return threshold
+
+
 def _check_fargate_size(cpu: int, memory: int) -> None:
     if cpu not in _FARGATE_MEMORY:
         raise ValueError(
@@ -357,6 +377,10 @@ class DeploymentConfig:
     # CPU architecture of the Fargate tasks ("x86_64" | "arm64"). x86_64
     # sets no runtime platform, so the templates are as without the key.
     fargate_cpu_architecture: str = "x86_64"
+    # Opt-in contextual grounding check on answers. Off: the templates are
+    # exactly as without the feature.
+    guardrail_contextual_grounding: bool = False
+    guardrail_grounding_threshold: float = 0.7
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -479,6 +503,17 @@ class DeploymentConfig:
                 "fargate_cpu_architecture must be 'x86_64' or 'arm64', got "
                 f"{fargate_cpu_architecture!r}"
             )
+        guardrail_contextual_grounding = as_bool(
+            "guardrail_contextual_grounding", default=False
+        )
+        if (
+            ctx("guardrail_grounding_threshold") is not None
+            and not guardrail_contextual_grounding
+        ):
+            raise ValueError(
+                "guardrail_grounding_threshold only applies with "
+                "guardrail_contextual_grounding=true"
+            )
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
@@ -563,6 +598,12 @@ class DeploymentConfig:
                 "spot_retry_wait_seconds", 600, minimum=0, maximum=86400
             ),
             fargate_cpu_architecture=fargate_cpu_architecture,
+            guardrail_contextual_grounding=guardrail_contextual_grounding,
+            guardrail_grounding_threshold=_as_threshold(
+                "guardrail_grounding_threshold",
+                ctx("guardrail_grounding_threshold"),
+                0.7,
+            ),
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:

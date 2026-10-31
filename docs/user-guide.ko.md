@@ -437,13 +437,37 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
   호출에 붙인 가드레일은 프롬프트 전체를 평가하므로 `PROMPT_ATTACK` 필터가 검색된 텍스트를
   사용자 입력으로 판정해 잘못 차단하고, 비용도 컨텍스트에 비례해 늘어납니다
   ([프롬프트 공격](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
-  컨텍스트 근거(contextual grounding) 검사는 하지 않습니다.
+  컨텍스트 근거(contextual grounding) 검사는 선택 기능이며 답변 검사에서만 실행합니다(아래).
 - **수집과 평가 심사 모델은 가드레일 없이 실행**(`run-eval`의 답변은 검사하는 질의 경로를
   거침). `NAME`을 익명화하는 PII 가드레일은 엔티티 이름을
   `{NAME}`으로 바꿔 서로 다른 사람을 합치고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는
   코퍼스 텍스트를 차단할 수 있습니다. 질의 경로에서도 `NAME` 익명화는 질문이 검색에 쓸
   이름을 지우므로, `iac/`가 만드는 기본 가드레일은 이메일, 전화번호, 카드 번호만
   익명화하고 `NAME`은 익명화하지 않습니다([iac/README.md](../iac/README.md#guardrail)(영문)).
+- **컨텍스트 근거 검사(선택, 영어·프랑스어·스페인어만).**
+  `aws.bedrock.guardrail.contextual_grounding.enabled: true`면 답변 검사에 답변 모델이 받은
+  컨텍스트(`grounding_source`)와 답한 질문(`query`)을 함께 보냅니다. 가드레일의
+  [컨텍스트 근거 정책](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)이
+  답변이 그 컨텍스트에 근거하는지(grounding)와 질문에 맞는지(relevance)를 채점하고 임곗값보다
+  낮으면 차단합니다(`iac/`: `-c guardrail_contextual_grounding=true`,
+  `guardrail_grounding_threshold`, 기본 0.7). `check_output`이 켜져 있어야 합니다.
+  - **언어.** Classic 계층(기본값이며 `iac/`가 만드는 계층)은 영어, 프랑스어, 스페인어만
+    채점합니다. 한국어를 포함한 다른 언어의 답변은 점수가 낮게 나와 차단됩니다. Standard
+    계층은 더 많은 언어를 지원하지만 리전 간 가드레일 프로필이 필요하고 제공 리전이 더
+    적습니다. 먼저 실제 질문으로 임곗값을 측정하세요.
+  - 차단된 답변은 위의 거절 경로를 따르며, `metadata.guardrail` 기록에
+    `reason: contextual_grounding`이 붙습니다. 검사한 답변에는 `metadata.grounding`(`checked`,
+    `scores`, `failed`)이 붙고 `kg_rag.guardrail` 스팬에 점수가 남습니다. 차단되지 않고
+    실패한 답변(탐지 전용 정책)과 점수를 돌려주지 않는 가드레일(근거 정책 없음)은 WARNING으로
+    기록합니다.
+  - **한도.** Bedrock은 참조 100,000자, 질문 1,000자, 답변 5,000자까지 받습니다. 더 긴
+    컨텍스트는 순위가 높은 섹션부터 남기고, 더 긴 질문은 앞부분만 남깁니다. 더 긴 답변은 다른
+    정책으로만 검사하며 `metadata.grounding.skipped_reason`이 `answer_too_long`이 되고
+    WARNING을 남깁니다.
+  - **비용.** 다른 정책과 별도로 참조, 질문, 답변을 합친 텍스트 단위(1,000자)마다 과금하므로
+    컨텍스트를 다 채우면 답변 하나에 약 100 텍스트 단위입니다
+    ([요금](https://aws.amazon.com/bedrock/pricing/)). `ApplyGuardrail`의 초당 텍스트 단위
+    할당량(가드레일 리전의 Service Quotas)에 따라 컨텍스트가 긴 동시 질의부터 스로틀링됩니다.
 - **사용자 코드**에서 질의가 아닌 작업에 `setup_chain`이나 `get_model`을 쓰면
   `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`. `from unified_kg_rag import
   ModelPurpose`)을 넘기세요. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적

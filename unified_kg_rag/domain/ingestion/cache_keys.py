@@ -165,6 +165,10 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.guardrail.trace": _neutral(
         "adds trace details to a response, not to what the model returns"
     ),
+    # Shapes answers: an ungrounded answer is refused instead of returned.
+    "aws.bedrock.guardrail.contextual_grounding": Unkeyed(
+        "checks the final answer against its retrieved context only"
+    ),
     # Output fixing repairs malformed model output in every stage.
     "fixing": _EVERY_CALL,
     # --- models: each role keys the stage it runs in, by its resolved id ----

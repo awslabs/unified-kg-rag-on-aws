@@ -204,6 +204,14 @@ Amazon Bedrock Guardrails configuration (disabled unless identifier set)
 | `check_input` | boolean | `true` | Screen each raw user query (ApplyGuardrail, source INPUT) before retrieval: prompt attacks, denied topics, PII |
 | `check_output` | boolean | `true` | Screen each final answer (ApplyGuardrail, source OUTPUT). A streamed answer is then delivered in one chunk, after the check |
 
+#### `aws.bedrock.guardrail.contextual_grounding`
+
+Contextual grounding and relevance check on each answer against the retrieved context (off by default)
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Send the retrieved context and the question with the answer's guardrail check, so the guardrail's contextual grounding policy scores and can block an ungrounded or irrelevant answer. The guardrail must have that policy; its Classic tier scores only English, French and Spanish. Needs check_output |
+
 #### `aws.bedrock.transient_retry`
 
 Retry for embedding and query-time LLM calls on transient Bedrock errors

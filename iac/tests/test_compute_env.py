@@ -168,6 +168,23 @@ def test_guardrail_version_is_injected_only_when_set() -> None:
     assert env["UKR__AWS__BEDROCK__GUARDRAIL__VERSION"] == "2"
 
 
+def test_contextual_grounding_is_turned_on_with_the_guardrail() -> None:
+    def env(context: dict[str, Any], identifier: str | None) -> dict[str, Any]:
+        task_defs = _compute_template(context, identifier).find_resources(
+            "AWS::ECS::TaskDefinition"
+        )
+        (task_def,) = [v for k, v in task_defs.items() if k.startswith("IngestionTask")]
+        (container,) = task_def["Properties"]["ContainerDefinitions"]
+        return {e["Name"]: e["Value"] for e in container["Environment"]}
+
+    key = "UKR__AWS__BEDROCK__GUARDRAIL__CONTEXTUAL_GROUNDING__ENABLED"
+    grounding = {"guardrail_contextual_grounding": "true"}
+    assert key not in env({}, "gr-1")
+    # No guardrail attached: nothing to check the answers with.
+    assert key not in env(grounding, None)
+    assert env(grounding, "gr-1")[key] == "true"
+
+
 def test_task_role_has_no_unused_delete_or_admin_actions() -> None:
     actions = _actions(_role_statements(_compute_template(), "TaskRole"))
     assert "s3:PutObject" in actions

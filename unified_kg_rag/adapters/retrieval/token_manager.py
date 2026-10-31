@@ -577,6 +577,16 @@ class TokenManager:
         return f"[{source_id}] {content}" if content else ""
 
     @classmethod
+    def ranked_section_lines(cls, optimized_context: OptimizedContext) -> list[str]:
+        """The sections as ``build_context_string`` renders them, one entry
+        per section, highest priority first (ties keep their order)."""
+        ranked = sorted(
+            optimized_context.sections, key=lambda s: s.priority, reverse=True
+        )
+        lines = (cls._section_line(s.source_id, s.content) for s in ranked)
+        return [line for line in lines if line]
+
+    @classmethod
     def build_context_string(cls, optimized_context: OptimizedContext) -> str:
         # Group sections by type under labeled
         # headers (mirrors LightRAG's Entities/Relationships/Chunks blocks and MS's

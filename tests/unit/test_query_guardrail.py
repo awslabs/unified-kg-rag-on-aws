@@ -10,6 +10,7 @@ a fake model factory and retrievers, as in ``test_rag_chain_streaming``.
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import logging
 from collections.abc import Iterator
@@ -25,8 +26,13 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strat
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.guardrail.bedrock import (
     DEFAULT_BLOCKED_MESSAGE,
+    GROUNDING_ANSWER_MAX_CHARS,
+    GROUNDING_QUERY_MAX_CHARS,
+    GROUNDING_SOURCE_MAX_CHARS,
     BedrockGuardrail,
+    select_grounding_source,
 )
+from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     GraphRAGChain,
@@ -41,7 +47,14 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.ports import ContentGuardPort, GuardAction, GuardSource
+from unified_kg_rag.domain.models.config import GuardrailConfig
+from unified_kg_rag.ports import (
+    ContentGuardPort,
+    GuardAction,
+    GuardSource,
+    GuardVerdict,
+)
+from unified_kg_rag.ports.guardrail import GroundingCheck, GroundingContext
 from unified_kg_rag.shared import GuardrailError
 
 pytestmark = pytest.mark.unit
@@ -680,3 +693,305 @@ async def test_query_span_records_no_text_for_a_blocked_query(
             await chain.ainvoke(_input())
 
     assert await _query_span_input(run) is None
+
+
+# --- contextual grounding ------------------------------------------------------
+
+_CONTEXT = "Vendor and Buyer signed the supply agreement."
+
+
+def _scored(grounding: float, relevance: float, threshold: float = 0.7) -> dict:
+    """A FULL-scope reply scoring the answer; blocked below ``threshold``."""
+    blocked = min(grounding, relevance) < threshold
+    return {
+        "action": "GUARDRAIL_INTERVENED" if blocked else "NONE",
+        "outputs": [{"text": _REFUSAL}] if blocked else [],
+        "assessments": [
+            {
+                "contextualGroundingPolicy": {
+                    "filters": [
+                        {
+                            "type": kind,
+                            "threshold": threshold,
+                            "score": score,
+                            "action": "BLOCKED" if score < threshold else "NONE",
+                            "detected": score < threshold,
+                        }
+                        for kind, score in (
+                            ("GROUNDING", grounding),
+                            ("RELEVANCE", relevance),
+                        )
+                    ]
+                }
+            }
+        ],
+    }
+
+
+def _grounded_request(
+    answer: str = _ANSWER, source: str = _CONTEXT, query: str = _QUERY
+) -> dict[str, Any]:
+    return {
+        **_request(answer, "OUTPUT"),
+        "content": [
+            {"text": {"text": answer, "qualifiers": ["guard_content"]}},
+            {"text": {"text": source, "qualifiers": ["grounding_source"]}},
+            {"text": {"text": query, "qualifiers": ["query"]}},
+        ],
+        "outputScope": "FULL",
+    }
+
+
+def _grounded_config() -> Config:
+    config = _guarded_config()
+    config.aws.bedrock.guardrail.contextual_grounding.enabled = True
+    return config
+
+
+def _context(
+    source: str = _CONTEXT, query: str = _QUERY, ranked: list[str] | None = None
+) -> GroundingContext:
+    return GroundingContext(query=query, source=source, ranked_sources=ranked or [])
+
+
+async def _ground(runtime: Any, response: dict, text: str = _ANSWER, **kw: Any) -> Any:
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", response, kw.pop("request", None))
+    guard = BedrockGuardrail(_grounded_config(), client=client)
+    return await guard.acheck(text, GuardSource.OUTPUT, grounding=_context(**kw))
+
+
+async def test_grounding_sends_answer_reference_and_query(
+    runtime,
+) -> None:  # noqa: ANN001
+    verdict = await _ground(runtime, _scored(0.93, 0.88), request=_grounded_request())
+
+    assert verdict.action is GuardAction.NONE and verdict.text == _ANSWER
+    assert verdict.grounding == GroundingCheck(
+        checked=True, scores={"grounding": 0.93, "relevance": 0.88}
+    )
+
+
+async def test_ungrounded_answer_is_blocked(runtime, caplog) -> None:  # noqa: ANN001
+    with caplog.at_level(logging.WARNING):
+        verdict = await _ground(runtime, _scored(0.12, 0.91))
+
+    assert verdict.action is GuardAction.BLOCKED and verdict.text == _REFUSAL
+    assert verdict.policies == ["contextualGroundingPolicy:GROUNDING"]
+    assert verdict.grounding is not None and verdict.grounding.failed == ["grounding"]
+    assert "on an answer blocked" in caplog.text and "grounding 0.12" in caplog.text
+
+
+async def test_detect_only_failure_passes_but_is_logged(
+    runtime, caplog
+) -> None:  # noqa: ANN001
+    response = _scored(0.2, 0.9)
+    response["action"], response["outputs"] = "NONE", []
+    for entry in response["assessments"][0]["contextualGroundingPolicy"]["filters"]:
+        entry["action"] = "NONE"
+    with caplog.at_level(logging.WARNING):
+        verdict = await _ground(runtime, response)
+
+    assert verdict.action is GuardAction.NONE
+    assert verdict.grounding is not None and verdict.grounding.failed == ["grounding"]
+    assert "failed but not blocked" in caplog.text
+
+
+async def test_guardrail_without_grounding_policy_is_logged(
+    runtime, caplog
+) -> None:  # noqa: ANN001
+    with caplog.at_level(logging.WARNING):
+        verdict = await _ground(runtime, _NONE)
+
+    assert verdict.grounding == GroundingCheck(
+        checked=False, skipped_reason="not_assessed"
+    )
+    assert "no contextual grounding policy" in caplog.text
+
+
+async def test_masked_grounded_answer_never_takes_the_reference(
+    runtime,
+) -> None:  # noqa: ANN001
+    masked = "Write to {EMAIL} about the order."
+    response = _anonymized(masked, "EMAIL")
+    # A reply that mirrors every block sent: only the first is the answer.
+    response["outputs"] += [{"text": _CONTEXT}, {"text": _QUERY}]
+    verdict = await _ground(runtime, response)
+
+    assert verdict.action is GuardAction.MASKED and verdict.text == masked
+
+
+async def test_grounding_is_not_sent_with_a_query_check(
+    runtime,
+) -> None:  # noqa: ANN001
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", _NONE, _request(_QUERY))
+    guard = BedrockGuardrail(_grounded_config(), client=client)
+
+    verdict = await guard.acheck(_QUERY, GuardSource.INPUT, grounding=_context())
+
+    assert verdict.grounding is None
+
+
+def test_long_reference_keeps_the_highest_ranked_sections() -> None:
+    top, second, third = "A" * 60_000, "B" * 39_000, "C" * 5_000
+    # The rendered context groups sections by type, not by rank.
+    context = _context("\n".join((third, second, top)), ranked=[top, second, third])
+
+    reference = select_grounding_source(context)
+
+    assert len(reference) == GROUNDING_SOURCE_MAX_CHARS
+    # Whole sections in rank order, then the head of the next one.
+    assert reference == "\n".join((top, second, third[:998]))
+    # At the limit the context goes verbatim; without sections, its head.
+    exact = "x" * GROUNDING_SOURCE_MAX_CHARS
+    assert select_grounding_source(_context(exact, ranked=["a"])) == exact
+    assert select_grounding_source(_context(exact + "y")) == exact
+
+
+async def test_reference_and_query_are_cut_to_bedrock_limits(
+    runtime,
+) -> None:  # noqa: ANN001
+    top, rest = "A" * 70_000, "B" * 70_000
+    await _ground(
+        runtime,
+        _scored(0.9, 0.9),
+        request=_grounded_request(
+            source=top + "\n" + rest[: GROUNDING_SOURCE_MAX_CHARS - 70_001],
+            query="Q" * GROUNDING_QUERY_MAX_CHARS,
+        ),
+        source=rest + top,
+        query="Q" * (GROUNDING_QUERY_MAX_CHARS + 50),
+        ranked=[top, rest],
+    )
+
+
+async def test_oversize_answer_skips_grounding_and_says_so(
+    runtime, caplog
+) -> None:  # noqa: ANN001
+    long_answer = "Vendor supplies parts. " * 250
+    assert len(long_answer) > GROUNDING_ANSWER_MAX_CHARS
+    with caplog.at_level(logging.WARNING):
+        # Screened by the other policies only: no grounding blocks are sent.
+        verdict = await _ground(
+            runtime, _NONE, long_answer, request=_request(long_answer, "OUTPUT")
+        )
+
+    assert verdict.action is GuardAction.NONE
+    assert verdict.grounding == GroundingCheck(
+        checked=False, skipped_reason="answer_too_long"
+    )
+    assert "exceed the 5000-character limit" in caplog.text
+
+
+def test_grounding_requires_the_output_check() -> None:
+    with pytest.raises(ValueError, match="requires check_output"):
+        GuardrailConfig(
+            identifier=_GUARDRAIL_ID,
+            check_output=False,
+            contextual_grounding={"enabled": True},
+        )
+
+
+def test_adapter_accepts_the_port_call_shape() -> None:
+    def shape(func: Any) -> list[tuple[str, Any, bool]]:
+        return [
+            (p.name, p.kind, p.default is not inspect.Parameter.empty)
+            for p in inspect.signature(func).parameters.values()
+        ]
+
+    assert shape(BedrockGuardrail.acheck) == shape(ContentGuardPort.acheck)
+
+
+class _RecordingGuard:
+    """A ContentGuardPort that passes everything and records each call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, GuardSource, dict[str, Any]]] = []
+
+    async def acheck(
+        self, text: str, source: GuardSource, **kwargs: Any
+    ) -> GuardVerdict:
+        self.calls.append((text, source, kwargs))
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+def _recording_chain(config: Config) -> tuple[GraphRAGChain, _RecordingGuard, _Factory]:
+    guard, factory, retriever = _RecordingGuard(), _Factory(), _Retriever()
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=factory,
+        retriever_builders={
+            RetrieverRole.DOCUMENT: lambda: retriever,
+            RetrieverRole.GRAPH: lambda: retriever,
+        },
+        guard=guard,
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    chain.memory_manager = _Memory()  # type: ignore[assignment]
+    return chain, guard, factory
+
+
+@pytest.mark.parametrize("grounded", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_answer_check_gets_what_the_answer_model_was_given(
+    grounded: bool, stream: bool
+) -> None:
+    config = _grounded_config() if grounded else _guarded_config()
+    chain, guard, factory = _recording_chain(config)
+
+    if stream:
+        assert [c async for c in chain.astream(_input())] == [_ANSWER]
+    else:
+        output = await chain.ainvoke(_input())
+        assert isinstance(output, RAGOutput)
+        assert "grounding" not in output.metadata  # the guard reported none
+
+    text, source, kwargs = guard.calls[-1]
+    assert (text, source) == (_ANSWER, GuardSource.OUTPUT)
+    if not grounded:
+        # Off: the plain two-argument call, so a guard written before the
+        # grounding check keeps working.
+        assert kwargs == {}
+        return
+    grounding = kwargs["grounding"]
+    assert grounding.query == _QUERY
+    # The reference is the context string the answer prompt carried.
+    assert _CONTEXT in grounding.source and grounding.source in factory.prompts[-1]
+    assert grounding.ranked_sources == ["[doc-1] " + _CONTEXT]
+
+
+async def test_ungrounded_answer_takes_the_refusal_path(
+    runtime,
+) -> None:  # noqa: ANN001
+    client, stubber = runtime
+    stubber.add_response("apply_guardrail", _NONE, _request(_QUERY))
+    stubber.add_response("apply_guardrail", _scored(0.1, 0.95))
+    chain, _, _, memory = _chain(_grounded_config(), client)
+
+    output = await chain.ainvoke(_input())
+
+    assert isinstance(output, RAGOutput)
+    assert output.answer == _REFUSAL
+    assert output.sources == [] and output.search_results.results == []
+    assert output.metadata["guardrail"] == [
+        {
+            "source": "output",
+            "action": "blocked",
+            "policies": ["contextualGroundingPolicy:GROUNDING"],
+            "reason": "contextual_grounding",
+        }
+    ]
+    assert output.metadata["grounding"]["scores"] == {
+        "grounding": 0.1,
+        "relevance": 0.95,
+    }
+    assert memory.turns == [(_QUERY, _REFUSAL)]
+
+
+def test_no_context_means_no_grounding_reference() -> None:
+    chain, _, _ = _recording_chain(_grounded_config())
+    # The answer step short-circuits to the fixed no-context answer, which is
+    # not screened at all.
+    for context in ("", "   ", EMPTY_CONTEXT_PLACEHOLDER):
+        assert chain._grounding_context({"context": context}) is None
