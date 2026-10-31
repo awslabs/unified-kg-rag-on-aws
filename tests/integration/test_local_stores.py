@@ -28,6 +28,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from gremlin_python.driver.client import Client
@@ -535,3 +536,45 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         vectors.clear([_SUFFIX])
         graph.close()
         vectors.close()
+
+
+def test_default_lucene_mapping_takes_vectors_wider_than_1024(
+    local_config: Config,
+) -> None:
+    # The default vector mapping (lucene HNSW, cosinesimil) on OpenSearch
+    # 2.13 accepts up to 16,000 dimensions (2.12+; 1,024 before), so a
+    # 3,072-dimension model needs no engine switch.
+    dimension = 3072
+    mapping = OpenSearchIndexer._get_knn_vector_mapping(
+        SimpleNamespace(  # type: ignore[arg-type]
+            opensearch_config=local_config.indexing.opensearch,
+            _embedding_dimension=dimension,
+        )
+    )
+    assert mapping["method"]["engine"] == "lucene"
+    assert mapping["method"]["space_type"] == "cosinesimil"
+    client = OpenSearchClient(local_config)
+    name = f"wide-{uuid.uuid4().hex[:8]}"
+    vector = [1.0 / dimension] * dimension
+    try:
+        client.client.indices.create(
+            index=name,
+            body={
+                "settings": {"index": {"knn": True}},
+                "mappings": {"properties": {"embedding": mapping}},
+            },
+        )
+        client.client.index(
+            index=name, id="v1", body={"embedding": vector}, refresh=True
+        )
+        hits = client.client.search(
+            index=name,
+            body={
+                "size": 1,
+                "query": {"knn": {"embedding": {"vector": vector, "k": 1}}},
+            },
+        )["hits"]["hits"]
+        assert [hit["_id"] for hit in hits] == ["v1"]
+    finally:
+        client.client.indices.delete(index=name, ignore_unavailable=True)
+        client.close()

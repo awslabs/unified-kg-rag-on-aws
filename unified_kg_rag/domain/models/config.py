@@ -2118,11 +2118,12 @@ class OpenSearchIndexingConfig(BaseModel):
             # supported OpenSearch versions. faiss HNSW does NOT: it accepts only
             # l2/innerproduct until OpenSearch 2.19 (cosine support) / 2.18
             # (auto-normalization), so faiss + cosinesimil is rejected at index
-            # creation with a mapper_parsing_exception on 2.13. lucene HNSW caps
-            # at 1024 dimensions, which covers the default Titan Embed V2 (1024);
-            # for >1024-dim models set engine: faiss with space_type:
-            # innerproduct (normalized embeddings) instead. Kept in sync with the
-            # index mapping default in OpenSearchIndexer.
+            # creation with a mapper_parsing_exception on 2.13. lucene takes
+            # up to 16,000 dimensions from OpenSearch 2.12 (1,024 before), the
+            # same cap as faiss and nmslib, so the 2.13 default needs no engine
+            # switch for wide models (tests/integration/test_local_stores.py
+            # creates a 3,072-dim index). Kept in sync with the index mapping
+            # default in OpenSearchIndexer.
             "engine": "lucene",
             "space_type": "cosinesimil",
             "ef_construction": 128,
