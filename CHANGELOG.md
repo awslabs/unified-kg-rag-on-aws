@@ -579,13 +579,13 @@ From 0.2.3 (or a `main` checkout since):
   (one more indexed read) and checks the label's mode again when a
   custom-id lookup finds none of its seeds. Before, a label found settled
   was not checked again, so a later switching build expanded only the seeds
-  and, once swept, returned nothing until a restart (#PR).
+  and, once swept, returned nothing until a restart (#473).
 - While a full build switches a Neptune label's vertex ids, graph expansion
   keeps each entity's better-scored copy (the rewritten one of two scored
   alike) instead of always the rewritten one, which could stand farther
   from the seeds while the build has rewritten only part of the edges.
   Results during a switch may still be partial until its sweep ends
-  (`docs/operations.md`) (#PR).
+  (`docs/operations.md`) (#473).
 - The public API exports its errors (`GraphRAGException`,
   `ConfigurationError`, `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `StoreRequestRejectedError`,
@@ -710,7 +710,7 @@ Queries and retrieval.
   instead (#470).
 - Of two equally short paths to an entity, graph expansion keeps the one
   from the seed the caller ranked first (then the first by content), not
-  the one whose seed name sorts first (#PR).
+  the one whose seed name sorts first (#473).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
