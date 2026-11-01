@@ -690,6 +690,10 @@ From 0.2.3 (or a `main` checkout since):
 - A `processing.chunking.chunk_overlap` not below `fallback_chunk_size`
   fails the load, naming both, instead of every chunker at the chunking
   stage (#474).
+- The extraction prompt's relationship-type examples are the
+  `{relationship_types}` variable, which a `graph_extraction` custom prompt
+  may use. The default prompt renders byte for byte as before, and
+  extraction records keep their keys (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

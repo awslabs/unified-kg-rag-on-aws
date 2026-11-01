@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
 from .base import (
@@ -38,6 +39,41 @@ transforming unstructured text into precise, comprehensive knowledge graphs.
 MISSION: Extract entities and relationships from text with maximum accuracy and completeness while strictly adhering to
 output format requirements."""
 
+# What {relationship_types} renders to: example relationship types the model
+# may use or go beyond. It was fixed text of the rules before it became a
+# slot, so the extraction-record fingerprint hashes the template with it
+# filled in (GraphExtractionPrompt.inlined_slots).
+DEFAULT_RELATIONSHIP_TYPES = """## Relationship Types (be specific and descriptive):
+- **HIERARCHICAL**: MANAGES, REPORTS_TO, OWNS, CONTAINS, PART_OF
+- **COLLABORATIVE**: WORKS_WITH, PARTNERS_WITH, COLLABORATES_WITH
+- **OPERATIONAL**: USES, CREATES, OPERATES, DEPENDS_ON, PROCESSES
+- **TEMPORAL**: OCCURS_BEFORE, OCCURS_AFTER, SCHEDULED_FOR
+- **SPATIAL**: LOCATED_IN, NEAR, CONTAINS_LOCATION
+- **INFORMATIONAL**: COMMUNICATES_WITH, INFORMS, REPORTS_TO"""
+
+# What {entity_types} renders to for an empty entity_types list.
+ANY_ENTITY_TYPES = "Use any entity types relevant to the document's domain."
+
+
+def format_entity_types(entity_types: Sequence[str]) -> str:
+    """Render config entity types into the prompt's category block.
+
+    Each item is rendered as ``- **LABEL**: description`` (the description
+    after the first ':' is optional). An empty list lets the model choose
+    any relevant types: the prompt slot then says so explicitly.
+    """
+    if not entity_types:
+        return ANY_ENTITY_TYPES
+    lines = []
+    for item in entity_types:
+        label, sep, desc = item.partition(":")
+        label = label.strip()
+        if not label:
+            continue
+        lines.append(f"- **{label}**:{desc.rstrip()}" if sep else f"- **{label}**")
+    return "\n".join(lines)
+
+
 _GRAPH_EXTRACTION_RULES = """# ENTITY EXTRACTION RULES
 
 ## Entity Categories (STRICT - use only these types):
@@ -73,13 +109,7 @@ Assign a confidence score based on how clearly the entity is identified in the t
 
 # RELATIONSHIP EXTRACTION RULES
 
-## Relationship Types (be specific and descriptive):
-- **HIERARCHICAL**: MANAGES, REPORTS_TO, OWNS, CONTAINS, PART_OF
-- **COLLABORATIVE**: WORKS_WITH, PARTNERS_WITH, COLLABORATES_WITH
-- **OPERATIONAL**: USES, CREATES, OPERATES, DEPENDS_ON, PROCESSES
-- **TEMPORAL**: OCCURS_BEFORE, OCCURS_AFTER, SCHEDULED_FOR
-- **SPATIAL**: LOCATED_IN, NEAR, CONTAINS_LOCATION
-- **INFORMATIONAL**: COMMUNICATES_WITH, INFORMS, REPORTS_TO
+{relationship_types}
 
 ## Strength Scoring (1-10 scale):
 - **9-10**: Direct dependencies, ownership, core operations
@@ -221,6 +251,7 @@ class GraphExtractionPrompt(BasePrompt):
         "max_entities_per_chunk",
         "max_relationships_per_chunk",
         "entity_types",
+        "relationship_types",
         "target_language",
     ]
 
@@ -228,6 +259,20 @@ class GraphExtractionPrompt(BasePrompt):
     def output_floor(cls, config: "Config") -> int:
         # Defaults: (50 entities + 50 relationships) x 150 + 8192 = 23192.
         return graph_output_floor(config)
+
+    @classmethod
+    def config_variables(cls, config: "Config") -> dict[str, str]:
+        """The variables rendered from ``config`` (the same for every unit)."""
+        return {
+            "entity_types": format_entity_types(
+                config.processing.graph_extraction.entity_types
+            ),
+            **cls.inlined_slots(config),
+        }
+
+    @classmethod
+    def inlined_slots(cls, config: "Config") -> dict[str, str]:
+        return {"relationship_types": DEFAULT_RELATIONSHIP_TYPES}
 
     # Persona/mission (domain-adaptable) and the rules + output format the
     # parser and grounding guard rely on (kept by tuned prompts).

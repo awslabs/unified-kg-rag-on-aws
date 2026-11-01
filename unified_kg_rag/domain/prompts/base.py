@@ -8,7 +8,9 @@ adapter layer (``adapters/llm/chain_factory.py``) turns a resolved
 ``ResolvedPrompt`` into a LangChain ``ChatPromptTemplate``.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from string import Formatter
 from typing import TYPE_CHECKING, ClassVar
 
 from unified_kg_rag.domain.ingestion.chunk_length import max_chars
@@ -54,6 +56,36 @@ def graph_output_floor(config: "Config") -> int:
     extraction = config.processing.graph_extraction
     records = extraction.max_entities_per_chunk + extraction.max_relationships_per_chunk
     return records * TOKENS_PER_GRAPH_RECORD + THINKING_HEADROOM_TOKENS
+
+
+def fill_slots(template: str, values: Mapping[str, str]) -> str:
+    """``template`` with the placeholders named in ``values`` replaced by
+    their value, every other placeholder and escaped brace kept as written.
+
+    A template that does not parse (an unmatched brace) is returned as is.
+    """
+    if not values:
+        return template
+    try:
+        parts = list(Formatter().parse(template))
+    except ValueError:
+        return template
+    out: list[str] = []
+    for literal, field, spec, conversion in parts:
+        out.append(literal.replace("{", "{{").replace("}", "}}"))
+        if field is None:
+            continue
+        if field in values and not spec and not conversion:
+            out.append(values[field])
+            continue
+        out.append(
+            "{"
+            + field
+            + (f"!{conversion}" if conversion else "")
+            + (f":{spec}" if spec else "")
+            + "}"
+        )
+    return "".join(out)
 
 
 @dataclass(frozen=True)
@@ -110,6 +142,16 @@ class BasePrompt:
         rest return the static ``min_output_tokens``.
         """
         return cls.min_output_tokens
+
+    @classmethod
+    def inlined_slots(cls, config: "Config") -> dict[str, str]:
+        """``{variable: value}`` of the slots that replaced fixed template text.
+
+        The extraction-record fingerprint hashes a template with these filled
+        in (:func:`fill_slots`), so turning fixed text into a variable whose
+        value under ``config`` is that text re-keys no record it shaped.
+        """
+        return {}
 
     @classmethod
     def validate_templates(cls) -> None:

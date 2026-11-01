@@ -691,7 +691,8 @@ def unit_record_fingerprint(
     extraction for a unit's ``claims`` record, the target language, and the
     prompt templates in effect: the built-in ones (code) as well as
     ``custom_prompts`` overrides, so editing a template re-keys the records
-    it shaped. The extraction store keys a record by this fingerprint and
+    it shaped (each hashed with its ``inlined_slots`` filled in). The
+    extraction store keys a record by this fingerprint and
     the hash of the unit's text
     (``domain.ingestion.contributions.record_key``).
     """
@@ -700,6 +701,7 @@ def unit_record_fingerprint(
         GraphExtractionPrompt,
         GraphRefinementPrompt,
     )
+    from unified_kg_rag.domain.prompts.base import fill_slots
 
     stages = {_P.GRAPH_EXTRACTION}
     prompts: list[Any] = [GraphExtractionPrompt]
@@ -722,12 +724,16 @@ def unit_record_fingerprint(
             "target_language": config.processing.translation.target_language.value,
             "prompts": [
                 compute_hash(
-                    resolved.system_prompt_template
-                    + "\n"
-                    + resolved.human_prompt_template
+                    fill_slots(
+                        resolved.system_prompt_template
+                        + "\n"
+                        + resolved.human_prompt_template,
+                        prompt.inlined_slots(config),
+                    )
                 )
-                for resolved in (
-                    prompt.resolve(config.custom_prompts) for prompt in prompts
+                for prompt, resolved in (
+                    (prompt, prompt.resolve(config.custom_prompts))
+                    for prompt in prompts
                 )
             ],
         }

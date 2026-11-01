@@ -1500,7 +1500,8 @@ custom_prompts:
 - 각 프롬프트의 데이터 변수는 system이나 human 템플릿에 있어야 합니다
   (`graph_extraction`과 `claim_extraction`은 `{input_text}`, `answer_generation`은
   `{query}`와 `{context}` 등). `{max_entities_per_chunk}` 같은 한도와
-  `{entity_types}`는 빼도 됩니다.
+  `{entity_types}`, `{relationship_types}`(내장 프롬프트의 관계 유형 예시)는
+  빼도 됩니다.
 
 `*_system` 오버라이드는 출력 지시를 포함한 내장 시스템 프롬프트 전체를 대체합니다.
 `graph_extraction`과 `community_report`에서는 파서가 읽는 XML 형식(추출에서는 환각 방지

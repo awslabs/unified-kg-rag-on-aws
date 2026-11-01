@@ -1689,7 +1689,8 @@ the key:
 - Each prompt's data variables must appear in its system or human template
   (`{input_text}` for `graph_extraction` and `claim_extraction`, `{query}` and
   `{context}` for `answer_generation`, ...); limits such as
-  `{max_entities_per_chunk}` and `{entity_types}` may be left out.
+  `{max_entities_per_chunk}`, `{entity_types}` and `{relationship_types}`
+  (the relationship-type examples of the built-in prompt) may be left out.
 
 A `*_system` override replaces the whole built-in system prompt, output
 instructions included. For `graph_extraction` and `community_report` that is
