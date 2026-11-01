@@ -12,6 +12,7 @@ dense scripts, where 8,000 characters are ~6,000 tokens.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from unittest import mock
 
@@ -154,6 +155,18 @@ def test_default_unit_is_chars_and_uses_the_stock_splitter() -> None:
     assert chunker.chunk_processor.chunk_overlap == 500
 
 
+def test_token_unit_wires_the_token_splitters() -> None:
+    # Both splitters a chunker builds measure in the configured unit: a
+    # character splitter here would cut 1,200 "tokens" as 1,200 characters.
+    config = _config(_TOKEN_SIZES)
+    fallback = SimpleTextChunker(config, show_progress=False).fallback_splitter
+    pre = _intelligent(config).pre_splitter
+    assert isinstance(fallback, TokenBudgetTextSplitter)
+    assert isinstance(pre, TokenBudgetTextSplitter)
+    assert (fallback._chunk_size, fallback._chunk_overlap) == (1200, 125)
+    assert (pre._chunk_size, pre._chunk_overlap) == (12500, 125)
+
+
 @pytest.mark.parametrize("name", ["ko", "ja", "en", "mixed"])
 def test_token_chunks_stay_within_the_token_sizes(name: str) -> None:
     text = korean_text(8000) if name == "ko" else _TEXTS[name]()
@@ -234,19 +247,43 @@ def test_small_chunks_are_merged_by_tokens() -> None:
 
 
 # The splitter never merges empty pieces (its splits drop them).
-@given(st.lists(st.text(min_size=1, max_size=12), max_size=12))
+@given(
+    st.lists(st.text(min_size=1, max_size=12), max_size=12),
+    st.lists(st.text(min_size=1, max_size=6), min_size=1, max_size=3),
+)
 def test_window_tally_equals_the_estimate_of_the_joined_text(
-    pieces: list[str],
+    pieces: list[str], extra: list[str]
 ) -> None:
     window = _Window()
     for piece in pieces:
         window.push(_Piece.of(piece))
     assert window.tokens() == estimate_token_count("".join(pieces))
+    # Appended pieces join at a seam too (a word may continue across it).
+    appended = [_Piece.of(e) for e in extra]
+    assert window.tokens(*appended) == estimate_token_count("".join(pieces + extra))
     if pieces:
         window.pop_front()
         assert window.tokens() == estimate_token_count("".join(pieces[1:]))
-        extra = _Piece.of(" x")
-        assert window.tokens(extra) == estimate_token_count("".join(pieces[1:]) + " x")
+        assert window.tokens(*appended) == estimate_token_count(
+            "".join(pieces[1:] + extra)
+        )
+
+
+def test_token_overlap_stays_within_its_budget() -> None:
+    # Distinct words, so the text two neighbours share is their overlap.
+    text = " ".join(f"w{i:04d}" for i in range(3000))
+    splitter = TokenBudgetTextSplitter(
+        chunk_size=600,
+        chunk_overlap=100,
+        separators=_SPLITTER_SEPARATORS,
+        is_separator_regex=True,
+    )
+    chunks = splitter.split_text(text)
+    assert len(chunks) > 2
+    for left, right in itertools.pairwise(chunks):
+        seen = set(left.split())
+        shared = " ".join(w for w in right.split() if w in seen)
+        assert 0 < estimate_token_count(shared) <= 100
 
 
 @given(

@@ -109,6 +109,28 @@ _GOLDEN: dict[str, tuple[str, str]] = {
     ),
 }
 
+# The same for the .md/.html files, as UnstructuredMarkdownLoader and
+# UnstructuredHTMLLoader (langchain-community 0.3.31, unstructured 0.24.1)
+# parsed them; checked only where unstructured is installed (the CI
+# optional-parsers job), so a partition change fails there even without
+# langchain-community.
+_MARKUP_GOLDEN: dict[str, tuple[str, str]] = {
+    "terms.html": (
+        "157d44ff1c543c5055dfa067b12dde6d",
+        "5b75e99b-d299-58a5-b289-1ed2d4f933a8",
+    ),
+    "terms.md": (
+        "360b838da5794068589568a4df31df47",
+        "8bd144a9-1401-500d-adc9-091eec91b4e0",
+    ),
+}
+
+
+def _goldens() -> dict[str, tuple[str, str]]:
+    """The golden entries of the files the corpus fixture writes."""
+    return {**_GOLDEN, **(_MARKUP_GOLDEN if _UNSTRUCTURED_AVAILABLE else {})}
+
+
 _PDF_METADATA = {
     "producer": "fixture",
     "creator": "loader_corpus",
@@ -132,7 +154,9 @@ def corpus(tmp_path: Path) -> Path:
 
 
 def test_golden_text_hashes_and_document_ids(corpus: Path) -> None:
-    for name, (text_hash, document_id) in _GOLDEN.items():
+    goldens = _goldens()
+    assert sorted(goldens) == sorted(path.name for path in corpus.iterdir())
+    for name, (text_hash, document_id) in goldens.items():
         document = _parse(corpus / name)
         got = compute_text_hash(document.page_content)
         assert (got, compute_document_id(name, got)) == (
@@ -248,7 +272,7 @@ def test_same_documents_as_the_community_loaders(corpus: Path, monkeypatch) -> N
         assert new.document_id == old.document_id, path.name
         assert new.metadata == old.metadata, path.name
         compared += 1
-    assert compared == len(_GOLDEN) + (2 if _UNSTRUCTURED_AVAILABLE else 0)
+    assert compared == len(_goldens())
 
 
 # --- an incremental rerun after the switch -------------------------------------
@@ -305,10 +329,11 @@ def test_rerun_after_switch_reports_no_changed_document(
     else:
         # The corpus as the old loaders recorded it: their content hashes.
         first = _run(corpus, store, mocker)
+        goldens = _goldens()
         for record in store.list_all():
             name = Path(record.file_path or "").name
-            if name in _GOLDEN:
-                store.put(record.model_copy(update={"content_hash": _GOLDEN[name][0]}))
+            if name in goldens:
+                store.put(record.model_copy(update={"content_hash": goldens[name][0]}))
     assert first.incremental_delta is not None
     indexed = len(first.incremental_delta.new)
     assert indexed == len(list(corpus.iterdir()))

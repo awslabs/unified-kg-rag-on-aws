@@ -136,6 +136,17 @@ def _cli_stops_raise(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _restored_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CLI run with ``--output-format json`` sends the shared console to
+    stderr for the rest of the process (``conventions.exits_on_sigterm``);
+    a test that runs one in-process would otherwise leave every later
+    test's console output on stderr."""
+    from unified_kg_rag.application.cli.display import console
+
+    monkeypatch.setattr(console, "stderr", console.stderr)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_aws_env(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
