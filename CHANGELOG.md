@@ -670,6 +670,10 @@ From 0.2.3 (or a `main` checkout since):
   the load warns when `contextual_grounding.enabled` has no guardrail
   identifier or `length_unit: tokens` keeps every character-default size
   (#470).
+- `GraphRAGChain` refuses to build (`ConfigurationError`) when
+  `aws.bedrock.guardrail.contextual_grounding.enabled` is on and
+  `check_output` off, however code set them: the nested flag is validated
+  without `check_output`, and a refused assignment stays applied (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

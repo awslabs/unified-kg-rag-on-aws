@@ -718,14 +718,27 @@ class GuardrailConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_contextual_grounding(self) -> "GuardrailConfig":
-        # The grounding check rides on the answer's check: without it, an
-        # enabled check would silently never run.
+        self.check_contextual_grounding()
+        return self
+
+    def check_contextual_grounding(self) -> None:
+        """Refuse an enabled grounding check without ``check_output``.
+
+        The grounding check rides on the answer's check: without it, an
+        enabled check would silently never run. Checked at load and on
+        assignment here, and again by the query chain when it is built: a
+        refused assignment stays applied, and ``contextual_grounding.enabled``
+        set in code is validated by its own section, which cannot see
+        ``check_output``.
+
+        Raises:
+            ValueError: The grounding check is on and ``check_output`` off.
+        """
         if self.contextual_grounding.enabled and not self.check_output:
             raise ValueError(
                 "contextual_grounding.enabled requires check_output: the "
                 "grounding check runs on the answer's guardrail check"
             )
-        return self
 
 
 class TransientRetryConfig(BaseModel):
