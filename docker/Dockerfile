@@ -20,8 +20,10 @@ FROM ${BASE_IMAGE} AS base
 COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 
 # Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
-# from S3 (the loader only reads a local Path). libgomp1 is needed by the
-# scientific stack (numpy/scikit-learn).
+# from S3 (the loader only reads a local Path). libgomp1 is the system OpenMP
+# runtime that numba's `omp` threading layer links (numba comes with the
+# `unstructured` extra); the core and eval wheels bundle their own libgomp
+# (scikit-network) or none, so a default image does not load it.
 # Versions are pinned (reproducible builds + satisfies SAST). Bump these when
 # the python:3.12-slim base advances and the pinned version is dropped from the
 # apt repo (check with `apt-cache policy awscli libgomp1` in the base image).
