@@ -846,7 +846,9 @@ class GraphGleaner(BaseProcessor):
             corrected.append("name")
 
         entity = next((e for e in record.entities if e.id == entity_id), None)
-        corrected_type = self._clean_text(details.get("corrected_type"))
+        corrected_type = self.schema.entity_type(
+            self._clean_text(details.get("corrected_type")) or ""
+        )
         description = self._clean_text(details.get("description"))
         if entity is not None:
             if corrected_type and corrected_type != entity.type:
@@ -920,7 +922,10 @@ class GraphGleaner(BaseProcessor):
 
         original_short_id = relationship.short_id
         corrected: list[str] = []
-        corrected_type = self._clean_text(details.get("corrected_type"))
+        # The declared label of an in-schema type, before the id is re-derived.
+        corrected_type = self.schema.relationship_type(
+            self._clean_text(details.get("corrected_type")) or ""
+        )
         if corrected_type and corrected_type != relationship.type:
             relationship.type = corrected_type
             corrected.append("type")

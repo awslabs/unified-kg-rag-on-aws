@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, TypeVar
 
+from unified_kg_rag.domain.ingestion.schema_conformance import SchemaConformance
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -202,6 +203,7 @@ class BaseProcessor:
         self.config = config
         self.extraction_config = self.config.processing.graph_extraction
         self.show_progress = show_progress
+        self.schema = SchemaConformance(self.extraction_config.extraction_schema())
 
     def get_text_for_processing(self, text_unit: TextUnit) -> str:
         if text_unit.translated_texts:
@@ -251,7 +253,7 @@ class BaseProcessor:
                 short_id=entity_id[:8],
                 name=name,
                 name_embedding=None,
-                type=coerce_llm_text(entity_data.get("type")),
+                type=self.schema.entity_type(coerce_llm_text(entity_data.get("type"))),
                 description=coerce_llm_text(entity_data.get("description"), join=True),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
@@ -304,7 +306,10 @@ class BaseProcessor:
         try:
             raw_source_name = coerce_llm_text(rel_data.get("source"))
             raw_target_name = coerce_llm_text(rel_data.get("target"))
-            rel_type = coerce_llm_text(rel_data.get("type"))
+            # The declared label of an in-schema type, before the id is built.
+            rel_type = self.schema.relationship_type(
+                coerce_llm_text(rel_data.get("type"))
+            )
 
             source_name = clean_display_name(raw_source_name)
             target_name = clean_display_name(raw_target_name)

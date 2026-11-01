@@ -1702,8 +1702,11 @@ class GraphExtractionConfig(BaseModel):
         description=(
             "Relationship types of the extraction schema, each 'LABEL: short "
             "description' or {label, description, iri} (iri: the ontology "
-            "property the type maps to). Empty: none declared. Accepted and "
-            "validated; extraction does not use them yet."
+            "property the type maps to). The extraction prompt lists them (and"
+            " relationship_patterns) instead of its example types, and unless "
+            "schema_mode is off a type naming one, or an entity type naming a "
+            "declared one, is written as declared. Empty: none declared, the "
+            "prompt shows its examples."
         ),
     )
     relationship_patterns: list[RelationshipPatternField] = Field(
