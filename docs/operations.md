@@ -325,9 +325,13 @@ Switching an existing graph needs one full build:
    old or over rewritten vertices only, and results may be partial (fewer
    or farther entities) until the sweep ends. Once the label is settled in
    the query's mode, custom-mode queries go back to vertex-id lookups. A
-   running query service needs no restart: each query reads the label's
-   switch vertex (one indexed read), and a custom-mode lookup that finds
-   none of its seeds checks the label's mode again.
+   running query service needs no restart: in `custom` mode each query
+   reads the label's switch vertex (one indexed read), and a lookup that
+   finds none of its seeds checks the label's mode again. In `property` mode
+   a label found in property mode is not read again (its lookups find the
+   vertices of both modes, and the rewritten copy is told by its custom
+   vertex id), so a running property-mode service logs no WARNING for a
+   switch to `custom` it started before.
 4. If a write fails, the build keeps the old vertices for a retry, and the
    switch vertex stays. In that state both modes refuse incremental runs
    ("did not finish") until a full build succeeds; queries go on reading by

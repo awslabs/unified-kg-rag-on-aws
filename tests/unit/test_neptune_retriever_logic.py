@@ -218,6 +218,40 @@ def test_a_path_from_an_unreturned_seed_ranks_after_every_seed(retriever) -> Non
     assert x.content.endswith("Path: S2 -> X"), x.content
 
 
+def test_of_equal_paths_a_rewritten_copy_beats_a_better_seeds_old_copy(
+    retriever,
+) -> None:
+    # During a vertex-id switch, x is reached from s1 over its old copy and
+    # from s2 over its rewritten one: the rewritten copy wins although s1
+    # ranks first.
+    rows = [
+        _entity_item("s1", 0, rank=1),
+        _entity_item("s2", 0, rank=1),
+        _from_seed("s1") | {"superseded": True},
+        _from_seed("s2"),
+    ]
+    for ordered in (rows, rows[::-1]):
+        results = retriever._process_traversal_results(
+            ordered, SearchQuery(query="x", filters={"id": ["s1", "s2"]})
+        )
+        (x,) = [r for r in results if r.source == "x"]
+        assert x.content.endswith("Path: S2 -> X"), x.content
+
+
+def test_seeds_sharing_a_name_rank_a_path_by_the_better_one(retriever) -> None:
+    # Paths name their seed; two seeds named alike (a1 first, a2 last) rank
+    # a path from that name by a1, ahead of seed b's.
+    a1, a2 = _entity_item("a1", 0), _entity_item("a2", 0)
+    a1["node"]["name"] = a2["node"]["name"] = ["ZETA"]
+    rows = [a1, a2, _entity_item("b", 0), _from_seed("zeta"), _from_seed("b")]
+    for ordered in (rows, rows[::-1]):
+        results = retriever._process_traversal_results(
+            ordered, SearchQuery(query="x", filters={"id": ["a1", "b", "a2"]})
+        )
+        (x,) = [r for r in results if r.source == "x"]
+        assert x.content.endswith("Path: ZETA -> X"), x.content
+
+
 def test_process_traversal_results_skips_missing_id(retriever) -> None:
     query = SearchQuery(query="x")
     items = [{"node": {"name": ["NoId"]}, "path": [], "node_type": "Entity-default"}]
