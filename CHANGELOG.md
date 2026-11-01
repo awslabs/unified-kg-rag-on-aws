@@ -677,7 +677,9 @@ Queries and retrieval.
   vertex's edges: a hub contributes its first `max_results_per_hop`
   neighbours by id, as the embedded store does, and of two equally short
   paths to an entity the first by content is kept, so two builds of one
-  graph expand alike (#PR).
+  graph expand alike. Ordering reads every neighbour of an expanded hub;
+  `indexing.neptune.deterministic_order: false` keeps the store's order
+  instead (#PR).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

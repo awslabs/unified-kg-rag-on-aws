@@ -2138,6 +2138,24 @@ class NeptuneIndexingConfig(BaseModel):
         ),
     )
 
+    deterministic_order: bool = Field(
+        default=True,
+        description=(
+            "Neptune graph expansion takes each vertex's max_results_per_hop "
+            "neighbours in id order, so two builds of one graph (edges "
+            "written in another order) expand to the same entities: "
+            "reproducible results across rebuilds. The cost: each expanded "
+            "vertex has all its neighbours read and sorted before the cut, "
+            "which grows with hub degree (Gremlin Server, 2,500-neighbour "
+            "hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour "
+            "hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: "
+            "the first neighbours the store returns (an order Neptune does "
+            "not specify), so a rebuild can change the results. Ties between "
+            "equally short paths break by content either way. The embedded "
+            "SQLite graph store always takes neighbours by id and ignores it."
+        ),
+    )
+
     vertex_ids: Literal["property", "custom"] = Field(
         default="property",
         description=(

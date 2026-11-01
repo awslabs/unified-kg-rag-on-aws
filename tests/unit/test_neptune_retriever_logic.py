@@ -463,6 +463,27 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
     )
 
 
+async def test_entity_traversal_without_deterministic_order_keeps_the_store_order(
+    retriever, config
+) -> None:
+    # indexing.neptune.deterministic_order: false is the unordered limit()
+    # traversal: a hub's first neighbours as the store returns them, the
+    # rest of it never read.
+    config.indexing.neptune.deterministic_order = False
+    object.__setattr__(retriever, "_max_hops", 2)
+    object.__setattr__(retriever, "_max_results_per_hop", 7)
+    query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
+    text = await _entity_traversal_text(retriever, ["e1", "e2", "e3", "e4"], query)
+    assert text == (
+        "g.V().hasLabel('Entity-default')"
+        ".has('id',within(['e1','e2','e3','e4']))"
+        ".union(__.identity(),__.local(__.repeat(__.local(__.both()"
+        ".hasLabel('Entity-default').limit(7))"
+        ".has('id',without(['e1','e2','e3','e4'])).dedup().limit(8))"
+        ".times(2).emit().dedup().limit(8)))"
+    )
+
+
 async def test_entity_traversal_keeps_every_seed(retriever, config) -> None:
     # A fixed cap of 10 silently dropped the seeds a caller passed beyond it
     # (local search and DRIFT pass up to top_k candidate ids).

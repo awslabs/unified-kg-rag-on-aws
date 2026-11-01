@@ -209,3 +209,12 @@ def test_prompt_cache_ttl_shapes_no_answer() -> None:
 
 def test_location_fields_are_config_fields() -> None:
     assert cache_keys._LOCATION_FIELDS <= set(_FIELDS)
+
+
+def test_the_neighbour_order_shapes_answers_but_keys_no_stage() -> None:
+    # It changes which entities graph expansion returns (eval manifests and
+    # paired comparisons record it), never a cached stage output.
+    path = "indexing.neptune.deterministic_order"
+    assert shapes_answers(path)
+    assert path in answer_settings(Config())
+    assert not isinstance(classify(path), Keyed)

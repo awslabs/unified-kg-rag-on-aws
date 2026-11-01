@@ -192,7 +192,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # fan out unbounded: its first n by id, as the embedded store takes
         # them, not the first n the store happens to keep (two builds of one
         # graph, with their edges written in another order, expanded to
-        # other entities). The seeds come back through the identity()
+        # other entities); indexing.neptune.deterministic_order: false takes
+        # the store's first n, without reading the rest of a hub. The seeds come back through the identity()
         # branch (path length 1, the top relevance band, never cut);
         # repeat().emit() emits from the first hop on, never the seed itself,
         # and the expansion excludes the seeds so it spends its budget on new
@@ -213,18 +214,18 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 return g.V(*vertex_ids(entity_label, [str(s) for s in seed_ids]))
             return g.V().hasLabel(entity_label).has("id", P.within(seed_ids))
 
+        def neighbours() -> GraphTraversal:
+            reached = __.both().hasLabel(entity_label)
+            if self._neptune_config.deterministic_order:
+                reached = reached.order().by("id")
+            return reached.limit(self._max_results_per_hop)
+
         def build(g: GraphTraversalSource) -> Traversal:
             traversal = seeds(g).union(
                 __.identity(),
                 __.local(
                     __.repeat(
-                        __.local(
-                            __.both()
-                            .hasLabel(entity_label)
-                            .order()
-                            .by("id")
-                            .limit(self._max_results_per_hop)
-                        )
+                        __.local(neighbours())
                         .has("id", P.without(seed_ids))
                         .dedup()
                         .limit(per_seed_limit)
