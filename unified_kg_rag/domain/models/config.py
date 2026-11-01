@@ -1367,10 +1367,12 @@ class ChunkingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_chunk_sizes(self, info: ValidationInfo) -> "ChunkingConfig":
-        if info.field_name is not None:
+        if info.field_name in type(self).model_fields:
             # An assignment (one field at a time): the sizes are checked
             # together where they are given together, so code can set
-            # several in any order.
+            # several in any order. Validated as a nested section, the
+            # field name is the parent's (``chunking``) and the sizes are
+            # checked.
             return self
         if self.min_chunk_size >= self.max_chunk_size:
             raise ValueError("min_chunk_size must be less than max_chunk_size")

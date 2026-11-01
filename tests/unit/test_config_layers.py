@@ -454,6 +454,42 @@ def test_a_chunk_length_unit_set_in_code_is_the_enum() -> None:
     assert chunking.length_unit is ChunkLengthUnit.TOKENS
 
 
+_BAD_CHUNK_SIZES = [
+    ({"min_chunk_size": 5000, "max_chunk_size": 100}, "min_chunk_size must be"),
+    ({"chunk_overlap": 1000}, "chunk_overlap must be"),
+    ({"pre_chunk_size": 400}, "pre_chunk_overlap must be"),
+]
+
+
+@pytest.mark.parametrize(("sizes", "message"), _BAD_CHUNK_SIZES)
+def test_inconsistent_chunk_sizes_fail_at_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sizes: dict, message: str
+) -> None:
+    # Validated as the nested chunking section, the sizes are checked
+    # together: from a file, from UKR__ variables and from model_validate.
+    from pydantic import ValidationError
+
+    from unified_kg_rag.shared import ConfigurationError
+
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"processing": {"chunking": sizes}}))
+    with pytest.raises(ConfigurationError, match=message):
+        ConfigLoader(path).load_config()
+    with pytest.raises(ValidationError, match=message):
+        Config.model_validate({"processing": {"chunking": sizes}})
+    for key, value in sizes.items():
+        monkeypatch.setenv(f"UKR__PROCESSING__CHUNKING__{key.upper()}", str(value))
+    with pytest.raises(ConfigurationError, match=message):
+        ConfigLoader().load_config()
+
+
+def test_chunk_sizes_set_in_code_one_at_a_time_in_any_order() -> None:
+    chunking = Config().processing.chunking
+    chunking.min_chunk_size = 9000  # above the default max until the next line
+    chunking.max_chunk_size = 20000
+    assert (chunking.min_chunk_size, chunking.max_chunk_size) == (9000, 20000)
+
+
 def test_check_output_turned_off_under_grounding_in_code_is_refused() -> None:
     from pydantic import ValidationError
 
