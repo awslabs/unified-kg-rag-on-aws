@@ -317,12 +317,17 @@ Switching an existing graph needs one full build:
    expansion never refuses a label: while the label is in the other mode or
    holds a switch vertex, it looks vertices up by their `id` property (both
    modes write it) and logs a WARNING once per label. During the build it
-   reads each entity once, the rewritten copy where the build has written
-   one and the old copy otherwise. Once the label is settled in the query's
-   mode, custom-mode queries go back to vertex-id lookups. A running query
-   service needs no restart: each query reads the label's switch vertex (one
-   indexed read), and a custom-mode lookup that finds none of its seeds
-   checks the label's mode again.
+   reads each entity once: of its old and its rewritten copy, the one nearer
+   the seeds (the rewritten one when both are as near), and the old copy
+   where the build has not rewritten it yet. The expansion then reads a
+   graph split between old and new copies: the build replaces each edge's
+   old copy with one between the rewritten endpoints, so a path runs over
+   old or over rewritten vertices only, and results may be partial (fewer
+   or farther entities) until the sweep ends. Once the label is settled in
+   the query's mode, custom-mode queries go back to vertex-id lookups. A
+   running query service needs no restart: each query reads the label's
+   switch vertex (one indexed read), and a custom-mode lookup that finds
+   none of its seeds checks the label's mode again.
 4. If a write fails, the build keeps the old vertices for a retry, and the
    switch vertex stays. In that state both modes refuse incremental runs
    ("did not finish") until a full build succeeds; queries go on reading by

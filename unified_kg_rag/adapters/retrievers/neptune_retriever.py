@@ -263,7 +263,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
                     functools.partial(build, custom_ids=custom_ids, switching=switching)
                 )
         if switching is not None:
-            return self._rewritten_copies(rows, entity_label, switching)
+            return self._mark_old_copies(rows, entity_label, switching)
         return rows
 
     def _settled(self, label: str) -> bool:
@@ -283,7 +283,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         a label of the other mode (the query service switched before the
         full build's first write, or the build before the query service) is
         read as it is, and one being switched is read whole, the rewritten
-        and the not yet rewritten vertices (see :meth:`_rewritten_copies`).
+        and the not yet rewritten vertices (see :meth:`_mark_old_copies`).
         Refusing the label failed every graph expansion until the build
         ended; the indexer still refuses writes of the other mode.
 
@@ -336,25 +336,29 @@ class NeptuneRetriever(GraphExpansionRetriever):
             f"neptune-vertex-id-switch:{label}:{target}",
             "Neptune label '%s' is being rewritten with vertex_ids '%s': "
             "graph expansion looks its vertices up by their id property "
-            "until the full build ends (rewritten vertices win over "
-            "their old copies)",
+            "until the full build ends (results may be partial until "
+            "then: its edges are split between old and rewritten vertices)",
             label,
             target,
         )
         return False, target
 
     @staticmethod
-    def _rewritten_copies(
+    def _mark_old_copies(
         rows: list[Any], label: str, target: str
     ) -> list[dict[str, Any]]:
-        """``rows`` (projected with each vertex's ``vertex_id``) without the
-        old copy of a vertex whose rewritten copy came back too.
+        """``rows`` (projected with each vertex's ``vertex_id``) without
+        their ``vertex_id``, the old copy of a vertex whose rewritten copy
+        came back too marked ``superseded``.
 
         A label a full build is switching to ``target`` holds a vertex it
         has rewritten twice, under its old and its new vertex id, with its
         old and its new edges, until the sweep drops the old copy; the
         rewritten one is the one whose vertex id is of the ``target`` mode.
-        A vertex not rewritten yet keeps its one (old) copy.
+        A vertex not rewritten yet keeps its one (old) copy. Both copies are
+        kept: the ranking keeps the better-scored one (the old copy may be
+        nearer the seeds over edges not rewritten yet), the rewritten one of
+        two scored alike.
         """
 
         def item_id(row: dict[str, Any]) -> str | None:
@@ -370,11 +374,13 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         dict_rows = [row for row in rows if isinstance(row, dict)]
         new = {item_id(row) for row in dict_rows if rewritten(row)}
-        kept: list[dict[str, Any]] = []
+        marked: list[dict[str, Any]] = []
         for row in dict_rows:
-            if rewritten(row) or item_id(row) not in new:
-                kept.append({k: v for k, v in row.items() if k != "vertex_id"})
-        return kept
+            kept = {k: v for k, v in row.items() if k != "vertex_id"}
+            if not rewritten(row) and item_id(row) in new:
+                kept["superseded"] = True
+            marked.append(kept)
+        return marked
 
     @staticmethod
     def _with_projection(

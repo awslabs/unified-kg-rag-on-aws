@@ -14,6 +14,8 @@ with Gremlin::
         "path": [{"name": [...]}, ...],  # seed first, the node last
         "node_type": "<vertex label>",
         "degree": <int>,  # only when entity_importance_source == "degree"
+        "superseded": True,  # optional: an older copy of a vertex whose
+                             # newer copy came back too
     }
 
 The seeds themselves come back as rows with a path of length 1.
@@ -189,8 +191,10 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         # Entity expansion runs per seed, so a node two seeds reach arrives once
         # per seed; keep the copy with the best score (its shortest path, since
         # the score orders by distance first), and of equally short paths the
-        # first by content, not the first to arrive.
-        best: dict[Any, RetrievalResult] = {}
+        # first by content, not the first to arrive. A node stored twice (a
+        # Neptune label being switched) arrives once per copy: the better
+        # scored, the newer of two scored alike.
+        best: dict[Any, tuple[tuple[float, bool, str], RetrievalResult]] = {}
         seed_ids: set[Any] = set()
         for item in traversal_results:
             node_data = self._node_data(item)
@@ -207,15 +211,13 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             if len(item.get("path") or []) <= 1:
                 # A path of one vertex: a seed, not something reached from one.
                 seed_ids.add(node_id)
+            key = (-(result.score or 0.0), bool(item.get("superseded")), result.content)
             kept = best.get(node_id)
-            if kept is None or (-(result.score or 0.0), result.content) < (
-                -(kept.score or 0.0),
-                kept.content,
-            ):
-                best[node_id] = result
+            if kept is None or key < kept[0]:
+                best[node_id] = (key, result)
 
         return rank_expanded(
-            best.values(),
+            (result for _, result in best.values()),
             {str(s) for s in seed_ids},
             (
                 query.top_k * query.retrieval_multiplier

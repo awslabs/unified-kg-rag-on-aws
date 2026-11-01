@@ -580,6 +580,12 @@ From 0.2.3 (or a `main` checkout since):
   custom-id lookup finds none of its seeds. Before, a label found settled
   was not checked again, so a later switching build expanded only the seeds
   and, once swept, returned nothing until a restart (#PR).
+- While a full build switches a Neptune label's vertex ids, graph expansion
+  keeps each entity's better-scored copy (the rewritten one of two scored
+  alike) instead of always the rewritten one, which could stand farther
+  from the seeds while the build has rewritten only part of the edges.
+  Results during a switch may still be partial until its sweep ends
+  (`docs/operations.md`) (#PR).
 - The public API exports its errors (`GraphRAGException`,
   `ConfigurationError`, `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `StoreRequestRejectedError`,

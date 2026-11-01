@@ -623,7 +623,7 @@ def _row(vid: Any, item_id: str, path: int, name: str = "") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("target", ["custom", "property"])
-def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
+def test_a_switch_keeps_the_better_scored_copy_of_a_vertex(target: str) -> None:
     from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 
     def vid(item_id: str, rewritten: bool) -> Any:
@@ -632,20 +632,37 @@ def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
 
     rows = [
         _row(vid("e1", False), "e1", 1, "old"),
-        _row(vid("e1", True), "e1", 1, "new"),
+        _row(vid("e1", True), "e1", 1, "rewritten"),
         # Reached over the old copy only: kept.
         _row(vid("e2", False), "e2", 2),
-        # Reached over both: the rewritten copy only.
-        _row(vid("e3", True), "e3", 3, "new"),
+        # Reached over both, nearer over the old copy's edges (not
+        # rewritten yet): the old copy.
+        _row(vid("e3", True), "e3", 3, "rewritten"),
         _row(vid("e3", False), "e3", 2, "old"),
+        # Nearer over the rewritten copy: the rewritten copy.
+        _row(vid("e4", False), "e4", 3, "old"),
+        _row(vid("e4", True), "e4", 2, "rewritten"),
     ]
-    kept = NeptuneRetriever._rewritten_copies(rows, _LABEL, target)
-    assert [(r["node"]["id"][0], r["node"]["name"][0]) for r in kept] == [
-        ("e1", "new"),
-        ("e2", "e2"),
-        ("e3", "new"),
+    marked = NeptuneRetriever._mark_old_copies(rows, _LABEL, target)
+    assert all("vertex_id" not in r for r in marked)
+    assert [(r["node"]["name"][0], r.get("superseded", False)) for r in marked] == [
+        ("old", True),
+        ("rewritten", False),
+        ("e2", False),
+        ("rewritten", False),
+        ("old", True),
+        ("old", True),
+        ("rewritten", False),
     ]
-    assert all("vertex_id" not in r for r in kept)
+    config = _config(target)
+    retriever = _retriever(target)
+    object.__setattr__(retriever, "_neptune_config", config.indexing.neptune)
+    results = retriever._process_traversal_results(
+        marked, SearchQuery(query="", filters={"id": ["e1"]})
+    )
+    names = {r.source: r.metadata["name"] for r in results}
+    # Two copies scored alike: the rewritten one (not the first by content).
+    assert names == {"e1": "rewritten", "e2": "e2", "e3": "old", "e4": "rewritten"}
 
 
 def _expanded(sample: Callable[[str], list[Any]]) -> Callable[[str], list[Any]]:
