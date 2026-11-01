@@ -29,6 +29,7 @@ from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
     is_name_grounded,
 )
+from unified_kg_rag.domain.ingestion.schema_conformance import unit_entity_types
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -146,11 +147,32 @@ class GleaningStats(BaseModel):
     # Gleaned relationships dropped (entity grounding on) because an endpoint
     # is an entity the unit does not list and whose name it does not contain.
     relationships_dropped_ungrounded_endpoint_name: int = 0
+    # Strict schema_mode (domain.ingestion.schema_conformance): gleaned
+    # entities and relationships of an undeclared type dropped, gleaned
+    # relationships naming an entity rejected as off schema for their unit,
+    # relationships of the unit's record no pattern allows once the answer is
+    # applied, and corrections to an undeclared type or to a direction or
+    # type no pattern allows, ignored. None of them is a failure.
+    entities_dropped_off_schema: int = 0
+    relationships_dropped_off_schema: int = 0
+    relationships_dropped_off_schema_endpoint: int = 0
+    relationships_dropped_off_pattern: int = 0
+    corrections_ignored_off_schema: int = 0
     rounds: list[GleaningRound] = Field(default_factory=list)
 
     @property
     def total_refinement_calls(self) -> int:
         return sum(r.units_gleaned for r in self.rounds)
+
+
+# The GleaningStats counters of the strict schema.
+_SCHEMA_STATS = (
+    "entities_dropped_off_schema",
+    "relationships_dropped_off_schema",
+    "relationships_dropped_off_schema_endpoint",
+    "relationships_dropped_off_pattern",
+    "corrections_ignored_off_schema",
+)
 
 
 class GraphGleaner(BaseProcessor):
@@ -186,6 +208,7 @@ class GraphGleaner(BaseProcessor):
         self._dropped_rejected_endpoint = 0
         self._dropped_low_confidence_entities = 0
         self._dropped_ungrounded_endpoint_name = 0
+        self._schema_counts = GleaningStats()
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_config(
@@ -244,6 +267,7 @@ class GraphGleaner(BaseProcessor):
         self._dropped_rejected_endpoint = 0
         self._dropped_low_confidence_entities = 0
         self._dropped_ungrounded_endpoint_name = 0
+        self._schema_counts = GleaningStats()
         max_rounds = self.gleaning_config.max_rounds
 
         units_to_glean = [
@@ -294,9 +318,22 @@ class GraphGleaner(BaseProcessor):
         stats.relationships_dropped_ungrounded_endpoint_name = (
             self._dropped_ungrounded_endpoint_name
         )
+        for name in _SCHEMA_STATS:
+            setattr(stats, name, getattr(self._schema_counts, name))
         stats.total_processing_time = time.time() - start_time
 
         self._log_completion_summary(stats, units_still_gaining=len(units_to_glean))
+        if self.conformance.strict:
+            logger.info(
+                "Gleaning schema (strict) - Entities dropped off schema: %s, "
+                "Relationships dropped off schema: %s, with an off-schema "
+                "endpoint: %s, off pattern: %s, Corrections ignored: %s",
+                stats.entities_dropped_off_schema,
+                stats.relationships_dropped_off_schema,
+                stats.relationships_dropped_off_schema_endpoint,
+                stats.relationships_dropped_off_pattern,
+                stats.corrections_ignored_off_schema,
+            )
 
         return records, stats
 
@@ -466,6 +503,11 @@ class GraphGleaner(BaseProcessor):
             # too).
             for entity_id, name in self._renames.items():
                 self._rename(record, entity_id, name)
+            if self.conformance.strict:
+                self._conform_record(record, unit)
+                # An addition the check dropped is no gain.
+                kept = {r.id for r in record.relationships}
+                new_relationships = [r for r in new_relationships if r.id in kept]
         except Exception as e:
             logger.warning(
                 "Failed to parse refinement output for unit %s: %s",
@@ -555,6 +597,8 @@ class GraphGleaner(BaseProcessor):
                 entity.confidence = base * grounding.penalty_factor
             if entity and self._below_confidence_threshold(entity, unit, record):
                 return
+            if entity and self._off_schema_entity(entity, unit, record):
+                return
             if entity:
                 # Strip the reserved grounding span (gleaner already verified it).
                 (entity.attributes or {}).pop("_source_text", None)
@@ -563,6 +607,8 @@ class GraphGleaner(BaseProcessor):
             rel = self.parse_relationship_data(
                 details, unit, self.build_entity_key_index(record.entities)
             )
+            if rel and self._off_schema_relationship(rel, unit):
+                return
             if rel:
                 (rel.attributes or {}).pop("_source_text", None)
                 if penalize:
@@ -665,7 +711,10 @@ class GraphGleaner(BaseProcessor):
         same relationships (``_drop_relationships_to_dropped_entities``).
 
         An entity the confidence threshold removed for this unit is rejected
-        whatever else cites the unit, so a stub never resurrects it.
+        whatever else cites the unit, so a stub never resurrects it. One
+        strict schema_mode rejected as off schema (by extraction, or proposed
+        by gleaning with an undeclared type) is lifted, like an ungrounded
+        one, once an entity of that name cites the unit.
 
         With entity grounding on, an endpoint no entity citing the unit names
         must also be named in the unit's text. With grounding off nothing is
@@ -680,7 +729,10 @@ class GraphGleaner(BaseProcessor):
             k for k, why in record.rejected.items() if why == "low_confidence"
         }
         blocked = (ungrounded - cited) | low_confidence
-        if not blocked and not grounding.enabled:
+        off_schema = {
+            k for k, why in record.rejected.items() if why == "off_schema"
+        } - cited
+        if not blocked and not off_schema and not grounding.enabled:
             return relationships
         chunk_text = self.get_text_for_processing(unit) if grounding.enabled else ""
 
@@ -693,6 +745,15 @@ class GraphGleaner(BaseProcessor):
                 logger.info(
                     "Dropping gleaned relationship '%s' — an endpoint was "
                     "rejected (ungrounded or low confidence) in chunk '%s'",
+                    rel.short_id,
+                    unit.short_id,
+                )
+                continue
+            if any(key in off_schema for key in keys):
+                self._schema_counts.relationships_dropped_off_schema_endpoint += 1
+                logger.debug(
+                    "Dropping gleaned relationship '%s': an endpoint was rejected"
+                    " as off schema in chunk '%s'",
                     rel.short_id,
                     unit.short_id,
                 )
@@ -711,6 +772,77 @@ class GraphGleaner(BaseProcessor):
                 continue
             kept.append(rel)
         return kept
+
+    def _off_schema_entity(
+        self, entity: Entity, unit: TextUnit, record: TextUnitExtraction
+    ) -> bool:
+        """Whether strict mode drops a gleaned entity of an undeclared type.
+
+        Its key is rejected for the unit as ``off_schema`` (unless the unit
+        lists the entity already), so a relationship naming it is dropped
+        too, as extraction drops the relationships of an entity it drops.
+        """
+        if not self.conformance.strict or not self.conformance.entity_off_schema(
+            entity.type
+        ):
+            return False
+        key = entity_key(entity.name)
+        if key not in {entity_key(e.name) for e in record.entities}:
+            record.reject(key, "off_schema")
+        self._schema_counts.entities_dropped_off_schema += 1
+        logger.debug(
+            "Dropping gleaned entity '%s' of off-schema type '%s' in chunk '%s'",
+            entity.name,
+            entity.type,
+            unit.short_id,
+        )
+        return True
+
+    def _off_schema_relationship(self, rel: Relationship, unit: TextUnit) -> bool:
+        """Whether strict mode drops a gleaned relationship of an undeclared
+        type."""
+        if not self.conformance.strict or not self.conformance.relationship_off_schema(
+            rel.type
+        ):
+            return False
+        self._schema_counts.relationships_dropped_off_schema += 1
+        logger.debug(
+            "Dropping gleaned relationship '%s' of off-schema type '%s' in chunk '%s'",
+            rel.short_id,
+            rel.type,
+            unit.short_id,
+        )
+        return True
+
+    def _ignore_correction(self, kind: str, unit: TextUnit, why: str) -> bool:
+        """Count and log a correction strict mode ignores; True."""
+        self._schema_counts.corrections_ignored_off_schema += 1
+        logger.debug("Ignoring %s in chunk '%s': %s", kind, unit.short_id, why)
+        return True
+
+    def _conform_record(self, record: TextUnitExtraction, unit: TextUnit) -> None:
+        """Check the unit's record against the strict schema once the answer
+        is applied: a correction can give an entity a type, or a relationship
+        a direction, that a pattern of one of the unit's relationships does
+        not allow. What extraction's check drops is dropped here too."""
+        result = self.conformance.conform(
+            record.entities, record.relationships, unit=unit.short_id
+        )
+        for key in sorted(result.off_schema_keys):
+            record.reject(key, "off_schema")
+        counts = self._schema_counts
+        counts.entities_dropped_off_schema += result.entities_dropped_off_schema
+        counts.relationships_dropped_off_schema += (
+            result.relationships_dropped_off_schema
+        )
+        counts.relationships_dropped_off_schema_endpoint += (
+            result.relationships_dropped_off_schema_endpoint
+        )
+        counts.relationships_dropped_off_pattern += (
+            result.relationships_dropped_off_pattern
+        )
+        record.entities = result.entities
+        record.relationships = result.relationships
 
     def _below_confidence_threshold(
         self, entity: Entity, unit: TextUnit, record: TextUnitExtraction
@@ -833,6 +965,20 @@ class GraphGleaner(BaseProcessor):
             logger.debug("Unmatched ENTITY_CORRECTION name: '%s'", name)
             return False
 
+        corrected_type = self.conformance.entity_type(
+            self._clean_text(details.get("corrected_type")) or ""
+        )
+        if (
+            corrected_type
+            and self.conformance.strict
+            and self.conformance.entity_off_schema(corrected_type)
+        ):
+            self._ignore_correction(
+                "ENTITY_CORRECTION", unit, "its corrected type is off schema"
+            )
+            logger.debug("Off-schema corrected entity type: '%s'", corrected_type)
+            return False
+
         corrected: list[str] = []
         # Extracted names keep their display form (clean_display_name); a
         # corrected one gets the same cleaning so both spellings are comparable.
@@ -846,9 +992,6 @@ class GraphGleaner(BaseProcessor):
             corrected.append("name")
 
         entity = next((e for e in record.entities if e.id == entity_id), None)
-        corrected_type = self.schema.entity_type(
-            self._clean_text(details.get("corrected_type")) or ""
-        )
         description = self._clean_text(details.get("description"))
         if entity is not None:
             if corrected_type and corrected_type != entity.type:
@@ -923,21 +1066,26 @@ class GraphGleaner(BaseProcessor):
         original_short_id = relationship.short_id
         corrected: list[str] = []
         # The declared label of an in-schema type, before the id is re-derived.
-        corrected_type = self.schema.relationship_type(
+        corrected_type = self.conformance.relationship_type(
             self._clean_text(details.get("corrected_type")) or ""
         )
-        if corrected_type and corrected_type != relationship.type:
-            relationship.type = corrected_type
-            corrected.append("type")
         # A reversal is the corrected endpoints naming the current pair the other
         # way round. Ids and names move together.
-        if (
+        reversed_ = (
             self._prompt_key(details.get("corrected_source")),
             self._prompt_key(details.get("corrected_target")),
         ) == (
             entity_key(relationship.target_name or ""),
             entity_key(relationship.source_name or ""),
+        )
+        if self.conformance.strict and self._strict_rejects_correction(
+            record, relationship, corrected_type, reversed_, unit
         ):
+            return False
+        if corrected_type and corrected_type != relationship.type:
+            relationship.type = corrected_type
+            corrected.append("type")
+        if reversed_:
             relationship.source_id, relationship.target_id = (
                 relationship.target_id,
                 relationship.source_id,
@@ -977,6 +1125,39 @@ class GraphGleaner(BaseProcessor):
             ", ".join(corrected),
         )
         return True
+
+    def _strict_rejects_correction(
+        self,
+        record: TextUnitExtraction,
+        relationship: Relationship,
+        corrected_type: str,
+        reversed_: bool,
+        unit: TextUnit,
+    ) -> bool:
+        """Whether strict mode ignores a RELATIONSHIP_CORRECTION: one to an
+        undeclared type, or to a type or direction no pattern allows between
+        the unit's types of its endpoints (it is never flipped back)."""
+        relation = corrected_type or relationship.type
+        if corrected_type and self.conformance.relationship_off_schema(corrected_type):
+            logger.debug("Off-schema corrected relationship type: '%s'", relation)
+            return self._ignore_correction(
+                "RELATIONSHIP_CORRECTION", unit, "its corrected type is off schema"
+            )
+        source, target = relationship.source_name, relationship.target_name
+        if reversed_:
+            source, target = target, source
+        types = unit_entity_types(record.entities)
+        if self.conformance.off_pattern(
+            relation,
+            types.get(entity_key(source or "")),
+            types.get(entity_key(target or "")),
+        ):
+            return self._ignore_correction(
+                "RELATIONSHIP_CORRECTION",
+                unit,
+                f"no pattern allows the corrected '{relationship.short_id}'",
+            )
+        return False
 
     @classmethod
     def _find_relationship(

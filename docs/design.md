@@ -1307,8 +1307,19 @@ checks that its values are the defaults and each key is in the reference).
   config copy, whose source is then `inline`. The extractor, the prompts
   and the cache keys read only the inline keys, so the loaded content is
   keyed and its location (`schema_source.path`) is not: a moved file
-  re-extracts nothing, an edited one re-extracts. Extraction does not apply
-  the schema yet.
+  re-extracts nothing, an edited one re-extracts. The extractor and the
+  gleaner apply it through `domain/ingestion/schema_conformance.py`
+  (`SchemaConformance`, built by `BaseProcessor`): it applies in `strict`,
+  and in `align` once relationship types are declared (entity types alone
+  only shape the prompt, so configs from before the schema keys keep their
+  records). An in-schema label is written as declared when parsed, before
+  the ids are built; `conform` then checks each unit's statements after
+  grounding and the confidence threshold, where `strict` drops off-schema
+  entities (rejection `off_schema`, lifted by an in-schema statement of the
+  same entity) with their relationships, off-schema relationship types, and
+  relationships a pattern of their type disallows between two endpoints the
+  unit types with declared types. The check is per unit and order-free, so
+  incremental runs converge with a full build; its drops are not failures.
 
 ---
 

@@ -605,13 +605,27 @@ From 0.2.3 (or a `main` checkout since):
   new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
   ORGANIZATION"`), `schema_mode` (`off`/`align`/`strict`, default `align`)
   and `schema_source` keys are validated on load: labels are unique by
-  case and word separators, and patterns name declared types. Extraction
-  does not apply them yet. At their defaults they change no cache key,
-  extraction record or recorded extraction settings (#475).
+  case and word separators, and patterns name declared types. At their
+  defaults they change no cache key, extraction record or recorded
+  extraction settings (#475).
 - Schema sources: `schema_source.kind: file` reads the schema keys from a
   YAML or JSON file at start-up, keyed by its content, not its path, and
   `@register_schema_source` (`adapters/schema_sources/`) adds a source for
   another format or service (#475).
+- Extraction applies the schema. Declared relationship types and patterns
+  replace the example relationship types in the extraction prompt. Once
+  relationship types are declared (or under `strict`), a type naming a
+  declared one is written as declared before ids are built, so its
+  spellings give one edge label and id. `schema_mode: strict` drops, per
+  text unit, entities of an empty or undeclared type with the unit's
+  relationships naming them (rejected as `off_schema`), relationships of
+  an undeclared type, and relationships a pattern does not allow between
+  two endpoints of declared types (never flipped); gleaning follows the
+  same rules. `align` keeps everything and counts. New counters in the
+  graph extraction stage's `extraction_stats` and the gleaning stage's
+  `gleaning_stats`; drops are not failures. With the defaults, or entity
+  types alone, every cache key, extraction record and prompt is unchanged
+  (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

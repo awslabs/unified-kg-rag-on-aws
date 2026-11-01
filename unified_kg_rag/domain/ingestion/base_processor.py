@@ -203,7 +203,7 @@ class BaseProcessor:
         self.config = config
         self.extraction_config = self.config.processing.graph_extraction
         self.show_progress = show_progress
-        self.schema = SchemaConformance(self.extraction_config.extraction_schema())
+        self.conformance = SchemaConformance(self.extraction_config.extraction_schema())
 
     def get_text_for_processing(self, text_unit: TextUnit) -> str:
         if text_unit.translated_texts:
@@ -253,7 +253,9 @@ class BaseProcessor:
                 short_id=entity_id[:8],
                 name=name,
                 name_embedding=None,
-                type=self.schema.entity_type(coerce_llm_text(entity_data.get("type"))),
+                type=self.conformance.entity_type(
+                    coerce_llm_text(entity_data.get("type"))
+                ),
                 description=coerce_llm_text(entity_data.get("description"), join=True),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
@@ -307,7 +309,7 @@ class BaseProcessor:
             raw_source_name = coerce_llm_text(rel_data.get("source"))
             raw_target_name = coerce_llm_text(rel_data.get("target"))
             # The declared label of an in-schema type, before the id is built.
-            rel_type = self.schema.relationship_type(
+            rel_type = self.conformance.relationship_type(
                 coerce_llm_text(rel_data.get("type"))
             )
 

@@ -1501,7 +1501,7 @@ custom_prompts:
 - 각 프롬프트의 데이터 변수는 system이나 human 템플릿에 있어야 합니다
   (`graph_extraction`과 `claim_extraction`은 `{input_text}`, `answer_generation`은
   `{query}`와 `{context}` 등). `{max_entities_per_chunk}` 같은 한도와
-  `{entity_types}`, `{relationship_types}`(내장 프롬프트의 관계 유형 예시)는
+  `{entity_types}`, `{relationship_types}`(선언한 관계 유형, 없으면 내장 예시)는
   빼도 됩니다.
 
 `*_system` 오버라이드는 출력 지시를 포함한 내장 시스템 프롬프트 전체를 대체합니다.
@@ -1516,12 +1516,10 @@ custom_prompts:
 **권장 흐름:** `run-prompt-tuning` → 검토 → 쓸 만한 프롬프트를 합치고 `entity_types`를
 조정 → 다시 수집.
 
-### C. 추출 스키마(미리 보기)
+### C. 추출 스키마
 
-추출 스키마 키는 지금도 받아서 검증하지만, 스키마 적용(enforcement)은 다음 릴리스에서
-들어오며 그 전까지 추출은 이 키를 쓰지 않습니다. 엔티티 유형은 온톨로지 클래스의 IRI를
-담은 매핑으로도 쓸 수 있고, 그 옆에 관계 유형과 엔티티 유형 사이에 허용되는 패턴을
-둡니다.
+엔티티 유형, 관계 유형, 엔티티 유형 사이에 허용되는 패턴이 추출 스키마를 이룹니다.
+엔티티 유형은 온톨로지 클래스의 IRI를 담은 매핑으로도 쓸 수 있습니다.
 
 ```yaml
 processing:
@@ -1531,22 +1529,58 @@ processing:
       - {label: ORGANIZATION, description: "Companies", iri: "https://schema.org/Organization"}
     relationship_types:
       - "WORKS_FOR: Employment"
+      - "PARTNERS_WITH"
     relationship_patterns:
       - "PERSON -WORKS_FOR-> ORGANIZATION"
-    schema_mode: align      # off | align(기본값) | strict
+    schema_mode: strict     # off | align(기본값) | strict
 ```
 
-- 레이블은 대소문자, 앞뒤 공백, 단어 사이의 공백·`_` 차이만 무시하고 비교하며
+- **프롬프트.** 모든 모드에서 선언한 관계 유형과 패턴이 추출 프롬프트의 관계 유형
+  예시를 대신합니다. 관계 유형을 하나도 선언하지 않으면 프롬프트는 예시를 그대로
+  씁니다.
+- **레이블**은 대소문자, 앞뒤 공백, 단어 사이의 공백·`_` 차이만 무시하고 비교하며
   (`works for` = `WORKS_FOR`) 유사도로는 맞추지 않습니다. `PERSONS`는 `PERSON`이
   아닙니다. 같은 종류의 레이블 두 개가 서로 일치하거나 패턴이 선언하지 않은 유형을
   가리키면 설정을 읽지 못합니다.
+- **`schema_mode`**:
+  - `off`: 스키마는 프롬프트에만 쓰입니다.
+  - `align`(기본값): 엔티티와 관계를 모두 남깁니다. 선언한 유형을 가리키는 유형은
+    id를 만들기 전에 선언한 표기로 바꿔 쓰므로(`works for`는 `WORKS_FOR`), 한 관계
+    유형의 여러 표기가 하나의 에지 레이블과 하나의 관계 id가 됩니다. 스키마나 패턴을
+    벗어난 항목은 개수만 셉니다. 엔티티 유형만 있으면(기본 설정처럼 관계 유형이
+    없으면) `align`은 아무것도 바꾸지 않습니다.
+  - `strict`: `align`에 더해 텍스트 단위마다 다음을 버립니다.
+    - 유형이 비었거나 선언되지 않은 엔티티와, 그 단위에서 이 엔티티를 가리키는 관계.
+      단위가 거부를 기록하므로 글리닝이 관계를 통해 이 엔티티를 되살리지 못합니다.
+      같은 엔티티를 선언한 유형으로도 언급하면 남습니다.
+    - 선언되지 않은 유형의 관계.
+    - 단위가 양 끝 엔티티를 모두 선언한 유형으로 나열했는데 패턴이 허용하지 않는 관계.
+      단위가 나열하지 않은 끝점은 통과하고, 방향이 거꾸로인 관계는 뒤집지 않고
+      버립니다. 패턴이 없는 관계 유형은 제한하지 않습니다.
+
+    글리닝도 같은 규칙을 따릅니다. 스키마를 벗어난 엔티티나 관계를 더하지 않고,
+    선언되지 않은 유형이나 패턴이 허용하지 않는 방향으로 바꾸는 수정은 무시합니다.
+- 끝점의 유형은 단위 안에서 그 엔티티에 병합된 유형(가장 많이 나온 유형)입니다.
+  선언된 유형이라고 우선하지는 않습니다. `align`에서 `VENDOR`로 두 번,
+  `ORGANIZATION`으로 한 번 언급된 엔티티는 `vendor`로 남습니다.
+- 버린 것은 실패가 아닙니다. 항목을 모두 버린 텍스트 단위도 (빈 결과로) 추출된
+  것이며 성공으로 세고 다시 시도하지 않습니다. 클레임은 검사하지 않습니다.
+- 그래프 추출 단계는 `extraction_stats`에 `entities_off_schema`,
+  `entities_dropped_off_schema`, `relationships_off_schema`,
+  `relationships_dropped_off_schema`, `relationships_dropped_off_schema_endpoint`,
+  `relationships_off_pattern`, `relationships_dropped_off_pattern`을, 글리닝 단계는
+  `gleaning_stats`에 strict에서 버린 개수를 보고하고 각각 요약 로그를 한 줄 남깁니다.
+  스키마를 벗어난 레이블 자체는 DEBUG 로그에만 남깁니다.
 - `schema_source: {kind: file, path: schema.yaml}`로 두면 `relationship_types`,
   `relationship_patterns`와 선택적으로 `entity_types` 키를 YAML 또는 JSON 파일에서
   읽습니다(상대 경로는 설정 파일 기준). 이때 설정에서는 그 키를 빼세요. 실행은 파일
   위치가 아니라 내용으로 키가 정해지므로, 파일을 옮기면 다시 추출하지 않고 내용을
   고치면 다시 추출합니다.
-- 기본값이면 아무것도 바뀌지 않습니다. 업그레이드해도 캐시 키, 추출 레코드, 기록된
-  추출 설정이 그대로입니다.
+- 스키마나 모드를 바꾸면 다른 추출 설정을 바꿀 때처럼 다시 추출합니다.
+  기본값이거나 엔티티 유형만 있으면 업그레이드해도 아무것도 바뀌지 않습니다. 캐시 키,
+  추출 레코드, 기록된 추출 설정이 그대로입니다.
+- 저장된 엔티티와 관계가 스키마 안에 있는지, 그 유형의 IRI가 무엇인지는 아직 저장하지
+  않으며 다음 릴리스에서 들어옵니다.
 
 ---
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from .entity import Entity
 from .relationship import Relationship
 
-RejectionReason = Literal["ungrounded", "low_confidence"]
+RejectionReason = Literal["ungrounded", "low_confidence", "off_schema"]
 
 
 class TextUnitExtraction(BaseModel):
@@ -35,8 +35,10 @@ class TextUnitExtraction(BaseModel):
         default_factory=dict,
         description="Entity keys rejected for the unit: ungrounded (the "
         "grounding guard dropped it; lifted once the unit lists the entity "
-        "with grounded evidence) or low_confidence (below "
-        "entity_confidence_threshold; never lifted). Gleaning does not bring "
+        "with grounded evidence), low_confidence (below "
+        "entity_confidence_threshold; never lifted) or off_schema (strict "
+        "schema_mode dropped it for an undeclared type; lifted once the unit "
+        "lists the entity with a declared type). Gleaning does not bring "
         "them back through a relationship naming them.",
     )
     gleaned: bool = Field(

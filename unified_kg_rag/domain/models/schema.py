@@ -40,8 +40,9 @@ if TYPE_CHECKING:
     from .config import GraphExtractionConfig
 
 # off: the schema only shapes the prompt. align (default): every item is
-# kept, in-schema labels are written as declared and items are marked in or
-# out of the schema. strict: items without a declared type are dropped.
+# kept and in-schema labels are written as declared. strict: items without a
+# declared type, and relationships no pattern allows, are dropped. How
+# extraction applies them: domain.ingestion.schema_conformance.
 SchemaMode = Literal["off", "align", "strict"]
 
 _SEPARATORS = re.compile(r"[\s_]+")
