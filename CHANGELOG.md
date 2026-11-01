@@ -474,7 +474,7 @@ Library API (Python callers and custom backends).
   `registered_strategies` and `NeptuneRetriever.DEFAULT_MAX_HOPS`);
   `GraphAnalyzer.set_community_data` / `export_graph_data` / `clear_cache`
   and the `chunk_size` / `max_file_size_mb` / `enable_chunking` arguments
-  of `CacheManager` (#PR).
+  of `CacheManager` (#471).
 
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
