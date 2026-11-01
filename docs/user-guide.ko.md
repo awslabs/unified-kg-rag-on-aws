@@ -862,6 +862,15 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   있으며, 범위 필터가 잘못 일치할 수 있습니다(`10/08/2024`는 모든 ISO 날짜보다 앞에 정렬되므로
   `{"lte": "2000-01-01"}`과도 일치합니다). 알 수 없는 날짜(`UNKNOWN`, `TBD`, `present`)는 저장하지 않으므로
   범위 필터를 포함해 어떤 필터에도 일치하지 않습니다.
+- 불리언·숫자 필드는 그 유형의 값을 받습니다. `in_schema`는 불리언, `rank`·`confidence`·
+  `weight`·`rating`은 숫자, `n_tokens`·`level`·`depth`·`max_cut_depth`는 정수입니다. 이
+  필드에 문자열을 주면(`--filters`와 `set-filter`의 값은 모두 문자열이고, 데이터셋이나
+  `RAGInput.filters`에도 문자열이 들어갈 수 있음) 검색 전에 리스트와 범위 경계까지 그
+  유형으로 바꾸므로, 모든 저장소가 유형을 갖춘 값과 똑같이 일치시킵니다. `in_schema:false`는
+  `False`(불리언은 대소문자 구분 없이 `true`/`false`, `1`/`0`, `yes`/`no`를 받음),
+  `rank:2`는 `2`가 됩니다. 유형에 맞지 않는 문자열(`in_schema:maybe`, `rank:high`,
+  `level:1.5`)은 `InvalidFilterError`를 일으킵니다(명령줄에서는 사용법 오류, 종료 코드 2).
+  그 밖의 필드 값은 `attr_<key>`와 `attributes.<path>`를 포함해 주어진 그대로 비교합니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
   `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다

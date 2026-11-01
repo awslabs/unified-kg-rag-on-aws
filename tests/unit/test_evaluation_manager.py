@@ -145,6 +145,17 @@ class TestLoadData:
                 [{"id": "f2", "question": "q", "metadata": {"filters": {"g": None}}}],
                 "(?s)query_id 'f2'.*'g' has no value",
             ),
+            # A string its field's type cannot take (a "false" is typed).
+            (
+                [
+                    {
+                        "id": "f3",
+                        "question": "q",
+                        "metadata": {"filters": {"in_schema": "maybe"}},
+                    }
+                ],
+                "(?s)query_id 'f3'.*'in_schema' is a boolean field",
+            ),
         ],
     )
     def test_invalid_dataset_fails_fast_with_location(

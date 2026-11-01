@@ -376,6 +376,50 @@ async def test_rag_an_unknown_filter_key_is_a_usage_error(config, mocker) -> Non
     assert result["success"] is False
 
 
+def test_rag_parse_filters_types_boolean_and_numeric_fields() -> None:
+    # Every value was a string: in_schema:false matched nothing on the
+    # graph stores, where the Python API's False matched.
+    out = run_rag_chain.RAGChainRunner._parse_filters(
+        ["in_schema:false", "rank:2", "confidence:0.5", "type:1"]
+    )
+    assert out == {"in_schema": False, "rank": 2, "confidence": 0.5, "type": "1"}
+    assert type(out["rank"]) is int and type(out["in_schema"]) is bool
+
+
+@pytest.mark.parametrize(
+    ("pair", "message"),
+    [
+        ("in_schema:maybe", "Filter 'in_schema' is a boolean field"),
+        ("rank:high", "Filter 'rank' is a number field"),
+    ],
+)
+def test_rag_a_filter_value_its_type_cannot_take_is_a_usage_error(
+    pair: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["run-rag", "--query", "q", "--filters", pair])
+    with pytest.raises(SystemExit) as exit_info:
+        run_rag_chain.CommandLineInterface().parse_args()
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_rag_interactive_set_filter_types_the_value(mocker) -> None:
+    state: dict = {"filters": {}}
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.rag_chain = None
+    printed = mocker.patch.object(run_rag_chain.console, "print")
+    runner._handle_set_filter(state, ["in_schema:FALSE"])
+    runner._handle_set_filter(state, ["rank:3"])
+    runner._handle_set_filter(state, ["in_schema:maybe"])
+    assert state["filters"] == {"in_schema": False, "rank": 3}
+    assert "Filter not set: Filter 'in_schema' is a boolean field" in str(
+        printed.call_args_list[-1].args[0]
+    )
+
+
 def test_rag_interactive_set_filter_keeps_a_value_with_spaces() -> None:
     # The command line is split on whitespace: the value was cut at its
     # first space ("title:Annual report" filtered on "Annual").

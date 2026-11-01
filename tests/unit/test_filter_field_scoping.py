@@ -24,9 +24,11 @@ from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetrieve
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
+    TYPED_FILTER_FIELDS,
     IndexLimits,
     check_filter_values,
     opensearch_filter_fields,
+    typed_filter_values,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
@@ -685,11 +687,12 @@ def test_filter_keys_are_checked_against_the_indexes_a_strategy_reads(
 
     config.processing.claim_extraction.enabled = True
     chain = _strategy_chain(config)
+    # A value every field type takes (``n_tokens`` and ``level`` are typed).
     if accepted:
-        chain.check_filter_keys({key: "x"}, SearchStrategy(strategy))
+        chain.check_filter_keys({key: "1"}, SearchStrategy(strategy))
         return
     with pytest.raises(InvalidFilterError, match=f"Unknown filter key\\(s\\): {key}"):
-        chain.check_filter_keys({key: "x"}, SearchStrategy(strategy))
+        chain.check_filter_keys({key: "1"}, SearchStrategy(strategy))
 
 
 @pytest.mark.parametrize("built", [True, False])
@@ -1214,3 +1217,119 @@ def test_run_eval_refuses_filter_keys_when_loading(config: Config, tmp_path) -> 
     naive = _eval_dataset(tmp_path, {"type": "person"}, search_strategy="naive")
     with pytest.raises(EvaluationException, match="type"):
         EvaluationManager.load_data(naive, check_filter_keys=check)
+
+
+# --------------------------------------------------------------------------- #
+# Typed filter values
+# --------------------------------------------------------------------------- #
+
+
+def test_typed_filter_fields_match_the_mappings(config: Config) -> None:
+    """Each non-string field the indexes map is typed, with its mapped type."""
+    indexer = _indexer(config)
+    kinds = {
+        "boolean": "boolean",
+        "integer": "integer",
+        "long": "integer",
+        "double": "number",
+        "float": "number",
+    }
+    mapped: dict[str, set[str]] = {}
+    for func in (
+        indexer._get_text_units_mapping,
+        indexer._get_entities_mapping,
+        indexer._get_relationships_mapping,
+        indexer._get_claims_mapping,
+        indexer._get_community_reports_mapping,
+    ):
+        for name, spec in func()["mappings"]["properties"].items():
+            if spec.get("type") in kinds:
+                mapped.setdefault(name, set()).add(kinds[spec["type"]])
+    assert {k: {v} for k, v in TYPED_FILTER_FIELDS.items()} == mapped
+    # The graph's typed vertex properties are typed alike.
+    entity = entity_properties(
+        Entity(id="e", name="E", type="org", rank=2, confidence=0.5, in_schema=False),
+        1000,
+    )
+    for key in NEPTUNE_ENTITY_FILTER_FIELDS.fields:
+        value = entity.get(key)
+        if isinstance(value, bool):
+            assert TYPED_FILTER_FIELDS[key] == "boolean", key
+        elif isinstance(value, int | float):
+            assert TYPED_FILTER_FIELDS[key] == "number", key
+
+
+@pytest.mark.parametrize(
+    ("given", "typed"),
+    [
+        ({"in_schema": "false"}, {"in_schema": False}),
+        ({"in_schema": " TRUE "}, {"in_schema": True}),
+        ({"in_schema": "No"}, {"in_schema": False}),
+        ({"in_schema": "yes"}, {"in_schema": True}),
+        ({"in_schema": "0"}, {"in_schema": False}),
+        ({"in_schema": ["1", False]}, {"in_schema": [True, False]}),
+        ({"rank": "2"}, {"rank": 2}),
+        ({"confidence": "0.5"}, {"confidence": 0.5}),
+        ({"rank": {"gte": "1", "lt": "2.5"}}, {"rank": {"gte": 1, "lt": 2.5}}),
+        ({"level": "1"}, {"level": 1}),
+        ({"level": "1.0"}, {"level": 1}),
+        # Keyword fields, the claim dates and attributes stay as given.
+        ({"type": "1", "start_date": {"gte": "2024"}}, None),
+        ({"attr_flag": "false", "attributes.score": "2"}, None),
+        # Typed values are kept.
+        ({"in_schema": False, "rank": 2.0}, None),
+    ],
+)
+def test_typed_filter_values_converts_strings_of_typed_fields(
+    given: dict[str, Any], typed: dict[str, Any] | None
+) -> None:
+    out = typed_filter_values(given)
+    assert out == (given if typed is None else typed)
+    assert {k: type(v) for k, v in out.items()} == {
+        k: type(v) for k, v in (given if typed is None else typed).items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"in_schema": "maybe"}, "Filter 'in_schema' is a boolean field"),
+        ({"in_schema": ["true", "off"]}, "Filter 'in_schema' is a boolean field"),
+        ({"rank": "high"}, "Filter 'rank' is a number field"),
+        ({"rank": "nan"}, "Filter 'rank' is a number field"),
+        ({"confidence": {"gte": "inf"}}, "Filter 'confidence' is a number field"),
+        ({"level": "1.5"}, "Filter 'level' is an integer field"),
+    ],
+)
+def test_typed_filter_values_refuses_a_string_its_type_cannot_take(
+    filters: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(InvalidFilterError, match=message):
+        typed_filter_values(filters)
+    # Before any model call, and when a query file is checked (run-eval).
+    with pytest.raises(InvalidFilterError, match=message):
+        GraphRAGChain._prepare_invoke({"query": "q", "filters": filters})
+    with pytest.raises(InvalidFilterError, match=message):
+        GraphRAGChain.check_filter_values(filters)
+
+
+def test_prepare_invoke_types_a_library_callers_string_values() -> None:
+    # A string reached the stores as given: OpenSearch converted it, the
+    # graph stores matched nothing.
+    given = {"in_schema": "false", "rank": "2", "type": "org"}
+    rag_input, input_dict = GraphRAGChain._prepare_invoke(
+        {"query": "q", "filters": given}
+    )
+    assert rag_input.filters == {"in_schema": False, "rank": 2, "type": "org"}
+    assert input_dict["filters"] == rag_input.filters
+    assert given == {"in_schema": "false", "rank": "2", "type": "org"}
+
+
+def test_graph_expansion_types_string_filter_values() -> None:
+    from unified_kg_rag.adapters.retrievers.graph_expansion import (
+        GraphExpansionRetriever,
+    )
+
+    assert GraphExpansionRetriever._scope_filters_to_label(
+        "entity", {"in_schema": "false", "rank": "2", "category": "x"}
+    ) == {"in_schema": False, "rank": 2}

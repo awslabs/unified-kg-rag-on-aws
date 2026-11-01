@@ -942,6 +942,18 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   falsely (`10/08/2024` sorts before every ISO date, so `{"lte":
   "2000-01-01"}` matches it). An unknown date (`UNKNOWN`, `TBD`,
   `present`) is not stored, so it matches no filter, a range included.
+- Boolean and numeric fields take their type's values: `in_schema` a
+  boolean; `rank`, `confidence`, `weight` and `rating` a number; `n_tokens`,
+  `level`, `depth` and `max_cut_depth` an integer. A string for one of them
+  (every `--filters` and `set-filter` value is one, and a dataset or
+  `RAGInput.filters` may hold one) is converted before the search, in a list
+  and in range bounds too, so every store matches it as it matches the typed
+  value: `in_schema:false` is `False` (a boolean takes `true`/`false`,
+  `1`/`0` or `yes`/`no`, in any case) and `rank:2` is `2`. A string its
+  type cannot take (`in_schema:maybe`, `rank:high`, `level:1.5`) raises
+  `InvalidFilterError` (a usage error, exit 2, on the command line). The
+  values of every other field are matched as given, `attr_<key>` and
+  `attributes.<path>` included.
 - A filter applies only to the stores that declare its field
   (`type:person` leaves text units unfiltered). A key no store the
   selected strategy reads declares (e.g. `category`, or `type` with `naive`

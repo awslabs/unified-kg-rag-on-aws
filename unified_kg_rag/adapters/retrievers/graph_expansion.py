@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
     FilterFields,
+    typed_filter_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
@@ -154,12 +155,15 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         every vertex lacking ``key``, so a key the label does not declare is
         dropped rather than emptying the traversal (the strategy checks the
         reached entities against the entities index for such a key,
-        ``BaseSearchStrategy._graph_unapplied_filters``).
+        ``BaseSearchStrategy._graph_unapplied_filters``). A string value of
+        a boolean or numeric field is converted to that type
+        (``typed_filter_values``): a vertex property compares as stored, so
+        ``"false"`` matched no ``in_schema``, where OpenSearch converts it.
         """
         if not filters:
             return filters
         kept: dict[str, Any] = {}
-        for key, value in filters.items():
+        for key, value in (typed_filter_values(filters) or {}).items():
             if not NEPTUNE_ENTITY_FILTER_FIELDS.declares(key):
                 logger.debug(
                     "Dropped filter key '%s': no %s vertex declares it", key, label

@@ -33,6 +33,7 @@ passes when the property matches or when it has no such property
 (``NeptuneRetriever._filter_predicate``). Other keys are strict on both stores.
 """
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -178,6 +179,89 @@ def check_filter_values(
             reason = bad(value)
         if reason:
             raise InvalidFilterError(f"Filter '{key}' {reason}.")
+
+
+# The declared fields whose stored values are not strings, by their type on
+# every store that declares them (the OpenSearch mappings and the graph
+# vertices; a unit test pins this to the mappings). Every other declared
+# field is a keyword or text field (the claim dates included), and the
+# ``attr_*`` / ``attributes.*`` values are matched as given.
+_BOOLEAN = "boolean"
+_INTEGER = "integer"
+_NUMBER = "number"
+TYPED_FILTER_FIELDS: dict[str, str] = {
+    "in_schema": _BOOLEAN,
+    "rank": _NUMBER,
+    "confidence": _NUMBER,
+    "weight": _NUMBER,
+    "rating": _NUMBER,
+    "n_tokens": _INTEGER,
+    "level": _INTEGER,
+    "depth": _INTEGER,
+    "max_cut_depth": _INTEGER,
+}
+_TRUE = frozenset({"true", "1", "yes"})
+_FALSE = frozenset({"false", "0", "no"})
+
+
+def _typed(key: str, kind: str, value: Any) -> Any:
+    """``value`` as a ``kind`` value when it is a string; else unchanged."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if kind == _BOOLEAN:
+        if text.lower() in _TRUE:
+            return True
+        if text.lower() in _FALSE:
+            return False
+        raise InvalidFilterError(
+            f"Filter '{key}' is a boolean field; give true or false "
+            f"(or 1/0, yes/no), not '{value}'."
+        )
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        number = float(text)
+    except ValueError:
+        number = math.nan
+    if not math.isfinite(number) or (kind == _INTEGER and not number.is_integer()):
+        expected = "an integer" if kind == _INTEGER else "a number"
+        raise InvalidFilterError(
+            f"Filter '{key}' is {expected} field; give {expected}, not '{value}'."
+        )
+    return int(number) if kind == _INTEGER else number
+
+
+def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None:
+    """``filters`` with each string value of a boolean or numeric field
+    (``TYPED_FILTER_FIELDS``) converted to that type, in a list and in range
+    bounds too: ``in_schema: "false"`` becomes ``False``, ``rank: "2"``
+    ``2``. A command line gives every value as a string; OpenSearch converts
+    one itself, but the graph stores compare it as written and matched
+    nothing, so every store sees typed values instead. A boolean takes
+    ``true``/``false``, ``1``/``0`` or ``yes``/``no`` (any case); a number
+    is kept an integer when it reads as one. Values of other fields and
+    values already typed are unchanged.
+
+    Raises:
+        InvalidFilterError: A string is not a value of its field's type.
+    """
+    if not filters:
+        return filters
+    typed: dict[str, Any] = {}
+    for key, value in filters.items():
+        kind = TYPED_FILTER_FIELDS.get(key)
+        if kind is None:
+            typed[key] = value
+        elif isinstance(value, list):
+            typed[key] = [_typed(key, kind, v) for v in value]
+        elif isinstance(value, dict):
+            typed[key] = {op: _typed(key, kind, v) for op, v in value.items()}
+        else:
+            typed[key] = _typed(key, kind, value)
+    return typed
 
 
 def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:

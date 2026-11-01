@@ -368,6 +368,33 @@ def test_schema_annotation_filters_on_entities_and_relationships(
     ]
 
 
+def test_cli_filter_values_match_as_the_api_values(harness: StoreHarness) -> None:
+    # run-rag --filters gives every value as a string; typed at the CLI they
+    # select what the Python API's booleans and numbers select.
+    from unified_kg_rag.application.cli.run_rag_chain import RAGChainRunner
+
+    harness.initialize()
+    entities = _entities()
+    entities[0] = entities[0].model_copy(update={"in_schema": True})
+    entities[1] = entities[1].model_copy(update={"in_schema": False})
+    assert harness.vector_indexer.index_entities(entities).failed_items == 0
+    entity = _prefixes(harness).entities_index_prefix
+    api = [{"in_schema": False}, {"rank": 2}, {"in_schema": True, "rank": 3}]
+    cli = [
+        RAGChainRunner._parse_filters(pairs)
+        for pairs in (["in_schema:false"], ["rank:2"], ["in_schema:yes", "rank:3"])
+    ]
+    assert cli == api
+    results = _search(
+        harness,
+        *(_query("widgets", entity, filters=f) for f in api),
+        *(_query("widgets", entity, filters=f) for f in cli),
+    )
+    by_query = [sorted(r.source for r in hits) for hits in results]
+    assert by_query[:3] == [["e-buyer"], ["e-buyer"], ["e-vendor"]]
+    assert by_query[3:] == by_query[:3]
+
+
 def test_an_empty_scope_list_matches_nothing(harness: StoreHarness) -> None:
     # A strategy's own scope may leave nothing (``_ask_incident`` intersects
     # a caller source_id with the frontier): the retriever takes the empty
@@ -981,6 +1008,50 @@ def test_graph_expansion_filters_on_the_schema_annotations(
         ["a", "c"],
         ["a", "c"],
     ]
+
+
+def test_graph_expansion_filters_cli_values_as_the_api_values(
+    graph_harness: StoreHarness,
+) -> None:
+    # in_schema:false and rank:1 from run-rag reached the traversal as the
+    # strings "false" and "1", which no vertex property equals: graph
+    # expansion matched nothing where the Python API's False and 1 matched.
+    from unified_kg_rag.application.cli.run_rag_chain import RAGChainRunner
+
+    harness = graph_harness
+    entities = [
+        Entity(id="a", name="A", type="org", rank=2, in_schema=True),
+        Entity(id="b", name="B", type="vendor", rank=1, in_schema=False),
+        Entity(id="c", name="C", type="org", rank=1, in_schema=True),
+        Entity(id="d", name="D", type="org", rank=3),
+    ]
+    relationships = [
+        Relationship(id=f"a{t}", source_id="a", target_id=t, description=f"a-{t}")
+        for t in "bcd"
+    ]
+    assert harness.graph_indexer.index_entities(entities).failed_items == 0
+    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
+    pairs = (["in_schema:false"], ["rank:1"], ["in_schema:TRUE", "rank:1"])
+    api: list[dict[str, Any]] = [
+        {"in_schema": False},
+        {"rank": 1},
+        {"in_schema": True, "rank": 1},
+    ]
+    cli = [RAGChainRunner._parse_filters(list(p)) for p in pairs]
+    assert cli == api
+    # A library caller's strings, given to the retriever as they are.
+    raw = [dict(pair.split(":", 1) for pair in p) for p in pairs]
+    results = _graph_retrieve(
+        harness,
+        *(
+            SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"], **f})
+            for f in (*api, *cli, *raw)
+        ),
+    )
+    by_query = [sorted(r.source for r in hits) for hits in results]
+    assert by_query[:3] == [["b"], ["b", "c"], ["c"]]
+    assert by_query[3:6] == by_query[:3]
+    assert by_query[6:] == by_query[:3]
 
 
 def test_graph_expansion_does_not_depend_on_the_edge_write_order(
