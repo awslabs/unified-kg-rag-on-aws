@@ -131,8 +131,10 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
     @staticmethod
     def _seed_ids(query: SearchQuery) -> list[Any]:
+        """The seed ids, each once (a repeated custom vertex id is a vertex
+        looked up, and expanded, once per repeat)."""
         seed_ids = (query.filters or {}).get("id")
-        return list(seed_ids) if isinstance(seed_ids, list) else []
+        return list(dict.fromkeys(seed_ids)) if isinstance(seed_ids, list) else []
 
     def filter_fields(self) -> FilterFields:
         # The traversal filters entity vertices only (_scope_filters_to_label).
@@ -186,7 +188,8 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
         # Entity expansion runs per seed, so a node two seeds reach arrives once
         # per seed; keep the copy with the best score (its shortest path, since
-        # the score orders by distance first).
+        # the score orders by distance first), and of equally short paths the
+        # first by content, not the first to arrive.
         best: dict[Any, RetrievalResult] = {}
         seed_ids: set[Any] = set()
         for item in traversal_results:
@@ -205,7 +208,10 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 # A path of one vertex: a seed, not something reached from one.
                 seed_ids.add(node_id)
             kept = best.get(node_id)
-            if kept is None or (result.score or 0.0) > (kept.score or 0.0):
+            if kept is None or (-(result.score or 0.0), result.content) < (
+                -(kept.score or 0.0),
+                kept.content,
+            ):
                 best[node_id] = result
 
         return rank_expanded(

@@ -308,6 +308,8 @@ Neptune과 다른 점은 다음과 같습니다.
   실행은 아무것도 쓰기 전에 멈추고 `indexing.reset: true`(또는 레지스트리 삭제)를
   요청합니다.
 - 정점을 만들 때 쓴 목록 속성은 중복 값을 유지합니다.
+- TinkerGraph에는 트랜잭션이 없으므로 `indexing.neptune.index_concurrency`는 1(기본값)로
+  두세요. 여러 작업자가 동시에 쓰면 재시도한 엣지 다시 쓰기가 중복 엣지를 남길 수 있습니다.
 - 쓰기는 `id` 속성으로 요소를 찾으며 compose 파일의 서버는 이 속성에 인덱스를 만듭니다
   (인덱스가 없으면 그래프가 커질수록 느려짐). `indexing.neptune.vertex_ids: custom`이면
   정점은 정점 id로 찾고, compose 파일의 그래프는 문자열 정점 id를 받습니다. 개발용 규모의

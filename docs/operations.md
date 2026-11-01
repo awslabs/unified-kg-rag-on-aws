@@ -326,7 +326,9 @@ Switching an existing graph needs one full build:
    the `id` property.
 
 Gremlin Server stores string vertex ids only when its graph uses
-`vertexIdManager=ANY`, which `docker/compose.local.yaml` sets.
+`vertexIdManager=ANY`, which `docker/compose.local.yaml` sets; on a stock
+server each custom-id write fails at once with a `StoreConfigurationError`
+naming the setting.
 
 ### On-disk vector storage
 

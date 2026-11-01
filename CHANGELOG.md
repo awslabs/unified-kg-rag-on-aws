@@ -663,6 +663,11 @@ Bugs present in 0.2.3.
 Queries and retrieval.
 - Graph expansion returns every seed and its neighbourhood and ranks by
   distance first, so hub neighbours no longer push seeds out (#161, #218).
+- Graph expansion no longer depends on the order the graph store keeps a
+  vertex's edges: a hub contributes its first `max_results_per_hop`
+  neighbours by id, as the embedded store does, and of two equally short
+  paths to an entity the first by content is kept, so two builds of one
+  graph expand alike (#PR).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

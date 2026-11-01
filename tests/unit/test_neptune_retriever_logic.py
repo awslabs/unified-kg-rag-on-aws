@@ -457,7 +457,7 @@ async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
         "g.V().hasLabel('Entity-default')"
         ".has('id',within(['e1','e2','e3','e4']))"
         ".union(__.identity(),__.local(__.repeat(__.local(__.both()"
-        ".hasLabel('Entity-default').limit(7))"
+        ".hasLabel('Entity-default').order().by('id').limit(7))"
         ".has('id',without(['e1','e2','e3','e4'])).dedup().limit(8))"
         ".times(2).emit().dedup().limit(8)))"
     )

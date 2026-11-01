@@ -189,7 +189,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # the outer dedup() keeps the total to distinct entities on both.
         # Within a seed, local(both().limit(n)) caps how many neighbours any
         # one node contributes per hop (max_results_per_hop) so a hub cannot
-        # fan out unbounded. The seeds come back through the identity()
+        # fan out unbounded: its first n by id, as the embedded store takes
+        # them, not the first n the store happens to keep (two builds of one
+        # graph, with their edges written in another order, expanded to
+        # other entities). The seeds come back through the identity()
         # branch (path length 1, the top relevance band, never cut);
         # repeat().emit() emits from the first hop on, never the seed itself,
         # and the expansion excludes the seeds so it spends its budget on new
@@ -218,6 +221,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
                         __.local(
                             __.both()
                             .hasLabel(entity_label)
+                            .order()
+                            .by("id")
                             .limit(self._max_results_per_hop)
                         )
                         .has("id", P.without(seed_ids))

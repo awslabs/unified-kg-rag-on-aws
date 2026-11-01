@@ -231,10 +231,16 @@ class NeptuneIndexer(GraphIndexer):
             f"Recording the vertex-id switch of '{label}'",
         )
 
-    def _drop_vertex_id_switch(self, label: str) -> None:
+    def _drop_vertex_id_switch(self, *labels: str) -> None:
+        """Drop the switch vertices of ``labels`` (those stored), in one
+        request."""
         self._execute_with_retries(
-            lambda g: g.V().hasLabel(VERTEX_ID_SWITCH_LABEL).has("id", label).drop(),
-            f"Dropping the vertex-id switch of '{label}'",
+            lambda g: g.V()
+            .hasLabel(VERTEX_ID_SWITCH_LABEL)
+            .has("id", P.within(list(labels)))
+            .drop(),
+            "Dropping the vertex-id switch of "
+            + ", ".join(f"'{label}'" for label in labels),
         )
 
     def _vertices(
@@ -244,9 +250,12 @@ class NeptuneIndexer(GraphIndexer):
         ``ids`` (non-empty): looked up by vertex id in custom mode, else by
         the ``id`` property."""
         if self._custom_ids:
+            # Each id once: V(a, a) yields the vertex twice (the property
+            # lookup's within() once).
+            unique = list(dict.fromkeys(ids))
             return cast(
                 GraphTraversal,
-                t.V(*(vid for label in labels for vid in vertex_ids(label, ids))),
+                t.V(*(vid for label in labels for vid in vertex_ids(label, unique))),
             )
         return cast(GraphTraversal, t.V().hasLabel(*labels).has("id", P.within(ids)))
 
@@ -1123,9 +1132,11 @@ class NeptuneIndexer(GraphIndexer):
         (``sweep``; skipped when a write failed, so a retry still finds the
         previous copies), and end the rebuild.
 
-        A label the build switched to this run's vertex ids
-        (:meth:`_check_vertex_ids`) holds only them once swept: its switch
-        vertex is dropped. Unswept, it holds both modes and stays refused
+        A swept label holds only what the build wrote, in this run's vertex
+        ids (:meth:`_check_vertex_ids`), or nothing: its switch vertex is
+        dropped, also where the build never used the label (a switch an
+        earlier build left there would refuse it for good otherwise). An
+        unswept label the build switched holds both modes and stays refused
         until a full build finishes it.
         """
         tag, self._rebuild_tag = self._rebuild_tag, None
@@ -1152,9 +1163,9 @@ class NeptuneIndexer(GraphIndexer):
                         _stale_vertices(label, tag), f"stale vertices of '{label}'"
                     )
                     swept.add(label)
-            for label in sorted(switching & swept):
-                self._drop_vertex_id_switch(label)
-                switching.discard(label)
+            if swept:
+                self._drop_vertex_id_switch(*sorted(swept))
+                switching -= swept
         finally:
             # Checked again on their next use, and refused.
             with self._labels_lock:

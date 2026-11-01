@@ -327,6 +327,9 @@ Differences from Neptune:
   incremental run stops before writing and asks for `indexing.reset: true`
   (or deleting the registry).
 - A list property written at vertex creation keeps duplicate values.
+- TinkerGraph has no transactions: keep `indexing.neptune.index_concurrency`
+  at 1 (the default). With concurrent writers a retried edge rewrite can
+  leave a duplicate edge.
 - Writes look elements up by their `id` property, which the compose file's
   server indexes (without the index it slows down as the graph grows), or
   with `indexing.neptune.vertex_ids: custom` vertices by their vertex id,

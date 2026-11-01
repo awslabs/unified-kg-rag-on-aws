@@ -907,3 +907,60 @@ def test_graph_expansion_filters_and_is_deterministic(
     assert [[(r.source, r.score) for r in hits] for hits in first] == [
         [(r.source, r.score) for r in hits] for hits in second
     ]
+
+
+def test_graph_expansion_does_not_depend_on_the_edge_write_order(
+    graph_harness: StoreHarness,
+) -> None:
+    # A hub's max_results_per_hop neighbours were the first the store kept,
+    # and of two equally short paths the first to arrive: two builds of one
+    # graph, edges written in another order, expanded to other entities and
+    # paths. Every backend takes the first neighbours by id.
+    def change(suffix: str) -> Any:
+        def apply(config: Any) -> None:
+            config.indexing.additional_suffix = suffix
+            config.indexing.neptune.max_results_per_hop = 3
+            config.indexing.neptune.max_hops = 1
+            config.indexing.neptune.traversal_fetch_multiplier = 1
+
+        return apply
+
+    near = [f"n{i:02d}" for i in range(10)]
+    entities = [
+        Entity(id=i, name=i.upper(), type="ORG", rank=1)
+        for i in ["hub", "s1", "s2", "x", *near]
+    ]
+    edges = [("hub", n) for n in near] + [("s1", "x"), ("s2", "x")]
+    relationships = [
+        Relationship(id=f"r-{a}-{b}", source_id=a, target_id=b, description=a + b)
+        for a, b in edges
+    ]
+    queries = [
+        SearchQuery(
+            query="",
+            suffix=_SUFFIX,
+            top_k=10,
+            retrieval_multiplier=1,
+            filters={"id": seeds},
+        )
+        for seeds in (["hub"], ["s2", "s1"])
+    ]
+    results = []
+    for suffix, order in (("ordera", 1), ("orderb", -1)):
+        h = graph_harness.derive(change(suffix))
+        assert h.graph_indexer.index_entities(entities[::order]).failed_items == 0
+        assert (
+            h.graph_indexer.index_relationships(relationships[::order]).failed_items
+            == 0
+        )
+        results.append(
+            [
+                [(r.source, r.score, r.content) for r in hits]
+                for hits in _graph_retrieve(h, *queries)
+            ]
+        )
+    assert results[0] == results[1]
+    hub, shared = results[0]
+    assert [source for source, *_ in hub] == ["hub", "n00", "n01", "n02"]
+    (x,) = [content for source, _, content in shared if source == "x"]
+    assert x.endswith("Path: S1 -> X"), x
