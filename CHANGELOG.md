@@ -655,8 +655,11 @@ From 0.2.3 (or a `main` checkout since):
   runs the tests in parallel and on Python 3.13 (non-blocking), checks
   licenses on every supported Python, and lints async and logging rules;
   `-m "not aws"` is the pytest default; the Dockerfile takes a
-  `BASE_IMAGE` argument; a layering test enforces the hexagonal import rules
-  (#119, #257, #297, #303, #428, #456, #464, #465).
+  `BASE_IMAGE` argument; a layering test enforces the hexagonal import rules,
+  statically and, for every module that has its backends injected, in a
+  clean interpreter; the core-install job runs without the dev group (a
+  `test` group holds the test runner) (#119, #257, #297, #303, #428, #456,
+  #464, #465, #PR).
 - Settings set in code on `processing.chunking`, `indexing.neptune`,
   `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and

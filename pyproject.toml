@@ -352,14 +352,27 @@ exclude_lines = [
 [dependency-groups]
 # Dev toolchain (PEP 735). `uv sync` installs it by default; `--no-dev` skips
 # it (the Docker image); pip >= 25.1 installs it with `pip install --group dev`.
-dev = [
-    "black>=25.9.0",
+# The test runner alone: the core-install CI job runs tests with it and
+# without the rest of dev (whose langchain-openai would hide a missing extra).
+test = [
     "hypothesis>=6.165.2",
-    "isort>=5.12.0",
-    # The Ollama and OpenAI-compatible adapters of the [local] extra, for
-    # their offline tests (the rest of the extra is heavy; the cross-encoder
-    # tests fake it).
+    # The Ollama adapter of the [local] extra: the embedded end-to-end tests
+    # serve their synthetic models through it.
     "langchain-ollama>=1.0.0,<2.0.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-mock>=3.12.0",
+    "pytest-timeout>=2.4.0",
+    # Parallel runs (`pytest -n auto`, as CI runs the suite).
+    "pytest-xdist>=3.8.0",
+]
+dev = [
+    { include-group = "test" },
+    "black>=25.9.0",
+    "isort>=5.12.0",
+    # The OpenAI-compatible adapter of the [local] extra (the Ollama one is
+    # in test), for their offline tests (the rest of the extra is heavy; the
+    # cross-encoder tests fake it).
     "langchain-openai>=1.1.14,<2.0.0",
     "moto[dynamodb,s3]>=5.2.2",
     "mypy>=2.3.0",
@@ -367,13 +380,7 @@ dev = [
     # without its exporters).
     "opentelemetry-sdk>=1.30.0",
     "pre-commit>=4.6.1",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "pytest-timeout>=2.4.0",
-    # Parallel runs (`pytest -n auto`, as CI runs the suite).
-    "pytest-xdist>=3.8.0",
     "ruff>=0.16.1",
     # The embedded engine's english stemmer (a [local] extra), so its analyzer
     # tests run in CI instead of skipping.
