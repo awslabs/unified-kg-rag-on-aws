@@ -212,8 +212,8 @@ class NeptuneIndexer(GraphIndexer):
         """Record that a full build is switching ``label`` to ``mode``."""
         logger.warning(
             "Neptune label '%s' holds vertices of the other vertex-id mode: "
-            "the full build rewrites it with vertex_ids '%s' (queries see "
-            "only what it has rewritten until it ends)",
+            "the full build rewrites it with vertex_ids '%s' (queries read "
+            "old and rewritten vertices until it ends)",
             label,
             mode,
         )

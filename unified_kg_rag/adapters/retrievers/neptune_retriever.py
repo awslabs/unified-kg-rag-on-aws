@@ -194,13 +194,14 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # them, not the first n the store happens to keep (two builds of one
         # graph, with their edges written in another order, expanded to
         # other entities); indexing.neptune.deterministic_order: false takes
-        # the store's first n, without reading the rest of a hub. The seeds come back through the identity()
-        # branch (path length 1, the top relevance band, never cut);
-        # repeat().emit() emits from the first hop on, never the seed itself,
-        # and the expansion excludes the seeds so it spends its budget on new
-        # entities. Both shapes stay Neptune-friendly:
-        # repeat().times().emit() and union(identity(), ...). An emit()
-        # before repeat() is not optimized by Neptune and times out.
+        # the store's first n, without reading the rest of a hub. The seeds
+        # come back through the identity() branch (path length 1, the top
+        # relevance band, never cut); repeat().emit() emits from the first
+        # hop on, never the seed itself, and the expansion excludes the
+        # seeds so it spends its budget on new entities. Both shapes stay
+        # Neptune-friendly: repeat().times().emit() and union(identity(),
+        # ...). An emit() before repeat() is not optimized by Neptune and
+        # times out.
         per_seed_limit = seed_share(
             query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
         )

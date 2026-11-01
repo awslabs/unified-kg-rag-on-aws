@@ -946,7 +946,9 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
         for seeds in (["hub"], ["s2", "s1"])
     ]
     results = []
-    for suffix, order in (("ordera", 1), ("orderb", -1)):
+    # Suffixes of this harness's own: two backends' runs of this test share
+    # one store server under xdist.
+    for suffix, order in ((f"{graph_harness.tag}a", 1), (f"{graph_harness.tag}b", -1)):
         h = graph_harness.derive(change(suffix))
         assert h.graph_indexer.index_entities(entities[::order]).failed_items == 0
         assert (

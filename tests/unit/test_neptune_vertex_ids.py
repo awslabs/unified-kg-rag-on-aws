@@ -366,12 +366,14 @@ def test_an_unfinished_switch_is_refused_in_either_mode(make_indexer) -> None:
 
 
 def test_a_full_build_switches_the_label_and_its_sweep_ends_the_switch(
-    make_indexer,
+    make_indexer, caplog
 ) -> None:
     indexer = make_indexer("custom")
     graph = _on(indexer, _Graph(stored="property"))
     assert indexer.begin_rebuild(["default"])
     indexer.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
+    # Queries go on reading the label whole meanwhile (both copies).
+    assert "queries read old and rewritten vertices until it ends" in caplog.text
     # Recorded before the build's first write to the label.
     ops = [op for op, _ in graph.requests]
     assert ops.index(f"Recording the vertex-id switch of '{_LABEL}'") < ops.index(
