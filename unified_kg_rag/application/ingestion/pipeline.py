@@ -23,6 +23,7 @@ from unified_kg_rag.application.bootstrap import (
     CheckpointSync,
     build_checkpoint_sync,
     build_providers,
+    resolve_extraction_schema,
 )
 from unified_kg_rag.application.ingestion.cache_manager import (
     CacheManager,
@@ -340,7 +341,10 @@ class DataIngestionPipeline:
         Raises:
             ValueError: ``providers`` and one of the shorthand components are
                 both given.
+            SchemaSourceError: The extraction schema source cannot be loaded.
         """
+        # Loaded once: every stage reads the schema from the inline keys.
+        config = resolve_extraction_schema(config)
         self.config = config
         # The write lease of the latest run (see _namespace_lease).
         self._lease: NamespaceLease | None = None

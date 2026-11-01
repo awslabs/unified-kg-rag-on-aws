@@ -608,6 +608,10 @@ From 0.2.3 (or a `main` checkout since):
   case and word separators, and patterns name declared types. Extraction
   does not apply them yet. At their defaults they change no cache key,
   extraction record or recorded extraction settings (#PR).
+- Schema sources: `schema_source.kind: file` reads the schema keys from a
+  YAML or JSON file at start-up, keyed by its content, not its path, and
+  `@register_schema_source` (`adapters/schema_sources/`) adds a source for
+  another format or service (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

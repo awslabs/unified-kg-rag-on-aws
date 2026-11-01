@@ -77,6 +77,7 @@ from .schema import (
     ExtractionSchema,
     RelationshipPattern,
     RelationshipTypeSpec,
+    SchemaDocument,
     SchemaMode,
     schema_key,
 )
@@ -158,6 +159,7 @@ __all__ = [
     "ExtractionSchema",
     "RelationshipPattern",
     "RelationshipTypeSpec",
+    "SchemaDocument",
     "SchemaMode",
     "schema_key",
     "validate_path_segment",

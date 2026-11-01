@@ -161,6 +161,18 @@ RelationshipPatternField = Annotated[
 ]
 
 
+class SchemaDocument(BaseModel):
+    """What a schema source supplies: the inline schema keys it fills, in
+    the forms the config takes. ``entity_types`` ``None``: the config's
+    stay."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entity_types: list[EntityTypeField] | None = None
+    relationship_types: list[RelationshipTypeField] = Field(default_factory=list)
+    relationship_patterns: list[RelationshipPatternField] = Field(default_factory=list)
+
+
 def _split_label(item: str) -> tuple[str, str]:
     """``(label, description)`` of a ``"LABEL: description"`` item."""
     label, _, description = item.partition(":")

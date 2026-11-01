@@ -116,8 +116,8 @@ down (the application imports the domain directly, every layer the kernel).
   CLIs. The orchestrators receive them (`Providers`, those builders, or a
   constructor argument).
 - **Plugins through their registry.** Outside its package, a renderer,
-  search strategy or evaluator is reached through the package root or its
-  base/registry module (§2.4). The search-strategy registry lives with the
+  search strategy, evaluator or schema source is reached through the
+  package root or its base/registry module (§2.4). The search-strategy registry lives with the
   strategy bases it stores (`adapters/retrieval/strategy_registry.py`), as
   the provider and renderer registries live with what they register.
 
@@ -157,6 +157,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
+│  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file)
 │  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
@@ -171,7 +172,7 @@ unified_kg_rag/
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
-│  │                    #   build_checkpoint_sync
+│  │                    #   build_checkpoint_sync, resolve_extraction_schema
 │  ├─ config.py         #   get_config / ConfigLoader: file + environment -> Config
 │  └─ observability.py  #   configure_observability: installs the tracing backend
 ├─ shared/              # leaf kernel (logging, exceptions, metrics, observability hooks,
@@ -242,6 +243,9 @@ backend fills each role is open (`providers.graph.kind` /
   selects, for every model, store and registry role.
 - **Renderers**: `@register_renderer("name")` (`adapters/renderers/base.py`);
   **parsers**: `ParserFactory.register_loader(".ext", Loader)`.
+- **Schema sources**: `@register_schema_source("kind")`
+  (`adapters/schema_sources/registry.py`): the loader
+  `processing.graph_extraction.schema_source.kind` selects (§12).
 - **Evaluators**: one lazy-import branch per `EvaluatorType` in
   `EvaluationManager._resolve_evaluator_class`.
 
@@ -1231,7 +1235,12 @@ fails the run (`BaseRenderer.check_dependencies`) before anything renders.
   apply; nothing is applied at run time. A tuned prompt replaces only the
   persona preamble and keeps the built-in output rules (the XML schema, the
   verbatim `source_text` grounding), so the parser and grounding guard keep
-  working.
+  working. The rules carry the `{entity_types}` and `{relationship_types}`
+  variables, rendered from config at call time
+  (`GraphExtractionPrompt.config_variables`). A variable that replaced fixed
+  rule text declares it (`inlined_slots`): the extraction-record
+  fingerprint hashes the template with it filled in, so the change re-keys
+  no record.
 
 ---
 
@@ -1280,7 +1289,26 @@ checks that its values are the defaults and each key is in the reference).
   document's extraction settings: their fingerprint is recorded on each
   committed document and the settings once per registry scope, compared field
   by field on the next run (a setting a release adds is no change while it
-  holds its default). Adding a section: §15.
+  holds its default). A field added to a keyed section whose default keeps
+  the earlier behaviour is listed in `_KEYED_ONCE_SET`: it counts for no key
+  until set otherwise, so an upgrade re-keys no stage cache or extraction
+  record. Adding a section: §15.
+- **Extraction schema** (`domain/models/schema.py`). The entity and
+  relationship types and the allowed patterns live inline in
+  `processing.graph_extraction` (`entity_types`, `relationship_types`,
+  `relationship_patterns`, `schema_mode`), read as one frozen
+  `ExtractionSchema` (types with an optional ontology `iri`, patterns, mode,
+  a content `digest`). Labels compare by `schema_key` (NFKC, case-folded,
+  each run of whitespace and `_` one `_`) and nothing looser: no synonyms,
+  plurals or edit distance. `schema_source` names where the schema comes
+  from: `inline`, or a registered source (`file` today) that
+  `application/bootstrap.resolve_extraction_schema` loads once at start-up
+  (`DataIngestionPipeline`, `EvaluationManager`) into the inline keys of a
+  config copy, whose source is then `inline`. The extractor, the prompts
+  and the cache keys read only the inline keys, so the loaded content is
+  keyed and its location (`schema_source.path`) is not: a moved file
+  re-extracts nothing, an edited one re-extracts. Extraction does not apply
+  the schema yet.
 
 ---
 
@@ -1340,13 +1368,33 @@ by default**.
 
 ## 15. Extension Guide
 
-This section is the single reference for extending the framework. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
+This section is the single reference for extending the framework. Strategies, renderers, parsers and schema sources extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
 
 - **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports. Override `check_dependencies` to fail fast when an optional package the renderer imports is missing.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
+- **New schema source** (an ontology format or service): register a loader
+  for a new `schema_source.kind` with `@register_schema_source("kind")`
+  (`adapters/schema_sources/`, imported by the package `__init__`). It
+  receives the `SchemaSourceConfig` (`kind`, `path`) and returns a
+  `SchemaDocument`: the `entity_types` (or `None` to keep the config's),
+  `relationship_types` and `relationship_patterns` it supplies, each a
+  string or a spec. The loader translates, it does not reason: an OWL/RDFS
+  loader would parse with rdflib, map classes to `EntityTypeSpec(label,
+  description, iri)` and object properties to `RelationshipTypeSpec`, take
+  its patterns from the properties' domain and range (closure over
+  `subClassOf` / `subPropertyOf` computed in the loader), and import the
+  parser inside the function, raising `SchemaSourceError` naming the extra
+  when it is missing; a SHACL or LinkML loader maps node shapes or classes
+  the same way, and a service loader (an ontology API or an MCP
+  `describe_schema` tool) fetches its snapshot once. Nothing else changes:
+  start-up writes the result into the inline keys, the config validates it
+  (unique labels, patterns naming declared types), and the content keys the
+  caches, so the snapshot a run used is the one it is keyed by. Raise
+  `SchemaSourceError` for anything unreadable; it is a `ConfigurationError`,
+  so the CLIs exit 2.
 - **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 
 
