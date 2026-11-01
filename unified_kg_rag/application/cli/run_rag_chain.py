@@ -99,6 +99,18 @@ class CommandLineInterface:
         self.parser = self._setup_arguments()
 
     @staticmethod
+    def _typed_filters(filter_args: list[str] | None) -> dict[str, Any]:
+        """``key:value`` pairs as a mapping, a boolean or numeric field's
+        value converted to its type (``in_schema:false`` is ``False``), as
+        the Python API would pass it.
+
+        Raises:
+            InvalidFilterError: A value its field's type cannot take.
+        """
+        filters = dict(item.split(":", 1) for item in filter_args or [])
+        return GraphRAGChain.typed_filter_values(filters) or {}
+
+    @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
@@ -155,7 +167,8 @@ class CommandLineInterface:
             action="extend",
             type=_filter_pair,
             help="Attribute filters as space-separated 'key:value' pairs (a "
-            "repeated --filters adds its pairs)",
+            "repeated --filters adds its pairs); a boolean or numeric field "
+            "takes its type's value (in_schema:false, rank:2)",
         )
         add_output_format_argument(parser)
         parser.add_argument(
@@ -183,6 +196,12 @@ class CommandLineInterface:
                 f"--filters gives {', '.join(repeated)} more than once; give "
                 "each key once"
             )
+        try:
+            # A value its field's type cannot take (in_schema:maybe) is a
+            # usage error, not a filter matching nothing.
+            CommandLineInterface._typed_filters(args.filters)
+        except InvalidFilterError as e:
+            self.parser.error(f"--filters: {e}")
         if args.interactive and args.output_format == "json":
             self.parser.error(
                 "--output-format json is not supported with --interactive, a "
@@ -467,8 +486,10 @@ class RAGChainRunner:
 
     @staticmethod
     def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        """``--filters`` as a mapping (each pair checked by ``_filter_pair``)."""
-        return dict(item.split(":", 1) for item in filter_args or [])
+        """``--filters`` as a mapping (each pair checked by ``_filter_pair``),
+        boolean and numeric fields typed (``CommandLineInterface.parse_args``
+        refused a value that is not one)."""
+        return CommandLineInterface._typed_filters(filter_args)
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:
@@ -601,7 +622,11 @@ class RAGChainRunner:
         except argparse.ArgumentTypeError:
             console.print("[red]Invalid filter format. Use 'key:value'[/red]")
             return
-        key, value = pair.split(":", 1)
+        try:
+            ((key, value),) = CommandLineInterface._typed_filters([pair]).items()
+        except InvalidFilterError as e:
+            console.print(f"[red]Filter not set: {markup_safe(e)}[/red]")
+            return
         # Rejected now, not by every later question until clear-filters.
         # Checked with the filters already set: under auto, together they
         # may leave no strategy that applies them all.

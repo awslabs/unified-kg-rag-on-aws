@@ -65,6 +65,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
     check_filter_values,
+    typed_filter_values,
     union_filter_fields,
 )
 from unified_kg_rag.application.bootstrap import build_providers, build_query_guard
@@ -1003,8 +1004,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         search engine would refuse or misread (``None``, NaN, a nested list,
         an empty list or range...), as every query checks before any model
         call. Needs no chain: a caller validating a whole query file first
-        (``run-eval``) uses it before building one."""
-        check_filter_values(filters)
+        (``run-eval``) uses it before building one. A string a boolean or
+        numeric field cannot take is refused too (``typed_filter_values``)."""
+        check_filter_values(typed_filter_values(filters))
+
+    @staticmethod
+    def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None:
+        """``filters`` with the strings of boolean and numeric fields
+        converted to their type (``in_schema: "false"`` to ``False``), as
+        every query converts them before any model call, so each store
+        matches them alike. For a caller holding string values (a command
+        line); raises ``InvalidFilterError`` on a string the field's type
+        cannot take."""
+        return typed_filter_values(filters)
 
     def check_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
@@ -1015,7 +1027,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         routes only among those that do), or a value is malformed
         (``check_filter_values``). For callers that keep filters across
         queries (an interactive session)."""
-        check_filter_values(filters)
+        check_filter_values(typed_filter_values(filters))
         if strategy is SearchStrategy.AUTO:
             self._auto_candidates(filters)
         else:
@@ -1859,7 +1871,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             RAGInput(**inputs) if isinstance(inputs, dict) else inputs.model_copy()
         )
 
+        # A string for a boolean or numeric field becomes that type: the
+        # graph stores match a value as given, OpenSearch converts it.
         # Malformed filter values fail now, before any model call.
+        rag_input.filters = typed_filter_values(rag_input.filters)
         check_filter_values(rag_input.filters)
         if rag_input.use_memory and not rag_input.conversation_id:
             rag_input.conversation_id = str(uuid.uuid4())

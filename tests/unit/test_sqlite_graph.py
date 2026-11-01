@@ -31,7 +31,11 @@ from unified_kg_rag.domain.models import (
     Relationship,
     SearchQuery,
 )
-from unified_kg_rag.shared.exceptions import StoreConfigurationError, StoreTimeoutError
+from unified_kg_rag.shared.exceptions import (
+    InvalidFilterError,
+    StoreConfigurationError,
+    StoreTimeoutError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -594,8 +598,13 @@ async def test_retriever_filters(config: Config) -> None:
     assert await ids({"attr_role": "vendor"}) == ["a", "c", "s"]
     # A key no entity vertex declares is dropped, not matched.
     assert await ids({"level": "0"}) == ["a", "b", "c", "s"]
+    # A string of a numeric field is typed (as the CLI gives every value)...
+    assert await ids({"rank": {"gte": "3"}}) == ["b", "c", "s"]
+    # ... and one that is no number refused, as OpenSearch refuses it.
+    with pytest.raises(InvalidFilterError, match="Filter 'rank' is a number"):
+        await ids({"rank": {"gte": "x"}})
     # Comparing across types matches nothing rather than raising.
-    assert await ids({"rank": {"gte": "x"}}) == []
+    assert await ids({"type": {"gte": 3}}) == []
     retriever.close()
     indexer.close()
 

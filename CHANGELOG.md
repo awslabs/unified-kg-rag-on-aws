@@ -765,6 +765,14 @@ Queries and retrieval.
   expand alike. Ordering reads every neighbour of an expanded hub;
   `indexing.neptune.deterministic_order: false` keeps the store's order
   instead (#470, #473).
+- A boolean or numeric filter given as a string (`run-rag --filters
+  in_schema:false rank:2`, `set-filter`, a string in a `run-eval` dataset
+  or in `RAGInput.filters`) is converted to the field's type, so graph
+  expansion on the SQLite graph and Gremlin, which matched nothing, agrees
+  with OpenSearch and the Python API's typed values. A boolean takes
+  `true`/`false`, `1`/`0` or `yes`/`no` (any case); a string the type
+  cannot take (`in_schema:maybe`) raises `InvalidFilterError` (exit 2 on
+  the command line) (#479).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
