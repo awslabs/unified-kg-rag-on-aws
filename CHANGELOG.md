@@ -607,11 +607,11 @@ From 0.2.3 (or a `main` checkout since):
   and `schema_source` keys are validated on load: labels are unique by
   case and word separators, and patterns name declared types. Extraction
   does not apply them yet. At their defaults they change no cache key,
-  extraction record or recorded extraction settings (#PR).
+  extraction record or recorded extraction settings (#475).
 - Schema sources: `schema_source.kind: file` reads the schema keys from a
   YAML or JSON file at start-up, keyed by its content, not its path, and
   `@register_schema_source` (`adapters/schema_sources/`) adds a source for
-  another format or service (#PR).
+  another format or service (#475).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -705,9 +705,9 @@ From 0.2.3 (or a `main` checkout since):
 - The extraction prompt's relationship-type examples are the
   `{relationship_types}` variable, which a `graph_extraction` custom prompt
   may use. The default prompt renders byte for byte as before, and
-  extraction records keep their keys (#PR).
+  extraction records keep their keys (#475).
 - An `entity_types` list with two labels that differ only in case or word
-  separators (`PERSON`, `person`) fails the load (#PR).
+  separators (`PERSON`, `person`) fails the load (#475).
 
 ### Fixed
 Bugs present in 0.2.3.
