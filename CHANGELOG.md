@@ -772,7 +772,7 @@ Queries and retrieval.
   with OpenSearch and the Python API's typed values. A boolean takes
   `true`/`false`, `1`/`0` or `yes`/`no` (any case); a string the type
   cannot take (`in_schema:maybe`) raises `InvalidFilterError` (exit 2 on
-  the command line) (#PR).
+  the command line) (#479).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
