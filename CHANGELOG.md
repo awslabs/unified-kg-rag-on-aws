@@ -184,7 +184,7 @@ Configuration keys.
 - Retries are configured in one section, `retry`, and every knob counts
   total attempts, the first included: a 0.2.3 `max_retries: N` is
   `max_attempts: N+1` (#151, #216, #468). The keys below fail the load
-  naming the new key, so a tuned value is not silently lost (#PR). A
+  naming the new key, so a tuned value is not silently lost (#470). A
   Neptune retry backs off from
   `retry.base_delay_seconds`, as the model calls do (both default 2 s).
   `BatchProcessor.from_processing` is `BatchProcessor.from_config(config)`,
@@ -665,7 +665,7 @@ From 0.2.3 (or a `main` checkout since):
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and
   the load warns when `contextual_grounding.enabled` has no guardrail
   identifier or `length_unit: tokens` keeps every character-default size
-  (#PR).
+  (#470).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -679,7 +679,7 @@ Queries and retrieval.
   paths to an entity the first by content is kept, so two builds of one
   graph expand alike. Ordering reads every neighbour of an expanded hub;
   `indexing.neptune.deterministic_order: false` keeps the store's order
-  instead (#PR).
+  instead (#470).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
