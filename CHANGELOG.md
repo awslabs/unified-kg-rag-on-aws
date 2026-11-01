@@ -625,7 +625,7 @@ From 0.2.3 (or a `main` checkout since):
   graph extraction stage's `extraction_stats` and the gleaning stage's
   `gleaning_stats`; drops are not failures. With the defaults, or entity
   types alone, every cache key, extraction record and prompt is unchanged
-  (#PR).
+  (#476).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
