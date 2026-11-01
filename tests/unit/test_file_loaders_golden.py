@@ -192,6 +192,24 @@ def test_pdf_pages_and_metadata(corpus: Path) -> None:
     assert [page.metadata["page"] for page in pages] == [0, 1, 2]
 
 
+def test_pdf_page_labels_are_read_once_per_file(corpus: Path, monkeypatch) -> None:
+    # pypdf builds the whole label list on each read: per page, a
+    # 4,000-page file took 30 s instead of 2.
+    import pypdf
+
+    reads: list[int] = []
+    labels = pypdf.PdfReader.page_labels
+
+    def counted(reader: pypdf.PdfReader) -> list[str]:
+        reads.append(1)
+        return labels.fget(reader)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(pypdf.PdfReader, "page_labels", property(counted))
+    pages = PdfFileLoader(corpus / "multi.pdf").load()
+    assert [page.metadata["page_label"] for page in pages] == ["1", "2", "3"]
+    assert len(reads) == 1
+
+
 def test_csv_rows_follow_dictreader_shapes(corpus: Path) -> None:
     rows = CsvFileLoader(corpus / "quotes.csv").load()
     assert [row.metadata["row"] for row in rows] == [0, 1, 2, 3, 4]

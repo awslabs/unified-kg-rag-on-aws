@@ -49,11 +49,12 @@ _QUARTER = re.compile(
     re.IGNORECASE,
 )
 # What a written-out date may carry that strptime does not read: an ordinal
-# suffix ("15th"), dropped, or an abbreviation's dot ("Jan.", "Dec.31"),
-# read as a space (none before a comma: "Jan., 2024" reads as "Jan, 2024").
+# suffix ("15th"), dropped, an abbreviation's dot ("Jan.", "Dec.31", "Jan .
+# 2024"), read as a space, and a comma spaced otherwise than ", " ("Jan.,
+# 2024", "Jan.,2024", "15 ,2024"), respaced.
 _ORDINAL = re.compile(r"(?<=\d)(st|nd|rd|th)\b", re.IGNORECASE)
-_ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\.")
-_SPACE_BEFORE_COMMA = re.compile(r"\s+,")
+_ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\s*\.")
+_COMMA = re.compile(r"\s*,\s*")
 # "Sept" is no %b abbreviation.
 _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
 
@@ -69,6 +70,8 @@ _DATE_FORMATS = (
     "%b %d %Y",
     "%d %B %Y",
     "%d %b %Y",
+    "%d %B, %Y",
+    "%d %b, %Y",
     "%Y-%m-%d",
     "%Y/%m/%d",
     "%Y.%m.%d",
@@ -124,8 +127,8 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
         if end:
             return _last_day(year, month + 2).isoformat()
         return f"{year:04d}-{month:02d}-01"
-    cleaned = _SPACE_BEFORE_COMMA.sub(
-        ",",
+    cleaned = _COMMA.sub(
+        ", ",
         " ".join(
             _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
         ),

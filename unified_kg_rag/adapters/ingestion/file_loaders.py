@@ -123,14 +123,13 @@ class PdfFileLoader(BaseLoader):
                 | dict(reader.metadata or {})
                 | {"source": str(self.file_path), "total_pages": len(reader.pages)}
             )
+            # Built for every page on each read: once per file, not per page.
+            page_labels = reader.page_labels
             for page_number, page in enumerate(reader.pages):
                 yield LangChainDocument(
                     page_content=page.extract_text(extraction_mode="plain").strip(),
                     metadata=metadata
-                    | {
-                        "page": page_number,
-                        "page_label": reader.page_labels[page_number],
-                    },
+                    | {"page": page_number, "page_label": page_labels[page_number]},
                 )
 
 
