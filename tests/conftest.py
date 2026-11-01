@@ -267,6 +267,7 @@ def skip_vertex_id_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(NeptuneIndexer, "_check_vertex_ids", lambda self, label: None)
     monkeypatch.setattr(NeptuneRetriever, "_vertex_lookup", configured)
+    monkeypatch.setattr(NeptuneRetriever, "_settled", lambda self, label: False)
 
 
 @pytest.fixture

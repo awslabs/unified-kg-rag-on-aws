@@ -574,6 +574,12 @@ From 0.2.3 (or a `main` checkout since):
   (#466, #470).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk
   quantized vectors on OpenSearch 2.17+ (#461).
+- A running query service follows a Neptune vertex-id switch without a
+  restart: graph expansion reads the label's switch vertex on each query
+  (one more indexed read) and checks the label's mode again when a
+  custom-id lookup finds none of its seeds. Before, a label found settled
+  was not checked again, so a later switching build expanded only the seeds
+  and, once swept, returned nothing until a restart (#PR).
 - The public API exports its errors (`GraphRAGException`,
   `ConfigurationError`, `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `StoreRequestRejectedError`,

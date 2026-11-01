@@ -319,7 +319,10 @@ Switching an existing graph needs one full build:
    modes write it) and logs a WARNING once per label. During the build it
    reads each entity once, the rewritten copy where the build has written
    one and the old copy otherwise. Once the label is settled in the query's
-   mode, custom-mode queries go back to vertex-id lookups.
+   mode, custom-mode queries go back to vertex-id lookups. A running query
+   service needs no restart: each query reads the label's switch vertex (one
+   indexed read), and a custom-mode lookup that finds none of its seeds
+   checks the label's mode again.
 4. If a write fails, the build keeps the old vertices for a retry, and the
    switch vertex stays. In that state both modes refuse incremental runs
    ("did not finish") until a full build succeeds; queries go on reading by
