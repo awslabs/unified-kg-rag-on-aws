@@ -93,7 +93,8 @@ Configuration loading.
   `allow_unknown_keys=True` (#335).
 - A moved key fails the load naming the key that replaces it (the *Moved
   keys* table of `docs/configuration.md`); a removed key loads with a
-  WARNING and is ignored (#334, #344, #467, #468).
+  WARNING and is ignored (its *Removed keys* table) (#334, #344, #467,
+  #468, #PR).
 - Environment overrides use one prefix: `UKR__<SECTION>__<KEY>` sets any
   config key (double underscores between path segments, any case; JSON for
   lists and mappings). The former names are no longer read (#335):
@@ -173,7 +174,6 @@ Configuration keys.
   | `indexing.opensearch.embedding_model_id` | `models.embedding.model_id` |
   | `indexing.opensearch.embedding_dimension` | `models.embedding.dimension` |
   | `evaluation.embedding_model_id` | `models.embedding.model_id` |
-  | `graph.visualization.embeddings` | `models.embedding.model_id` |
   | `providers.rerank.model_id` | `models.rerank` |
   | `search.reranking.rerank_model_id` | `models.rerank` |
 - `aws.dynamodb.enabled` moved to `providers.doc_status.enabled` (default
@@ -183,9 +183,9 @@ Configuration keys.
   only the visualization computes centrality (#335).
 - Retries are configured in one section, `retry`, and every knob counts
   total attempts, the first included: a 0.2.3 `max_retries: N` is
-  `max_attempts: N+1` (#151, #216, #468). The keys below load with a WARNING
-  naming the new key and are ignored, so set the new key to keep a
-  non-default value. A Neptune retry backs off from
+  `max_attempts: N+1` (#151, #216, #468). The keys below fail the load
+  naming the new key, so a tuned value is not silently lost (#PR). A
+  Neptune retry backs off from
   `retry.base_delay_seconds`, as the model calls do (both default 2 s).
   `BatchProcessor.from_processing` is `BatchProcessor.from_config(config)`,
   and `TransientRetryConfig` is no longer a config section
@@ -227,6 +227,7 @@ Configuration keys.
   | `graph.visualization.embedding_method` | none: the layout is a spring layout |
   | `graph.visualization.layout_method` | none: the layout is a spring layout |
   | `graph.visualization.layout` (`umap`, `tsne`, `pca`) | none |
+  | `graph.visualization.embeddings` | none: the layout uses no embeddings |
 - `graph.visualization.interactive` and `static` are typed sections: a
   misspelled renderer setting is an unknown key, values are validated, and
   setting one key keeps the others' defaults (#344).
@@ -656,6 +657,12 @@ From 0.2.3 (or a `main` checkout since):
   `-m "not aws"` is the pytest default; the Dockerfile takes a
   `BASE_IMAGE` argument; a layering test enforces the hexagonal import rules
   (#119, #257, #297, #303, #428, #456, #464, #465).
+- Settings set in code on `processing.chunking`, `indexing.neptune`,
+  `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
+  `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and
+  the load warns when `contextual_grounding.enabled` has no guardrail
+  identifier or `length_unit: tokens` keeps every character-default size
+  (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

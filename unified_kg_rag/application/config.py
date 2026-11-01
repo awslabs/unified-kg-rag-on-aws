@@ -152,8 +152,12 @@ def _env_path(name: str) -> tuple[str, ...] | None:
 
 
 def _unknown_variable(name: str) -> str:
-    """How an unknown variable ``name`` is reported: a nested ``index``
-    segment of an index setting names the variable to set instead."""
+    """How an unknown variable ``name`` is reported: one naming a moved key
+    (``MOVED_KEYS``) or a nested ``index`` segment of an index setting names
+    the variable to set instead."""
+    for old, new in MOVED_KEYS.items():
+        if name.upper() == env_var(old):
+            return f"environment variable {name} (moved: set {env_var(new)})"
     settings = env_var("indexing.opensearch.index_settings")
     nested = f"{settings}__INDEX__"
     if name.upper().startswith(nested):
@@ -252,6 +256,8 @@ class ConfigLoader:
                 "(see providers.*.kind)",
                 path,
             )
+        for message in config.ineffective_settings():
+            _logger.warning("Config: %s", message)
         if self.config_path is not None:
             resolve_relative_paths(config, self.config_path)
         self._config = config

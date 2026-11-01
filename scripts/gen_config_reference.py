@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ENV_PREFIX
-from unified_kg_rag.domain.models.config import MOVED_KEYS, Config
+from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS, Config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "configuration.md"
@@ -60,7 +60,8 @@ the keys most deployments set.
   mapping value takes JSON. {{aws_fallbacks}}
 - **Unknown keys** fail the load (`--allow-unknown-keys` turns that into a
   warning). Keys that moved are refused with their new place; see
-  [Moved keys](#moved-keys).
+  [Moved keys](#moved-keys). Removed keys load with a warning and are
+  ignored; see [Removed keys](#removed-keys).
 """
 
 
@@ -220,7 +221,12 @@ def render() -> str:
     if top_rows:
         lines.append("- [Top-level keys](#top-level-keys)")
     lines += [f"- [`{name}`](#{name})" for name, *_ in sections]
-    lines += ["- [Long defaults](#long-defaults)", "- [Moved keys](#moved-keys)", ""]
+    lines += [
+        "- [Long defaults](#long-defaults)",
+        "- [Moved keys](#moved-keys)",
+        "- [Removed keys](#removed-keys)",
+        "",
+    ]
     if top_rows:
         lines += [
             "## Top-level keys",
@@ -246,6 +252,14 @@ def render() -> str:
         "| Former key | Now |",
         "|---|---|",
         *[f"| `{old}` | `{new}` |" for old, new in MOVED_KEYS.items()],
+        "",
+        "## Removed keys",
+        "",
+        "These keys, and any key under them, load with a WARNING and are " "ignored.",
+        "",
+        "| Former key | Why |",
+        "|---|---|",
+        *[f"| `{old}` | {_cell(why)} |" for old, why in REMOVED_KEYS.items()],
         "",
     ]
     return "\n".join(lines).rstrip() + "\n"

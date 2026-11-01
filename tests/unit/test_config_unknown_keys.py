@@ -21,7 +21,7 @@ import yaml
 from tests.fixtures.config_template import uncommented_template
 from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import REMOVED_KEYS
+from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -179,15 +179,42 @@ _REMOVED_SETTINGS = [
     ("indexing.opensearch.embedding_cache_s3_key", None, "embedding-cache/cache.json"),
     ("search.local_search.type_quota", "text_floor", 4),
     ("cache.chunking", "chunk_size", 500),
-    ("processing.max_attempts", None, 2),
-    ("aws.bedrock.transient_retry", "max_attempts", 2),
-    ("providers.llm.max_attempts", None, 2),
-    ("providers.embedding.max_attempts", None, 2),
-    ("indexing.neptune.max_attempts", None, 2),
-    ("indexing.neptune.retry_delay_seconds", None, 0),
-    ("search.store_max_attempts", None, 2),
-    ("evaluation.ragas_max_attempts", None, 2),
+    ("graph.visualization.embeddings", "model_id", "amazon.titan-embed-text-v2:0"),
+    ("search.lightrag_search.structured_keyword_output", None, True),
 ]
+
+
+# The retry keys #468 folded into the retry section: each counts what its
+# replacement counts, so a tuned value fails the load naming the new key
+# rather than silently reverting to the default.
+_MOVED_RETRY_KEYS = {
+    "processing.max_attempts": "retry.max_attempts",
+    "aws.bedrock.transient_retry.max_attempts": "retry.max_attempts",
+    "aws.bedrock.transient_retry.base_delay_seconds": "retry.base_delay_seconds",
+    "aws.bedrock.transient_retry.max_delay_seconds": "retry.max_delay_seconds",
+    "aws.bedrock.transient_retry.max_total_seconds": "retry.max_total_seconds",
+    "providers.llm.max_attempts": "retry.model_server_max_attempts",
+    "providers.embedding.max_attempts": "retry.model_server_max_attempts",
+    "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
+    "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
+    "search.store_max_attempts": "retry.query_store_max_attempts",
+    "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
+}
+
+
+@pytest.mark.parametrize(("old", "new"), sorted(_MOVED_RETRY_KEYS.items()))
+def test_a_tuned_old_retry_key_fails_naming_its_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: str
+) -> None:
+    assert MOVED_KEYS[old] == new
+    assert old not in REMOVED_KEYS
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(old, 2)))
+    with pytest.raises(ConfigurationError, match=f"{old} -> {new}"):
+        ConfigLoader(config_file).load_config()
+    monkeypatch.setenv(env_var(old), "2")
+    with pytest.raises(ConfigurationError, match=f"moved: set {env_var(new)}"):
+        ConfigLoader().load_config()
 
 
 def _nested(path: str, value: Any) -> dict[str, Any]:

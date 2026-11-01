@@ -527,10 +527,23 @@ MOVED_KEYS: dict[str, str] = {
     "indexing.opensearch.embedding_model_id": "models.embedding.model_id",
     "indexing.opensearch.embedding_dimension": "models.embedding.dimension",
     "evaluation.embedding_model_id": "models.embedding.model_id",
-    "graph.visualization.embeddings": "models.embedding.model_id",
     "providers.rerank.model_id": "models.rerank",
     "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
+    # Retries are configured in one section; each old key counts what its
+    # replacement counts, so a tuned value fails the load instead of
+    # silently reverting to the default.
+    "processing.max_attempts": "retry.max_attempts",
+    "aws.bedrock.transient_retry.max_attempts": "retry.max_attempts",
+    "aws.bedrock.transient_retry.base_delay_seconds": "retry.base_delay_seconds",
+    "aws.bedrock.transient_retry.max_delay_seconds": "retry.max_delay_seconds",
+    "aws.bedrock.transient_retry.max_total_seconds": "retry.max_total_seconds",
+    "providers.llm.max_attempts": "retry.model_server_max_attempts",
+    "providers.embedding.max_attempts": "retry.model_server_max_attempts",
+    "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
+    "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
+    "search.store_max_attempts": "retry.query_store_max_attempts",
+    "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
 }
 
 
@@ -551,7 +564,13 @@ REMOVED_KEYS: dict[str, str] = {
             "renders the visualization_data.json it writes "
             "(graph.visualization.export_data), with a spring layout"
         )
-        for key in ("enabled", "embedding_method", "layout_method", "layout")
+        for key in (
+            "enabled",
+            "embedding_method",
+            "layout_method",
+            "layout",
+            "embeddings",
+        )
     },
     **{
         f"indexing.opensearch.{key}": (
@@ -570,21 +589,10 @@ REMOVED_KEYS: dict[str, str] = {
         "a stage-cache entry of more than 1,000 items or 50 MB is always "
         "written in chunk files"
     ),
-    **{
-        old: f"retries are configured in one section: set {new}"
-        for old, new in {
-            "processing.max_attempts": "retry.max_attempts",
-            "aws.bedrock.transient_retry": "retry.max_attempts, "
-            "retry.base_delay_seconds, retry.max_delay_seconds and "
-            "retry.max_total_seconds",
-            "providers.llm.max_attempts": "retry.model_server_max_attempts",
-            "providers.embedding.max_attempts": "retry.model_server_max_attempts",
-            "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
-            "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
-            "search.store_max_attempts": "retry.query_store_max_attempts",
-            "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
-        }.items()
-    },
+    "search.lightrag_search.structured_keyword_output": (
+        "keyword extraction parses the model's text answer; the structured "
+        "output pilot was removed before any release"
+    ),
 }
 
 
@@ -629,6 +637,8 @@ class ContextualGroundingConfig(BaseModel):
     only: other languages, Korean included, score low and are blocked.
     """
 
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = Field(
         default=False,
         description=(
@@ -663,6 +673,10 @@ class GuardrailConfig(BaseModel):
     entity) and a prompt-attack filter blocks instruction-like corpus text,
     which silently yields empty extractions.
     """
+
+    # Settings set in code are checked too: check_output turned off under
+    # an enabled grounding check is refused, as in a file.
+    model_config = ConfigDict(validate_assignment=True)
 
     identifier: str | None = Field(
         default=None,
@@ -763,6 +777,8 @@ class RetryConfig(BaseModel):
     attempt everywhere. ``max_attempts`` and the backoff apply to the model
     calls; the callers whose defaults differ have their own attempt count.
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     max_attempts: int = Field(
         default=5,
@@ -1255,6 +1271,10 @@ class DocumentParsingConfig(BaseModel):
 
 
 class ChunkingConfig(BaseModel):
+    # Settings set in code are checked too: a string length_unit would pick
+    # the character splitter while the cache key reads tokens.
+    model_config = ConfigDict(validate_assignment=True)
+
     chunker_type: ChunkingStrategy = Field(
         default=ChunkingStrategy.INTELLIGENT,
         description=(
@@ -1346,7 +1366,12 @@ class ChunkingConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_chunk_sizes(self) -> "ChunkingConfig":
+    def validate_chunk_sizes(self, info: ValidationInfo) -> "ChunkingConfig":
+        if info.field_name is not None:
+            # An assignment (one field at a time): the sizes are checked
+            # together where they are given together, so code can set
+            # several in any order.
+            return self
         if self.min_chunk_size >= self.max_chunk_size:
             raise ValueError("min_chunk_size must be less than max_chunk_size")
         if self.chunk_overlap >= self.min_chunk_size:
@@ -1354,6 +1379,17 @@ class ChunkingConfig(BaseModel):
         if self.pre_chunk_overlap >= self.pre_chunk_size:
             raise ValueError("pre_chunk_overlap must be less than pre_chunk_size")
         return self
+
+
+# The chunk sizes processing.chunking.length_unit counts.
+_CHUNK_SIZE_FIELDS = (
+    "min_chunk_size",
+    "max_chunk_size",
+    "chunk_overlap",
+    "pre_chunk_size",
+    "pre_chunk_overlap",
+    "fallback_chunk_size",
+)
 
 
 class TranslationConfig(BaseModel):
@@ -2017,6 +2053,8 @@ class GraphConfig(BaseModel):
 
 
 class NeptuneIndexingConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     entity_label_prefix: str = Field(
         default="Entity",
         min_length=1,
@@ -4053,6 +4091,39 @@ class Config(BaseModel):
             if inactive
             for name in sorted(names & section.model_fields_set)
         ]
+
+    def ineffective_settings(self) -> list[str]:
+        """Why settings the config sets do not do what they say, one message
+        each. Logged as a WARNING at load: the config is valid, but likely
+        not what was meant.
+
+        - Contextual grounding on without a guardrail identifier: no
+          guardrail screens the answers, so no grounding check runs.
+        - ``length_unit: tokens`` with every chunk size at its character
+          default: the sizes are read as tokens, about four times the
+          intended chunk length in English text.
+        """
+        messages: list[str] = []
+        guardrail = self.aws.bedrock.guardrail
+        if guardrail.contextual_grounding.enabled and not guardrail.enabled:
+            messages.append(
+                "aws.bedrock.guardrail.contextual_grounding.enabled is set "
+                "without aws.bedrock.guardrail.identifier: no guardrail screens "
+                "the answers, so no grounding check runs"
+            )
+        chunking = self.processing.chunking
+        if chunking.length_unit is ChunkLengthUnit.TOKENS and all(
+            getattr(chunking, name) == ChunkingConfig.model_fields[name].default
+            for name in _CHUNK_SIZE_FIELDS
+        ):
+            messages.append(
+                "processing.chunking.length_unit is tokens, but every chunk size "
+                "is still its character default (max_chunk_size 8000 tokens is "
+                "about 32,000 English characters): set the sizes in tokens, "
+                "for example min 250, max 2000, overlap 125, fallback 1200, "
+                "pre-chunk 12500 and its overlap 125"
+            )
+        return messages
 
     @property
     def doc_status_enabled(self) -> bool:

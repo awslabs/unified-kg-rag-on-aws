@@ -22,7 +22,8 @@ the keys most deployments set.
   mapping value takes JSON. The standard AWS variables also apply when nothing else sets the key: `AWS_PROFILE` fills `aws.profile_name`, `AWS_REGION` fills `aws.region_name`.
 - **Unknown keys** fail the load (`--allow-unknown-keys` turns that into a
   warning). Keys that moved are refused with their new place; see
-  [Moved keys](#moved-keys).
+  [Moved keys](#moved-keys). Removed keys load with a warning and are
+  ignored; see [Removed keys](#removed-keys).
 
 ## Contents
 
@@ -44,6 +45,7 @@ the keys most deployments set.
 - [`custom_prompts`](#custom_prompts)
 - [Long defaults](#long-defaults)
 - [Moved keys](#moved-keys)
+- [Removed keys](#removed-keys)
 
 ## Top-level keys
 
@@ -888,7 +890,36 @@ These keys are refused at load with the key that replaced them.
 | `indexing.opensearch.embedding_model_id` | `models.embedding.model_id` |
 | `indexing.opensearch.embedding_dimension` | `models.embedding.dimension` |
 | `evaluation.embedding_model_id` | `models.embedding.model_id` |
-| `graph.visualization.embeddings` | `models.embedding.model_id` |
 | `providers.rerank.model_id` | `models.rerank` |
 | `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |
+| `processing.max_attempts` | `retry.max_attempts` |
+| `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
+| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
+| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
+| `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
+| `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
+| `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
+| `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
+| `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
+| `search.store_max_attempts` | `retry.query_store_max_attempts` |
+| `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+
+## Removed keys
+
+These keys, and any key under them, load with a WARNING and are ignored.
+
+| Former key | Why |
+|---|---|
+| `aws.bedrock.guardrail.apply_to` | the guardrail screens the user query and the answer only; ingestion and evaluation models are never guarded |
+| `indexing.cross_run_merge` | an incremental run always merges its delta into the stored graph; turning that off overwrote entities other documents still cite |
+| `graph.visualization.enabled` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.embedding_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.layout_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.layout` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.embeddings` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `indexing.opensearch.persist_embedding_cache` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
+| `indexing.opensearch.embedding_cache_s3_key` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
+| `search.local_search.type_quota` | the fusion slots local search and DRIFT reserve per section type are fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager.type_budgets sets each type's share of the context |
+| `cache.chunking` | a stage-cache entry of more than 1,000 items or 50 MB is always written in chunk files |
+| `search.lightrag_search.structured_keyword_output` | keyword extraction parses the model's text answer; the structured output pilot was removed before any release |

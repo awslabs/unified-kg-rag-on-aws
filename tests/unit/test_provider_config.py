@@ -182,10 +182,6 @@ def test_non_bedrock_llm_requires_a_default_model() -> None:
             "indexing.opensearch.embedding_dimension -> models.embedding.dimension",
         ),
         (
-            {"graph": {"visualization": {"embeddings": {}}}},
-            "graph.visualization.embeddings -> models.embedding.model_id",
-        ),
-        (
             {"search": {"reranking": {"rerank_model_id": "m"}}},
             "search.reranking.rerank_model_id -> models.rerank",
         ),
