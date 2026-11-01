@@ -1923,7 +1923,7 @@ class TestStopsInTheLoop:
         ("run_rag_chain", "asyncio.run(stoppable(async_main(args)))"),
         ("run_rag_chain", "with interruptible():"),
         ("run_evaluation", "stoppable(_run_and_close())"),
-        ("run_prompt_tuning", "stoppable(tuner.tune(texts))"),
+        ("run_prompt_tuning", "stoppable(tuner.tune(texts, "),
     ],
 )
 def test_each_query_cli_runs_its_coroutine_as_the_stoppable_task(

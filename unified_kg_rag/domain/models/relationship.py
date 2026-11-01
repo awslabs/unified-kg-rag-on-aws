@@ -39,5 +39,6 @@ class Relationship(Identified, SchemaAnnotated):
     predicate_iri: str | None = Field(
         default=None,
         description="IRI of the ontology property the relationship's declared "
-        "type maps to, set at indexing; None when the type declares none",
+        "type maps to, set at indexing unless schema_mode is off; None when "
+        "the type declares none",
     )

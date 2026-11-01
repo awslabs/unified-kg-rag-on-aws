@@ -41,5 +41,6 @@ class Entity(Named, SchemaAnnotated):
     type_iri: str | None = Field(
         default=None,
         description="IRI of the ontology class the entity's declared type maps "
-        "to, set at indexing; None when the type declares none",
+        "to, set at indexing unless schema_mode is off; None when the type "
+        "declares none",
     )

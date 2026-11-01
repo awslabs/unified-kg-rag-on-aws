@@ -11,11 +11,14 @@ full build and an incremental run store the same annotations. Whether a
 relationship fits a pattern is not stored: it depends on its endpoints'
 types, which other runs' documents can change without touching the edge.
 
-An annotation is ``None`` where no schema applies: under ``off``, under
-``align`` with entity types alone (extraction then leaves every record as
-before the schema keys, ``SchemaConformance.applies``), and for one kind of
-item when the schema declares no type of that kind (relationships, with
-entity types only). An IRI is ``None`` for a type that declares none.
+``in_schema`` is ``None`` where the schema does not apply: under ``off``,
+under ``align`` with entity types alone (extraction then leaves every record
+as before the schema keys, ``SchemaConformance.applies``), and for one kind
+of item when the schema declares no type of that kind (relationships, with
+entity types only). An IRI is written whenever the item's type names a
+declared type with an ``iri``, unless the mode is ``off``: under ``align``
+with entity types alone too, so declaring a class IRI is enough to link the
+entities of that type. It is ``None`` for any other type.
 """
 
 from __future__ import annotations
@@ -28,7 +31,6 @@ from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
 
 # (in_schema, iri) of one item.
 Annotation = tuple[bool | None, str | None]
-_NONE: Annotation = (None, None)
 
 
 class SchemaAnnotator:
@@ -36,43 +38,59 @@ class SchemaAnnotator:
 
     def __init__(self, schema: ExtractionSchema) -> None:
         applies = SchemaConformance(schema).applies
-        # Type key -> the declared type's IRI; None: that kind is not annotated.
-        self._entity_iris: dict[str, str | None] | None = (
-            {schema_key(spec.label): spec.iri for spec in schema.entity_types}
+        # The type keys whose items get in_schema; None: that kind's items
+        # get none.
+        self._entity_keys: frozenset[str] | None = (
+            frozenset(schema_key(spec.label) for spec in schema.entity_types)
             if applies and schema.entity_types
             else None
         )
-        self._relationship_iris: dict[str, str | None] | None = (
-            {schema_key(spec.label): spec.iri for spec in schema.relationship_types}
+        self._relationship_keys: frozenset[str] | None = (
+            frozenset(schema_key(spec.label) for spec in schema.relationship_types)
             if applies and schema.relationship_types
             else None
         )
+        # Type key -> the IRI of a declared type that has one.
+        on = schema.mode != "off"
+        self._entity_iris: dict[str, str] = {
+            schema_key(spec.label): spec.iri
+            for spec in schema.entity_types
+            if on and spec.iri
+        }
+        self._relationship_iris: dict[str, str] = {
+            schema_key(spec.label): spec.iri
+            for spec in schema.relationship_types
+            if on and spec.iri
+        }
 
     @property
     def active(self) -> bool:
-        """Whether any item gets an annotation."""
-        return self._entity_iris is not None or self._relationship_iris is not None
+        """Whether any item can get an annotation."""
+        return bool(
+            self._entity_keys is not None
+            or self._relationship_keys is not None
+            or self._entity_iris
+            or self._relationship_iris
+        )
 
     @staticmethod
     def _annotation(
-        iris: dict[str, str | None] | None, label: str | None
+        keys: frozenset[str] | None, iris: dict[str, str], label: str | None
     ) -> Annotation:
-        if iris is None:
-            return _NONE
         key = schema_key(label or "")
-        if key not in iris:
-            return False, None
-        return True, iris[key]
+        return (None if keys is None else key in keys), iris.get(key)
 
     def entity_annotation(self, entity_type: str | None) -> Annotation:
         """``(in_schema, type_iri)`` of an entity of ``entity_type`` (empty
         included: an untyped entity is off schema)."""
-        return self._annotation(self._entity_iris, entity_type)
+        return self._annotation(self._entity_keys, self._entity_iris, entity_type)
 
     def relationship_annotation(self, relationship_type: str | None) -> Annotation:
         """``(in_schema, predicate_iri)`` of a relationship of
         ``relationship_type``."""
-        return self._annotation(self._relationship_iris, relationship_type)
+        return self._annotation(
+            self._relationship_keys, self._relationship_iris, relationship_type
+        )
 
     def entity(self, entity: Entity) -> Entity:
         """``entity`` with its annotations; itself when they already hold."""

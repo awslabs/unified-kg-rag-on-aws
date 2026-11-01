@@ -53,12 +53,15 @@ def schema_key(label: str) -> str:
     """The key a type label is compared by.
 
     NFKC-normalized, trimmed, each run of whitespace and underscores made one
-    ``_``, then case-folded: ``"works for"``, ``"WORKS_FOR"`` and
-    ``" Works__For "`` share a key. Nothing looser: ``"PERSONS"`` is not
-    ``"PERSON"``, ``"Org"`` is not ``"ORGANIZATION"`` and ``"works-for"`` is
-    not ``"works for"``.
+    ``_``, then case-folded and normalized again (folding can leave a
+    decomposed sequence, "ß" + U+0301 → "ss" + U+0301, which would key apart
+    from its composed spelling): ``"works for"``, ``"WORKS_FOR"`` and
+    ``" Works__For "`` share a key, and a key is its own key. Nothing
+    looser: ``"PERSONS"`` is not ``"PERSON"``, ``"Org"`` is not
+    ``"ORGANIZATION"`` and ``"works-for"`` is not ``"works for"``.
     """
-    return _SEPARATORS.sub("_", unicodedata.normalize("NFKC", label).strip()).casefold()
+    spaced = _SEPARATORS.sub("_", unicodedata.normalize("NFKC", label).strip())
+    return unicodedata.normalize("NFKC", spaced.casefold())
 
 
 _Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

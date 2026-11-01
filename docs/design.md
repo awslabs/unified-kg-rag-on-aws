@@ -460,11 +460,13 @@ gets its models and stores from the run's `Providers` bundle.
   values; pattern conformance is not stored, since it depends on endpoint
   types other documents can change. Where the schema does not apply
   (`SchemaConformance.applies`: `off`, `align` with entity types alone) and
-  for a kind with no declared type, every annotation is `None`, and `None`
-  is never written: models drop it from their dumps (`SchemaAnnotated`),
-  extraction records never hold annotations, the Neptune codec and the
-  OpenSearch documents omit it. A default config therefore stores exactly
-  what it stored before the fields; only the index mappings gain
+  for a kind with no declared type, `in_schema` is `None`; an IRI is written
+  whenever the stored type names a declared type with an `iri` and the mode
+  is not `off` (so `align` with entity types alone still links them), and is
+  `None` otherwise. `None` is never written: models drop it from their dumps
+  (`SchemaAnnotated`), extraction records never hold annotations, the
+  Neptune codec and the OpenSearch documents omit it. A default config (no
+  `iri` anywhere) therefore stores exactly what it stored before the fields; only the index mappings gain
   `in_schema` (boolean) and the IRI keyword fields, added to live indices
   by the incremental preflight (`check_index_settings` →
   `_add_missing_fields`). Ids are unchanged; the IRIs are the seam for
@@ -1263,6 +1265,17 @@ fails the run (`BaseRenderer.check_dependencies`) before anything renders.
   rule text declares it (`inlined_slots`): the extraction-record
   fingerprint hashes the template with it filled in, so the change re-keys
   no record.
+- **Schema drafts** (`run-prompt-tuning --schema-out`, `SchemaDraft` in
+  `application/prompts/tuner.py`): the profile's entity types and the
+  relationship types the grounded examples state most often, counted by
+  `schema_key` (at most `MAX_DRAFT_RELATIONSHIP_TYPES`). A type gets
+  patterns only when every (source type, target type) the examples give it
+  between two profile types appears `MIN_PATTERN_SUPPORT` times, so `align`
+  never counts the draft's own examples off pattern. The file is a
+  `schema_source: {kind: file}` document validated as a schema before it is
+  written, and names `align`, never `strict`: a draft from a few chunks
+  would drop what they did not show. A pure function of the profile and the
+  records, so a fixed model gives the same file.
 
 ---
 
@@ -1320,9 +1333,9 @@ checks that its values are the defaults and each key is in the reference).
   `processing.graph_extraction` (`entity_types`, `relationship_types`,
   `relationship_patterns`, `schema_mode`), read as one frozen
   `ExtractionSchema` (types with an optional ontology `iri`, patterns, mode,
-  a content `digest`). Labels compare by `schema_key` (NFKC, case-folded,
-  each run of whitespace and `_` one `_`) and nothing looser: no synonyms,
-  plurals or edit distance. `schema_source` names where the schema comes
+  a content `digest`). Labels compare by `schema_key` (NFKC, each run of
+  whitespace and `_` one `_`, case-folded and normalized again, so a key is
+  its own key) and nothing looser: no synonyms, plurals or edit distance. `schema_source` names where the schema comes
   from: `inline`, or a registered source (`file` today) that
   `application/bootstrap.resolve_extraction_schema` loads once at start-up
   (`DataIngestionPipeline`, `EvaluationManager`) into the inline keys of a
@@ -1343,7 +1356,8 @@ checks that its values are the defaults and each key is in the reference).
   unit types with declared types. The check is per unit and order-free, so
   incremental runs converge with a full build; its drops are not failures.
   Indexing then stores, from the same schema, whether each merged item's
-  type is declared and its type's IRI (§4.2, "Schema annotations"); the
+  type is declared (where the schema applies) and its type's IRI (whenever
+  one is declared and the mode is not `off`; §4.2, "Schema annotations"); the
   filter schema (`adapters/storage/filter_schema.py`) declares `in_schema`
   and `type_iri` on entities and Neptune entity vertices and `in_schema` and
   `predicate_iri` on relationships, but no `type` on relationships, which
@@ -1359,8 +1373,10 @@ by default**.
 - **Port-based fakes** (`tests/fixtures/fakes/`) implement the stores and the
   registry in memory; `moto` covers the DynamoDB and S3 adapters.
 - **Property tests** (hypothesis) cover merge laws, incremental-versus-full
-  convergence, interrupted runs, fusion monotonicity, MinHash and token-estimate
-  equivalence; `tests/integration/test_doc_status_conformance.py` checks the
+  convergence (under a `strict` extraction schema too), interrupted runs,
+  fusion monotonicity, MinHash and token-estimate equivalence, and the
+  extraction schema (`strict` keeps a subset of `align`, the per-unit check
+  is idempotent and order-free, `schema_key` is its own key); `tests/integration/test_doc_status_conformance.py` checks the
   `DocStatusPort.diff` partition against every registry.
 - **Store conformance suites**
   (`tests/integration/test_{graph_store,vector_store,retrieval}_conformance.py`)

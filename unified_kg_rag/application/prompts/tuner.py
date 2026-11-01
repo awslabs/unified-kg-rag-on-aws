@@ -9,21 +9,30 @@ as MS GraphRAG does), then emits ``custom_prompts`` overrides adapted to that
 profile. The output is a YAML-ready dict the user pastes under ``custom_prompts``
 in their config — keeping prompt tuning a deliberate, reviewable step rather
 than opaque runtime behaviour.
+
+On request it also drafts an extraction schema (:class:`SchemaDraft`): the
+profile's entity types and the relationship types the grounded examples
+use, as a file for ``schema_source: {kind: file}``.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import unicodedata
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+import yaml
 from langchain_core.output_parsers import StrOutputParser
+from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.contributions import unit_entities
+from unified_kg_rag.domain.ingestion.schema_conformance import unit_entity_types
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -31,6 +40,15 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     Relationship,
     TextUnit,
+    TextUnitExtraction,
+)
+from unified_kg_rag.domain.models.schema import (
+    EntityTypeSpec,
+    ExtractionSchema,
+    RelationshipPattern,
+    RelationshipTypeSpec,
+    entity_type_spec,
+    schema_key,
 )
 from unified_kg_rag.domain.prompts import (
     CommunityReportPrompt,
@@ -39,6 +57,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import (
+    entity_key,
     generate_stable_id,
     parse_llm_json,
     text_digest,
@@ -56,6 +75,14 @@ _MAX_EVIDENCE_CHARS = 200
 # Hard cap when the names themselves lie further apart than the target; a
 # sentence whose names cannot fit in this many characters gives no span.
 _MAX_EVIDENCE_SPAN_CHARS = 400
+
+
+# The relationship types a schema draft lists at most (the most frequent).
+MAX_DRAFT_RELATIONSHIP_TYPES = 12
+# How often the examples must state a (source type, relation, target type)
+# before a schema draft lists it as a pattern.
+MIN_PATTERN_SUPPORT = 2
+_LABEL_SEPARATORS = re.compile(r"[\s_]+")
 
 
 def _escape_braces(text: str) -> str:
@@ -89,6 +116,154 @@ class CorpusProfile:
                 str(t).strip().upper() for t in entity_types if str(t).strip()
             ],
         )
+
+
+def _draft_label(label: str) -> str:
+    """``label`` as a schema draft writes it: NFKC, trimmed, each run of
+    whitespace and ``_`` one ``_``, uppercase (``works for`` → ``WORKS_FOR``)."""
+    return _LABEL_SEPARATORS.sub(
+        "_", unicodedata.normalize("NFKC", label).strip()
+    ).upper()
+
+
+def _parses_back(pattern: RelationshipPattern) -> bool:
+    try:
+        return RelationshipPattern.parse(str(pattern)) == pattern
+    except ValueError:
+        return False
+
+
+class SchemaDraft(BaseModel):
+    """An extraction schema drafted by prompt tuning, for review.
+
+    ``entity_types`` are the corpus profile's; ``relationship_types`` the
+    ones the grounded examples state most often (at most
+    ``MAX_DRAFT_RELATIONSHIP_TYPES``, ``relationship_type_counts`` how
+    often). A relationship type gets patterns only when the examples state
+    it between two of the entity types and every such (source type, target
+    type) at least ``MIN_PATTERN_SUPPORT`` times, so the draft never flags
+    its own examples as off pattern. Written as a ``schema_source`` file
+    (:meth:`to_yaml`) and meant for ``schema_mode: align``.
+    """
+
+    entity_types: list[str] = Field(default_factory=list)
+    relationship_types: list[str] = Field(default_factory=list)
+    relationship_patterns: list[RelationshipPattern] = Field(default_factory=list)
+    relationship_type_counts: dict[str, int] = Field(default_factory=dict)
+
+    @classmethod
+    def from_examples(
+        cls, entity_types: list[str], records: list[TextUnitExtraction]
+    ) -> SchemaDraft:
+        """The draft of a profile's ``entity_types`` and the example
+        extraction ``records``; the same input gives the same draft."""
+        entities: dict[str, str] = {}
+        for item in entity_types:
+            spec = entity_type_spec(item)
+            if spec is not None:
+                entities.setdefault(schema_key(spec.label), spec.label)
+
+        counts: Counter[str] = Counter()
+        spellings: dict[str, Counter[str]] = defaultdict(Counter)
+        for record in records:
+            for rel in record.relationships:
+                if label := _draft_label(rel.type or ""):
+                    counts[schema_key(label)] += 1
+                    spellings[schema_key(label)][label] += 1
+        ranked = sorted(
+            counts,
+            key=lambda key: (-counts[key], min(spellings[key])),
+        )[:MAX_DRAFT_RELATIONSHIP_TYPES]
+        relations = {
+            key: min(spellings[key], key=lambda s: (-spellings[key][s], s))
+            for key in ranked
+        }
+
+        # Relation key -> (source key, target key) -> statements.
+        triples: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
+        for record in records:
+            types = unit_entity_types(record.entities)
+            for rel in record.relationships:
+                relation = schema_key(_draft_label(rel.type or ""))
+                source = schema_key(types.get(entity_key(rel.source_name or ""), ""))
+                target = schema_key(types.get(entity_key(rel.target_name or ""), ""))
+                if relation in relations and source in entities and target in entities:
+                    triples[relation][(source, target)] += 1
+        patterns = [
+            RelationshipPattern(
+                source_type=entities[source],
+                relation=relations[relation],
+                target_type=entities[target],
+            )
+            for relation in ranked
+            if triples[relation]
+            and min(triples[relation].values()) >= MIN_PATTERN_SUPPORT
+            for source, target in sorted(triples[relation])
+        ]
+        draft = cls(
+            entity_types=list(entities.values()),
+            relationship_types=list(relations.values()),
+            relationship_patterns=patterns,
+            relationship_type_counts={relations[key]: counts[key] for key in ranked},
+        )
+        draft.extraction_schema()  # A draft is a valid schema (raises if not).
+        return draft
+
+    def extraction_schema(self) -> ExtractionSchema:
+        """The draft as the schema ``schema_mode: align`` would apply.
+
+        Raises:
+            ValueError: The draft is inconsistent (``schema_problems``).
+        """
+        return ExtractionSchema.from_items(
+            [EntityTypeSpec(label=label) for label in self.entity_types],
+            [RelationshipTypeSpec(label=label) for label in self.relationship_types],
+            self.relationship_patterns,
+        )
+
+    def document(self) -> dict[str, Any]:
+        """The keys of the schema file. Without entity types the config's
+        stay, so the file then leaves ``entity_types`` out."""
+        document: dict[str, Any] = {}
+        if self.entity_types:
+            document["entity_types"] = list(self.entity_types)
+        # A label with ':' would read as 'LABEL: description', and a pattern
+        # whose labels hold its separators would not parse back: mappings.
+        document["relationship_types"] = [
+            {"label": label} if ":" in label else label
+            for label in self.relationship_types
+        ]
+        document["relationship_patterns"] = [
+            (str(pattern) if _parses_back(pattern) else pattern.model_dump(mode="json"))
+            for pattern in self.relationship_patterns
+        ]
+        return document
+
+    def to_yaml(self, path: str = "schema.yaml") -> str:
+        """The schema file: a comment on how to use it, then the keys."""
+        lines = [
+            "# Extraction schema draft written by run-prompt-tuning. Review it",
+            "# (rename, merge or drop types, add descriptions and iri), then load it:",
+            "#   processing:",
+            "#     graph_extraction:",
+            f"#       schema_source: {{kind: file, path: {json.dumps(path)}}}",
+            "#       schema_mode: align",
+            "# Remove entity_types from the config, or from this file, first: both",
+            "# may not set them. align keeps every extracted item; strict would",
+            "# drop what this sample did not show.",
+        ]
+        if self.relationship_type_counts:
+            lines.append("# Relationship types by statements in the tuning examples:")
+            lines.extend(
+                f"#   {label}: {count}"
+                for label, count in self.relationship_type_counts.items()
+            )
+        body = str(
+            yaml.safe_dump(
+                self.document(), sort_keys=False, allow_unicode=True, width=1000
+            )
+        )
+        return "\n".join(lines) + "\n" + body
 
 
 class PromptTuner:
@@ -194,9 +369,17 @@ class PromptTuner:
         string if the corpus is empty or extraction yields nothing (extraction
         still works without examples, so this degrades gracefully).
         """
+        return self.render_examples(*self.extract_examples(texts))
+
+    def extract_examples(
+        self, texts: list[str]
+    ) -> tuple[list[TextUnit], list[TextUnitExtraction]]:
+        """The sampled example chunks and the real ``GraphExtractor``'s
+        records of them; no records if extraction fails (examples are
+        best-effort)."""
         chunks = self._sample_chunks(texts)
         if not chunks:
-            return ""
+            return [], []
 
         text_units = [
             TextUnit.model_validate(
@@ -213,8 +396,15 @@ class PromptTuner:
             records, _ = extractor.extract_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort
             logger.warning("Corpus-grounded example extraction failed: %s", exc)
-            return ""
+            return text_units, []
+        return text_units, records
 
+    @classmethod
+    def render_examples(
+        cls, text_units: list[TextUnit], records: list[TextUnitExtraction]
+    ) -> str:
+        """Each unit with a non-empty record, rendered as a worked example
+        (:meth:`_render_example`), up to ``MAX_EXAMPLES``."""
         # Each rendered example pairs a genuine passage with what was actually
         # extracted from it (its unit's record).
         by_unit = {record.text_unit_id: record for record in records}
@@ -224,11 +414,11 @@ class PromptTuner:
             if record is None or not (record.entities or record.relationships):
                 continue
             rendered.append(
-                self._render_example(
+                cls._render_example(
                     unit.text, unit_entities(record), record.relationships
                 )
             )
-            if len(rendered) >= self.MAX_EXAMPLES:
+            if len(rendered) >= cls.MAX_EXAMPLES:
                 break
 
         return "\n\n".join(rendered).strip()
@@ -442,10 +632,17 @@ class PromptTuner:
             "community_report_system": community_report_system,
         }
 
-    async def tune(self, texts: list[str]) -> dict[str, Any]:
-        """End-to-end: profile the corpus, generate examples, return overrides."""
+    async def tune(
+        self, texts: list[str], *, schema_draft: bool = False
+    ) -> dict[str, Any]:
+        """End-to-end: profile the corpus, generate examples, return overrides.
+
+        With ``schema_draft`` the result also holds ``"schema_draft"``, the
+        :class:`SchemaDraft` of the profile and the examples' records.
+        """
         profile = await self.profile_corpus(texts)
-        profile.few_shot_examples = await self.generate_examples(profile, texts)
+        text_units, records = self.extract_examples(texts)
+        profile.few_shot_examples = self.render_examples(text_units, records)
         logger.info(
             "Corpus profile: domain='%s', language='%s', %d entity types, examples=%s",
             profile.domain,
@@ -453,7 +650,7 @@ class PromptTuner:
             len(profile.entity_types),
             "yes" if profile.few_shot_examples else "no",
         )
-        return {
+        result: dict[str, Any] = {
             "profile": {
                 "domain": profile.domain,
                 "language": profile.language,
@@ -462,3 +659,8 @@ class PromptTuner:
             },
             "custom_prompts": self.build_custom_prompts(profile),
         }
+        if schema_draft:
+            result["schema_draft"] = SchemaDraft.from_examples(
+                profile.entity_types, records
+            )
+        return result
