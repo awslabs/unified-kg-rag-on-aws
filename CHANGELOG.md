@@ -139,7 +139,7 @@ naming the key that replaces it.
   | `graph.visualization.embedding_method` | none: the layout is a spring layout |
   | `graph.visualization.layout_method` | none: the layout is a spring layout |
   | `graph.visualization.layout` (`umap`, `tsne`, `pca`) | none |
-- The persisted S3 embedding cache is gone (#PR). Off by default, it kept
+- The persisted S3 embedding cache is gone (#468). Off by default, it kept
   every vector of every run in one S3 JSON object that each indexing task
   downloaded whole and rewrote per item type. An incremental run
   (`providers.doc_status.enabled`) already embeds only what its delta
@@ -154,7 +154,7 @@ naming the key that replaces it.
   |---|---|
   | `indexing.opensearch.persist_embedding_cache` | incremental indexing (`providers.doc_status.enabled`) |
   | `indexing.opensearch.embedding_cache_s3_key` | none |
-- `search.local_search.type_quota` (ten keys) is gone (#PR): the fusion
+- `search.local_search.type_quota` (ten keys) is gone (#468): the fusion
   slots local search and DRIFT reserve per section type are the constant
   `BaseSearchStrategy.TYPE_QUOTA`, with the former defaults (text 2x top_k,
   at least 20; entities and relationships 1x, at least 10; reports and
@@ -163,10 +163,10 @@ naming the key that replaces it.
   The section loads with a WARNING and is ignored; a subclass that needs
   other slots overrides `TYPE_QUOTA`.
 - `cache.chunking` (`enabled`, `chunk_size`, `max_file_size_mb`) is gone
-  (#PR): a stage-cache entry of more than 1,000 items or 50 MB is always
+  (#468): a stage-cache entry of more than 1,000 items or 50 MB is always
   written in chunk files, as by default before. The section loads with a
   WARNING and is ignored.
-- Retries are configured in one section, `retry` (#PR): eleven keys in
+- Retries are configured in one section, `retry` (#468): eleven keys in
   seven sections became eight in one, with every default unchanged.
   `retry.max_attempts` and its backoff serve the model calls (ingestion
   items, Bedrock embeddings and query-time calls, which had the same 5
@@ -1066,7 +1066,7 @@ changed once with the full-config keys (#332).
   other key is in the generated `docs/configuration.md`, which now lists the
   defaults too long for its tables under Long defaults instead of pointing
   to the template. A copy of the old template still loads (removed keys
-  warn) (#PR).
+  warn) (#468).
 - The parser reads `.txt`, `.csv`, `.pdf` and (with the `unstructured`
   extra) `.md`/`.html` with its own loaders on langchain-core
   (`adapters/ingestion/file_loaders.py`) instead of the langchain-community
