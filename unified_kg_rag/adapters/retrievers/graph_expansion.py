@@ -14,6 +14,8 @@ with Gremlin::
         "path": [{"name": [...]}, ...],  # seed first, the node last
         "node_type": "<vertex label>",
         "degree": <int>,  # only when entity_importance_source == "degree"
+        "superseded": True,  # optional: an older copy of a vertex whose
+                             # newer copy came back too
     }
 
 The seeds themselves come back as rows with a path of length 1.
@@ -21,6 +23,7 @@ The seeds themselves come back as rows with a path of length 1.
 
 import time
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
@@ -189,8 +192,12 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         # Entity expansion runs per seed, so a node two seeds reach arrives once
         # per seed; keep the copy with the best score (its shortest path, since
         # the score orders by distance first), and of equally short paths the
-        # first by content, not the first to arrive.
-        best: dict[Any, RetrievalResult] = {}
+        # one from the better-ranked seed (the caller's seed order), then the
+        # first by content, not the first to arrive. A node stored twice (a
+        # Neptune label being switched) arrives once per copy: the better
+        # scored, the newer of two scored alike.
+        seed_rank = self._seed_ranks(traversal_results, query)
+        best: dict[Any, tuple[tuple[float, bool, int, str], RetrievalResult]] = {}
         seed_ids: set[Any] = set()
         for item in traversal_results:
             node_data = self._node_data(item)
@@ -207,15 +214,18 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             if len(item.get("path") or []) <= 1:
                 # A path of one vertex: a seed, not something reached from one.
                 seed_ids.add(node_id)
+            key = (
+                -(result.score or 0.0),
+                bool(item.get("superseded")),
+                seed_rank(item),
+                result.content,
+            )
             kept = best.get(node_id)
-            if kept is None or (-(result.score or 0.0), result.content) < (
-                -(kept.score or 0.0),
-                kept.content,
-            ):
-                best[node_id] = result
+            if kept is None or key < kept[0]:
+                best[node_id] = (key, result)
 
         return rank_expanded(
-            best.values(),
+            (result for _, result in best.values()),
             {str(s) for s in seed_ids},
             (
                 query.top_k * query.retrieval_multiplier
@@ -223,6 +233,30 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 else None
             ),
         )
+
+    def _seed_ranks(
+        self, traversal_results: list[dict[str, Any]], query: SearchQuery
+    ) -> Callable[[dict[str, Any]], int]:
+        """The rank of the seed a row's path starts from: its position in the
+        caller's seed ids, the paths naming it by name (of seeds sharing a
+        name, the best rank); after every seed when not among the rows."""
+        order = {str(s): i for i, s in enumerate(self._seed_ids(query))}
+        by_name: dict[str, int] = {}
+        for item in traversal_results:
+            if len(item.get("path") or []) > 1:
+                continue
+            node_data = self._node_data(item)
+            rank = order.get(str(node_data.get("id")), len(order))
+            name = str(node_data.get("name", ""))
+            by_name[name] = min(rank, by_name.get(name, rank))
+
+        def seed_rank(item: dict[str, Any]) -> int:
+            path = item.get("path") or [{}]
+            first = path[0] if isinstance(path[0], dict) else {}
+            names = first.get("name") or [""]
+            return by_name.get(str(names[0]), len(order))
+
+        return seed_rank
 
     def _entity_importance_key(self) -> str | None:
         """The node property graph expansion reads as entity importance."""

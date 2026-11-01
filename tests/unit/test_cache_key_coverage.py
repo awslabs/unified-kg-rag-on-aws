@@ -218,3 +218,6 @@ def test_the_neighbour_order_shapes_answers_but_keys_no_stage() -> None:
     assert shapes_answers(path)
     assert path in answer_settings(Config())
     assert not isinstance(classify(path), Keyed)
+    # Its section's entry classifies it: no entry of its own.
+    assert path not in CONFIG_KEYING
+    assert classify(path) == CONFIG_KEYING["indexing.neptune"]

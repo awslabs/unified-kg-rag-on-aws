@@ -2199,8 +2199,9 @@ class NeptuneIndexingConfig(BaseModel):
             "hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour "
             "hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: "
             "the first neighbours the store returns (an order Neptune does "
-            "not specify), so a rebuild can change the results. Ties between "
-            "equally short paths break by content either way. The embedded "
+            "not specify), so a rebuild can change the results. Of equally "
+            "short paths to an entity, the one from the better-ranked seed "
+            "is kept, then the first by content, either way. The embedded "
             "SQLite graph store always takes neighbours by id and ignores it."
         ),
     )

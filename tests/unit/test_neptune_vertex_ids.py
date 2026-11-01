@@ -12,6 +12,7 @@ against Gremlin Server in both modes in the graph conformance suites
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -366,12 +367,15 @@ def test_an_unfinished_switch_is_refused_in_either_mode(make_indexer) -> None:
 
 
 def test_a_full_build_switches_the_label_and_its_sweep_ends_the_switch(
-    make_indexer,
+    make_indexer, caplog
 ) -> None:
+    caplog.set_level(logging.WARNING)
     indexer = make_indexer("custom")
     graph = _on(indexer, _Graph(stored="property"))
     assert indexer.begin_rebuild(["default"])
     indexer.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
+    # Queries go on reading the label whole meanwhile (both copies).
+    assert "queries read old and rewritten vertices until it ends" in caplog.text
     # Recorded before the build's first write to the label.
     ops = [op for op, _ in graph.requests]
     assert ops.index(f"Recording the vertex-id switch of '{_LABEL}'") < ops.index(
@@ -575,6 +579,7 @@ def test_the_retriever_reads_a_label_of_the_other_mode_by_property(
     # the build switched and the query service has not): a refusal failed
     # every graph expansion until then. The id property is in both modes,
     # so the expansion looks the seeds up by it, and warns once.
+    caplog.set_level(logging.WARNING)
     retriever = _retriever(configured)
     for _ in range(2):
         sent = _run_retriever(retriever, _sample(stored))
@@ -598,6 +603,7 @@ def test_the_retriever_reads_a_label_being_switched_by_property(
 ) -> None:
     # The sample may hit a vertex of either mode: a label being switched
     # holds both, and only the property lookup finds them all.
+    caplog.set_level(logging.WARNING)
     for sampled in ("custom", "property"):
 
         def answer(groovy: str, sampled: str = sampled) -> list[Any]:
@@ -623,7 +629,7 @@ def _row(vid: Any, item_id: str, path: int, name: str = "") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("target", ["custom", "property"])
-def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
+def test_a_switch_keeps_the_better_scored_copy_of_a_vertex(target: str) -> None:
     from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 
     def vid(item_id: str, rewritten: bool) -> Any:
@@ -632,28 +638,142 @@ def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
 
     rows = [
         _row(vid("e1", False), "e1", 1, "old"),
-        _row(vid("e1", True), "e1", 1, "new"),
+        _row(vid("e1", True), "e1", 1, "rewritten"),
         # Reached over the old copy only: kept.
         _row(vid("e2", False), "e2", 2),
-        # Reached over both: the rewritten copy only.
-        _row(vid("e3", True), "e3", 3, "new"),
+        # Reached over both, nearer over the old copy's edges (not
+        # rewritten yet): the old copy.
+        _row(vid("e3", True), "e3", 3, "rewritten"),
         _row(vid("e3", False), "e3", 2, "old"),
+        # Nearer over the rewritten copy: the rewritten copy.
+        _row(vid("e4", False), "e4", 3, "old"),
+        _row(vid("e4", True), "e4", 2, "rewritten"),
     ]
-    kept = NeptuneRetriever._rewritten_copies(rows, _LABEL, target)
-    assert [(r["node"]["id"][0], r["node"]["name"][0]) for r in kept] == [
-        ("e1", "new"),
-        ("e2", "e2"),
-        ("e3", "new"),
+    marked = NeptuneRetriever._mark_old_copies(rows, _LABEL, target)
+    assert all("vertex_id" not in r for r in marked)
+    assert [(r["node"]["name"][0], r.get("superseded", False)) for r in marked] == [
+        ("old", True),
+        ("rewritten", False),
+        ("e2", False),
+        ("rewritten", False),
+        ("old", True),
+        ("old", True),
+        ("rewritten", False),
     ]
-    assert all("vertex_id" not in r for r in kept)
+    config = _config(target)
+    retriever = _retriever(target)
+    object.__setattr__(retriever, "_neptune_config", config.indexing.neptune)
+    results = retriever._process_traversal_results(
+        marked, SearchQuery(query="", filters={"id": ["e1"]})
+    )
+    names = {r.source: r.metadata["name"] for r in results}
+    # Two copies scored alike: the rewritten one (not the first by content).
+    assert names == {"e1": "rewritten", "e2": "e2", "e3": "old", "e4": "rewritten"}
 
 
-def test_the_retriever_checks_a_matching_label_once() -> None:
+def _expanded(sample: Callable[[str], list[Any]]) -> Callable[[str], list[Any]]:
+    """``sample``, with a row for the expansion (the seeds were found)."""
+
+    def answer(groovy: str) -> list[Any]:
+        if ".union(" in groovy:
+            return [_row(None, "e1", 1)]
+        return sample(groovy)
+
+    return answer
+
+
+def _switching(target: str, sample: Callable[[str], list[Any]]) -> Callable:
+    def answer(groovy: str) -> list[Any]:
+        if f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in groovy:
+            return [target]
+        return sample(groovy)
+
+    return answer
+
+
+def test_the_retriever_samples_a_matching_label_once() -> None:
     retriever = _retriever("custom")
-    first = _run_retriever(retriever, _sample("custom"))
-    second = _run_retriever(retriever, _sample("custom"))
-    # The sample and the switch, then the expansion; then the expansion.
-    assert len(first) == 3 and len(second) == 1
+    first = _run_retriever(retriever, _expanded(_sample("custom")))
+    second = _run_retriever(retriever, _expanded(_sample("custom")))
+    # The sample and the switch, then the expansion; then the switch alone
+    # (one indexed read) before each expansion.
+    assert len(first) == 3
+    assert len(second) == 2
+    assert f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in second[0]
+    assert second[1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
+
+
+@pytest.mark.parametrize("configured", ["custom", "property"])
+@pytest.mark.parametrize("target", ["custom", "property"])
+def test_a_settled_label_follows_a_switch_and_its_end(
+    warned, configured: str, target: str
+) -> None:
+    # One retriever across a full build switching a label it found settled:
+    # the build's switch vertex is seen on the next query, and once the
+    # sweep has dropped it the label is sampled again.
+    retriever = _retriever(configured)
+    _run_retriever(retriever, _expanded(_sample(configured)))
+    sent = _run_retriever(retriever, _expanded(_switching(target, _sample(target))))
+    assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+    assert retriever.projected[-1]["with_vertex_id"] is True
+    sent = _run_retriever(retriever, _expanded(_sample(target)))
+    assert any(".limit(1).project('vertex_id','id')" in groovy for groovy in sent)
+    if configured == target == "custom":
+        assert sent[-1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
+    else:
+        assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+
+
+def test_a_settled_custom_label_found_without_its_seeds_is_sampled_again(
+    warned,
+) -> None:
+    # A full build switched the label to property ids and swept between two
+    # queries (no switch vertex left to see): the custom-id lookup finds no
+    # seed, so the label is sampled again and the expansion re-run by the id
+    # property.
+    retriever = _retriever("custom")
+    _run_retriever(retriever, _expanded(_sample("custom")))
+
+    def swept(groovy: str) -> list[Any]:
+        if groovy.startswith("g.V('Entity-default:"):
+            return []
+        return _expanded(_sample("property"))(groovy)
+
+    sent = _run_retriever(retriever, swept)
+    assert len(sent) == 5, sent
+    assert sent[1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
+    assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+    assert "Entity-default" not in retriever._checked_labels
+    # Still custom, the seeds just absent: sampled again, not re-expanded.
+    retriever = _retriever("custom")
+    _run_retriever(retriever, _expanded(_sample("custom")))
+    sent = _run_retriever(retriever, _sample("custom"))
+    assert len(sent) == 4, sent
+    assert sent[-1].startswith(f"g.V().hasLabel('{VERTEX_ID_SWITCH_LABEL}')")
+    assert "Entity-default" in retriever._checked_labels
+
+
+@pytest.mark.parametrize(
+    ("switch", "text"), [(None, "built with"), ("custom", "being rewritten")]
+)
+def test_each_label_warns_once(caplog, warned, switch: str | None, text: str) -> None:
+    # One WARNING per label (and mode or target), however often it is read:
+    # two labels warn once each.
+    caplog.set_level(logging.WARNING)
+    retriever = _retriever("custom")
+    sample = _sample("property")
+    answer = _switching(switch, sample) if switch else sample
+
+    async def execute(build: Callable) -> list[Any]:
+        return answer(_groovy(build(Graph().traversal())))
+
+    object.__setattr__(retriever, "_execute_traversal", execute)
+    for label in ("Entity-a", "Entity-b", "Entity-a"):
+        asyncio.run(retriever._vertex_lookup(label))
+    messages = [r.getMessage() for r in caplog.records if text in r.getMessage()]
+    assert len(messages) == 2, messages
+    for label in ("Entity-a", "Entity-b"):
+        assert sum(label in m for m in messages) == 1, messages
 
 
 def test_the_retriever_checks_an_empty_label_again() -> None:

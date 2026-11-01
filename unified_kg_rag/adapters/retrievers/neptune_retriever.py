@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import functools
 import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -193,13 +194,14 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # them, not the first n the store happens to keep (two builds of one
         # graph, with their edges written in another order, expanded to
         # other entities); indexing.neptune.deterministic_order: false takes
-        # the store's first n, without reading the rest of a hub. The seeds come back through the identity()
-        # branch (path length 1, the top relevance band, never cut);
-        # repeat().emit() emits from the first hop on, never the seed itself,
-        # and the expansion excludes the seeds so it spends its budget on new
-        # entities. Both shapes stay Neptune-friendly:
-        # repeat().times().emit() and union(identity(), ...). An emit()
-        # before repeat() is not optimized by Neptune and times out.
+        # the store's first n, without reading the rest of a hub. The seeds
+        # come back through the identity() branch (path length 1, the top
+        # relevance band, never cut); repeat().emit() emits from the first
+        # hop on, never the seed itself, and the expansion excludes the
+        # seeds so it spends its budget on new entities. Both shapes stay
+        # Neptune-friendly: repeat().times().emit() and union(identity(),
+        # ...). An emit() before repeat() is not optimized by Neptune and
+        # times out.
         per_seed_limit = seed_share(
             query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
         )
@@ -207,9 +209,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
         with_degree = self._neptune_config.entity_importance_source == "degree"
         if not seed_ids:
             return []
+        settled = self._settled(entity_label)
         custom_ids, switching = await self._vertex_lookup(entity_label)
 
-        def seeds(g: GraphTraversalSource) -> GraphTraversal:
+        def seeds(g: GraphTraversalSource, custom_ids: bool) -> GraphTraversal:
             if custom_ids:
                 return g.V(*vertex_ids(entity_label, [str(s) for s in seed_ids]))
             return g.V().hasLabel(entity_label).has("id", P.within(seed_ids))
@@ -220,8 +223,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 reached = reached.order().by("id")
             return reached.limit(self._max_results_per_hop)
 
-        def build(g: GraphTraversalSource) -> Traversal:
-            traversal = seeds(g).union(
+        def build(
+            g: GraphTraversalSource, *, custom_ids: bool, switching: str | None
+        ) -> Traversal:
+            traversal = seeds(g, custom_ids).union(
                 __.identity(),
                 __.local(
                     __.repeat(
@@ -243,10 +248,29 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 with_vertex_id=switching is not None,
             )
 
-        rows = await self._execute_traversal(build)
+        rows = await self._execute_traversal(
+            functools.partial(build, custom_ids=custom_ids, switching=switching)
+        )
+        if custom_ids and settled and not rows:
+            # No seed under its custom vertex id: a full build may have
+            # switched the label to property ids since it was found settled
+            # (its sweep drops the switch vertex, and with it the old
+            # copies). Checked again, and expanded again if so.
+            self._checked_labels.discard(entity_label)
+            lookup = await self._vertex_lookup(entity_label)
+            if lookup != (custom_ids, switching):
+                custom_ids, switching = lookup
+                rows = await self._execute_traversal(
+                    functools.partial(build, custom_ids=custom_ids, switching=switching)
+                )
         if switching is not None:
-            return self._rewritten_copies(rows, entity_label, switching)
+            return self._mark_old_copies(rows, entity_label, switching)
         return rows
+
+    def _settled(self, label: str) -> bool:
+        """Whether ``label`` was found settled in the configured mode (and
+        not being switched) on an earlier query."""
+        return label in self._checked_labels
 
     async def _vertex_lookup(self, label: str) -> tuple[bool, str | None]:
         """How the expansion finds ``label``'s vertices: by custom vertex id
@@ -260,18 +284,24 @@ class NeptuneRetriever(GraphExpansionRetriever):
         a label of the other mode (the query service switched before the
         full build's first write, or the build before the query service) is
         read as it is, and one being switched is read whole, the rewritten
-        and the not yet rewritten vertices (see :meth:`_rewritten_copies`).
+        and the not yet rewritten vertices (see :meth:`_mark_old_copies`).
         Refusing the label failed every graph expansion until the build
         ended; the indexer still refuses writes of the other mode.
 
-        A label found settled in the configured mode is not checked again;
-        any other is checked on each query, so lookups follow once a build
-        has rewritten it.
+        A label found settled in the configured mode is only checked for a
+        switch on each query (one indexed read), and sampled again once a
+        custom-id lookup finds none of the seeds (``_traverse``); any other
+        is sampled on each query, so lookups follow once a build has
+        rewritten it.
         """
         mode = self._neptune_config.vertex_ids
         custom = mode == CUSTOM_VERTEX_IDS
-        if label in self._checked_labels:
-            return custom, None
+        if self._settled(label):
+            switching = await self._execute_traversal(vertex_id_switch_query(label))
+            if not switching:
+                return custom, None
+            self._checked_labels.discard(label)
+            return self._switch_lookup(label, str(switching[0]))
         stored = stored_vertex_id_mode(
             label, await self._execute_traversal(sample_vertex_query(label))
         )
@@ -279,18 +309,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             return custom, None
         switching = await self._execute_traversal(vertex_id_switch_query(label))
         if switching:
-            target = str(switching[0])
-            warn_once(
-                logger,
-                f"neptune-vertex-id-switch:{label}:{target}",
-                "Neptune label '%s' is being rewritten with vertex_ids '%s': "
-                "graph expansion looks its vertices up by their id property "
-                "until the full build ends (rewritten vertices win over "
-                "their old copies)",
-                label,
-                target,
-            )
-            return False, target
+            return self._switch_lookup(label, str(switching[0]))
         if stored != mode:
             warn_once(
                 logger,
@@ -310,17 +329,37 @@ class NeptuneRetriever(GraphExpansionRetriever):
         return custom, None
 
     @staticmethod
-    def _rewritten_copies(
+    def _switch_lookup(label: str, target: str) -> tuple[bool, str]:
+        """The lookup of ``label`` while a full build switches it to
+        ``target``: by the ``id`` property, with a WARNING once."""
+        warn_once(
+            logger,
+            f"neptune-vertex-id-switch:{label}:{target}",
+            "Neptune label '%s' is being rewritten with vertex_ids '%s': "
+            "graph expansion looks its vertices up by their id property "
+            "until the full build ends (results may be partial until "
+            "then: its edges are split between old and rewritten vertices)",
+            label,
+            target,
+        )
+        return False, target
+
+    @staticmethod
+    def _mark_old_copies(
         rows: list[Any], label: str, target: str
     ) -> list[dict[str, Any]]:
-        """``rows`` (projected with each vertex's ``vertex_id``) without the
-        old copy of a vertex whose rewritten copy came back too.
+        """``rows`` (projected with each vertex's ``vertex_id``) without
+        their ``vertex_id``, the old copy of a vertex whose rewritten copy
+        came back too marked ``superseded``.
 
         A label a full build is switching to ``target`` holds a vertex it
         has rewritten twice, under its old and its new vertex id, with its
         old and its new edges, until the sweep drops the old copy; the
         rewritten one is the one whose vertex id is of the ``target`` mode.
-        A vertex not rewritten yet keeps its one (old) copy.
+        A vertex not rewritten yet keeps its one (old) copy. Both copies are
+        kept: the ranking keeps the better-scored one (the old copy may be
+        nearer the seeds over edges not rewritten yet), the rewritten one of
+        two scored alike.
         """
 
         def item_id(row: dict[str, Any]) -> str | None:
@@ -336,11 +375,13 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         dict_rows = [row for row in rows if isinstance(row, dict)]
         new = {item_id(row) for row in dict_rows if rewritten(row)}
-        kept: list[dict[str, Any]] = []
+        marked: list[dict[str, Any]] = []
         for row in dict_rows:
-            if rewritten(row) or item_id(row) not in new:
-                kept.append({k: v for k, v in row.items() if k != "vertex_id"})
-        return kept
+            kept = {k: v for k, v in row.items() if k != "vertex_id"}
+            if not rewritten(row) and item_id(row) in new:
+                kept["superseded"] = True
+            marked.append(kept)
+        return marked
 
     @staticmethod
     def _with_projection(

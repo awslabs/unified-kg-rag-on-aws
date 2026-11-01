@@ -12,6 +12,7 @@ the other mode is refused until one full build rewrites it. Skipped unless
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import Iterator
@@ -400,3 +401,65 @@ def test_queries_in_either_mode_read_a_switch_in_progress_once_per_entity(
     finally:
         indexer.end_rebuild([_SUFFIX])
     assert _switches(switching) == []
+
+
+@pytest.mark.parametrize("built_in", ["custom", "property"])
+def test_a_long_lived_retriever_follows_a_switch_like_a_fresh_one(
+    custom: StoreHarness, built_in: str
+) -> None:
+    # The query service keeps one retriever (in the label's old mode) while
+    # a full build switches the label: before, during and after the build
+    # it answers what a retriever opened at that moment answers. It cached
+    # the label as settled, so before it followed neither the switch (seeds
+    # only) nor its end (nothing until a restart, custom -> property).
+    target = "property" if built_in == "custom" else "custom"
+    old = custom.derive(_in(built_in))
+    entities, relationships, _ = _graph()
+    assert old.graph_indexer.upsert_entities(entities).failed_items == 0
+    assert old.graph_indexer.upsert_relationships(relationships).failed_items == 0
+    query = SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["vendor"]})
+
+    def hits(results: list[Any]) -> list[tuple[str, float | None, str]]:
+        return sorted((hit.source, hit.score, hit.content) for hit in results)
+
+    def fresh() -> list[tuple[str, float | None, str]]:
+        (results,) = old.retrieve(RetrieverRole.GRAPH, query)
+        return hits(results)
+
+    async def follow() -> dict[str, tuple[Any, Any]]:
+        indexer = custom.derive(_in(target)).graph_indexer
+        rewritten = [
+            e.model_copy(update={"description": "rewritten"}) for e in entities
+        ]
+        assert old.graph_retriever is not None
+        retriever = old.graph_retriever()
+        phases: dict[str, tuple[Any, Any]] = {}
+        try:
+            phases["before"] = (
+                hits(await retriever.aretrieve(query)),
+                await asyncio.to_thread(fresh),
+            )
+            await asyncio.to_thread(indexer.begin_rebuild, [_SUFFIX])
+            await asyncio.to_thread(
+                indexer.index_entities, rewritten, suffixes=[_SUFFIX]
+            )
+            await asyncio.to_thread(indexer.index_relationships, relationships)
+            phases["during"] = (
+                hits(await retriever.aretrieve(query)),
+                await asyncio.to_thread(fresh),
+            )
+            await asyncio.to_thread(indexer.end_rebuild, [_SUFFIX], True)
+            phases["after"] = (
+                hits(await retriever.aretrieve(query)),
+                await asyncio.to_thread(fresh),
+            )
+        finally:
+            await retriever.aclose()
+        return phases
+
+    phases = asyncio.run(follow())
+    assert _switches(old) == []
+    for phase, (same, opened) in phases.items():
+        assert same == opened, phase
+        assert [source for source, _, _ in same] == ["buyer", "depot", "vendor"]
+    assert all("rewritten" in content for _, _, content in phases["after"][0])
