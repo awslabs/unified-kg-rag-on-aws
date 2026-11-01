@@ -141,12 +141,11 @@ than an edit to dispatch code.
 
 ### Documentation
 
-- User-facing documentation is in English. `README.md` and `docs/user-guide.md`, `docs/design.md`,
-  `docs/operations.md` and `docs/models.md` have Korean translations (`*.ko.md`); `docs/glossary.ko.md` fixes the
-  Korean terms.
-- **EN/KO sync rule:** a change to a document that has a `.ko.md` twin updates both files in the same pull request. If
-  you cannot write the Korean text, say so in the pull request description and add this note at the top of the
-  `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
+- User-facing documentation is in English. Only `README.md` and `docs/user-guide.md` have Korean translations
+  (`README.ko.md`, `docs/user-guide.ko.md`); the other documents are English-only. Do not add new `.ko.md` files.
+- **EN/KO sync rule:** a change to `README.md` or `docs/user-guide.md` updates its `.ko.md` twin in the same pull
+  request. If you cannot write the Korean text, say so in the pull request description and add this note at the top
+  of the `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
   A maintainer then updates the translation and removes the note.
 - Describe current behavior only. Do not write "previously", "now" or "(old behaviour)" in the guides; put release
   history in [CHANGELOG.md](./CHANGELOG.md).

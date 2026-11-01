@@ -112,9 +112,9 @@ The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with
 | [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Configuration, CLI flags, incremental indexing, evaluation, library usage, [limitations](./docs/user-guide.md#12-limitations) |
 | [CLI Reference](./docs/cli.md) | Every flag of every CLI: default and description (generated from the parsers) |
 | [Configuration Reference](./docs/configuration.md) | Every configuration key: type, default, description (generated from the code) |
-| [Model Catalog](./docs/models.md) ([한국어](./docs/models.ko.md)) | Supported Bedrock models and per-provider request differences |
-| [Operator Runbook](./docs/operations.md) ([한국어](./docs/operations.ko.md)) | Re-ingestion, incremental runs, failed documents, caches, common errors |
-| [Design Doc](./docs/design.md) ([한국어](./docs/design.ko.md)) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
+| [Model Catalog](./docs/models.md) | Supported Bedrock models and per-provider request differences |
+| [Operator Runbook](./docs/operations.md) | Re-ingestion, incremental runs, failed documents, caches, common errors |
+| [Design Doc](./docs/design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
 | [`iac/README.md`](./iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, tests, quality gate, branch and commit rules |
 | [CHANGELOG.md](./CHANGELOG.md) | Release notes |

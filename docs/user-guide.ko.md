@@ -2,7 +2,7 @@
 
 > 🇬🇧 English version: [docs/user-guide.md](./user-guide.md)
 
-용어는 [용어집](./glossary.ko.md)을 따릅니다.
+한국어 문서는 README와 이 사용자 가이드뿐입니다. 설계 문서, 운영 런북, 모델 카탈로그, CLI·설정 레퍼런스는 영문으로만 제공합니다.
 
 이 문서는 **unified-kg-rag-on-aws**를 실제로 사용하는 방법을 설명하는 가이드입니다.
 unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래프를 만들고 그 그래프를
@@ -12,7 +12,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 
 - 프로젝트 소개와 1분 빠른 시작은 [README.ko.md](../README.ko.md)를 참고하세요.
 - 내부 구조와 아키텍처(헥사고날 레이어, 포트와 어댑터, 의존성 규칙)는
-  [설계 문서](./design.ko.md)를 참고하세요.
+  [설계 문서](./design.md)(영문)를 참고하세요.
 
 콘솔 진입점 여섯 개(`pyproject` 스크립트로 정의)는 모두 `application.cli.launch`로
 시작해 아래 모듈을 불러옵니다.
@@ -43,8 +43,8 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 11. [Python 라이브러리로 사용하기](#11-python-라이브러리로-사용하기)
 12. [제한 사항](#12-제한-사항)
 
-관련 문서: [CLI 레퍼런스](./cli.md)(영문) · [설정 레퍼런스](./configuration.md)(영문) · [모델 카탈로그](./models.ko.md) · [운영 런북](./operations.ko.md) ·
-[설계 문서](./design.ko.md) · [`iac/README.md`](../iac/README.md)
+관련 문서: [CLI 레퍼런스](./cli.md)(영문) · [설정 레퍼런스](./configuration.md)(영문) · [모델 카탈로그](./models.md)(영문) · [운영 런북](./operations.md)(영문) ·
+[설계 문서](./design.md)(영문) · [`iac/README.md`](../iac/README.md)
 
 ---
 
@@ -91,7 +91,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
   실패하며 오류 메시지에 이 해결 방법이 나옴).
 - **권한.** [IAM 권한](#iam-권한)을 참고하세요. 재순위화에는 별도 정책 문이 필요합니다.
 
-[모델 카탈로그](./models.ko.md)에 선별된 모델 전체와 각 모델의 한도가 있습니다.
+[모델 카탈로그](./models.md)에 선별된 모델 전체와 각 모델의 한도가 있습니다.
 
 이 프레임워크는 **이미 있는** 서비스에 연결할 뿐 서비스를 만들지 않습니다.
 [로컬 모드](#로컬-모드-aws-없이)로 실행하거나, 기존 서비스에 연결하거나(엔드포인트를
@@ -227,7 +227,7 @@ Bedrock을 쓸 수 있습니다.
 - **토큰 계산**은 문자 체계를 고려한 추정치를 씁니다(BPE 인코딩은
   `providers.llm.tokenizer: tiktoken`).
 - **사용자 정의 kind**는 `adapters.provider_registry.register_provider`로 빌더를
-  등록합니다([설계 문서 §15](./design.ko.md#15-확장-가이드)).
+  등록합니다([설계 문서 §15](./design.md#15-extension-guide)).
 
 #### AWS 모드와 다른 점
 
@@ -260,7 +260,7 @@ Bedrock을 쓸 수 있습니다.
 **SQLite 파일**은 한 번에 한 프로세스만 씁니다. 저장소 파일마다 수집은 하나씩
 실행하고(질의는 함께 읽을 수 있음), `search.store_timeout_seconds`보다 오래 기다린
 쓰기는 "stayed locked"로 실패합니다. 파일은 NFS, SMB, Amazon EFS가 아닌 로컬 디스크에
-두세요([자주 보는 오류](./operations.ko.md#로컬-모드)).
+두세요([자주 보는 오류](./operations.md#local-mode)).
 
 #### 공급자 플래그
 
@@ -407,7 +407,7 @@ models:
 
 - 임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS에 함께
   쓰이며, 이 모델이나 `dimension`을 바꾸면 다시 인덱싱해야 합니다. Bedrock에서는 임베딩과
-  재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./models.ko.md#모델-id와-기능-정보-레코드)),
+  재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./models.md#model-ids-and-capability-records)),
   다른 공급자는 어떤 모델 이름이든 받습니다.
 - 선택하지 않은 공급자의 설정(Bedrock 모델을 쓰는데 `providers.llm.temperature`를
   지정한 경우 등)은 무시하고 WARNING을 남깁니다.
@@ -417,7 +417,7 @@ models:
   높은 하한을 계산하고 그 값이 우선하며(기본으로 그래프 추출과 gleaning 23192, 문서 번역
   18992, 주장 29792), 청크당 한도를 올리면 함께 올라갑니다.
 - 선별된 모델, 요청 형식, 프롬프트 캐싱, `aws.bedrock.model_overrides`는
-  [모델 카탈로그](./models.ko.md)에 있습니다.
+  [모델 카탈로그](./models.md)에 있습니다.
 
 ### 컨텍스트 예산
 
@@ -481,8 +481,8 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
     ([요금](https://aws.amazon.com/bedrock/pricing/)). `ApplyGuardrail`의 초당 텍스트 단위
     할당량(가드레일 리전의 Service Quotas)에 따라 컨텍스트가 긴 동시 질의부터 스로틀링됩니다.
 - **사용자 코드**에서 질의가 아닌 작업에 `setup_chain`이나 `get_model`을 쓰면
-  `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`. `from unified_kg_rag import
-  ModelPurpose`)을 넘기세요. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적
+  `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`.
+  `from unified_kg_rag import ModelPurpose`)을 넘기세요. 표시하지 않은 호출은 `QUERY`로 간주하므로 질의 시점의 일시적
   오류 재시도가 적용되고, 응답 캐시와 수집 effort는 적용되지 않습니다.
 
 ### S3 캐시 암호화
@@ -574,8 +574,8 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
   레코드에는 그 스팬의 `trace_id`와 `span_id`가 들어갑니다.
 - `capture_content: true`가 아니면 스팬에 질의 본문, 문단, 모델 출력이 들어가지 않습니다.
 
-Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.ko.md#트레이스-구조)(모든
-스팬과 속성, 벤더 속성 이름, 알려진 제한), 전송 제한은 [운영 런북](./operations.ko.md#관측성)에
+Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.md#trace-shape)(모든
+스팬과 속성, 벤더 속성 이름, 알려진 제한), 전송 제한은 [운영 런북](./operations.md#observability)에
 있습니다. CDK 스택의 CloudWatch 추적은
 [iac/README.md](../iac/README.md#cloudwatch-tracing-optional)(영문)에 있습니다.
 
@@ -584,7 +584,7 @@ Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.ko.md#트
 ## 3. 수집 (`run-ingestion`)
 
 수집은 문서 디렉터리를 그래프 저장소와 벡터 저장소의 지식 그래프로 바꿉니다.
-`run-ingestion --source-directory <dir>`이 12개 단계([설계 §4](./design.ko.md#4-수집-파이프라인)에
+`run-ingestion --source-directory <dir>`이 12개 단계([설계 §4](./design.md#4-ingestion-pipeline)에
 그림이 있음)를 실행하며 단계마다 체크포인트를 남기고, 같은 `--pipeline-id`로 다시
 실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
 증분으로 동작합니다([§5](#5-증분-인덱싱)).
@@ -649,9 +649,9 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
 Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를 업로드하고 143으로
 종료합니다. 단계 사이의 업로드 실패는 다음 단계에서 다시 시도하고, 처음 다운로드나
 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. 만료와 다른 캐시는
-[캐시와 접두사](./operations.ko.md#캐시와-접두사)에 있습니다. 실행 사이에 바뀌지 않은
-문서를 다시 임베딩하지 않으려면 문서 상태 레지스트리(`providers.doc_status.enabled`)를
-켜세요. 증분 실행은 델타가 바꾼 것만 임베딩합니다.
+[캐시와 접두사](./operations.md#caches-and-prefixes)에 있습니다. 실행 사이에는 문서 상태
+레지스트리(`providers.doc_status.enabled`)가 바뀌지 않은 문서를 다시 임베딩하지 않게
+합니다. 증분 실행은 델타가 바꾼 것만 임베딩합니다.
 
 **LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐). 수집 단계의 모델 응답은 모두 실행의
 캐시 디렉터리 `llm-cache/`에 두고 함께 동기화하므로, 같은 pipeline id로 다시 실행하면
@@ -660,7 +660,7 @@ Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를
 
 - 이전 실행의 응답만, 실행마다 한 번까지만 씁니다. 출력 토큰 한도에서 잘린 응답은
   보관하지 않습니다. temperature가 0보다 크면 다시 실행할 때 이전 샘플을 재사용합니다.
-  모든 시도가 실패한 호출(끝내 파싱되지 않은 응답 등)이나 그래프·클레임 레코드를 만들지 못한 호출의 응답은 버리므로,
+  모든 시도가 실패한 호출(끝내 파싱되지 않은 응답 등)이나 그래프·주장 레코드를 만들지 못한 호출의 응답은 버리므로,
   다시 실행하면 그 단위만 모델에 다시 묻습니다.
   시간 제한을 넘겨 버려진 호출이 늦게 받은 응답도 보관하지 않습니다.
 - `--force-rebuild`는 캐시에서 답하지 않으며, 질의와 평가 호출은 캐시하지 않습니다.
@@ -682,7 +682,7 @@ Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를
 
 접미사는 이름을 나눌 뿐 접근을 막지 않습니다. 질의할 수 있는 호출자는 어떤 접미사든
 지정할 수 있으므로, 멀티 테넌트 서비스는 인증된 호출자를 기준으로 서버에서 접미사를
-정해야 합니다. [운영 런북: 질의 권한과 테넌트 격리](./operations.ko.md#질의-권한과-테넌트-격리)를
+정해야 합니다. [운영 런북: 질의 권한과 테넌트 격리](./operations.md#query-access-and-tenant-isolation)를
 참고하세요.
 
 ### 다국어 수집
@@ -734,7 +734,7 @@ processing:
   Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다(블루/그린 배포). 그래서
   [CDK 배포](../iac/README.md)는 `ko`를 기본 제공 `cjk` 분석기(문자 바이그램)에
   매핑합니다. `-c opensearch_nori_package=true`로 배포하면 패키지를 연결하고 `ko`를
-  `nori`에 매핑합니다([Nori로 한국어 분석하기](./operations.ko.md#nori로-한국어-분석하기)).
+  `nori`에 매핑합니다([Nori로 한국어 분석하기](./operations.md#korean-with-nori)).
 - **실패.** 번역에 실패한 텍스트 단위는 원문 언어로 추출합니다. 대상 언어 하나의 호출
   전체가 실패하면 `processing.ignore_errors: true`가 아닌 한 단계가 실패합니다. 증분
   실행은 `failed_units`의 문서를 실패로 기록하므로 다음 실행이 다시 시도합니다.
@@ -746,7 +746,7 @@ processing:
 `run-rag --query "..."`는 질문 하나에 답하고, `--interactive`는 대화를 이어 갑니다.
 전략은 `--search-strategy`로 고르며(기본값 `auto`, LLM 라우터), 모든 답변은 답변 모델이
 실제로 본 출처를 함께 돌려줍니다. 전략별 검색 방식은
-[설계 §6](./design.ko.md#6-검색-두-방법론)의 그림에 있습니다.
+[설계 §6](./design.md#6-retrieval-two-methodologies)의 그림에 있습니다.
 
 모든 플래그와 기본값은 [CLI 레퍼런스](./cli.md#run-rag)(영문)에 있습니다.
 
@@ -999,7 +999,7 @@ aws:
 - **재구축**(`indexing.reset: true`): 접미사를 서비스에서 내리지 않고 코퍼스 전체를
   다시 인덱싱합니다. 격리된 문서는 건너뛰고 레코드를 그대로 둡니다. 실패한 reset은 아무것도
   지우지 않으므로 다시 실행해도 안전합니다
-  (동작 방식: [운영 런북: 다시 수집하기](./operations.ko.md#다시-수집하기)).
+  (동작 방식: [운영 런북: 다시 수집하기](./operations.md#re-ingest)).
 
 ### 삭제 범위
 
@@ -1040,7 +1040,7 @@ aws:
 레지스트리는 인덱스 네임스페이스(문서 키의 `<namespace>#` 접두사)별로 나뉘므로 실행은
 자기 네임스페이스의 레코드만 읽습니다. `doc_id`만으로 키를 잡던 이전 키 스키마의 테이블은
 처음 쓸 때 거부됩니다. 새 테이블로 바꾸고 `indexing.reset: true`로 한 번 실행하세요
-([운영 런북: 증분 실행](./operations.ko.md#증분-실행)).
+([운영 런북: 증분 실행](./operations.md#incremental-runs)).
 
 ### 실패한 문서
 
@@ -1052,7 +1052,7 @@ aws:
 재시도하지 않습니다. 그 뒤에는 파일을 수정하거나 한도를 올리면 다시 시도합니다.
 주장은 선택 사항이라, 주장 추출만 단위 자체의 오류로 실패하면 문서는 그 주장 없이 인덱싱되고
 실패로 세지 않으며 다음 실행이 그 주장을 한 번 더 추출합니다.
-[운영 런북: 실패한 문서](./operations.ko.md#실패한-문서)를 참고하세요.
+[운영 런북: 실패한 문서](./operations.md#failed-documents)를 참고하세요.
 
 ### 격리된 문서
 
@@ -1067,13 +1067,13 @@ aws:
 - 여러 문서를 처리하다 죽었다면 다음 실행들이 원인 문서만 남을 때까지 의심 문서를 절반씩
   줄이고, 그동안 다른 새 문서와 변경된 문서는 미룹니다(`total_documents_deferred`).
 
-[운영 런북: 격리된 문서](./operations.ko.md#격리된-문서)를 참고하세요.
+[운영 런북: 격리된 문서](./operations.md#quarantined-documents)를 참고하세요.
 
 ### 동시 실행
 
 레지스트리를 쓰면 실행은 첫 단계부터 끝날 때까지 인덱스 네임스페이스의 쓰기 임대를
 유지하며, 같은 네임스페이스의 두 번째 실행은 저장소를 읽거나 무엇이든 쓰기 전에
-`NamespaceLeaseError`로 멈춥니다. [운영 런북: 동시 실행](./operations.ko.md#동시-실행)을
+`NamespaceLeaseError`로 멈춥니다. [운영 런북: 동시 실행](./operations.md#concurrent-runs)을
 참고하세요.
 
 ### 문서 크기 한도
@@ -1093,7 +1093,7 @@ SQLite 레지스트리에는 이 한도가 없습니다.
 도출되며, 엔티티는 전체 빌드와 같이 현재 우세한 이름의 ID를 받습니다(저장된 커뮤니티와
 리포트는 재구축 전까지 이전 ID를 유지). 병합은 항상 켜져 있으며, 제거된
 `indexing.cross_run_merge` 키는 WARNING을 남기고 무시합니다. 규칙은
-[설계 §5.4](./design.ko.md#54-식별-도출한-내용-병합-규칙)에 있습니다.
+[설계 §5.4](./design.md#54-identity-derived-content-and-merge-rules)에 있습니다.
 
 ---
 
@@ -1517,7 +1517,7 @@ custom_prompts:
 ## 10. 운영과 문제 해결
 
 [IAM 권한](#iam-권한)은 §1에, 오류 메시지와 해결 방법은
-[운영 런북: 자주 보는 오류](./operations.ko.md#자주-보는-오류)에 있습니다.
+[운영 런북: 자주 보는 오류](./operations.md#common-errors)에 있습니다.
 
 ### CLI 종료 코드와 JSON 출력
 
@@ -1564,10 +1564,8 @@ custom_prompts:
   배치는 공유 정점에서 충돌해 재시도함). 문서 상태
   레지스트리(`providers.doc_status.enabled`)를 켜면 다음 실행부터 바뀐 문서에만 비용이
   듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
-  대신 정점 id(`<레이블>:<항목 id>`)로 찾습니다. 조회가 빨라지고 동시 쓰기의
-  `ConcurrentModificationException`도 줄어듭니다. 질의에도 같은 값을 설정하세요. 다른 방식으로 만든
-  그래프는 거부되므로, 기존 그래프를 전환하려면 `indexing.reset: true`로 전체 빌드를 한 번
-  실행해야 합니다([운영 문서](operations.md#custom-neptune-vertex-ids)).
+  대신 정점 id로 찾습니다. 기존 그래프를 전환하려면 전체 빌드를 한 번 실행해야
+  합니다([운영 런북: 사용자 지정 Neptune 정점 id](operations.md#custom-neptune-vertex-ids)).
 - **다국어:** [다국어 수집](#다국어-수집)을 참고하세요.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
   [인덱스 접미사](#인덱스-접미사)를 따로 두세요.
@@ -1654,7 +1652,7 @@ finally:
 `register_strategy`, `ParserFactory`, `register_renderer`가 여기에 있습니다. 두 생성자
 모두 백엔드를 `providers=Providers(config, ...)` 번들이나 개별 인자(`doc_status=`,
 `vector_indexer=`, `model_factory=` 등) 중 하나로 주입받으며, 둘을 함께 쓸 수는
-없습니다. [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
+없습니다. [설계 문서 §15](./design.md#15-extension-guide)를 참고하세요.
 `vector_indexer=` / `graph_indexer=`로 넘긴 인덱서는 호출한 쪽이 닫습니다. 파이프라인은
 닫지 않습니다.
 
@@ -1679,7 +1677,7 @@ finally:
   Bedrock이나 sentence-transformers 크로스 인코더([로컬 모드](#로컬-모드-aws-없이)).
   저장소: Neptune(또는 Gremlin Server)과 OpenSearch, 또는 내장 SQLite 저장소(호스트 한
   대, 인덱스당 문서 약 100,000개). 그 밖의 것은 `register_provider` 빌더나 사용자 정의
-  어댑터가 필요합니다([설계 문서 §15](./design.ko.md#15-확장-가이드)).
+  어댑터가 필요합니다([설계 문서 §15](./design.md#15-extension-guide)).
 - **서빙 계층이 없습니다.** HTTP API, 최종 사용자 인증, 요청 속도 제한은 없습니다.
 - **필터는 접근 제어가 아닙니다**(§4). 테넌트는 인덱스 접미사로 분리하세요.
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티 탐지를 끄면
@@ -1694,7 +1692,7 @@ finally:
 - **동시 실행에는 레지스트리가 필요합니다.** 레지스트리의 쓰기 임대가 한
   네임스페이스의 두 번째 실행을 멈춥니다. 레지스트리가 없거나 `IncrementalIndexer`
   API를 직접 쓰면 잠그는 장치가 없어, 같은 접미사의 수집 두 개가 서로의 인덱스를 지울
-  수 있습니다([동시 실행](./operations.ko.md#동시-실행)).
+  수 있습니다([동시 실행](./operations.md#concurrent-runs)).
 - **태스크를 죽이는 문서를 가려내려면 여러 번 실행해야 합니다**(*격리된 문서*). 함께
   죽은 문서 `n`개 가운데 원인 문서 하나에 대략 `log2(n) + 1`번이 걸리고, 그동안 미룬
   문서는 기다립니다.
@@ -1706,4 +1704,4 @@ finally:
 ---
 
 *함께 보기: 개요와 빠른 시작은 [README.ko.md](../README.ko.md), 아키텍처와 내부 구조는
-[설계 문서](./design.ko.md)를 참고하세요.*
+[설계 문서](./design.md)를 참고하세요.*

@@ -1,7 +1,5 @@
 # Unified Knowledge Graph RAG on AWS — Technical Documentation
 
-> 🇰🇷 한국어판: [docs/design.ko.md](./design.ko.md)
-
 This is the **design reference for contributors and advanced users**: how the
 library is built and why. Usage is in the [User Guide](user-guide.md), every
 configuration key in the [Configuration Reference](./configuration.md), the

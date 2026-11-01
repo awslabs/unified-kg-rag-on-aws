@@ -20,7 +20,7 @@
 - **증분 인덱싱.** 문서 상태 레지스트리(`providers.doc_status.enabled`)를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다.
 - **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 지원합니다.
 - **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고, `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며, `run-visualization`은 내보낸 그래프를 렌더링합니다.
-- **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 전략·렌더러·파서·공급자는 레지스트리로 등록합니다([확장 가이드](./docs/design.ko.md#15-확장-가이드)).
+- **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 전략·렌더러·파서·공급자는 레지스트리로 등록합니다([확장 가이드](./docs/design.md#15-extension-guide)).
 
 ## 아키텍처
 
@@ -41,7 +41,7 @@
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 그래프 없이 청크만 검색하는(BM25 + 벡터) 빠른 기준선과 비교 실험 |
 
-전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.ko.md#4-수집-파이프라인)·[증분 인덱싱](./docs/design.ko.md#5-증분-인덱싱)·[검색](./docs/design.ko.md#6-검색-두-방법론) 상세 다이어그램은 [설계 문서](./docs/design.ko.md)를 참고하세요.
+전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-two-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -106,15 +106,16 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 문서 안내
 
+한국어 문서는 이 README와 사용자 가이드뿐이며, 나머지 문서는 영문으로만 제공합니다.
+
 | 문서 | 내용 |
 |---|---|
 | [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
 | [CLI 레퍼런스](./docs/cli.md) (영문) | 모든 CLI 플래그의 기본값과 설명(파서에서 생성) |
 | [설정 레퍼런스](./docs/configuration.md) (영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
-| [모델 카탈로그](./docs/models.ko.md) ([English](./docs/models.md)) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
-| [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 보는 오류 |
-| [설계 문서](./docs/design.ko.md) ([English](./docs/design.md)) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
-| [용어집](./docs/glossary.ko.md) | 한국어 문서와 영문 문서·코드의 용어 대응 |
+| [모델 카탈로그](./docs/models.md) (영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
+| [운영 런북](./docs/operations.md) (영문) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 보는 오류 |
+| [설계 문서](./docs/design.md) (영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
 | [`iac/README.md`](./iac/README.md) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | 개발 환경, 테스트, 품질 게이트, 브랜치와 커밋 규칙 |
 | [CHANGELOG.md](./CHANGELOG.md) | 릴리스 노트 |
@@ -131,7 +132,7 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 기여
 
-기여를 환영합니다. 개발 환경, 테스트, PR 절차는 [CONTRIBUTING.md](./CONTRIBUTING.md)를, 확장 방법은 [설계 문서 §15](./docs/design.ko.md#15-확장-가이드)를 참고하세요. 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
+기여를 환영합니다. 개발 환경, 테스트, PR 절차는 [CONTRIBUTING.md](./CONTRIBUTING.md)를, 확장 방법은 [설계 문서 §15](./docs/design.md#15-extension-guide)를 참고하세요. 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
 
 ## 라이선스
 
@@ -146,4 +147,4 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 - Microsoft GraphRAG: [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) · [라이브러리](https://github.com/microsoft/graphrag)
 - LightRAG: [Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779) · [라이브러리](https://github.com/HKUDS/LightRAG)
 
-DRIFT 검색, 동적 커뮤니티 선택, 자동 튜닝, LazyGraphRAG 등 GraphRAG 관련 추가 자료는 [설계 문서](./docs/design.ko.md#16-참고-자료)에 정리되어 있습니다.
+DRIFT 검색, 동적 커뮤니티 선택, 자동 튜닝, LazyGraphRAG 등 GraphRAG 관련 추가 자료는 [설계 문서](./docs/design.md#16-further-reading)에 정리되어 있습니다.

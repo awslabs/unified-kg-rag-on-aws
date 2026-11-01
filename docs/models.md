@@ -1,7 +1,5 @@
 # Model Catalog
 
-> 🇰🇷 한국어판: [docs/models.ko.md](./models.ko.md)
-
 Which Bedrock models the framework knows, how it shapes requests for each
 provider, and how to describe a model it does not know. For which models to
 enable before a first run, see the
