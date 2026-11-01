@@ -1628,6 +1628,13 @@ domain and entity types. **Review it**, then copy the prompts you want under
   generated few-shot examples come last.
 - Entity categories still come from `processing.graph_extraction.entity_types`
   (`{entity_types}`): copy the profile's `entity_types` there.
+- `--schema-out schema.yaml` also writes an
+  [extraction schema](#c-extraction-schema) draft: the profile's entity
+  types, the relationship types the tuning examples state most often (at
+  most 12, with their counts in a comment) and a pattern only where every
+  pair of endpoint types of a relationship type appears at least twice. It
+  is a `schema_source: {kind: file}` file, to load with `schema_mode:
+  align` after review; the same model answers give the same file.
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
@@ -1638,8 +1645,8 @@ domain and entity types. **Review it**, then copy the prompts you want under
 
 ## 9. Domain adaptation
 
-Two levers specialize the pipeline for a domain (medical, legal, finance, ...);
-a third, the extraction schema (C), is in preview:
+Three levers specialize the pipeline for a domain (medical, legal, finance,
+...): the entity types (A), the prompts (B) and the extraction schema (C).
 
 ### A. `entity_types` (cheapest, highest-impact)
 
@@ -1713,8 +1720,30 @@ and tune `entity_types` → re-ingest.
 ### C. Extraction schema
 
 Entity types, relationship types and the patterns allowed between them form
-the extraction schema. An entity type may be a mapping with the IRI of an
-ontology class:
+the extraction schema. With the defaults it is the `entity_types` list
+alone, and extraction works as it always has. Declare relationship types
+(and, if you like, patterns and ontology IRIs) when the graph should use
+one fixed vocabulary: the same relationship written `works for`,
+`Works_For` and `WORKS_FOR` then becomes one edge label, and every stored
+item records whether it fits the schema.
+
+**Which mode.** `schema_mode` chooses what extraction does with the schema:
+
+| Mode | Keeps | Use it when |
+|---|---|---|
+| `off` | everything, as written | the schema should only shape the prompt |
+| `align` (default) | everything; declared types written as declared | you want consistent labels and can live with, or want to review, items outside the schema |
+| `strict` | only items of declared types and allowed patterns | downstream users of the graph accept only the ontology's types |
+
+`strict` costs recall: whatever the model types outside the schema is lost,
+and with an entity go the unit's relationships naming it. Start with
+`align`, look at what falls outside the schema (`filters={"in_schema":
+False}`, below), widen the schema, and switch to `strict` only when little
+falls outside. To measure the cost on your questions, ingest the corpus
+under two index suffixes (one per mode, [Index suffix](#index-suffix)) and
+run the same `run-eval` dataset against each.
+
+**Declaring the schema.** Inline, in `processing.graph_extraction`:
 
 ```yaml
 processing:
@@ -1724,41 +1753,59 @@ processing:
       - {label: ORGANIZATION, description: "Companies", iri: "https://schema.org/Organization"}
     relationship_types:
       - "WORKS_FOR: Employment"
-      - "PARTNERS_WITH"
+      - {label: PARTNERS_WITH, iri: "https://example.org/onto#partnersWith"}
     relationship_patterns:
       - "PERSON -WORKS_FOR-> ORGANIZATION"
-    schema_mode: strict     # off | align (default) | strict
+      - {source_type: ORGANIZATION, relation: PARTNERS_WITH, target_type: ORGANIZATION}
+    schema_mode: align     # off | align (default) | strict
 ```
+
+- A type is `"LABEL: description"` (the description is optional) or a
+  `{label, description, iri}` mapping; `iri` names the ontology class (entity
+  type) or property (relationship type) it maps to. A pattern is
+  `"SOURCE -RELATION-> TARGET"` or a `{source_type, relation, target_type}`
+  mapping, and must name declared types. A misspelled mapping key fails the
+  load.
+- Labels match ignoring case, surrounding spaces and the choice of space or
+  `_` between words (`works for` = `WORKS_FOR`), never by similarity:
+  `PERSONS` is not `PERSON`. Two labels of one kind may not match each other.
+- From the environment the lists are JSON, e.g.
+  `UKR__PROCESSING__GRAPH_EXTRACTION__RELATIONSHIP_TYPES='["WORKS_FOR: Employment"]'`
+  and `UKR__PROCESSING__GRAPH_EXTRACTION__SCHEMA_MODE=strict`
+  ([Environment variable overrides](#environment-variable-overrides)).
+- Or keep the schema in a file: `schema_source: {kind: file, path:
+  schema.yaml}` reads `relationship_types`, `relationship_patterns` and,
+  optionally, `entity_types` from a YAML or JSON file of the same shape (a
+  relative path is resolved against the config file). Leave those keys out
+  of the config then: a file and a config that both set `entity_types` fail
+  the load. Other formats (OWL, SHACL, a schema service) plug in as a
+  registered schema source ([Design Doc §15](./design.md#15-extension-guide)).
+
+**What extraction does.**
 
 - **Prompt.** In every mode the declared relationship types and patterns
   replace the example relationship types of the extraction prompt. With no
   relationship type declared, the prompt keeps its examples.
-- **Labels** match ignoring case, surrounding spaces and the choice of space
-  or `_` between words (`works for` = `WORKS_FOR`), never by similarity:
-  `PERSONS` is not `PERSON`. Two labels of one kind may not match each other,
-  and a pattern must name declared types; the load fails otherwise.
-- **`schema_mode`**:
-  - `off`: the schema only shapes the prompt.
-  - `align` (default): every entity and relationship is kept. A type that
-    names a declared one is written as declared (`works for` becomes
-    `WORKS_FOR`) before ids are built, so the spellings of one relationship
-    type give one edge label and one relationship id. Off-schema and
-    off-pattern items are counted. With entity types alone (no relationship
-    types, as in the default config) `align` changes nothing.
-  - `strict`: as `align`, and each text unit drops:
-    - an entity whose type is empty or undeclared, with the unit's
-      relationships naming it. The unit records the rejection, so gleaning
-      cannot bring the entity back through a relationship; a statement of
-      the same entity with a declared type keeps it.
-    - a relationship of an undeclared type.
-    - a relationship a pattern does not allow, when the unit lists both
-      endpoints with declared types. An endpoint the unit does not list
-      passes, and a reversed relationship is dropped, not flipped. A
-      relationship type without patterns is not restricted.
+- **`align`** keeps every entity and relationship. A type that names a
+  declared one is written as declared (`works for` becomes `WORKS_FOR`)
+  before ids are built, so its spellings give one edge label and one
+  relationship id. Off-schema and off-pattern items are counted. With entity
+  types alone (no relationship types, as in the default config) labels stay
+  as written.
+- **`strict`** does the same and drops, per text unit:
+  - an entity whose type is empty or undeclared, with the unit's
+    relationships naming it. The unit records the rejection, so gleaning
+    cannot bring the entity back through a relationship; a statement of the
+    same entity with a declared type keeps it.
+  - a relationship of an undeclared type.
+  - a relationship a pattern does not allow, when the unit lists both
+    endpoints with declared types. An endpoint the unit does not list passes,
+    and a reversed relationship is dropped, not flipped. A relationship type
+    without patterns is not restricted.
 
-    Gleaning follows the same rules: it does not add an off-schema entity
-    or relationship, and ignores a correction to an undeclared type or to a
-    direction no pattern allows.
+  Gleaning follows the same rules: it does not add an off-schema entity or
+  relationship, and ignores a correction to an undeclared type or to a
+  direction no pattern allows.
 - An endpoint's type is the unit's merged type of the entity (its most
   frequent type). Being declared does not make a type win: under `align` an
   entity stated twice as `VENDOR` and once as `ORGANIZATION` stays a
@@ -1773,41 +1820,71 @@ processing:
   and `relationships_dropped_off_pattern` in its `extraction_stats`, and the
   gleaning stage its strict drops in `gleaning_stats`; each logs one summary
   line. The off-schema labels themselves are logged at DEBUG only.
-- `schema_source: {kind: file, path: schema.yaml}` reads the
-  `relationship_types`, `relationship_patterns` and, optionally,
-  `entity_types` keys from a YAML or JSON file instead (a relative path is
-  resolved against the config file). Leave those keys out of the config
-  then. A run is keyed by the file's content, not its location: moving the
-  file re-extracts nothing, editing it re-extracts.
-- Changing the schema or the mode re-extracts, like any other change of an
-  extraction setting. With the defaults, or with entity types
-  alone, nothing changes on upgrade: no cache key, extraction record or
-  recorded extraction setting moves.
-- **Stored annotations.** Indexing writes on every entity `in_schema`
-  (whether its merged type is a declared entity type) and `type_iri` (that
-  type's `iri`), and on every relationship `in_schema` and `predicate_iri`,
-  in the graph and vector stores. They follow the stored type, so a full
-  build and an incremental run store the same values; whether a
-  relationship fits a pattern is not stored (it depends on the endpoints'
-  types, which other documents can change). An entity named only as a
-  relationship endpoint has no type and is off schema, under `strict` too.
-  None is stored under `off`, with entity types alone, for relationships
-  when no relationship type is declared, and no IRI for a type without one;
-  the stores then hold exactly what they held before. Filter on them like
-  any field (see [Filters](#filters)):
 
-  ```python
-  RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
-  ```
+**What is stored.** Indexing writes these fields on entities and
+relationships, in the graph and the vector stores:
 
-  returns only the off-schema entities (and, with `mix`, `hybrid`, `local`
-  or `drift`, off-schema relationships), useful to review what `align`
-  kept outside the schema. An item stored without the annotation matches
-  no `in_schema` value. An incremental run maps the new fields on its live
-  OpenSearch indices before its first write; items it does not rewrite keep
-  the annotations of the run that wrote them, so re-run with
-  `indexing.reset: true` after changing the schema to annotate the whole
-  corpus.
+| Field | On | Value | Written |
+|---|---|---|---|
+| `in_schema` | entities, relationships | whether the stored type is a declared type of that kind (an empty type is not) | under `strict`, and under `align` once relationship types are declared; per kind, only when that kind has declared types |
+| `type_iri` | entities | the `iri` of the declared entity type the stored type names | whenever such a type has an `iri` and the mode is not `off`, with entity types alone too |
+| `predicate_iri` | relationships | the `iri` of the declared relationship type | as `type_iri` |
+
+- The values follow the stored (merged) type, so a full build and an
+  incremental run store the same ones. Whether a relationship fits a
+  pattern is not stored: it depends on the endpoints' types, which other
+  documents can change.
+- An entity named only as a relationship endpoint has no type and is off
+  schema, under `strict` too.
+- A field that does not apply is not written at all, so a config without
+  relationship types or IRIs (the default included) stores exactly what it
+  stored before these fields existed. Ids never change because of them.
+
+**Filters.** The fields are filter keys on the entities and relationships
+indices and on Neptune entity vertices (graph expansion), like any other
+field ([Filters](#filters)):
+
+```python
+RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
+RAGInput(query="...", search_strategy="mix",
+         filters={"type_iri": "https://schema.org/Organization"})
+```
+
+The first returns only off-schema entities (and, with `mix`, `hybrid`,
+`local` or `drift`, off-schema relationships): the review list of what
+`align` kept outside the schema. An item stored without the field matches
+no value of it.
+
+**Changing the schema.** A change of a type, pattern, description, IRI or
+the mode is a change of extraction settings: an incremental run
+re-extracts its scope, which also rewrites the stored annotations, and
+moving a schema file without editing it re-extracts nothing (the content is
+keyed, not the path). Items that run does not rewrite (other index scopes)
+keep the annotations of the run that wrote them; re-run with
+`indexing.reset: true` to annotate the whole corpus. Upgrading with the
+defaults, or with entity types alone and no IRI, changes no cache key,
+extraction record or stored item; an incremental run maps the new fields on
+its live OpenSearch indices before its first write.
+
+**Drafting a schema with prompt tuning.** `run-prompt-tuning --schema-out
+schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-prompt-tuning)):
+
+1. Run it over a representative sample of the corpus.
+2. Review the draft: it lists the profile's entity types and the
+   relationship types the tuning examples state most often, with a count
+   each, and a pattern only where the examples support it. Merge synonyms,
+   drop noise, add descriptions and IRIs.
+3. Load it with `schema_source: {kind: file, path: schema.yaml}` and
+   `schema_mode: align` (the draft comes from a few chunks, so `strict`
+   would drop what they did not show), and remove `entity_types` from the
+   config if the draft sets them.
+4. Ingest, review the off-schema items with `filters={"in_schema": False}`
+   and the stage counters, extend the file, re-run.
+
+**Local backend.** `backend: local` behaves the same: the SQLite graph
+store and the embedded vector store hold the same fields, the same filters
+apply (graph expansion included), and live embedded indices gain the
+fields the same way.
 
 ---
 
