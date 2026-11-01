@@ -258,9 +258,11 @@ runs `pkg/__init__.py`, so the imports a package's `__init__` makes count
 for every module that imports from the package; outside the facade and the
 console-script launcher, a package module is never imported by a name
 string (`importlib.import_module`, `__import__`, `pkgutil.resolve_name`,
-`importlib.util.find_spec`), and a dynamic import of a name the scan cannot
-read (a variable, a concatenation, a relative name) needs an entry saying
-what it imports. Its list of allowed exceptions is empty, and each rule has
+`importlib.util.find_spec`, also under an alias, through `getattr` or with
+`name=`), and a dynamic import of a name the scan cannot read (a variable,
+a concatenation, a relative name), `exec` or
+`importlib.util.spec_from_file_location` needs an entry saying what it
+imports. Its list of allowed exceptions is empty, and each rule has
 a synthetic case it must catch. A clean-interpreter check pins the runtime
 side, which the scan of edges cannot see (an allowed adapter module passing
 a backend on): importing any module of the application (the CLIs and the

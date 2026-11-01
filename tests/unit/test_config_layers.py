@@ -556,6 +556,16 @@ def test_settings_that_do_nothing_are_warned_at_load(
     assert not [r for r in caplog.records if r.getMessage().startswith("Config: ")]
 
 
+def test_a_token_fallback_size_alone_is_no_character_default() -> None:
+    # fallback_chunk_size is one of the sizes length_unit counts: set for
+    # tokens, the sizes are not all character defaults.
+    config = Config()
+    config.processing.chunking.length_unit = "tokens"  # type: ignore[assignment]
+    assert [m for m in config.ineffective_settings() if "character default" in m]
+    config.processing.chunking.fallback_chunk_size = 1200
+    assert not [m for m in config.ineffective_settings() if "character default" in m]
+
+
 def test_opensearch_indexing_settings_set_in_code_are_checked_too() -> None:
     # Set after load, a knn key or an invalid prefix reached index creation
     # unchecked (OpenSearchIndexingConfig did not validate assignments).
