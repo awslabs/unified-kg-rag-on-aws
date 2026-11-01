@@ -671,6 +671,33 @@ def test_a_switch_keeps_the_better_scored_copy_of_a_vertex(target: str) -> None:
     assert names == {"e1": "rewritten", "e2": "e2", "e3": "old", "e4": "rewritten"}
 
 
+def test_a_rewritten_copy_beats_a_higher_ranked_old_copy_as_near() -> None:
+    from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+
+    # The old copy keeps its rank (or degree) until the sweep: as near, it
+    # can score higher, but the rewritten copy is the one read.
+    def ranked(vid: Any, item_id: str, path: int, name: str, rank: int) -> Any:
+        row = _row(vid, item_id, path, name)
+        row["node"]["rank"] = [rank]
+        return row
+
+    rows = [
+        ranked(vertex_id(_LABEL, "e1"), "e1", 1, "seed", 1),
+        ranked("uuid-e2", "e2", 2, "old", 9),
+        ranked(vertex_id(_LABEL, "e2"), "e2", 2, "new", 1),
+        # A nearer old copy still wins over a farther rewritten one.
+        ranked("uuid-e3", "e3", 2, "near", 1),
+        ranked(vertex_id(_LABEL, "e3"), "e3", 3, "far", 9),
+    ]
+    marked = NeptuneRetriever._mark_old_copies(rows, _LABEL, "custom")
+    for ordered in (marked, marked[::-1]):
+        results = _retriever("custom")._process_traversal_results(
+            ordered, SearchQuery(query="", filters={"id": ["e1"]})
+        )
+        names = {r.source: r.metadata["name"] for r in results}
+        assert names == {"e1": "seed", "e2": "new", "e3": "near"}, names
+
+
 def _expanded(sample: Callable[[str], list[Any]]) -> Callable[[str], list[Any]]:
     """``sample``, with a row for the expansion (the seeds were found)."""
 
@@ -696,32 +723,69 @@ def test_the_retriever_samples_a_matching_label_once() -> None:
     first = _run_retriever(retriever, _expanded(_sample("custom")))
     second = _run_retriever(retriever, _expanded(_sample("custom")))
     # The sample and the switch, then the expansion; then the switch alone
-    # (one indexed read) before each expansion.
+    # (one indexed read) before each custom-id expansion.
     assert len(first) == 3
     assert len(second) == 2
     assert f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in second[0]
     assert second[1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
 
 
-@pytest.mark.parametrize("configured", ["custom", "property"])
 @pytest.mark.parametrize("target", ["custom", "property"])
-def test_a_settled_label_follows_a_switch_and_its_end(
-    warned, configured: str, target: str
+def test_a_settled_custom_label_follows_a_switch_and_its_end(
+    warned, target: str
 ) -> None:
     # One retriever across a full build switching a label it found settled:
     # the build's switch vertex is seen on the next query, and once the
     # sweep has dropped it the label is sampled again.
-    retriever = _retriever(configured)
-    _run_retriever(retriever, _expanded(_sample(configured)))
+    retriever = _retriever("custom")
+    _run_retriever(retriever, _expanded(_sample("custom")))
     sent = _run_retriever(retriever, _expanded(_switching(target, _sample(target))))
     assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
     assert retriever.projected[-1]["with_vertex_id"] is True
     sent = _run_retriever(retriever, _expanded(_sample(target)))
     assert any(".limit(1).project('vertex_id','id')" in groovy for groovy in sent)
-    if configured == target == "custom":
+    if target == "custom":
         assert sent[-1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
     else:
         assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+
+
+def test_a_settled_property_label_is_not_read_again(warned) -> None:
+    # Property lookups find the vertices of both modes, so a label settled
+    # in property mode costs the expansion alone on each later query, during
+    # a switch to custom ids and after it. Each vertex id is read along: a
+    # switch can only be to custom ids, whose copies it tells apart.
+    retriever = _retriever("property")
+    first = _run_retriever(retriever, _expanded(_sample("property")))
+    assert len(first) == 3, first
+    for answer in (
+        _expanded(_sample("property")),
+        _expanded(_switching("custom", _sample("custom"))),
+        _expanded(_sample("custom")),
+        _sample("property"),
+    ):
+        sent = _run_retriever(retriever, answer)
+        assert len(sent) == 1 and sent[0].startswith(_BY_PROPERTY), sent
+        assert retriever.projected[-1]["with_vertex_id"] is True
+    rows = [
+        _row("uuid-e1", "e1", 1, "seed"),
+        _row("uuid-e2", "e2", 2, "old"),
+        _row(vertex_id(_LABEL, "e2"), "e2", 2, "rewritten"),
+    ]
+
+    async def execute(build: Callable) -> list[Any]:
+        return rows if ".union(" in _groovy(build(Graph().traversal())) else []
+
+    object.__setattr__(retriever, "_execute_traversal", execute)
+    for ordered in (rows, rows[::-1]):
+        rows = ordered
+        hits = asyncio.run(
+            retriever.aretrieve(SearchQuery(query="", filters={"id": ["e1"]}))
+        )
+        assert {h.source: h.metadata["name"] for h in hits} == {
+            "e1": "seed",
+            "e2": "rewritten",
+        }
 
 
 def test_a_settled_custom_label_found_without_its_seeds_is_sampled_again(

@@ -570,22 +570,15 @@ From 0.2.3 (or a `main` checkout since):
 - `indexing.neptune.vertex_ids: custom`: Neptune vertex ids
   `<label>:<item id>`. Graph expansion reads a label of the other mode, or
   one a full build is switching, by the `id` property (one WARNING), so
-  queries keep working while ingestion and the query service switch
-  (#466, #470).
+  queries keep working while ingestion and the query service switch. During
+  a switch it keeps each entity's nearer copy, the rewritten one of two as
+  near. A running query service follows a switch without a restart: in
+  `custom` mode graph expansion reads the label's switch vertex on each
+  query (one indexed read) and checks the label's mode again when a
+  custom-id lookup finds none of its seeds; `property` mode needs no extra
+  read (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk
   quantized vectors on OpenSearch 2.17+ (#461).
-- A running query service follows a Neptune vertex-id switch without a
-  restart: graph expansion reads the label's switch vertex on each query
-  (one more indexed read) and checks the label's mode again when a
-  custom-id lookup finds none of its seeds. Before, a label found settled
-  was not checked again, so a later switching build expanded only the seeds
-  and, once swept, returned nothing until a restart (#473).
-- While a full build switches a Neptune label's vertex ids, graph expansion
-  keeps each entity's better-scored copy (the rewritten one of two scored
-  alike) instead of always the rewritten one, which could stand farther
-  from the seeds while the build has rewritten only part of the edges.
-  Results during a switch may still be partial until its sweep ends
-  (`docs/operations.md`) (#473).
 - The public API exports its errors (`GraphRAGException`,
   `ConfigurationError`, `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `StoreRequestRejectedError`,
@@ -694,6 +687,9 @@ From 0.2.3 (or a `main` checkout since):
   `aws.bedrock.guardrail.contextual_grounding.enabled` is on and
   `check_output` off, however code set them: the nested flag is validated
   without `check_output`, and a refused assignment stays applied (#472).
+- A `processing.chunking.chunk_overlap` not below `fallback_chunk_size`
+  fails the load, naming both, instead of every chunker at the chunking
+  stage (#474).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -704,13 +700,11 @@ Queries and retrieval.
 - Graph expansion no longer depends on the order the graph store keeps a
   vertex's edges: a hub contributes its first `max_results_per_hop`
   neighbours by id, as the embedded store does, and of two equally short
-  paths to an entity the first by content is kept, so two builds of one
-  graph expand alike. Ordering reads every neighbour of an expanded hub;
+  paths to an entity the one from the better-ranked seed (the caller's seed
+  order), then the first by content, is kept, so two builds of one graph
+  expand alike. Ordering reads every neighbour of an expanded hub;
   `indexing.neptune.deterministic_order: false` keeps the store's order
-  instead (#470).
-- Of two equally short paths to an entity, graph expansion keeps the one
-  from the seed the caller ranked first (then the first by content), not
-  the one whose seed name sorts first (#473).
+  instead (#470, #473).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

@@ -264,6 +264,61 @@ def test_a_missing_extra_is_named_with_the_settings_that_need_it(
     assert error.count("uv sync --extra local") == 1
 
 
+@pytest.mark.parametrize("role", ["llm", "embedding"])
+def test_the_openai_compatible_kind_needs_its_client(
+    without_local_extra: None, role: str
+) -> None:
+    config = _local_config()
+    getattr(config.providers, role).kind = "openai_compatible"
+    error = missing_extras_error(config) or ""
+    assert f"'langchain_openai' (for providers.{role}.kind 'openai_compatible')" in (
+        error
+    )
+
+
+def test_two_modules_of_one_extra_name_its_install_once(
+    without_local_extra: None,
+) -> None:
+    config = _local_config()
+    config.providers.llm.kind = "openai_compatible"
+    error = missing_extras_error(config) or ""
+    assert "'langchain_openai'" in error and "'langchain_ollama'" in error
+    assert error.count("uv sync --extra local") == 1
+
+
+def test_a_module_lookup_that_raises_counts_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # find_spec raises ValueError for a module whose __spec__ is None.
+    from unified_kg_rag.application.cli import preflight
+
+    def refuse(name: str) -> None:
+        raise ValueError(f"{name}.__spec__ is None")
+
+    monkeypatch.setattr(preflight.importlib.util, "find_spec", refuse)
+    assert "'langchain_ollama'" in (missing_extras_error(_local_config()) or "")
+
+
+def test_a_kind_two_roles_share_is_named_once() -> None:
+    # A custom graph kind needing a module for its indexer and its retriever
+    # (one providers.graph section).
+    kind = "synthetic_graph_store"
+    config = Config()
+    config.providers.graph.kind = kind
+    roles = (ProviderRole.GRAPH_INDEXER, ProviderRole.GRAPH_RETRIEVER)
+    try:
+        for role in roles:
+            register_provider(role, kind, requires=("synthetic_absent_module", "x"))(
+                lambda providers: None
+            )
+        error = missing_extras_error(config) or ""
+        assert error.count(f"providers.graph.kind '{kind}'") == 1, error
+    finally:
+        for role in roles:
+            provider_registry._REGISTRY.pop((role, kind), None)
+            provider_registry._REQUIRES.pop((role, kind), None)
+
+
 def test_an_installed_extra_passes() -> None:
     pytest.importorskip("langchain_ollama")
     assert missing_extras_error(_local_config()) is None
@@ -298,6 +353,25 @@ def test_ingestion_exits_before_the_pipeline_without_the_extra(
     with pytest.raises(SystemExit) as exc:
         runner.run()
     assert exc.value.code == 2  # a configuration error
+    pipeline.assert_not_called()
+    assert "uv sync --extra local" in " ".join(capsys.readouterr().err.split())
+
+
+def test_verify_metadata_without_the_extra_exits_before_the_pipeline(
+    mocker,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    without_local_extra: None,
+) -> None:
+    # --verify-metadata builds the pipeline too, and its stages their
+    # models: without the extra it would fail there, with a stage error.
+    runner = _ingestion_runner(
+        mocker, tmp_path, _local_config(), "--verify-metadata", "--pipeline-id", "p"
+    )
+    pipeline = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    with pytest.raises(SystemExit) as exc:
+        runner.run()
+    assert exc.value.code == 2
     pipeline.assert_not_called()
     assert "uv sync --extra local" in " ".join(capsys.readouterr().err.split())
 

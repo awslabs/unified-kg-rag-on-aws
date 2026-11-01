@@ -457,6 +457,7 @@ def test_a_chunk_length_unit_set_in_code_is_the_enum() -> None:
 _BAD_CHUNK_SIZES = [
     ({"min_chunk_size": 5000, "max_chunk_size": 100}, "min_chunk_size must be"),
     ({"chunk_overlap": 1000}, "chunk_overlap must be"),
+    ({"fallback_chunk_size": 400}, "less than fallback_chunk_size"),
     ({"pre_chunk_size": 400}, "pre_chunk_overlap must be"),
 ]
 

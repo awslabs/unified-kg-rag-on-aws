@@ -463,3 +463,38 @@ def test_a_long_lived_retriever_follows_a_switch_like_a_fresh_one(
         assert same == opened, phase
         assert [source for source, _, _ in same] == ["buyer", "depot", "vendor"]
     assert all("rewritten" in content for _, _, content in phases["after"][0])
+
+
+def test_a_switch_swept_between_two_queries_is_followed(
+    custom: StoreHarness,
+) -> None:
+    # A full build switches a custom label to property ids and sweeps
+    # between two queries of one retriever: no switch vertex is left to see,
+    # so the custom-id lookup finds no seed, and the label is sampled again
+    # and the expansion re-run by the id property.
+    old = custom.derive(_in("custom"))
+    entities, relationships, _ = _graph()
+    assert old.graph_indexer.upsert_entities(entities).failed_items == 0
+    assert old.graph_indexer.upsert_relationships(relationships).failed_items == 0
+    query = SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["vendor"]})
+
+    async def follow() -> tuple[list[str], list[str]]:
+        indexer = custom.derive(_in("property")).graph_indexer
+        assert old.graph_retriever is not None
+        retriever = old.graph_retriever()
+        try:
+            before = sorted(h.source for h in await retriever.aretrieve(query))
+            await asyncio.to_thread(indexer.begin_rebuild, [_SUFFIX])
+            await asyncio.to_thread(
+                indexer.index_entities, entities, suffixes=[_SUFFIX]
+            )
+            await asyncio.to_thread(indexer.index_relationships, relationships)
+            await asyncio.to_thread(indexer.end_rebuild, [_SUFFIX], True)
+            after = sorted(h.source for h in await retriever.aretrieve(query))
+        finally:
+            await retriever.aclose()
+        return before, after
+
+    before, after = asyncio.run(follow())
+    assert _switches(old) == []
+    assert before == after == ["buyer", "depot", "vendor"]

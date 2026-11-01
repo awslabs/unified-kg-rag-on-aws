@@ -288,15 +288,22 @@ class NeptuneRetriever(GraphExpansionRetriever):
         Refusing the label failed every graph expansion until the build
         ended; the indexer still refuses writes of the other mode.
 
-        A label found settled in the configured mode is only checked for a
-        switch on each query (one indexed read), and sampled again once a
-        custom-id lookup finds none of the seeds (``_traverse``); any other
-        is sampled on each query, so lookups follow once a build has
-        rewritten it.
+        A label found settled in ``custom`` mode is only checked for a switch
+        on each query (one indexed read), and sampled again once a custom-id
+        lookup finds none of the seeds (``_traverse``). One settled in
+        ``property`` mode is not read again: its lookups by the ``id``
+        property find the vertices of both modes, and a switch can only be
+        to custom ids, so each vertex id is read along (no request of its
+        own) and a rewritten copy, the one with a custom vertex id, is told
+        from its old one whether or not a build is switching the label. Any
+        other label is sampled on each query, so lookups follow once a build
+        has rewritten it.
         """
         mode = self._neptune_config.vertex_ids
         custom = mode == CUSTOM_VERTEX_IDS
         if self._settled(label):
+            if not custom:
+                return False, CUSTOM_VERTEX_IDS
             switching = await self._execute_traversal(vertex_id_switch_query(label))
             if not switching:
                 return custom, None
@@ -357,9 +364,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
         old and its new edges, until the sweep drops the old copy; the
         rewritten one is the one whose vertex id is of the ``target`` mode.
         A vertex not rewritten yet keeps its one (old) copy. Both copies are
-        kept: the ranking keeps the better-scored one (the old copy may be
-        nearer the seeds over edges not rewritten yet), the rewritten one of
-        two scored alike.
+        kept: the ranking keeps the nearer one (the old copy may be nearer
+        the seeds over edges not rewritten yet), the rewritten one of two as
+        near.
         """
 
         def item_id(row: dict[str, Any]) -> str | None:

@@ -190,14 +190,14 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             )
 
         # Entity expansion runs per seed, so a node two seeds reach arrives once
-        # per seed; keep the copy with the best score (its shortest path, since
-        # the score orders by distance first), and of equally short paths the
-        # one from the better-ranked seed (the caller's seed order), then the
-        # first by content, not the first to arrive. A node stored twice (a
-        # Neptune label being switched) arrives once per copy: the better
-        # scored, the newer of two scored alike.
+        # per seed; keep the copy with the shortest path, of equally short
+        # paths the best-scored one, then the one from the better-ranked seed
+        # (the caller's seed order), then the first by content, not the first
+        # to arrive. A node stored twice (a Neptune label being switched)
+        # arrives once per copy: the nearer, the newer of two as near (even
+        # where the old copy's degree or rank scores it higher).
         seed_rank = self._seed_ranks(traversal_results, query)
-        best: dict[Any, tuple[tuple[float, bool, int, str], RetrievalResult]] = {}
+        best: dict[Any, tuple[tuple[int, bool, float, int, str], RetrievalResult]] = {}
         seed_ids: set[Any] = set()
         for item in traversal_results:
             node_data = self._node_data(item)
@@ -215,8 +215,9 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 # A path of one vertex: a seed, not something reached from one.
                 seed_ids.add(node_id)
             key = (
-                -(result.score or 0.0),
+                len(item.get("path") or []) or 1,
                 bool(item.get("superseded")),
+                -(result.score or 0.0),
                 seed_rank(item),
                 result.content,
             )
