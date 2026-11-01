@@ -791,7 +791,8 @@ translation stage is skipped at no cost, even with `enabled: true`.
 
   Switching the unit re-chunks the corpus and re-extracts its documents (an
   incremental run re-extracts every document of the scope); the default
-  `chars` keeps the chunks, and so the ids, of earlier releases.
+  `chars` keeps the chunks, and so the ids, of releases before
+  `length_unit`.
 - **The analyzer must exist on the cluster**, or the indexing stage fails
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the

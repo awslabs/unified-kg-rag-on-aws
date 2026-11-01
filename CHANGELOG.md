@@ -94,7 +94,7 @@ Configuration loading.
 - A moved key fails the load naming the key that replaces it (the *Moved
   keys* table of `docs/configuration.md`); a removed key loads with a
   WARNING and is ignored (its *Removed keys* table) (#334, #344, #467,
-  #468, #PR).
+  #468, #470).
 - Environment overrides use one prefix: `UKR__<SECTION>__<KEY>` sets any
   config key (double underscores between path segments, any case; JSON for
   lists and mappings). The former names are no longer read (#335):
@@ -456,7 +456,8 @@ Library API (Python callers and custom backends).
   `load_context` are `load_history` / `add_turn` (no `entities=`, no
   `providers=`) (#212, #218); `NeptuneClient.connection` is
   `NeptuneClient.g` (#266); `ports.CachePort` and
-  `shared.get_cache_manager` are `shared.cache_manager.CacheManager`, and
+  `shared.get_cache_manager` are
+  `application.ingestion.cache_manager.CacheManager`, and
   `S3CacheManager` requires `prefix=` (#216, #300, #345); `BaseEvaluator`
   is `BaseGraphRAGEvaluator` (#300); `LanguageModelInfo`,
   `EmbeddingModelInfo`, `RerankModelInfo` live in `ports.model_factory`,
@@ -549,7 +550,7 @@ From 0.2.3 (or a `main` checkout since):
 - The guardrail's `ApplyGuardrail` screening (#319) and opt-in contextual
   grounding check `aws.bedrock.guardrail.contextual_grounding` (CDK
   `-c guardrail_contextual_grounding=true`); `GroundingCheck.blocked` says
-  whether the check blocked the answer (#462, #PR).
+  whether the check blocked the answer (#462, #471).
 - Per-query rerank status (`metadata.rerank`) and opt-in
   `search.reranking.required` (#284).
 - Evaluation: `retrieval` and `answer_match` evaluators, grouped
@@ -570,7 +571,7 @@ From 0.2.3 (or a `main` checkout since):
   `<label>:<item id>`. Graph expansion reads a label of the other mode, or
   one a full build is switching, by the `id` property (one WARNING), so
   queries keep working while ingestion and the query service switch
-  (#466, #PR).
+  (#466, #470).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk
   quantized vectors on OpenSearch 2.17+ (#461).
 - The public API exports its errors (`GraphRAGException`,
@@ -643,7 +644,7 @@ From 0.2.3 (or a `main` checkout since):
   stage read (#248).
 - The parser uses its own loaders on langchain-core (same text and
   metadata, so document ids are unchanged; a 4,000-page PDF loads in about
-  1 s); `ParserFactory.register_loader` takes any `BaseLoader` (#460, #PR).
+  1 s); `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471).
 - Gleaning refines each text unit's own record and a correction changes only
   what that unit says (#322).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name` when
@@ -657,10 +658,10 @@ From 0.2.3 (or a `main` checkout since):
 - Documentation: the user guide, runbook and design doc were reorganized and
   describe the current release only; only `README.ko.md` and
   `docs/user-guide.ko.md` remain in Korean, and they link the English
-  design doc, runbook and model catalog (#337-#342, #351, #PR).
-- Dependencies: pydantic 2.14, langchain-core 1.6.10, `langchain-aws>=1.8.1`
+  design doc, runbook and model catalog (#337-#342, #351, #469).
+- Dependencies: pydantic 2.14, langchain-core 1.7.0, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
-  5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.112; aws-cdk-lib 2.274 in the
+  5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.118; aws-cdk-lib 2.274 in the
   CDK lock; `nest-asyncio` is no longer used (#241, #251, #265, #438, #465).
 - Tooling: development tools are in the `dev` group; CI pins uv 0.12.23,
   runs the tests in parallel and on Python 3.13 (non-blocking), checks
@@ -670,7 +671,7 @@ From 0.2.3 (or a `main` checkout since):
   statically and, for every module that has its backends injected, in a
   clean interpreter; the core-install job runs without the dev group (a
   `test` group holds the test runner) (#119, #257, #297, #303, #428, #456,
-  #464, #465, #PR).
+  #464, #465, #470).
 - Settings set in code on `processing.chunking`, `indexing.neptune`,
   `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and
@@ -909,12 +910,13 @@ Deployment (CDK).
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
   denial-of-service advisories through the PDF parser, for example
   GHSA-5849-834g-hvw5), tornado 6.6 (GHSA-pcg2-g6cj-q92c,
-  GHSA-r4j5-9xpp-3985, GHSA-pw9p-v7r6-gx4p), filelock 4.2.5 (nine advisories,
-  GHSA-v4x8-3wr5-3wq8 high; the lock overrides `unstructured`'s cap),
-  Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others), certifi 2026.10.23
-  (GHSA-6q48-6c7w-9gw2), `unstructured>=0.24.1` (GHSA-4mvj-m6j5-pmf7,
+  GHSA-r4j5-9xpp-3985, GHSA-pw9p-v7r6-gx4p), filelock 4.2.1 (nine advisories,
+  GHSA-v4x8-3wr5-3wq8 high; an override lifts `unstructured`'s cap; locked
+  at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others),
+  `unstructured>=0.24.1` (GHSA-4mvj-m6j5-pmf7,
   GHSA-8mgp-746c-j5xp, a stored XSS GHSA-v5mq-3xhg-98m9) and
-  `langchain-openai>=1.1.14` (GHSA-r7w7-9xr2-qq2r) (#307, #426, #430,
+  `langchain-openai>=1.1.14` (GHSA-r7w7-9xr2-qq2r); the lock, not a
+  floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#307, #426, #430,
   #455).
 - Document attribute filters no longer leak excluded documents: they apply
   to relationships, claims, community reports (which carried the first
