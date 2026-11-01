@@ -328,6 +328,46 @@ def test_term_terms_range_and_attribute_filters(harness: StoreHarness) -> None:
     assert all(r.score == 0.0 for r in results[1])
 
 
+def test_schema_annotation_filters_on_entities_and_relationships(
+    harness: StoreHarness,
+) -> None:
+    harness.initialize()
+    indexer = harness.vector_indexer
+    iri = "https://example.org/onto#Organization"
+    supplies = "https://example.org/onto#supplies"
+    entities = _entities()
+    entities[0] = entities[0].model_copy(update={"in_schema": True, "type_iri": iri})
+    entities[1] = entities[1].model_copy(update={"in_schema": False})
+    relationships = _relationships()
+    relationships[0] = relationships[0].model_copy(
+        update={"in_schema": True, "predicate_iri": supplies}
+    )
+    relationships[1] = relationships[1].model_copy(update={"in_schema": False})
+    for stats in (
+        indexer.index_entities(entities),
+        indexer.index_relationships(relationships),
+    ):
+        assert stats.failed_items == 0, stats.errors
+    o = _prefixes(harness)
+    entity, rel = o.entities_index_prefix, o.relationships_index_prefix
+    results = _search(
+        harness,
+        _query("widgets", entity, filters={"in_schema": False}),
+        _query("", entity, filters={"in_schema": True}),
+        _query("", entity, filters={"type_iri": iri}),
+        _query("widgets", rel, filters={"in_schema": False}),
+        _query("", rel, filters={"predicate_iri": supplies}),
+    )
+    # e-depot carries no annotation: no in_schema value matches it.
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["e-buyer"],
+        ["e-vendor"],
+        ["e-vendor"],
+        ["r-ships"],
+        ["r-supplies"],
+    ]
+
+
 def test_an_empty_scope_list_matches_nothing(harness: StoreHarness) -> None:
     # A strategy's own scope may leave nothing (``_ask_incident`` intersects
     # a caller source_id with the frontier): the retriever takes the empty
@@ -906,6 +946,40 @@ def test_graph_expansion_filters_and_is_deterministic(
     second = _graph_retrieve(harness, *queries)
     assert [[(r.source, r.score) for r in hits] for hits in first] == [
         [(r.source, r.score) for r in hits] for hits in second
+    ]
+
+
+def test_graph_expansion_filters_on_the_schema_annotations(
+    graph_harness: StoreHarness,
+) -> None:
+    harness = graph_harness
+    iri = "https://example.org/onto#Organization"
+    entities = [
+        Entity(id="a", name="A", type="org", rank=2, in_schema=True, type_iri=iri),
+        Entity(id="b", name="B", type="vendor", rank=1, in_schema=False),
+        Entity(id="c", name="C", type="org", rank=1, in_schema=True, type_iri=iri),
+        # Written with no schema in effect: no annotation.
+        Entity(id="d", name="D", type="org", rank=1),
+    ]
+    relationships = [
+        Relationship(id=f"a{t}", source_id="a", target_id=t, description=f"a-{t}")
+        for t in "bcd"
+    ]
+    assert harness.graph_indexer.index_entities(entities).failed_items == 0
+    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
+    results = _graph_retrieve(
+        harness,
+        SearchQuery(
+            query="", suffix=_SUFFIX, filters={"id": ["a"], "in_schema": False}
+        ),
+        SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"], "in_schema": True}),
+        SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"], "type_iri": iri}),
+    )
+    # The seed passes the filter too (as for ``type``).
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["b"],
+        ["a", "c"],
+        ["a", "c"],
     ]
 
 

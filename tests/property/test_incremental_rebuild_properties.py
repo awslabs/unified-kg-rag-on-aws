@@ -62,6 +62,7 @@ from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     Config,
     Document,
@@ -346,18 +347,30 @@ def test_incremental_rounds_match_a_full_build(rounds) -> None:
 
 # --- strict extraction schema ---------------------------------------------------
 
-_STRICT = Config.model_validate(
-    {
-        "processing": {
-            "graph_extraction": {
-                "schema_mode": "strict",
-                "entity_types": ["ORGANIZATION", "PERSON"],
-                "relationship_types": ["SUPPLIES", "RELATED_TO"],
-                "relationship_patterns": ["ORGANIZATION -SUPPLIES-> PERSON"],
+
+def _schema_config(mode: str) -> Config:
+    return Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_mode": mode,
+                    "entity_types": [
+                        {"label": "ORGANIZATION", "iri": "https://example.org/o#Org"},
+                        "PERSON",
+                    ],
+                    "relationship_types": [
+                        {"label": "SUPPLIES", "iri": "https://example.org/o#supplies"},
+                        "RELATED_TO",
+                    ],
+                    "relationship_patterns": ["ORGANIZATION -SUPPLIES-> PERSON"],
+                }
             }
         }
-    }
-)
+    )
+
+
+_STRICT = _schema_config("strict")
+_CONFIGS = {"strict": _STRICT, "align": _schema_config("align")}
 # Declared, a spelling of a declared one, undeclared and empty.
 _ENTITY_TYPES = ["ORGANIZATION", "person", "vendor", ""]
 _RELATIONSHIP_TYPES = ["SUPPLIES", "related to", "KNOWS"]
@@ -385,9 +398,10 @@ _typed_round = st.fixed_dictionaries(
 
 
 @cache
-def _strict_processors() -> tuple[GraphExtractor, GraphGleaner]:
-    """The real extractor and gleaner under the strict schema, with no model
-    behind them (each unit's answer is given)."""
+def _strict_processors(mode: str = "strict") -> tuple[GraphExtractor, GraphGleaner]:
+    """The real extractor and gleaner under the schema in ``mode``, with no
+    model behind them (each unit's answer is given)."""
+    config = _CONFIGS[mode]
     with (
         mock.patch.object(bedrock_module, "BedrockLanguageModelFactory"),
         mock.patch.object(extractor_module, "create_robust_xml_output_parser"),
@@ -395,7 +409,7 @@ def _strict_processors() -> tuple[GraphExtractor, GraphGleaner]:
         mock.patch.object(gleaner_module, "create_robust_xml_output_parser"),
         mock.patch.object(gleaner_module, "setup_chain"),
     ):
-        return GraphExtractor(_STRICT), GraphGleaner(_STRICT, show_progress=False)
+        return GraphExtractor(config), GraphGleaner(config, show_progress=False)
 
 
 def _typed_relationship(edge: tuple[str, str, int, str], where: str) -> dict:
@@ -409,10 +423,10 @@ def _typed_relationship(edge: tuple[str, str, int, str], where: str) -> dict:
     }
 
 
-def _strict_extract(corpus: dict[str, Any]):
+def _strict_extract(corpus: dict[str, Any], mode: str = "strict"):
     """:func:`_extract` with each record parsed and gleaned by the real code
-    under the strict schema."""
-    extractor, gleaner = _strict_processors()
+    under the schema in ``mode`` (strict by default)."""
+    extractor, gleaner = _strict_processors(mode)
     units: list[TextUnit] = []
     records: list[TextUnitExtraction] = []
     for path, content in corpus.items():
@@ -466,7 +480,7 @@ def _strict_extract(corpus: dict[str, Any]):
                 )
             records.append(record)
     resolved, _ = GraphResolver(
-        _STRICT, max_workers=1, use_process_pool=False
+        _CONFIGS[mode], max_workers=1, use_process_pool=False
     ).resolve_graph(*merge_contributions(records))
     return units, records, resolved["entities"], resolved["relationships"]
 
@@ -533,3 +547,93 @@ def test_incremental_rounds_match_a_full_build_under_strict(rounds) -> None:
             "SUPPLIES",
             "RELATED_TO",
         }
+
+
+def _annotations(
+    entities: list[Entity], relationships: list[Relationship]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    return (
+        {e.id: (e.in_schema, e.type_iri) for e in entities},
+        {r.id: (r.in_schema, r.predicate_iri) for r in relationships},
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(rounds=st.lists(_typed_round, min_size=1, max_size=4))
+# Buyer is an ORGANIZATION in a.txt and a vendor in b.txt and c.txt: the vote
+# makes it off schema until c.txt goes, then in schema with the class IRI.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: [([("Buyer", "ORGANIZATION")], [], [])],
+            _PATHS[1]: [
+                (
+                    [("Buyer", "vendor"), ("Vendor", "person")],
+                    [("Vendor", "Buyer", 2, "supplies")],
+                    [],
+                )
+            ],
+            _PATHS[2]: [([("Buyer", "vendor")], [("Buyer", "Depot", 1, "KNOWS")], [])],
+        },
+        {
+            _PATHS[0]: [([("Buyer", "ORGANIZATION")], [], [])],
+            _PATHS[1]: [
+                (
+                    [("Buyer", "vendor"), ("Vendor", "person")],
+                    [("Vendor", "Buyer", 2, "supplies")],
+                    [],
+                )
+            ],
+            _PATHS[2]: None,
+        },
+    ]
+)
+@pytest.mark.parametrize("mode", ["align", "strict"])
+def test_incremental_rounds_store_the_annotations_of_a_full_build(
+    mode: str, rounds
+) -> None:
+    """The stored schema annotations are those a full build writes: each is a
+    function of the item's merged type, whichever run wrote it."""
+    config = _CONFIGS[mode]
+    graph = FakeGraphStore(config)
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    inc = IncrementalIndexer(FakeDocStatusStore(), manager)
+    annotator = SchemaAnnotator(config.processing.graph_extraction.extraction_schema())
+
+    def extract(corpus: dict[str, Any]):
+        return _strict_extract(corpus, mode)
+
+    for state in rounds:
+        corpus = {path: content for path, content in state.items() if content}
+        _run(inc, corpus, extract)
+
+        _, _, entities, edges = extract(corpus)
+        expected = _annotations(
+            annotator.entities(entities), annotator.relationships(edges)
+        )
+        assert _graph_state(graph) == _expected_state(corpus, extract)
+        assert (
+            _annotations(
+                graph.read_entities(sorted(graph.ids("entities"))),
+                graph.read_relationships(sorted(graph.ids("relationships"))),
+            )
+            == expected
+        )
+        assert (
+            _annotations(
+                list(vector.data.get("entities", {}).values()),
+                list(vector.data.get("relationships", {}).values()),
+            )
+            == expected
+        )
+        # Every edge strict keeps has a declared type (an entity may not: one
+        # named only as an endpoint has no type, so it is off schema).
+        if mode == "strict":
+            assert all(v[0] is True for v in expected[1].values())

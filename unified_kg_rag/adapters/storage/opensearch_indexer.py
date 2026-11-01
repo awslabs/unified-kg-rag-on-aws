@@ -73,13 +73,32 @@ _KNN_SETTINGS = ("knn", "knn.algo_param.ef_search")
 _VECTOR_COPY_FIELDS = {
     "entities": (
         "entities_index_prefix",
-        ["name", "type", "confidence", "description"],
+        ["name", "type", "confidence", "description", "in_schema", "type_iri"],
     ),
     "relationships": (
         "relationships_index_prefix",
-        ["source_id", "target_id", "source_name", "target_name", "description"],
+        [
+            "source_id",
+            "target_id",
+            "source_name",
+            "target_name",
+            "description",
+            "in_schema",
+            "predicate_iri",
+        ],
     ),
 }
+
+# Field types a dynamic mapping can give a field of another type, which then
+# refuses this release's values (see _add_missing_fields).
+_EXACT_TYPES = frozenset({"keyword", "boolean"})
+
+
+def _present(**fields: Any) -> dict[str, Any]:
+    """``fields`` but the ``None`` ones: a schema annotation is written only
+    when set, so a document without one is what it was before the field."""
+    return {name: value for name, value in fields.items() if value is not None}
+
 
 # Whether the doc-status registry tracks the index's documents: False when
 # a run with the registry off built it (see check_index_settings).
@@ -302,15 +321,17 @@ class OpenSearchIndexer(VectorIndexer):
           created;
         - the doc-status registry: an index built by a run with the registry
           off holds documents the registry does not describe;
-        - its keyword fields: one a dynamic mapping made a date (date
-          detection, on an index built before it was turned off) refuses
-          every value that is not a date, such as an unknown claim date.
+        - its keyword and boolean fields: one a dynamic mapping made a date
+          (date detection, on an index built before it was turned off) or a
+          keyword refuses every value of the mapped form, such as an unknown
+          claim date.
 
         An index that records no embedding settings was built by an earlier
         release, whose indices this one does not read: it is rejected too.
         An index that passes gets, in one additive mapping update, the fields
         this release maps that it lacks (the claim dates of an index built
-        before #444) and date detection turned off, before any write.
+        before #444, the schema annotations of one built before
+        ``in_schema``) and date detection turned off, before any write.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -411,28 +432,30 @@ class OpenSearchIndexer(VectorIndexer):
         expected: dict[str, Any],
     ) -> None:
         """Map on ``index_name`` the ``expected`` fields it lacks and turn its
-        date detection off, or raise when a keyword field is mapped otherwise.
+        date detection off, or raise when a keyword or boolean field is
+        mapped otherwise.
 
         Raises:
-            ConfigurationError: A keyword field of ``expected`` is mapped as
-                another type (a date, by date detection).
+            ConfigurationError: A keyword or boolean field of ``expected`` is
+                mapped as another type (a date, by date detection; a keyword,
+                by the dynamic template).
         """
         live = mappings.get("properties") or {}
         retyped = [
-            f"'{name}' is mapped as {live[name].get('type')}"
+            f"'{name}' is mapped as {live[name].get('type')} (needs "
+            f"{field['type']})"
             for name, field in expected.items()
-            if field.get("type") == "keyword"
+            if field.get("type") in _EXACT_TYPES
             and isinstance(live.get(name), dict)
-            and live[name].get("type") != "keyword"
+            and live[name].get("type") != field["type"]
         ]
         if retyped:
             raise ConfigurationError(
-                f"The OpenSearch index '{index_name}' maps keyword fields "
-                f"otherwise: {'; '.join(retyped)} (needs keyword). A dynamic "
-                "mapping typed them on a first write, and every later value "
-                "of another form fails to write; a live index's field types "
-                "cannot change. Re-run once with indexing.reset: true to "
-                "rebuild the indices."
+                f"The OpenSearch index '{index_name}' maps fields otherwise: "
+                f"{'; '.join(retyped)}. A dynamic mapping typed them on a "
+                "first write, and every later value of another form fails to "
+                "write; a live index's field types cannot change. Re-run once "
+                "with indexing.reset: true to rebuild the indices."
             )
         missing = {name: field for name, field in expected.items() if name not in live}
         if missing or mappings.get("date_detection") is not False:
@@ -678,6 +701,7 @@ class OpenSearchIndexer(VectorIndexer):
             # Chunk lineage: lets LightRAG mix follow entity -> source chunks
             # instead of relying solely on a separate naive vector query.
             "text_unit_ids": list(entity.text_unit_ids or []),
+            **_present(in_schema=entity.in_schema, type_iri=entity.type_iri),
         }
 
     @classmethod
@@ -698,6 +722,7 @@ class OpenSearchIndexer(VectorIndexer):
             # Chunk lineage: lets LightRAG mix follow relationship -> source
             # chunks (LightRAG's _find_related_text_unit_from_relationships).
             "text_unit_ids": list(rel.text_unit_ids or []),
+            **_present(in_schema=rel.in_schema, predicate_iri=rel.predicate_iri),
         }
 
     def index_relationships(
@@ -2041,6 +2066,8 @@ class OpenSearchIndexer(VectorIndexer):
                 "rank": {"type": "double"},
                 "confidence": {"type": "double"},
                 "text_unit_ids": {"type": "keyword"},
+                "in_schema": {"type": "boolean"},
+                "type_iri": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
@@ -2058,6 +2085,8 @@ class OpenSearchIndexer(VectorIndexer):
                 "weight": {"type": "double"},
                 "rank": {"type": "double"},
                 "text_unit_ids": {"type": "keyword"},
+                "in_schema": {"type": "boolean"},
+                "predicate_iri": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

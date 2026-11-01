@@ -589,6 +589,7 @@ class FakeVectorStore(_Recorder):
                     "type": item.type or "",
                     "confidence": confidence if confidence is not None else 1.0,
                 }
+                annotations = {"in_schema": item.in_schema, "type_iri": item.type_iri}
             else:
                 fields = {
                     "source_id": item.source_id,
@@ -596,6 +597,12 @@ class FakeVectorStore(_Recorder):
                     "source_name": item.source_name or "",
                     "target_name": item.target_name or "",
                 }
+                annotations = {
+                    "in_schema": item.in_schema,
+                    "predicate_iri": item.predicate_iri,
+                }
+            # A schema annotation is written only when set.
+            fields |= {k: v for k, v in annotations.items() if v is not None}
             out[i] = {"id": i, **fields, "description": item.description or ""}
         return out
 

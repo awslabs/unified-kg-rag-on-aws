@@ -13,6 +13,7 @@ deleted) leaves the graph a fresh full build of the final corpus produces.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,8 @@ from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
-from unified_kg_rag.domain.models import Config, PipelineStageStatus
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
+from unified_kg_rag.domain.models import Config, PipelineStageStatus, SearchStrategy
 
 pytestmark = pytest.mark.integration
 
@@ -109,12 +111,16 @@ class _Model:
         return e2e._respond(system, human)
 
 
-def _config(stores: Path, viz: Path) -> Config:
+def _config(
+    stores: Path, viz: Path, change: Callable[[Config], None] | None = None
+) -> Config:
     config = e2e._config(stores, viz)
     for key, value in SCHEMA.items():
         setattr(config.processing.graph_extraction, key, value)
     config.processing.gleaning.enabled = True
     config.processing.gleaning.max_rounds = 1
+    if change is not None:
+        change(config)
     return config
 
 
@@ -142,9 +148,15 @@ def _graph(providers: Providers) -> tuple[dict[str, str], set[tuple[str, str, st
         graph.close()
 
 
-def _run(tmp_path: Path, name: str, corpus: dict[str, str]):
-    """A fresh store set with one full ingest of ``corpus``."""
-    config = _config(tmp_path / name / "stores", tmp_path / name / "viz")
+def _run(
+    tmp_path: Path,
+    name: str,
+    corpus: dict[str, str],
+    change: Callable[[Config], None] | None = None,
+):
+    """A fresh store set with one full ingest of ``corpus`` (the schema
+    config, then ``change``)."""
+    config = _config(tmp_path / name / "stores", tmp_path / name / "viz", change)
     model = _Model()
     providers = e2e._providers(
         config, FakeOllama(model, e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
@@ -214,3 +226,84 @@ def test_strict_schema_end_to_end_and_incremental_matches_full(
     assert set(entities) == {"Vendor", "Buyer", "Gadget"}
     assert all(not re.search(r"[a-z]", rel_type) for _, rel_type, _ in edges)
     assert ("Vendor", "STOCKS", "Gadget") in edges
+
+
+ORG_IRI = "https://example.org/onto#Organization"
+SUPPLIES_IRI = "https://example.org/onto#supplies"
+
+
+def test_align_stores_the_annotations_and_in_schema_filters_entities(
+    tmp_path: Path, no_aws  # noqa: F811
+) -> None:
+    def align(config: Config) -> None:
+        extraction = config.processing.graph_extraction
+        extraction.schema_mode = "align"
+        extraction.entity_types = [
+            {"label": "ORGANIZATION", "description": "Companies", "iri": ORG_IRI},
+            "PRODUCT: Goods",
+        ]
+        extraction.relationship_types = [
+            {"label": "SUPPLIES", "description": "Sells to", "iri": SUPPLIES_IRI},
+            "STOCKS: Holds goods",
+        ]
+
+    config, providers, _, _ = _run(tmp_path, "align", FIRST, change=align)
+    graph = providers.build_graph_indexer()
+    try:
+        names = dict(graph.read_entity_names())
+        stored = {
+            e.name: (e.in_schema, e.type_iri)
+            for e in graph.read_entities(sorted(names))
+        }
+    finally:
+        graph.close()
+    # align keeps everything: Depot (warehouse) and gleaning's Ledger
+    # (document) are off schema.
+    assert stored == {
+        "Vendor": (True, ORG_IRI),
+        "Buyer": (True, ORG_IRI),
+        "Gadget": (True, None),
+        "Depot": (False, None),
+        "Ledger": (False, None),
+    }
+    documents = e2e._stored(
+        config, providers, config.indexing.opensearch.entities_index_prefix
+    )
+    assert {h["_source"]["name"]: h["_source"].get("in_schema") for h in documents} == {
+        name: in_schema for name, (in_schema, _) in stored.items()
+    }
+
+    off_schema = {name for name, (in_schema, _) in stored.items() if not in_schema}
+
+    def search(strategy: SearchStrategy, filters: dict | None) -> list:
+        return rag.search(
+            RAGInput(
+                query="Who stocks the gadgets?",
+                search_strategy=strategy,
+                filters=filters,
+            )
+        ).search_results.results
+
+    rag = GraphRAGChain(config, providers=providers)
+    try:
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            unfiltered = {
+                r.metadata.get("name")
+                for r in search(strategy, None)
+                if r.retriever_type == "entity"
+            }
+            assert unfiltered - off_schema, strategy  # in-schema entities too
+            results = search(strategy, {"in_schema": False})
+            entities = {
+                r.metadata.get("name") for r in results if r.retriever_type == "entity"
+            }
+            # Only off-schema entities (vector search and graph expansion);
+            # the relationships index applies the filter too.
+            assert entities and entities <= off_schema, (strategy, entities)
+            assert all(
+                r.metadata.get("in_schema") is False
+                for r in results
+                if r.retriever_type == "relationship"
+            ), strategy
+    finally:
+        rag.close()

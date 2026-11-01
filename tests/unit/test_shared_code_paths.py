@@ -15,10 +15,12 @@ from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.models import (
     Config,
+    Entity,
     EvaluationQuery,
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    Relationship,
 )
 from unified_kg_rag.ports import GraphIndexer
 from unified_kg_rag.ports.indexer import IndexingStats
@@ -120,8 +122,9 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     mocker.patch.object(manager, "_log_completion_summary")
     artifacts: dict[str, Any] = {
         "text_units": [SimpleNamespace(id="t", community_ids=None)],
-        "entities": ["e"],
-        "relationships": [SimpleNamespace(id="r", source_id="e", target_id="e")],
+        # Models: both paths annotate them (schema_annotation).
+        "entities": [Entity(id="e", name="e")],
+        "relationships": [Relationship(id="r", source_id="e", target_id="e")],
         "communities": [
             SimpleNamespace(id="c", text_unit_ids=[], level="0", parent="", children=[])
         ],

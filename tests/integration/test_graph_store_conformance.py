@@ -417,3 +417,40 @@ def test_a_rebuild_drops_an_edge_it_did_not_write(harness: StoreHarness) -> None
 
     assert harness.stored_ids("graph.entities") == {"a", "b"}
     assert harness.stored_ids("graph.relationships") == set()
+
+
+def test_schema_annotations_round_trip_and_an_upsert_clears_them(
+    harness: StoreHarness,
+) -> None:
+    graph = harness.graph_indexer
+    iri = "https://example.org/onto#Organization"
+    annotated = [
+        _entity("a", type="organization", in_schema=True, type_iri=iri),
+        _entity("b", type="vendor", in_schema=False),
+    ]
+    edge = _rel(
+        "ab",
+        "a",
+        "b",
+        type="SUPPLIES",
+        in_schema=True,
+        predicate_iri="https://example.org/onto#supplies",
+    )
+    assert graph.upsert_entities(annotated).failed_items == 0
+    assert graph.upsert_relationships([edge]).failed_items == 0
+    # A store returns the vertices in no particular order.
+    assert sorted(graph.read_entities(["a", "b"]), key=lambda e: e.id) == annotated
+    assert graph.read_relationships(["ab"]) == [edge]
+
+    # Written without them (the schema turned off), they are gone.
+    plain = [
+        e.model_copy(update={"in_schema": None, "type_iri": None}) for e in annotated
+    ]
+    graph.upsert_entities(plain)
+    graph.upsert_relationships(
+        [edge.model_copy(update={"in_schema": None, "predicate_iri": None})]
+    )
+    read = graph.read_entities(["a", "b"])
+    assert [(e.in_schema, e.type_iri) for e in read] == [(None, None)] * 2
+    (rel,) = graph.read_relationships(["ab"])
+    assert (rel.in_schema, rel.predicate_iri) == (None, None)

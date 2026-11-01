@@ -12,7 +12,9 @@ exactly what the write produced. Both directions live here:
 - string values are truncated to ``property_max_length``; JSON strings are not,
   because a cut JSON string no longer parses;
 - item attributes are ``attr_<key>`` properties;
-- a relationship's type is the edge label.
+- a relationship's type is the edge label;
+- the schema annotations (``in_schema``, a boolean, and ``type_iri`` /
+  ``predicate_iri``) are properties of their own, absent while ``None``.
 
 Read-back limits: a set-cardinality vertex list keeps no order or duplicates,
 and a one-element list attribute reads back as its single value (Gremlin
@@ -23,7 +25,7 @@ array reads back as the decoded value.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
@@ -44,11 +46,16 @@ def property_value(value: Any, max_length: int) -> Any:
 
 
 def item_properties(
-    item: Any, base_props: dict[str, Any], max_length: int
+    item: Any,
+    base_props: dict[str, Any],
+    max_length: int,
+    *,
+    whole: Collection[str] = (),
 ) -> dict[str, Any]:
-    """``base_props`` plus the item's ``attr_*`` attributes, encoded, no Nones."""
+    """``base_props`` plus the item's ``attr_*`` attributes, encoded, no Nones;
+    the ``whole`` properties are not truncated."""
     properties = {
-        key: property_value(value, max_length)
+        key: value if key in whole else property_value(value, max_length)
         for key, value in base_props.items()
         if value is not None
     }
@@ -84,8 +91,12 @@ def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
             "confidence": entity.confidence,
             "text_unit_ids": entity.text_unit_ids,
             "community_ids": entity.community_ids,
+            "in_schema": entity.in_schema,
+            # Not truncated: a cut IRI names another resource.
+            "type_iri": entity.type_iri,
         },
         max_length,
+        whole=("type_iri",),
     )
 
 
@@ -100,8 +111,11 @@ def relationship_properties(rel: Relationship, max_length: int) -> dict[str, Any
             "description": rel.description,
             "rank": rel.rank,
             "text_unit_ids": rel.text_unit_ids,
+            "in_schema": rel.in_schema,
+            "predicate_iri": rel.predicate_iri,
         },
         max_length,
+        whole=("predicate_iri",),
     )
     return {
         key: json.dumps(value) if isinstance(value, list) else value
@@ -172,6 +186,19 @@ def _attributes(value_map: Mapping[Any, Any]) -> dict[str, Any] | None:
     return attributes or None
 
 
+def _annotations(value_map: Mapping[Any, Any], iri_key: str) -> dict[str, Any]:
+    """The schema annotations a vertex or edge holds (``in_schema`` and
+    ``iri_key``); a value of another type than written is left out."""
+    fields: dict[str, Any] = {}
+    in_schema = _single(value_map.get("in_schema"))
+    if isinstance(in_schema, bool):
+        fields["in_schema"] = in_schema
+    iri = _single(value_map.get(iri_key))
+    if isinstance(iri, str):
+        fields[iri_key] = iri
+    return fields
+
+
 def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
     """Rebuild an entity from a vertex ``valueMap()``; None without id/name."""
     entity_id, name = _single(value_map.get("id")), _single(value_map.get("name"))
@@ -191,6 +218,7 @@ def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
         value = _single(value_map.get(key))
         if value is not None:
             fields[key] = value
+    fields.update(_annotations(value_map, "type_iri"))
     return Entity.model_validate(fields)
 
 
@@ -218,4 +246,5 @@ def relationship_from_edge(
         value = _single(value_map.get(key))
         if value is not None:
             fields[key] = value
+    fields.update(_annotations(value_map, "predicate_iri"))
     return Relationship.model_validate(fields)

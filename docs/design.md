@@ -294,8 +294,10 @@ first access (`import unified_kg_rag` loads nothing), and
 dependency:
 
 - `Entity` (`name`, `description`, `type`, `text_unit_ids`, `community_ids`,
-  `rank`, `confidence`, embedding fields), `Relationship` (`source_id` /
-  `target_id`, `description`, `weight`, `text_unit_ids`),
+  `rank`, `confidence`, embedding fields, the schema annotations
+  `in_schema` / `type_iri`), `Relationship` (`source_id` / `target_id`,
+  `description`, `weight`, `text_unit_ids`, `in_schema` / `predicate_iri`;
+  §4.2),
   `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim);
 - `DocStatus` (a `PENDING` write-ahead record, then `PROCESSED` / `FAILED` /
   `QUARANTINED`), `DocStatusRecord` (content hash, the document's text units,
@@ -447,6 +449,26 @@ gets its models and stores from the run's `Providers` bundle.
   "가나다연구소" stay apart). A type-aware union-find never groups two
   differently typed names; the incremental merge uses the same matcher, so
   full and incremental builds group the same names.
+- **Schema annotations are written, not extracted.** `IndexingManager`
+  sets `in_schema` and `type_iri` on each entity and `in_schema` and
+  `predicate_iri` on each relationship it writes, on every write path (full
+  build, delta, the strip of a removal, the stored edges it rewrites for
+  their names or rank), from the item's stored type and the schema
+  (`domain/ingestion/schema_annotation.SchemaAnnotator`, matched by
+  `schema_key`, so the lowercased type vote still matches). A pure function
+  of the merged type, it gives a full build and an incremental run the same
+  values; pattern conformance is not stored, since it depends on endpoint
+  types other documents can change. Where the schema does not apply
+  (`SchemaConformance.applies`: `off`, `align` with entity types alone) and
+  for a kind with no declared type, every annotation is `None`, and `None`
+  is never written: models drop it from their dumps (`SchemaAnnotated`),
+  extraction records never hold annotations, the Neptune codec and the
+  OpenSearch documents omit it. A default config therefore stores exactly
+  what it stored before the fields; only the index mappings gain
+  `in_schema` (boolean) and the IRI keyword fields, added to live indices
+  by the incremental preflight (`check_index_settings` →
+  `_add_missing_fields`). Ids are unchanged; the IRIs are the seam for
+  linking items to an external ontology.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
   re-summarizes those over a token budget with a cheap model (map-reduce when
   one exceeds a call's input); a failed call keeps the concatenation. The
@@ -1320,6 +1342,12 @@ checks that its values are the defaults and each key is in the reference).
   relationships a pattern of their type disallows between two endpoints the
   unit types with declared types. The check is per unit and order-free, so
   incremental runs converge with a full build; its drops are not failures.
+  Indexing then stores, from the same schema, whether each merged item's
+  type is declared and its type's IRI (§4.2, "Schema annotations"); the
+  filter schema (`adapters/storage/filter_schema.py`) declares `in_schema`
+  and `type_iri` on entities and Neptune entity vertices and `in_schema` and
+  `predicate_iri` on relationships, but no `type` on relationships, which
+  would empty that index under `mix` and `hybrid`.
 
 ---
 

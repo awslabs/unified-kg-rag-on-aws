@@ -183,11 +183,16 @@ def _portable(item: Entity | Relationship | Claim) -> dict[str, Any]:
         for key, value in (item.attributes or {}).items()
         if key not in _PLACEMENT and key != TEXT_UNIT_WEIGHTS_ATTRIBUTE
     }
+    # The schema annotations are the indexing's, from the merged type: a
+    # record holds what extraction stated.
     excluded = {
         "text_unit_ids",
         "attributes",
         "name_embedding",
         "description_embedding",
+        "in_schema",
+        "type_iri",
+        "predicate_iri",
     }
     return item.model_dump(
         mode="json", exclude=excluded & set(type(item).model_fields)
