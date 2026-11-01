@@ -49,7 +49,7 @@ Installation. Evaluation judges and visualization are optional extras, so a
 core install (`uv sync`, `pip install -e .`) is ingestion and queries, and
 shrinks from 145 to 83 packages (937 to 335 MB on Linux). Upgrade: install
 with `uv sync --extra eval --extra viz` (or `pip install -e '.[eval,viz]'`)
-where you evaluate or render (#PR).
+where you evaluate or render (#467).
 - `eval`: `ragas`, `datasets`, `pandas` and `langchain-community` moved out
   of the core dependencies, and `langchain-openai` is declared (langchain's
   `load_evaluator` imports it for the `langchain` judge even with a Bedrock
@@ -131,7 +131,7 @@ naming the key that replaces it.
   renders it with a seeded spring layout from the graph topology. The
   embedding-based layout (one embedding call per node and a UMAP, t-SNE or
   PCA reduction) is gone, and with it `umap-learn` and `scikit-learn`. The
-  keys of the removed path load with a WARNING each and are ignored (#PR):
+  keys of the removed path load with a WARNING each and are ignored (#467):
 
   | Removed key | Replacement |
   |---|---|
@@ -635,7 +635,7 @@ Library API (Python callers and custom backends).
   `BedrockNodeEmbedder`, `DimensionalityReducer` and `HTMLExporter` (the
   `graph_analysis_report.html` summary page) are gone. Render with
   `run-visualization`, or drive the renderers through
-  `unified_kg_rag.adapters.renderers` (`render_all`, `RenderContext`) (#PR).
+  `unified_kg_rag.adapters.renderers` (`render_all`, `RenderContext`) (#467).
 - `LocalSearchStrategy` no longer takes an `entity_focus_multiplier`
   argument; nothing passed it, so it was always 2, now the class constant
   `ENTITY_CANDIDATES_PER_FOCUS` (#247).
