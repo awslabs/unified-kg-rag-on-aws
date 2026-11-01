@@ -355,13 +355,13 @@ def test_a_lost_lease_stops_a_full_build_before_its_alias_swap(tmp_path: Path) -
 
 def test_a_lost_lease_stops_the_neptune_retries(mocker) -> None:
     # Old behaviour: the fence was checked once before a write, which was
-    # then retried (neptune.max_attempts, up to 180 s each) without a check,
+    # then retried (retry.graph_store_max_attempts, up to 180 s each) without a check,
     # and a batch's failure fell back to writing its items one by one.
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
     from unified_kg_rag.adapters.storage import neptune_indexer as neptune_mod
 
     config = Config()
-    config.indexing.neptune.retry_delay_seconds = 0
+    config.retry.base_delay_seconds = 0
     indexer = neptune_mod.NeptuneIndexer(config=config)
     sent: list[int] = []
 

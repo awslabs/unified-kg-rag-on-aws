@@ -117,7 +117,7 @@ def scope_test_config(base: Config | None = None) -> Config:
     config.processing.translation.enabled = False
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
-    config.processing.max_attempts = 1
+    config.retry.max_attempts = 1
     config.fixing.enabled = False
     return config
 

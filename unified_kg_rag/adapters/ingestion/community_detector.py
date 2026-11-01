@@ -185,8 +185,8 @@ class CommunityDetector:
         self.show_progress = show_progress
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing,
+        self.batch_processor = BatchProcessor.from_config(
+            self.config,
             is_transient_error=transient_error_predicate(self.factory),
         )
 

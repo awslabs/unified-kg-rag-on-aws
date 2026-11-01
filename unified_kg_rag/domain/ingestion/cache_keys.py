@@ -145,7 +145,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "providers.llm.base_url": _neutral(_WHERE),
     "providers.llm.api_key": _neutral(_WHERE),
     "providers.llm.timeout_seconds": _neutral(_THROUGHPUT),
-    "providers.llm.max_attempts": _neutral(_THROUGHPUT),
     "aws.bedrock.default_max_output_tokens": _EVERY_CALL,
     "aws.bedrock.model_overrides": _EVERY_CALL,
     "aws.bedrock.enable_1m_context": _EVERY_CALL,
@@ -155,7 +154,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.region_name": _neutral(_WHERE),
     "aws.bedrock.assumed_role_arn": _neutral(_WHERE),
     "aws.bedrock.enable_global_profile": _neutral(_WHERE),
-    "aws.bedrock.transient_retry": _neutral(_THROUGHPUT),
     # How long Bedrock keeps a query prompt cached: cost and latency, never
     # the answer, so the run-eval manifest leaves it out.
     "aws.bedrock.query_prompt_cache_ttl": _neutral(
@@ -265,7 +263,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "custom_prompts.claim_extraction_human",
     ),
     "processing.max_concurrency": _neutral(_THROUGHPUT),
-    "processing.max_attempts": _neutral(_THROUGHPUT),
     "processing.io_workers": _neutral(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
     "graph.analysis": _neutral("shapes graph statistics, which no later stage reads"),
@@ -291,7 +288,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "providers.embedding.base_url": _neutral(_WHERE),
     "providers.embedding.api_key": _neutral(_WHERE),
     "providers.embedding.timeout_seconds": _neutral(_THROUGHPUT),
-    "providers.embedding.max_attempts": _neutral(_THROUGHPUT),
     "providers.rerank": Unkeyed(_QUERY),
     "providers.rerank.device": _neutral(_THROUGHPUT),
     "providers.rerank.batch_size": _neutral(_THROUGHPUT),
@@ -305,6 +301,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.opensearch": _neutral(_WHERE),
     "aws.s3": _neutral("says where caches and exports are stored"),
     "cache": _neutral("says how and how long caches are stored, not what they hold"),
+    "retry": _neutral(_THROUGHPUT),
     "search": Unkeyed(_QUERY),
     "memory": Unkeyed(_QUERY),
     "evaluation": Unkeyed("read by run-eval only"),

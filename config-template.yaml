@@ -85,17 +85,6 @@ aws:
       # Screen each final answer (source OUTPUT). A streamed answer is then
       # generated in full, screened, and delivered as one chunk.
       check_output: true
-    # Retry on transient Bedrock errors that botocore does not retry, such as
-    # HTTP 424 ModelErrorException. Applies to every embedding request and to
-    # query-time LLM calls (strategy routing, query entity/keyword extraction,
-    # translation, query rewrite, answer generation, global/DRIFT steps).
-    # Validation/access errors still fail fast. Ingestion LLM calls are
-    # retried by their batch processor instead (processing.max_attempts).
-    transient_retry:
-      max_attempts: 5  # total attempts per call; 1 disables the retry
-      base_delay_seconds: 2.0  # first backoff ceiling; doubles with jitter
-      max_delay_seconds: 16.0
-      max_total_seconds: 60.0  # wall-clock retry budget per call
 
   # Neptune Configuration
   neptune:
@@ -178,7 +167,6 @@ backend: "aws"
 #     base_url: null
 #     api_key: null
 #     timeout_seconds: 300.0
-#     max_attempts: 3  # per request on transient errors, including the first
 #     # Non-Bedrock only: model limits (Bedrock models take theirs from the
 #     # capability catalog). context_window_size is sent to Ollama as num_ctx.
 #     context_window_size: 32768
@@ -194,7 +182,6 @@ backend: "aws"
 #     base_url: null
 #     api_key: null
 #     timeout_seconds: 300.0
-#     max_attempts: 3  # per request on transient errors, including the first
 #     max_input_tokens: 8192
 #   rerank:
 #     # bedrock | cross_encoder (sentence-transformers, [local] extra) | none.
@@ -278,9 +265,6 @@ processing:
   # because backend "local" sets 20 (a local model server queues the calls
   # it cannot run at once); uncomment it to change it.
   # max_concurrency: 40
-  # Attempts per ingestion LLM item, including the first call (transient
-  # errors, timeouts and unparseable output are retried); 1 = no retry.
-  max_attempts: 5
   # Threads for blocking query-path I/O (Bedrock calls LangChain runs in the
   # event loop's default executor, Neptune, reranking). Python's default is
   # min(32, CPUs + 4), six on a 2-vCPU task, which caps concurrent queries.
@@ -671,15 +655,6 @@ indexing:
     # Gremlin connection pool (aws.neptune.pool_size, raised to at least this
     # value). Each batch accumulates its own stats, merged on completion.
     index_concurrency: 1
-    # Attempts per Neptune indexer request (writes, read-backs, drops, label
-    # clears), including the first (1 = no retry). Every error is retried
-    # except one a retry cannot fix (a malformed query, access denied, a bad
-    # parameter: PERMANENT_NEPTUNE_ERROR_CODES, or a client-side
-    # ValueError/TypeError), which fails on the first attempt.
-    max_attempts: 4
-    # Base of the full-jitter exponential backoff: the wait after attempt n is
-    # random between 0 and retry_delay_seconds * 2^(n-1) seconds.
-    retry_delay_seconds: 2
     # Max characters per Neptune property value. Keep it above the longest
     # description that is not re-summarized (description_summarization only
     # triggers above 600 tokens, ~2,400 characters).
@@ -879,12 +854,10 @@ search:
       general: 0.10
 
   # How long a query waits for one OpenSearch or Neptune request (and for
-  # opening a Neptune connection), and how many attempts an OpenSearch query
-  # request gets on a timeout or a 429/502/503/504. A store that does not
-  # answer fails the query instead of answering from no context. Ingestion
-  # keeps its own, longer limits.
+  # opening a Neptune connection). A store that does not answer fails the
+  # query instead of answering from no context. Ingestion keeps its own,
+  # longer limits.
   store_timeout_seconds: 30
-  store_max_attempts: 3
 
 # Memory Configuration
 memory:
@@ -898,6 +871,19 @@ cache:
   llm_responses:  # ingestion model responses, reused by a re-run with the same pipeline id
     enabled: true
     flush_every: 100  # responses per segment file (written/uploaded when full and per stage)
+
+# Retries on transient errors (attempts include the first; 1 = no retry)
+retry:
+  # Model calls: each ingestion LLM item, and each Bedrock embedding and
+  # query-time call (transient errors botocore does not retry, such as 424).
+  max_attempts: 5
+  base_delay_seconds: 2.0  # backoff base; doubles per attempt
+  max_delay_seconds: 16.0
+  max_total_seconds: 60.0  # wall-clock retry budget per model call
+  model_server_max_attempts: 3  # OpenAI-compatible / Ollama requests
+  graph_store_max_attempts: 4  # Neptune / Gremlin indexer requests
+  query_store_max_attempts: 3  # OpenSearch query requests
+  judge_max_attempts: 3  # RAGAS judge calls
 
 # Logging Configuration
 logging:
@@ -995,8 +981,8 @@ evaluation:
   # metric on ONE sample, including all of its judge calls and retries; a
   # timed-out job yields NaN for that metric. RAGAS' own default (180s) is too
   # tight for thinking judges. Lower ragas_max_workers if Bedrock throttles the
-  # judge (throttled calls burn the per-job timeout). ragas_max_attempts is the
-  # total attempts per judge call.
+  # judge (throttled calls burn the per-job timeout). retry.judge_max_attempts
+  # is the total attempts per judge call.
   ragas_timeout: 300
   # Top-ranked contexts per sample scored by RAGAS context_precision (applied
   # before max_context_tokens), which makes one judge call PER context, so
@@ -1007,7 +993,6 @@ evaluation:
   # in the report metadata. null = no cap.
   ragas_max_contexts: 20
   ragas_max_workers: 8
-  ragas_max_attempts: 3
   # Cutoff k for the retrieval evaluator's hit@k / recall@k: the top k distinct
   # files of the reported sources, in rank order.
   retrieval_k: 5

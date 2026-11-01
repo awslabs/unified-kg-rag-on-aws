@@ -166,6 +166,36 @@ naming the key that replaces it.
   (#PR): a stage-cache entry of more than 1,000 items or 50 MB is always
   written in chunk files, as by default before. The section loads with a
   WARNING and is ignored.
+- Retries are configured in one section, `retry` (#PR): eleven keys in
+  seven sections became eight in one, with every default unchanged.
+  `retry.max_attempts` and its backoff serve the model calls (ingestion
+  items, Bedrock embeddings and query-time calls, which had the same 5
+  attempts); the callers whose defaults differ keep their own attempt count.
+  The old keys load with a WARNING each naming the new key and are ignored,
+  so set the new key to keep a non-default value. The run-eval manifest's
+  `retrieval_config_sha256` of an unchanged config changes once (retry
+  counts no longer count as answer settings, and the `type_quota` keys are
+  gone); stage cache keys do not change:
+
+  | Removed key | Replacement |
+  |---|---|
+  | `processing.max_attempts` | `retry.max_attempts` |
+  | `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
+  | `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
+  | `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
+  | `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
+  | `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
+  | `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
+  | `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
+  | `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
+  | `search.store_max_attempts` | `retry.query_store_max_attempts` |
+  | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+
+  A Neptune retry now backs off from `retry.base_delay_seconds`, the same
+  base as the model calls (both default 2 s), and an Ollama call from the
+  `retry` backoff rather than fixed defaults. `BatchProcessor.from_processing`
+  is `BatchProcessor.from_config(config)`, and `TransientRetryConfig` is no
+  longer a config section (`RetryConfig.transient_policy()` builds it).
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
@@ -222,15 +252,14 @@ naming the key that replaces it.
   | `graph.visualization.embeddings` | `models.embedding.model_id` |
   | `providers.rerank.model_id` | `models.rerank` |
   | `search.reranking.rerank_model_id` | `models.rerank` |
-- `providers.llm.max_retries` / `providers.embedding.max_retries` (retries
-  after the first try) are now `max_attempts` (total attempts, default 3)
-  (#216). Every retry knob counts total attempts (#151).
-- The renamed-key shim is gone (#216). Replace `search.llm_retry` with
-  `aws.bedrock.transient_retry`, `aws.bedrock.effort` with
-  `aws.bedrock.default_effort`, and `processing.max_retries`,
-  `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` with the
-  matching `max_attempts` key (a former `max_retries: N` is
-  `max_attempts: N+1`).
+- Every retry knob counts total attempts, the first included (#151, #216):
+  a former `max_retries: N` is `max_attempts: N+1` in the `retry` section
+  (see the retry table above).
+- The renamed-key shim is gone (#216). Replace `aws.bedrock.effort` with
+  `aws.bedrock.default_effort`; `search.llm_retry`,
+  `providers.llm.max_retries`, `providers.embedding.max_retries`,
+  `processing.max_retries`, `indexing.neptune.max_retries` and
+  `evaluation.ragas_max_retries` are the `retry` section's keys.
 - The `"NONE"` alias of `aws.s3.encryption.encryption_type` is removed; use
   `BUCKET_DEFAULT` (#216).
 - The post-retrieval context-building call is removed with
@@ -2165,7 +2194,7 @@ changed once with the full-config keys (#332).
 - Graph extraction: output listing entities none of which has a name (cut
   off with no stop reason) fails the unit as cut-off output
   (`LLMOutputTruncatedError`), counted the same way and not retried. As a
-  parse failure it was asked `processing.max_attempts` times with backoff,
+  parse failure it was asked `retry.max_attempts` times with backoff,
   about 165 s a unit at the default 5: some 3.4 hours for 3000 units under
   a server-side output cap (#440).
 - Incremental indexing: when every unit of more than one document fails
@@ -4130,7 +4159,7 @@ changed once with the full-config keys (#332).
   missed about 1 in 10 of its true nearest neighbours. The retriever sends
   `k = max(hits, ef_search)` on lucene and still returns the hits asked
   for; faiss and nmslib keep reading the index setting (#306).
-- `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
+- `retry.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
   counts the first call, as documented: an item that keeps failing with a
   retryable error is called `max_attempts` times. The first call used to
   come on top of `max_attempts` retries, so default ingestion made 6 calls
@@ -4162,8 +4191,8 @@ changed once with the full-config keys (#332).
   that reports no dimension no longer silently gets a 1024-dimension index:
   it uses `indexing.opensearch.embedding_dimension`, and without one the run
   fails with a message naming that key (#297).
-- `indexing.neptune.retry_delay_seconds: 0` is accepted with the default
-  `max_attempts` and retries at once, as its description says; a validator
+- `retry.base_delay_seconds: 0` is accepted with the default
+  `retry.graph_store_max_attempts` and Neptune retries at once, as its description says; a validator
   rejected it whenever `max_attempts` was above 1 (#297).
 - `processing.ignore_errors` is documented for what it does: it decides
   whether a whole step that fails (a batch call, a translation language, an
@@ -4524,7 +4553,7 @@ changed once with the full-config keys (#332).
   instead of degrading silently (#264).
 - A short OpenSearch throttling burst no longer fails a query: opensearch-py
   retried a 429/502/503/504 back to back, so a burst of a few milliseconds
-  used up `search.store_max_attempts`. Query requests now back off between
+  used up `retry.query_store_max_attempts`. Query requests now back off between
   attempts (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s) and still fail
   once the attempts run out (#264).
 - A query no longer hangs when gremlinpython's connection pool stays empty
@@ -4573,7 +4602,7 @@ changed once with the full-config keys (#332).
   its removals, merges or full-build clear. The indexer's reads (the merge
   and removal read-backs, the incident-edge lookup), `delete_by_id`, the
   label clear and the drops before relationship and membership writes now
-  reconnect and retry like writes (`indexing.neptune.max_attempts`). Before,
+  reconnect and retry like writes (`retry.graph_store_max_attempts`). Before,
   they had one attempt on the pooled connection, so in a long-lived process
   every later incremental run failed at its first read (#263).
 - An OpenSearch bulk write survives a 429/502/503/504 burst longer than the
@@ -4591,7 +4620,7 @@ changed once with the full-config keys (#332).
   wrapper's retries fails the query too, as a store that does not answer
   does (#261).
 - An OpenSearch cluster still answering 429/502/503/504 after the query
-  client's `search.store_max_attempts` attempts (overloaded or restarting)
+  client's `retry.query_store_max_attempts` attempts (overloaded or restarting)
   fails the query with `StoreConnectionError`; every strategy answered from
   no context. An HTTP 500 for one search still degrades only that search
   (#261).
@@ -4697,7 +4726,7 @@ changed once with the full-config keys (#332).
   way (#258).
 - Queries no longer hang on a store that stops answering. The query-side
   OpenSearch client waits `search.store_timeout_seconds` (30) per request in
-  `search.store_max_attempts` (3) attempts instead of the indexing client's
+  `retry.query_store_max_attempts` (3) attempts instead of the indexing client's
   180 s in 6, and Neptune connects, reads and writes within the same
   timeout; it had none, so a query (and the process exit) blocked forever.
   A request still unanswered fails the query with `StoreConnectionError`; it
@@ -5090,8 +5119,8 @@ changed once with the full-config keys (#332).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
-  framework's retry, `providers.llm.max_attempts` /
-  `providers.embedding.max_attempts` attempts. OpenAI-compatible servers keep
+  framework's retry, `retry.model_server_max_attempts` attempts.
+  OpenAI-compatible servers keep
   the OpenAI client's own retries, with no second layer (#225).
 - A local ingestion run no longer imports the AWS SDK at community detection:
   Leiden now calls `graspologic-native` directly, as `graspologic` does,

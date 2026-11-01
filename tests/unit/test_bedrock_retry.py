@@ -205,9 +205,25 @@ def test_embedding_factory_applies_configured_policy(mocker) -> None:
     from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingModelFactory
 
     config = Config()
-    config.aws.bedrock.transient_retry = TransientRetryConfig(max_attempts=2)
+    config.retry.max_attempts = 2
     factory = BedrockEmbeddingModelFactory(
         config=config, boto_session=mocker.MagicMock()
     )
     model = factory.get_model(EmbeddingModelId.TITAN_EMBED_V2)
     assert model.transient_retry.max_attempts == 2
+
+
+def test_the_retry_section_keeps_every_former_default() -> None:
+    # One section replaced eleven keys in seven sections; each caller's
+    # default attempts and backoff are what they were.
+    retry = Config().retry
+    assert retry.transient_policy() == TransientRetryConfig()
+    assert (retry.max_attempts, retry.base_delay_seconds) == (5, 2.0)
+    assert (retry.max_delay_seconds, retry.max_total_seconds) == (16.0, 60.0)
+    assert retry.model_server_max_attempts == 3
+    assert retry.graph_store_max_attempts == 4
+    assert retry.query_store_max_attempts == 3
+    assert retry.judge_max_attempts == 3
+    assert retry.transient_policy(max_attempts=3) == TransientRetryConfig(
+        max_attempts=3
+    )

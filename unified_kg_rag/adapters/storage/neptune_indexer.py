@@ -1289,8 +1289,8 @@ class NeptuneIndexer(GraphIndexer):
         reads (``fenced=False``), each attempt checks the run's write fence
         first, so a run that lost its lease stops between attempts.
         """
-        max_attempts = self.neptune_config.max_attempts
-        delay = self.neptune_config.retry_delay_seconds
+        max_attempts = self.config.retry.graph_store_max_attempts
+        delay = self.config.retry.base_delay_seconds
         attempt = 0
         while True:
             if fenced:

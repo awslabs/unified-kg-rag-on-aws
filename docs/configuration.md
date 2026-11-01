@@ -36,6 +36,7 @@ preset, environment, CLI flags) and the settings most runs change are in the
 - [`search`](#search)
 - [`memory`](#memory)
 - [`cache`](#cache)
+- [`retry`](#retry)
 - [`logging`](#logging)
 - [`observability`](#observability)
 - [`evaluation`](#evaluation)
@@ -61,7 +62,6 @@ Language-model provider
 | `base_url` | string \| null (min length 1) | `null` | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
 | `api_key` | secret string \| null | `null` | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
 | `timeout_seconds` | number (> 0) | `300.0` | HTTP timeout per request to the model server, in seconds. |
-| `max_attempts` | integer (≥ 1) | `3` | Attempts per request on transient errors, including the first. The OpenAI client retries itself; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion chains keep processing.max_attempts). 1 disables the retry. |
 | `kind` | string (min length 1) | `"bedrock"` | Language-model provider: bedrock \| openai_compatible \| ollama. |
 | `context_window_size` | integer (≥ 1024) | `32768` | Context window of the non-Bedrock models, in tokens. Sizes the retrieval context budget and is sent to Ollama as num_ctx. Bedrock models take theirs from the capability catalog. |
 | `max_output_tokens` | integer (≥ 1) | `8192` | Output-token ceiling of the non-Bedrock models. A request asks for aws.bedrock.default_max_output_tokens (or a prompt's own floor), clamped to this. |
@@ -78,7 +78,6 @@ Embedding provider
 | `base_url` | string \| null (min length 1) | `null` | Endpoint of the model server, e.g. http://localhost:11434 for Ollama or http://localhost:8000/v1 for an OpenAI-compatible server (vLLM, llama.cpp, LM Studio). Ignored by bedrock. |
 | `api_key` | secret string \| null | `null` | API key for an OpenAI-compatible server (masked in logs). Most local servers ignore it; null sends a placeholder. Ignored by bedrock and ollama. |
 | `timeout_seconds` | number (> 0) | `300.0` | HTTP timeout per request to the model server, in seconds. |
-| `max_attempts` | integer (≥ 1) | `3` | Attempts per request on transient errors, including the first. The OpenAI client retries itself; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion chains keep processing.max_attempts). 1 disables the retry. |
 | `kind` | string (min length 1) | `"bedrock"` | Embedding provider: bedrock \| openai_compatible \| ollama. |
 | `max_input_tokens` | integer (≥ 1) | `8192` | Longest input the non-Bedrock embedding model accepts, in tokens; longer texts are truncated (by the estimate) before embedding. |
 
@@ -212,17 +211,6 @@ Contextual grounding and relevance check on each answer against the retrieved co
 |---|---|---|---|
 | `enabled` | boolean | `false` | Send the retrieved context and the question with the answer's guardrail check, so the guardrail's contextual grounding policy scores and can block an ungrounded or irrelevant answer. The guardrail must have that policy; its Classic tier scores only English, French and Spanish. Needs check_output |
 
-#### `aws.bedrock.transient_retry`
-
-Retry for embedding and query-time LLM calls on transient Bedrock errors
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_attempts` | integer (≥ 1) | `5` | Attempts per call, including the first, for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. 1 disables the retry. |
-| `base_delay_seconds` | number (≥ 0.0) | `2.0` | Backoff ceiling for the first retry; doubles per attempt with equal jitter |
-| `max_delay_seconds` | number (≥ 0.0) | `16.0` | Upper bound on a single backoff delay in seconds |
-| `max_total_seconds` | number (≥ 0.0) | `60.0` | Wall-clock retry budget per call; no retry starts once the next backoff would cross it |
-
 ### `aws.neptune`
 
 AWS Neptune database configuration
@@ -293,7 +281,6 @@ Text processing configuration
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `max_concurrency` | integer (≥ 1) | `40` | LLM calls an ingestion stage keeps in flight: the next item starts as soon as one finishes, so this is both the peak and the steady concurrency. These stages are I/O-bound, so this can be well above the CPU count. Bedrock quotas differ per account, model and Region: lower it if the logs show ThrottlingException retries, raise it if quota allows. The backend: local preset sets 20, since a local model server queues the calls it cannot run at once. |
-| `max_attempts` | integer (≥ 1) | `5` | Attempts per ingestion LLM item, including the first call. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. 1 disables the retry. |
 | `io_workers` | integer (≥ 1) | `64` | Threads for blocking I/O on the query path (the Bedrock calls LangChain runs in the event loop's default executor, Neptune traversals, reranking) in the CLIs and GraphRAGChain's sync methods. Python's default is min(32, CPUs + 4), six on a 2-vCPU task. An async host calls unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers) at startup. |
 | `ignore_errors` | boolean | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
 | `deduplicate` | boolean | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9 (fixed parameters); of each pair the first is kept, and an incremental run keeps the already-indexed copy. |
@@ -521,8 +508,6 @@ Configuration settings for Neptune graph database indexing
 | `community_label_prefix` | string (min length 1) | `"Community"` | Prefix for community node labels in Neptune (letters, digits, '-', '_') |
 | `batch_size` | integer (≥ 1) | `100` | Items per Neptune write batch. |
 | `index_concurrency` | integer (≥ 1) | `1` | Neptune write batches (and relationship edges, one per request) submitted concurrently; the Gremlin connection pool grows to at least this. Above 1, batches touching the same vertices can raise ConcurrentModificationException. On Neptune (one transaction per request) the retry recovers, but the conflicts can make a large run slower than sequential writes, so measure before raising it. A local Gremlin Server has no transactions: a retried edge rewrite can leave a duplicate edge (3,025 edges for 3,000 ids in one measurement), so keep it at 1 there. |
-| `max_attempts` | integer (≥ 1) | `4` | Attempts per Neptune indexer request (writes, read-backs, drops and label clears), including the first, with full-jitter exponential backoff (the wait after attempt n is random between 0 and retry_delay_seconds * 2^(n-1) seconds). Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt. 1 disables the retry. |
-| `retry_delay_seconds` | integer (≥ 0) | `2` | Base of the retry backoff in seconds (full jitter): the wait after attempt n is random between 0 and retry_delay_seconds * 2**(n-1). 0 retries at once. |
 | `property_max_length` | integer (≥ 1) | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above force_summary_threshold_tokens, 600 tokens or ~2,400 English characters). OpenSearch keeps descriptions in full. Takes effect on re-ingestion. |
 | `max_hops` | integer (≥ 1) | `3` | Depth of the graph expansion around the seed entities at query time. |
 | `max_results_per_hop` | integer (≥ 1) | `50` | Maximum number of neighbours one node contributes per traversal hop, so a hub entity cannot fan the expansion out unbounded |
@@ -561,7 +546,6 @@ Search configuration
 | `auto_routable_strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"`] (min length 1) | `["local", "mix", "global"]` | Strategies the auto router may pick; its prompt describes exactly these, in this order (under filters, only those applying every filter key; none applying them refuses the filters). simple is left out by default because the graph strategies cover its direct lookups with graph context, and drift because it costs up to 27 LLM calls a query (local: 2), a price one misrouted question should not pay; add it to route to it. global and drift are skipped when graph.community_detection.enabled is false (no community reports), and local is used when nothing is left; with one strategy left no router call is made. auto itself is rejected; every strategy stays selectable explicitly. |
 | `max_concurrency` | integer (≥ 1) | `10` | LLM calls and store requests one query keeps in flight at each level: the global map calls, the dynamic-selection ratings, the DRIFT primer calls and follow-up local searches; and within a search, its fetch-by-id batches (ids past the live index's id_batch_size), the global report browse's scope batches and a search's filter batches (lists past max_terms_count), and a filtered graph walk's per-vertex edge requests (each asks both endpoint sides, so up to twice that many). Each bound is its own and they nest: each DRIFT follow-up search, and each batch the retriever splits again, has one, so up to the square of this many requests. Per query, so concurrent queries (run-eval keeps processing.max_concurrency of them in flight) multiply it; lower it if a query's calls are throttled. |
 | `store_timeout_seconds` | number (> 0) | `30.0` | Seconds a query waits for one OpenSearch or Neptune request (and for opening a Neptune connection); a Neptune traversal, including its wait for a pooled connection, gets twice that. A store that does not answer fails the query instead of answering from no context. Ingestion keeps its own, longer limits. |
-| `store_max_attempts` | integer (≥ 1) | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, including the first, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so a short throttling burst is waited out. A hung cluster fails a query after about store_max_attempts x store_timeout_seconds. Neptune query requests are not retried. |
 
 ### `search.hybrid`
 
@@ -695,6 +679,21 @@ Ingestion LLM response cache
 | `enabled` | boolean | `true` | Keep the responses of the ingestion model calls with the run's stage cache, so a re-run with the same pipeline id (after a crash, a stop or a timeout) does not call the model again for a prompt that already answered. Query and evaluation calls are never cached |
 | `flush_every` | integer (≥ 1) | `100` | Responses per cache segment file; a segment is written (and uploaded with --s3-sync) when it is full and before each stage checkpoint, so a killed task loses at most this many responses |
 
+## `retry`
+
+Retries on transient errors, for every caller
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `max_attempts` | integer (≥ 1) | `5` | Attempts per model call: each ingestion LLM item (transient errors, call timeouts and unparseable output), and each Bedrock embedding request and query-time call (transient errors botocore does not retry, such as HTTP 424). |
+| `base_delay_seconds` | number (≥ 0.0) | `2.0` | Backoff base in seconds. A Bedrock embedding or query-time call, and an Ollama call, waits up to this before its first retry, doubling per attempt (equal jitter); a graph-store indexer request waits a random 0 to base_delay_seconds * 2^(n-1) after attempt n (full jitter). 0 retries at once. |
+| `max_delay_seconds` | number (≥ 0.0) | `16.0` | Upper bound on one backoff delay of a Bedrock embedding or query-time call or an Ollama call, in seconds. |
+| `max_total_seconds` | number (≥ 0.0) | `60.0` | Wall-clock retry budget per Bedrock embedding or query-time call or Ollama call: no retry starts once the next backoff would cross it. |
+| `model_server_max_attempts` | integer (≥ 1) | `3` | Attempts per request to an OpenAI-compatible or Ollama model server (providers.llm, providers.embedding) on transient errors. The OpenAI client retries itself; on Ollama, whose client does not, query chains and embedding calls are retried by the framework (ingestion items keep max_attempts). |
+| `graph_store_max_attempts` | integer (≥ 1) | `4` | Attempts per Neptune or Gremlin indexer request (writes, read-backs, drops and label clears), with full-jitter backoff from base_delay_seconds. Errors a retry cannot fix (malformed query, access denied, bad parameter, read-only violation) fail on the first attempt. |
+| `query_store_max_attempts` | integer (≥ 1) | `3` | Attempts of one OpenSearch query request that timed out, could not connect or got a 429/502/503/504, with a jittered backoff between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so a short throttling burst is waited out. A hung cluster fails a query after about query_store_max_attempts x search.store_timeout_seconds. Neptune query requests are not retried. |
+| `judge_max_attempts` | integer (≥ 1) | `3` | Attempts per RAGAS judge call (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with exponential backoff). Attempts count against evaluation.ragas_timeout. |
+
 ## `logging`
 
 Logging system configuration
@@ -736,7 +735,6 @@ Evaluation configuration
 | `ragas_timeout` | integer (≥ 1) | `300` | RAGAS RunConfig.timeout in seconds: the budget for scoring ONE metric on ONE sample, covering all of its LLM calls and retries. A timed-out job yields NaN for that metric. RAGAS' own default (180s) is too tight for thinking judges. |
 | `ragas_max_contexts` | integer \| null (≥ 1) | `20` | Maximum number of top-ranked retrieved contexts per sample scored by RAGAS context_precision, applied before max_context_tokens. Context precision makes one judge call per context, so its cost scales with the context count; strategies that report 100+ sources time out otherwise. Only that metric is capped (it becomes context_precision@N); faithfulness and context_recall see every context within max_context_tokens, and the answer model's context is unaffected. null disables the cap. |
 | `ragas_max_workers` | integer (≥ 1) | `8` | RAGAS RunConfig.max_workers: concurrent metric jobs. Lower it if Bedrock throttles the judge model (throttled calls burn the per-job timeout). |
-| `ragas_max_attempts` | integer (≥ 1) | `3` | Total attempts per judge call, including the first (passed as RAGAS RunConfig.max_retries, which RAGAS applies as stop_after_attempt, with exponential backoff). Attempts count against ragas_timeout. |
 | `answer_normalization` | `"default"` \| `"official_squad"` | `"default"` | Normalization of the answer_match exact_match and token_f1 scores. 'default' keeps meaning-bearing punctuation (minus signs, decimal points, 'C++') and folds Unicode; 'official_squad' is the official SQuAD v1.1 script (lowercase, ASCII punctuation and English articles removed), so scores compare with published MuSiQue / HotpotQA numbers. answer_contains always uses 'default'. |
 | `retrieval_k` | integer (≥ 1) | `5` | Cutoff k for the retrieval evaluator's hit@k / recall@k: the number of top-ranked distinct files (of the reported sources, in rank order) compared with reference_sources. |
 | `save_detailed_results` | boolean | `true` | Whether to save detailed evaluation results and reports. |

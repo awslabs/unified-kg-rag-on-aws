@@ -413,7 +413,7 @@ WARNING(`XML output ends with <entities> unclosed`)을 남깁니다. OpenAI 호�
   오류로 인덱싱을 실패시킵니다. 파일을 나누세요.
 - **쓰기 실패**는 먼저 재시도합니다. 429, 502, 503, 504로 거부된 OpenSearch 벌크 항목은
   백오프하며 최대 네 번, 모든 Neptune 요청은 새 연결로 최대
-  `indexing.neptune.max_attempts`(기본값 `4`)번 시도합니다. 한 산출물 유형의 쓰기가
+  `retry.graph_store_max_attempts`(기본값 `4`)번 시도합니다. 한 산출물 유형의 쓰기가
   `indexing.max_failure_rate`(기본값 `0.2`)를 넘게 실패하면 인덱싱이 실패하고 문서를
   기록하지 않습니다. 그 이하면 실패한 산출물을 가진 문서만 `FAILED`가 됩니다(백엔드가
   항목을 밝히지 않으면 실행의 모든 문서). 이 문서는 다음 실행이 재시도 한도에 세지 않고 다시
@@ -848,7 +848,7 @@ Langfuse에는 `langfuse.observation.type`(모델 호출은 `generation`, `embed
 
 | 메시지(요약) | 의미 | 조치 |
 |---|---|---|
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 연결 거부나 이름 확인 실패, Neptune이 연결을 닫음(재시작, 장애 조치. 다음에 다시 엶), 또는 OpenSearch가 `search.store_max_attempts`번 모두 429/502/503/504로 답함. 벡터 저장소에 연결할 수 없으면 `run-ingestion`은 모델 호출 전 저장소 검사에서 실패함 | 엔드포인트, 포트, 저장소 실행 여부, 보안 그룹과 VPC 엔드포인트 확인 |
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | 연결 거부나 이름 확인 실패, Neptune이 연결을 닫음(재시작, 장애 조치. 다음에 다시 엶), 또는 OpenSearch가 `retry.query_store_max_attempts`번 모두 429/502/503/504로 답함. 벡터 저장소에 연결할 수 없으면 `run-ingestion`은 모델 호출 전 저장소 검사에서 실패함 | 엔드포인트, 포트, 저장소 실행 여부, 보안 그룹과 VPC 엔드포인트 확인 |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | `search.store_timeout_seconds` 안에 답이 없음(수집 중 Neptune은 고정 180초, 항목 재시도) | 저장소 상태와 부하를 확인하거나 제한 시간을 늘림 |
 | `OpenSearch denied the search on <index>: ... status=403 ...`(또는 `401`) | 세분화된 액세스 제어에서 역할에 `indices:data/read/search`가 없거나 자격 증명이 잘못됨 | 권한(과 `indices:admin/mappings/get`, `indices:monitor/settings/get`)을 부여하거나 자격 증명을 고침 |
 | `Neptune refused the connection (HTTP 403)` | 클러스터에 대한 `neptune-db:connect`가 없거나 다른 리전으로 서명함 | 권한(과 필요한 `neptune-db:*` 데이터 작업)을 부여하고 `aws.region_name`을 클러스터 리전으로 설정 |

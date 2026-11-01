@@ -179,6 +179,14 @@ _REMOVED_SETTINGS = [
     ("indexing.opensearch.embedding_cache_s3_key", None, "embedding-cache/cache.json"),
     ("search.local_search.type_quota", "text_floor", 4),
     ("cache.chunking", "chunk_size", 500),
+    ("processing.max_attempts", None, 2),
+    ("aws.bedrock.transient_retry", "max_attempts", 2),
+    ("providers.llm.max_attempts", None, 2),
+    ("providers.embedding.max_attempts", None, 2),
+    ("indexing.neptune.max_attempts", None, 2),
+    ("indexing.neptune.retry_delay_seconds", None, 0),
+    ("search.store_max_attempts", None, 2),
+    ("evaluation.ragas_max_attempts", None, 2),
 ]
 
 

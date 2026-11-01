@@ -359,8 +359,10 @@ cp config-template.yaml config.yaml
 `allow_unknown_keys=True`)를 주면 키마다 WARNING만 남깁니다. 위치가 바뀐 키는 대신할 키를
 알려 주며 실패합니다([Moved keys](./configuration.md#moved-keys)).
 
-`max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
-않습니다.
+재시도는 `retry` 섹션 하나에서 설정합니다. `max_attempts`와 백오프는 모델 호출(수집 항목,
+Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 호출자(모델 서버, 그래프 저장소
+인덱서, OpenSearch 질의, RAGAS 평가 모델)는 시도 횟수를 따로 둡니다. 시도 횟수는 모두 첫
+시도를 포함하며, `1`이면 재시도하지 않습니다.
 
 ### 대부분의 실행에서 바꾸는 설정
 

@@ -180,7 +180,7 @@ class _LocalEmbeddingFactory:
             provider_name=self.provider_name,
             max_input_tokens=self.settings.max_input_tokens,
             retry=(
-                local_transient_retry(self.settings)
+                local_transient_retry(self.config)
                 if self.retries_transient_errors
                 else None
             ),
@@ -194,7 +194,7 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
     """Embeddings from an OpenAI-compatible ``/v1/embeddings`` endpoint.
 
     Transient errors are retried by the OpenAI client
-    (``providers.embedding.max_attempts``).
+    (``retry.model_server_max_attempts``).
     """
 
     provider_name = "openai"
@@ -218,7 +218,7 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             api_key=api_key_value(self.settings),
             timeout=self.settings.timeout_seconds,
             # The OpenAI client counts retries after the first attempt.
-            max_retries=self.settings.max_attempts - 1,
+            max_retries=self.config.retry.model_server_max_attempts - 1,
             # Send text, not tiktoken ids: only OpenAI's own servers accept
             # pre-tokenized input, and the estimate already truncated it.
             check_embedding_ctx_length=False,
@@ -231,7 +231,7 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
     """Embeddings from an Ollama server (``/api/embed``).
 
     The Ollama client never retries, so each embed call is retried here on
-    transient errors (``providers.embedding.max_attempts`` attempts).
+    transient errors (``retry.model_server_max_attempts`` attempts).
     """
 
     provider_name = "ollama"

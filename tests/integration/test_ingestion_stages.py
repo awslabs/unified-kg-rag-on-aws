@@ -112,7 +112,7 @@ def _config() -> Config:
     config.processing.gleaning.enabled = True
     config.processing.gleaning.max_rounds = 1
     config.processing.claim_extraction.enabled = True
-    config.processing.max_attempts = 1
+    config.retry.max_attempts = 1
     config.fixing.enabled = False
     return config
 

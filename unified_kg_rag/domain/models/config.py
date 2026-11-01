@@ -570,6 +570,21 @@ REMOVED_KEYS: dict[str, str] = {
         "a stage-cache entry of more than 1,000 items or 50 MB is always "
         "written in chunk files"
     ),
+    **{
+        old: f"retries are configured in one section: set {new}"
+        for old, new in {
+            "processing.max_attempts": "retry.max_attempts",
+            "aws.bedrock.transient_retry": "retry.max_attempts, "
+            "retry.base_delay_seconds, retry.max_delay_seconds and "
+            "retry.max_total_seconds",
+            "providers.llm.max_attempts": "retry.model_server_max_attempts",
+            "providers.embedding.max_attempts": "retry.model_server_max_attempts",
+            "indexing.neptune.max_attempts": "retry.graph_store_max_attempts",
+            "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
+            "search.store_max_attempts": "retry.query_store_max_attempts",
+            "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
+        }.items()
+    },
 }
 
 
@@ -700,7 +715,7 @@ class GuardrailConfig(BaseModel):
 
 
 class TransientRetryConfig(BaseModel):
-    """Bounded retry on transient Bedrock errors that botocore does not retry.
+    """Bounded retry policy on transient model errors (not a config section).
 
     botocore's retry modes do not retry Bedrock's HTTP 424
     ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
@@ -708,7 +723,8 @@ class TransientRetryConfig(BaseModel):
     vector index. Applied to every embedding request and to query-time LLM
     chains; ingestion LLM chains are retried by ``BatchProcessor`` instead.
     Only transient errors are retried; validation and access errors still fail
-    fast.
+    fast. Built from the ``retry`` section (``RetryConfig.transient_policy``);
+    a custom LLM factory may return one as its ``transient_retry``.
     """
 
     max_attempts: int = Field(
@@ -737,6 +753,106 @@ class TransientRetryConfig(BaseModel):
         description="Wall-clock retry budget per call; no retry starts once the "
         "next backoff would cross it",
     )
+
+
+class RetryConfig(BaseModel):
+    """Retries on errors a new attempt can fix, for every caller (``retry``).
+
+    Attempts include the first call, and 1 disables the retry. Errors a retry
+    cannot fix (validation, access denied, a malformed query) fail on the first
+    attempt everywhere. ``max_attempts`` and the backoff apply to the model
+    calls; the callers whose defaults differ have their own attempt count.
+    """
+
+    max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Attempts per model call: each ingestion LLM item (transient "
+            "errors, call timeouts and unparseable output), and each Bedrock "
+            "embedding request and query-time call (transient errors botocore "
+            "does not retry, such as HTTP 424)."
+        ),
+    )
+    base_delay_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        description=(
+            "Backoff base in seconds. A Bedrock embedding or query-time call, "
+            "and an Ollama call, waits up to this before its first retry, "
+            "doubling per attempt (equal jitter); a graph-store indexer "
+            "request waits a random 0 to base_delay_seconds * 2^(n-1) after "
+            "attempt n (full jitter). 0 retries at once."
+        ),
+    )
+    max_delay_seconds: float = Field(
+        default=16.0,
+        ge=0.0,
+        description="Upper bound on one backoff delay of a Bedrock embedding or "
+        "query-time call or an Ollama call, in seconds.",
+    )
+    max_total_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        description="Wall-clock retry budget per Bedrock embedding or "
+        "query-time call or Ollama call: no retry starts once the next backoff "
+        "would cross it.",
+    )
+    model_server_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Attempts per request to an OpenAI-compatible or Ollama model "
+            "server (providers.llm, providers.embedding) on transient errors. "
+            "The OpenAI client retries itself; on Ollama, whose client does "
+            "not, query chains and embedding calls are retried by the "
+            "framework (ingestion items keep max_attempts)."
+        ),
+    )
+    graph_store_max_attempts: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Attempts per Neptune or Gremlin indexer request (writes, "
+            "read-backs, drops and label clears), with full-jitter backoff "
+            "from base_delay_seconds. Errors a retry cannot fix (malformed "
+            "query, access denied, bad parameter, read-only violation) fail "
+            "on the first attempt."
+        ),
+    )
+    query_store_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Attempts of one OpenSearch query request that timed out, could "
+            "not connect or got a 429/502/503/504, with a jittered backoff "
+            "between them (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s), so"
+            " a short throttling burst is waited out. A hung cluster fails a "
+            "query after about query_store_max_attempts x "
+            "search.store_timeout_seconds. Neptune query requests are not "
+            "retried."
+        ),
+    )
+    judge_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Attempts per RAGAS judge call (passed as RAGAS RunConfig."
+            "max_retries, which RAGAS applies as stop_after_attempt, with "
+            "exponential backoff). Attempts count against "
+            "evaluation.ragas_timeout."
+        ),
+    )
+
+    def transient_policy(self, max_attempts: int | None = None) -> TransientRetryConfig:
+        """The model-call retry policy, with ``max_attempts`` attempts (default
+        this section's)."""
+        return TransientRetryConfig(
+            max_attempts=self.max_attempts if max_attempts is None else max_attempts,
+            base_delay_seconds=self.base_delay_seconds,
+            max_delay_seconds=self.max_delay_seconds,
+            max_total_seconds=self.max_total_seconds,
+        )
 
 
 class BedrockConfig(BaseModel):
@@ -857,11 +973,6 @@ class BedrockConfig(BaseModel):
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
-    )
-    transient_retry: TransientRetryConfig = Field(
-        default_factory=TransientRetryConfig,
-        description="Retry for embedding and query-time LLM calls on transient "
-        "Bedrock errors",
     )
 
     def tier_effort(
@@ -1510,15 +1621,6 @@ class ProcessingConfig(BaseModel):
             " once."
         ),
     )
-    max_attempts: int = Field(
-        default=5,
-        ge=1,
-        description=(
-            "Attempts per ingestion LLM item, including the first call. "
-            "Transient Bedrock errors, call timeouts and unparseable output "
-            "are retried; other errors fail fast. 1 disables the retry."
-        ),
-    )
     io_workers: int = Field(
         default=64,
         ge=1,
@@ -1946,26 +2048,6 @@ class NeptuneIndexingConfig(BaseModel):
             "retried edge rewrite can leave a duplicate edge (3,025 edges "
             "for 3,000 ids in one measurement), so keep it at 1 there."
         ),
-    )
-    max_attempts: int = Field(
-        default=4,
-        ge=1,
-        description=(
-            "Attempts per Neptune indexer request (writes, read-backs, drops "
-            "and label clears), including the first, with full-jitter "
-            "exponential backoff (the wait after attempt n is random between 0"
-            " and retry_delay_seconds * 2^(n-1) seconds). Errors a retry "
-            "cannot fix (malformed query, access denied, bad parameter, "
-            "read-only violation) fail on the first attempt. 1 disables the "
-            "retry."
-        ),
-    )
-    retry_delay_seconds: int = Field(
-        default=2,
-        ge=0,
-        description="Base of the retry backoff in seconds (full jitter): the "
-        "wait after attempt n is random between 0 and "
-        "retry_delay_seconds * 2**(n-1). 0 retries at once.",
     )
     property_max_length: int = Field(
         default=4000,
@@ -3071,18 +3153,6 @@ class SearchConfig(BaseModel):
             "context. Ingestion keeps its own, longer limits."
         ),
     )
-    store_max_attempts: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "Attempts of one OpenSearch query request that timed out, could "
-            "not connect or got a 429/502/503/504, including the first, with a"
-            " jittered backoff between them (0.25-0.5 s, then 0.5-1 s, "
-            "doubling up to 2-4 s), so a short throttling burst is waited out."
-            " A hung cluster fails a query after about store_max_attempts x "
-            "store_timeout_seconds. Neptune query requests are not retried."
-        ),
-    )
 
 
 class MemoryConfig(BaseModel):
@@ -3655,16 +3725,6 @@ class EvaluationConfig(BaseModel):
             "per-job timeout)."
         ),
     )
-    ragas_max_attempts: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "Total attempts per judge call, including the first (passed as "
-            "RAGAS RunConfig.max_retries, which RAGAS applies as "
-            "stop_after_attempt, with exponential backoff). Attempts count "
-            "against ragas_timeout."
-        ),
-    )
     answer_normalization: Literal["default", "official_squad"] = Field(
         default="default",
         description=(
@@ -3767,6 +3827,10 @@ class Config(BaseModel):
     )
     cache: CacheConfig = Field(
         default_factory=CacheConfig, description="Caching system configuration"
+    )
+    retry: RetryConfig = Field(
+        default_factory=RetryConfig,
+        description="Retries on transient errors, for every caller",
     )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig, description="Logging system configuration"

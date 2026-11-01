@@ -395,7 +395,7 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
     # ModelErrorException) that botocore's retry modes do not cover. Applied
     # per InvokeModel call, so every sync/async embed path benefits and a
     # failure mid-batch does not restart the already-embedded texts. The
-    # factory sets it from aws.bedrock.transient_retry.
+    # factory sets it from the retry section (RetryConfig.transient_policy).
     transient_retry: TransientRetryConfig = Field(default_factory=TransientRetryConfig)
 
     def _invoke_model(self, input_body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -568,7 +568,7 @@ class BedrockEmbeddingModelFactory(
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
-            transient_retry=self.config.aws.bedrock.transient_retry,
+            transient_retry=self.config.retry.transient_policy(),
             # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
             # __init__ signature hides it from mypy.
             token_counter=token_counter,  # type: ignore[call-arg]
@@ -597,7 +597,7 @@ class BedrockLanguageModelFactory(
     @property
     def transient_retry(self) -> TransientRetryConfig:
         """The retry policy ``setup_chain`` applies to query chains."""
-        return self.config.aws.bedrock.transient_retry
+        return self.config.retry.transient_policy()
 
     @property
     def query_prompt_cache_ttl(self) -> str:

@@ -5,7 +5,7 @@
 The caller says which errors are transient (``is_transient``): the language
 model factory's ``is_transient_error`` (``transient_error_predicate``), so
 validation, access-denied and other client errors fail fast. The bounds come
-from one policy, ``aws.bedrock.transient_retry``.
+from one policy, the ``retry`` section (``RetryConfig.transient_policy``).
 """
 
 from __future__ import annotations

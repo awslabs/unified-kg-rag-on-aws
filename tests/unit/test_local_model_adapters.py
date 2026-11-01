@@ -68,7 +68,8 @@ pytestmark = pytest.mark.unit
 DIM = 8
 
 
-def _config(kind: str, **llm: Any) -> Config:
+def _config(kind: str, max_attempts: int | None = None, **llm: Any) -> Config:
+    retry = {} if max_attempts is None else {"model_server_max_attempts": max_attempts}
     base_url = (
         "http://model-server.test/v1"
         if kind == "openai_compatible"
@@ -91,6 +92,7 @@ def _config(kind: str, **llm: Any) -> Config:
             "default": "synthetic-chat",
             "embedding": {"model_id": "synthetic-embed", "dimension": DIM},
         },
+        retry=retry,
     )
 
 
@@ -861,8 +863,7 @@ def test_successive_event_loops_send_one_openai_request_per_call(
     fake = FakeServer()
     with _HTTPFakeServer(fake) as server:
         config = _http_config("openai_compatible", server.url)
-        config.providers.llm.max_attempts = max_attempts
-        config.providers.embedding.max_attempts = max_attempts
+        config.retry.model_server_max_attempts = max_attempts
         chat = OpenAICompatibleLanguageModelFactory(config).get_model("synthetic-chat")
         embeddings = OpenAICompatibleEmbeddingFactory(config).get_model(
             "synthetic-embed", dimensions=DIM

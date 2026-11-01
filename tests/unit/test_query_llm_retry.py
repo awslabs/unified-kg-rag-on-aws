@@ -42,7 +42,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import RetryConfig, TransientRetryConfig
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
 
 pytestmark = pytest.mark.unit
@@ -138,7 +138,7 @@ class _FakeBedrockFactory(BedrockLanguageModelFactory):
 
 def _config(retry: TransientRetryConfig = _NO_WAIT) -> Config:
     config = Config()
-    config.aws.bedrock.transient_retry = retry
+    config.retry = RetryConfig(**retry.model_dump())
     return config
 
 

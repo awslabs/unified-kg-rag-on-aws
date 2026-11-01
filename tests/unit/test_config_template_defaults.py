@@ -152,7 +152,7 @@ _DOCUMENTED_KNOBS = (
     "evaluation.judge_effort",
     "evaluation.ragas_timeout",
     "evaluation.ragas_max_workers",
-    "evaluation.ragas_max_attempts",
+    "retry.judge_max_attempts",
 )
 
 

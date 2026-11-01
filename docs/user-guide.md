@@ -384,8 +384,11 @@ silently keeps its default; `--allow-unknown-keys`
 A moved key fails naming its replacement
 ([Moved keys](./configuration.md#moved-keys)).
 
-Every `max_attempts` key counts total attempts, the first included; `1`
-disables the retry.
+Retries are configured in one section, `retry`: `max_attempts` for model
+calls (ingestion items, Bedrock embeddings and query-time calls) with its
+backoff, and an attempt count for the callers whose defaults differ (model
+servers, the graph-store indexer, OpenSearch queries, RAGAS judges). Every
+attempt count includes the first attempt; `1` disables the retry.
 
 ### Settings most runs change
 

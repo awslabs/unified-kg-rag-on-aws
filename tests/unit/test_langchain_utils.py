@@ -6,7 +6,7 @@ These exercise the pure orchestration / parsing surface of
 ``unified_kg_rag.adapters.llm.langchain`` with plain fake callables (no real LLM,
 no boto3). The wall-clock timeout / ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
-complementary branches: the per-item happy path, from_processing,
+complementary branches: the per-item happy path, from_config,
 empty input, the ``BATCH_ITEM_FAILED`` filler on per-item failure, the retry
 decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 ``RobustXMLOutputParser`` recovery ladder.
@@ -31,7 +31,7 @@ from unified_kg_rag.adapters.llm.langchain import (
     ProgressLogger,
     RobustXMLOutputParser,
 )
-from unified_kg_rag.domain.models.config import ProcessingConfig
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared.utils import ensure_list
 
 pytestmark = pytest.mark.unit
@@ -112,9 +112,9 @@ class TestExecuteWithFallback:
         assert out == list(range(6))
         assert max_in_flight == 2
 
-    def test_from_processing_takes_the_processing_settings(self) -> None:
-        processing = ProcessingConfig(max_concurrency=3, max_attempts=2)
-        bp = BatchProcessor.from_processing(processing, call_timeout_seconds=0)
+    def test_from_config_takes_the_concurrency_and_retry_settings(self) -> None:
+        config = Config(processing={"max_concurrency": 3}, retry={"max_attempts": 2})
+        bp = BatchProcessor.from_config(config, call_timeout_seconds=0)
         assert (bp.max_concurrency, bp.max_attempts) == (3, 2)
         assert bp.call_timeout_seconds == 0
         # The inputs are prepared once, for all items.
