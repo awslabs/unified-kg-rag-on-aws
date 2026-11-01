@@ -576,7 +576,7 @@ From 0.2.3 (or a `main` checkout since):
   `custom` mode graph expansion reads the label's switch vertex on each
   query (one indexed read) and checks the label's mode again when a
   custom-id lookup finds none of its seeds; `property` mode needs no extra
-  read (#466, #470, #473, #PR).
+  read (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk
   quantized vectors on OpenSearch 2.17+ (#461).
 - The public API exports its errors (`GraphRAGException`,
@@ -689,7 +689,7 @@ From 0.2.3 (or a `main` checkout since):
   without `check_output`, and a refused assignment stays applied (#472).
 - A `processing.chunking.chunk_overlap` not below `fallback_chunk_size`
   fails the load, naming both, instead of every chunker at the chunking
-  stage (#PR).
+  stage (#474).
 
 ### Fixed
 Bugs present in 0.2.3.
