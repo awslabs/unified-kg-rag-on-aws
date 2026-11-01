@@ -566,6 +566,10 @@ REMOVED_KEYS: dict[str, str] = {
         "fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager."
         "type_budgets sets each type's share of the context"
     ),
+    "cache.chunking": (
+        "a stage-cache entry of more than 1,000 items or 50 MB is always "
+        "written in chunk files"
+    ),
 }
 
 
@@ -3103,22 +3107,6 @@ class MemoryConfig(BaseModel):
     )
 
 
-class CacheChunkingConfig(BaseModel):
-    enabled: bool = Field(
-        default=True, description="Enable cache data chunking for large datasets"
-    )
-    chunk_size: int = Field(
-        default=1000,
-        ge=1,
-        description="Maximum number of items per cache chunk",
-    )
-    max_file_size_mb: int = Field(
-        default=50,
-        ge=1,
-        description="Maximum file size in MB before triggering chunking",
-    )
-
-
 class LLMResponseCacheConfig(BaseModel):
     """The ingestion LLM response cache (``adapters.llm.response_cache``)."""
 
@@ -3148,10 +3136,6 @@ class CacheConfig(BaseModel):
             " never expire. Not applied with --s3-sync, where the bucket "
             "lifecycle expires the checkpoints."
         ),
-    )
-    chunking: CacheChunkingConfig = Field(
-        default_factory=CacheChunkingConfig,
-        description="Configuration for cache data chunking behavior",
     )
     llm_responses: LLMResponseCacheConfig = Field(
         default_factory=LLMResponseCacheConfig,

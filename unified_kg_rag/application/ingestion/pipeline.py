@@ -416,7 +416,6 @@ class DataIngestionPipeline:
 
     def _initialize_managers(self) -> None:
         cache_config = self.config.cache
-        chunking_config = cache_config.chunking
 
         # force_rebuild ignores existing cached stage outputs: FORCE_REFRESH makes
         # the cache treat every entry as a miss so stages actually re-execute.
@@ -437,9 +436,6 @@ class DataIngestionPipeline:
                 if self.pipeline_config.s3_sync_enabled
                 else cache_config.ttl_seconds
             ),
-            chunk_size=chunking_config.chunk_size,
-            max_file_size_mb=chunking_config.max_file_size_mb,
-            enable_chunking=chunking_config.enabled,
         )
         self.state_manager = PipelineStateManager(self.cache_manager)
         # The resume manager must reconstruct the same input-fingerprinted cache

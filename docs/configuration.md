@@ -686,16 +686,6 @@ Caching system configuration
 |---|---|---|---|
 | `ttl_seconds` | integer \| null (≥ 1) | `86400` | Time-to-live of the local stage-cache entries, in seconds; null = never expire. Not applied with --s3-sync, where the bucket lifecycle expires the checkpoints. |
 
-### `cache.chunking`
-
-Configuration for cache data chunking behavior
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Enable cache data chunking for large datasets |
-| `chunk_size` | integer (≥ 1) | `1000` | Maximum number of items per cache chunk |
-| `max_file_size_mb` | integer (≥ 1) | `50` | Maximum file size in MB before triggering chunking |
-
 ### `cache.llm_responses`
 
 Ingestion LLM response cache

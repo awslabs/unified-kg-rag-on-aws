@@ -162,6 +162,10 @@ naming the key that replaces it.
   The user-facing mix of the context is `search.token_manager.type_budgets`.
   The section loads with a WARNING and is ignored; a subclass that needs
   other slots overrides `TYPE_QUOTA`.
+- `cache.chunking` (`enabled`, `chunk_size`, `max_file_size_mb`) is gone
+  (#PR): a stage-cache entry of more than 1,000 items or 50 MB is always
+  written in chunk files, as by default before. The section loads with a
+  WARNING and is ignored.
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
