@@ -833,17 +833,19 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 | 저장소 | 필터 가능한 필드 |
 |---|---|
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
-| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `attr_<key>`, `attributes.<path>` |
+| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `attr_<key>`, `attributes.filters.<key>` |
 | 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우) |
+| Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `attr_<key>`(있는 경우) |
 
 - OpenSearch에서 `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목입니다(여러
   문서에서 나온 항목은 그 값을 모두 가짐). Neptune 엔티티 정점에서는 엔티티 자체의
   속성입니다(`attr_role`).
 - 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 `term`은 정확히 일치해야
-  하므로 `type:PERSON`이 아니라 `type:person`으로 필터링하세요. keyword나 숫자 필드를
+  하므로 `type:PERSON`이 아니라 `type:person`으로 필터링하세요. 관계에는 `type` 필터가
+  없습니다(관계 인덱스에 유형을 저장하지 않음). `in_schema`, `type_iri`,
+  `predicate_iri`는 [추출 스키마](#c-추출-스키마) 표시입니다. keyword나 숫자 필드를
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
   `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
@@ -1579,8 +1581,26 @@ processing:
 - 스키마나 모드를 바꾸면 다른 추출 설정을 바꿀 때처럼 다시 추출합니다.
   기본값이거나 엔티티 유형만 있으면 업그레이드해도 아무것도 바뀌지 않습니다. 캐시 키,
   추출 레코드, 기록된 추출 설정이 그대로입니다.
-- 저장된 엔티티와 관계가 스키마 안에 있는지, 그 유형의 IRI가 무엇인지는 아직 저장하지
-  않으며 다음 릴리스에서 들어옵니다.
+- **저장되는 표시.** 인덱싱은 그래프 저장소와 벡터 저장소의 엔티티마다 `in_schema`(병합된
+  유형이 선언한 엔티티 유형인지)와 `type_iri`(그 유형의 `iri`)를, 관계마다 `in_schema`와
+  `predicate_iri`를 씁니다. 저장된 유형을 따르므로 전체 빌드와 증분 실행이 같은 값을
+  저장합니다. 관계가 패턴에 맞는지는 저장하지 않습니다(끝점 유형에 달려 있고, 다른
+  문서가 끝점 유형을 바꿀 수 있음). 관계의 끝점으로만 나온 엔티티는 유형이 없으므로
+  `strict`에서도 스키마 밖입니다. `off`, 엔티티 유형만 있을 때, 관계 유형을 선언하지
+  않은 관계에는 아무것도 저장하지 않고, IRI가 없는 유형에는 IRI를 저장하지 않습니다.
+  이때 저장소 내용은 이전과 똑같습니다. 다른 필드처럼 필터링할 수 있습니다
+  ([필터](#필터) 참고).
+
+  ```python
+  RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
+  ```
+
+  는 스키마 밖 엔티티만(`mix`, `hybrid`, `local`, `drift`에서는 스키마 밖 관계도)
+  돌려주므로 `align`이 스키마 밖으로 남긴 항목을 검토할 때 쓸 수 있습니다. 표시 없이
+  저장된 항목은 어떤 `in_schema` 값과도 일치하지 않습니다. 증분 실행은 첫 쓰기 전에
+  기존 OpenSearch 인덱스에 새 필드를 매핑합니다. 다시 쓰지 않은 항목은 그 항목을 쓴
+  실행의 표시를 유지하므로, 스키마를 바꾼 뒤 코퍼스 전체에 표시를 붙이려면
+  `indexing.reset: true`로 다시 실행하세요.
 
 ---
 

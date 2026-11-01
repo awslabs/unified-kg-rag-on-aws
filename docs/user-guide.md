@@ -904,17 +904,20 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Store | Filterable fields |
 |---|---|
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `attr_<key>`, `attributes.filters.<key>` |
 | Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
+| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `attr_<key>` (where present) |
 
 - On OpenSearch, `attr_<key>` is entry `<key>` of a document's `filters`
   metadata (an item from several documents carries all their values); on
   Neptune entity vertices it is the entity's own attribute (`attr_role`).
 - Entity and claim `type` and claim `status` are stored lowercase and `term`
-  matches exactly: filter `type:person`, not `type:PERSON`. Prefer keyword or
+  matches exactly: filter `type:person`, not `type:PERSON`. Relationships
+  take no `type` filter (their type is not stored on the relationships
+  index). `in_schema`, `type_iri` and `predicate_iri` are the
+  [extraction schema](#c-extraction-schema) annotations. Prefer keyword or
   numeric fields; a `term` on an analyzed field such as `description` matches
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
@@ -1780,8 +1783,31 @@ processing:
   extraction setting. With the defaults, or with entity types
   alone, nothing changes on upgrade: no cache key, extraction record or
   recorded extraction setting moves.
-- Whether a stored entity or relationship is in the schema, and the IRI of
-  its type, are not stored yet; that arrives in a following release.
+- **Stored annotations.** Indexing writes on every entity `in_schema`
+  (whether its merged type is a declared entity type) and `type_iri` (that
+  type's `iri`), and on every relationship `in_schema` and `predicate_iri`,
+  in the graph and vector stores. They follow the stored type, so a full
+  build and an incremental run store the same values; whether a
+  relationship fits a pattern is not stored (it depends on the endpoints'
+  types, which other documents can change). An entity named only as a
+  relationship endpoint has no type and is off schema, under `strict` too.
+  None is stored under `off`, with entity types alone, for relationships
+  when no relationship type is declared, and no IRI for a type without one;
+  the stores then hold exactly what they held before. Filter on them like
+  any field (see [Filters](#filters)):
+
+  ```python
+  RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
+  ```
+
+  returns only the off-schema entities (and, with `mix`, `hybrid`, `local`
+  or `drift`, off-schema relationships), useful to review what `align`
+  kept outside the schema. An item stored without the annotation matches
+  no `in_schema` value. An incremental run maps the new fields on its live
+  OpenSearch indices before its first write; items it does not rewrite keep
+  the annotations of the run that wrote them, so re-run with
+  `indexing.reset: true` after changing the schema to annotate the whole
+  corpus.
 
 ---
 

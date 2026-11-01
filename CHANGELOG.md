@@ -626,6 +626,19 @@ From 0.2.3 (or a `main` checkout since):
   `gleaning_stats`; drops are not failures. With the defaults, or entity
   types alone, every cache key, extraction record and prompt is unchanged
   (#476).
+- Schema annotations in the stores: indexing writes `in_schema` and
+  `type_iri` on entities and `in_schema` and `predicate_iri` on
+  relationships (Neptune and SQLite graph properties, OpenSearch and
+  embedded vector documents), from the merged type and the schema's
+  `iri`s, so a full build and an incremental run agree. They are filter
+  keys on the entities, relationships and graph stores (`filters:
+  {in_schema: false}` returns the off-schema items `align` kept). Under
+  `off`, with entity types alone, and for relationships when none are
+  declared, nothing is written and the stored documents and properties are
+  unchanged; the entities and relationships mappings gain the fields, and
+  an incremental run adds them to its live indices before its first write
+  (re-run with `indexing.reset: true` after a schema change to annotate
+  items it does not rewrite) (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
