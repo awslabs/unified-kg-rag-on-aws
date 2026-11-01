@@ -97,15 +97,15 @@ def missing_extras_error(config: Config) -> str | None:
     # Importing the module registers the built-in kinds and their needs.
     import unified_kg_rag.adapters.providers  # noqa: F401
 
-    # (module, how to install it) -> the settings that select it.
-    missing: dict[tuple[str, str], list[str]] = {}
+    # (module, how to install it) -> the settings that select it, each once
+    # (two roles share a section: graph indexer and retriever, ...).
+    missing: dict[tuple[str, str], dict[str, None]] = {}
     for role in ProviderRole:
         kind = provider_kind(config, role)
         requirement = provider_requirement(role, kind)
         if requirement is not None and not _installed(requirement[0]):
             setting = f"providers.{role.section}.kind '{kind}'"
-            if setting not in (settings := missing.setdefault(requirement, [])):
-                settings.append(setting)
+            missing.setdefault(requirement, {})[setting] = None
     if not missing:
         return None
     modules = ", ".join(
