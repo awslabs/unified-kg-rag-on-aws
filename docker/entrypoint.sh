@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Data-plane entrypoint. The ingestion loader only reads a local filesystem
 # path, so if the source directory is an s3:// URI (set by Step Functions via
 # UKR_SOURCE_DIRECTORY) we sync it to a local scratch dir first and rewrite

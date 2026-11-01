@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """docs/configuration.md is generated from the configuration models.
 
 The reference lists every key with its type, default and description; this test

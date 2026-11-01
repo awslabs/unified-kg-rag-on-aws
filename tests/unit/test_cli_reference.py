@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """docs/cli.md is generated from the CLI parsers.
 
 The reference lists every flag with its default and help text; this test fails
