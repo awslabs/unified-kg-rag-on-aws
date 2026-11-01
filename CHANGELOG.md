@@ -51,7 +51,7 @@ code that was added and fixed again before any release.
   `strict` (off-schema items dropped), stored as `in_schema` / `type_iri` /
   `predicate_iri` filter keys, and drafted from a corpus by
   `run-prompt-tuning --schema-out`; the defaults change nothing (#475-#477,
-  #PR).
+  #478).
 - Evaluation: three LLM-free evaluators (`graph_aware`, `retrieval`,
   `answer_match`), paired strategy comparison with bootstrap CIs and a
   pairwise judge, and a MuSiQue benchmark preparer (#121, #315, #324).
@@ -647,13 +647,13 @@ From 0.2.3 (or a `main` checkout since):
   unchanged; the entities and relationships mappings gain the fields, and
   an incremental run adds them to its live indices before its first write
   (re-run with `indexing.reset: true` after a schema change to annotate
-  items it does not rewrite) (#477, #PR).
+  items it does not rewrite) (#477, #478).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
   counts) and patterns only where every endpoint-type pair of a type is
   seen at least twice. It names `schema_mode: align`, and a fixed model
-  gives the same file (#PR).
+  gives the same file (#478).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
