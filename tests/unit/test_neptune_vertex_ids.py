@@ -249,7 +249,13 @@ def _run_retriever(retriever: Any, answer: Callable[[str], list[Any]]) -> list[s
         sent.append(groovy)
         return answer(groovy)
 
-    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
+    projected: list[dict[str, Any]] = retriever.__dict__.setdefault("projected", [])
+
+    def project(traversal: Any, **kwargs: Any) -> Any:
+        projected.append(kwargs)
+        return traversal
+
+    object.__setattr__(retriever, "_with_projection", project)
     object.__setattr__(retriever, "_execute_traversal", execute)
     asyncio.run(
         retriever._traverse(["e1", "e2"], SearchQuery(query="", suffix="default"))
@@ -375,7 +381,7 @@ def test_a_full_build_switches_the_label_and_its_sweep_ends_the_switch(
     graph.stored = "custom"  # what the sweep leaves
     indexer.end_rebuild(["default"])
     assert graph.switch is None
-    assert f"Dropping the vertex-id switch of '{_LABEL}'" in [
+    assert f"Dropping the vertex-id switch of 'Community-default', '{_LABEL}'" in [
         op for op, _ in graph.requests
     ]
     # And the label is usable at once.
@@ -407,11 +413,116 @@ def test_a_full_build_in_the_labels_own_mode_records_no_switch(make_indexer) -> 
     indexer.begin_rebuild(["default"])
     indexer.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
     indexer.end_rebuild(["default"])
-    assert not [
-        op
-        for op, _ in graph.requests
-        if "vertex-id switch of" in op and not op.startswith("Reading")
-    ]
+    assert not [op for op, _ in graph.requests if op.startswith("Recording")]
+
+
+def test_a_full_build_finishes_a_switch_whose_sample_is_rewritten(
+    make_indexer,
+) -> None:
+    # A rerun of an unswept switch whose sample vertex is one the earlier
+    # build already rewrote: the switch is still recorded and swept.
+    indexer = make_indexer("custom")
+    graph = _on(indexer, _Graph(stored="custom", switch="custom"))
+    indexer.begin_rebuild(["default"])
+    indexer.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
+    assert _LABEL in indexer._switching_labels
+    indexer.end_rebuild(["default"])
+    assert graph.switch is None
+
+
+class _Labels(_Graph):
+    """``_Graph`` with a switch vertex per label (``switches``)."""
+
+    def __init__(self, stored: str | None, switches: dict[str, str]) -> None:
+        super().__init__(stored=stored)
+        self.switches = dict(switches)
+
+    def execute(self, build: Callable, operation: str, **kwargs: Any) -> list[Any]:
+        groovy = _groovy(build(Graph().traversal()))
+        if operation.startswith("Reading the vertex-id switch"):
+            self.requests.append((operation, groovy))
+            label = groovy.split("has('id','")[1].split("'")[0]
+            return [self.switches[label]] if label in self.switches else []
+        if operation.startswith("Recording the vertex-id switch"):
+            self.requests.append((operation, groovy))
+            label = groovy.split("has('id','")[1].split("'")[0]
+            self.switches[label] = "custom"
+            return []
+        if operation.startswith("Dropping the vertex-id switch"):
+            self.requests.append((operation, groovy))
+            labels = groovy.split("within([")[1].split("])")[0]
+            for label in [x.strip("'") for x in labels.split(",")]:
+                self.switches.pop(label, None)
+            return []
+        return super().execute(build, operation, **kwargs)
+
+
+def test_a_full_build_ends_the_switch_of_a_label_it_never_used(
+    make_indexer,
+) -> None:
+    # An earlier build left the community label switching; this one writes
+    # entities only. Its sweep empties the community label too, and the
+    # label's switch vertex goes with it: left behind, it refused every
+    # later run on the label ("did not finish").
+    community = "Community-default"
+    indexer = make_indexer("custom")
+    graph = _on(indexer, _Labels(stored="custom", switches={community: "custom"}))
+    indexer.begin_rebuild(["default"])
+    indexer.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
+    indexer.end_rebuild(["default"])
+    assert graph.switches == {}
+    graph.stored = None
+    assert indexer.find_ids_citing(["t1"], communities=True) == {}
+    # Unswept, it stays.
+    graph.switches = {community: "custom"}
+    indexer.begin_rebuild(["default"])
+    indexer.end_rebuild(["default"], sweep=False)
+    assert graph.switches == {community: "custom"}
+
+
+def test_custom_mode_looks_each_id_up_once(make_indexer) -> None:
+    indexer = make_indexer("custom")
+    graph = _on(indexer, _Graph(stored="custom"))
+    indexer.read_entities(["e1", "e2", "e1"])
+    (sent,) = [groovy for op, groovy in graph.requests if op == "read_entities"]
+    assert sent.startswith("g.V('Entity-default:e1','Entity-default:e2').")
+
+
+def test_a_graph_store_without_string_ids_names_the_setting(
+    make_indexer, mocker
+) -> None:
+    # TinkerGraph's default id manager takes Long ids only: every custom-id
+    # lookup failed with a raw 500, retried graph_store_max_attempts times.
+    from gremlin_python.driver.protocol import GremlinServerError
+
+    from unified_kg_rag.adapters.aws.neptune import neptune_request_error
+
+    refused = GremlinServerError(
+        {
+            "code": 500,
+            "message": "Expected an id that is convertible to class "
+            "java.lang.Long but received class java.lang.String - "
+            "[Entity-default:e1]",
+            "attributes": {},
+        }
+    )
+    error = neptune_request_error(refused, None)
+    assert isinstance(error, StoreConfigurationError)
+    assert "vertexIdManager=ANY" in str(error)
+    assert "vertex_ids: property" in str(error)
+
+    indexer = make_indexer("custom")
+    calls: list[str] = []
+
+    def run(client: Any, build: Callable, **kwargs: Any) -> list[Any]:
+        calls.append("sent")
+        raise error
+
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.run_traversal", run)
+    with pytest.raises(StoreConfigurationError):
+        indexer._execute_with_retries(lambda g: g.V(), "Entity indexing")
+    # Not retried: it fails the same way every time.
+    assert calls == ["sent"]
 
 
 def test_clearing_a_label_drops_its_switch(make_indexer) -> None:
@@ -443,36 +554,113 @@ def test_the_switch_vertex_is_found_by_its_label_and_id_property(
 # --- the mode check: the retriever -------------------------------------------
 
 
-def test_the_retriever_refuses_a_label_of_the_other_mode() -> None:
-    for configured, stored in (("custom", "property"), ("property", "custom")):
+@pytest.fixture
+def warned(monkeypatch) -> None:
+    """Every once-per-process warning logged again."""
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+
+
+_BY_PROPERTY = "g.V().hasLabel('Entity-default').has('id',within(['e1','e2']))"
+
+
+@pytest.mark.parametrize(
+    ("configured", "stored"), [("custom", "property"), ("property", "custom")]
+)
+def test_the_retriever_reads_a_label_of_the_other_mode_by_property(
+    caplog, warned, configured: str, stored: str
+) -> None:
+    # The query service switched before the full build's first write (or
+    # the build switched and the query service has not): a refusal failed
+    # every graph expansion until then. The id property is in both modes,
+    # so the expansion looks the seeds up by it, and warns once.
+    retriever = _retriever(configured)
+    for _ in range(2):
+        sent = _run_retriever(retriever, _sample(stored))
+        assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+    warnings = [r for r in caplog.records if "vertex_ids" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    assert f"built with vertex_ids '{stored}'" in warnings[0].getMessage()
+    # Checked again on each query: once a build rewrites the label, the
+    # configured lookups take over.
+    sent = _run_retriever(retriever, _sample(configured))
+    if configured == "custom":
+        assert sent[-1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
+    else:
+        assert sent[-1].startswith(_BY_PROPERTY)
+
+
+@pytest.mark.parametrize("configured", ["custom", "property"])
+@pytest.mark.parametrize("target", ["custom", "property"])
+def test_the_retriever_reads_a_label_being_switched_by_property(
+    caplog, warned, configured: str, target: str
+) -> None:
+    # The sample may hit a vertex of either mode: a label being switched
+    # holds both, and only the property lookup finds them all.
+    for sampled in ("custom", "property"):
+
+        def answer(groovy: str, sampled: str = sampled) -> list[Any]:
+            if f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in groovy:
+                return [target]
+            return _sample(sampled)(groovy)
+
         retriever = _retriever(configured)
-        with pytest.raises(StoreConfigurationError, match="indexing.reset: true"):
-            _run_retriever(retriever, _sample(stored))
+        sent = _run_retriever(retriever, answer)
+        assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+        # With each vertex's id, to tell the rewritten copy from the old.
+        assert retriever.projected[-1]["with_vertex_id"] is True
+        assert "being rewritten" in caplog.text
 
 
-def test_the_retriever_reads_a_label_being_switched(caplog) -> None:
-    def answer(groovy: str) -> list[Any]:
-        if f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in groovy:
-            return ["custom"]
-        return _sample("property")(groovy)
+def _row(vid: Any, item_id: str, path: int, name: str = "") -> dict[str, Any]:
+    return {
+        "node": {"id": [item_id], "name": [name or item_id]},
+        "path": [{"name": [f"p{i}"]} for i in range(path)],
+        "node_type": _LABEL,
+        "vertex_id": vid,
+    }
 
-    sent = _run_retriever(_retriever("custom"), answer)
-    assert sent[-1].startswith("g.V('Entity-default:e1'")
-    assert "being rewritten" in caplog.text
+
+@pytest.mark.parametrize("target", ["custom", "property"])
+def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
+    from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+
+    def vid(item_id: str, rewritten: bool) -> Any:
+        custom = rewritten == (target == "custom")
+        return vertex_id(_LABEL, item_id) if custom else f"uuid-{item_id}"
+
+    rows = [
+        _row(vid("e1", False), "e1", 1, "old"),
+        _row(vid("e1", True), "e1", 1, "new"),
+        # Reached over the old copy only: kept.
+        _row(vid("e2", False), "e2", 2),
+        # Reached over both: the rewritten copy only.
+        _row(vid("e3", True), "e3", 3, "new"),
+        _row(vid("e3", False), "e3", 2, "old"),
+    ]
+    kept = NeptuneRetriever._rewritten_copies(rows, _LABEL, target)
+    assert [(r["node"]["id"][0], r["node"]["name"][0]) for r in kept] == [
+        ("e1", "new"),
+        ("e2", "e2"),
+        ("e3", "new"),
+    ]
+    assert all("vertex_id" not in r for r in kept)
 
 
 def test_the_retriever_checks_a_matching_label_once() -> None:
     retriever = _retriever("custom")
     first = _run_retriever(retriever, _sample("custom"))
     second = _run_retriever(retriever, _sample("custom"))
-    assert len(first) == 2 and len(second) == 1
+    # The sample and the switch, then the expansion; then the expansion.
+    assert len(first) == 3 and len(second) == 1
 
 
 def test_the_retriever_checks_an_empty_label_again() -> None:
     retriever = _retriever("custom")
     _run_retriever(retriever, _sample(None))
-    with pytest.raises(StoreConfigurationError):
-        _run_retriever(retriever, _sample("property"))
+    sent = _run_retriever(retriever, _sample("property"))
+    assert sent[-1].startswith(_BY_PROPERTY)
 
 
 def test_the_local_graph_store_takes_the_setting_and_ignores_it(tmp_path) -> None:
@@ -526,3 +714,13 @@ def test_a_switch_to_property_ids_rewrites_no_custom_vertex_in_place(
     other.index_entities([Entity(id="e1", name="Vendor")], suffixes=["default"])
     (written,) = [g for op, g in graph.requests if op == "Entity indexing"]
     assert "has('build_tag'" not in written.split(".fold()")[0]
+
+
+def test_graph_expansion_seeds_each_id_once() -> None:
+    # g.V(a, a) looks a custom vertex id up, and expands it, twice.
+    from unified_kg_rag.adapters.retrievers.graph_expansion import (
+        GraphExpansionRetriever,
+    )
+
+    query = SearchQuery(query="", filters={"id": ["e2", "e1", "e2"]})
+    assert GraphExpansionRetriever._seed_ids(query) == ["e2", "e1"]

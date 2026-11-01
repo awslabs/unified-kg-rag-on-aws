@@ -130,18 +130,22 @@ jobs:
           version: "0.12.23"
           python-version: "3.12"
 
+      # Without the dev group too: its langchain-openai is an eval module,
+      # which would hide a judge that runs without the extra. The test group
+      # is the test runner alone.
       - name: Sync without extras
-        run: uv sync --locked
+        run: uv sync --locked --no-dev --group test
 
       - name: Check the extras are absent
         run: >-
-          uv run --frozen python -c "import importlib.util as u, sys;
-          present = [m for m in ('bokeh', 'datasets', 'pandas', 'pyvis', 'ragas')
+          uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
+          present = [m for m in ('bokeh', 'datasets', 'langchain_community',
+          'langchain_openai', 'pandas', 'pyvis', 'ragas')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end
         run: >-
-          uv run --frozen pytest -q -n auto
+          uv run --frozen --no-dev --group test pytest -q -n auto
           tests/unit/test_public_api.py
           tests/unit/test_evaluation_manager.py
           tests/unit/test_visualization_cli.py

@@ -13,6 +13,8 @@
 #   TinkerPop line (3.7) matches the gremlinpython client. Its init script
 #   indexes the "id" property the indexer looks vertices and edges up by, and
 #   its graph takes string vertex ids (indexing.neptune.vertex_ids: custom).
+#   TinkerGraph has no transactions: keep indexing.neptune.index_concurrency
+#   at 1 (the default), or a retried edge rewrite can leave a duplicate edge.
 #
 # - Ollama (profile "models", so the stores alone start without it): serves
 #   the language and embedding models of local mode. No model is pulled

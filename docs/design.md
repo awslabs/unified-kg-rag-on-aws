@@ -257,10 +257,16 @@ and the root facade imported only for `__version__`. Importing `pkg.mod`
 runs `pkg/__init__.py`, so the imports a package's `__init__` makes count
 for every module that imports from the package; outside the facade and the
 console-script launcher, a package module is never imported by a name
-string (`importlib.import_module`, `__import__`). Its list of allowed
-exceptions is empty, and each rule has a synthetic case it must catch. A
-clean-interpreter check pins the runtime side: importing evaluation or the
-RAG chain loads no store adapter, gremlin-python or opensearch-py.
+string (`importlib.import_module`, `__import__`, `pkgutil.resolve_name`,
+`importlib.util.find_spec`), and a dynamic import of a name the scan cannot
+read (a variable, a concatenation, a relative name) needs an entry saying
+what it imports. Its list of allowed exceptions is empty, and each rule has
+a synthetic case it must catch. A clean-interpreter check pins the runtime
+side, which the scan of edges cannot see (an allowed adapter module passing
+a backend on): importing any module of the application (the CLIs and the
+composition root aside), evaluation, the search strategies, the retrieval
+kernel or the ingestion adapters loads no vendor binding, port
+implementation, gremlin-python or opensearch-py.
 `tests/unit/test_domain_purity.py` checks the third-party side: no domain
 module loads an infrastructure package, even transitively.
 

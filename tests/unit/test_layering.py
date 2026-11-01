@@ -40,7 +40,16 @@ The rules:
   package would hide a dependency on the layer that defines it.
 * **Imports are static.** Only the facade and the console-script launcher
   (``_DYNAMIC_IMPORTERS``) import a package module by a name string: any
-  other dynamic import would be an edge a reader cannot see.
+  other dynamic import would be an edge a reader cannot see. A dynamic
+  import whose name the scan cannot read (a variable, a concatenation, a
+  relative name, an f-string that could name a package module) is allowed
+  only where ``_RUNTIME_NAMED_IMPORTS`` says what it imports.
+
+The scan sees edges, not what they load at run time: an allowed module can
+pass a backend on (an adapter module importing a store adapter, imported by
+the application). ``test_injected_modules_load_no_store_backend`` imports
+every module that has its backends injected in a clean interpreter and
+checks no backend is loaded.
 
 ``_ALLOWED`` lists deliberate exceptions, each with its reason. It is empty:
 keep it that way, or say there why an edge cannot follow the rules.
@@ -123,7 +132,21 @@ _PLUGIN_MAPS = {"adapters.evaluators": "evaluation.evaluation_manager"}
 # The modules that may import a package module by a name string: the facade
 # resolves its lazy names, the launcher imports the CLI its script names.
 _DYNAMIC_IMPORTERS = ("", "application.cli.launch")
-_DYNAMIC_IMPORT_CALLS = {"import_module", "__import__"}
+# importlib.import_module, __import__, pkgutil.resolve_name and
+# importlib.util.find_spec (which imports the parent packages of the name).
+_DYNAMIC_IMPORT_CALLS = {"import_module", "__import__", "resolve_name", "find_spec"}
+# The calls that import the module they name (find_spec of a name in a
+# variable only looks an optional extra up).
+_NAME_IMPORTING_CALLS = _DYNAMIC_IMPORT_CALLS - {"find_spec"}
+# Module -> what its dynamic imports of a name the scan cannot read import.
+_RUNTIME_NAMED_IMPORTS: dict[str, str] = {
+    "adapters.local.models": (
+        "import_optional: the [local]-extra module its caller names "
+        "(langchain_ollama, langchain_openai, sentence_transformers)"
+    ),
+}
+# What a dynamic import of a name the scan cannot read targets.
+_UNREAD = "<a name the scan cannot read>"
 
 # (importing module, imported module) -> why the edge is allowed.
 _ALLOWED: dict[tuple[str, str], str] = {}
@@ -168,20 +191,29 @@ def _is_module(root: Path, name: str) -> bool:
 
 
 def _dynamic_target(node: ast.Call) -> str | None:
-    """The module an ``import_module``/``__import__`` call names, if a
-    literal (or an f-string's literal head, up to its last dot)."""
+    """The module a dynamic import call names: a literal (``resolve_name``'s
+    without its ``:attribute``), or an f-string's literal head up to its last
+    dot; ``_UNREAD`` when the name could be a package module the scan cannot
+    read; None for other calls and for names outside the package."""
     func = node.func
     name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     if name not in _DYNAMIC_IMPORT_CALLS or not node.args:
         return None
     arg = node.args[0]
     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-        return arg.value
+        if arg.value.startswith("."):
+            return _UNREAD  # relative to a package given at run time
+        return arg.value.partition(":")[0]
     if isinstance(arg, ast.JoinedStr) and arg.values:
         head = arg.values[0]
         if isinstance(head, ast.Constant) and isinstance(head.value, str):
-            return head.value.rpartition(".")[0] or None
-    return None
+            text = head.value
+            if text.startswith(f"{PACKAGE}."):
+                return text.rpartition(".")[0] or None
+            # f"unstructured.partition.{x}" names no package module.
+            if not PACKAGE.startswith(text) and "." in text:
+                return None
+    return _UNREAD if name in _NAME_IMPORTING_CALLS else None
 
 
 def package_imports(root: Path = _PACKAGE_ROOT) -> Iterator[Import]:
@@ -194,6 +226,9 @@ def package_imports(root: Path = _PACKAGE_ROOT) -> Iterator[Import]:
             dynamic = False
             if isinstance(node, ast.Call):
                 if (literal := _dynamic_target(node)) is None:
+                    continue
+                if literal == _UNREAD:
+                    yield Import(module, _UNREAD, (), node.lineno, dynamic=True)
                     continue
                 targets = [(literal, ())]
                 dynamic = True
@@ -275,6 +310,13 @@ def _rule_broken(imp: Import) -> str | None:
     source, target = layer_of(imp.source), layer_of(imp.target)
     if source is None:
         return "module in no layer"
+    if imp.target == _UNREAD:
+        if imp.source in _DYNAMIC_IMPORTERS or imp.source in _RUNTIME_NAMED_IMPORTS:
+            return None
+        return (
+            "a dynamic import of a name the scan cannot read; import it "
+            "statically, or say what it imports in _RUNTIME_NAMED_IMPORTS"
+        )
     if imp.dynamic and imp.source not in _DYNAMIC_IMPORTERS:
         return "a dynamic import; import it statically"
     if not imp.target:
@@ -350,6 +392,10 @@ def test_every_layer_has_modules() -> None:
 def test_allowed_exceptions_are_still_needed() -> None:
     edges = {(imp.source, imp.target) for imp in package_imports()}
     assert set(_ALLOWED) <= edges, "remove the stale _ALLOWED entries"
+    unread = {imp.source for imp in package_imports() if imp.target == _UNREAD}
+    assert (
+        set(_RUNTIME_NAMED_IMPORTS) <= unread
+    ), "remove the stale _RUNTIME_NAMED_IMPORTS entries"
 
 
 def test_the_scan_sees_lazy_type_only_and_relative_imports(tmp_path: Path) -> None:
@@ -433,6 +479,18 @@ def test_each_rule_catches_its_violation(
         assert len(found) == 1 and rule in found[0], found
 
 
+@pytest.mark.parametrize("backend", _BACKENDS)
+@pytest.mark.parametrize(
+    "source", ["application/x.py", "adapters/search_strategies/x.py"]
+)
+def test_every_backend_is_injected(tmp_path: Path, backend: str, source: str) -> None:
+    path = tmp_path / source
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"from unified_kg_rag.{backend}.module import thing\n")
+    found = violations(tmp_path)
+    assert len(found) == 1 and "a backend; inject it" in found[0], found
+
+
 @pytest.mark.parametrize(
     ("source", "call", "rule"),
     [
@@ -449,6 +507,35 @@ def test_each_rule_catches_its_violation(
             "importlib.import_module(f'unified_kg_rag.application.cli.{name}')",
             None,
         ),
+        # Names the scan cannot read.
+        (
+            "domain/x.py",
+            "importlib.import_module('.aws.bedrock', 'unified_kg_rag.adapters')",
+            "cannot read",
+        ),
+        (
+            "domain/x.py",
+            "importlib.import_module('unified_kg_rag.' + 'adapters.aws.bedrock')",
+            "cannot read",
+        ),
+        ("domain/x.py", "importlib.import_module(name)", "cannot read"),
+        ("domain/x.py", "importlib.import_module(f'unified_kg_rag{name}')", "read"),
+        ("domain/x.py", "__import__(name)", "cannot read"),
+        ("domain/x.py", "pkgutil.resolve_name(name)", "cannot read"),
+        (
+            "domain/x.py",
+            "pkgutil.resolve_name('unified_kg_rag.adapters.aws.bedrock:X')",
+            "a dynamic import",
+        ),
+        (
+            "domain/x.py",
+            "importlib.util.find_spec('unified_kg_rag.adapters.aws.bedrock')",
+            "a dynamic import",
+        ),
+        # Outside the package, or only looked up.
+        ("domain/x.py", "import_module(f'unstructured.partition.{name}')", None),
+        ("domain/x.py", "importlib.util.find_spec(name)", None),
+        ("adapters/local/models.py", "importlib.import_module(name)", None),
     ],
 )
 def test_dynamic_imports_are_flagged(
@@ -530,40 +617,84 @@ def test_package_init_edges_count_for_the_importer(
         assert all("/__init__)" in v for v in found), found
 
 
-# Third-party store clients and the store adapters that must stay unloaded
-# by the modules that receive their stores through ``Providers``.
+# Third-party store clients and the backends (vendor bindings and port
+# implementations) that must stay unloaded by the modules that receive them
+# through ``Providers``.
 _STORE_MODULES = (
     "gremlin_python",
     "opensearchpy",
-    "unified_kg_rag.adapters.storage.neptune_indexer",
-    "unified_kg_rag.adapters.storage.opensearch_indexer",
-    "unified_kg_rag.adapters.storage.sqlite_graph_indexer",
-    "unified_kg_rag.adapters.retrievers",
-    "unified_kg_rag.adapters.aws.neptune",
-    "unified_kg_rag.adapters.aws.opensearch",
+    *(f"{PACKAGE}.{backend}" for backend in _BACKENDS),
+)
+# The modules that have their backends injected: every module of these
+# packages but the composition roots.
+_INJECTED = (
+    "application",
+    "evaluation",
+    *_BACKEND_FREE_ADAPTERS,
 )
 
 
-@pytest.mark.parametrize(
-    "module",
-    ["unified_kg_rag.evaluation", "unified_kg_rag.application.retrieval.rag_chain"],
-)
-def test_injected_modules_load_no_store_backend(module: str) -> None:
-    """The runtime side of the static rules: what a clean interpreter has
-    loaded after importing a module that has its stores injected."""
-    script = (
-        "import importlib, json, sys\n"
-        f"importlib.import_module({module!r})\n"
-        f"watched = {_STORE_MODULES!r}\n"
-        "print(json.dumps(sorted(w for w in watched if any(\n"
-        "    m == w or m.startswith(w + '.') for m in sys.modules))))\n"
-    )
+def _injected_modules(root: Path = _PACKAGE_ROOT) -> list[str]:
+    modules = sorted(_module_name(f, root) for f in root.rglob("*.py"))
+    return [
+        f"{PACKAGE}.{m}"
+        for m in modules
+        if _within(m, _INJECTED) and not _within(m, _COMPOSITION_ROOTS)
+    ]
+
+
+# Imports each module in turn and reports the watched modules that import
+# loaded first (one interpreter for all: a backend any of them loads is in
+# sys.modules after it). A module whose optional dependency is missing (a
+# core install without the eval extra) is skipped.
+_LOADED_BY = """
+import importlib, json, sys
+watched, loaded = {watched!r}, {{}}
+for module in {modules!r}:
+    before = set(sys.modules)
+    try:
+        importlib.import_module(module)
+    except ModuleNotFoundError as e:
+        if (e.name or "").startswith("unified_kg_rag"):
+            raise
+        continue
+    new = set(sys.modules) - before
+    hit = sorted(w for w in watched if any(m == w or m.startswith(w + ".") for m in new))
+    if hit:
+        loaded[module] = hit
+print(json.dumps(loaded))
+"""
+
+
+def _loaded_by(modules: list[str]) -> dict[str, list[str]]:
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [
+            sys.executable,
+            "-c",
+            _LOADED_BY.format(watched=_STORE_MODULES, modules=modules),
+        ],
         capture_output=True,
         text=True,
         check=True,
         timeout=120,
     )
-    loaded = json.loads(result.stdout.strip().splitlines()[-1])
-    assert not loaded, f"importing {module} loaded {loaded}"
+    return dict(json.loads(result.stdout.strip().splitlines()[-1]))
+
+
+def test_injected_modules_load_no_store_backend() -> None:
+    """The runtime side of the static rules: what a clean interpreter has
+    loaded after importing each module that has its backends injected. The
+    scan sees edges; this sees a backend an allowed module passes on."""
+    modules = _injected_modules()
+    assert f"{PACKAGE}.application.retrieval.rag_chain" in modules
+    assert f"{PACKAGE}.evaluation" in modules
+    assert not any(".application.cli" in m or m.endswith("bootstrap") for m in modules)
+    loaded = _loaded_by(modules)
+    assert not loaded, f"backends loaded by injected modules: {loaded}"
+
+
+def test_the_runtime_check_sees_a_backend_passed_on() -> None:
+    # One module loads a store client (as an allowed adapter module passing
+    # a backend on would); the check names it, not the clean ones.
+    loaded = _loaded_by(["json", "gremlin_python.process.traversal", "csv"])
+    assert loaded == {"gremlin_python.process.traversal": ["gremlin_python"]}

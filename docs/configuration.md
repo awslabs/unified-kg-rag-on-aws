@@ -22,7 +22,8 @@ the keys most deployments set.
   mapping value takes JSON. The standard AWS variables also apply when nothing else sets the key: `AWS_PROFILE` fills `aws.profile_name`, `AWS_REGION` fills `aws.region_name`.
 - **Unknown keys** fail the load (`--allow-unknown-keys` turns that into a
   warning). Keys that moved are refused with their new place; see
-  [Moved keys](#moved-keys).
+  [Moved keys](#moved-keys). Removed keys load with a warning and are
+  ignored; see [Removed keys](#removed-keys).
 
 ## Contents
 
@@ -44,6 +45,7 @@ the keys most deployments set.
 - [`custom_prompts`](#custom_prompts)
 - [Long defaults](#long-defaults)
 - [Moved keys](#moved-keys)
+- [Removed keys](#removed-keys)
 
 ## Top-level keys
 
@@ -515,7 +517,8 @@ Configuration settings for Neptune graph database indexing
 | `max_results_per_hop` | integer (≥ 1) | `50` | Maximum number of neighbours one node contributes per traversal hop, so a hub entity cannot fan the expansion out unbounded |
 | `entity_importance_source` | `"rank"` \| `"degree"` \| `"none"` | `"rank"` | Graph-expansion relevance orders entities by distance from the seeds (seeds first) and, at the same distance, by this importance: 'rank' (the indexed entity rank, its degree), 'degree' (the entity's edges counted at query time, as MS GraphRAG ranks entities; read as 'rank' under a document filter, whose walk runs over the search store) or 'none' (a neutral 0.5 for every entity, so expansion ranks by distance alone). |
 | `traversal_fetch_multiplier` | integer (≥ 1) | `3` | Graph expansion (the graph walk, or under a document filter the walk over the relationships index) reaches up to top_k * retrieval_multiplier * this many entities besides the seeds, split evenly across the seeds (each seed reaches at most its share), ranks them by relevance, then keeps every seed plus the top top_k * retrieval_multiplier of the others. 1 = no over-fetch: every reached entity is kept, with no cut after ranking. |
-| `vertex_ids` | `"property"` \| `"custom"` | `"property"` | How Neptune vertices are identified. 'property': the vertex id Neptune assigns, and the item id in an 'id' property that every lookup filters on. 'custom': the vertex id is '<label>:<item id>' (e.g. 'Entity-default:<entity id>'), so lookups go by vertex id, which Neptune serves faster and with fewer ConcurrentModificationExceptions than a property lookup; the 'id' property is still written. Edges are unchanged. A graph is built in one mode: a run or query in the other mode is refused, and switching needs one full build (indexing.reset: true with incremental indexing on), which rewrites the graph. Neptune and Gremlin Server only: the embedded SQLite graph store ignores it. |
+| `deterministic_order` | boolean | `true` | Neptune graph expansion takes each vertex's max_results_per_hop neighbours in id order, so two builds of one graph (edges written in another order) expand to the same entities: reproducible results across rebuilds. The cost: each expanded vertex has all its neighbours read and sorted before the cut, which grows with hub degree (Gremlin Server, 2,500-neighbour hubs at the defaults: 6.8 to 23.2 ms per query; 60-neighbour hubs: 4.5 to 4.8 ms; Neptune hub latency is unmeasured). false: the first neighbours the store returns (an order Neptune does not specify), so a rebuild can change the results. Ties between equally short paths break by content either way. The embedded SQLite graph store always takes neighbours by id and ignores it. |
+| `vertex_ids` | `"property"` \| `"custom"` | `"property"` | How Neptune vertices are identified. 'property': the vertex id Neptune assigns, and the item id in an 'id' property that every lookup filters on. 'custom': the vertex id is '<label>:<item id>' (e.g. 'Entity-default:<entity id>'), so lookups go by vertex id, which Neptune serves faster and with fewer ConcurrentModificationExceptions than a property lookup; the 'id' property is still written. Edges are unchanged. A graph is built in one mode: an ingestion run in the other mode is refused, and switching needs one full build (indexing.reset: true with incremental indexing on), which rewrites the graph. A query in the other mode, or during the switch, looks vertices up by the 'id' property instead (logged once). Neptune and Gremlin Server only: the embedded SQLite graph store ignores it. |
 
 ### `indexing.opensearch`
 
@@ -888,7 +891,36 @@ These keys are refused at load with the key that replaced them.
 | `indexing.opensearch.embedding_model_id` | `models.embedding.model_id` |
 | `indexing.opensearch.embedding_dimension` | `models.embedding.dimension` |
 | `evaluation.embedding_model_id` | `models.embedding.model_id` |
-| `graph.visualization.embeddings` | `models.embedding.model_id` |
 | `providers.rerank.model_id` | `models.rerank` |
 | `aws.dynamodb.enabled` | `providers.doc_status.enabled` |
 | `search.reranking.rerank_model_id` | `models.rerank` |
+| `processing.max_attempts` | `retry.max_attempts` |
+| `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
+| `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
+| `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
+| `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
+| `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
+| `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
+| `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
+| `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
+| `search.store_max_attempts` | `retry.query_store_max_attempts` |
+| `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+
+## Removed keys
+
+These keys, and any key under them, load with a WARNING and are ignored.
+
+| Former key | Why |
+|---|---|
+| `aws.bedrock.guardrail.apply_to` | the guardrail screens the user query and the answer only; ingestion and evaluation models are never guarded |
+| `indexing.cross_run_merge` | an incremental run always merges its delta into the stored graph; turning that off overwrote entities other documents still cite |
+| `graph.visualization.enabled` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.embedding_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.layout_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.layout` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `graph.visualization.embeddings` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
+| `indexing.opensearch.persist_embedding_cache` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
+| `indexing.opensearch.embedding_cache_s3_key` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
+| `search.local_search.type_quota` | the fusion slots local search and DRIFT reserve per section type are fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager.type_budgets sets each type's share of the context |
+| `cache.chunking` | a stage-cache entry of more than 1,000 items or 50 MB is always written in chunk files |
+| `search.lightrag_search.structured_keyword_output` | keyword extraction parses the model's text answer; the structured output pilot was removed before any release |

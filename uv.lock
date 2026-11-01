@@ -4286,6 +4286,15 @@ dev = [
     { name = "snowballstemmer" },
     { name = "types-boto3", extra = ["full"] },
 ]
+test = [
+    { name = "hypothesis" },
+    { name = "langchain-ollama" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-mock" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4358,6 +4367,15 @@ dev = [
     { name = "ruff", specifier = ">=0.16.1" },
     { name = "snowballstemmer", specifier = ">=2.2" },
     { name = "types-boto3", extras = ["full"], specifier = ">=1.43.71" },
+]
+test = [
+    { name = "hypothesis", specifier = ">=6.165.2" },
+    { name = "langchain-ollama", specifier = ">=1.0.0,<2.0.0" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-mock", specifier = ">=3.12.0" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
 
 [[package]]

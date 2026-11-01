@@ -327,6 +327,9 @@ Differences from Neptune:
   incremental run stops before writing and asks for `indexing.reset: true`
   (or deleting the registry).
 - A list property written at vertex creation keeps duplicate values.
+- TinkerGraph has no transactions: keep `indexing.neptune.index_concurrency`
+  at 1 (the default). With concurrent writers a retried edge rewrite can
+  leave a duplicate edge.
 - Writes look elements up by their `id` property, which the compose file's
   server indexes (without the index it slows down as the graph grows), or
   with `indexing.neptune.vertex_ids: custom` vertices by their vertex id,
@@ -1769,6 +1772,12 @@ flight (this run's, or those of the run whose expired lease it took over),
   documents. On Neptune, `indexing.neptune.vertex_ids: custom` looks vertices
   up by vertex id rather than by the `id` property. Switching an existing
   graph needs one full build ([Custom Neptune vertex ids](operations.md#custom-neptune-vertex-ids)).
+  Graph expansion takes a hub's neighbours in id order
+  (`indexing.neptune.deterministic_order: true`, the default), so a rebuild
+  returns the same results, at the cost of reading every neighbour of each
+  expanded hub (on Gremlin Server, 6.8 to 23.2 ms per query for
+  2,500-neighbour hubs; unmeasured on Neptune). If hub-heavy queries are
+  too slow, `false` takes the first neighbours Neptune returns instead.
 - **Multilingual:** see [Multilingual ingestion](#multilingual-ingestion).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](#index-suffix).

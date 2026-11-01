@@ -308,6 +308,8 @@ Neptune과 다른 점은 다음과 같습니다.
   실행은 아무것도 쓰기 전에 멈추고 `indexing.reset: true`(또는 레지스트리 삭제)를
   요청합니다.
 - 정점을 만들 때 쓴 목록 속성은 중복 값을 유지합니다.
+- TinkerGraph에는 트랜잭션이 없으므로 `indexing.neptune.index_concurrency`는 1(기본값)로
+  두세요. 여러 작업자가 동시에 쓰면 재시도한 엣지 다시 쓰기가 중복 엣지를 남길 수 있습니다.
 - 쓰기는 `id` 속성으로 요소를 찾으며 compose 파일의 서버는 이 속성에 인덱스를 만듭니다
   (인덱스가 없으면 그래프가 커질수록 느려짐). `indexing.neptune.vertex_ids: custom`이면
   정점은 정점 id로 찾고, compose 파일의 그래프는 문자열 정점 id를 받습니다. 개발용 규모의
@@ -1566,6 +1568,11 @@ custom_prompts:
   듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
   대신 정점 id로 찾습니다. 기존 그래프를 전환하려면 전체 빌드를 한 번 실행해야
   합니다([운영 런북: 사용자 지정 Neptune 정점 id](operations.md#custom-neptune-vertex-ids)).
+  그래프 확장은 허브의 이웃을 id 순서로 가져오므로(`indexing.neptune.deterministic_order:
+  true`, 기본값) 다시 빌드해도 결과가 같습니다. 대신 확장하는 허브마다 이웃을 모두
+  읽습니다(Gremlin Server에서 이웃 2,500개 허브는 질의당 6.8 ms에서 23.2 ms로 늘었고,
+  Neptune에서는 측정하지 않음). 허브가 많은 질의가 너무 느리면 `false`로 두어 Neptune이
+  먼저 돌려주는 이웃을 쓰세요.
 - **다국어:** [다국어 수집](#다국어-수집)을 참고하세요.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
   [인덱스 접미사](#인덱스-접미사)를 따로 두세요.

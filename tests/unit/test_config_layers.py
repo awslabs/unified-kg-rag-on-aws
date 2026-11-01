@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import SecretStr
 
 from unified_kg_rag.application.cli import (
@@ -418,6 +420,95 @@ def test_an_index_name_part_set_in_code_is_checked_too(
         setattr(owner, field, "V2")
     setattr(owner, field, "tenant_b-2")
     assert getattr(owner, field) == "tenant_b-2"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        # A string length_unit picked the character splitter (an `is` check)
+        # while the stage-cache key read tokens.
+        (lambda c: c.processing.chunking, "length_unit", "words"),
+        (lambda c: c.processing.chunking, "max_chunk_size", 0),
+        (lambda c: c.indexing.neptune, "vertex_ids", "Custom"),
+        (lambda c: c.indexing.neptune, "max_hops", 0),
+        (lambda c: c.retry, "max_attempts", 0),
+        (lambda c: c.retry, "graph_store_max_attempts", 0),
+        (lambda c: c.aws.bedrock.guardrail, "version", ""),
+        (lambda c: c.aws.bedrock.guardrail.contextual_grounding, "enabled", "maybe"),
+    ],
+)
+def test_the_new_sections_check_settings_set_in_code(
+    section: Any, field: str, value: Any
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        setattr(section(Config()), field, value)
+
+
+def test_a_chunk_length_unit_set_in_code_is_the_enum() -> None:
+    from unified_kg_rag.domain.models.config import ChunkLengthUnit
+
+    chunking = Config().processing.chunking
+    chunking.length_unit = "tokens"  # type: ignore[assignment]
+    assert chunking.length_unit is ChunkLengthUnit.TOKENS
+
+
+def test_check_output_turned_off_under_grounding_in_code_is_refused() -> None:
+    from pydantic import ValidationError
+
+    guardrail = Config().aws.bedrock.guardrail
+    guardrail.contextual_grounding.enabled = True
+    with pytest.raises(ValidationError, match="requires check_output"):
+        guardrail.check_output = False
+
+
+def test_settings_that_do_nothing_are_warned_at_load(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "aws": {
+                    "bedrock": {
+                        "guardrail": {"contextual_grounding": {"enabled": True}}
+                    }
+                },
+                "processing": {"chunking": {"length_unit": "tokens"}},
+            }
+        )
+    )
+    with caplog.at_level(logging.WARNING):
+        ConfigLoader(path).load_config()
+    messages = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Config: ")
+    ]
+    assert len(messages) == 2, messages
+    assert "no grounding check runs" in messages[0]
+    assert "character default" in messages[1]
+    # Sized in tokens, or with a guardrail: nothing to warn.
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "aws": {
+                    "bedrock": {
+                        "guardrail": {
+                            "identifier": "gr-1",
+                            "contextual_grounding": {"enabled": True},
+                        }
+                    }
+                },
+                "processing": {
+                    "chunking": {"length_unit": "tokens", "max_chunk_size": 2000}
+                },
+            }
+        )
+    )
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        ConfigLoader(path).load_config()
+    assert not [r for r in caplog.records if r.getMessage().startswith("Config: ")]
 
 
 def test_opensearch_indexing_settings_set_in_code_are_checked_too() -> None:

@@ -101,6 +101,10 @@ def is_connection_lost(exc: BaseException) -> bool:
     return False
 
 
+# What TinkerGraph answers when its vertex id manager (Long by default)
+# cannot convert a custom string vertex id: every lookup and write by one.
+_ID_MANAGER_REFUSAL = "Expected an id that is convertible to"
+
 # The setting a query's Neptune requests are bounded by.
 QUERY_TIMEOUT_SETTING = "search.store_timeout_seconds"
 
@@ -134,6 +138,17 @@ def neptune_request_error(
             f"Neptune denied the request: {exc}. Check that the caller's IAM "
             "policy allows the neptune-db actions the query needs (such as "
             "neptune-db:ReadDataViaQuery)."
+        )
+    if isinstance(exc, GremlinServerError) and _ID_MANAGER_REFUSAL in str(
+        exc.status_message
+    ):
+        return StoreConfigurationError(
+            "The graph store refused a string vertex id "
+            "(indexing.neptune.vertex_ids: custom): a Gremlin Server's "
+            "TinkerGraph takes them only with "
+            "gremlin.tinkergraph.vertexIdManager=ANY, which "
+            "docker/compose.local.yaml sets. Set it, or vertex_ids: property. "
+            f"Server error: {str(exc.status_message).splitlines()[0]}"
         )
     if is_timeout(exc):
         within = f" within {timeout_seconds} s" if timeout_seconds else ""

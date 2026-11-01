@@ -20,7 +20,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     neptune_request_error,
     sample_vertex_query,
     stored_vertex_id_mode,
-    vertex_id_mode_error,
+    vertex_id,
     vertex_id_switch_query,
     vertex_ids,
 )
@@ -30,7 +30,7 @@ from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
-from unified_kg_rag.shared.exceptions import StoreConfigurationError
+from unified_kg_rag.shared.logging import warn_once
 
 logger = get_logger(__name__)
 
@@ -67,7 +67,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # reranking and every other strategy need. Created on first use.
         self._executor: ThreadPoolExecutor | None = None
         self._closed = False
-        # indexing.neptune.vertex_ids: the labels found built in this mode.
+        # indexing.neptune.vertex_ids: the labels found built in this mode
+        # (and not being switched).
         self._checked_labels: set[str] = set()
 
     def _is_closed(self) -> bool:
@@ -188,7 +189,11 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # the outer dedup() keeps the total to distinct entities on both.
         # Within a seed, local(both().limit(n)) caps how many neighbours any
         # one node contributes per hop (max_results_per_hop) so a hub cannot
-        # fan out unbounded. The seeds come back through the identity()
+        # fan out unbounded: its first n by id, as the embedded store takes
+        # them, not the first n the store happens to keep (two builds of one
+        # graph, with their edges written in another order, expanded to
+        # other entities); indexing.neptune.deterministic_order: false takes
+        # the store's first n, without reading the rest of a hub. The seeds come back through the identity()
         # branch (path length 1, the top relevance band, never cut);
         # repeat().emit() emits from the first hop on, never the seed itself,
         # and the expansion excludes the seeds so it spends its budget on new
@@ -202,24 +207,25 @@ class NeptuneRetriever(GraphExpansionRetriever):
         with_degree = self._neptune_config.entity_importance_source == "degree"
         if not seed_ids:
             return []
-        await self._check_vertex_ids(entity_label)
-        custom_ids = self._neptune_config.vertex_ids == CUSTOM_VERTEX_IDS
+        custom_ids, switching = await self._vertex_lookup(entity_label)
 
         def seeds(g: GraphTraversalSource) -> GraphTraversal:
             if custom_ids:
                 return g.V(*vertex_ids(entity_label, [str(s) for s in seed_ids]))
             return g.V().hasLabel(entity_label).has("id", P.within(seed_ids))
 
+        def neighbours() -> GraphTraversal:
+            reached = __.both().hasLabel(entity_label)
+            if self._neptune_config.deterministic_order:
+                reached = reached.order().by("id")
+            return reached.limit(self._max_results_per_hop)
+
         def build(g: GraphTraversalSource) -> Traversal:
             traversal = seeds(g).union(
                 __.identity(),
                 __.local(
                     __.repeat(
-                        __.local(
-                            __.both()
-                            .hasLabel(entity_label)
-                            .limit(self._max_results_per_hop)
-                        )
+                        __.local(neighbours())
                         .has("id", P.without(seed_ids))
                         .dedup()
                         .limit(per_seed_limit)
@@ -232,55 +238,126 @@ class NeptuneRetriever(GraphExpansionRetriever):
             )
             traversal = self._apply_filters(traversal, filters)
             return self._with_projection(
-                traversal, degree_label=entity_label if with_degree else None
+                traversal,
+                degree_label=entity_label if with_degree else None,
+                with_vertex_id=switching is not None,
             )
 
-        return await self._execute_traversal(build)
+        rows = await self._execute_traversal(build)
+        if switching is not None:
+            return self._rewritten_copies(rows, entity_label, switching)
+        return rows
 
-    async def _check_vertex_ids(self, label: str) -> None:
-        """Refuse a ``label`` built with the other vertex-id mode.
+    async def _vertex_lookup(self, label: str) -> tuple[bool, str | None]:
+        """How the expansion finds ``label``'s vertices: by custom vertex id
+        or by the ``id`` property, and the mode a full build is switching the
+        label to (``None``: no switch).
 
-        Checked on the first query that finds the label non-empty: its seeds
-        would be looked up the wrong way and found nowhere, a "no results"
-        for every query. While a full build switches the label (its switch
-        vertex is stored) the query goes on over what it has rewritten.
+        Lookups go by custom vertex id only where every vertex has one: the
+        configured mode is ``custom`` and the label is empty or was built so,
+        and no build is switching it. Otherwise they go by the ``id``
+        property, which vertices of both modes have, with a WARNING once:
+        a label of the other mode (the query service switched before the
+        full build's first write, or the build before the query service) is
+        read as it is, and one being switched is read whole, the rewritten
+        and the not yet rewritten vertices (see :meth:`_rewritten_copies`).
+        Refusing the label failed every graph expansion until the build
+        ended; the indexer still refuses writes of the other mode.
 
-        Raises:
-            StoreConfigurationError: ``label`` holds the other mode's vertices.
+        A label found settled in the configured mode is not checked again;
+        any other is checked on each query, so lookups follow once a build
+        has rewritten it.
         """
-        if label in self._checked_labels:
-            return
         mode = self._neptune_config.vertex_ids
+        custom = mode == CUSTOM_VERTEX_IDS
+        if label in self._checked_labels:
+            return custom, None
         stored = stored_vertex_id_mode(
             label, await self._execute_traversal(sample_vertex_query(label))
         )
         if stored is None:
-            return
-        if stored != mode:
-            switching = await self._execute_traversal(vertex_id_switch_query(label))
-            if not switching:
-                raise StoreConfigurationError(vertex_id_mode_error(label, stored, mode))
-            logger.warning(
+            return custom, None
+        switching = await self._execute_traversal(vertex_id_switch_query(label))
+        if switching:
+            target = str(switching[0])
+            warn_once(
+                logger,
+                f"neptune-vertex-id-switch:{label}:{target}",
                 "Neptune label '%s' is being rewritten with vertex_ids '%s': "
-                "graph expansion sees only its %s vertices",
+                "graph expansion looks its vertices up by their id property "
+                "until the full build ends (rewritten vertices win over "
+                "their old copies)",
                 label,
-                switching[0],
-                mode,
+                target,
             )
-            return
+            return False, target
+        if stored != mode:
+            warn_once(
+                logger,
+                f"neptune-vertex-id-mode:{label}:{stored}",
+                "Neptune label '%s' was built with vertex_ids '%s', but this "
+                "query uses '%s': graph expansion looks its vertices up by "
+                "their id property (slower) until a full build with "
+                "vertex_ids: %s rewrites it, or set vertex_ids back to '%s'",
+                label,
+                stored,
+                mode,
+                mode,
+                stored,
+            )
+            return False, None
         self._checked_labels.add(label)
+        return custom, None
+
+    @staticmethod
+    def _rewritten_copies(
+        rows: list[Any], label: str, target: str
+    ) -> list[dict[str, Any]]:
+        """``rows`` (projected with each vertex's ``vertex_id``) without the
+        old copy of a vertex whose rewritten copy came back too.
+
+        A label a full build is switching to ``target`` holds a vertex it
+        has rewritten twice, under its old and its new vertex id, with its
+        old and its new edges, until the sweep drops the old copy; the
+        rewritten one is the one whose vertex id is of the ``target`` mode.
+        A vertex not rewritten yet keeps its one (old) copy.
+        """
+
+        def item_id(row: dict[str, Any]) -> str | None:
+            ids = (row.get("node") or {}).get("id") or []
+            return str(ids[0]) if ids else None
+
+        def rewritten(row: dict[str, Any]) -> bool:
+            item = item_id(row)
+            if item is None:
+                return False
+            custom = str(row.get("vertex_id")) == vertex_id(label, item)
+            return custom == (target == CUSTOM_VERTEX_IDS)
+
+        dict_rows = [row for row in rows if isinstance(row, dict)]
+        new = {item_id(row) for row in dict_rows if rewritten(row)}
+        kept: list[dict[str, Any]] = []
+        for row in dict_rows:
+            if rewritten(row) or item_id(row) not in new:
+                kept.append({k: v for k, v in row.items() if k != "vertex_id"})
+        return kept
 
     @staticmethod
     def _with_projection(
-        traversal: GraphTraversal, degree_label: str | None = None
+        traversal: GraphTraversal,
+        degree_label: str | None = None,
+        with_vertex_id: bool = False,
     ) -> GraphTraversal:
         """Project each vertex; with ``degree_label``, also its degree: its
         edges to entities of that label (an older build's ``MemberOf`` edges
-        to communities are not relationships)."""
+        to communities are not relationships); with ``with_vertex_id``, its
+        vertex id."""
         # `rank` is what the indexer writes on entity vertices (see
         # NeptuneIndexer.index_entities).
         with_degree = degree_label is not None
         keys = ["node", "path", "node_type"] + (["degree"] if with_degree else [])
+        if with_vertex_id:
+            keys.append("vertex_id")
         projected = (
             traversal.project(*keys)
             .by(__.value_map("id", "name", "description", "rank", "text_unit_ids"))
@@ -289,6 +366,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
         )
         if degree_label is not None:
             projected = projected.by(__.both().hasLabel(degree_label).count())
+        if with_vertex_id:
+            projected = projected.by(__.id_())
         return projected
 
     async def _execute_traversal(
