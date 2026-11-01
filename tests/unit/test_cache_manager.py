@@ -33,8 +33,19 @@ class _Item(BaseModel):
     value: int
 
 
-def _manager(tmp_path: Path, **kwargs) -> CacheManager:  # noqa: ANN003
-    return CacheManager(Config(), cache_directory=tmp_path, **kwargs)
+def _manager(
+    tmp_path: Path,
+    *,
+    chunk_items: int | None = None,
+    max_file_bytes: int | None = None,
+    **kwargs,  # noqa: ANN003
+) -> CacheManager:
+    manager = CacheManager(Config(), cache_directory=tmp_path, **kwargs)
+    if chunk_items is not None:
+        manager.CHUNK_ITEMS = chunk_items  # type: ignore[misc]
+    if max_file_bytes is not None:
+        manager.MAX_FILE_BYTES = max_file_bytes  # type: ignore[misc]
+    return manager
 
 
 class TestKeyAndDirConstruction:
@@ -46,10 +57,6 @@ class TestKeyAndDirConstruction:
         target = tmp_path / "nested" / "cache"
         CacheManager(Config(), cache_directory=target)
         assert target.exists()
-
-    def test_max_file_size_converted_to_bytes(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, max_file_size_mb=2)
-        assert mgr.max_file_size_bytes == 2 * 1024 * 1024
 
 
 class TestSingleFileRoundTrip:
@@ -98,21 +105,21 @@ class TestSingleFileRoundTrip:
 
 class TestChunking:
     def test_list_over_chunk_size_is_chunked(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=3)
+        mgr = _manager(tmp_path, chunk_items=3)
         data = list(range(10))  # > chunk_size 3 -> ceil(10/3) = 4 chunks
         entry = mgr.save_stage_result(data, "big", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is True
         assert entry.metadata["chunk_count"] == 4
 
     def test_chunked_round_trip_preserves_order_and_items(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=3)
+        mgr = _manager(tmp_path, chunk_items=3)
         data = list(range(10))
         mgr.save_stage_result(data, "big", STAGE, PIPELINE)
         loaded = mgr.load_stage_result("big", PIPELINE)
         assert loaded == data
 
     def test_chunked_files_written_with_index_naming(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=2)
+        mgr = _manager(tmp_path, chunk_items=2)
         mgr.save_stage_result([1, 2, 3, 4, 5], "c", STAGE, PIPELINE)
         stage_dir = tmp_path / PIPELINE / STAGE
         assert (stage_dir / "c_chunk_0000.json").exists()
@@ -120,7 +127,7 @@ class TestChunking:
         assert (stage_dir / "c_chunk_0002.json").exists()
 
     def test_small_list_below_threshold_not_chunked(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=1000)
+        mgr = _manager(tmp_path, chunk_items=1000)
         entry = mgr.save_stage_result([1, 2, 3], "small", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is False
 
@@ -129,7 +136,7 @@ class TestChunking:
         # while the write uses serialize_data(indent=2), undershooting the on-disk
         # size. A list UNDER chunk_size but whose indented bytes exceed the file
         # limit must still chunk. Each item is a dict so indent=2 inflates size.
-        mgr = _manager(tmp_path, chunk_size=100_000, max_file_size_mb=1)
+        mgr = _manager(tmp_path, chunk_items=100_000, max_file_bytes=1024 * 1024)
         # ~8000 dicts; indented JSON comfortably exceeds 1 MB (well above the
         # ~946 KB a smaller set produced) so the size-based trigger fires.
         data = [{"id": i, "v": "x" * 200} for i in range(8000)]
@@ -138,19 +145,14 @@ class TestChunking:
         # Round-trips intact despite size-triggered chunking.
         assert mgr.load_stage_result("bysize", PIPELINE) == data
 
-    def test_chunking_disabled_keeps_single_file(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=2, enable_chunking=False)
-        entry = mgr.save_stage_result([1, 2, 3, 4, 5], "k", STAGE, PIPELINE)
-        assert entry.metadata["is_chunked"] is False
-
     def test_chunked_max_items_truncates_load(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=2)
+        mgr = _manager(tmp_path, chunk_items=2)
         mgr.save_stage_result(list(range(10)), "c", STAGE, PIPELINE)
         loaded = mgr.load_stage_result("c", PIPELINE, max_items=3)
         assert loaded == [0, 1, 2]
 
     def test_chunked_filter_applied_on_load(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=2)
+        mgr = _manager(tmp_path, chunk_items=2)
         mgr.save_stage_result(list(range(10)), "c", STAGE, PIPELINE)
         loaded = mgr.load_stage_result("c", PIPELINE, chunk_filter=lambda x: x % 2 == 0)
         assert loaded == [0, 2, 4, 6, 8]
@@ -158,7 +160,7 @@ class TestChunking:
     def test_estimated_size_threshold_triggers_chunking(self, tmp_path: Path) -> None:
         # Below chunk_size count, but each item is large enough that the
         # estimated total exceeds the tiny max_file_size limit -> chunk.
-        mgr = _manager(tmp_path, chunk_size=10000, max_file_size_mb=0)
+        mgr = _manager(tmp_path, chunk_items=10000, max_file_bytes=0)
         data = ["x" * 500 for _ in range(20)]
         entry = mgr.save_stage_result(data, "fat", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is True
@@ -280,7 +282,7 @@ class TestIntegrity:
     """A damaged entry is a miss (recompute), never a partial hit."""
 
     def _chunked(self, tmp_path: Path) -> CacheManager:
-        mgr = _manager(tmp_path, chunk_size=3)
+        mgr = _manager(tmp_path, chunk_items=3)
         mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
         return mgr
 
@@ -328,7 +330,7 @@ class TestIntegrity:
         assert mgr.cache_exists("big", PIPELINE) is False
 
     def test_chunks_that_fail_validation_are_a_miss(self, tmp_path: Path) -> None:
-        mgr = _manager(tmp_path, chunk_size=1)
+        mgr = _manager(tmp_path, chunk_items=1)
         mgr.save_stage_result(
             [{"name": "a", "value": 1}, {"x": 2}], "c", STAGE, PIPELINE
         )
@@ -383,7 +385,7 @@ class TestRelocation:
 
     def test_copied_cache_directory_still_hits(self, tmp_path: Path) -> None:
         original = tmp_path / "original"
-        mgr = _manager(original, chunk_size=3)
+        mgr = _manager(original, chunk_items=3)
         mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
         mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
 
@@ -391,7 +393,7 @@ class TestRelocation:
         shutil.copytree(original, moved)
         shutil.rmtree(original)
 
-        restored = _manager(moved, chunk_size=3)
+        restored = _manager(moved, chunk_items=3)
         assert restored.cache_exists("single", PIPELINE) is True
         assert restored.cache_exists("big", PIPELINE) is True
         assert restored.load_stage_result("single", PIPELINE) == {"x": 1}

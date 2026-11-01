@@ -79,6 +79,11 @@ class GroundingCheck(BaseModel):
         description="Checks whose score fell below their threshold, whether "
         "or not the guard blocked the answer for it",
     )
+    blocked: bool = Field(
+        default=False,
+        description="Whether the guard blocked the answer for a failed check "
+        "(False for a detect-only failure)",
+    )
 
 
 class GuardVerdict(BaseModel):

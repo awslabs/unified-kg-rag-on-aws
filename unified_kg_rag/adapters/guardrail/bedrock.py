@@ -92,10 +92,13 @@ def grounding_from_response(response: dict[str, Any]) -> GroundingCheck:
     """The contextual grounding scores in an ApplyGuardrail ``response``.
 
     A check fails when Bedrock detected it (score below the threshold) or
-    blocked for it, so a detect-only policy still reports the failure. No
-    entry at all means the guardrail has no contextual grounding policy.
+    blocked for it, so a detect-only policy still reports the failure; the
+    answer was blocked for it when the guardrail intervened with a blocking
+    entry. No entry at all means the guardrail has no contextual grounding
+    policy.
     """
     check = GroundingCheck(checked=False, skipped_reason="not_assessed")
+    intervened = response.get("action") == _INTERVENED
     for assessment in response.get("assessments") or []:
         policy = assessment.get(_GROUNDING_POLICY) or {}
         for entry in policy.get("filters") or []:
@@ -105,6 +108,8 @@ def grounding_from_response(response: dict[str, Any]) -> GroundingCheck:
                 check.scores[name] = float(entry["score"])
             if entry.get("detected") or entry.get("action") == _BLOCKED:
                 check.failed.append(name)
+            if intervened and entry.get("action") == _BLOCKED:
+                check.blocked = True
     return check
 
 
@@ -307,7 +312,7 @@ class BedrockGuardrail:
             )
         elif not check.failed:
             return
-        elif any(p.startswith(f"{_GROUNDING_POLICY}:") for p in verdict.policies):
+        elif check.blocked:
             outcome = "blocked"
         else:
             outcome = "failed but not blocked (detect-only policy)"

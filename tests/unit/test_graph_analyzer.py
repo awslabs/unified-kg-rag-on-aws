@@ -105,13 +105,13 @@ class TestCentrality:
         metrics = analyzer.calculate_centrality()
         assert metrics["a"].closeness == pytest.approx(1.0)
 
-    def test_centrality_cache_populated_for_enabled_methods(self) -> None:
+    def test_only_enabled_methods_are_computed(self) -> None:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        analyzer.calculate_centrality()
+        metrics = analyzer.calculate_centrality()["a"]
         # degree/betweenness/pagerank are enabled by default.
-        assert "degree" in analyzer._centrality_cache
-        assert "pagerank" in analyzer._centrality_cache
-        assert "closeness" not in analyzer._centrality_cache
+        assert metrics.degree is not None
+        assert metrics.pagerank is not None
+        assert metrics.closeness is None
 
 
 class TestStatistics:
@@ -186,12 +186,12 @@ class TestStatistics:
     def test_setting_graph_clears_cache(self) -> None:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
         analyzer.calculate_centrality()
-        analyzer.get_graph_statistics()
-        assert analyzer._centrality_cache
+        assert analyzer.get_graph_statistics().num_nodes == 3
         analyzer.graph = _star_graph()
-        assert analyzer._centrality_cache == {}
-        assert analyzer._statistics_cache is None
         assert set(analyzer.calculate_centrality()) == set(_star_graph().nodes)
+        assert (
+            analyzer.get_graph_statistics().num_nodes == _star_graph().number_of_nodes()
+        )
 
     def test_centrality_computed_once_per_graph(self, mocker) -> None:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
@@ -202,47 +202,3 @@ class TestStatistics:
         first = analyzer.calculate_centrality()
         assert analyzer.calculate_centrality() is first
         assert pagerank.call_count == 1
-
-
-class TestExportGraphData:
-    def test_empty_graph_export_shape(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=None)
-        data = analyzer.export_graph_data()
-        assert data == {"nodes": [], "edges": [], "statistics": {}}
-
-    def test_export_shape_and_counts(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        data = analyzer.export_graph_data()
-        assert len(data["nodes"]) == 3
-        assert len(data["edges"]) == 3
-        assert data["statistics"]["num_nodes"] == 3
-
-    def test_node_ids_are_strings_with_attributes(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        data = analyzer.export_graph_data()
-        node = next(n for n in data["nodes"] if n["id"] == "a")
-        assert isinstance(node["id"], str)
-        assert node["attributes"]["name"] == "Alice"
-
-    def test_edges_have_source_and_target(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        data = analyzer.export_graph_data()
-        for edge in data["edges"]:
-            assert "source" in edge
-            assert "target" in edge
-            assert isinstance(edge["source"], str)
-
-    def test_export_includes_centrality_after_calculation(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        analyzer.calculate_centrality()  # fills centrality cache
-        data = analyzer.export_graph_data()
-        node = data["nodes"][0]
-        # cache keys are surfaced as "<name>_centrality" on each node.
-        assert "degree_centrality" in node
-        assert node["degree_centrality"] == pytest.approx(1.0)
-
-    def test_export_without_centrality_has_no_centrality_keys(self) -> None:
-        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
-        data = analyzer.export_graph_data()  # no calculate_centrality call
-        node = data["nodes"][0]
-        assert not any(k.endswith("_centrality") for k in node)

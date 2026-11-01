@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel
 
@@ -45,35 +45,30 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 class CacheManager:
+    # A list stage output is saved in parts of at most CHUNK_ITEMS items, or
+    # of about MAX_FILE_BYTES each when its serialization would exceed that.
+    CHUNK_ITEMS: ClassVar[int] = 1000
+    MAX_FILE_BYTES: ClassVar[int] = 50 * 1024 * 1024
+
     def __init__(
         self,
         config: Config,
         cache_directory: str | Path,
         strategy: CacheStrategy = CacheStrategy.CONTENT_HASH,
         ttl_seconds: int | None = None,
-        chunk_size: int = 1000,
-        max_file_size_mb: int = 50,
-        enable_chunking: bool = True,
     ):
         self.config = config
         self.cache_directory = Path(cache_directory)
         self.strategy = strategy
         self.ttl_seconds = ttl_seconds
-        self.chunk_size = chunk_size
-        self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
-        self.enable_chunking = enable_chunking
         self.stats = CacheStats()
         self.cache_directory.mkdir(parents=True, exist_ok=True)
 
-        ttl_display = f"{ttl_seconds}s" if ttl_seconds else "none"
         logger.info(
-            "Initialized Cache Manager at '%s' with strategy='%s', TTL=%s, chunk_size=%s, max_file_size=%sMB, chunking_enabled=%s",
+            "Initialized Cache Manager at '%s' with strategy='%s', TTL=%s",
             self.cache_directory,
             strategy.value,
-            ttl_display,
-            chunk_size,
-            max_file_size_mb,
-            enable_chunking,
+            f"{ttl_seconds}s" if ttl_seconds else "none",
         )
 
     def cache_exists(self, cache_key: str, pipeline_id: str) -> bool:
@@ -356,7 +351,7 @@ class CacheManager:
             cache_directory = self.get_pipeline_cache_dir(pipeline_id)
             cache_directory.mkdir(parents=True, exist_ok=True)
 
-            if self.enable_chunking and self._should_chunk_data(data):
+            if self._should_chunk_data(data):
                 return self._save_chunked_data(
                     data, cache_key, stage_name, pipeline_id, metadata
                 )
@@ -376,11 +371,11 @@ class CacheManager:
         if data_length == 0:
             return False
 
-        if data_length > self.chunk_size:
+        if data_length > self.CHUNK_ITEMS:
             logger.debug(
                 "Data size (%s) exceeds chunk size (%s), will chunk",
                 data_length,
-                self.chunk_size,
+                self.CHUNK_ITEMS,
             )
             return True
 
@@ -394,11 +389,11 @@ class CacheManager:
             estimated_size = (len(sample_json) / sample_size) * data_length
             estimated_size_mb = estimated_size / 1024 / 1024
 
-            if estimated_size > self.max_file_size_bytes:
+            if estimated_size > self.MAX_FILE_BYTES:
                 logger.debug(
                     "Estimated file size (%.2f MB) exceeds limit (%.2f MB), will chunk",
                     estimated_size_mb,
-                    self.max_file_size_bytes / 1024 / 1024,
+                    self.MAX_FILE_BYTES / 1024 / 1024,
                 )
                 return True
         except Exception as e:
@@ -464,14 +459,14 @@ class CacheManager:
         stage_cache_dir = cache_directory / stage_name
         stage_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        if len(data) > self.chunk_size:
-            chunks = list(self._chunk_data(data, self.chunk_size))
+        if len(data) > self.CHUNK_ITEMS:
+            chunks = list(self._chunk_data(data, self.CHUNK_ITEMS))
         else:
             sample_size = min(5, len(data))
             sample_data = data[:sample_size]
             sample_json = self.serialize_data(sample_data)
             avg_size_per_item = len(sample_json) / sample_size
-            target_chunk_size_bytes = self.max_file_size_bytes
+            target_chunk_size_bytes = self.MAX_FILE_BYTES
             items_per_chunk = max(1, int(target_chunk_size_bytes / avg_size_per_item))
             chunks = list(self._chunk_data(data, items_per_chunk))
 
@@ -508,7 +503,7 @@ class CacheManager:
                 **(metadata or {}),
                 "is_chunked": True,
                 "chunk_count": chunk_count,
-                "chunk_size": self.chunk_size,
+                "chunk_size": self.CHUNK_ITEMS,
                 "chunk_hashes": chunk_hashes,
             },
             created_at=datetime.now(),
