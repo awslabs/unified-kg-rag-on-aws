@@ -65,7 +65,6 @@ own layer and the layers after it, never one before it:
 | Entry points | `application/cli/` | the console scripts: parse flags, load config, wire, run |
 | Evaluation | `evaluation/` | drives the RAG chain over a dataset; of the application it imports only the chain (`application/retrieval/`) and the composition root (`application/bootstrap.py`) |
 | Application | `application/` | orchestration: ingestion pipeline, indexing manager, RAG chain, prompt tuner, config loading, composition root |
-| Visualization | `visualization/` | renders a built graph (the ingestion community stage and `run-visualization` drive it) |
 | Adapters | `adapters/` | technology bindings and port implementations |
 | Ports | `ports/` | the interfaces the application wires and the adapters implement |
 | Domain | `domain/` | models, pure algorithms, prompts |
@@ -80,12 +79,11 @@ flowchart TB
     cli["<b>application/cli/</b><br/>entry points"]
     evaluation["<b>evaluation/</b><br/>evaluators, strategy comparison"]
     application["<b>application/</b><br/>ingestion pipeline, indexing manager, RAG chain, bootstrap"]
-    visualization["<b>visualization/</b><br/>render loop"]
     adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
     ports["<b>ports/</b><br/>abstract interfaces"]
     domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
     shared["<b>shared/</b><br/>logging, errors, metrics, pure helpers"]
-    cli --> evaluation --> application --> visualization --> adapters --> ports --> domain --> shared
+    cli --> evaluation --> application --> adapters --> ports --> domain --> shared
 ```
 
 An arrow reads "may import"; a layer may also import every layer further
@@ -110,10 +108,8 @@ down (the application imports the domain directly, every layer the kernel).
   `application/cli/display.py`. `setup_logging` takes the configuration
   structurally (`shared.logging.HasLoggingSettings`).
 - **Evaluation reaches the stores through the chain** (its retrievers,
-  `GraphRAGChain.check_filter_values` / `check_filter_keys`), and
-  **visualization reaches renderers through the registry**: the
-  renderer-neutral layout helpers (`displayed_graph`, `spring_layout`) are in
-  `domain/ingestion/visualization_data.py`. Neither imports a store adapter.
+  `GraphRAGChain.check_filter_values` / `check_filter_keys`) and imports no
+  store adapter.
 - **Backends are injected.** Vendor bindings (`adapters/aws/`,
   `adapters/local/`) and port implementations (the `storage/` indexers,
   `retrievers/`, `doc_status/`, `guardrail/`) are built by the provider
@@ -182,17 +178,14 @@ unified_kg_rag/
 │  └─ observability.py  #   configure_observability: installs the tracing backend
 ├─ shared/              # leaf kernel (logging, exceptions, metrics, observability hooks,
 │                       #   write fence, utils/: hashing, ids, concurrency, scripts)
-├─ evaluation/          # real logic package: evaluation_manager / graph_aware /
-│                       #   retrieval / answer_match, strategy comparison + pairwise
-│                       #   judge, benchmarks/ (MuSiQue)
-└─ visualization/       # real logic package: render loop + embeddings/exporters
+└─ evaluation/          # real logic package: evaluation_manager / graph_aware /
+                        #   retrieval / answer_match, strategy comparison + pairwise
+                        #   judge, benchmarks/ (MuSiQue)
 ```
 
-- **Real logic packages.** `evaluation/` (the manager and the LLM-free
-  evaluators) and `visualization/` (the render loop, `embeddings/`,
-  `exporters/`; renderers are in `adapters/renderers/`), each a layer of its
-  own (above). Everything else is imported from its real location
-  (`application.*`, `adapters.*`, `domain.*`).
+- **Real logic package.** `evaluation/` (the manager and the LLM-free
+  evaluators) is a layer of its own (above). Everything else is imported
+  from its real location (`application.*`, `adapters.*`, `domain.*`).
 - **Vendor and role packages.** Vendor packages (`adapters/aws/`,
   `adapters/local/`) hold technology bindings (clients, embedded engines and
   stores, model factories, token counters, caches); role packages
@@ -260,8 +253,8 @@ backend fills each role is open (`providers.graph.kind` /
 module (lazy and `TYPE_CHECKING` ones included, relative ones resolved):
 the layer order, evaluation's reach into the application, injected
 backends (also inside the adapters: the search strategies, the retrieval
-kernel and the ingestion adapters import none), store-free evaluation and
-visualization, vendor packages as leaves, plugins through their registries,
+kernel and the ingestion adapters import none), store-free evaluation,
+vendor packages as leaves, plugins through their registries,
 and the root facade imported only for `__version__`. Importing `pkg.mod`
 runs `pkg/__init__.py`, so the imports a package's `__init__` makes count
 for every module that imports from the package; outside the facade and the
@@ -1206,15 +1199,17 @@ choices:
 
 ## 10. Visualization & Analytics
 
-`visualization/` (`GraphVisualizationManager`, the render loop) drives the
-renderers of `adapters/renderers/` (`BaseRenderer`, `@register_renderer`,
-`RenderContext`): `InteractiveRenderer` (pyvis network and community
-hierarchy) and `StaticRenderer` (Bokeh degree, centrality and community-size
-charts). The layout embeds each node's `name: description` and reduces it
-(UMAP by default, a spring layout on failure). `run-visualization` renders
-exported graph JSON without ingestion, computing a seeded spring layout and
-the configured centrality for the layout-free file ingestion writes by
-default.
+Ingestion renders nothing: the community-detection stage writes the graph
+and its community hierarchy as JSON (`graph.visualization.export_data`,
+`domain/ingestion/visualization_data.py`). `run-visualization` renders that
+file without ingestion through the renderers of `adapters/renderers/`
+(`BaseRenderer`, `@register_renderer`, `RenderContext`, `render_all`):
+`InteractiveRenderer` (pyvis network and community hierarchy) and
+`StaticRenderer` (Bokeh degree, centrality and community-size charts),
+computing a seeded spring layout and the configured centrality first. The
+renderers are the `viz` extra: the adapters import them on use, so the
+registry and `BaseRenderer` work on a core install, and a missing extra
+fails the run (`BaseRenderer.check_dependencies`) before anything renders.
 
 ---
 
@@ -1342,7 +1337,7 @@ This section is the single reference for extending the framework. Strategies, re
 - **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
-- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
+- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports. Override `check_dependencies` to fail fast when an optional package the renderer imports is missing.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 - **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field, regenerate `docs/configuration.md` and add it to `config-template.yaml` (see §12).
 

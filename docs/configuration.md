@@ -447,11 +447,8 @@ Visualization configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `false` | Render visualizations during ingestion. Off by default: it adds an embedding call per node (embedding_method) and a dimensionality reduction to every ingest; render on demand with run-visualization from the data export_data writes instead. |
-| `export_data` | boolean | `true` | Write visualization_data.json (graph nodes, edges and the community hierarchy) at ingestion when enabled is false, so run-visualization can render on demand. One pass over the graph: no embedding or model call, no layout or centrality (run-visualization computes them). enabled: true always writes the file, with its layout. |
-| `outputs_directory` | string \| path \| null | `null` | Directory to save visualization files. When unset, ingestion writes to '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so visualization_data.json is synced to S3 with the cache; other callers fall back to 'outputs/visualization'. |
-| `embedding_method` | string | `"description"` | Node embedding for the layout: 'description' embeds each node's 'name: description' with the embedding model; 'none' uses a spring layout from the graph topology. |
-| `layout_method` | string | `"umap"` | Dimensionality reduction of the node layout: umap, tsne or pca. |
+| `export_data` | boolean | `true` | Write visualization_data.json (graph nodes, edges and the community hierarchy) at ingestion, so run-visualization can render it. One pass over the graph: no embedding or model call, no layout or centrality (run-visualization computes them). |
+| `outputs_directory` | string \| path \| null | `null` | Directory ingestion writes visualization_data.json to. When unset, '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so the file is synced to S3 with the cache, or 'outputs/visualization' without a cache directory. |
 
 #### `graph.visualization.centrality`
 
@@ -471,44 +468,6 @@ Node centrality metrics the visualization sizes nodes and plots by (computed at 
 | `betweenness_seed` | integer | `42` | Random seed for sampled betweenness (only used when betweenness_k is set). Fixed for reproducibility — sampled betweenness picks random pivots, so without a seed centrality is non-deterministic. |
 | `eigenvector_max_iter` | integer (≥ 1) | `1000` | Maximum iterations for eigenvector centrality convergence |
 | `eigenvector_tol` | number (> 0.0) | `0.001` | Convergence tolerance for eigenvector centrality |
-
-#### `graph.visualization.layout`
-
-Parameters per layout_method.
-
-#### `graph.visualization.layout.umap`
-
-A dimensionality reduction of the node layout (PCA; the base of the others).
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
-| `metric` | string | `"euclidean"` | Distance metric. |
-| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
-| `n_neighbors` | integer (≥ 2) | `15` | Neighbours of the local approximation. |
-| `min_dist` | number (≥ 0.0) | `0.1` | Minimum distance between laid-out points. |
-
-#### `graph.visualization.layout.tsne`
-
-A dimensionality reduction of the node layout (PCA; the base of the others).
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
-| `metric` | string | `"euclidean"` | Distance metric. |
-| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
-| `perplexity` | integer (≥ 1) | `30` | Balance of local and global structure. |
-| `max_iter` | integer (≥ 250) | `1000` | Optimization iterations. |
-
-#### `graph.visualization.layout.pca`
-
-A dimensionality reduction of the node layout (PCA; the base of the others).
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `n_components` | integer (≥ 1) | `2` | Output dimensions. |
-| `metric` | string | `"euclidean"` | Distance metric. |
-| `random_state` | integer \| null | `42` | Random seed, so a re-render gives the same layout; null for a random one (UMAP then runs in parallel). |
 
 #### `graph.visualization.interactive`
 

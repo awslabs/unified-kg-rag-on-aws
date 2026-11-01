@@ -1494,7 +1494,7 @@ class CommunityDetectionStage(_RegistryStage):
     def _export_visualization_data(self, context: PipelineContext) -> None:
         """Write the graph and communities for ``run-visualization`` (no render).
 
-        Best effort, like rendering: a failed write never fails the stage.
+        Best effort: a failed write never fails the stage.
         """
         import json
 
@@ -1687,12 +1687,12 @@ class CommunityDetectionStage(_RegistryStage):
             community_objects, failed_community_ids
         )
 
-        viz = self.config.graph.visualization
+        export = self.config.graph.visualization.export_data
         delta = context.incremental_delta
-        if (viz.enabled or viz.export_data) and delta is not None and delta.unchanged:
+        if export and delta is not None and delta.unchanged:
             # An incremental run's graph holds only the delta's documents:
-            # rendering or exporting it would replace the full graph's
-            # visualization with a fragment.
+            # exporting it would replace the full graph's visualization data
+            # with a fragment.
             logger.info(
                 "Visualization skipped: this incremental run's graph holds only "
                 "its %d new or changed documents, not the %d unchanged ones. "
@@ -1702,29 +1702,7 @@ class CommunityDetectionStage(_RegistryStage):
                 len(delta.to_process),
                 len(delta.unchanged),
             )
-        elif self.config.graph.visualization.enabled and context.knowledge_graph:
-            try:
-                # Imported on use: rendering is opt-in, and the visualization
-                # package loads umap and scikit-learn (seconds of import time).
-                from unified_kg_rag.visualization import GraphVisualizationManager
-
-                logger.info("Generating graph visualizations...")
-                analyzer = GraphAnalyzer(self.config)
-                analyzer.graph = context.knowledge_graph
-
-                visualization_manager = GraphVisualizationManager(
-                    config=self.config,
-                    graph_analyzer=analyzer,
-                    community_detector=self.detector,
-                    outputs_dir=self._visualization_outputs_dir(context),
-                    providers=self.providers,
-                )
-
-                visualization_manager.run()
-                logger.info("Graph visualizations generated successfully")
-            except Exception as e:
-                logger.warning("Visualization generation failed: %s", e)
-        elif self.config.graph.visualization.export_data and context.knowledge_graph:
+        elif export and context.knowledge_graph:
             self._export_visualization_data(context)
 
         communities_count = len(context.communities)

@@ -12,8 +12,8 @@ one ingestion/indexing/caching/hybrid-search infrastructure and only differ at
 the algorithm layer. Dependencies point **inward**. Layers, outermost first —
 a module imports its own layer and later ones, never an earlier one, and
 that includes lazy and `TYPE_CHECKING` imports:
-`application/cli` → `evaluation` → `application` → `visualization` →
-`adapters` → `ports` → `domain` → `shared`.
+`application/cli` → `evaluation` → `application` → `adapters` → `ports` →
+`domain` → `shared`.
 `tests/unit/test_layering.py` enforces this and the rules below (its
 allowlist of exceptions is empty; keep it so).
 
@@ -71,14 +71,11 @@ allowlist of exceptions is empty; keep it so).
   that needs domain models belongs in another layer; `setup_logging` takes
   the config structurally. Keep `shared/__init__` and `shared/utils/__init__`
   dependency-light (the domain imports them).
-- **`evaluation/` and `visualization/`**: real logic packages, each its own
-  layer. Evaluation (evaluators + manager, driven by the CLIs) imports of the
-  application only `application.retrieval` and `application.bootstrap`, and
-  reaches the stores only through the chain (`GraphRAGChain.check_filter_*`).
-  Visualization (render loop + `embeddings/`/`exporters/`, driven by the
-  ingestion stage and `run-visualization`) imports no application module and
-  reaches renderers only through the registry. Neither imports a store
-  adapter.
+- **`evaluation/`**: a real logic package and its own layer (evaluators +
+  manager, driven by the CLIs). Of the application it imports only
+  `application.retrieval` and `application.bootstrap`, reaches the stores only
+  through the chain (`GraphRAGChain.check_filter_*`) and imports no store
+  adapter. The LLM judges (`ragas`, `langchain`) need the `eval` extra.
 - **Registries over hardcoded dispatch**: search strategies register via
   `@register_strategy` (`adapters/retrieval/strategy_registry.py`). Follow this
   pattern — and `ParserFactory.register_loader` / `@register_renderer` —
@@ -133,9 +130,14 @@ The rules to keep in mind:
   intentionally not emitted — see the evaluator docstring), `retrieval`
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
   match/token F1 against `answer` + `metadata.answer_aliases`).
-- **Visualization**: renderers register via `@register_renderer`
-  (`adapters/renderers/`); the manager and the standalone CLI drive them
-  through one registry + `RenderContext`.
+- **Visualization**: ingestion only exports `visualization_data.json`
+  (`graph.visualization.export_data`); `run-visualization` renders it through
+  the renderers registered via `@register_renderer` (`adapters/renderers/`,
+  one registry + `RenderContext`). Rendering needs the `viz` extra.
+- **Extras**: `eval` (LLM judges) and `viz` (pyvis, Bokeh) are optional, like
+  `otel`, `local` and `unstructured`; a feature whose extra is missing fails
+  fast with a `ConfigurationError` naming the extra. Tests that need one use
+  `tests/fixtures/extras.py`; the CI `core-install` job runs without them.
 
 ## Code standards
 
@@ -188,7 +190,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
   `quality.yml` sits just under it: currently 95, measured ~96%). Run:
-  `uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag`.
+  `uv run --extra otel --extra eval --extra viz pytest -m "not aws" -n auto --cov=unified_kg_rag`.
 
 ## Quality gate
 

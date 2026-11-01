@@ -1,20 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""AWS-free unit tests for the renderer registry / RenderContext and the pure
-``DimensionalityReducer`` (PCA/t-SNE/fallback paths).
-
-The node embedder is Bedrock-coupled and excluded here; the reducer itself
-operates on plain numpy arrays so its PCA/t-SNE/fallback paths are AWS-free.
-"""
+"""AWS-free unit tests for the renderer registry and RenderContext."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import networkx as nx
-import numpy as np
 import pytest
 
+from tests.fixtures.extras import requires_viz
 from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     InteractiveRendererAdapter,
@@ -24,10 +19,6 @@ from unified_kg_rag.adapters.renderers import (
     register_renderer,
     registered_renderers,
 )
-from unified_kg_rag.visualization.embeddings.dimensionality import (
-    DimensionalityReducer,
-)
-from unified_kg_rag.visualization.embeddings.node_embedder import NodeEmbeddings
 
 pytestmark = pytest.mark.unit
 
@@ -97,6 +88,7 @@ class TestRenderContext:
         assert ctx.centrality == {"a": 1}
 
 
+@requires_viz
 class TestRendererAdaptersDriveRenderContext:
     def _ctx(self) -> RenderContext:
         g = nx.Graph()
@@ -114,78 +106,3 @@ class TestRendererAdaptersDriveRenderContext:
         written = InteractiveRendererAdapter({}).render(self._ctx(), tmp_path)
         assert (tmp_path / "interactive_graph.html") in written
         assert (tmp_path / "interactive_graph.html").exists()
-
-
-def _embeddings(n: int, dim: int = 8) -> NodeEmbeddings:
-    rng = np.random.default_rng(0)
-    nodes = [f"n{i}" for i in range(n)]
-    return NodeEmbeddings(
-        nodes=nodes,
-        embeddings={node: rng.normal(size=dim) for node in nodes},
-    )
-
-
-class TestDimensionalityReducer:
-    def test_empty_embeddings_returns_empty(self) -> None:
-        reducer = DimensionalityReducer({})
-        out = reducer.reduce_dimensions(NodeEmbeddings(nodes=[], embeddings={}))
-        assert out == {}
-
-    def test_single_node_returns_origin(self) -> None:
-        reducer = DimensionalityReducer({})
-        emb = NodeEmbeddings(nodes=["n0"], embeddings={"n0": np.zeros(8)})
-        out = reducer.reduce_dimensions(emb)
-        assert out == {"n0": (0.0, 0.0)}
-
-    def test_pca_produces_2d_layout(self) -> None:
-        reducer = DimensionalityReducer({})
-        out = reducer.reduce_dimensions(_embeddings(10), method="pca")
-        assert len(out) == 10
-        assert all(len(coord) == 2 for coord in out.values())
-        assert all(
-            isinstance(x, float) and isinstance(y, float) for x, y in out.values()
-        )
-
-    def test_tsne_produces_2d_layout(self) -> None:
-        # One OpenMP/BLAS thread: on a loaded host (the suite in parallel
-        # with other jobs) t-SNE's thread pool oversubscribed the cores and
-        # ran past the 120 s test timeout (83 s alone). OMP_NUM_THREADS is
-        # read when the libraries load, so the limit is set at run time.
-        from threadpoolctl import threadpool_limits
-
-        reducer = DimensionalityReducer({"tsne": {"perplexity": 5}})
-        with threadpool_limits(limits=1):
-            out = reducer.reduce_dimensions(_embeddings(20), method="tsne")
-        assert len(out) == 20
-        assert all(len(coord) == 2 for coord in out.values())
-
-    def test_reducers_seeded_by_default(self, mocker) -> None:
-        # Unseeded UMAP gives a different layout on every re-render.
-        from unified_kg_rag.visualization.embeddings import dimensionality
-
-        umap = mocker.patch.object(dimensionality.umap, "UMAP")
-        umap.return_value.fit_transform.return_value = np.zeros((10, 2))
-        reducer = DimensionalityReducer({})
-        reducer.reduce_dimensions(_embeddings(10), method="umap")
-        assert umap.call_args.kwargs["random_state"] == 42
-        assert reducer.tsne_config.random_state == 42
-        assert reducer.pca_config.random_state == 42
-        assert (
-            DimensionalityReducer({"umap": {"random_state": None}}).umap_config
-        ).random_state is None
-
-    @pytest.mark.parametrize("n", [2, 3])
-    def test_too_few_points_falls_back_to_pca(self, mocker, n: int) -> None:
-        # UMAP's spectral init fails with k >= N at n_components + 1 points
-        # (n_components=2, so 3), which degraded a three-node graph's layout.
-        # Up to n_components + 1 points the reducer uses PCA instead and still
-        # lays out every node in 2D.
-        reducer = DimensionalityReducer({})
-        assert reducer.umap_config.n_components == 2
-        umap = mocker.spy(reducer, "_apply_umap")
-        pca = mocker.spy(reducer, "_apply_pca")
-        out = reducer.reduce_dimensions(_embeddings(n), method="umap")
-        assert len(out) == n
-        assert all(len(coord) == 2 for coord in out.values())
-        umap.assert_not_called()
-        pca.assert_called_once()

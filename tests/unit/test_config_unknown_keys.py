@@ -142,3 +142,28 @@ def test_a_removed_key_loads_with_a_warning(
     assert "'indexing.cross_run_merge'" in removed[0]
     assert "UKR__INDEXING__CROSS_RUN_MERGE" in removed[1]
     assert not hasattr(config.indexing, "cross_run_merge")
+
+
+def test_the_removed_ingestion_rendering_keys_load_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Ingestion no longer renders: a config written for it (rendering on, an
+    # embedding layout and its UMAP parameters) loads, says each key is gone,
+    # and still exports the data run-visualization renders.
+    path = tmp_path / "config.yaml"
+    visualization = {
+        "enabled": True,
+        "embedding_method": "description",
+        "layout_method": "umap",
+        "layout": {"umap": {"n_neighbors": 5}},
+    }
+    path.write_text(yaml.safe_dump({"graph": {"visualization": visualization}}))
+    with caplog.at_level(logging.WARNING):
+        config = ConfigLoader(path).load_config()
+    removed = [
+        r.getMessage() for r in caplog.records if "removed and ignored" in r.message
+    ]
+    assert len(removed) == 4
+    assert all("run-visualization" in message for message in removed)
+    assert config.graph.visualization.export_data is True
+    assert not set(visualization) & set(type(config.graph.visualization).model_fields)

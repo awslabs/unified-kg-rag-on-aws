@@ -3,12 +3,14 @@
 """Standalone graph visualization CLI.
 
 Renders visualizations from a previously exported visualization-data JSON
-(``visualization_data.json``, written into ``graph.visualization.outputs_directory``
-during ingestion: by ``GraphVisualizationManager.run`` with a layout and
-centrality when ``graph.visualization.enabled``, else as graph and communities
-only, ``export_data``) WITHOUT re-running ingestion. A data-only file gets a
-spring layout and the configured centrality metrics here. Drives the renderer registry, so any registered renderer
-(``--renderers interactive static``) can be produced independently.
+(``visualization_data.json``, the graph and its communities, written into
+``graph.visualization.outputs_directory`` during ingestion by
+``graph.visualization.export_data``) WITHOUT re-running ingestion. The file
+gets a spring layout and the configured centrality metrics here unless it
+carries its own. Drives the renderer registry, so any registered renderer
+(``--renderers interactive static``) can be produced independently. The
+built-in renderers need the ``viz`` extra; without it the run stops before
+rendering (exit 2) naming the extra.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import networkx as nx
 
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
+    get_renderer_class,
     registered_renderers,
     render_all,
 )
@@ -163,15 +166,14 @@ def _render_context(data: dict[str, Any]) -> RenderContext:
 
 
 def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
-    """Compute what a data-only export (``graph.visualization.export_data``)
-    leaves out: a seeded spring layout from the graph topology and the
-    configured centrality metrics."""
+    """Compute what the export (``graph.visualization.export_data``) leaves
+    out: a seeded spring layout from the graph topology and the configured
+    centrality metrics."""
     if context.graph.number_of_nodes() == 0:
         return
     if not context.layout:
         logger.info(
-            "No layout in the data (exported without rendering); using a spring "
-            "layout from the graph topology."
+            "No layout in the data; using a spring layout from the graph " "topology."
         )
         context.layout = spring_layout(
             context.graph,
@@ -186,7 +188,14 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
 def run_visualization(
     data_path: Path, output_dir: Path, renderer_names: list[str], config: Any
 ) -> list[Path]:
-    """Render the requested renderers from exported data; return written paths."""
+    """Render the requested renderers from exported data; return written paths.
+
+    Raises:
+        ConfigurationError: A renderer's dependency is not installed (the
+            ``viz`` extra), checked before the data is loaded.
+    """
+    for name in renderer_names:
+        get_renderer_class(name).check_dependencies()
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
     _fill_missing_analysis(context, config)

@@ -63,7 +63,6 @@ import는 **안쪽을 향합니다**. 레이어는 바깥쪽부터 다음과 같
 | 진입점 | `application/cli/` | 콘솔 스크립트: 플래그 해석, 설정 로드, 연결, 실행 |
 | 평가 | `evaluation/` | 데이터셋에 대해 RAG 체인을 실행합니다. 애플리케이션 중에서는 체인(`application/retrieval/`)과 composition root(`application/bootstrap.py`)만 import합니다 |
 | 애플리케이션 | `application/` | 오케스트레이션: 수집 파이프라인, 인덱싱 매니저, RAG 체인, 프롬프트 튜너, 설정 로드, composition root |
-| 시각화 | `visualization/` | 만들어진 그래프를 렌더링합니다(수집의 커뮤니티 단계와 `run-visualization`이 호출) |
 | 어댑터 | `adapters/` | 기술 바인딩과 포트 구현 |
 | 포트 | `ports/` | 애플리케이션이 연결하고 어댑터가 구현하는 인터페이스 |
 | 도메인 | `domain/` | 모델, 순수 알고리즘, 프롬프트 |
@@ -77,12 +76,11 @@ flowchart TB
     cli["<b>application/cli/</b><br/>entry points"]
     evaluation["<b>evaluation/</b><br/>evaluators, strategy comparison"]
     application["<b>application/</b><br/>ingestion pipeline, indexing manager, RAG chain, bootstrap"]
-    visualization["<b>visualization/</b><br/>render loop"]
     adapters["<b>adapters/</b><br/>AWS and local bindings, search strategies, retrievers"]
     ports["<b>ports/</b><br/>abstract interfaces"]
     domain["<b>domain/</b><br/>models, pure algorithms, prompts"]
     shared["<b>shared/</b><br/>logging, errors, metrics, pure helpers"]
-    cli --> evaluation --> application --> visualization --> adapters --> ports --> domain --> shared
+    cli --> evaluation --> application --> adapters --> ports --> domain --> shared
 ```
 
 화살표는 "import할 수 있다"는 뜻이며, 더 아래에 있는 레이어도 모두 import할 수 있습니다
@@ -102,11 +100,9 @@ flowchart TB
   `adapters/ingestion/document_converter.py`, rich 콘솔 도우미는
   `application/cli/display.py`에 있습니다. `setup_logging`은 설정을 구조적 타입
   (`shared.logging.HasLoggingSettings`)으로 받습니다.
-- **평가는 체인을 통해 저장소에 닿고**(체인의 리트리버,
-  `GraphRAGChain.check_filter_values` / `check_filter_keys`), **시각화는 레지스트리를 통해
-  렌더러에 닿습니다**. 렌더러에 묶이지 않은 레이아웃 도우미(`displayed_graph`,
-  `spring_layout`)는 `domain/ingestion/visualization_data.py`에 있습니다. 둘 다 저장소
-  어댑터를 import하지 않습니다.
+- **평가는 체인을 통해 저장소에 닿습니다**(체인의 리트리버,
+  `GraphRAGChain.check_filter_values` / `check_filter_keys`). 저장소 어댑터는 import하지
+  않습니다.
 - **백엔드는 주입합니다.** 벤더 바인딩(`adapters/aws/`, `adapters/local/`)과 포트
   구현(`storage/` 인덱서, `retrievers/`, `doc_status/`, `guardrail/`)은 공급자 빌더와
   composition root가 만듭니다. composition root는 `application/bootstrap.py`
@@ -171,15 +167,13 @@ unified_kg_rag/
 │  └─ observability.py  #   configure_observability: 추적 백엔드 설치
 ├─ shared/              # 다른 레이어에 의존하지 않는 커널 (logging, exceptions, metrics,
 │                       #   observability 훅, write fence, utils/: 해시, ID, 동시성, 문자 체계)
-├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
-│                       #   retrieval / answer_match, 전략 비교 + 쌍대 평가,
-│                       #   benchmarks/ (MuSiQue)
-└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters
+└─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
+                        #   retrieval / answer_match, 전략 비교 + 쌍대 평가,
+                        #   benchmarks/ (MuSiQue)
 ```
 
-- **실제 로직 패키지.** `evaluation/`(매니저와 LLM을 쓰지 않는 평가기)과
-  `visualization/`(렌더 루프, `embeddings/`, `exporters/`. 렌더러는 `adapters/renderers/`)이며,
-  각각 하나의 레이어입니다(위 표). 그 밖의 모듈은 실제 위치(`application.*`, `adapters.*`, `domain.*`)에서 import합니다.
+- **실제 로직 패키지.** `evaluation/`(매니저와 LLM을 쓰지 않는 평가기)이며, 하나의
+  레이어입니다(위 표). 그 밖의 모듈은 실제 위치(`application.*`, `adapters.*`, `domain.*`)에서 import합니다.
 - **벤더 패키지와 역할 패키지.** 벤더 패키지(`adapters/aws/`, `adapters/local/`)에는 기술
   바인딩(클라이언트, 내장 엔진과 저장소, 모델 팩토리, 토큰 카운터, 캐시)이, 역할
   패키지(`storage/`, `retrievers/`, `doc_status/`, `guardrail/`)에는 애플리케이션이 연결하는
@@ -238,7 +232,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 `tests/unit/test_layering.py`는 모든 모듈의 모든 import(지연 import와 `TYPE_CHECKING`
 import 포함, 상대 import는 풀어서)에 §2.1을 강제합니다. 레이어 순서, 평가가 닿는 애플리케이션
 범위, 백엔드 주입(어댑터 안에서도 검색 전략, 검색 커널, 수집 어댑터는 백엔드를 import하지
-않음), 저장소 어댑터를 쓰지 않는 평가와 시각화, 벤더 패키지의 독립성, 레지스트리를 통한 플러그인
+않음), 저장소 어댑터를 쓰지 않는 평가, 벤더 패키지의 독립성, 레지스트리를 통한 플러그인
 접근, `__version__`만 가져오는 루트 파사드 import입니다. `pkg.mod`를 import하면
 `pkg/__init__.py`가 실행되므로, 패키지 `__init__`의 import는 그 패키지에서 import하는 모든
 모듈의 import로 셉니다. 파사드와 콘솔 스크립트 실행기(launcher) 밖에서는 패키지 모듈을 이름
@@ -991,13 +985,15 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 
 ## 10. 시각화와 분석
 
-`visualization/`(`GraphVisualizationManager`, 렌더 루프)이 `adapters/renderers/`의
-렌더러(`BaseRenderer`, `@register_renderer`, `RenderContext`)를 구동합니다.
-`InteractiveRenderer`(pyvis 네트워크와 커뮤니티 계층)와 `StaticRenderer`(Bokeh 차수, 중심성,
-커뮤니티 크기 차트)가 있습니다. 레이아웃은 노드마다 `name: description`을 임베딩해 차원을
-줄입니다(기본값 UMAP, 실패하면 spring 레이아웃). `run-visualization`은 수집 없이 내보낸 그래프
-JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 파일에는 시드를 고정한 spring
-레이아웃과 설정한 중심성을 계산합니다.
+수집은 렌더링하지 않습니다. 커뮤니티 탐지 단계가 그래프와 커뮤니티 계층을 JSON으로
+씁니다(`graph.visualization.export_data`, `domain/ingestion/visualization_data.py`).
+`run-visualization`은 수집 없이 이 파일을 `adapters/renderers/`의 렌더러(`BaseRenderer`,
+`@register_renderer`, `RenderContext`, `render_all`)로 렌더링하며, 먼저 시드를 고정한 spring
+레이아웃과 설정한 중심성을 계산합니다. 렌더러는 `InteractiveRenderer`(pyvis 네트워크와
+커뮤니티 계층)와 `StaticRenderer`(Bokeh 차수, 중심성, 커뮤니티 크기 차트)입니다. 렌더러는
+`viz` extra에 속합니다. 어댑터가 쓸 때 import하므로 레지스트리와 `BaseRenderer`는 핵심
+설치만으로 동작하며, extra가 없으면 렌더링 전에 실행이 실패합니다
+(`BaseRenderer.check_dependencies`).
 
 ---
 
@@ -1104,7 +1100,7 @@ JSON으로 렌더링하며, 수집이 기본으로 쓰는 레이아웃 없는 �
 - **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export + `STRATEGY_ROUTING_GUIDE`(`domain/prompts/retrieval.py`)에 항목 추가(단위 테스트가 `auto`를 뺀 모든 전략에 항목을 요구). `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. 커뮤니티 리포트로 답하는 전략은 `needs_community_reports=True`도 넘겨, 리포트가 없는 구성에서 `auto`가 고르지 않게 합니다. id 조회는 `BaseSearchStrategy._fetch_by_ids`(실제 인덱스 한도로 배치)로 하고, 그 밖의 목록 필터(`terms`)는 읽는 인덱스의 `aindex_limits`가 알려 주는 실제 `max_terms_count`에 맞춰 자르거나 배치로 나눕니다. 더 긴 목록은 거부됩니다(`InvalidFilterError`). 호출자 필터를 적용해 검색하는 인덱스를 `filtered_index_prefixes`로 재정의하면, 그 어디에도 선언되지 않은 필터 키는 무시되지 않고 거부됩니다(기본값은 모든 인덱스로 검사). 필터를 적용하는 리트리버는 `filtered_retrievers`로 재정의합니다(기본값은 가진 리트리버 전부. `mix`와 `hybrid`는 그래프 확장이 꺼져 있으면 그래프를 뺌). 하위 검색의 필터는 `_scoped_filters`로 만들며, 이 함수는 호출자 필터를 유지하고 양쪽이 모두 건 키는 교집합으로 둡니다(`id`/`source_id`/`target_id`: 전략이 건 값 중 호출자가 허용하는 값. 체인은 이 키에 준 범위(range)를 거부). `reserved_filter_keys`는 호출자 값과 교집합을 낼 수 없는 값으로 범위를 거는 키(`global`: 컷 범위나 루트부터의 탐색, 그리고 값이 여러 개인 `community_ids`. 호출자의 커뮤니티와 범위의 커뮤니티에 함께 속한 텍스트 단위는 두 필터를 모두 통과하지만 두 목록의 교집합은 비어 있을 수 있음)를 지정하며, 체인은 이 키를 거부합니다. `rag_chain`은 고치지 않습니다. `auto`가 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
 - **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
-- **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.
+- **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어나며, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러를 봅니다. 렌더러가 import하는 선택 패키지가 없을 때 바로 실패하게 하려면 `check_dependencies`를 재정의합니다.
 - **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — `langchain_core` `BaseLoader` 하위 클래스면 무엇이든 됩니다(`adapters/ingestion/file_loaders.py`의 내장 로더가 예시입니다). 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
 - **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드를 설명하고 `docs/configuration.md`를 재생성한 뒤 `config-template.yaml`에 추가(§12 참고).
 

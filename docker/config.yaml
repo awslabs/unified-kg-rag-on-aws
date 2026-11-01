@@ -27,13 +27,6 @@ providers:
     # UKR__AWS__DYNAMODB__TABLE_NAME.
     enabled: true
 
-graph:
-  visualization:
-    # Off in the image: render output would land on the task's ephemeral disk
-    # and be discarded when the task exits. Run `run-visualization` locally
-    # against exported graph data instead.
-    enabled: false
-
 logging:
   # The container logs to stdout, which the awslogs driver ships to CloudWatch.
   log_to_file: false

@@ -13,6 +13,9 @@ from pathlib import Path
 
 import networkx as nx
 import pytest
+
+pytest.importorskip("bokeh", reason="needs the viz extra")
+
 from bokeh.plotting import figure
 
 from unified_kg_rag.adapters.renderers.static import StaticRenderer

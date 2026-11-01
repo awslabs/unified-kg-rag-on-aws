@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # unified-kg-rag-on-aws data-plane image: the same image runs the Step Functions ingestion task
-# (run-ingestion) and ad-hoc run-rag / run-eval. Built with uv for reproducible,
-# locked dependency resolution.
+# (run-ingestion) and ad-hoc run-rag / run-eval (the CDK QueryTask), so it
+# always installs the `eval` extra (run-eval's LangChain and RAGAS judges).
+# Built with uv for reproducible, locked dependency resolution.
 # Base image pinned by tag and digest (multi-arch index) so a re-pushed tag
 # cannot change the build. Bump both together, and re-check the apt pins below.
 # BASE_IMAGE only lets a build pull the same digest from another registry (CI
@@ -19,8 +20,10 @@ FROM ${BASE_IMAGE} AS base
 COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 
 # Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
-# from S3 (the loader only reads a local Path). libgomp1 is needed by the
-# scientific stack (numpy/scikit-learn).
+# from S3 (the loader only reads a local Path). libgomp1 is the system OpenMP
+# runtime that numba's `omp` threading layer links (numba comes with the
+# `unstructured` extra); the core and eval wheels bundle their own libgomp
+# (scikit-network) or none, so a default image does not load it.
 # Versions are pinned (reproducible builds + satisfies SAST). Bump these when
 # the python:3.12-slim base advances and the pinned version is dropped from the
 # apt repo (check with `apt-cache policy awscli libgomp1` in the base image).
@@ -42,21 +45,23 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Optional extras. The default image parses .pdf/.txt/.csv/.json only. Markdown
-# and HTML need the `unstructured` extra, which adds ~30 packages (spaCy, thinc,
-# pypdfium2, ...) and about 200 MB, so it is opt-in:
+# Optional extras, added to `eval`. The default image parses .pdf/.txt/.csv/.json
+# only. Markdown and HTML need the `unstructured` extra, which adds ~30 packages
+# (spaCy, thinc, pypdfium2, ...) and about 200 MB, so it is opt-in:
 #   docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .
+# The image renders no visualization (run-visualization runs where its HTML is
+# read), so it leaves the `viz` extra out.
 ARG UV_EXTRAS=""
 
 # Install dependencies first (cached layer) using only the lock + metadata.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev ${UV_EXTRAS}
+    uv sync --frozen --no-install-project --no-dev --extra eval ${UV_EXTRAS}
 
 # Now the source, then install the project itself.
 COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev ${UV_EXTRAS}
+    uv sync --frozen --no-dev --extra eval ${UV_EXTRAS}
 
 # Baked-in, endpoint-free config (deployed endpoints come from env vars the
 # compute stack injects; see docker/config.yaml) and the S3-sync entrypoint.

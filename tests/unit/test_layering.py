@@ -23,9 +23,8 @@ The rules:
   imports a vendor binding or a port implementation (``_BACKENDS``); they
   arrive through ``Providers``. Inside the adapters, the search strategies,
   the retrieval kernel and the ingestion adapters
-  (``_BACKEND_FREE_ADAPTERS``) receive them too. Evaluation and
-  visualization do not import the store adapters at all: evaluation reaches
-  the stores through the chain, visualization renders the graph it is handed.
+  (``_BACKEND_FREE_ADAPTERS``) receive them too. Evaluation does not import
+  the store adapters at all: it reaches the stores through the chain.
 * **Vendor packages are leaves.** ``adapters/aws`` and ``adapters/local``
   import, of the adapters, only each other and the vendor-neutral kernel
   (``adapters/llm``, ``adapters/observability``), which imports no other
@@ -74,9 +73,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Orchestration: ingestion pipeline, indexing manager, RAG chain,
     # composition root, config loading.
     ("application", ("application",)),
-    # Renders a built graph through the renderer registry; the ingestion
-    # stage and run-visualization drive it.
-    ("visualization", ("visualization",)),
     ("adapters", ("adapters",)),
     ("ports", ("ports",)),
     ("domain", ("domain",)),
@@ -110,7 +106,7 @@ _BACKEND_FREE_ADAPTERS = (
     "adapters.ingestion",
 )
 # Layers that see no store adapter at all (not even the filter schema).
-_STORE_FREE = {"evaluation": "adapters.storage", "visualization": "adapters.storage"}
+_STORE_FREE = {"evaluation": "adapters.storage"}
 
 _VENDORS = ("adapters.aws", "adapters.local")
 _ADAPTER_KERNEL = ("adapters.llm", "adapters.observability")
@@ -387,15 +383,18 @@ def test_the_scan_sees_lazy_type_only_and_relative_imports(tmp_path: Path) -> No
         ("application/x.py", "unified_kg_rag.adapters.aws.s3_cache", "a backend"),
         ("application/bootstrap.py", "unified_kg_rag.adapters.aws.s3_cache", None),
         ("evaluation/x.py", "unified_kg_rag.adapters.storage.filter_schema", "store"),
-        ("visualization/x.py", "unified_kg_rag.application", "must not import"),
         ("evaluation/x.py", "unified_kg_rag.application.retrieval.rag_chain", None),
         ("evaluation/x.py", "unified_kg_rag.application.ingestion.pipeline", "chain"),
         ("adapters/aws/x.py", "unified_kg_rag.adapters.store_errors", "vendor"),
         ("adapters/llm/x.py", "unified_kg_rag.adapters.local.models", "kernel"),
         ("adapters/storage/x.py", "unified_kg_rag.adapters.aws.neptune", None),
         ("adapters/x.py", "unified_kg_rag", "__version__ only"),
-        ("visualization/x.py", "unified_kg_rag.adapters.renderers.static", "registry"),
-        ("visualization/x.py", "unified_kg_rag.adapters.renderers", None),
+        (
+            "application/cli/x.py",
+            "unified_kg_rag.adapters.renderers.static",
+            "registry",
+        ),
+        ("application/cli/x.py", "unified_kg_rag.adapters.renderers", None),
         ("adapters/renderers/x.py", "unified_kg_rag.adapters.renderers.static", None),
         (
             "evaluation/x.py",
@@ -489,7 +488,7 @@ def test_dynamic_imports_are_flagged(
         ),
         # A plugin package root re-exports its plugins.
         (
-            "visualization/x.py",
+            "application/cli/x.py",
             "from unified_kg_rag.adapters.renderers.base import R",
             None,
         ),

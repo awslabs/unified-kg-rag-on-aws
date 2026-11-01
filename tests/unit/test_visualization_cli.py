@@ -11,6 +11,7 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
+from tests.fixtures.extras import requires_viz
 from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     RenderContext,
@@ -25,6 +26,7 @@ from unified_kg_rag.application.cli.run_visualization import (
     run_visualization,
 )
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -129,10 +131,11 @@ class TestRunVisualization:
         assert written == [out_dir / "fake.txt"]
         assert (out_dir / "fake.txt").read_text() == "ok"
 
+    @requires_viz
     def test_data_only_export_gets_a_layout_and_centrality(
         self, tmp_path: Path, config: Config
     ) -> None:
-        # The file ingestion writes with graph.visualization.enabled false.
+        # The file ingestion writes (graph.visualization.export_data).
         from unified_kg_rag.domain.ingestion.visualization_data import graph_data
 
         graph = nx.Graph()
@@ -239,6 +242,7 @@ def _write_empty_export(tmp_path: Path) -> Path:
     return path
 
 
+@requires_viz
 class TestBuiltinAdaptersReportOnlyWrittenFiles:
     @staticmethod
     def _empty_context() -> RenderContext:
@@ -292,3 +296,74 @@ class TestBuiltinAdaptersReportOnlyWrittenFiles:
         monkeypatch.setattr(sys, "argv", argv)
         monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
         assert cli_module.main() == 1
+
+
+def _without_module(
+    monkeypatch: pytest.MonkeyPatch, package: str, *loaded: str
+) -> None:
+    """Make ``import package`` fail as on an install without it, and forget
+    the renderer modules (``loaded``) that already imported it."""
+    for name in [m for m in sys.modules if m == package or m.startswith(f"{package}.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, package, None)
+    for name in loaded:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+
+class TestWithoutTheVizExtra:
+    @pytest.mark.parametrize(
+        ("renderer", "package"), [("interactive", "pyvis"), ("static", "bokeh")]
+    )
+    def test_a_builtin_renderer_names_the_extra(
+        self, renderer: str, package: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _without_module(
+            monkeypatch, package, f"unified_kg_rag.adapters.renderers.{renderer}"
+        )
+        renderer_cls = get_renderer_class(renderer)
+        with pytest.raises(ConfigurationError, match=rf"'{package}'.*--extra viz"):
+            renderer_cls.check_dependencies()
+        with pytest.raises(ConfigurationError, match="--extra viz"):
+            renderer_cls({}).render(RenderContext(graph=nx.Graph()), Path("."))
+
+    def test_render_all_fails_before_rendering_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Not logged and skipped like a failing renderer: the static charts
+        # are not written either when the interactive page cannot be.
+        _without_module(
+            monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.interactive"
+        )
+        graph = nx.Graph([("a", "b")])
+        with pytest.raises(ConfigurationError, match="--extra viz"):
+            render_all(
+                RenderContext(graph=graph), tmp_path, ["static", "interactive"], None
+            )
+        assert list(tmp_path.iterdir()) == []
+
+    def test_main_exits_2_naming_the_extra(
+        self,
+        export_json: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _without_module(
+            monkeypatch, "bokeh", "unified_kg_rag.adapters.renderers.static"
+        )
+        argv = [
+            "run-visualization",
+            "--data-path",
+            str(export_json),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--renderers",
+            "static",
+            "--output-format",
+            "json",
+        ]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
+        assert cli_module.main() == 2
+        assert "--extra viz" in json.loads(capsys.readouterr().out)["error"]
+        assert not (tmp_path / "out").exists()

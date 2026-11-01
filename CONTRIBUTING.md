@@ -56,11 +56,11 @@ test suite runs without AWS.
 ```bash
 git clone https://github.com/<your-username>/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync                          # creates .venv with the package and the dev dependency group
+uv sync --extra eval --extra viz # creates .venv with the package, the dev group and the extras the tests need
 uv run pre-commit install        # runs ruff, isort, black and mypy on every commit
 ```
 
-Without uv: create a virtual environment, activate it, and run `pip install -e . --group dev` (pip 25.1 or later).
+Without uv: create a virtual environment, activate it, and run `pip install -e '.[eval,viz]' --group dev` (pip 25.1 or later).
 
 ### Branches and pull requests
 
@@ -93,7 +93,7 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
 uv run pytest -m "not aws"                              # unit, property and integration suites
-uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run --extra otel --extra eval --extra viz pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 Add `-n auto` to run the suite on every CPU through pytest-xdist, as CI does; coverage still combines across the
@@ -101,7 +101,8 @@ workers.
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
 3.11 (and, as a non-blocking early warning, on 3.13 with the `requires-python` cap lifted), checks the optional
-parsers, runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
+parsers, checks a core install without the `eval` and `viz` extras (tests that need an extra skip there; mark a
+new one with `tests/fixtures/extras.py`), runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
 `cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the

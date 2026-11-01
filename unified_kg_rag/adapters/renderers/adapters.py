@@ -3,22 +3,51 @@
 """Registered renderer adapters wrapping the concrete renderers.
 
 These present the existing ``InteractiveRenderer`` / ``StaticRenderer`` (whose
-methods differ) behind the uniform :class:`BaseRenderer.render` interface so the
-manager and the standalone CLI drive them through the registry.
+methods differ) behind the uniform :class:`BaseRenderer.render` interface so
+``run-visualization`` drives them through the registry. The concrete
+renderers import pyvis and Bokeh (the ``viz`` extra), so each adapter imports
+its renderer on use: registering the adapters needs neither package.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger
 
-from .base import BaseRenderer, RenderContext, register_renderer
-from .interactive import InteractiveRenderer
-from .static import StaticRenderer
+from .base import VIZ_EXTRA_HINT, BaseRenderer, RenderContext, register_renderer
+
+if TYPE_CHECKING:
+    from .interactive import InteractiveRenderer
+    from .static import StaticRenderer
 
 logger = get_logger(__name__)
+
+
+def _missing_extra(renderer: str, error: ImportError) -> ConfigurationError:
+    package = (error.name or "").split(".")[0]
+    return ConfigurationError(
+        f"The '{renderer}' renderer needs '{package}', which is not "
+        f"installed: {VIZ_EXTRA_HINT}"
+    )
+
+
+def _interactive_renderer() -> type[InteractiveRenderer]:
+    try:
+        from .interactive import InteractiveRenderer
+    except ImportError as e:
+        raise _missing_extra("interactive", e) from e
+    return InteractiveRenderer
+
+
+def _static_renderer() -> type[StaticRenderer]:
+    try:
+        from .static import StaticRenderer
+    except ImportError as e:
+        raise _missing_extra("static", e) from e
+    return StaticRenderer
 
 
 def _render_file(path: Path, draw: Callable[[str], None]) -> list[Path]:
@@ -41,8 +70,12 @@ def _render_file(path: Path, draw: Callable[[str], None]) -> list[Path]:
 class InteractiveRendererAdapter(BaseRenderer):
     """pyvis interactive network + community hierarchy."""
 
+    @classmethod
+    def check_dependencies(cls) -> None:
+        _interactive_renderer()
+
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
-        renderer = InteractiveRenderer(self.config)
+        renderer = _interactive_renderer()(self.config)
         written: list[Path] = []
 
         written += _render_file(
@@ -67,8 +100,12 @@ class InteractiveRendererAdapter(BaseRenderer):
 class StaticRendererAdapter(BaseRenderer):
     """Bokeh static plots: degree / centrality / community-size distributions."""
 
+    @classmethod
+    def check_dependencies(cls) -> None:
+        _static_renderer()
+
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
-        renderer = StaticRenderer(self.config)
+        renderer = _static_renderer()(self.config)
         written: list[Path] = []
 
         written += _render_file(

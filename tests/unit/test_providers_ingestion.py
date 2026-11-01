@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from tests.fixtures.extras import requires_eval
 from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.llm.response_cache import CachingLLMFactory
@@ -103,9 +104,8 @@ def test_injected_providers_reach_every_ingestion_stage(
     assert indexing.description_summarizer.factory is llm
 
 
-def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
+def test_translator_uses_the_bundle(no_bedrock) -> None:
     from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
-    from unified_kg_rag.visualization.base import GraphVisualizationManager
 
     config = Config()
     llm, embedding = _FakeLLMFactory(), MagicMock()
@@ -114,15 +114,8 @@ def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
     )
 
     translator = TextUnitTranslator(config, providers=providers)
-    viz = GraphVisualizationManager(
-        config=config,
-        graph_analyzer=MagicMock(),
-        community_detector=MagicMock(),
-        providers=providers,
-    )
 
     assert translator.factory is llm
-    assert viz.providers is providers
 
 
 def test_pipeline_without_providers_builds_one_default_bundle(
@@ -151,6 +144,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
     assert all(stage.providers is pipeline.providers for stage in pipeline.stages)
 
 
+@requires_eval
 def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
     no_bedrock, mocker
 ) -> None:

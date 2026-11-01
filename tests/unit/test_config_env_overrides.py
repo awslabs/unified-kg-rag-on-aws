@@ -257,7 +257,6 @@ def test_docker_image_config_takes_endpoints_from_env(
     assert cfg.aws.s3.bucket_name == "example-cache-bucket"
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
     assert cfg.aws.dynamodb.create_table_if_missing is False
-    assert cfg.graph.visualization.enabled is False
 
 
 def test_bedrock_region_inherits_aws_region(

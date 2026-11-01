@@ -30,16 +30,11 @@ dependencies = [
     # (adapters/aws/neptune.py); gremlinpython pins its line.
     "aiohttp>=3.9.0,<4.0.0",
     "aws-assume-role-lib>=2.10.0",
-    "bokeh>=3.9.2",
     "boto3>=1.43.66",
     # Imported directly (exceptions, Config, retries); boto3 pins its line.
     "botocore>=1.43.66",
     # Encoding detection for non-UTF-8 text sources (parser + Document loader).
     "charset-normalizer>=3.4.0",
-    # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
-    # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
-    # langchain-community removed in 0.4 — see the ragas floor below.
-    "datasets>=4.0.0",
     "datasketch>=2.0.0",
     # Leiden is called here directly, as graspologic's wrapper does; graspologic
     # itself is not a dependency (its import loads its embed stack, and boto3
@@ -67,41 +62,26 @@ dependencies = [
     # retrievers treat as fatal (store_errors.is_fatal_retrieval_error).
     "langchain-aws>=1.8.1,<2.0.0",
     "langchain-classic>=1.0.0,<2.0.0",
-    # Not imported by this package (the parser's loaders are its own); ragas
-    # depends on it without a bound and imports
-    # langchain_community.chat_models.vertexai unconditionally, which 0.4
-    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
-    "langchain-community>=0.3.27,<0.4.0",
     "langchain-core>=1.5.3,<2.0.0",
     "langchain-text-splitters>=1.1.2,<2.0.0",
     # Imported directly to warn when LangSmith tracing is on (shared/logging.py).
     "langsmith>=0.3.45,<1.0.0",
-    "llvmlite>=0.48.0",
     "lxml>=6.0.0",
     "networkx>=3.4",
     "numpy>=1.26.4",
     "opensearch-py>=3.0.0",
-    "pandas>=2.3.1",
-    # 13.0.0 fixes the critical/high Pillow advisories.
-    "pillow>=13.0.0",
     "pydantic>=2.11.7",
     # 6.21.4 fixes the high-severity DoS advisories (GHSA-5849-834g-hvw5 and
     # six more) that crafted PDFs reach through the PDF loader.
     "pypdf>=6.21.4",
     "python-dotenv>=1.1.1",
-    "pyvis>=0.3.2",
     "pyyaml>=6.0.2",
-    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
-    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
-    # can requires datasets>=4.0.0.
-    "ragas>=0.4.3,<0.5.0",
-    # Instructor (via ragas) requires Rich <15 for OpenAI 2.x compatibility.
+    # Instructor (via ragas, the eval extra) requires Rich <15 for OpenAI 2.x
+    # compatibility.
     "rich>=14.3.3,<15.0.0",
-    "scikit-learn>=1.7.1",
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
     "tqdm>=4.70.0",
-    "umap-learn>=0.5.6",
 ]
 
 [project.scripts]
@@ -117,7 +97,48 @@ prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
 unstructured = [
+    # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
+    "llvmlite>=0.48.0",
     "unstructured[md]>=0.24.1",
+]
+# Optional: the LLM-judge evaluators of `run-eval` (`langchain` and `ragas`,
+# both in the default evaluation.enabled_evaluators). The core package imports
+# none of these; the evaluation manager fails fast naming this extra when an
+# enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
+# retrieval, answer_match) need none of it.
+eval = [
+    # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
+    # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
+    # langchain-community removed in 0.4 — see the ragas floor below.
+    "datasets>=4.0.0",
+    # Not imported by this package (the parser's loaders are its own); ragas
+    # depends on it without a bound and imports
+    # langchain_community.chat_models.vertexai unconditionally, which 0.4
+    # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
+    "langchain-community>=0.3.27,<0.4.0",
+    # Not imported here: langchain_classic's load_evaluator imports it for the
+    # langchain evaluator even when handed a Bedrock model. 1.1.14 fixes SSRF
+    # through image token counting (GHSA-r7w7-9xr2-qq2r).
+    "langchain-openai>=1.1.14,<2.0.0",
+    "pandas>=2.3.1",
+    # Not imported here: ragas depends on Pillow, and 13.0.0 fixes the
+    # critical/high Pillow advisories.
+    "pillow>=13.0.0",
+    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
+    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
+    # can requires datasets>=4.0.0.
+    "ragas>=0.4.3,<0.5.0",
+]
+# Optional: graph visualization (`run-visualization`): the pyvis interactive
+# graph and the Bokeh static charts. The core package imports neither;
+# `run-visualization` and the renderers fail fast naming this extra when they
+# are missing.
+viz = [
+    "bokeh>=3.9.2",
+    # Not imported here: Bokeh depends on Pillow, and 13.0.0 fixes the
+    # critical/high Pillow advisories.
+    "pillow>=13.0.0",
+    "pyvis>=0.3.2",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when
@@ -147,9 +168,6 @@ local = [
 
 [tool.uv]
 constraint-dependencies = [
-    # Ragas pulls in this package transitively; earlier releases allow SSRF
-    # through image token counting (GHSA-r7w7-9xr2-qq2r).
-    "langchain-openai>=1.1.14",
     # Bokeh pulls in Tornado; 6.6 fixes GHSA-pcg2-g6cj-q92c, GHSA-r4j5-9xpp-3985
     # and GHSA-pw9p-v7r6-gx4p.
     "tornado>=6.6",
@@ -265,9 +283,7 @@ module = [
     "pandas.*",
     "pyvis.*",
     "ragas.*",
-    "sklearn.*",
     "snowballstemmer",
-    "umap.*",
     "datasets.*",
     "lxml.*",
     "tqdm.*",
@@ -306,7 +322,7 @@ markers = [
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's
-# TinkerPop line; numba: transitive via umap; ragas: the
+# TinkerPop line; numba: transitive via unstructured; ragas: the
 # metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
 filterwarnings = [
     "ignore::DeprecationWarning:gremlin_python",
@@ -340,9 +356,11 @@ dev = [
     "black>=25.9.0",
     "hypothesis>=6.165.2",
     "isort>=5.12.0",
-    # The Ollama adapters of the [local] extra, for their offline tests (the
-    # rest of the extra is heavy; the cross-encoder tests fake it).
+    # The Ollama and OpenAI-compatible adapters of the [local] extra, for
+    # their offline tests (the rest of the extra is heavy; the cross-encoder
+    # tests fake it).
     "langchain-ollama>=1.0.0,<2.0.0",
+    "langchain-openai>=1.1.14,<2.0.0",
     "moto[dynamodb,s3]>=5.2.2",
     "mypy>=2.3.0",
     # In-memory span exporter for the observability tests (the [otel] extra

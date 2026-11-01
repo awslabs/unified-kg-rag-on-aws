@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Renderer abstraction + registry for graph visualization.
 
-Replaces the hardcoded renderer calls in ``GraphVisualizationManager`` with a
-registry of :class:`BaseRenderer` adapters. A new renderer (e.g. a Cytoscape or
-D3 exporter) is added by subclassing ``BaseRenderer`` and decorating it with
-``@register_renderer(...)`` — no edit to the manager.
+``run-visualization`` drives a registry of :class:`BaseRenderer` adapters. A
+new renderer (e.g. a Cytoscape or D3 exporter) is added by subclassing
+``BaseRenderer`` and decorating it with ``@register_renderer(...)`` — no edit
+to the CLI.
 """
 
 from __future__ import annotations
@@ -16,17 +16,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger
 
 if TYPE_CHECKING:
     import networkx as nx
 
 logger = get_logger(__name__)
 
+# How to install what the built-in renderers import (pyvis, Bokeh).
+VIZ_EXTRA_HINT = (
+    "install the viz extra (`uv sync --extra viz`, or `pip install -e "
+    "'.[viz]'` in a source checkout)"
+)
+
 
 @dataclass
 class RenderContext:
-    """Everything a renderer may need, assembled once by the manager."""
+    """Everything a renderer may need, assembled once by the caller."""
 
     graph: nx.Graph
     layout: dict[str, Any] = field(default_factory=dict)
@@ -40,6 +46,17 @@ class BaseRenderer(ABC):
 
     def __init__(self, config: Any) -> None:
         self.config = config
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Raise ``ConfigurationError`` when a package :meth:`render` needs
+        is not installed (nothing by default).
+
+        Called before any rendering, so a missing optional dependency fails
+        the run naming its remedy instead of leaving that renderer's files
+        out.
+        """
+        return None
 
     @abstractmethod
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
@@ -89,15 +106,21 @@ def render_all(
 
     A renderer's config is the ``viz_config`` attribute named after it (an
     empty dict when there is none), so a newly registered renderer needs no
-    dispatch edit. An unknown name raises ``ValueError``; a renderer that
-    fails is logged and skipped so the others still render.
+    dispatch edit. An unknown name raises ``ValueError`` and a missing
+    dependency ``ConfigurationError`` (:meth:`BaseRenderer.check_dependencies`),
+    both before anything renders; a renderer that fails is logged and skipped
+    so the others still render.
     """
+    renderers = [(name, get_renderer_class(name)) for name in renderer_names]
+    for _, renderer_cls in renderers:
+        renderer_cls.check_dependencies()
     written: list[Path] = []
-    for name in renderer_names:
-        renderer_cls = get_renderer_class(name)
+    for name, renderer_cls in renderers:
         renderer_config = getattr(viz_config, name, None) or {}
         try:
             paths = renderer_cls(renderer_config).render(context, output_dir)
+        except ConfigurationError:
+            raise
         except Exception as e:  # noqa: BLE001 - one renderer must not sink the rest
             logger.error("Renderer '%s' failed: %s", name, e)
             continue

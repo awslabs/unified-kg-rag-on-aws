@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.extras import requires_viz
 from unified_kg_rag.application.cli import (
     prepare_benchmark,
     run_evaluation,
@@ -900,6 +901,7 @@ async def test_eval_json_output_is_the_only_stdout(
     assert result["runs"][0]["guardrail_blocked_counts"] == {}
 
 
+@requires_viz
 def test_visualization_json_output_names_the_written_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

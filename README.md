@@ -68,11 +68,11 @@ Python 3.11–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works). Loca
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync                                 # or: pip install -e .
+uv sync --extra eval --extra viz        # or: pip install -e '.[eval,viz]'
 cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 
-If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
+If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. `uv sync` alone installs ingestion and queries; `run-eval`'s LangChain and RAGAS judges need the `eval` extra and `run-visualization` the `viz` extra. Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
 
 ### Ingest, query, evaluate
 

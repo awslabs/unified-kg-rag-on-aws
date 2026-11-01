@@ -75,7 +75,7 @@ configure replaces the one in its row) before the first run:
 |---|---|---|
 | Default tier (extraction, gleaning, community reports, answers, judges) | `anthropic.claude-sonnet-5-5` | `models.default` |
 | Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `models.fast` |
-| Embeddings (indexing, queries, evaluation and visualization layout) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
+| Embeddings (indexing, queries and evaluation) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
 | Reranking | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **Region.** Every Bedrock call goes to `aws.bedrock.region_name`
@@ -106,8 +106,16 @@ variables ([After deploy](../iac/README.md#after-deploy)).
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync              # or: pip install -e .
+uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
+
+`uv sync` alone installs ingestion and queries. Two extras add the rest;
+without one, the command that needs it stops with exit `2`, naming it:
+
+- **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
+  pandas, langchain-openai), both enabled by default ([§6](#evaluators)).
+  The LLM-free evaluators need no extra.
+- **`viz`**: pyvis and Bokeh for `run-visualization` ([§7](#7-visualization-run-visualization)).
 
 **Markdown and HTML** need the `unstructured` extra
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
@@ -421,7 +429,7 @@ models:
 ```
 
 - The embedding model (`models.embedding.model_id`) serves the indices, the
-  queries, RAGAS and the visualization layout; changing it or its
+  queries and RAGAS; changing it or its
   `dimension` needs a re-index. On Bedrock, embedding and rerank ids are a
   closed list ([Model Catalog](./models.md#model-ids-and-capability-records));
   other providers take any model name.
@@ -1248,8 +1256,11 @@ judge-free run set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 | `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 
-An enabled evaluator that cannot be built (no Bedrock access for the judge,
-say) or rejects its configuration stops the run; with
+The two judges need the `eval` extra (`uv sync --extra eval`, [§1](#install));
+without it `run-eval` stops before the first query with exit `2`, naming the
+extra, even with `processing.ignore_errors: true`. The judge-free run above
+needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
+access for the judge, say) or rejects its configuration stops the run; with
 `processing.ignore_errors: true` it is dropped and listed in
 `run_manifest.dropped_evaluators`. Scoring starts after every answer is
 generated, so an evaluator error never discards the run: the metric is
@@ -1558,9 +1569,10 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-The two renderers are **`interactive`** (pyvis) and **`static`** (Bokeh),
-configured under `graph.visualization` (`interactive.*`, `static.*`,
-`embedding_method`, `layout_method`).
+It needs the `viz` extra (`uv sync --extra viz`, [§1](#install)). The two
+renderers are **`interactive`** (pyvis) and **`static`** (Bokeh), configured
+under `graph.visualization` (`interactive.*`, `static.*`, `centrality.*`).
+Ingestion itself renders nothing.
 
 - **The input.** The community-detection stage of `run-ingestion` writes
   `visualization_data.json` on every run whose graph covers the whole corpus:
@@ -1572,19 +1584,11 @@ configured under `graph.visualization` (`interactive.*`, `static.*`,
   `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
   `.json` only; re-render the HTML locally.
 - **What.** Nodes (colored by their level-0 `community_id`), edges and the
-  community hierarchy, without vectors. By default writing it calls no model
-  and `run-visualization` computes a seeded spring layout when it renders;
-  with `graph.visualization.enabled: true` the stage also renders and stores an
-  embedding-based layout (one embedding call per node per ingest).
+  community hierarchy, without vectors. Writing it calls no model;
+  `run-visualization` computes a seeded spring layout from the graph
+  topology and the `centrality` metrics when it renders.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
   by degree (default 2000) and lays out only those.
-- **Layout.** `embedding_method: "none"` is a spring layout with no
-  embedding client; `"description"` embeds each node's `name: description`
-  (`models.embedding`) and reduces it with `layout_method`. A failed embedding
-  fails the visualization step (not the ingestion) unless
-  `processing.ignore_errors: true`, which logs an ERROR and falls back to a
-  spring layout; a failed reduction always falls back. A fallback records
-  `"layout_degraded": true`.
 - Edge width and opacity are log-scaled to the graph's own weight range.
 - Only files a renderer wrote are reported (an earlier file of the same name
   is removed first); when nothing is rendered (an empty graph) the command

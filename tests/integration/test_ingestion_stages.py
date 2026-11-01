@@ -114,7 +114,6 @@ def _config() -> Config:
     config.processing.claim_extraction.enabled = True
     config.processing.max_attempts = 1
     config.fixing.enabled = False
-    config.graph.visualization.enabled = False
     return config
 
 

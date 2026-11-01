@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.extras import requires_eval
 from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery, RAGOutput
 from unified_kg_rag.domain.models import (
     Config,
@@ -443,6 +444,7 @@ class TestGraphSourceAttribution:
         assert results[0].retrieved_source_ids == [[], [], ["terms.pdf"]]
         assert summary.metric_statistics["hit_at_k"]["mean"] == 0.0
 
+    @requires_eval
     def test_default_resolver_only_for_graph_rag_chain(self, config: Config) -> None:
         manager = EvaluationManager(config, rag_chain=self._chain())
         assert manager.source_resolver is None
