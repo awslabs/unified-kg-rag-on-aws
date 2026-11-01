@@ -188,7 +188,7 @@ Configuration keys.
   call made 5 attempts, the `retry.max_attempts` default) (#151, #216,
   #468). The keys below fail the load naming the new key, so a tuned value
   is not silently lost (#470); the two 0.2.3 keys also say how to convert
-  their value (#PR). A
+  their value (#472). A
   Neptune retry backs off from
   `retry.base_delay_seconds`, as the model calls do (both default 2 s).
   `BatchProcessor.from_processing` is `BatchProcessor.from_config(config)`,
@@ -485,12 +485,12 @@ Library API (Python callers and custom backends).
 From 0.2.3 (or a `main` checkout since):
 1. Install on Python 3.11 or 3.12, with the extras you use (`eval`, `viz`,
    `local`, `otel`, `unstructured`). Without the `local` extra a CLI whose
-   providers need it exits 2 at start-up, naming it (#PR).
+   providers need it exits 2 at start-up, naming it (#472).
 2. Load your config once and fix what it reports: unknown keys (the table
    of removed 0.2.3 keys above), moved keys (the load names the
    replacement), and removed keys (a WARNING names the replacement). The
    0.2.3 template's empty `processing.document_parsing.source_directory`
-   loads as unset (#PR). Rename
+   loads as unset (#472). Rename
    environment variables to `UKR__...`, and set any 0.2.3 default you rely
    on (*Defaults* above). Update scripts for the renamed CLI flags and exit
    codes.
@@ -681,7 +681,7 @@ From 0.2.3 (or a `main` checkout since):
 - `GraphRAGChain` refuses to build (`ConfigurationError`) when
   `aws.bedrock.guardrail.contextual_grounding.enabled` is on and
   `check_output` off, however code set them: the nested flag is validated
-  without `check_output`, and a refused assignment stays applied (#PR).
+  without `check_output`, and a refused assignment stays applied (#472).
 
 ### Fixed
 Bugs present in 0.2.3.
