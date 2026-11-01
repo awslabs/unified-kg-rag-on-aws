@@ -39,7 +39,10 @@ from unified_kg_rag.application.cli.display import (
     markup_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
-from unified_kg_rag.application.cli.preflight import missing_endpoints_error
+from unified_kg_rag.application.cli.preflight import (
+    missing_endpoints_error,
+    missing_extras_error,
+)
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
@@ -533,6 +536,9 @@ class IngestionPipelineRunner:
 
         console.print("\n[bold]Initializing pipeline...[/bold]")
         pipeline_config = self._create_pipeline_config()
+        # The stages build their models when the pipeline is built.
+        if error := missing_extras_error(self.config):
+            usage_error(error)
         self._require_indexing_endpoints(pipeline_config)
         self.pipeline = DataIngestionPipeline(
             config=self.config,

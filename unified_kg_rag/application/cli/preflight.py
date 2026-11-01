@@ -5,17 +5,22 @@
 A missing store endpoint otherwise surfaces only when a retriever or indexer
 first connects: at query time for ``run-rag``/``run-eval``, and at the final
 indexing stage for ``run-ingestion``, after every LLM stage has been paid for.
+A missing optional extra surfaces when the first model is built, inside a
+stage or the chain, as an unexpected error.
 """
 
 from __future__ import annotations
 
+import importlib.util
 from functools import reduce
 from typing import Any
 
 from unified_kg_rag.adapters.provider_registry import (
     RETRIEVER_PROVIDER_ROLES,
+    ProviderRole,
     provider_endpoint,
     provider_kind,
+    provider_requirement,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
@@ -73,3 +78,39 @@ def missing_endpoints_error(
         f"Set {'them' if len(missing) > 1 else 'it'} in the config file or "
         "the environment."
     )
+
+
+def _installed(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def missing_extras_error(config: Config) -> str | None:
+    """Message naming each optional module the selected providers import
+    that is not installed, or None if all are.
+
+    Only kinds that declare one (``register_provider(..., requires=...)``)
+    are checked.
+    """
+    # Importing the module registers the built-in kinds and their needs.
+    import unified_kg_rag.adapters.providers  # noqa: F401
+
+    # (module, how to install it) -> the settings that select it.
+    missing: dict[tuple[str, str], list[str]] = {}
+    for role in ProviderRole:
+        kind = provider_kind(config, role)
+        requirement = provider_requirement(role, kind)
+        if requirement is not None and not _installed(requirement[0]):
+            setting = f"providers.{role.section}.kind '{kind}'"
+            if setting not in (settings := missing.setdefault(requirement, [])):
+                settings.append(setting)
+    if not missing:
+        return None
+    modules = ", ".join(
+        f"'{module}' (for {', '.join(settings)})"
+        for (module, _), settings in missing.items()
+    )
+    installs = "; ".join(dict.fromkeys(install for _, install in missing))
+    return f"Not installed: {modules}. Install {installs}."

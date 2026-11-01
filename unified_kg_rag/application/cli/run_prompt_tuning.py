@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.conventions import (
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
@@ -134,6 +135,8 @@ def main() -> int:
             config = apply_provider_arguments(load_cli_config(args), args)
         if not args.source_directory.is_dir():
             usage_error(f"source directory not found: '{args.source_directory}'")
+        if error := missing_extras_error(config):
+            usage_error(error)
         setup_logging(config, stream=sys.stderr if as_json else None)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)

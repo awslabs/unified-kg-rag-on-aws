@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The CLIs reject missing store endpoints before any paid model call."""
+"""The CLIs reject missing store endpoints and optional extras before any
+paid model call."""
 
 from __future__ import annotations
 
@@ -14,15 +15,18 @@ from unified_kg_rag.adapters import provider_registry
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
     provider_endpoint,
+    provider_requirement,
     register_provider,
 )
 from unified_kg_rag.application.cli import (
     run_evaluation,
     run_ingestion_pipeline,
+    run_prompt_tuning,
     run_rag_chain,
 )
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
+    missing_extras_error,
     strategy_roles,
 )
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
@@ -228,3 +232,123 @@ def test_eval_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     assert exc.value.code == 2  # a configuration error
     chain.assert_not_called()
     assert "aws.neptune.endpoint" in capsys.readouterr().err
+
+
+# --- missing optional extras ---------------------------------------------
+
+
+@pytest.fixture
+def without_local_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A None entry makes the module unimportable (and find_spec None).
+    for module in ("langchain_ollama", "langchain_openai"):
+        monkeypatch.setitem(sys.modules, module, None)
+
+
+def _local_config() -> Config:
+    return Config(backend="local")
+
+
+def test_the_bedrock_kinds_need_no_extra(without_local_extra: None) -> None:
+    assert missing_extras_error(Config()) is None
+
+
+def test_a_missing_extra_is_named_with_the_settings_that_need_it(
+    without_local_extra: None,
+) -> None:
+    error = missing_extras_error(_local_config())
+    assert error is not None
+    assert (
+        "'langchain_ollama' (for providers.llm.kind 'ollama', "
+        "providers.embedding.kind 'ollama')" in error
+    )
+    assert error.count("uv sync --extra local") == 1
+
+
+def test_an_installed_extra_passes() -> None:
+    pytest.importorskip("langchain_ollama")
+    assert missing_extras_error(_local_config()) is None
+
+
+def test_reregistering_a_kind_replaces_its_requirement() -> None:
+    kind = "synthetic_model_server"
+    role = ProviderRole.LLM
+    config = Config()
+    config.providers.llm.kind = kind
+    try:
+        register_provider(role, kind, requires=("synthetic_absent_module", "x"))(
+            lambda providers: None
+        )
+        assert provider_requirement(role, kind) == ("synthetic_absent_module", "x")
+        assert "'synthetic_absent_module'" in (missing_extras_error(config) or "")
+        register_provider(role, kind)(lambda providers: None)
+        assert provider_requirement(role, kind) is None
+        assert missing_extras_error(config) is None
+    finally:
+        provider_registry._REGISTRY.pop((role, kind), None)
+
+
+def test_ingestion_exits_before_the_pipeline_without_the_extra(
+    mocker,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    without_local_extra: None,
+) -> None:
+    runner = _ingestion_runner(mocker, tmp_path, _local_config())
+    pipeline = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    with pytest.raises(SystemExit) as exc:
+        runner.run()
+    assert exc.value.code == 2  # a configuration error
+    pipeline.assert_not_called()
+    assert "uv sync --extra local" in " ".join(capsys.readouterr().err.split())
+
+
+async def test_rag_exits_before_the_chain_without_the_extra(
+    mocker, capsys: pytest.CaptureFixture[str], without_local_extra: None
+) -> None:
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=_local_config())
+    create = mocker.patch.object(run_rag_chain, "create_rag_chain")
+    parser = run_rag_chain.CommandLineInterface._setup_arguments()
+    args = parser.parse_args(["-q", "hi"])
+    assert await run_rag_chain.async_main(args) == 2
+    create.assert_not_called()
+    assert "langchain_ollama" in capsys.readouterr().err
+
+
+def test_prompt_tuning_exits_before_tuning_without_the_extra(
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    without_local_extra: None,
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["run-prompt-tuning", "--source-directory", str(tmp_path)]
+    )
+    mocker.patch.object(
+        run_prompt_tuning, "load_cli_config", return_value=_local_config()
+    )
+    tuner = mocker.patch.object(run_prompt_tuning, "PromptTuner")
+    with pytest.raises(SystemExit) as exc:
+        run_prompt_tuning.main()
+    assert exc.value.code == 2
+    tuner.assert_not_called()
+    assert "langchain_ollama" in capsys.readouterr().err
+
+
+def test_eval_exits_before_the_chain_without_the_extra(
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    without_local_extra: None,
+) -> None:
+    data = tmp_path / "eval.json"
+    data.write_text("[]")
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(data)])
+    mocker.patch.object(run_evaluation, "load_cli_config", return_value=_local_config())
+    chain = mocker.patch.object(run_evaluation, "GraphRAGChain")
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.main()
+    assert exc.value.code == 2
+    chain.assert_not_called()
+    assert "langchain_ollama" in capsys.readouterr().err

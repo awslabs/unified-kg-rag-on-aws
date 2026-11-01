@@ -483,7 +483,8 @@ Library API (Python callers and custom backends).
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
 1. Install on Python 3.11 or 3.12, with the extras you use (`eval`, `viz`,
-   `local`, `otel`, `unstructured`).
+   `local`, `otel`, `unstructured`). Without the `local` extra a CLI whose
+   providers need it exits 2 at start-up, naming it (#PR).
 2. Load your config once and fix what it reports: unknown keys (the table
    of removed 0.2.3 keys above), moved keys (the load names the
    replacement), and removed keys (a WARNING names the replacement). The

@@ -20,7 +20,9 @@ indexer takes ``providers.embedding_factory``).
 A store kind that connects to a server declares its endpoint setting
 (``endpoint=("aws.neptune.endpoint", "UKR__AWS__NEPTUNE__ENDPOINT")``: the config key and
 its environment variable), so the CLIs can reject a missing one at start-up
-(``application.cli.preflight``); an embedded kind declares none.
+(``application.cli.preflight``); an embedded kind declares none. A kind
+whose builder imports an optional extra names its module (``requires=``),
+so the CLIs reject a missing extra at start-up as well.
 """
 
 from __future__ import annotations
@@ -81,6 +83,8 @@ BuilderT = TypeVar("BuilderT", bound=ProviderBuilder)
 _REGISTRY: dict[tuple[ProviderRole, str], ProviderBuilder] = {}
 # (config key, environment variable) of the endpoint a kind connects to.
 _ENDPOINTS: dict[tuple[ProviderRole, str], tuple[str, str]] = {}
+# (module, how to install it) of the optional dependency a kind imports.
+_REQUIRES: dict[tuple[ProviderRole, str], tuple[str, str]] = {}
 
 
 def _key(role: ProviderRole, kind: str) -> tuple[ProviderRole, str]:
@@ -88,25 +92,32 @@ def _key(role: ProviderRole, kind: str) -> tuple[ProviderRole, str]:
 
 
 def register_provider(
-    role: ProviderRole, kind: str, *, endpoint: tuple[str, str] | None = None
+    role: ProviderRole,
+    kind: str,
+    *,
+    endpoint: tuple[str, str] | None = None,
+    requires: tuple[str, str] | None = None,
 ) -> Callable[[BuilderT], BuilderT]:
     """Register the decorated builder for ``role`` under ``kind``.
 
     ``endpoint`` is the ``(config key, environment variable)`` of the server
     the built component connects to, or None for a kind that needs none.
+    ``requires`` is the ``(module, how to install it)`` of the optional
+    dependency the built component imports, or None.
 
     A later registration of the same role and kind replaces the earlier one,
-    endpoint included, so a deployment can override a built-in (e.g. a tuned
-    Bedrock factory).
+    endpoint and requirement included, so a deployment can override a
+    built-in (e.g. a tuned Bedrock factory).
     """
     key = _key(role, kind)
 
     def decorator(builder: BuilderT) -> BuilderT:
         _REGISTRY[key] = builder
-        if endpoint is None:
-            _ENDPOINTS.pop(key, None)
-        else:
-            _ENDPOINTS[key] = endpoint
+        for declared, table in ((endpoint, _ENDPOINTS), (requires, _REQUIRES)):
+            if declared is None:
+                table.pop(key, None)
+            else:
+                table[key] = declared
         return builder
 
     return decorator
@@ -115,6 +126,11 @@ def register_provider(
 def provider_endpoint(role: ProviderRole, kind: str) -> tuple[str, str] | None:
     """The ``(config key, environment variable)`` ``kind`` declared for ``role``."""
     return _ENDPOINTS.get(_key(role, kind))
+
+
+def provider_requirement(role: ProviderRole, kind: str) -> tuple[str, str] | None:
+    """The ``(module, how to install it)`` ``kind`` declared for ``role``."""
+    return _REQUIRES.get(_key(role, kind))
 
 
 def registered_kinds(role: ProviderRole) -> list[str]:
