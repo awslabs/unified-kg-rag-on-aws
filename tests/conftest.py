@@ -251,11 +251,11 @@ def skip_vertex_id_check(monkeypatch: pytest.MonkeyPatch) -> None:
     from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
-    async def unchecked(self: object, label: str) -> None:
-        return None
+    async def configured(self: NeptuneRetriever, label: str) -> tuple[bool, None]:
+        return self._neptune_config.vertex_ids == "custom", None
 
     monkeypatch.setattr(NeptuneIndexer, "_check_vertex_ids", lambda self, label: None)
-    monkeypatch.setattr(NeptuneRetriever, "_check_vertex_ids", unchecked)
+    monkeypatch.setattr(NeptuneRetriever, "_vertex_lookup", configured)
 
 
 @pytest.fixture

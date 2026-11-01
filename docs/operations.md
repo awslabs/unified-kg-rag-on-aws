@@ -305,18 +305,25 @@ in the logs). On a small graph the gain is small.
 
 Switching an existing graph needs one full build:
 
-1. Set `vertex_ids` the same for ingestion and queries (`UKR__INDEXING__NEPTUNE__VERTEX_IDS`).
-   A run or query in one mode refuses a label built in the other mode,
+1. Set `vertex_ids` to the new mode for ingestion (`UKR__INDEXING__NEPTUNE__VERTEX_IDS`).
+   An incremental run in one mode refuses a label built in the other mode,
    with a `StoreConfigurationError` that names the label.
 2. Run ingestion once with `indexing.reset: true` (with incremental indexing
    off, any run is a full build). The build first writes a
    `VertexIdSwitch` vertex for the label and then writes the graph in the new
    mode. At the end, the sweep drops the vertices of the old mode and the
-   switch vertex. Until the build finishes, queries see only the vertices it
-   has already rewritten.
-3. If a write fails, the build keeps the old vertices for a retry, and the
+   switch vertex.
+3. Set the same mode for queries, before, during or after the build. Graph
+   expansion never refuses a label: while the label is in the other mode or
+   holds a switch vertex, it looks vertices up by their `id` property (both
+   modes write it) and logs a WARNING once per label. During the build it
+   reads each entity once, the rewritten copy where the build has written
+   one and the old copy otherwise. Once the label is settled in the query's
+   mode, custom-mode queries go back to vertex-id lookups.
+4. If a write fails, the build keeps the old vertices for a retry, and the
    switch vertex stays. In that state both modes refuse incremental runs
-   ("did not finish") until a full build succeeds.
+   ("did not finish") until a full build succeeds; queries go on reading by
+   the `id` property.
 
 Gremlin Server stores string vertex ids only when its graph uses
 `vertexIdManager=ANY`, which `docker/compose.local.yaml` sets.

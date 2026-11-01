@@ -2110,9 +2110,11 @@ class NeptuneIndexingConfig(BaseModel):
             "vertex id, which Neptune serves faster and with fewer "
             "ConcurrentModificationExceptions than a property lookup; the "
             "'id' property is still written. Edges are unchanged. A graph "
-            "is built in one mode: a run or query in the other mode is "
+            "is built in one mode: an ingestion run in the other mode is "
             "refused, and switching needs one full build (indexing.reset: "
             "true with incremental indexing on), which rewrites the graph. "
+            "A query in the other mode, or during the switch, looks vertices "
+            "up by the 'id' property instead (logged once). "
             "Neptune and Gremlin Server only: the embedded SQLite graph "
             "store ignores it."
         ),

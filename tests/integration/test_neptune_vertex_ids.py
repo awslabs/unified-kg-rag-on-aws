@@ -285,10 +285,11 @@ def test_a_graph_of_the_other_mode_is_refused_until_a_full_build(
         lambda: new.graph_indexer.upsert_entities(entities[:1]),
         lambda: new.graph_indexer.read_entities(["vendor"]),
         lambda: new.graph_indexer.upsert_communities(communities),
-        lambda: _expand(new),
     ):
         with pytest.raises(StoreConfigurationError, match="indexing.reset: true"):
             refused()
+    # Queries in the new mode before the build: read by the id property.
+    assert _expand(new) == ["buyer", "depot", "vendor"]
     assert new.stored_ids("graph.entities") == {"vendor", "buyer", "depot"}
 
     # One full build rewrites it: the old vertices are swept, the switch ends.
@@ -355,3 +356,47 @@ def test_an_unswept_switch_is_refused_until_a_full_build_finishes_it(
         == 3
     )
     assert _expand(rerun) == ["buyer", "depot", "vendor"]
+
+
+@pytest.mark.parametrize("target", ["property", "custom"])
+def test_queries_in_either_mode_read_a_switch_in_progress_once_per_entity(
+    custom: StoreHarness, target: str
+) -> None:
+    # A full build switching to `target` wrote some of the graph and has not
+    # swept yet: the label holds the rewritten vertices next to their old
+    # copies. A query in either mode (the query service switched before or
+    # after the build started) reads every entity once, the rewritten copy
+    # where there is one.
+    built_in = "custom" if target == "property" else "property"
+    old = custom.derive(_in(built_in))
+    entities, relationships, _ = _graph()
+    assert old.graph_indexer.upsert_entities(entities).failed_items == 0
+    assert old.graph_indexer.upsert_relationships(relationships).failed_items == 0
+
+    switching = custom.derive(_in(target))
+    indexer = switching.graph_indexer
+    indexer.begin_rebuild([_SUFFIX])
+    rewritten = [
+        entity.model_copy(update={"description": "rewritten"})
+        for entity in entities
+        if entity.id in ("vendor", "buyer")
+    ]
+    assert indexer.index_entities(rewritten, suffixes=[_SUFFIX]).failed_items == 0
+    assert indexer.index_relationships(relationships[:1]).failed_items == 0
+    assert _switches(switching) == [indexer._get_label("Entity", _SUFFIX)]
+    try:
+        for mode in ("property", "custom"):
+            query = custom.derive(_in(mode))
+            (hits,) = query.retrieve(
+                RetrieverRole.GRAPH,
+                SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["vendor"]}),
+            )
+            by_id = {hit.source: hit for hit in hits}
+            assert sorted(hit.source for hit in hits) == ["buyer", "depot", "vendor"]
+            assert "rewritten" in by_id["vendor"].content
+            assert "rewritten" in by_id["buyer"].content
+            # Not rewritten yet: its old copy.
+            assert "rewritten" not in by_id["depot"].content
+    finally:
+        indexer.end_rebuild([_SUFFIX])
+    assert _switches(switching) == []

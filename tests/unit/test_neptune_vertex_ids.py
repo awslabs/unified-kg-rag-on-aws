@@ -249,7 +249,13 @@ def _run_retriever(retriever: Any, answer: Callable[[str], list[Any]]) -> list[s
         sent.append(groovy)
         return answer(groovy)
 
-    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
+    projected: list[dict[str, Any]] = retriever.__dict__.setdefault("projected", [])
+
+    def project(traversal: Any, **kwargs: Any) -> Any:
+        projected.append(kwargs)
+        return traversal
+
+    object.__setattr__(retriever, "_with_projection", project)
     object.__setattr__(retriever, "_execute_traversal", execute)
     asyncio.run(
         retriever._traverse(["e1", "e2"], SearchQuery(query="", suffix="default"))
@@ -443,36 +449,113 @@ def test_the_switch_vertex_is_found_by_its_label_and_id_property(
 # --- the mode check: the retriever -------------------------------------------
 
 
-def test_the_retriever_refuses_a_label_of_the_other_mode() -> None:
-    for configured, stored in (("custom", "property"), ("property", "custom")):
+@pytest.fixture
+def warned(monkeypatch) -> None:
+    """Every once-per-process warning logged again."""
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+
+
+_BY_PROPERTY = "g.V().hasLabel('Entity-default').has('id',within(['e1','e2']))"
+
+
+@pytest.mark.parametrize(
+    ("configured", "stored"), [("custom", "property"), ("property", "custom")]
+)
+def test_the_retriever_reads_a_label_of_the_other_mode_by_property(
+    caplog, warned, configured: str, stored: str
+) -> None:
+    # The query service switched before the full build's first write (or
+    # the build switched and the query service has not): a refusal failed
+    # every graph expansion until then. The id property is in both modes,
+    # so the expansion looks the seeds up by it, and warns once.
+    retriever = _retriever(configured)
+    for _ in range(2):
+        sent = _run_retriever(retriever, _sample(stored))
+        assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+    warnings = [r for r in caplog.records if "vertex_ids" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    assert f"built with vertex_ids '{stored}'" in warnings[0].getMessage()
+    # Checked again on each query: once a build rewrites the label, the
+    # configured lookups take over.
+    sent = _run_retriever(retriever, _sample(configured))
+    if configured == "custom":
+        assert sent[-1].startswith("g.V('Entity-default:e1','Entity-default:e2')")
+    else:
+        assert sent[-1].startswith(_BY_PROPERTY)
+
+
+@pytest.mark.parametrize("configured", ["custom", "property"])
+@pytest.mark.parametrize("target", ["custom", "property"])
+def test_the_retriever_reads_a_label_being_switched_by_property(
+    caplog, warned, configured: str, target: str
+) -> None:
+    # The sample may hit a vertex of either mode: a label being switched
+    # holds both, and only the property lookup finds them all.
+    for sampled in ("custom", "property"):
+
+        def answer(groovy: str, sampled: str = sampled) -> list[Any]:
+            if f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in groovy:
+                return [target]
+            return _sample(sampled)(groovy)
+
         retriever = _retriever(configured)
-        with pytest.raises(StoreConfigurationError, match="indexing.reset: true"):
-            _run_retriever(retriever, _sample(stored))
+        sent = _run_retriever(retriever, answer)
+        assert sent[-1].startswith(_BY_PROPERTY), sent[-1]
+        # With each vertex's id, to tell the rewritten copy from the old.
+        assert retriever.projected[-1]["with_vertex_id"] is True
+        assert "being rewritten" in caplog.text
 
 
-def test_the_retriever_reads_a_label_being_switched(caplog) -> None:
-    def answer(groovy: str) -> list[Any]:
-        if f"hasLabel('{VERTEX_ID_SWITCH_LABEL}')" in groovy:
-            return ["custom"]
-        return _sample("property")(groovy)
+def _row(vid: Any, item_id: str, path: int, name: str = "") -> dict[str, Any]:
+    return {
+        "node": {"id": [item_id], "name": [name or item_id]},
+        "path": [{"name": [f"p{i}"]} for i in range(path)],
+        "node_type": _LABEL,
+        "vertex_id": vid,
+    }
 
-    sent = _run_retriever(_retriever("custom"), answer)
-    assert sent[-1].startswith("g.V('Entity-default:e1'")
-    assert "being rewritten" in caplog.text
+
+@pytest.mark.parametrize("target", ["custom", "property"])
+def test_a_switch_keeps_the_rewritten_copy_of_a_vertex(target: str) -> None:
+    from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+
+    def vid(item_id: str, rewritten: bool) -> Any:
+        custom = rewritten == (target == "custom")
+        return vertex_id(_LABEL, item_id) if custom else f"uuid-{item_id}"
+
+    rows = [
+        _row(vid("e1", False), "e1", 1, "old"),
+        _row(vid("e1", True), "e1", 1, "new"),
+        # Reached over the old copy only: kept.
+        _row(vid("e2", False), "e2", 2),
+        # Reached over both: the rewritten copy only.
+        _row(vid("e3", True), "e3", 3, "new"),
+        _row(vid("e3", False), "e3", 2, "old"),
+    ]
+    kept = NeptuneRetriever._rewritten_copies(rows, _LABEL, target)
+    assert [(r["node"]["id"][0], r["node"]["name"][0]) for r in kept] == [
+        ("e1", "new"),
+        ("e2", "e2"),
+        ("e3", "new"),
+    ]
+    assert all("vertex_id" not in r for r in kept)
 
 
 def test_the_retriever_checks_a_matching_label_once() -> None:
     retriever = _retriever("custom")
     first = _run_retriever(retriever, _sample("custom"))
     second = _run_retriever(retriever, _sample("custom"))
-    assert len(first) == 2 and len(second) == 1
+    # The sample and the switch, then the expansion; then the expansion.
+    assert len(first) == 3 and len(second) == 1
 
 
 def test_the_retriever_checks_an_empty_label_again() -> None:
     retriever = _retriever("custom")
     _run_retriever(retriever, _sample(None))
-    with pytest.raises(StoreConfigurationError):
-        _run_retriever(retriever, _sample("property"))
+    sent = _run_retriever(retriever, _sample("property"))
+    assert sent[-1].startswith(_BY_PROPERTY)
 
 
 def test_the_local_graph_store_takes_the_setting_and_ignores_it(tmp_path) -> None:

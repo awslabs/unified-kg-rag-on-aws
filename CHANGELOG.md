@@ -555,7 +555,10 @@ From 0.2.3 (or a `main` checkout since):
 - `processing.chunking.length_unit: tokens`: chunk sizes in a script-aware
   token estimate instead of characters (#460).
 - `indexing.neptune.vertex_ids: custom`: Neptune vertex ids
-  `<label>:<item id>` (#466).
+  `<label>:<item id>`. Graph expansion reads a label of the other mode, or
+  one a full build is switching, by the `id` property (one WARNING), so
+  queries keep working while ingestion and the query service switch
+  (#466, #PR).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk
   quantized vectors on OpenSearch 2.17+ (#461).
 - The public API exports its errors (`GraphRAGException`,
