@@ -708,6 +708,9 @@ Queries and retrieval.
   graph expand alike. Ordering reads every neighbour of an expanded hub;
   `indexing.neptune.deterministic_order: false` keeps the store's order
   instead (#470).
+- Of two equally short paths to an entity, graph expansion keeps the one
+  from the seed the caller ranked first (then the first by content), not
+  the one whose seed name sorts first (#PR).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

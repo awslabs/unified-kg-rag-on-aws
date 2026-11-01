@@ -181,6 +181,43 @@ def test_process_traversal_results_orders_equal_scores_by_id(retriever) -> None:
     assert [r.source for r in results] == ["e1", "e2", "e3"]
 
 
+def _from_seed(seed: str, node_id: str = "x") -> dict:
+    return {
+        "node": {"id": [node_id], "name": [node_id.upper()]},
+        "path": [{"name": [seed.upper()]}, {"name": [node_id.upper()]}],
+        "node_type": "Entity-default",
+    }
+
+
+@pytest.mark.parametrize("seeds", [["s2", "s1"], ["s1", "s2"]])
+def test_of_equal_paths_the_better_ranked_seeds_is_kept(retriever, seeds) -> None:
+    # Two seeds reach x in one hop: the path from the seed the caller ranked
+    # first wins, whatever order the rows arrive in or their content sorts.
+    rows = [
+        _entity_item("s1", 0, rank=1),
+        _entity_item("s2", 0, rank=1),
+        _from_seed("s1"),
+        _from_seed("s2"),
+    ]
+    for ordered in (rows, rows[::-1]):
+        results = retriever._process_traversal_results(
+            ordered, SearchQuery(query="x", filters={"id": seeds})
+        )
+        (x,) = [r for r in results if r.source == "x"]
+        assert x.content.endswith(f"Path: {seeds[0].upper()} -> X"), x.content
+
+
+def test_a_path_from_an_unreturned_seed_ranks_after_every_seed(retriever) -> None:
+    # The seed s1 did not come back (a filter dropped it): its path ranks
+    # after the returned seed s2's, then by content.
+    rows = [_entity_item("s2", 0, rank=1), _from_seed("s1"), _from_seed("s2")]
+    results = retriever._process_traversal_results(
+        rows, SearchQuery(query="x", filters={"id": ["s1", "s2"]})
+    )
+    (x,) = [r for r in results if r.source == "x"]
+    assert x.content.endswith("Path: S2 -> X"), x.content
+
+
 def test_process_traversal_results_skips_missing_id(retriever) -> None:
     query = SearchQuery(query="x")
     items = [{"node": {"name": ["NoId"]}, "path": [], "node_type": "Entity-default"}]

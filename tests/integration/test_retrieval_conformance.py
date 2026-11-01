@@ -962,5 +962,7 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
     assert results[0] == results[1]
     hub, shared = results[0]
     assert [source for source, *_ in hub] == ["hub", "n00", "n01", "n02"]
+    # Of two equally short paths, the one from the better-ranked seed (the
+    # caller's first), not the first by content.
     (x,) = [content for source, _, content in shared if source == "x"]
-    assert x.endswith("Path: S1 -> X"), x
+    assert x.endswith("Path: S2 -> X"), x
