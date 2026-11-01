@@ -12,6 +12,7 @@ against Gremlin Server in both modes in the graph conformance suites
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -368,6 +369,7 @@ def test_an_unfinished_switch_is_refused_in_either_mode(make_indexer) -> None:
 def test_a_full_build_switches_the_label_and_its_sweep_ends_the_switch(
     make_indexer, caplog
 ) -> None:
+    caplog.set_level(logging.WARNING)
     indexer = make_indexer("custom")
     graph = _on(indexer, _Graph(stored="property"))
     assert indexer.begin_rebuild(["default"])
@@ -577,6 +579,7 @@ def test_the_retriever_reads_a_label_of_the_other_mode_by_property(
     # the build switched and the query service has not): a refusal failed
     # every graph expansion until then. The id property is in both modes,
     # so the expansion looks the seeds up by it, and warns once.
+    caplog.set_level(logging.WARNING)
     retriever = _retriever(configured)
     for _ in range(2):
         sent = _run_retriever(retriever, _sample(stored))
@@ -600,6 +603,7 @@ def test_the_retriever_reads_a_label_being_switched_by_property(
 ) -> None:
     # The sample may hit a vertex of either mode: a label being switched
     # holds both, and only the property lookup finds them all.
+    caplog.set_level(logging.WARNING)
     for sampled in ("custom", "property"):
 
         def answer(groovy: str, sampled: str = sampled) -> list[Any]:
@@ -755,6 +759,7 @@ def test_a_settled_custom_label_found_without_its_seeds_is_sampled_again(
 def test_each_label_warns_once(caplog, warned, switch: str | None, text: str) -> None:
     # One WARNING per label (and mode or target), however often it is read:
     # two labels warn once each.
+    caplog.set_level(logging.WARNING)
     retriever = _retriever("custom")
     sample = _sample("property")
     answer = _switching(switch, sample) if switch else sample
@@ -767,7 +772,8 @@ def test_each_label_warns_once(caplog, warned, switch: str | None, text: str) ->
         asyncio.run(retriever._vertex_lookup(label))
     messages = [r.getMessage() for r in caplog.records if text in r.getMessage()]
     assert len(messages) == 2, messages
-    assert {"Entity-a", "Entity-b"} == {m.split("'")[1] for m in messages}
+    for label in ("Entity-a", "Entity-b"):
+        assert sum(label in m for m in messages) == 1, messages
 
 
 def test_the_retriever_checks_an_empty_label_again() -> None:
