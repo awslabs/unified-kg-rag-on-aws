@@ -1,7 +1,5 @@
 # Operator Runbook
 
-> 🇰🇷 한국어판: [docs/operations.ko.md](./operations.ko.md)
-
 Tasks an operator runs against an existing deployment, and what to do when a
 run or a query fails. Every configuration key is in the
 [Configuration Reference](./configuration.md) (how the configuration loads:

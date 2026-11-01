@@ -1059,6 +1059,10 @@ changed once with the full-config keys (#332).
   25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
+- Documentation: only `README.ko.md` and `docs/user-guide.ko.md` remain in
+  Korean. The Korean design doc, operator runbook, model catalog and
+  glossary are retired; the Korean README and user guide link the English
+  documents (#PR).
 - `config-template.yaml` is a short starting file (131 lines, from 1,109)
   with the keys most deployments set: the backend preset and providers,
   models, AWS stores, chunking, translation, gleaning and claims, reset,
