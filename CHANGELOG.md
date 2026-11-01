@@ -600,6 +600,14 @@ From 0.2.3 (or a `main` checkout since):
   for ingestion and ARM64 tasks (#457), the Nori analyzer package
   (`opensearch_nori_package`) (#459), and an `EnableVersionUpgrade` policy
   for in-place OpenSearch upgrades (#457).
+- Extraction schema settings under `processing.graph_extraction`:
+  `entity_types` items may be `{label, description, iri}` mappings, and the
+  new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
+  ORGANIZATION"`), `schema_mode` (`off`/`align`/`strict`, default `align`)
+  and `schema_source` keys are validated on load: labels are unique by
+  case and word separators, and patterns name declared types. Extraction
+  does not apply them yet. At their defaults they change no cache key,
+  extraction record or recorded extraction settings (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -694,6 +702,8 @@ From 0.2.3 (or a `main` checkout since):
   `{relationship_types}` variable, which a `graph_extraction` custom prompt
   may use. The default prompt renders byte for byte as before, and
   extraction records keep their keys (#PR).
+- An `entity_types` list with two labels that differ only in case or word
+  separators (`PERSON`, `person`) fails the load (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

@@ -72,6 +72,14 @@ from .retrieval import (
     validate_path_segment,
     validate_safe_name,
 )
+from .schema import (
+    EntityTypeSpec,
+    ExtractionSchema,
+    RelationshipPattern,
+    RelationshipTypeSpec,
+    SchemaMode,
+    schema_key,
+)
 from .text_unit import TextUnit
 
 __all__ = [
@@ -146,6 +154,12 @@ __all__ = [
     "SearchStrategy",
     "SearchType",
     "TextUnit",
+    "EntityTypeSpec",
+    "ExtractionSchema",
+    "RelationshipPattern",
+    "RelationshipTypeSpec",
+    "SchemaMode",
+    "schema_key",
     "validate_path_segment",
     "validate_safe_name",
 ]

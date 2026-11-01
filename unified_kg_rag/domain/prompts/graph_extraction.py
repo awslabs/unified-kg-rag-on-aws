@@ -3,6 +3,8 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
+from unified_kg_rag.domain.models.schema import EntityTypeItem, EntityTypeSpec
+
 from .base import (
     THINKING_HEADROOM_TOKENS,
     BasePrompt,
@@ -55,17 +57,25 @@ DEFAULT_RELATIONSHIP_TYPES = """## Relationship Types (be specific and descripti
 ANY_ENTITY_TYPES = "Use any entity types relevant to the document's domain."
 
 
-def format_entity_types(entity_types: Sequence[str]) -> str:
+def format_entity_types(entity_types: Sequence[EntityTypeItem]) -> str:
     """Render config entity types into the prompt's category block.
 
     Each item is rendered as ``- **LABEL**: description`` (the description
-    after the first ':' is optional). An empty list lets the model choose
-    any relevant types: the prompt slot then says so explicitly.
+    after the first ':' of a string item is optional, and written as
+    given). An empty list lets the model choose any relevant types: the
+    prompt slot then says so explicitly.
     """
     if not entity_types:
         return ANY_ENTITY_TYPES
     lines = []
     for item in entity_types:
+        if isinstance(item, EntityTypeSpec):
+            lines.append(
+                f"- **{item.label}**: {item.description}"
+                if item.description
+                else f"- **{item.label}**"
+            )
+            continue
         label, sep, desc = item.partition(":")
         label = label.strip()
         if not label:
