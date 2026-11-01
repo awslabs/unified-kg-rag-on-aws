@@ -3,7 +3,11 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
-from unified_kg_rag.domain.models.schema import EntityTypeItem, EntityTypeSpec
+from unified_kg_rag.domain.models.schema import (
+    EntityTypeItem,
+    EntityTypeSpec,
+    ExtractionSchema,
+)
 
 from .base import (
     THINKING_HEADROOM_TOKENS,
@@ -41,10 +45,11 @@ transforming unstructured text into precise, comprehensive knowledge graphs.
 MISSION: Extract entities and relationships from text with maximum accuracy and completeness while strictly adhering to
 output format requirements."""
 
-# What {relationship_types} renders to: example relationship types the model
-# may use or go beyond. It was fixed text of the rules before it became a
-# slot, so the extraction-record fingerprint hashes the template with it
-# filled in (GraphExtractionPrompt.inlined_slots).
+# What {relationship_types} renders to when the schema declares no
+# relationship types: example types the model may use or go beyond. It was
+# fixed text of the rules before it became a slot, so the extraction-record
+# fingerprint hashes the template with the slot filled in
+# (GraphExtractionPrompt.inlined_slots).
 DEFAULT_RELATIONSHIP_TYPES = """## Relationship Types (be specific and descriptive):
 - **HIERARCHICAL**: MANAGES, REPORTS_TO, OWNS, CONTAINS, PART_OF
 - **COLLABORATIVE**: WORKS_WITH, PARTNERS_WITH, COLLABORATES_WITH
@@ -81,6 +86,41 @@ def format_entity_types(entity_types: Sequence[EntityTypeItem]) -> str:
         if not label:
             continue
         lines.append(f"- **{label}**:{desc.rstrip()}" if sep else f"- **{label}**")
+    return "\n".join(lines)
+
+
+# The header of a declared relationship-type block and of its patterns.
+SCHEMA_RELATIONSHIP_TYPES_HEADER = (
+    "## Relationship Types (STRICT - use only these types):"
+)
+SCHEMA_PATTERNS_HEADER = "Allowed patterns:"
+
+
+def format_relationship_types(schema: ExtractionSchema) -> str:
+    """Render the schema's relationship types into the prompt's block.
+
+    No declared type: :data:`DEFAULT_RELATIONSHIP_TYPES`, the examples the
+    prompt has always shown. Otherwise one ``- **LABEL**: description``
+    line per type, as for entity types, then the allowed patterns, one
+    ``- (SOURCE)-[RELATION]->(TARGET)`` line each, when there are any.
+    """
+    if not schema.relationship_types:
+        return DEFAULT_RELATIONSHIP_TYPES
+    lines = [SCHEMA_RELATIONSHIP_TYPES_HEADER]
+    lines += [
+        (
+            f"- **{spec.label}**: {spec.description}"
+            if spec.description
+            else f"- **{spec.label}**"
+        )
+        for spec in schema.relationship_types
+    ]
+    if schema.relationship_patterns:
+        lines.append(SCHEMA_PATTERNS_HEADER)
+        lines += [
+            f"- ({p.source_type})-[{p.relation}]->({p.target_type})"
+            for p in schema.relationship_patterns
+        ]
     return "\n".join(lines)
 
 
@@ -282,7 +322,13 @@ class GraphExtractionPrompt(BasePrompt):
 
     @classmethod
     def inlined_slots(cls, config: "Config") -> dict[str, str]:
-        return {"relationship_types": DEFAULT_RELATIONSHIP_TYPES}
+        # The declared types when there are any: the fingerprint then hashes
+        # them too (the config keys them already).
+        return {
+            "relationship_types": format_relationship_types(
+                config.processing.graph_extraction.extraction_schema()
+            )
+        }
 
     # Persona/mission (domain-adaptable) and the rules + output format the
     # parser and grounding guard rely on (kept by tuned prompts).

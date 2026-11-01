@@ -1691,7 +1691,8 @@ the key:
   (`{input_text}` for `graph_extraction` and `claim_extraction`, `{query}` and
   `{context}` for `answer_generation`, ...); limits such as
   `{max_entities_per_chunk}`, `{entity_types}` and `{relationship_types}`
-  (the relationship-type examples of the built-in prompt) may be left out.
+  (the declared relationship types, else the built-in examples) may be left
+  out.
 
 A `*_system` override replaces the whole built-in system prompt, output
 instructions included. For `graph_extraction` and `community_report` that is
@@ -1706,13 +1707,11 @@ that drops a tag the parser reads (`<entities>`, `<relationships>`,
 **Recommended flow:** `run-prompt-tuning` → review → merge the useful prompts
 and tune `entity_types` → re-ingest.
 
-### C. Extraction schema (preview)
+### C. Extraction schema
 
-The keys of an extraction schema are accepted and validated now; schema
-enforcement arrives in a following release, and until then extraction
-ignores them. An entity type may be a mapping with the IRI of an ontology
-class, and relationship types and the patterns allowed between entity types
-sit beside it:
+Entity types, relationship types and the patterns allowed between them form
+the extraction schema. An entity type may be a mapping with the IRI of an
+ontology class:
 
 ```yaml
 processing:
@@ -1722,23 +1721,67 @@ processing:
       - {label: ORGANIZATION, description: "Companies", iri: "https://schema.org/Organization"}
     relationship_types:
       - "WORKS_FOR: Employment"
+      - "PARTNERS_WITH"
     relationship_patterns:
       - "PERSON -WORKS_FOR-> ORGANIZATION"
-    schema_mode: align      # off | align (default) | strict
+    schema_mode: strict     # off | align (default) | strict
 ```
 
-- Labels match ignoring case, surrounding spaces and the choice of space or
-  `_` between words (`works for` = `WORKS_FOR`), never by similarity:
+- **Prompt.** In every mode the declared relationship types and patterns
+  replace the example relationship types of the extraction prompt. With no
+  relationship type declared, the prompt keeps its examples.
+- **Labels** match ignoring case, surrounding spaces and the choice of space
+  or `_` between words (`works for` = `WORKS_FOR`), never by similarity:
   `PERSONS` is not `PERSON`. Two labels of one kind may not match each other,
   and a pattern must name declared types; the load fails otherwise.
+- **`schema_mode`**:
+  - `off`: the schema only shapes the prompt.
+  - `align` (default): every entity and relationship is kept. A type that
+    names a declared one is written as declared (`works for` becomes
+    `WORKS_FOR`) before ids are built, so the spellings of one relationship
+    type give one edge label and one relationship id. Off-schema and
+    off-pattern items are counted. With entity types alone (no relationship
+    types, as in the default config) `align` changes nothing.
+  - `strict`: as `align`, and each text unit drops:
+    - an entity whose type is empty or undeclared, with the unit's
+      relationships naming it. The unit records the rejection, so gleaning
+      cannot bring the entity back through a relationship; a statement of
+      the same entity with a declared type keeps it.
+    - a relationship of an undeclared type.
+    - a relationship a pattern does not allow, when the unit lists both
+      endpoints with declared types. An endpoint the unit does not list
+      passes, and a reversed relationship is dropped, not flipped. A
+      relationship type without patterns is not restricted.
+
+    Gleaning follows the same rules: it does not add an off-schema entity
+    or relationship, and ignores a correction to an undeclared type or to a
+    direction no pattern allows.
+- An endpoint's type is the unit's merged type of the entity (its most
+  frequent type). Being declared does not make a type win: under `align` an
+  entity stated twice as `VENDOR` and once as `ORGANIZATION` stays a
+  `vendor`.
+- Drops are not failures: a text unit whose items were all dropped is
+  extracted (with nothing), counts as a success and is not retried. Claims
+  are not checked.
+- The graph extraction stage reports `entities_off_schema`,
+  `entities_dropped_off_schema`, `relationships_off_schema`,
+  `relationships_dropped_off_schema`,
+  `relationships_dropped_off_schema_endpoint`, `relationships_off_pattern`
+  and `relationships_dropped_off_pattern` in its `extraction_stats`, and the
+  gleaning stage its strict drops in `gleaning_stats`; each logs one summary
+  line. The off-schema labels themselves are logged at DEBUG only.
 - `schema_source: {kind: file, path: schema.yaml}` reads the
   `relationship_types`, `relationship_patterns` and, optionally,
   `entity_types` keys from a YAML or JSON file instead (a relative path is
   resolved against the config file). Leave those keys out of the config
   then. A run is keyed by the file's content, not its location: moving the
   file re-extracts nothing, editing it re-extracts.
-- With the defaults nothing changes: no cache key, extraction record or
-  recorded extraction setting moves on upgrade.
+- Changing the schema or the mode re-extracts, like any other change of an
+  extraction setting. With the defaults, or with entity types
+  alone, nothing changes on upgrade: no cache key, extraction record or
+  recorded extraction setting moves.
+- Whether a stored entity or relationship is in the schema, and the IRI of
+  its type, are not stored yet; that arrives in a following release.
 
 ---
 

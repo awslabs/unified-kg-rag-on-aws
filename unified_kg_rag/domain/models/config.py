@@ -1702,8 +1702,11 @@ class GraphExtractionConfig(BaseModel):
         description=(
             "Relationship types of the extraction schema, each 'LABEL: short "
             "description' or {label, description, iri} (iri: the ontology "
-            "property the type maps to). Empty: none declared. Accepted and "
-            "validated; extraction does not use them yet."
+            "property the type maps to). The extraction prompt lists them (and"
+            " relationship_patterns) instead of its example types, and unless "
+            "schema_mode is off a type naming one, or an entity type naming a "
+            "declared one, is written as declared. Empty: none declared, the "
+            "prompt shows its examples."
         ),
     )
     relationship_patterns: list[RelationshipPatternField] = Field(
@@ -1712,19 +1715,22 @@ class GraphExtractionConfig(BaseModel):
             "Relationship types allowed between entity types, each "
             "'SOURCE -RELATION-> TARGET' (e.g. 'PERSON -WORKS_FOR-> "
             "ORGANIZATION') or {source_type, relation, target_type}; every "
-            "label must be a declared type. Empty: no restriction. Accepted "
-            "and validated; extraction does not use them yet."
+            "label must be a declared type. A relationship type with patterns "
+            "is allowed only between the entity types they name, in their "
+            "direction; one without is not restricted. Empty: no restriction."
         ),
     )
     schema_mode: SchemaMode = Field(
         default="align",
         description=(
-            "How extraction is to apply the schema: 'off', 'align' (keep "
-            "every item, write in-schema labels as declared and mark items "
-            "in or out of the schema) or 'strict' (drop items without a "
-            "declared type). Accepted and validated; extraction does not "
-            "apply it yet. Labels match by case and word separators only, "
-            "never by similarity."
+            "How extraction applies the schema: 'off' (the prompt only), "
+            "'align' (keep every item, write in-schema labels as declared and "
+            "count the rest; with entity types alone it changes nothing) or "
+            "'strict' (also drop, per text unit, entities of an undeclared or "
+            "empty type with their relationships, relationships of an "
+            "undeclared type, and relationships a pattern does not allow "
+            "between two entities of declared types). Labels match by case "
+            "and word separators only, never by similarity."
         ),
     )
     schema_source: SchemaSourceConfig = Field(

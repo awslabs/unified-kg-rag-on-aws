@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -27,6 +28,10 @@ from unified_kg_rag.domain.ingestion.contributions import (
     merge_relationship_contributions,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.schema_conformance import (
+    SCHEMA_COUNTERS,
+    UnitConformance,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -114,6 +119,37 @@ class ExtractionStats(BaseModel):
         "mode because their chunk did not extract one of their endpoints "
         "(keeping them would make that entity cite the chunk)",
     )
+    # The extraction schema (schema_mode align or strict; see
+    # domain.ingestion.schema_conformance). Drops are not failures: a unit
+    # whose every item was dropped is a successful, empty extraction.
+    entities_off_schema: int = Field(
+        default=0,
+        description="Entities whose type is not a declared entity type "
+        "(an empty type included)",
+    )
+    entities_dropped_off_schema: int = Field(
+        default=0, description="Off-schema entities strict mode dropped"
+    )
+    relationships_off_schema: int = Field(
+        default=0,
+        description="Relationships whose type is not a declared relationship type",
+    )
+    relationships_dropped_off_schema: int = Field(
+        default=0, description="Off-schema relationships strict mode dropped"
+    )
+    relationships_dropped_off_schema_endpoint: int = Field(
+        default=0,
+        description="Relationships strict mode dropped because their chunk "
+        "dropped an endpoint as off schema",
+    )
+    relationships_off_pattern: int = Field(
+        default=0,
+        description="Relationships between two entities of declared types that"
+        " no pattern of their relationship type allows",
+    )
+    relationships_dropped_off_pattern: int = Field(
+        default=0, description="Off-pattern relationships strict mode dropped"
+    )
 
     @property
     def processed_unit_count(self) -> int:
@@ -168,6 +204,8 @@ class GraphExtractor(BaseProcessor):
         )
 
         self.stats: ExtractionStats = ExtractionStats()
+        # The off-schema type labels of the run, for the debug summary.
+        self._off_schema_labels: Counter[str] = Counter()
 
     def extract_units(
         self, text_units: list[TextUnit]
@@ -184,6 +222,7 @@ class GraphExtractor(BaseProcessor):
             return [], ExtractionStats()
 
         self.stats = ExtractionStats(num_total_units=len(text_units))
+        self._off_schema_labels = Counter()
         logger.info("Starting graph extraction from %s text units", len(text_units))
 
         errors: dict[int, BaseException] = {}
@@ -229,6 +268,7 @@ class GraphExtractor(BaseProcessor):
         self.stats.total_processing_time = time.time() - start_time
 
         self._log_completion_summary(self.stats)
+        self._log_schema_summary()
 
         return records, self.stats
 
@@ -372,11 +412,17 @@ class GraphExtractor(BaseProcessor):
         entities, low_confidence_keys = self._apply_confidence_threshold(
             entities, text_unit
         )
+        conformance = self.conformance.conform_entities(
+            entities, unit=text_unit.short_id
+        )
+        entities = conformance.entities
         record = TextUnitExtraction(text_unit_id=text_unit.id)
         for key in sorted(dropped_keys):
             record.reject(key, "ungrounded")
         for key in sorted(low_confidence_keys):
             record.reject(key, "low_confidence")
+        for key in sorted(conformance.off_schema_keys):
+            record.reject(key, "off_schema")
 
         entity_name_to_id = self.build_entity_key_index(entities)
         relationships_data = ensure_list(raw_relationships, inner_key="relationship")
@@ -399,7 +445,11 @@ class GraphExtractor(BaseProcessor):
         self.stats.relationships_filtered_by_confidence += len(relationships) - len(
             kept_relationships
         )
-        relationships = kept_relationships
+        conformance = self.conformance.conform_relationships(
+            kept_relationships, conformance, unit=text_unit.short_id
+        )
+        self._count_conformance(conformance)
+        relationships = conformance.relationships
         relationships = self._apply_relationship_grounding(
             relationships, text_unit, {e.id for e in entities}
         )
@@ -612,6 +662,41 @@ class GraphExtractor(BaseProcessor):
                     text_unit.short_id,
                 )
         return kept
+
+    def _count_conformance(self, conformance: UnitConformance) -> None:
+        for name in SCHEMA_COUNTERS:
+            setattr(
+                self.stats, name, getattr(self.stats, name) + getattr(conformance, name)
+            )
+        self._off_schema_labels.update(conformance.off_schema_labels)
+
+    def _log_schema_summary(self) -> None:
+        """One summary of the schema check (when the schema applies); the
+        off-schema labels, which are model text, at debug only."""
+        if not self.conformance.applies:
+            return
+        stats = self.stats
+        logger.info(
+            "Extraction schema (%s) - Entities off schema: %s (dropped %s), "
+            "Relationships off schema: %s (dropped %s), dropped with an "
+            "off-schema endpoint: %s, off pattern: %s (dropped %s)",
+            self.conformance.schema.mode,
+            stats.entities_off_schema,
+            stats.entities_dropped_off_schema,
+            stats.relationships_off_schema,
+            stats.relationships_dropped_off_schema,
+            stats.relationships_dropped_off_schema_endpoint,
+            stats.relationships_off_pattern,
+            stats.relationships_dropped_off_pattern,
+        )
+        if self._off_schema_labels:
+            logger.debug(
+                "Most frequent off-schema type labels: %s",
+                ", ".join(
+                    f"{label or '<empty>'} ({count})"
+                    for label, count in self._off_schema_labels.most_common(10)
+                ),
+            )
 
     @staticmethod
     def _log_completion_summary(stats: ExtractionStats) -> None:
