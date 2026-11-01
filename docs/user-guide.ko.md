@@ -1448,7 +1448,8 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
 
 ## 9. 도메인 적응
 
-파이프라인을 의료, 법률, 금융 같은 도메인에 맞추는 방법은 두 가지입니다.
+파이프라인을 의료, 법률, 금융 같은 도메인에 맞추는 방법은 두 가지이고, 세 번째인 추출
+스키마(C)는 미리 보기입니다.
 
 ### A. `entity_types`(비용이 가장 적고 효과가 가장 큼)
 
@@ -1500,7 +1501,8 @@ custom_prompts:
 - 각 프롬프트의 데이터 변수는 system이나 human 템플릿에 있어야 합니다
   (`graph_extraction`과 `claim_extraction`은 `{input_text}`, `answer_generation`은
   `{query}`와 `{context}` 등). `{max_entities_per_chunk}` 같은 한도와
-  `{entity_types}`는 빼도 됩니다.
+  `{entity_types}`, `{relationship_types}`(내장 프롬프트의 관계 유형 예시)는
+  빼도 됩니다.
 
 `*_system` 오버라이드는 출력 지시를 포함한 내장 시스템 프롬프트 전체를 대체합니다.
 `graph_extraction`과 `community_report`에서는 파서가 읽는 XML 형식(추출에서는 환각 방지
@@ -1513,6 +1515,38 @@ custom_prompts:
 
 **권장 흐름:** `run-prompt-tuning` → 검토 → 쓸 만한 프롬프트를 합치고 `entity_types`를
 조정 → 다시 수집.
+
+### C. 추출 스키마(미리 보기)
+
+추출 스키마 키는 지금도 받아서 검증하지만, 스키마 적용(enforcement)은 다음 릴리스에서
+들어오며 그 전까지 추출은 이 키를 쓰지 않습니다. 엔티티 유형은 온톨로지 클래스의 IRI를
+담은 매핑으로도 쓸 수 있고, 그 옆에 관계 유형과 엔티티 유형 사이에 허용되는 패턴을
+둡니다.
+
+```yaml
+processing:
+  graph_extraction:
+    entity_types:
+      - "PERSON: People"
+      - {label: ORGANIZATION, description: "Companies", iri: "https://schema.org/Organization"}
+    relationship_types:
+      - "WORKS_FOR: Employment"
+    relationship_patterns:
+      - "PERSON -WORKS_FOR-> ORGANIZATION"
+    schema_mode: align      # off | align(기본값) | strict
+```
+
+- 레이블은 대소문자, 앞뒤 공백, 단어 사이의 공백·`_` 차이만 무시하고 비교하며
+  (`works for` = `WORKS_FOR`) 유사도로는 맞추지 않습니다. `PERSONS`는 `PERSON`이
+  아닙니다. 같은 종류의 레이블 두 개가 서로 일치하거나 패턴이 선언하지 않은 유형을
+  가리키면 설정을 읽지 못합니다.
+- `schema_source: {kind: file, path: schema.yaml}`로 두면 `relationship_types`,
+  `relationship_patterns`와 선택적으로 `entity_types` 키를 YAML 또는 JSON 파일에서
+  읽습니다(상대 경로는 설정 파일 기준). 이때 설정에서는 그 키를 빼세요. 실행은 파일
+  위치가 아니라 내용으로 키가 정해지므로, 파일을 옮기면 다시 추출하지 않고 내용을
+  고치면 다시 추출합니다.
+- 기본값이면 아무것도 바뀌지 않습니다. 업그레이드해도 캐시 키, 추출 레코드, 기록된
+  추출 설정이 그대로입니다.
 
 ---
 

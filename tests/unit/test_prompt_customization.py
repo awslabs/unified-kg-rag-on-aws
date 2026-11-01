@@ -11,9 +11,12 @@ B: per-prompt overrides resolve by a `prompt_key` convention (no per-class
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
-from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import CustomPromptConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
@@ -21,7 +24,11 @@ from unified_kg_rag.domain.prompts import (
     EntityExtractionPrompt,
     GraphExtractionPrompt,
 )
-from unified_kg_rag.domain.prompts.base import BasePrompt
+from unified_kg_rag.domain.prompts.base import BasePrompt, fill_slots
+from unified_kg_rag.domain.prompts.graph_extraction import (
+    DEFAULT_RELATIONSHIP_TYPES,
+    format_entity_types,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -111,15 +118,116 @@ def test_extraction_prompt_has_entity_types_slot() -> None:
         ),
         (["GENE"], "- **GENE**"),
         (["  DRUG  : meds "], "- **DRUG**: meds"),
+        ([": no label", "PERSON"], "- **PERSON**"),
     ],
 )
 def test_format_entity_types(types: list[str], expected: str) -> None:
-    assert GraphExtractor._format_entity_types(types) == expected
+    assert format_entity_types(types) == expected
 
 
 def test_format_entity_types_empty_lets_model_choose() -> None:
-    out = GraphExtractor._format_entity_types([])
+    out = format_entity_types([])
     assert "any entity types" in out.lower()
+
+
+# The default extraction prompt rendered (system, a blank line, human) with
+# the values below, by the code before {relationship_types} became a slot
+# (f739d979). The slot's default must leave it byte for byte the same.
+_DEFAULT_EXTRACTION_PROMPT_SHA256 = (
+    "202a48fa01eed41a35479957fe6e20b255a493f225b3036457d0cd66f2c3d121"
+)
+
+
+def _rendered_extraction_prompt(config: Config) -> str:
+    resolved = GraphExtractionPrompt.resolve(config.custom_prompts)
+    values = {
+        "input_text": "Alice works for Acme.",
+        "max_entities_per_chunk": "50",
+        "max_relationships_per_chunk": "50",
+        "target_language": "en",
+        **GraphExtractionPrompt.config_variables(config),
+    }
+    return (
+        resolved.system_prompt_template.format(**values)
+        + "\n\n"
+        + resolved.human_prompt_template.format(**values)
+    )
+
+
+def test_default_extraction_prompt_renders_byte_identical() -> None:
+    text = _rendered_extraction_prompt(Config())
+    assert hashlib.sha256(text.encode()).hexdigest() == (
+        _DEFAULT_EXTRACTION_PROMPT_SHA256
+    )
+    assert text.count(DEFAULT_RELATIONSHIP_TYPES) == 1
+
+
+def test_relationship_types_is_a_declared_slot() -> None:
+    resolved = GraphExtractionPrompt.resolve()
+    assert "{relationship_types}" in resolved.system_prompt_template
+    assert "relationship_types" in resolved.input_variables
+    assert "HIERARCHICAL" not in resolved.system_prompt_template
+    # Tuned prompts copy the rules verbatim, the slot with them.
+    assert "{relationship_types}" in GraphExtractionPrompt.output_rules
+    GraphExtractionPrompt.validate_templates()
+
+
+def test_custom_prompt_may_use_relationship_types() -> None:
+    cfg = CustomPromptConfig(
+        graph_extraction_human="Types:\n{relationship_types}\n{input_text}"
+    )
+    assert cfg.graph_extraction_human is not None
+
+
+def test_record_fingerprint_hashes_the_slot_filled_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The template with {relationship_types} filled in is the template before
+    # the slot: the records extracted then keep their keys.
+    resolved = GraphExtractionPrompt.resolve()
+    filled = fill_slots(
+        resolved.system_prompt_template,
+        GraphExtractionPrompt.inlined_slots(Config()),
+    )
+    assert "{relationship_types}" not in filled
+    assert DEFAULT_RELATIONSHIP_TYPES in filled
+    assert "{entity_types}" in filled
+    # The fingerprint is the one of the template with the text written in.
+    expected = unit_record_fingerprint(Config(), gleaned=True)
+    monkeypatch.setattr(GraphExtractionPrompt, "system_prompt_template", filled)
+    monkeypatch.setattr(
+        GraphExtractionPrompt,
+        "input_variables",
+        [v for v in resolved.input_variables if v != "relationship_types"],
+    )
+    monkeypatch.setattr(
+        GraphExtractionPrompt, "inlined_slots", classmethod(lambda cls, c: {})
+    )
+    assert unit_record_fingerprint(Config(), gleaned=True) == expected
+    monkeypatch.undo()
+    # A custom prompt using the slot hashes its own text: two overrides that
+    # differ only in it differ.
+    with_slot = Config(
+        custom_prompts={"graph_extraction_human": "{relationship_types}\n{input_text}"}
+    )
+    without = Config(custom_prompts={"graph_extraction_human": "{input_text}"})
+    assert unit_record_fingerprint(with_slot, gleaned=False) != unit_record_fingerprint(
+        without, gleaned=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        ("a {x} b", "a X b"),
+        ("{{x}} {x}", "{{x}} X"),
+        ("{y} {x} {y!r} {y:>3}", "{y} X {y!r} {y:>3}"),
+        ("{x:>3}", "{x:>3}"),
+        ("unmatched {", "unmatched {"),
+    ],
+)
+def test_fill_slots(template: str, expected: str) -> None:
+    assert fill_slots(template, {"x": "X"}) == expected
 
 
 # --- answer prompt contract ---------------------------------------------------

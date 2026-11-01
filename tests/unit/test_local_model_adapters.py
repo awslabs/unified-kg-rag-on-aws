@@ -384,6 +384,7 @@ def test_response_cut_at_the_output_limit_fails_the_chain(kind, factory_cls) -> 
                 "max_entities_per_chunk": 10,
                 "max_relationships_per_chunk": 10,
                 "entity_types": "ORG",
+                "relationship_types": "WORKS_FOR",
                 "target_language": "en",
             }
         )

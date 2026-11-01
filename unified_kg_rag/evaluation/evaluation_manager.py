@@ -26,7 +26,10 @@ from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProces
 from unified_kg_rag.adapters.observability.endpoints import safe_url
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.bootstrap import (
+    build_providers,
+    resolve_extraction_schema,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
     GraphRAGChain,
@@ -156,6 +159,8 @@ class EvaluationManager:
         *,
         providers: Providers | None = None,
     ) -> None:
+        # The run manifest hashes the loaded schema, not where it was read.
+        config = resolve_extraction_schema(config)
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")

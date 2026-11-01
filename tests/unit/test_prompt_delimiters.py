@@ -69,6 +69,7 @@ def test_graph_extraction_prompt_keeps_injected_text_inside_input_text() -> None
             "max_entities_per_chunk": 10,
             "max_relationships_per_chunk": 10,
             "entity_types": "ORG",
+            "relationship_types": "WORKS_FOR",
             "target_language": "en",
         },
     )

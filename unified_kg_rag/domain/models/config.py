@@ -21,6 +21,7 @@ from pydantic import (
     PrivateAttr,
     SecretStr,
     StringConstraints,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -42,6 +43,16 @@ from .retrieval import (
     SearchStrategy,
     validate_path_segment,
     validate_safe_name,
+)
+from .schema import (
+    EntityTypeField,
+    EntityTypeItem,
+    ExtractionSchema,
+    RelationshipPatternField,
+    RelationshipTypeField,
+    SchemaMode,
+    relationship_pattern,
+    relationship_type_spec,
 )
 
 # Stdlib logger: shared.logging imports this module, so get_logger would cycle.
@@ -1595,7 +1606,51 @@ class EntityGroundingConfig(BaseModel):
     )
 
 
+INLINE_SCHEMA_SOURCE = "inline"
+
+
+class SchemaSourceConfig(BaseModel):
+    """Where the extraction schema comes from: the inline keys, or a
+    registered schema source that fills them at start-up."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    kind: str = Field(
+        default=INLINE_SCHEMA_SOURCE,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "'inline' (default): the schema is the entity_types, "
+            "relationship_types and relationship_patterns keys. Another kind "
+            "names a registered schema source ('file': a YAML or JSON file of "
+            "those keys) loaded once at start-up into those keys; the loaded "
+            "content, not its location, keys the extraction caches. A file "
+            "that sets entity_types replaces the config's, which must then "
+            "be left unset."
+        ),
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Location the schema source reads (for 'file', the file). A "
+            "relative path is resolved against the config file's directory "
+            "(the working directory without one); a URL is left as written. "
+            "Must be unset for 'inline'."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_path(self) -> "SchemaSourceConfig":
+        if self.kind == INLINE_SCHEMA_SOURCE and self.path is not None:
+            raise ValueError(
+                "schema_source.path is set but schema_source.kind is "
+                "'inline'; set the kind of the source that reads it"
+            )
+        return self
+
+
 class GraphExtractionConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     max_entities_per_chunk: int = Field(
         default=50,
         ge=1,
@@ -1620,23 +1675,61 @@ class GraphExtractionConfig(BaseModel):
             "prompt's 1-10 score / 10. 0.0 keeps everything."
         ),
     )
-    entity_types: list[str] = Field(
-        default_factory=lambda: [
-            "PERSON: Names, individuals, roles, titles",
-            "ORGANIZATION: Companies, institutions, departments, groups",
-            "LOCATION: Places, addresses, geographic areas, facilities",
-            "CONCEPT: Ideas, theories, methodologies, frameworks, principles",
-            "OBJECT: Documents, tools, products, systems, technologies",
-            "EVENT: Meetings, projects, activities, processes, incidents",
-            "TEMPORAL: Dates, time periods, schedules, deadlines",
-        ],
+    entity_types: list[EntityTypeField] = Field(
+        default_factory=lambda: list[EntityTypeItem](
+            [
+                "PERSON: Names, individuals, roles, titles",
+                "ORGANIZATION: Companies, institutions, departments, groups",
+                "LOCATION: Places, addresses, geographic areas, facilities",
+                "CONCEPT: Ideas, theories, methodologies, frameworks, principles",
+                "OBJECT: Documents, tools, products, systems, technologies",
+                "EVENT: Meetings, projects, activities, processes, incidents",
+                "TEMPORAL: Dates, time periods, schedules, deadlines",
+            ]
+        ),
         description=(
             "Entity categories injected into the extraction prompt, each "
             "'LABEL: short description' (the description is optional), e.g. "
-            "['GENE: ...', 'DISEASE: ...']. The cheapest and most effective "
-            "domain-adaptation knob; an empty list lets the model choose any "
-            "relevant types."
+            "['GENE: ...', 'DISEASE: ...'], or {label, description, iri} "
+            "(iri: the ontology class the type maps to). The cheapest and "
+            "most effective domain-adaptation knob; an empty list lets the "
+            "model choose any relevant types. Labels must differ in more "
+            "than case and word separators."
         ),
+    )
+    relationship_types: list[RelationshipTypeField] = Field(
+        default_factory=list,
+        description=(
+            "Relationship types of the extraction schema, each 'LABEL: short "
+            "description' or {label, description, iri} (iri: the ontology "
+            "property the type maps to). Empty: none declared. Accepted and "
+            "validated; extraction does not use them yet."
+        ),
+    )
+    relationship_patterns: list[RelationshipPatternField] = Field(
+        default_factory=list,
+        description=(
+            "Relationship types allowed between entity types, each "
+            "'SOURCE -RELATION-> TARGET' (e.g. 'PERSON -WORKS_FOR-> "
+            "ORGANIZATION') or {source_type, relation, target_type}; every "
+            "label must be a declared type. Empty: no restriction. Accepted "
+            "and validated; extraction does not use them yet."
+        ),
+    )
+    schema_mode: SchemaMode = Field(
+        default="align",
+        description=(
+            "How extraction is to apply the schema: 'off', 'align' (keep "
+            "every item, write in-schema labels as declared and mark items "
+            "in or out of the schema) or 'strict' (drop items without a "
+            "declared type). Accepted and validated; extraction does not "
+            "apply it yet. Labels match by case and word separators only, "
+            "never by similarity."
+        ),
+    )
+    schema_source: SchemaSourceConfig = Field(
+        default_factory=SchemaSourceConfig,
+        description="Where the extraction schema comes from",
     )
     description_summarization: DescriptionSummarizationConfig = Field(
         default_factory=DescriptionSummarizationConfig,
@@ -1646,6 +1739,60 @@ class GraphExtractionConfig(BaseModel):
         default_factory=EntityGroundingConfig,
         description="Provenance grounding guard against hallucinated entities",
     )
+
+    @field_validator("relationship_types", "relationship_patterns")
+    @classmethod
+    def _check_items(cls, items: list[Any], info: ValidationInfo) -> list[Any]:
+        """Parse each string item, naming the ones that do not."""
+        parse: Callable[[Any], Any] = (
+            relationship_type_spec
+            if info.field_name == "relationship_types"
+            else relationship_pattern
+        )
+        errors = []
+        for position, item in enumerate(items):
+            try:
+                parse(item)
+            except ValueError as e:
+                errors.append(f"item {position}: {_schema_message(e)}")
+        if errors:
+            raise ValueError("; ".join(errors))
+        return items
+
+    @model_validator(mode="after")
+    def _check_schema(self) -> "GraphExtractionConfig":
+        """Reject an inconsistent schema, and inline relationship types or
+        patterns beside a schema source (which fills them)."""
+        errors: list[str] = []
+        source = self.schema_source
+        if source.kind != INLINE_SCHEMA_SOURCE and (
+            self.relationship_types or self.relationship_patterns
+        ):
+            errors.append(
+                f"schema_source.kind '{source.kind}' fills relationship_types "
+                "and relationship_patterns; leave them unset here"
+            )
+        try:
+            ExtractionSchema.from_config(self)
+        except ValueError as e:
+            errors.append(_schema_message(e))
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+    def extraction_schema(self) -> ExtractionSchema:
+        """The schema these settings hold inline."""
+        return ExtractionSchema.from_config(self)
+
+
+def _schema_message(error: ValueError) -> str:
+    """The messages of a schema error, without pydantic's framing."""
+    if isinstance(error, ValidationError):
+        return "; ".join(
+            str(detail["msg"]).removeprefix("Value error, ")
+            for detail in error.errors(include_url=False, include_input=False)
+        )
+    return str(error)
 
 
 class GleaningConfig(BaseModel):

@@ -14,6 +14,11 @@ single place to override a role.
 backends a run wires (the Bedrock guardrail, the S3 sync of the stage
 cache), so no orchestrator imports a vendor binding.
 
+``resolve_extraction_schema`` loads the extraction schema a registered
+source names (``processing.graph_extraction.schema_source``) once, into the
+inline keys of a copy of the config, so every stage, prompt and cache key
+reads the schema from the inline keys alone.
+
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
 and the model-id defaults as if the file had set them; switching the backend
@@ -36,11 +41,13 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_kind,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.schema_sources import get_schema_source
 from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.models import Config, PipelineConfig
-from unified_kg_rag.domain.models.config import merge_over
+from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, merge_over
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 if TYPE_CHECKING:
     import boto3
@@ -139,6 +146,53 @@ def build_checkpoint_sync(
         bucket_name=pipeline_config.s3_bucket_name,
         prefix=pipeline_config.s3_prefix,
     )
+
+
+def resolve_extraction_schema(config: Config) -> Config:
+    """``config`` with its extraction schema in the inline keys.
+
+    With ``schema_source.kind`` ``inline`` (the default) that is ``config``
+    itself. Otherwise the registered source is loaded once and its keys
+    (``relationship_types``, ``relationship_patterns`` and, when it has
+    them, ``entity_types``) are written into a copy, whose source is then
+    ``inline``: the loaded content keys the extraction caches, the location
+    does not, and loading again changes nothing.
+
+    Raises:
+        SchemaSourceError: The kind is not registered, the source cannot be
+            read, both it and the config set ``entity_types``, or the config
+            refuses the loaded schema.
+    """
+    extraction = config.processing.graph_extraction
+    source = extraction.schema_source
+    if source.kind == INLINE_SCHEMA_SOURCE:
+        return config
+    document = get_schema_source(source.kind)(source)
+    where = f"schema_source ({source.kind} '{source.path}')"
+    keys: dict[str, Any] = document.model_dump(mode="json", exclude_none=True)
+    if "entity_types" in keys and "entity_types" in extraction.model_fields_set:
+        raise SchemaSourceError(
+            f"Both the config and {where} set entity_types; keep one"
+        )
+    keys["schema_source"] = {"kind": INLINE_SCHEMA_SOURCE, "path": None}
+    data = merge_over(config.as_input(), {"processing": {"graph_extraction": keys}})
+    try:
+        resolved = Config.model_validate(data)
+    except ValidationError as e:
+        raise SchemaSourceError(
+            f"The schema of {where} is invalid: {validation_summary(e)}"
+        ) from e
+    schema = resolved.processing.graph_extraction.extraction_schema()
+    logger.info(
+        "Extraction schema from %s: %d entity types, %d relationship types, "
+        "%d patterns (digest %s)",
+        where,
+        len(schema.entity_types),
+        len(schema.relationship_types),
+        len(schema.relationship_patterns),
+        schema.digest[:12],
+    )
+    return resolved
 
 
 def with_provider_overrides(

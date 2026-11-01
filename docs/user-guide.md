@@ -1635,7 +1635,8 @@ domain and entity types. **Review it**, then copy the prompts you want under
 
 ## 9. Domain adaptation
 
-Two levers specialize the pipeline for a domain (medical, legal, finance, ...):
+Two levers specialize the pipeline for a domain (medical, legal, finance, ...);
+a third, the extraction schema (C), is in preview:
 
 ### A. `entity_types` (cheapest, highest-impact)
 
@@ -1689,7 +1690,8 @@ the key:
 - Each prompt's data variables must appear in its system or human template
   (`{input_text}` for `graph_extraction` and `claim_extraction`, `{query}` and
   `{context}` for `answer_generation`, ...); limits such as
-  `{max_entities_per_chunk}` and `{entity_types}` may be left out.
+  `{max_entities_per_chunk}`, `{entity_types}` and `{relationship_types}`
+  (the relationship-type examples of the built-in prompt) may be left out.
 
 A `*_system` override replaces the whole built-in system prompt, output
 instructions included. For `graph_extraction` and `community_report` that is
@@ -1703,6 +1705,40 @@ that drops a tag the parser reads (`<entities>`, `<relationships>`,
 
 **Recommended flow:** `run-prompt-tuning` → review → merge the useful prompts
 and tune `entity_types` → re-ingest.
+
+### C. Extraction schema (preview)
+
+The keys of an extraction schema are accepted and validated now; schema
+enforcement arrives in a following release, and until then extraction
+ignores them. An entity type may be a mapping with the IRI of an ontology
+class, and relationship types and the patterns allowed between entity types
+sit beside it:
+
+```yaml
+processing:
+  graph_extraction:
+    entity_types:
+      - "PERSON: People"
+      - {label: ORGANIZATION, description: "Companies", iri: "https://schema.org/Organization"}
+    relationship_types:
+      - "WORKS_FOR: Employment"
+    relationship_patterns:
+      - "PERSON -WORKS_FOR-> ORGANIZATION"
+    schema_mode: align      # off | align (default) | strict
+```
+
+- Labels match ignoring case, surrounding spaces and the choice of space or
+  `_` between words (`works for` = `WORKS_FOR`), never by similarity:
+  `PERSONS` is not `PERSON`. Two labels of one kind may not match each other,
+  and a pattern must name declared types; the load fails otherwise.
+- `schema_source: {kind: file, path: schema.yaml}` reads the
+  `relationship_types`, `relationship_patterns` and, optionally,
+  `entity_types` keys from a YAML or JSON file instead (a relative path is
+  resolved against the config file). Leave those keys out of the config
+  then. A run is keyed by the file's content, not its location: moving the
+  file re-extracts nothing, editing it re-extracts.
+- With the defaults nothing changes: no cache key, extraction record or
+  recorded extraction setting moves on upgrade.
 
 ---
 

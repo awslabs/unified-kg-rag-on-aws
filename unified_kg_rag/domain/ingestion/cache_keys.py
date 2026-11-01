@@ -244,6 +244,11 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "custom_prompts.description_summarization_system",
         "custom_prompts.description_summarization_human",
     ),
+    # Where the schema source reads: start-up loads the schema into the
+    # inline keys of processing.graph_extraction, keyed with the section.
+    "processing.graph_extraction.schema_source.path": _neutral(
+        "a location: the schema loaded from it is keyed as the inline keys"
+    ),
     **_keyed_at(
         _P.GLEANING,
         "processing.gleaning",
@@ -352,6 +357,27 @@ _LOCATION_FIELDS = frozenset(
 # to classify it costs a cache miss, never a stale hit.
 _UNCLASSIFIED = _EVERY_CALL
 
+# Fields added to a keyed section whose default keeps the behaviour from
+# before they existed: they count only once set to something else, so an
+# upgrade re-keys no stage cache or extraction record and changes no
+# recorded extraction settings or evaluation manifest. Take a field out
+# when its default stops matching the earlier behaviour.
+_KEYED_ONCE_SET = frozenset(
+    {
+        "processing.graph_extraction.relationship_types",
+        "processing.graph_extraction.relationship_patterns",
+        "processing.graph_extraction.schema_mode",
+        "processing.graph_extraction.schema_source.kind",
+    }
+)
+
+
+def _at_earlier_default(path: str, value: Any) -> bool:
+    """Whether ``value`` is the default of a ``_KEYED_ONCE_SET`` field."""
+    return path in _KEYED_ONCE_SET and to_jsonable_python(value) == to_jsonable_python(
+        _field_default(path)
+    )
+
 
 def classify(path: str) -> Keyed | Unkeyed | None:
     """The ``CONFIG_KEYING`` entry of the longest prefix of ``path``, if any."""
@@ -383,7 +409,7 @@ def answer_settings(config: Config) -> dict[str, Any]:
     settings = {
         path: to_jsonable_python(_resolved(config, path, value))
         for path, value, _ in _leaves(config)
-        if shapes_answers(path)
+        if shapes_answers(path) and not _at_earlier_default(path, value)
     }
     settings["aws.bedrock.guardrail.enabled"] = config.aws.bedrock.guardrail.enabled
     return settings
@@ -491,7 +517,9 @@ def _settings(config: Config, selected: Callable[[Keyed], bool]) -> dict[str, An
     for path, value, disabled in _leaves(config):
         rule = classify(path) or _UNCLASSIFIED
         if isinstance(rule, Keyed) and selected(rule):
-            if _in_effect(config, path, disabled):
+            if _in_effect(config, path, disabled) and not _at_earlier_default(
+                path, value
+            ):
                 settings[path] = to_jsonable_python(_resolved(config, path, value))
     return settings
 
@@ -632,12 +660,20 @@ def extraction_fingerprint(config: Config) -> str:
 _MISSING = object()
 
 
-def _default_value(path: str) -> Any:
+def _field_default(path: str) -> Any:
+    """The default of the field at ``path``, or ``_MISSING``."""
     node: Any = _default_config()
     for name in path.split("."):
         node = getattr(node, name, _MISSING)
         if node is _MISSING:
             return _MISSING
+    return node
+
+
+def _default_value(path: str) -> Any:
+    node = _field_default(path)
+    if node is _MISSING:
+        return _MISSING
     return _recorded(to_jsonable_python(_resolved(_default_config(), path, node)))
 
 
@@ -691,7 +727,8 @@ def unit_record_fingerprint(
     extraction for a unit's ``claims`` record, the target language, and the
     prompt templates in effect: the built-in ones (code) as well as
     ``custom_prompts`` overrides, so editing a template re-keys the records
-    it shaped. The extraction store keys a record by this fingerprint and
+    it shaped (each hashed with its ``inlined_slots`` filled in). The
+    extraction store keys a record by this fingerprint and
     the hash of the unit's text
     (``domain.ingestion.contributions.record_key``).
     """
@@ -700,6 +737,7 @@ def unit_record_fingerprint(
         GraphExtractionPrompt,
         GraphRefinementPrompt,
     )
+    from unified_kg_rag.domain.prompts.base import fill_slots
 
     stages = {_P.GRAPH_EXTRACTION}
     prompts: list[Any] = [GraphExtractionPrompt]
@@ -722,12 +760,16 @@ def unit_record_fingerprint(
             "target_language": config.processing.translation.target_language.value,
             "prompts": [
                 compute_hash(
-                    resolved.system_prompt_template
-                    + "\n"
-                    + resolved.human_prompt_template
+                    fill_slots(
+                        resolved.system_prompt_template
+                        + "\n"
+                        + resolved.human_prompt_template,
+                        prompt.inlined_slots(config),
+                    )
                 )
-                for resolved in (
-                    prompt.resolve(config.custom_prompts) for prompt in prompts
+                for prompt, resolved in (
+                    (prompt, prompt.resolve(config.custom_prompts))
+                    for prompt in prompts
                 )
             ],
         }

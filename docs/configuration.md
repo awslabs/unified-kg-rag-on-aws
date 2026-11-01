@@ -339,7 +339,19 @@ Graph extraction configuration
 | `max_entities_per_chunk` | integer (≥ 1) | `50` | Most entities the extraction prompt asks for per text chunk; it also sizes the extraction call's output-token floor. |
 | `max_relationships_per_chunk` | integer (≥ 1) | `50` | Maximum relationships per text chunk |
 | `entity_confidence_threshold` | number (≥ 0.0, ≤ 1.0) | `0.0` | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together). Compared against the normalized confidence: the prompt's 1-10 score / 10. 0.0 keeps everything. |
-| `entity_types` | list[string] | see [Long defaults](#long-defaults) | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...']. The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. |
+| `entity_types` | list[string \| EntityTypeSpec] | see [Long defaults](#long-defaults) | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...'], or {label, description, iri} (iri: the ontology class the type maps to). The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. Labels must differ in more than case and word separators. |
+| `relationship_types` | list[string \| RelationshipTypeSpec] | `[]` | Relationship types of the extraction schema, each 'LABEL: short description' or {label, description, iri} (iri: the ontology property the type maps to). Empty: none declared. Accepted and validated; extraction does not use them yet. |
+| `relationship_patterns` | list[string \| RelationshipPattern] | `[]` | Relationship types allowed between entity types, each 'SOURCE -RELATION-> TARGET' (e.g. 'PERSON -WORKS_FOR-> ORGANIZATION') or {source_type, relation, target_type}; every label must be a declared type. Empty: no restriction. Accepted and validated; extraction does not use them yet. |
+| `schema_mode` | `"off"` \| `"align"` \| `"strict"` | `"align"` | How extraction is to apply the schema: 'off', 'align' (keep every item, write in-schema labels as declared and mark items in or out of the schema) or 'strict' (drop items without a declared type). Accepted and validated; extraction does not apply it yet. Labels match by case and word separators only, never by similarity. |
+
+#### `processing.graph_extraction.schema_source`
+
+Where the extraction schema comes from
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `kind` | string | `"inline"` | 'inline' (default): the schema is the entity_types, relationship_types and relationship_patterns keys. Another kind names a registered schema source ('file': a YAML or JSON file of those keys) loaded once at start-up into those keys; the loaded content, not its location, keys the extraction caches. A file that sets entity_types replaces the config's, which must then be left unset. |
+| `path` | string \| null | `null` | Location the schema source reads (for 'file', the file). A relative path is resolved against the config file's directory (the working directory without one); a URL is left as written. Must be unset for 'inline'. |
 
 #### `processing.graph_extraction.description_summarization`
 

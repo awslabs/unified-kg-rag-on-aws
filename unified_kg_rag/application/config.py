@@ -66,15 +66,26 @@ DOTENV_FILENAME = ".env"
 
 
 def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
-    """Resolve relative SQLite store paths against ``config_path``'s directory.
+    """Resolve relative SQLite store paths and the extraction schema
+    source's path against ``config_path``'s directory.
 
     A store must be the same file on every run against it; relative to the
     working directory, a run started elsewhere would silently use an empty
     registry or store. Applies to each of the doc-status registry and the
     graph and vector stores whose kind is SQLite, so a caller that switches
     the config to it afterwards (``--backend local`` over an ``aws`` config
-    file) calls this again.
+    file) calls this again. A schema source path that is a URL
+    (``scheme://...``) is left as written.
     """
+    schema_source = config.processing.graph_extraction.schema_source
+    if (
+        schema_source.path is not None
+        and "://" not in schema_source.path
+        and not Path(schema_source.path).is_absolute()
+    ):
+        schema_source.path = str(
+            (Path(config_path).parent / schema_source.path).resolve()
+        )
     providers = config.providers
     for section in (providers.doc_status, providers.graph, providers.vector):
         path = Path(section.sqlite_path)

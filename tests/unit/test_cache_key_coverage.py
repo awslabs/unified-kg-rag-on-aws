@@ -183,7 +183,12 @@ def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
     hashed = set(answer_settings(Config()))
     excluded = {path for path in _FIELDS if not shapes_answers(path)}
     # Plus one derived entry: whether a guardrail is on (its id is a location).
-    assert hashed == set(_FIELDS) - excluded | {"aws.bedrock.guardrail.enabled"}
+    # Fields added at a default that keeps the earlier behaviour count once
+    # set (test_extraction_schema).
+    assert hashed == set(_FIELDS) - excluded - cache_keys._KEYED_ONCE_SET | {
+        "aws.bedrock.guardrail.enabled"
+    }
+    assert cache_keys._KEYED_ONCE_SET <= set(_FIELDS)
     for path in excluded:
         rule = classify(path)
         assert (

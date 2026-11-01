@@ -38,6 +38,11 @@ class ConfigurationError(GraphRAGException, ValueError):
     """
 
 
+class SchemaSourceError(ConfigurationError):
+    """The extraction schema source cannot be loaded (an unknown kind, a
+    missing or invalid file) or holds a schema the config refuses."""
+
+
 class DataProcessingError(GraphRAGException):
     pass
 

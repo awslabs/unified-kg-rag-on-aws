@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.relationship_endpoints import (
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.domain.prompts.graph_extraction import (
+    DEFAULT_RELATIONSHIP_TYPES,
     GraphExtractionPrompt,
     GraphRefinementPrompt,
 )
@@ -477,26 +478,6 @@ class TestExtractionStats:
 
 
 # --------------------------------------------------------------------------- #
-# _format_entity_types
-# --------------------------------------------------------------------------- #
-class TestFormatEntityTypes:
-    def test_empty_list_uses_free_choice_message(self) -> None:
-        out = GraphExtractor._format_entity_types([])
-        assert "any entity types" in out.lower()
-
-    def test_label_only(self) -> None:
-        assert GraphExtractor._format_entity_types(["PERSON"]) == "- **PERSON**"
-
-    def test_label_with_description(self) -> None:
-        out = GraphExtractor._format_entity_types(["ORG: a company"])
-        assert out == "- **ORG**: a company"
-
-    def test_blank_label_skipped(self) -> None:
-        out = GraphExtractor._format_entity_types([": no label", "PERSON"])
-        assert out == "- **PERSON**"
-
-
-# --------------------------------------------------------------------------- #
 # _parse_extraction_result
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
@@ -611,6 +592,13 @@ class TestPrepareExtractionInputs:
         assert inputs[0]["max_entities_per_chunk"] == str(
             extractor.extraction_config.max_entities_per_chunk
         )
+
+    def test_inputs_carry_every_prompt_variable(self, extractor) -> None:
+        # A variable missing from the inputs raises KeyError when the
+        # template is formatted.
+        (inputs,) = extractor._prepare_extraction_inputs([TextUnit(id="t1", text="x")])
+        assert set(inputs) == set(GraphExtractionPrompt.input_variables)
+        assert inputs["relationship_types"] == DEFAULT_RELATIONSHIP_TYPES
 
     def test_inputs_carry_target_language(self, extractor) -> None:
         # Descriptions are written in the graph's (target) language.

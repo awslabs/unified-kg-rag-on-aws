@@ -93,10 +93,14 @@ class TestBuildCustomPrompts:
         )
         custom = CustomPromptConfig(**PromptTuner.build_custom_prompts(profile))
         rendered = {}
-        # The built-in rules keep their real variables: {entity_types} is
-        # filled from config at call time; nothing corpus-derived becomes one.
+        # The built-in rules keep their real variables: {entity_types} and
+        # {relationship_types} are filled from config at call time; nothing
+        # corpus-derived becomes one.
         for prompt_class, variables in (
-            (GraphExtractionPrompt, {"entity_types": "- **SETTING**"}),
+            (
+                GraphExtractionPrompt,
+                {"entity_types": "- **SETTING**", "relationship_types": "- **R**"},
+            ),
             (CommunityReportPrompt, {}),
         ):
             resolved = prompt_class.resolve(custom_prompts=custom)

@@ -600,6 +600,18 @@ From 0.2.3 (or a `main` checkout since):
   for ingestion and ARM64 tasks (#457), the Nori analyzer package
   (`opensearch_nori_package`) (#459), and an `EnableVersionUpgrade` policy
   for in-place OpenSearch upgrades (#457).
+- Extraction schema settings under `processing.graph_extraction`:
+  `entity_types` items may be `{label, description, iri}` mappings, and the
+  new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
+  ORGANIZATION"`), `schema_mode` (`off`/`align`/`strict`, default `align`)
+  and `schema_source` keys are validated on load: labels are unique by
+  case and word separators, and patterns name declared types. Extraction
+  does not apply them yet. At their defaults they change no cache key,
+  extraction record or recorded extraction settings (#475).
+- Schema sources: `schema_source.kind: file` reads the schema keys from a
+  YAML or JSON file at start-up, keyed by its content, not its path, and
+  `@register_schema_source` (`adapters/schema_sources/`) adds a source for
+  another format or service (#475).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -690,6 +702,12 @@ From 0.2.3 (or a `main` checkout since):
 - A `processing.chunking.chunk_overlap` not below `fallback_chunk_size`
   fails the load, naming both, instead of every chunker at the chunking
   stage (#474).
+- The extraction prompt's relationship-type examples are the
+  `{relationship_types}` variable, which a `graph_extraction` custom prompt
+  may use. The default prompt renders byte for byte as before, and
+  extraction records keep their keys (#475).
+- An `entity_types` list with two labels that differ only in case or word
+  separators (`PERSON`, `person`) fails the load (#475).
 
 ### Fixed
 Bugs present in 0.2.3.
