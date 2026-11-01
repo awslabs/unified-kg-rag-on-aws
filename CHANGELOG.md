@@ -638,7 +638,7 @@ From 0.2.3 (or a `main` checkout since):
   unchanged; the entities and relationships mappings gain the fields, and
   an incremental run adds them to its live indices before its first write
   (re-run with `indexing.reset: true` after a schema change to annotate
-  items it does not rewrite) (#PR).
+  items it does not rewrite) (#477).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
