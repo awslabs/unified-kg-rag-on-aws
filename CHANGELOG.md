@@ -139,6 +139,63 @@ naming the key that replaces it.
   | `graph.visualization.embedding_method` | none: the layout is a spring layout |
   | `graph.visualization.layout_method` | none: the layout is a spring layout |
   | `graph.visualization.layout` (`umap`, `tsne`, `pca`) | none |
+- The persisted S3 embedding cache is gone (#468). Off by default, it kept
+  every vector of every run in one S3 JSON object that each indexing task
+  downloaded whole and rewrote per item type. An incremental run
+  (`providers.doc_status.enabled`) already embeds only what its delta
+  re-indexes: in a synthetic measurement a one-document change re-embedded
+  21 of 301 texts, 11 of which the cache would have served. A full rebuild
+  (`indexing.reset: true`) now embeds the corpus again. The keys load with a
+  WARNING each and are ignored, and the CDK cache bucket no longer expires
+  `embedding-cache/` (delete `s3://<bucket>/embedding-cache/` once if you
+  had turned the cache on):
+
+  | Removed key | Replacement |
+  |---|---|
+  | `indexing.opensearch.persist_embedding_cache` | incremental indexing (`providers.doc_status.enabled`) |
+  | `indexing.opensearch.embedding_cache_s3_key` | none |
+- `search.local_search.type_quota` (ten keys) is gone (#468): the fusion
+  slots local search and DRIFT reserve per section type are the constant
+  `BaseSearchStrategy.TYPE_QUOTA`, with the former defaults (text 2x top_k,
+  at least 20; entities and relationships 1x, at least 10; reports and
+  claims 0.5x, at least 2), so retrieval with the defaults is unchanged.
+  The user-facing mix of the context is `search.token_manager.type_budgets`.
+  The section loads with a WARNING and is ignored; a subclass that needs
+  other slots overrides `TYPE_QUOTA`.
+- `cache.chunking` (`enabled`, `chunk_size`, `max_file_size_mb`) is gone
+  (#468): a stage-cache entry of more than 1,000 items or 50 MB is always
+  written in chunk files, as by default before. The section loads with a
+  WARNING and is ignored.
+- Retries are configured in one section, `retry` (#468): eleven keys in
+  seven sections became eight in one, with every default unchanged.
+  `retry.max_attempts` and its backoff serve the model calls (ingestion
+  items, Bedrock embeddings and query-time calls, which had the same 5
+  attempts); the callers whose defaults differ keep their own attempt count.
+  The old keys load with a WARNING each naming the new key and are ignored,
+  so set the new key to keep a non-default value. The run-eval manifest's
+  `retrieval_config_sha256` of an unchanged config changes once (retry
+  counts no longer count as answer settings, and the `type_quota` keys are
+  gone); stage cache keys do not change:
+
+  | Removed key | Replacement |
+  |---|---|
+  | `processing.max_attempts` | `retry.max_attempts` |
+  | `aws.bedrock.transient_retry.max_attempts` | `retry.max_attempts` |
+  | `aws.bedrock.transient_retry.base_delay_seconds` | `retry.base_delay_seconds` |
+  | `aws.bedrock.transient_retry.max_delay_seconds` | `retry.max_delay_seconds` |
+  | `aws.bedrock.transient_retry.max_total_seconds` | `retry.max_total_seconds` |
+  | `providers.llm.max_attempts` | `retry.model_server_max_attempts` |
+  | `providers.embedding.max_attempts` | `retry.model_server_max_attempts` |
+  | `indexing.neptune.max_attempts` | `retry.graph_store_max_attempts` |
+  | `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
+  | `search.store_max_attempts` | `retry.query_store_max_attempts` |
+  | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+
+  A Neptune retry now backs off from `retry.base_delay_seconds`, the same
+  base as the model calls (both default 2 s), and an Ollama call from the
+  `retry` backoff rather than fixed defaults. `BatchProcessor.from_processing`
+  is `BatchProcessor.from_config(config)`, and `TransientRetryConfig` is no
+  longer a config section (`RetryConfig.transient_policy()` builds it).
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
@@ -195,15 +252,14 @@ naming the key that replaces it.
   | `graph.visualization.embeddings` | `models.embedding.model_id` |
   | `providers.rerank.model_id` | `models.rerank` |
   | `search.reranking.rerank_model_id` | `models.rerank` |
-- `providers.llm.max_retries` / `providers.embedding.max_retries` (retries
-  after the first try) are now `max_attempts` (total attempts, default 3)
-  (#216). Every retry knob counts total attempts (#151).
-- The renamed-key shim is gone (#216). Replace `search.llm_retry` with
-  `aws.bedrock.transient_retry`, `aws.bedrock.effort` with
-  `aws.bedrock.default_effort`, and `processing.max_retries`,
-  `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` with the
-  matching `max_attempts` key (a former `max_retries: N` is
-  `max_attempts: N+1`).
+- Every retry knob counts total attempts, the first included (#151, #216):
+  a former `max_retries: N` is `max_attempts: N+1` in the `retry` section
+  (see the retry table above).
+- The renamed-key shim is gone (#216). Replace `aws.bedrock.effort` with
+  `aws.bedrock.default_effort`; `search.llm_retry`,
+  `providers.llm.max_retries`, `providers.embedding.max_retries`,
+  `processing.max_retries`, `indexing.neptune.max_retries` and
+  `evaluation.ragas_max_retries` are the `retry` section's keys.
 - The `"NONE"` alias of `aws.s3.encryption.encryption_type` is removed; use
   `BUCKET_DEFAULT` (#216).
 - The post-retrieval context-building call is removed with
@@ -1003,6 +1059,14 @@ changed once with the full-config keys (#332).
   25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
+- `config-template.yaml` is a short starting file (131 lines, from 1,109)
+  with the keys most deployments set: the backend preset and providers,
+  models, AWS stores, chunking, translation, gleaning and claims, reset,
+  analyzers, routing, reranking and the log level, at their defaults. Every
+  other key is in the generated `docs/configuration.md`, which now lists the
+  defaults too long for its tables under Long defaults instead of pointing
+  to the template. A copy of the old template still loads (removed keys
+  warn) (#468).
 - The parser reads `.txt`, `.csv`, `.pdf` and (with the `unstructured`
   extra) `.md`/`.html` with its own loaders on langchain-core
   (`adapters/ingestion/file_loaders.py`) instead of the langchain-community
@@ -1522,9 +1586,8 @@ changed once with the full-config keys (#332).
   as a lower bound on correct declines (#292).
 - The vector indexer no longer keeps every vector it embedded in memory for
   the rest of the run: memory grew with the corpus and the copy was not
-  reused (identical texts of one embedding call are still embedded once).
-  `indexing.opensearch.persist_embedding_cache` and its S3 cache are
-  unchanged (#294).
+  reused (identical texts of one embedding call are still embedded once)
+  (#294).
 - `indexing.reset` no longer waits a fixed second after clearing the
   OpenSearch indices: the deletes are acknowledged before they return and
   the rebuild writes new timestamped indices (#294).
@@ -1583,8 +1646,7 @@ changed once with the full-config keys (#332).
 - `config-template.yaml` shows the `providers` section, the Neptune and
   OpenSearch connection keys and the embedding and rerank model ids as
   comments, so a copy of it switches with `backend: local` alone.
-- Performance: shared MinHash permutations, float32 embedding cache,
-  reused query chains, batched registry reads and writes, and in-process
+- Performance: shared MinHash permutations, reused query chains, batched registry reads and writes, and in-process
   claim resolution and gleaning preparation (#176, #191, #194, #213).
 - The CloudWatch EMF sink publishes dimensionless aggregate series only
   (#158). Development tools live in the `dev` dependency group (#119).
@@ -2140,7 +2202,7 @@ changed once with the full-config keys (#332).
 - Graph extraction: output listing entities none of which has a name (cut
   off with no stop reason) fails the unit as cut-off output
   (`LLMOutputTruncatedError`), counted the same way and not retried. As a
-  parse failure it was asked `processing.max_attempts` times with backoff,
+  parse failure it was asked `retry.max_attempts` times with backoff,
   about 165 s a unit at the default 5: some 3.4 hours for 3000 units under
   a server-side output cap (#440).
 - Incremental indexing: when every unit of more than one document fails
@@ -4105,7 +4167,7 @@ changed once with the full-config keys (#332).
   missed about 1 in 10 of its true nearest neighbours. The retriever sends
   `k = max(hits, ef_search)` on lucene and still returns the hits asked
   for; faiss and nmslib keep reading the index setting (#306).
-- `processing.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
+- `retry.max_attempts` (and every `BatchProcessor`'s `max_attempts`)
   counts the first call, as documented: an item that keeps failing with a
   retryable error is called `max_attempts` times. The first call used to
   come on top of `max_attempts` retries, so default ingestion made 6 calls
@@ -4137,8 +4199,8 @@ changed once with the full-config keys (#332).
   that reports no dimension no longer silently gets a 1024-dimension index:
   it uses `indexing.opensearch.embedding_dimension`, and without one the run
   fails with a message naming that key (#297).
-- `indexing.neptune.retry_delay_seconds: 0` is accepted with the default
-  `max_attempts` and retries at once, as its description says; a validator
+- `retry.base_delay_seconds: 0` is accepted with the default
+  `retry.graph_store_max_attempts` and Neptune retries at once, as its description says; a validator
   rejected it whenever `max_attempts` was above 1 (#297).
 - `processing.ignore_errors` is documented for what it does: it decides
   whether a whole step that fails (a batch call, a translation language, an
@@ -4499,7 +4561,7 @@ changed once with the full-config keys (#332).
   instead of degrading silently (#264).
 - A short OpenSearch throttling burst no longer fails a query: opensearch-py
   retried a 429/502/503/504 back to back, so a burst of a few milliseconds
-  used up `search.store_max_attempts`. Query requests now back off between
+  used up `retry.query_store_max_attempts`. Query requests now back off between
   attempts (0.25-0.5 s, then 0.5-1 s, doubling up to 2-4 s) and still fail
   once the attempts run out (#264).
 - A query no longer hangs when gremlinpython's connection pool stays empty
@@ -4548,7 +4610,7 @@ changed once with the full-config keys (#332).
   its removals, merges or full-build clear. The indexer's reads (the merge
   and removal read-backs, the incident-edge lookup), `delete_by_id`, the
   label clear and the drops before relationship and membership writes now
-  reconnect and retry like writes (`indexing.neptune.max_attempts`). Before,
+  reconnect and retry like writes (`retry.graph_store_max_attempts`). Before,
   they had one attempt on the pooled connection, so in a long-lived process
   every later incremental run failed at its first read (#263).
 - An OpenSearch bulk write survives a 429/502/503/504 burst longer than the
@@ -4566,7 +4628,7 @@ changed once with the full-config keys (#332).
   wrapper's retries fails the query too, as a store that does not answer
   does (#261).
 - An OpenSearch cluster still answering 429/502/503/504 after the query
-  client's `search.store_max_attempts` attempts (overloaded or restarting)
+  client's `retry.query_store_max_attempts` attempts (overloaded or restarting)
   fails the query with `StoreConnectionError`; every strategy answered from
   no context. An HTTP 500 for one search still degrades only that search
   (#261).
@@ -4672,7 +4734,7 @@ changed once with the full-config keys (#332).
   way (#258).
 - Queries no longer hang on a store that stops answering. The query-side
   OpenSearch client waits `search.store_timeout_seconds` (30) per request in
-  `search.store_max_attempts` (3) attempts instead of the indexing client's
+  `retry.query_store_max_attempts` (3) attempts instead of the indexing client's
   180 s in 6, and Neptune connects, reads and writes within the same
   timeout; it had none, so a query (and the process exit) blocked forever.
   A request still unanswered fails the query with `StoreConnectionError`; it
@@ -4862,12 +4924,6 @@ changed once with the full-config keys (#332).
   longer grows with the corpus (about 75 KB per entity before, several
   gigabytes at 50,000 entities with up to six types indexed concurrently), and
   the index is refreshed once per type as before (#252).
-- With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
-  object that exists but cannot be read (throttling, access denied, a network
-  error) is no longer treated as empty: the run embeds without it and does not
-  overwrite it. Before, its first flush replaced the object with only this
-  run's vectors, dropping every other model's and dimension's entries, and the
-  next runs re-embedded the corpus (#252).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
@@ -5071,8 +5127,8 @@ changed once with the full-config keys (#332).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
-  framework's retry, `providers.llm.max_attempts` /
-  `providers.embedding.max_attempts` attempts. OpenAI-compatible servers keep
+  framework's retry, `retry.model_server_max_attempts` attempts.
+  OpenAI-compatible servers keep
   the OpenAI client's own retries, with no second layer (#225).
 - A local ingestion run no longer imports the AWS SDK at community detection:
   Leiden now calls `graspologic-native` directly, as `graspologic` does,
@@ -5546,7 +5602,6 @@ changed once with the full-config keys (#332).
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
   missed the match (#219).
 - `pipeline_id` must be a single path segment (#173).
-- The persisted embedding cache honours `aws.s3.encryption` (#173).
 - Metadata filters are documented as relevance filters, not an
   access-control boundary (#173).
 - Interactive graph tooltips are escaped (#180).

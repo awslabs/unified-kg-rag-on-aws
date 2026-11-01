@@ -435,12 +435,7 @@ def _opensearch_vector_indexer(providers: Providers) -> VectorIndexer:
     config = providers.config
     return OpenSearchIndexer(
         config=config,
-        # The S3 embedding cache reads and writes with the same session.
-        boto_session=_signing_session(
-            providers,
-            config.aws.opensearch.use_iam
-            or config.indexing.opensearch.persist_embedding_cache,
-        ),
+        boto_session=_signing_session(providers, config.aws.opensearch.use_iam),
         embedding_factory=providers.embedding_factory,
     )
 
@@ -488,10 +483,6 @@ def _sqlite_vector_indexer(providers: Providers) -> VectorIndexer:
     config = providers.config
     return OpenSearchIndexer(
         config=config,
-        # Only the S3 embedding cache needs a session.
-        boto_session=_signing_session(
-            providers, config.indexing.opensearch.persist_embedding_cache
-        ),
         embedding_factory=providers.embedding_factory,
         opensearch_client=_sqlite_search_engine(providers),
     )

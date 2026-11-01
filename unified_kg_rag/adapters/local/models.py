@@ -212,13 +212,14 @@ def _tracing_callbacks(
     return with_callback(callbacks, handler)
 
 
-def local_transient_retry(endpoint: EndpointConfig) -> TransientRetryConfig:
+def local_transient_retry(config: Config) -> TransientRetryConfig:
     """Retry policy for a client that does not retry on its own (Ollama).
 
-    ``endpoint.max_attempts`` attempts with the default backoff and wall-clock
-    budget of :class:`TransientRetryConfig`.
+    ``retry.model_server_max_attempts`` attempts with the backoff and
+    wall-clock budget of the ``retry`` section.
     """
-    return TransientRetryConfig(max_attempts=endpoint.max_attempts)
+    retry = config.retry
+    return retry.transient_policy(max_attempts=retry.model_server_max_attempts)
 
 
 class _LocalLanguageModelFactory:
@@ -314,7 +315,7 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
     llama.cpp server, LM Studio, or OpenAI itself when unset).
 
     The OpenAI client retries transient errors itself
-    (``providers.llm.max_attempts``), so this factory defines no
+    (``retry.model_server_max_attempts``), so this factory defines no
     ``transient_retry`` and query chains are not wrapped in a second retry.
     """
 
@@ -342,7 +343,7 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
             max_tokens=max_tokens,
             timeout=self.settings.timeout_seconds,
             # The OpenAI client counts retries after the first attempt.
-            max_retries=self.settings.max_attempts - 1,
+            max_retries=self.config.retry.model_server_max_attempts - 1,
             callbacks=callbacks,
             **extra,
         )
@@ -357,7 +358,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     truncates the prompt silently when it does not fit.
 
     The Ollama client never retries, so ``transient_retry`` (from
-    ``providers.llm.max_attempts``) gives query chains the chain-level retry
+    ``retry.model_server_max_attempts``) gives query chains the chain-level retry
     of ``setup_chain``; ingestion chains keep the batch retries.
     """
 
@@ -367,7 +368,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     @property
     def transient_retry(self) -> TransientRetryConfig:
         """The retry policy ``setup_chain`` applies to query chains."""
-        return local_transient_retry(self.settings)
+        return local_transient_retry(self.config)
 
     def _build(
         self, model_id: str, max_tokens: int, temperature: float, callbacks: Any

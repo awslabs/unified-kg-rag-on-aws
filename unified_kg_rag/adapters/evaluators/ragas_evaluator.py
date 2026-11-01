@@ -181,7 +181,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         return RunConfig(
             timeout=evaluation.ragas_timeout,
             max_workers=evaluation.ragas_max_workers,
-            max_retries=evaluation.ragas_max_attempts,
+            max_retries=self.config.retry.judge_max_attempts,
         )
 
     def _budgeted_contexts(

@@ -295,13 +295,13 @@ for your region and sizes. What scales each service's cost:
 | Service | Cost grows with | Levers |
 |---|---|---|
 | Bedrock models | Tokens per ingestion (extraction per chunk, up to `max_rounds` gleaning calls, a report per community, optional claims) and per query | Fast tier for light roles, `aws.bedrock.ingestion_effort`, `processing.gleaning.max_rounds`, claims off, incremental indexing |
-| Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
+| Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query | Incremental indexing, `search.reranking.top_k` |
 | Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, I/O-Optimized storage when I/O is above about 25% of the Neptune bill ([Neptune I/O-Optimized storage](../docs/operations.md#neptune-io-optimized-storage)), `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
 | Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
 | Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
-| S3 | Checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
+| S3 | Checkpoints, corpus, access logs | 30-day expiry on `pipeline-runs/` |
 | DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |
 | CloudWatch | Log ingestion and retention, alarms, dashboard; Container Insights metrics and performance logs (always on: per-task CPU and memory, which the `IngestionTaskMemory` alarm reads) | `vpc_flow_logs`, `flow_log_retention_days` |
 | KMS | Keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
@@ -424,9 +424,9 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
 - **Buckets.** The task role reads and writes the cache bucket only
   (`-c corpus_bucket_name=<bucket>` for another corpus bucket). In `private`
   mode the gateway endpoints allow only this deployment's buckets, table and
-  the ECR layer bucket. The 30-day expiry applies only to `pipeline-runs/`
-  and `embedding-cache/`: do not put the corpus under them, since an expired
-  source file looks deleted to the next incremental run.
+  the ECR layer bucket. The 30-day expiry applies only to `pipeline-runs/`:
+  do not put the corpus under it, since an expired source file looks deleted
+  to the next incremental run.
 - **One run at a time.** The state machine does not stop a second execution;
   the doc-status registry's write lease stops the second run with
   `NamespaceLeaseError` once it has synced the corpus, before it downloads its

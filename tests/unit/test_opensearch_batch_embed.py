@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the content-hash embedding cache (perf/cost hardening)."""
+"""Unit tests for ``OpenSearchIndexer._batch_embed`` (dedup, concurrency, failures)."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def test_empty_text_skipped(indexer) -> None:
     assert indexer._embedded_log == ["x"]
 
 
-def test_without_the_s3_cache_no_vector_is_kept_across_calls(indexer) -> None:
+def test_no_vector_is_kept_across_calls(indexer) -> None:
     # An in-process tier held every vector of the run for no measured hit:
     # texts repeat within a call (deduplicated above), rarely across calls.
     assert not hasattr(indexer, "_embedding_cache")
@@ -58,32 +58,6 @@ def test_without_the_s3_cache_no_vector_is_kept_across_calls(indexer) -> None:
     indexer._embedded_log.clear()
     assert indexer._batch_embed(["a"]) == [[1.0] * 4]
     assert indexer._embedded_log == ["a"]
-
-
-def test_batch_embed_does_not_flush_s3_per_call(indexer) -> None:
-    # The S3 cache must NOT be flushed inside _batch_embed (it is called once per
-    # extractor per item-type; flushing there read-merge-overwrites the whole
-    # growing S3 object many times per run). Flushing is deferred to
-    # _flush_embedding_cache at the item-type boundary.
-    s3 = MagicMock()
-    indexer._s3_embedding_cache = s3
-    indexer._batch_embed(["a", "b"])
-    indexer._batch_embed(["c", "d"])
-    s3.flush.assert_not_called()  # decoupled from per-batch embedding
-    s3.load.assert_called()  # load stays (idempotent, guarded by _loaded)
-
-
-def test_flush_embedding_cache_persists_once(indexer) -> None:
-    s3 = MagicMock()
-    indexer._s3_embedding_cache = s3
-    indexer._flush_embedding_cache()
-    s3.flush.assert_called_once()
-
-
-def test_flush_embedding_cache_noop_without_s3(indexer) -> None:
-    indexer._s3_embedding_cache = None
-    # Should not raise when the S3 tier is disabled.
-    indexer._flush_embedding_cache()
 
 
 def test_final_embedding_failures_summarized_at_warning(indexer, caplog) -> None:
@@ -106,19 +80,6 @@ def test_final_embedding_failures_summarized_at_warning(indexer, caplog) -> None
     ]
     assert len(summaries) == 1
     assert "1 of 2" in summaries[0].getMessage()
-
-
-def test_s3_cache_serves_a_later_call(indexer) -> None:
-    from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
-
-    s3 = S3EmbeddingCache("bucket", "key", "titan", 4)
-    s3._loaded = True  # nothing to load; no S3 call
-    indexer._s3_embedding_cache = s3
-    indexer._batch_embed(["alpha", "beta"])
-    indexer._embedded_log.clear()
-
-    assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
-    assert indexer._embedded_log == []
 
 
 def test_embedding_requests_run_sixteen_at_once(indexer) -> None:

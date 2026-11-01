@@ -312,7 +312,7 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer) -> None:
 
 def test_a_failed_delete_batch_counts_each_of_its_ids(indexer, mocker) -> None:
     indexer.neptune_config.batch_size = 2
-    indexer.neptune_config.max_attempts = 1  # the first batch's drop fails
+    indexer.config.retry.graph_store_max_attempts = 1  # the first batch's drop fails
     g = mocker.MagicMock()
     drop = g.E.return_value.has.return_value.where.return_value.drop.return_value
     drop.iterate.side_effect = [RuntimeError("timed out"), None]

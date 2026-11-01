@@ -175,8 +175,8 @@ class DescriptionSummarizer:
         self.target_language = self.config.processing.translation.target_language.value
         self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing,
+        self.batch_processor = BatchProcessor.from_config(
+            self.config,
             is_transient_error=transient_error_predicate(self.factory),
         )
         self.summarizer = setup_chain(

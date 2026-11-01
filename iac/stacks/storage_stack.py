@@ -30,10 +30,9 @@ from iac.stacks.storage_custom_resources import NoriPackage
 
 # Cache-bucket prefixes the app writes and that are safe to expire: the stage
 # checkpoints of `run-ingestion --s3-sync` (PipelineConfig.s3_prefix /
-# --s3-prefix, default "pipeline-runs") and the optional persisted embedding
-# cache (embedding_cache_s3_key, default "embedding-cache/cache.json"). Anything
-# else in the bucket, such as an uploaded corpus, is never expired.
-CACHE_EXPIRY_PREFIXES = ("pipeline-runs/", "embedding-cache/")
+# --s3-prefix, default "pipeline-runs"). Anything else in the bucket, such as
+# an uploaded corpus, is never expired.
+CACHE_EXPIRY_PREFIXES = ("pipeline-runs/",)
 
 # The domain's engine version. A change upgrades the domain in place
 # (enable_version_upgrade); with opensearch_nori_package the Nori package of

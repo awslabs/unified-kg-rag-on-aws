@@ -224,8 +224,8 @@ class ComputeStack(Stack):
             )
         )
         # DynamoDB doc-status registry + S3 cache (scoped to our resources).
-        # The app only reads and writes cache objects (stage checkpoints,
-        # embedding cache); expiry is the bucket lifecycle's job, so the role
+        # The app only reads and writes cache objects (stage checkpoints and
+        # their LLM responses); expiry is the bucket lifecycle's job, so the role
         # gets no s3:DeleteObject*.
         storage.doc_status_table.grant_read_write_data(role)
         storage.cache_bucket.grant_read(role)

@@ -1235,7 +1235,9 @@ The configuration is one nested Pydantic tree (`domain/models/config.py`,
 root `Config`) loaded by `application/config.py` (`get_config`).
 [docs/configuration.md](./configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
-fails when it is stale; `config-template.yaml` is the commented starting file.
+fails when it is stale; `config-template.yaml` is a short starting file with
+the keys most deployments set (`tests/unit/test_config_template_defaults.py`
+checks that its values are the defaults and each key is in the reference).
 [docs/cli.md](./cli.md) is generated the same way from the CLI parsers
 (`scripts/gen_cli_reference.py`, `tests/unit/test_cli_reference.py`).
 
@@ -1339,7 +1341,7 @@ This section is the single reference for extending the framework. Strategies, re
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports. Override `check_dependencies` to fail fast when an optional package the renderer imports is missing.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
-- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field, regenerate `docs/configuration.md` and add it to `config-template.yaml` (see §12).
+- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 
 
 ### Custom backends (run without AWS)

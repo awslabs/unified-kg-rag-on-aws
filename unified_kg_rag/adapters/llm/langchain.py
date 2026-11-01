@@ -32,7 +32,7 @@ from unified_kg_rag.shared.utils.concurrency import (
 )
 
 if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import ProcessingConfig
+    from unified_kg_rag.domain.models import Config
 
 logger = get_logger(__name__)
 
@@ -198,13 +198,12 @@ class BatchProcessor(BaseModel):
     )
 
     @classmethod
-    def from_processing(
-        cls, processing: "ProcessingConfig", **settings: Any
-    ) -> "BatchProcessor":
-        """A processor sized by ``config.processing`` (the ingestion stages)."""
+    def from_config(cls, config: "Config", **settings: Any) -> "BatchProcessor":
+        """A processor sized by ``processing.max_concurrency`` and
+        ``retry.max_attempts`` (the ingestion stages)."""
         return cls(
-            max_concurrency=processing.max_concurrency,
-            max_attempts=processing.max_attempts,
+            max_concurrency=config.processing.max_concurrency,
+            max_attempts=config.retry.max_attempts,
             **settings,
         )
 

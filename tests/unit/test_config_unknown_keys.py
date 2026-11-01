@@ -10,15 +10,18 @@ turns the error back into a warning per key.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
 from tests.fixtures.config_template import uncommented_template
-from unified_kg_rag.application.config import ConfigLoader, unknown_keys
+from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import REMOVED_KEYS
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -167,3 +170,57 @@ def test_the_removed_ingestion_rendering_keys_load_with_a_warning(
     assert all("run-visualization" in message for message in removed)
     assert config.graph.visualization.export_data is True
     assert not set(visualization) & set(type(config.graph.visualization).model_fields)
+
+
+# Removed settings: (the removed key, a path at or under it a config sets, a
+# value it could hold).
+_REMOVED_SETTINGS = [
+    ("indexing.opensearch.persist_embedding_cache", None, True),
+    ("indexing.opensearch.embedding_cache_s3_key", None, "embedding-cache/cache.json"),
+    ("search.local_search.type_quota", "text_floor", 4),
+    ("cache.chunking", "chunk_size", 500),
+    ("processing.max_attempts", None, 2),
+    ("aws.bedrock.transient_retry", "max_attempts", 2),
+    ("providers.llm.max_attempts", None, 2),
+    ("providers.embedding.max_attempts", None, 2),
+    ("indexing.neptune.max_attempts", None, 2),
+    ("indexing.neptune.retry_delay_seconds", None, 0),
+    ("search.store_max_attempts", None, 2),
+    ("evaluation.ragas_max_attempts", None, 2),
+]
+
+
+def _nested(path: str, value: Any) -> dict[str, Any]:
+    data: Any = value
+    for part in reversed(path.split(".")):
+        data = {part: data}
+    return data
+
+
+@pytest.mark.parametrize(("removed", "under", "value"), _REMOVED_SETTINGS)
+def test_a_removed_setting_loads_with_a_warning_from_file_or_environment(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    removed: str,
+    under: str | None,
+    value: Any,
+) -> None:
+    # A config written before the key went away still loads (no unknown-key
+    # error), names the key and why it is gone, and keeps the defaults.
+    assert removed in REMOVED_KEYS
+    path = f"{removed}.{under}" if under else removed
+    unset = ConfigLoader().load_config()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(path, value)))
+    with caplog.at_level(logging.WARNING):
+        assert ConfigLoader(config_file).load_config() == unset
+    monkeypatch.setenv(env_var(path), json.dumps(value))
+    with caplog.at_level(logging.WARNING):
+        assert ConfigLoader().load_config() == unset
+    warnings = [
+        r.getMessage() for r in caplog.records if "removed and ignored" in r.message
+    ]
+    assert len(warnings) == 2
+    assert f"'{removed}'" in warnings[0] and REMOVED_KEYS[removed] in warnings[0]
+    assert env_var(path) in warnings[1] and REMOVED_KEYS[removed] in warnings[1]

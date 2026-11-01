@@ -72,17 +72,6 @@ class EndpointConfig(BaseModel):
         gt=0,
         description="HTTP timeout per request to the model server, in seconds.",
     )
-    max_attempts: int = Field(
-        default=3,
-        ge=1,
-        description=(
-            "Attempts per request on transient errors, including the first. "
-            "The OpenAI client retries itself; on Ollama, whose client does not, "
-            "query chains and embedding calls are retried by the framework "
-            "(ingestion chains keep processing.max_attempts). 1 disables the "
-            "retry."
-        ),
-    )
 
 
 class LLMProviderConfig(EndpointConfig):

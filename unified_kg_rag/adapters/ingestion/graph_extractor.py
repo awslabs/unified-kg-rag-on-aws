@@ -143,8 +143,8 @@ class GraphExtractor(BaseProcessor):
         self.providers = Providers.resolve(config, providers)
         self.ignore_errors = self.config.processing.ignore_errors
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing,
+        self.batch_processor = BatchProcessor.from_config(
+            self.config,
             is_transient_error=transient_error_predicate(self.factory),
         )
         self.is_item_error = item_error_predicate(self.factory)

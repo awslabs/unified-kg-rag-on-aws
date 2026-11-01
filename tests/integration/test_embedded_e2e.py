@@ -162,7 +162,7 @@ def _config(stores: Path, viz: Path) -> Config:
     config.processing.translation.enabled = False
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
-    config.processing.max_attempts = 1
+    config.retry.max_attempts = 1
     config.fixing.enabled = False
     config.graph.visualization.outputs_directory = str(viz)
     return config

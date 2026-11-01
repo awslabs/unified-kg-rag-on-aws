@@ -532,7 +532,7 @@ def _processor(
     ``error`` (see :class:`_Rejecting`)."""
     config.processing.ignore_errors = True
     # Output errors are retried: one attempt keeps the backoff out.
-    config.processing.max_attempts = 1
+    config.retry.max_attempts = 1
     module, cls = _STAGES[stage]
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(

@@ -131,11 +131,9 @@ Coming from a pre-release build: see
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
 | Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results reused by later runs while a stored text unit names them, and the notes a removal (`pending-strip`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded, or run `indexing.reset: true` next |
-| Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 
-The CDK bucket expires `pipeline-runs/` and `embedding-cache/` after 30
-days: keep the corpus under another prefix (`corpus/`), since an expired file
+The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
 looks deleted. Check a reused bucket's own lifecycle rules.
 
 ### OpenSearch replicas
@@ -508,7 +506,7 @@ is a setting and counts for none.
   split it.
 - **Write failures** are retried first: OpenSearch bulk items rejected with
   429, 502, 503 or 504 up to four times with backoff, every Neptune request up
-  to `indexing.neptune.max_attempts` (default `4`) over a new connection. If
+  to `retry.graph_store_max_attempts` (default `4`) over a new connection. If
   more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
   writes still fail, indexing fails and records no document; below it, only
   the documents owning a failed artifact are `FAILED` (all of the run's when
@@ -987,7 +985,7 @@ model or credential error fails a query rather than answering from no context.
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `search.store_max_attempts` attempts. An unreachable vector store fails `run-ingestion` at its store check, before any model call | Check endpoint, port, that the store runs, security groups and VPC endpoints |
+| `StoreConnectionError: ... Cannot connect to host ...` / `Neptune is not reachable ...` / `... status=429 ... (still failing after the client's retries)` | Refused or unresolved, closed by Neptune (restart, failover; reopened next time), or OpenSearch 429/502/503/504 for all `retry.query_store_max_attempts` attempts. An unreachable vector store fails `run-ingestion` at its store check, before any model call | Check endpoint, port, that the store runs, security groups and VPC endpoints |
 | `OpenSearch did not answer a request on <index> within N s in M attempt(s)` / `Neptune did not answer within N s` | No answer within `search.store_timeout_seconds` (ingestion: Neptune fixed 180 s, item retried) | Check the store's health and load, or raise the timeout |
 | `OpenSearch denied the search on <index>: ... status=403 ...` (or `401`) | Fine-grained access control: the role lacks `indices:data/read/search`; or bad credentials | Grant it (and `indices:admin/mappings/get`, `indices:monitor/settings/get`), or fix the credentials |
 | `Neptune refused the connection (HTTP 403)` | No `neptune-db:connect` on the cluster, or signed for another region | Grant it (and the needed `neptune-db:*` data actions); set `aws.region_name` to the cluster's region |

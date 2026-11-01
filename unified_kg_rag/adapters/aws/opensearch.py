@@ -63,7 +63,7 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 
 # Transport retries of the sync (indexing) client, whose per-request timeout
 # is INDEXING_REQUEST_TIMEOUT_SECONDS. The async client serves queries and
-# takes search.store_timeout_seconds and search.store_max_attempts instead: a
+# takes search.store_timeout_seconds and retry.query_store_max_attempts instead: a
 # hung cluster blocked a query for 6 x 180 s before it answered from no
 # context.
 _CLIENT_MAX_RETRIES = 5
@@ -965,13 +965,13 @@ class OpenSearchClient:
         return dict(result)
 
     async def _aquery(self, request: Callable[[], Awaitable[Any]]) -> Any:
-        """``request()`` in up to ``search.store_max_attempts`` attempts.
+        """``request()`` in up to ``retry.query_store_max_attempts`` attempts.
 
         A timeout, a connection failure and a 429/502/503/504 are retried
         after an exponential backoff (``backoff_delay``); the last attempt's
         error, or any other, propagates.
         """
-        attempts = self.config.search.store_max_attempts
+        attempts = self.config.retry.query_store_max_attempts
         attempt = 1
         while True:
             try:

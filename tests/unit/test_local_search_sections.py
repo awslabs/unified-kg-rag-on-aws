@@ -112,37 +112,33 @@ async def test_sections_fall_back_to_query_text_without_entity_focus(
     assert rel_calls and rel_calls[0].query == "raw text"
 
 
-def test_per_type_quota_is_configured_shares_of_top_k(config: Config) -> None:
-    # The fusion quota is config, not constants: MS local's proportional context
-    # assembly is expressed as per-type multipliers of top_k with a floor, so a
-    # deployment that rebalances the shares must move the quota.
+def test_per_type_quota_is_a_multiple_of_top_k_with_a_floor(config: Config) -> None:
+    # MS local's proportional context assembly as per-type multiples of top_k:
+    # 2x chunks, 1x entities and relationships, 0.5x reports and claims.
     strategy, _, _ = _make_strategy(config)
-    quota_config = config.search.local_search.type_quota
 
-    quota = strategy._per_type_quota(top_k=40)
-    assert quota["text"] == int(quota_config.text_multiplier * 40)
-    assert quota["entity"] == int(quota_config.entity_multiplier * 40)
-    assert quota["relationship"] == int(quota_config.relationship_multiplier * 40)
-    assert quota["community"] == int(quota_config.community_multiplier * 40)
-    assert quota["claim"] == int(quota_config.claim_multiplier * 40)
-
-    quota_config.community_multiplier = 2.0
-    assert strategy._per_type_quota(top_k=40)["community"] == 80
+    assert strategy._per_type_quota(top_k=40) == {
+        "text": 80,
+        "entity": 40,
+        "relationship": 40,
+        "community": 20,
+        "claim": 20,
+    }
 
 
 def test_per_type_quota_floors_hold_at_a_tiny_top_k(config: Config) -> None:
-    # At top_k=1 the multipliers alone would reserve 0-2 slots, which starves the
+    # At top_k=1 the multiples alone would reserve 0-2 slots, which starves the
     # KG sections the multi-hop bridge items live in; the floors are what keep each
     # section represented.
     strategy, _, _ = _make_strategy(config)
-    quota_config = config.search.local_search.type_quota
 
-    quota = strategy._per_type_quota(top_k=1)
-    assert quota["text"] == quota_config.text_floor
-    assert quota["entity"] == quota_config.entity_floor
-    assert quota["relationship"] == quota_config.relationship_floor
-    assert quota["community"] == quota_config.community_floor
-    assert quota["claim"] == quota_config.claim_floor
+    assert strategy._per_type_quota(top_k=1) == {
+        "text": 20,
+        "entity": 10,
+        "relationship": 10,
+        "community": 2,
+        "claim": 2,
+    }
 
 
 class LineageRetriever(FakeRetriever):

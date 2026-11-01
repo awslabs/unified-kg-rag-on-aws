@@ -285,17 +285,6 @@ class TestInitialization:
             EvaluatorType.GRAPH_AWARE,
         ]
 
-    def test_config_template_matches_default_evaluators(self) -> None:
-        from pathlib import Path
-
-        import yaml
-
-        template_path = Path(__file__).resolve().parents[2] / "config-template.yaml"
-        template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
-        assert template["evaluation"]["enabled_evaluators"] == [
-            e.value for e in Config().evaluation.enabled_evaluators
-        ]
-
     def test_only_enabled_evaluators_initialized(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         assert set(manager.evaluators) == {EvaluatorType.GRAPH_AWARE}
@@ -1014,7 +1003,6 @@ class TestComparability:
         config.aws.region_name = "eu-west-1"
         config.aws.bedrock.region_name = "eu-west-1"
         config.aws.s3.bucket_name = "another-bucket"
-        config.indexing.opensearch.persist_embedding_cache = True
         config.providers.llm.base_url = "http://localhost:11434"
         config.evaluation.outputs_directory = "elsewhere"
         assert manager.build_run_manifest()["retrieval_config_sha256"] == before

@@ -35,7 +35,7 @@ _CLIS: dict[str, tuple[Callable[[], object], list[str]]] = {
 }
 
 _BAD_FILES = {
-    "wrong type": "processing:\n  max_attempts: abc\n",
+    "wrong type": "retry:\n  max_attempts: abc\n",
     "invalid yaml": "processing: [1\n",
     "not a mapping": "- a\n- b\n",
 }
@@ -86,14 +86,12 @@ def test_missing_config_file_is_a_usage_error(
 
 def test_validation_error_names_the_key_but_not_the_value(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "processing:\n  max_attempts: s3cr3t-value\n", encoding="utf-8"
-    )
+    config_path.write_text("retry:\n  max_attempts: s3cr3t-value\n", encoding="utf-8")
     with pytest.raises(ConfigurationError) as exc:
         ConfigLoader(config_path).load_config()
     message = str(exc.value)
     assert message.startswith("Configuration validation error: ")
-    assert "processing.max_attempts" in message
+    assert "retry.max_attempts" in message
     assert "s3cr3t-value" not in message
     assert "\n" not in message
 

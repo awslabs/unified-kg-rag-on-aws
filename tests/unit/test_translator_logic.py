@@ -56,7 +56,7 @@ def _make_translator(
     config.processing.translation.target_language = target
     config.processing.translation.additional_target_languages = additional
     # An empty answer is retried like output that does not parse: no waits.
-    config.processing.max_attempts = 1
+    config.retry.max_attempts = 1
     translator = TextUnitTranslator(config, show_progress=False)
     return translator, fake_chain
 

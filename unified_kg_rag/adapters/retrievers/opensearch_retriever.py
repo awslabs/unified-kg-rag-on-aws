@@ -798,11 +798,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _unanswered_error(self, target: str) -> StoreTimeoutError:
         """The error a request OpenSearch never answered fails the query with."""
-        search = self._config.search
+        timeout = self._config.search.store_timeout_seconds
+        attempts = self._config.retry.query_store_max_attempts
         return StoreTimeoutError(
             f"OpenSearch did not answer a request on {target} within "
-            f"{search.store_timeout_seconds} s in {search.store_max_attempts} "
-            "attempt(s) (search.store_timeout_seconds, search.store_max_attempts)"
+            f"{timeout} s in {attempts} attempt(s) "
+            "(search.store_timeout_seconds, retry.query_store_max_attempts)"
         )
 
     def _raise_on_embedding_mismatch(
