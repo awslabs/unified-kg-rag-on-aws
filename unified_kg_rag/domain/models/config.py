@@ -553,6 +553,14 @@ REMOVED_KEYS: dict[str, str] = {
         )
         for key in ("enabled", "embedding_method", "layout_method", "layout")
     },
+    **{
+        f"indexing.opensearch.{key}": (
+            "the persisted S3 embedding cache is gone; an incremental run "
+            "(providers.doc_status.enabled) embeds only the documents it "
+            "re-indexes"
+        )
+        for key in ("persist_embedding_cache", "embedding_cache_s3_key")
+    },
 }
 
 
@@ -982,10 +990,7 @@ class S3EncryptionConfig(BaseModel):
 class S3Config(BaseModel):
     bucket_name: str | None = Field(
         default=None,
-        description=(
-            "Bucket for the stage-cache sync (run-ingestion "
-            "--s3-sync) and the persisted embedding cache."
-        ),
+        description=("Bucket for the stage-cache sync (run-ingestion --s3-sync)."),
     )
     encryption: S3EncryptionConfig = Field(
         default_factory=S3EncryptionConfig,
@@ -2131,19 +2136,6 @@ class OpenSearchIndexingConfig(BaseModel):
     refresh_after_batch: bool = Field(
         default=True,
         description="Whether to refresh OpenSearch indices after each batch operation for immediate visibility",
-    )
-    persist_embedding_cache: bool = Field(
-        default=False,
-        description=(
-            "Persist the content-hash embedding cache to S3, so unchanged text"
-            " is not embedded again by a later run (each Fargate task is a "
-            "fresh process). Requires aws.s3.bucket_name."
-        ),
-    )
-    embedding_cache_s3_key: str = Field(
-        default="embedding-cache/cache.json",
-        description="S3 key (under the cache bucket) for the persisted embedding "
-        "cache when persist_embedding_cache is enabled.",
     )
     max_query_size: int = Field(
         default=100,

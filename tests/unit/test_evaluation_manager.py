@@ -1014,7 +1014,6 @@ class TestComparability:
         config.aws.region_name = "eu-west-1"
         config.aws.bedrock.region_name = "eu-west-1"
         config.aws.s3.bucket_name = "another-bucket"
-        config.indexing.opensearch.persist_embedding_cache = True
         config.providers.llm.base_url = "http://localhost:11434"
         config.evaluation.outputs_directory = "elsewhere"
         assert manager.build_run_manifest()["retrieval_config_sha256"] == before

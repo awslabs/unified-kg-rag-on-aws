@@ -257,7 +257,7 @@ AWS S3 storage configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `bucket_name` | string \| null | `null` | Bucket for the stage-cache sync (run-ingestion --s3-sync) and the persisted embedding cache. |
+| `bucket_name` | string \| null | `null` | Bucket for the stage-cache sync (run-ingestion --s3-sync). |
 
 #### `aws.s3.encryption`
 
@@ -546,8 +546,6 @@ Configuration settings for OpenSearch vector and text indexing
 | `default_analyzer` | string (min length 1) | `"standard"` | OpenSearch text analyzer used when the language has no specific mapping |
 | `language_analyzers` | dict[string, string] | `{"en": "english", "ko": "nori"}` | Text analyzer per language code (en: english, ko: nori); languages without an entry use default_analyzer. nori needs the analysis-nori plugin, which an Amazon OpenSearch Service domain has only once its optional package is associated (the CDK stack maps ko to cjk). Setting the key replaces the whole map. |
 | `refresh_after_batch` | boolean | `true` | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
-| `persist_embedding_cache` | boolean | `false` | Persist the content-hash embedding cache to S3, so unchanged text is not embedded again by a later run (each Fargate task is a fresh process). Requires aws.s3.bucket_name. |
-| `embedding_cache_s3_key` | string | `"embedding-cache/cache.json"` | S3 key (under the cache bucket) for the persisted embedding cache when persist_embedding_cache is enabled. |
 | `max_query_size` | integer (≥ 1) | `100` | Maximum number of hits returned per OpenSearch query |
 | `index_settings` | dict[string, Any] | see `config-template.yaml` | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. Setting the key replaces the whole map; a left-out shard, replica or refresh setting is 1, 0 or 1s. |
 | `vector_search` | dict[string, Any] | see `config-template.yaml` | HNSW algorithm parameters for approximate nearest neighbor search. ef_search is the candidate list size of a query: on faiss and nmslib the index setting index.knn.algo_param.ef_search (fixed when the index is created), on lucene, which ignores that setting, the k of every kNN query (at least the hits requested), read at query time. |

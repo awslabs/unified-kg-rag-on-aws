@@ -63,7 +63,7 @@ local component.
 | **Amazon Bedrock** | Yes | Every LLM call, embeddings and reranking (enable model access for the model ids you configure) |
 | **Amazon Neptune** | Yes | The knowledge graph and multi-hop traversal at query time |
 | **Amazon OpenSearch** | Yes | Vector and BM25 lexical indices (text units, entities, community reports, relationships, claims) |
-| **Amazon S3** | Only for `--s3-sync`, `indexing.opensearch.persist_embedding_cache` or `s3://` paths | Stage-cache sync, the embedding cache, `s3://` datasets and the CDK corpus |
+| **Amazon S3** | Only for `--s3-sync` or `s3://` paths | Stage-cache sync, `s3://` datasets and the CDK corpus |
 | **Amazon DynamoDB** | Only for incremental indexing | The document-status registry that diffs the corpus by content hash |
 
 ### Required models
@@ -700,9 +700,10 @@ resumes there. On SIGTERM (ECS `StopTask`, a Step Functions timeout) the run
 uploads the running stage's checkpoint and exits 143. A failed upload between
 stages is retried by the next one; a failed initial download or final upload
 fails the run with `CacheSyncError`. Expiry and the other caches:
-[Caches and prefixes](./operations.md#caches-and-prefixes); set
-`indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
-unchanged text across runs.
+[Caches and prefixes](./operations.md#caches-and-prefixes). Across runs,
+the doc-status registry (`providers.doc_status.enabled`) keeps unchanged
+documents from being embedded again: an incremental run embeds only what its
+delta changes.
 
 **LLM response cache** (`cache.llm_responses`, on by default). Every
 ingestion model response is kept under `llm-cache/` in the run's cache
@@ -1760,8 +1761,7 @@ flight (this run's, or those of the run whose expired lease it took over),
 - **Large:** raise `processing.max_concurrency` as far as the Bedrock quota
   allows; keep `indexing.neptune.index_concurrency` at `1` unless you measured
   a gain (concurrent write batches conflict on shared vertices and retry);
-  `indexing.opensearch.persist_embedding_cache` with `--s3-sync` saves
-  re-runs the embedding work; the doc-status registry
+  the doc-status registry
   (`providers.doc_status.enabled`) makes later runs pay only for changed
   documents. On Neptune, `indexing.neptune.vertex_ids: custom` looks vertices
   up by vertex id rather than by the `id` property. Switching an existing

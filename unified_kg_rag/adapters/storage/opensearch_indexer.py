@@ -50,8 +50,6 @@ from unified_kg_rag.shared.write_fence import check_write_fence
 if TYPE_CHECKING:
     import boto3
 
-    from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
-
 logger = get_logger(__name__)
 
 # Texts per embedding request, and requests in flight at once (Bedrock
@@ -190,9 +188,6 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> None:
         super().__init__(config)
         self.opensearch_config = self.config.indexing.opensearch
-        # Kept here, not read back through the client: the S3 embedding cache
-        # needs it whichever search engine is injected.
-        self.boto_session = boto_session
         self.opensearch_client: SearchEngineClient = (
             opensearch_client
             if opensearch_client is not None
@@ -208,10 +203,6 @@ class OpenSearchIndexer(VectorIndexer):
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.analyzer = self._analyzer_for(self.target_language)
-        # Optional S3-persisted cache so unchanged text is not re-embedded across
-        # separate runs (each Fargate task is a fresh process). Loaded
-        # lazily on first embed; best-effort (an S3 error leaves it in memory).
-        self._s3_embedding_cache = self._build_s3_embedding_cache()
 
     def _resolve_vector_storage(self) -> dict[str, str]:
         """The ``mode`` / ``compression_level`` keys of the knn_vector
@@ -234,39 +225,6 @@ class OpenSearchIndexer(VectorIndexer):
         return self.opensearch_config.language_analyzers.get(
             language, self.opensearch_config.default_analyzer
         )
-
-    def _build_s3_embedding_cache(self) -> "S3EmbeddingCache | None":
-        """Construct the optional S3-persisted embedding cache, if enabled."""
-        if not self.opensearch_config.persist_embedding_cache:
-            return None
-        bucket = self.config.aws.s3.bucket_name
-        if not bucket:
-            logger.warning(
-                "persist_embedding_cache is on but aws.s3.bucket_name is unset; "
-                "embedding cache will be in-process only."
-            )
-            return None
-        from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
-
-        return S3EmbeddingCache(
-            bucket_name=bucket,
-            key=self.opensearch_config.embedding_cache_s3_key,
-            model_id=model_id_value(self.config.embedding_model_id),
-            dimension=self._embedding_dimension,
-            boto_session=self._s3_session(),
-            encryption=self.config.aws.s3.encryption,
-        )
-
-    def _s3_session(self) -> "boto3.Session":
-        """The given session, else the default one ``OpenSearchClient`` makes."""
-        if self.boto_session is None:
-            import boto3
-
-            self.boto_session = boto3.Session(
-                profile_name=self.config.aws.profile_name,
-                region_name=self.config.aws.region_name,
-            )
-        return self.boto_session
 
     def _resolve_embedding_dimension(self) -> int:
         return resolve_embedding_dimension(self.embedding_factory, self.config)
@@ -1548,7 +1506,6 @@ class OpenSearchIndexer(VectorIndexer):
                     str(e), len(chunk_items), ids=[item.id for item in chunk_items]
                 )
 
-        self._flush_embedding_cache()
         return total_stats
 
     @staticmethod
@@ -1679,7 +1636,6 @@ class OpenSearchIndexer(VectorIndexer):
                 spec.name,
             )
 
-        self._flush_embedding_cache()
         return total_stats
 
     def _embed_and_write(
@@ -1816,32 +1772,20 @@ class OpenSearchIndexer(VectorIndexer):
         result: list[list[float] | None] = [None] * len(texts)
 
         # Identical texts of one call are embedded once and fanned back out.
-        # The optional S3 cache (loaded once, lazily) persists vectors across
-        # runs and phases so unchanged text is not re-embedded. No in-process
-        # tier: it held every vector of the run and texts rarely repeat
-        # across calls.
-        if self._s3_embedding_cache is not None:
-            self._s3_embedding_cache.load()
-
+        # No vector is kept across calls: a cache held every vector of the run
+        # and texts rarely repeat across calls (an incremental run embeds only
+        # what its delta changed).
         key_to_indices: dict[str, list[int]] = {}
         unique: list[tuple[str, str]] = []  # (content_hash, text) to embed
-        seen_keys: set[str] = set()
         for i, text in enumerate(texts):
             if not text or not text.strip():
                 continue
             key = compute_hash(text, length=32)
+            if key not in key_to_indices:
+                unique.append((key, text))
             key_to_indices.setdefault(key, []).append(i)
-            cached = self._cached_embedding(key)
-            if cached is not None:
-                result[i] = cached
-            else:
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    unique.append((key, text))
 
         def _store(key: str, emb: list[float] | None) -> None:
-            if emb is not None and self._s3_embedding_cache is not None:
-                self._s3_embedding_cache.put(key, emb)
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
@@ -1875,7 +1819,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         # Embedding is IO-bound (Bedrock InvokeModel); fan the batches out across
         # threads instead of issuing them strictly serially. Results are stored
-        # back on the calling thread to avoid races on result and the S3 cache.
+        # back on the calling thread to avoid races on result.
         batches = [
             unique[start : start + batch_size]
             for start in range(0, len(unique), batch_size)
@@ -1897,27 +1841,7 @@ class OpenSearchIndexer(VectorIndexer):
                     len(unique),
                 )
 
-        # NOTE: the S3 cache is intentionally NOT flushed here. _batch_embed is
-        # called once per extractor per item-type, so flushing here would
-        # read-merge-overwrite the whole (growing) S3 object many times per run.
-        # Newly-computed vectors are held by the S3 cache and flushed once per
-        # item-type by _flush_embedding_cache() at the indexing boundary.
         return result
-
-    def _cached_embedding(self, key: str) -> list[float] | None:
-        if self._s3_embedding_cache is None:
-            return None
-        return self._s3_embedding_cache.get(key)
-
-    def _flush_embedding_cache(self) -> None:
-        """Persist newly-computed vectors to the S3 tier (once per item-type).
-
-        Called at the end of an item-type's indexing rather than per embed batch,
-        so the full-object read-merge-write happens a handful of times per run
-        instead of dozens.
-        """
-        if self._s3_embedding_cache is not None:
-            self._s3_embedding_cache.flush()
 
     @staticmethod
     def _prepare_documents(

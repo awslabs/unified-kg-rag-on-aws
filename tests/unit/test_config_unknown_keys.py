@@ -10,15 +10,18 @@ turns the error back into a warning per key.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
 from tests.fixtures.config_template import uncommented_template
-from unified_kg_rag.application.config import ConfigLoader, unknown_keys
+from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import REMOVED_KEYS
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -167,3 +170,44 @@ def test_the_removed_ingestion_rendering_keys_load_with_a_warning(
     assert all("run-visualization" in message for message in removed)
     assert config.graph.visualization.export_data is True
     assert not set(visualization) & set(type(config.graph.visualization).model_fields)
+
+
+# Removed keys: (dotted path, a value a config could set it to).
+_REMOVED_SETTINGS = [
+    ("indexing.opensearch.persist_embedding_cache", True),
+    ("indexing.opensearch.embedding_cache_s3_key", "embedding-cache/cache.json"),
+]
+
+
+def _nested(path: str, value: Any) -> dict[str, Any]:
+    data: Any = value
+    for part in reversed(path.split(".")):
+        data = {part: data}
+    return data
+
+
+@pytest.mark.parametrize(("path", "value"), _REMOVED_SETTINGS)
+def test_a_removed_setting_loads_with_a_warning_from_file_or_environment(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    value: Any,
+) -> None:
+    # A config written before the key went away still loads (no unknown-key
+    # error), names the key and why it is gone, and keeps the defaults.
+    assert path in REMOVED_KEYS
+    unset = ConfigLoader().load_config()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(path, value)))
+    with caplog.at_level(logging.WARNING):
+        assert ConfigLoader(config_file).load_config() == unset
+    monkeypatch.setenv(env_var(path), json.dumps(value))
+    with caplog.at_level(logging.WARNING):
+        assert ConfigLoader().load_config() == unset
+    removed = [
+        r.getMessage() for r in caplog.records if "removed and ignored" in r.message
+    ]
+    assert len(removed) == 2
+    assert f"'{path}'" in removed[0] and REMOVED_KEYS[path] in removed[0]
+    assert env_var(path) in removed[1]

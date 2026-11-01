@@ -3,7 +3,7 @@
 """AWS-free unit tests for OpenSearchIndexer pure document/mapping logic.
 
 Complements ``test_relationship_indexing.py`` (relationship doc + mapping) and
-``test_embedding_cache.py`` (``_batch_embed`` cache/dedup). Here we cover the
+``test_opensearch_batch_embed.py`` (``_batch_embed`` dedup). Here we cover the
 remaining ``_prepare_*_doc`` shapes, the ``_get_*_mapping`` builders, the
 shared ``_prepare_common_doc_properties`` / ``_prepare_documents`` helpers, and
 ``delete_by_id`` stats accounting — all without constructing any AWS client.
@@ -640,7 +640,6 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
     from unified_kg_rag.adapters.storage import opensearch_indexer as module
 
     slice_size = module._WRITE_SLICE_SIZE
-    indexer._s3_embedding_cache = None
     indexer.opensearch_client = mocker.MagicMock()
     indexer.opensearch_client.get_index_name_by_alias.return_value = "idx"
     indexer.opensearch_client.bulk_index.return_value = {"errors": False}

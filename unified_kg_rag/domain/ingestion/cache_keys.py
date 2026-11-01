@@ -287,8 +287,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "indexing.neptune": Unkeyed(_AT_INDEXING),
     "indexing.opensearch": Unkeyed(_AT_INDEXING),
     "indexing.opensearch.refresh_after_batch": _neutral(_THROUGHPUT),
-    "indexing.opensearch.persist_embedding_cache": _neutral(_THROUGHPUT),
-    "indexing.opensearch.embedding_cache_s3_key": _neutral(_WHERE),
     "providers.embedding": Unkeyed(_AT_INDEXING),
     "providers.embedding.base_url": _neutral(_WHERE),
     "providers.embedding.api_key": _neutral(_WHERE),

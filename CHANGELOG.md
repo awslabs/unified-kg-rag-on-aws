@@ -139,6 +139,21 @@ naming the key that replaces it.
   | `graph.visualization.embedding_method` | none: the layout is a spring layout |
   | `graph.visualization.layout_method` | none: the layout is a spring layout |
   | `graph.visualization.layout` (`umap`, `tsne`, `pca`) | none |
+- The persisted S3 embedding cache is gone (#PR). Off by default, it kept
+  every vector of every run in one S3 JSON object that each indexing task
+  downloaded whole and rewrote per item type. An incremental run
+  (`providers.doc_status.enabled`) already embeds only what its delta
+  re-indexes: in a synthetic measurement a one-document change re-embedded
+  21 of 301 texts, 11 of which the cache would have served. A full rebuild
+  (`indexing.reset: true`) now embeds the corpus again. The keys load with a
+  WARNING each and are ignored, and the CDK cache bucket no longer expires
+  `embedding-cache/` (delete `s3://<bucket>/embedding-cache/` once if you
+  had turned the cache on):
+
+  | Removed key | Replacement |
+  |---|---|
+  | `indexing.opensearch.persist_embedding_cache` | incremental indexing (`providers.doc_status.enabled`) |
+  | `indexing.opensearch.embedding_cache_s3_key` | none |
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made
@@ -1522,9 +1537,8 @@ changed once with the full-config keys (#332).
   as a lower bound on correct declines (#292).
 - The vector indexer no longer keeps every vector it embedded in memory for
   the rest of the run: memory grew with the corpus and the copy was not
-  reused (identical texts of one embedding call are still embedded once).
-  `indexing.opensearch.persist_embedding_cache` and its S3 cache are
-  unchanged (#294).
+  reused (identical texts of one embedding call are still embedded once)
+  (#294).
 - `indexing.reset` no longer waits a fixed second after clearing the
   OpenSearch indices: the deletes are acknowledged before they return and
   the rebuild writes new timestamped indices (#294).
@@ -1583,8 +1597,7 @@ changed once with the full-config keys (#332).
 - `config-template.yaml` shows the `providers` section, the Neptune and
   OpenSearch connection keys and the embedding and rerank model ids as
   comments, so a copy of it switches with `backend: local` alone.
-- Performance: shared MinHash permutations, float32 embedding cache,
-  reused query chains, batched registry reads and writes, and in-process
+- Performance: shared MinHash permutations, reused query chains, batched registry reads and writes, and in-process
   claim resolution and gleaning preparation (#176, #191, #194, #213).
 - The CloudWatch EMF sink publishes dimensionless aggregate series only
   (#158). Development tools live in the `dev` dependency group (#119).
@@ -4862,12 +4875,6 @@ changed once with the full-config keys (#332).
   longer grows with the corpus (about 75 KB per entity before, several
   gigabytes at 50,000 entities with up to six types indexed concurrently), and
   the index is refreshed once per type as before (#252).
-- With `indexing.opensearch.persist_embedding_cache`, an embedding-cache
-  object that exists but cannot be read (throttling, access denied, a network
-  error) is no longer treated as empty: the run embeds without it and does not
-  overwrite it. Before, its first flush replaced the object with only this
-  run's vectors, dropping every other model's and dimension's entries, and the
-  next runs re-embedded the corpus (#252).
 - `run-eval --eval-data-path` naming a file that does not exist exits 2 with
   `Error: invalid evaluation dataset: ...`, as the user guide documents and
   as an unreadable or invalid dataset does; it exited 1 (#230).
@@ -5546,7 +5553,6 @@ changed once with the full-config keys (#332).
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
   missed the match (#219).
 - `pipeline_id` must be a single path segment (#173).
-- The persisted embedding cache honours `aws.s3.encryption` (#173).
 - Metadata filters are documented as relevance filters, not an
   access-control boundary (#173).
 - Interactive graph tooltips are escaped (#180).

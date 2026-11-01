@@ -65,7 +65,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 | **Amazon Bedrock** | 필수 | 모든 LLM 호출, 임베딩, 재순위화(설정한 모델 ID의 모델 액세스를 활성화해야 함) |
 | **Amazon Neptune** | 필수 | 지식 그래프와 질의 시점의 다중 홉 순회 |
 | **Amazon OpenSearch** | 필수 | 벡터 인덱스와 BM25 어휘 인덱스(텍스트 단위, 엔티티, 커뮤니티 리포트, 관계, 주장) |
-| **Amazon S3** | `--s3-sync`, `indexing.opensearch.persist_embedding_cache`, `s3://` 경로를 쓸 때만 | 단계 캐시 동기화, 임베딩 캐시, `s3://` 데이터셋, CDK 코퍼스 |
+| **Amazon S3** | `--s3-sync`나 `s3://` 경로를 쓸 때만 | 단계 캐시 동기화, `s3://` 데이터셋, CDK 코퍼스 |
 | **Amazon DynamoDB** | 증분 인덱싱을 쓸 때만 | 콘텐츠 해시로 코퍼스의 변경분을 계산하는 문서 상태 레지스트리 |
 
 ### 필수 모델
@@ -648,8 +648,8 @@ Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를
 종료합니다. 단계 사이의 업로드 실패는 다음 단계에서 다시 시도하고, 처음 다운로드나
 마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. 만료와 다른 캐시는
 [캐시와 접두사](./operations.ko.md#캐시와-접두사)에 있습니다. 실행 사이에 바뀌지 않은
-텍스트를 다시 임베딩하지 않으려면 `indexing.opensearch.persist_embedding_cache: true`를
-설정하세요.
+문서를 다시 임베딩하지 않으려면 문서 상태 레지스트리(`providers.doc_status.enabled`)를
+켜세요. 증분 실행은 델타가 바꾼 것만 임베딩합니다.
 
 **LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐). 수집 단계의 모델 응답은 모두 실행의
 캐시 디렉터리 `llm-cache/`에 두고 함께 동기화하므로, 같은 pipeline id로 다시 실행하면
@@ -1559,8 +1559,7 @@ custom_prompts:
 
 - **대규모:** Bedrock 할당량이 허용하는 만큼 `processing.max_concurrency`를 올리고,
   `indexing.neptune.index_concurrency`는 효과를 측정하기 전까지 `1`로 두세요(동시 쓰기
-  배치는 공유 정점에서 충돌해 재시도함). `indexing.opensearch.persist_embedding_cache`와
-  `--s3-sync`를 켜면 다시 실행할 때 임베딩을 다시 계산하지 않고, 문서 상태
+  배치는 공유 정점에서 충돌해 재시도함). 문서 상태
   레지스트리(`providers.doc_status.enabled`)를 켜면 다음 실행부터 바뀐 문서에만 비용이
   듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
   대신 정점 id(`<레이블>:<항목 id>`)로 찾습니다. 조회가 빨라지고 동시 쓰기의
