@@ -216,10 +216,10 @@ class TestSampleAndParse:
 
         mocker.patch.object(tuner, "profile_corpus", side_effect=_fake_profile)
 
-        async def _fake_examples(_profile, _texts):
-            return "EXAMPLE TEXT: a trade settled."
-
-        mocker.patch.object(tuner, "generate_examples", side_effect=_fake_examples)
+        mocker.patch.object(tuner, "extract_examples", return_value=([], []))
+        mocker.patch.object(
+            tuner, "render_examples", return_value="EXAMPLE TEXT: a trade settled."
+        )
         result = await tuner.tune(["some financial text"])
         assert result["profile"]["domain"] == "finance"
         assert "graph_extraction_system" in result["custom_prompts"]

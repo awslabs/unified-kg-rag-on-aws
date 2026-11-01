@@ -4,7 +4,8 @@
 
 Samples documents from a directory, profiles the corpus domain/language/persona/
 entity-types via Bedrock, and writes domain-adapted ``custom_prompts`` as a YAML
-fragment the user reviews and merges into their config.
+fragment the user reviews and merges into their config; ``--schema-out`` also
+writes an extraction schema draft for ``schema_source: {kind: file}``.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.prompts.tuner import PromptTuner
+from unified_kg_rag.application.prompts.tuner import PromptTuner, SchemaDraft
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
@@ -114,6 +115,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to write the tuned custom_prompts YAML",
     )
     parser.add_argument(
+        "--schema-out",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Also write an extraction schema draft (.yaml/.yml): the "
+            "profile's entity types and the relationship types the tuning "
+            "examples use most, for schema_source: {kind: file, path: PATH} "
+            "with schema_mode: align"
+        ),
+    )
+    parser.add_argument(
         "--max-docs",
         type=positive_int,
         default=20,
@@ -135,6 +148,11 @@ def main() -> int:
             config = apply_provider_arguments(load_cli_config(args), args)
         if not args.source_directory.is_dir():
             usage_error(f"source directory not found: '{args.source_directory}'")
+        if args.schema_out is not None and args.schema_out.suffix.lower() not in (
+            ".yaml",
+            ".yml",
+        ):
+            usage_error(f"--schema-out must end in .yaml or .yml: '{args.schema_out}'")
         if error := missing_extras_error(config):
             usage_error(error)
         setup_logging(config, stream=sys.stderr if as_json else None)
@@ -147,8 +165,10 @@ def main() -> int:
 
         tuner = PromptTuner(config)
         result = event_loop.run(
-            stoppable(tuner.tune(texts)), io_workers=config.processing.io_workers
+            stoppable(tuner.tune(texts, schema_draft=args.schema_out is not None)),
+            io_workers=config.processing.io_workers,
         )
+        draft: SchemaDraft | None = result.pop("schema_draft", None)
 
         args.output_path.write_text(
             yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
@@ -156,10 +176,22 @@ def main() -> int:
         )
         logger.info("Wrote tuned prompts to '%s'", args.output_path)
         logger.info("Detected domain: '%s'", result["profile"]["domain"])
-        if as_json:
-            print_json(
-                {"output_path": str(args.output_path), "profile": result["profile"]}
+        summary = {"output_path": str(args.output_path), "profile": result["profile"]}
+        if draft is not None:
+            args.schema_out.write_text(
+                draft.to_yaml(args.schema_out.name), encoding="utf-8"
             )
+            logger.info(
+                "Wrote an extraction schema draft to '%s' (%d entity types, "
+                "%d relationship types, %d patterns)",
+                args.schema_out,
+                len(draft.entity_types),
+                len(draft.relationship_types),
+                len(draft.relationship_patterns),
+            )
+            summary["schema_path"] = str(args.schema_out)
+        if as_json:
+            print_json(summary)
         return 0
     except KeyboardInterrupt:
         logger.warning("Prompt tuning interrupted by user.")
