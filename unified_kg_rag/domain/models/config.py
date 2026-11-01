@@ -1733,9 +1733,10 @@ class GraphExtractionConfig(BaseModel):
             "undeclared type, and relationships a pattern does not allow "
             "between two entities of declared types). Labels match by case "
             "and word separators only, never by similarity. Where the schema "
-            "applies, indexing stores in_schema and the declared types' IRIs "
-            "(type_iri, predicate_iri) on entities and relationships, as "
-            "filter keys."
+            "applies, indexing stores in_schema on entities and "
+            "relationships, and unless the mode is off it stores a declared "
+            "type's iri (type_iri, predicate_iri) on the items of that type, "
+            "with entity types alone too; both are filter keys."
         ),
     )
     schema_source: SchemaSourceConfig = Field(

@@ -101,9 +101,13 @@ def test_undeclared_and_untyped_items_are_off_schema() -> None:
     "schema",
     [
         pytest.param(_schema("off"), id="off"),
-        # Entity types alone (every configuration from before the schema
-        # keys) leave the records and the stores as they were.
-        pytest.param(_schema(relationship_types=[]), id="align-entity-types-only"),
+        # Entity types alone and without IRIs (every configuration from
+        # before the schema keys) leave the records and the stores as they
+        # were.
+        pytest.param(
+            _schema(relationship_types=[], entity_types=["ORGANIZATION", "PRODUCT"]),
+            id="align-entity-types-only",
+        ),
         pytest.param(ExtractionSchema.from_items(), id="no-schema"),
     ],
 )
@@ -112,6 +116,30 @@ def test_no_annotation_where_no_schema_applies(schema: ExtractionSchema) -> None
     assert not annotator.active
     assert annotator.entity_annotation("organization") == (None, None)
     assert annotator.relationship_annotation("supplies") == (None, None)
+
+
+def test_a_declared_iri_is_written_where_in_schema_is_not() -> None:
+    # align with entity types alone: no in_schema (extraction leaves the
+    # records as written), but a declared class IRI still links the type.
+    annotator = SchemaAnnotator(_schema(relationship_types=[]))
+    assert annotator.active
+    assert annotator.entity_annotation("organization") == (None, ORG)
+    assert annotator.entity_annotation(" Organization ") == (None, ORG)
+    assert annotator.entity_annotation("product") == (None, None)
+    assert annotator.entity_annotation("vendor") == (None, None)
+    assert annotator.entity_annotation(None) == (None, None)
+    assert annotator.relationship_annotation("supplies") == (None, None)
+    entity = annotator.entity(_entity("v", "organization"))
+    assert (entity.in_schema, entity.type_iri) == (None, ORG)
+    # An undeclared type has its stale IRI cleared.
+    stale = annotator.entity(_entity("v", "vendor", type_iri=ORG))
+    assert (stale.in_schema, stale.type_iri) == (None, None)
+
+
+def test_off_writes_no_iri() -> None:
+    annotator = SchemaAnnotator(_schema("off", relationship_types=[]))
+    assert not annotator.active
+    assert annotator.entity_annotation("organization") == (None, None)
 
 
 def test_a_kind_without_declared_types_is_not_annotated() -> None:

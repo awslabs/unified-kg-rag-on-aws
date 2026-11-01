@@ -307,3 +307,56 @@ def test_align_stores_the_annotations_and_in_schema_filters_entities(
             ), strategy
     finally:
         rag.close()
+
+
+def test_align_with_entity_types_alone_stores_declared_iris_only(
+    tmp_path: Path, no_aws  # noqa: F811
+) -> None:
+    # No relationship type declared: extraction keeps the records as written
+    # and no item gets in_schema, but a declared class IRI is still stored.
+    def entity_types_only(config: Config) -> None:
+        extraction = config.processing.graph_extraction
+        extraction.schema_mode = "align"
+        extraction.relationship_patterns = []
+        extraction.relationship_types = []
+        extraction.entity_types = [
+            {"label": "ORGANIZATION", "description": "Companies", "iri": ORG_IRI},
+            "PRODUCT: Goods",
+        ]
+
+    config, providers, _, _ = _run(tmp_path, "iri", FIRST, change=entity_types_only)
+    graph = providers.build_graph_indexer()
+    try:
+        names = dict(graph.read_entity_names())
+        stored = {
+            e.name: (e.in_schema, e.type_iri)
+            for e in graph.read_entities(sorted(names))
+        }
+        assert isinstance(graph, SQLiteGraphIndexer)
+        label = graph._entity_label(None)
+        with graph.store.read("test") as connection:
+            edge_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM edges WHERE label = ?", (label,)
+                )
+            ]
+        edges = graph.read_relationships(sorted(edge_ids))
+    finally:
+        graph.close()
+    assert stored == {
+        "Vendor": (None, ORG_IRI),
+        "Buyer": (None, ORG_IRI),
+        "Gadget": (None, None),
+        "Depot": (None, None),
+        "Ledger": (None, None),
+    }
+    assert edges and all((r.in_schema, r.predicate_iri) == (None, None) for r in edges)
+    documents = e2e._stored(
+        config, providers, config.indexing.opensearch.entities_index_prefix
+    )
+    by_name = {h["_source"]["name"]: h["_source"] for h in documents}
+    assert {name: source.get("type_iri") for name, source in by_name.items()} == {
+        name: iri for name, (_, iri) in stored.items()
+    }
+    assert not any("in_schema" in source for source in by_name.values())

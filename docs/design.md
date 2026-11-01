@@ -460,11 +460,13 @@ gets its models and stores from the run's `Providers` bundle.
   values; pattern conformance is not stored, since it depends on endpoint
   types other documents can change. Where the schema does not apply
   (`SchemaConformance.applies`: `off`, `align` with entity types alone) and
-  for a kind with no declared type, every annotation is `None`, and `None`
-  is never written: models drop it from their dumps (`SchemaAnnotated`),
-  extraction records never hold annotations, the Neptune codec and the
-  OpenSearch documents omit it. A default config therefore stores exactly
-  what it stored before the fields; only the index mappings gain
+  for a kind with no declared type, `in_schema` is `None`; an IRI is written
+  whenever the stored type names a declared type with an `iri` and the mode
+  is not `off` (so `align` with entity types alone still links them), and is
+  `None` otherwise. `None` is never written: models drop it from their dumps
+  (`SchemaAnnotated`), extraction records never hold annotations, the
+  Neptune codec and the OpenSearch documents omit it. A default config (no
+  `iri` anywhere) therefore stores exactly what it stored before the fields; only the index mappings gain
   `in_schema` (boolean) and the IRI keyword fields, added to live indices
   by the incremental preflight (`check_index_settings` →
   `_add_missing_fields`). Ids are unchanged; the IRIs are the seam for

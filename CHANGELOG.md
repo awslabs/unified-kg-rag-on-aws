@@ -632,13 +632,15 @@ From 0.2.3 (or a `main` checkout since):
   embedded vector documents), from the merged type and the schema's
   `iri`s, so a full build and an incremental run agree. They are filter
   keys on the entities, relationships and graph stores (`filters:
-  {in_schema: false}` returns the off-schema items `align` kept). Under
-  `off`, with entity types alone, and for relationships when none are
+  {in_schema: false}` returns the off-schema items `align` kept). A
+  declared `iri` is written whenever the mode is not `off`, with entity
+  types alone too (`type_iri` then comes without `in_schema`). Under `off`,
+  with entity types alone and no `iri`, and for relationships when none are
   declared, nothing is written and the stored documents and properties are
   unchanged; the entities and relationships mappings gain the fields, and
   an incremental run adds them to its live indices before its first write
   (re-run with `indexing.reset: true` after a schema change to annotate
-  items it does not rewrite) (#477).
+  items it does not rewrite) (#477, #PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
