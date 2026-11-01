@@ -534,8 +534,8 @@ MOVED_KEYS: dict[str, str] = {
 }
 
 
-# Removed settings -> why they are gone. A config that sets one loads with
-# a WARNING and the setting ignored.
+# Removed settings -> why they are gone. A config that sets one, or a key
+# under a removed section, loads with a WARNING and the setting ignored.
 REMOVED_KEYS: dict[str, str] = {
     "aws.bedrock.guardrail.apply_to": (
         "the guardrail screens the user query and the answer only; ingestion "
@@ -561,6 +561,11 @@ REMOVED_KEYS: dict[str, str] = {
         )
         for key in ("persist_embedding_cache", "embedding_cache_s3_key")
     },
+    "search.local_search.type_quota": (
+        "the fusion slots local search and DRIFT reserve per section type are "
+        "fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager."
+        "type_budgets sets each type's share of the context"
+    ),
 }
 
 
@@ -2726,49 +2731,6 @@ class GlobalSearchConfig(BaseModel):
     )
 
 
-class LocalSearchQuotaConfig(BaseModel):
-    """Reserved fusion slots per section type, as multiples of the query's top_k.
-
-    Without reserved slots a single type (usually entities, which arrive with many
-    near-tie fusion scores) takes the whole flat top_k cut and crowds out the
-    document chunks that carry the answer. MS GraphRAG's local search assembles
-    its context the same way — proportional per-section budgets rather than one
-    ranked list — with ``top_k_entities``/``top_k_relationships`` defaulting to 10.
-
-    Each entry is ``max(multiplier * top_k, floor)``, so the shape holds as the
-    caller's top_k scales while a small top_k still admits enough of each type.
-    """
-
-    text_multiplier: float = Field(
-        default=2.0, gt=0.0, description="Chunk slots as a multiple of top_k"
-    )
-    text_floor: int = Field(
-        default=20, ge=1, description="Minimum chunk slots regardless of top_k"
-    )
-    entity_multiplier: float = Field(
-        default=1.0, gt=0.0, description="Entity slots as a multiple of top_k"
-    )
-    entity_floor: int = Field(
-        default=10, ge=1, description="Minimum entity slots regardless of top_k"
-    )
-    relationship_multiplier: float = Field(
-        default=1.0, gt=0.0, description="Relationship slots as a multiple of top_k"
-    )
-    relationship_floor: int = Field(
-        default=10, ge=1, description="Minimum relationship slots regardless of top_k"
-    )
-    community_multiplier: float = Field(
-        default=0.5, gt=0.0, description="Community report slots as a multiple of top_k"
-    )
-    community_floor: int = Field(
-        default=2, ge=1, description="Minimum community report slots"
-    )
-    claim_multiplier: float = Field(
-        default=0.5, gt=0.0, description="Claim slots as a multiple of top_k"
-    )
-    claim_floor: int = Field(default=2, ge=1, description="Minimum claim slots")
-
-
 class LocalSearchConfig(BaseModel):
     entity_frequency_threshold: int = Field(
         default=20,
@@ -2777,10 +2739,6 @@ class LocalSearchConfig(BaseModel):
         "many text units (too generic to be discriminative for local search) "
         "from the context and the text-unit fan-out. The query's own matched "
         "(seed) entities are always kept.",
-    )
-    type_quota: LocalSearchQuotaConfig = Field(
-        default_factory=LocalSearchQuotaConfig,
-        description="Reserved fusion slots per section type",
     )
     include_bridge_relationships: bool = Field(
         default=True,

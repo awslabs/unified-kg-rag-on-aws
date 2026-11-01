@@ -826,20 +826,6 @@ search:
     # edges between two retrieved entities first (needs the relationship
     # index). false = only the relationship vector query, as before.
     include_bridge_relationships: true
-    # Reserved fusion slots per section type, as max(multiplier * top_k, floor).
-    # Without reserved slots one type takes the whole flat top_k cut and crowds
-    # out the document chunks that carry the answer.
-    type_quota:
-      text_multiplier: 2.0
-      text_floor: 20
-      entity_multiplier: 1.0
-      entity_floor: 10
-      relationship_multiplier: 1.0
-      relationship_floor: 10
-      community_multiplier: 0.5
-      community_floor: 2
-      claim_multiplier: 0.5
-      claim_floor: 2
 
   # Drift Search Configuration (MS GraphRAG DRIFT search)
   drift_search:

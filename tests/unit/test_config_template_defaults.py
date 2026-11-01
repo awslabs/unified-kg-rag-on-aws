@@ -145,7 +145,6 @@ def test_template_values_equal_model_defaults(
 _DOCUMENTED_KNOBS = (
     "search.token_manager.type_budgets",
     "search.token_manager.min_truncated_section_tokens",
-    "search.local_search.type_quota",
     "search.lightrag_search.kg_stream_top_k",
     "search.lightrag_search.chunk_stream_top_k",
     "search.lightrag_search.related_chunk_number",

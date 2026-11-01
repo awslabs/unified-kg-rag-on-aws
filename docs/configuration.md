@@ -620,23 +620,6 @@ Local search configuration
 | `entity_frequency_threshold` | integer (≥ 1) | `20` | Drop graph-expanded entities appearing in more than this many text units (too generic to be discriminative for local search) from the context and the text-unit fan-out. The query's own matched (seed) entities are always kept. |
 | `include_bridge_relationships` | boolean | `true` | Also fetch the relationships incident to the graph-expanded entities, edges between two of those entities first (MS GraphRAG local's in-network relationships). These bridge edges carry the hops of a multi-hop chain, which the relationship vector query alone often misses. Needs indexing.opensearch.build_relationship_vector_index. false = only the vector query on the relationship index. |
 
-#### `search.local_search.type_quota`
-
-Reserved fusion slots per section type
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `text_multiplier` | number (> 0.0) | `2.0` | Chunk slots as a multiple of top_k |
-| `text_floor` | integer (≥ 1) | `20` | Minimum chunk slots regardless of top_k |
-| `entity_multiplier` | number (> 0.0) | `1.0` | Entity slots as a multiple of top_k |
-| `entity_floor` | integer (≥ 1) | `10` | Minimum entity slots regardless of top_k |
-| `relationship_multiplier` | number (> 0.0) | `1.0` | Relationship slots as a multiple of top_k |
-| `relationship_floor` | integer (≥ 1) | `10` | Minimum relationship slots regardless of top_k |
-| `community_multiplier` | number (> 0.0) | `0.5` | Community report slots as a multiple of top_k |
-| `community_floor` | integer (≥ 1) | `2` | Minimum community report slots |
-| `claim_multiplier` | number (> 0.0) | `0.5` | Claim slots as a multiple of top_k |
-| `claim_floor` | integer (≥ 1) | `2` | Minimum claim slots |
-
 ### `search.drift_search`
 
 Drift search configuration

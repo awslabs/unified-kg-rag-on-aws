@@ -339,6 +339,22 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
+    # Fusion slots reserved per section type in local search and DRIFT, as
+    # (multiple of the query's top_k, floor): max(multiple * top_k, floor).
+    # Without them one type (usually entities, which arrive with many
+    # near-tie fusion scores) takes the whole flat top_k cut and crowds out
+    # the chunks that carry the answer; MS GraphRAG's local search assembles
+    # per-section budgets the same way (top_k_entities and
+    # top_k_relationships 10). The floor keeps enough of each type at a small
+    # top_k. What the context then holds of each type is
+    # search.token_manager.type_budgets.
+    TYPE_QUOTA: ClassVar[dict[SectionType, tuple[float, int]]] = {
+        SectionType.TEXT: (2.0, 20),
+        SectionType.ENTITY: (1.0, 10),
+        SectionType.RELATIONSHIP: (1.0, 10),
+        SectionType.COMMUNITY: (0.5, 2),
+        SectionType.CLAIM: (0.5, 2),
+    }
 
     def __init__(
         self,
@@ -800,39 +816,15 @@ class BaseSearchStrategy(ABC):
         }
 
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
-        """Reserved fusion slots per section type, from configured shares of top_k.
+        """Reserved fusion slots per section type for ``top_k`` (``TYPE_QUOTA``).
 
         Shared by local search and DRIFT (whose iterations are local searches,
         as in MS GraphRAG) so one flat top_k cut cannot let a single section
-        type crowd out the others (``search.local_search.type_quota``).
+        type crowd out the others.
         """
-        quota_config = self.config.search.local_search.type_quota
-        shares: list[tuple[SectionType, float, int]] = [
-            (SectionType.TEXT, quota_config.text_multiplier, quota_config.text_floor),
-            (
-                SectionType.ENTITY,
-                quota_config.entity_multiplier,
-                quota_config.entity_floor,
-            ),
-            (
-                SectionType.RELATIONSHIP,
-                quota_config.relationship_multiplier,
-                quota_config.relationship_floor,
-            ),
-            (
-                SectionType.COMMUNITY,
-                quota_config.community_multiplier,
-                quota_config.community_floor,
-            ),
-            (
-                SectionType.CLAIM,
-                quota_config.claim_multiplier,
-                quota_config.claim_floor,
-            ),
-        ]
         return {
-            section_type.value: max(int(multiplier * top_k), floor)
-            for section_type, multiplier, floor in shares
+            section_type.value: max(int(multiple * top_k), floor)
+            for section_type, (multiple, floor) in self.TYPE_QUOTA.items()
         }
 
     async def _expand_via_graph(

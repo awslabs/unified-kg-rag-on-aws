@@ -165,6 +165,17 @@ def _unknown_variable(name: str) -> str:
     return f"environment variable {name}"
 
 
+def _removed_path(name: str) -> str | None:
+    """The removed key a ``UKR__`` variable sets, itself or under a removed
+    section (``REMOVED_KEYS``), if any."""
+    upper = name.upper()
+    for path in REMOVED_KEYS:
+        variable = env_var(path)
+        if upper == variable or upper.startswith(f"{variable}__"):
+            return path
+    return None
+
+
 def _warn_removed(where: str, path: str) -> None:
     _logger.warning(
         "Config key %s is removed and ignored: %s", where, REMOVED_KEYS[path]
@@ -317,12 +328,12 @@ class ConfigLoader:
         """
         overrides: dict[str, tuple[str, ...]] = {}
         unknown: list[str] = []
-        removed = {env_var(path): path for path in REMOVED_KEYS}
         for name in sorted(os.environ):
             if name.upper().startswith(ENV_PREFIX):
                 path = _env_path(name)
-                if name.upper() in removed:
-                    _warn_removed(f"environment variable {name}", removed[name.upper()])
+                removed = _removed_path(name)
+                if removed is not None:
+                    _warn_removed(f"environment variable {name}", removed)
                 elif path is None:
                     unknown.append(name)
                 else:

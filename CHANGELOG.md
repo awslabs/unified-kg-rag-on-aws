@@ -154,6 +154,14 @@ naming the key that replaces it.
   |---|---|
   | `indexing.opensearch.persist_embedding_cache` | incremental indexing (`providers.doc_status.enabled`) |
   | `indexing.opensearch.embedding_cache_s3_key` | none |
+- `search.local_search.type_quota` (ten keys) is gone (#PR): the fusion
+  slots local search and DRIFT reserve per section type are the constant
+  `BaseSearchStrategy.TYPE_QUOTA`, with the former defaults (text 2x top_k,
+  at least 20; entities and relationships 1x, at least 10; reports and
+  claims 0.5x, at least 2), so retrieval with the defaults is unchanged.
+  The user-facing mix of the context is `search.token_manager.type_budgets`.
+  The section loads with a WARNING and is ignored; a subclass that needs
+  other slots overrides `TYPE_QUOTA`.
 - Switching `--backend` (or any provider flag) rebuilds the config from what
   the file, the environment and the caller set, so a value equal to the old
   preset's that you set yourself is kept, and a change a library caller made

@@ -85,19 +85,23 @@ _FILTERS = {
 }
 
 
+def _four_text_slots(strategy: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    quota = {**strategy.TYPE_QUOTA, SectionType.TEXT: (0.0, 4)}
+    monkeypatch.setattr(strategy, "TYPE_QUOTA", quota)
+
+
 @pytest.mark.parametrize("kind", list(_FILTERS))
 async def test_local_fills_the_text_quota_with_chunks_that_pass(
-    config: Config, kind: str
+    config: Config, kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     filtered = _FILTERS[kind] is not None
-    config.search.local_search.type_quota.text_multiplier = 0.0
-    config.search.local_search.type_quota.text_floor = 4
     config.search.local_search.entity_frequency_threshold = 100
     units_prefix = config.indexing.opensearch.text_units_index_prefix
     store = _Store(units_prefix, _entities())
     strategy = get_strategy_spec(SearchStrategy.LOCAL).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
+    _four_text_slots(strategy, monkeypatch)
     sections, stats = await strategy._retrieve_entity_chain(
         SearchQuery(query="q", entity_focus=["e0"], filters=_FILTERS[kind])
     )
@@ -143,17 +147,16 @@ _ALLOWED = ["u2", "u5", "u7", "u9", "u11"]
 
 
 async def test_local_spends_no_slot_on_a_chunk_a_caller_id_filter_removes(
-    config: Config,
+    config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Regression: the quota took the top-ranked chunks, and the fetch then
     # intersected them with the caller's ids (1 chunk of 4).
-    config.search.local_search.type_quota.text_multiplier = 0.0
-    config.search.local_search.type_quota.text_floor = 4
     config.search.local_search.entity_frequency_threshold = 100
     store = _Store(config.indexing.opensearch.text_units_index_prefix, _entities())
     strategy = get_strategy_spec(SearchStrategy.LOCAL).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
+    _four_text_slots(strategy, monkeypatch)
     sections, _ = await strategy._retrieve_entity_chain(
         SearchQuery(query="q", entity_focus=["e0"], filters={"id": _ALLOWED})
     )

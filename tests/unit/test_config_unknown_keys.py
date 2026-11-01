@@ -172,10 +172,12 @@ def test_the_removed_ingestion_rendering_keys_load_with_a_warning(
     assert not set(visualization) & set(type(config.graph.visualization).model_fields)
 
 
-# Removed keys: (dotted path, a value a config could set it to).
+# Removed settings: (the removed key, a path at or under it a config sets, a
+# value it could hold).
 _REMOVED_SETTINGS = [
-    ("indexing.opensearch.persist_embedding_cache", True),
-    ("indexing.opensearch.embedding_cache_s3_key", "embedding-cache/cache.json"),
+    ("indexing.opensearch.persist_embedding_cache", None, True),
+    ("indexing.opensearch.embedding_cache_s3_key", None, "embedding-cache/cache.json"),
+    ("search.local_search.type_quota", "text_floor", 4),
 ]
 
 
@@ -186,17 +188,19 @@ def _nested(path: str, value: Any) -> dict[str, Any]:
     return data
 
 
-@pytest.mark.parametrize(("path", "value"), _REMOVED_SETTINGS)
+@pytest.mark.parametrize(("removed", "under", "value"), _REMOVED_SETTINGS)
 def test_a_removed_setting_loads_with_a_warning_from_file_or_environment(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
-    path: str,
+    removed: str,
+    under: str | None,
     value: Any,
 ) -> None:
     # A config written before the key went away still loads (no unknown-key
     # error), names the key and why it is gone, and keeps the defaults.
-    assert path in REMOVED_KEYS
+    assert removed in REMOVED_KEYS
+    path = f"{removed}.{under}" if under else removed
     unset = ConfigLoader().load_config()
     config_file = tmp_path / "config.yaml"
     config_file.write_text(yaml.safe_dump(_nested(path, value)))
@@ -205,9 +209,9 @@ def test_a_removed_setting_loads_with_a_warning_from_file_or_environment(
     monkeypatch.setenv(env_var(path), json.dumps(value))
     with caplog.at_level(logging.WARNING):
         assert ConfigLoader().load_config() == unset
-    removed = [
+    warnings = [
         r.getMessage() for r in caplog.records if "removed and ignored" in r.message
     ]
-    assert len(removed) == 2
-    assert f"'{path}'" in removed[0] and REMOVED_KEYS[path] in removed[0]
-    assert env_var(path) in removed[1]
+    assert len(warnings) == 2
+    assert f"'{removed}'" in warnings[0] and REMOVED_KEYS[removed] in warnings[0]
+    assert env_var(path) in warnings[1] and REMOVED_KEYS[removed] in warnings[1]
