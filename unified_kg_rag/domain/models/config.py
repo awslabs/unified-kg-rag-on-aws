@@ -544,6 +544,21 @@ MOVED_KEYS: dict[str, str] = {
     "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
     "search.store_max_attempts": "retry.query_store_max_attempts",
     "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
+    # The 0.2.3 retry counts, which count otherwise (MOVED_KEY_NOTES).
+    "processing.max_retries": "retry.max_attempts",
+    "indexing.neptune.max_retries": "retry.graph_store_max_attempts",
+}
+
+# Moved key -> what to know when converting its value (a key whose
+# replacement counts the same needs none).
+MOVED_KEY_NOTES: dict[str, str] = {
+    "processing.max_retries": (
+        "it had no effect; each model call made 5 attempts, the "
+        "retry.max_attempts default"
+    ),
+    "indexing.neptune.max_retries": (
+        "it counted retries, so max_retries N is graph_store_max_attempts N+1"
+    ),
 }
 
 
@@ -603,9 +618,19 @@ def _sets(data: Any, path: str) -> bool:
     return node is not _ABSENT
 
 
+def moved_key_hint(old: str, new: str) -> str:
+    """``new``, with what to know when converting ``old``'s value, if any."""
+    note = MOVED_KEY_NOTES.get(old)
+    return f"{new} ({note})" if note else new
+
+
 def moved_keys(data: Any) -> list[str]:
     """``"old -> new"`` for each moved setting ``data`` sets."""
-    return [f"{old} -> {new}" for old, new in MOVED_KEYS.items() if _sets(data, old)]
+    return [
+        f"{old} -> {moved_key_hint(old, new)}"
+        for old, new in MOVED_KEYS.items()
+        if _sets(data, old)
+    ]
 
 
 def removed_keys(data: Any) -> list[str]:

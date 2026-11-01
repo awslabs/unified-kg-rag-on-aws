@@ -182,9 +182,13 @@ Configuration keys.
 - `graph.analysis.centrality` moved to `graph.visualization.centrality`:
   only the visualization computes centrality (#335).
 - Retries are configured in one section, `retry`, and every knob counts
-  total attempts, the first included: a 0.2.3 `max_retries: N` is
-  `max_attempts: N+1` (#151, #216, #468). The keys below fail the load
-  naming the new key, so a tuned value is not silently lost (#470). A
+  total attempts, the first included: a 0.2.3
+  `indexing.neptune.max_retries: N` is `retry.graph_store_max_attempts:
+  N+1`, while 0.2.3's `processing.max_retries` had no effect (each model
+  call made 5 attempts, the `retry.max_attempts` default) (#151, #216,
+  #468). The keys below fail the load naming the new key, so a tuned value
+  is not silently lost (#470); the two 0.2.3 keys also say how to convert
+  their value (#PR). A
   Neptune retry backs off from
   `retry.base_delay_seconds`, as the model calls do (both default 2 s).
   `BatchProcessor.from_processing` is `BatchProcessor.from_config(config)`,
@@ -204,12 +208,12 @@ Configuration keys.
   | `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
   | `search.store_max_attempts` | `retry.query_store_max_attempts` |
   | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+  | `processing.max_retries` | `retry.max_attempts` |
+  | `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
 
-  The 0.2.3 keys `processing.max_retries` and `indexing.neptune.max_retries`
-  (and the pre-release `search.llm_retry`, `providers.llm.max_retries`,
-  `providers.embedding.max_retries`, `evaluation.ragas_max_retries`) are
-  unknown keys now: use `retry.max_attempts` and
-  `retry.graph_store_max_attempts` (#216).
+  The pre-release `search.llm_retry`, `providers.llm.max_retries`,
+  `providers.embedding.max_retries` and `evaluation.ragas_max_retries` are
+  unknown keys now: set the `retry` section instead (#216).
 - Ingestion no longer renders visualizations: it writes
   `visualization_data.json` (`graph.visualization.export_data`, default
   `true`; graph and communities, no model call) and `run-visualization`

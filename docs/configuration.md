@@ -905,6 +905,13 @@ These keys are refused at load with the key that replaced them.
 | `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
 | `search.store_max_attempts` | `retry.query_store_max_attempts` |
 | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+| `processing.max_retries` | `retry.max_attempts` |
+| `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
+
+Each takes the value of the key it replaces, except:
+
+- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
+- `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
 
 ## Removed keys
 
