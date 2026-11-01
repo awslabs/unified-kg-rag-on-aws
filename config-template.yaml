@@ -62,11 +62,13 @@ aws:
     # null = aws.region_name. A private VPC whose only Bedrock route is its
     # VPC endpoint must keep its own region.
     region_name: null
-    default_effort: "high"
-    fast_effort: "low"
+    # Bedrock models only (a set value is ignored, with a warning, under
+    # other providers).
+    # default_effort: "high"
+    # fast_effort: "low"
     # Effort of the default-tier ingestion calls; e.g. "medium" cuts the
     # ingestion cost without changing queries. null = default_effort.
-    ingestion_effort: null
+    # ingestion_effort: null
     # Amazon Bedrock Guardrails: screens each user query and each answer.
     guardrail:
       identifier: null  # guardrail ID or ARN; null = no guardrail

@@ -23,8 +23,10 @@ AWS-free: only YAML parsing and Pydantic validation.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -239,3 +241,20 @@ def test_backend_local_alone_switches_the_template_to_the_preset(
         if _lookup(local, path) != _lookup(preset, path)
     ]
     assert not differ, f"template keys override the local preset: {differ}"
+
+
+def test_a_template_copy_switched_to_local_loads_without_warnings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Every key the template sets is read under either backend: a Bedrock-only
+    # knob it showed set was warned as ignored on every `backend: local` load.
+    from unified_kg_rag.application.config import ConfigLoader
+
+    text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    switched = re.sub(r"(?m)^backend: .*$", "backend: local", text)
+    assert switched != text
+    path = tmp_path / "config.yaml"
+    path.write_text(switched, encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        ConfigLoader(path).load_config()
+    assert not [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
