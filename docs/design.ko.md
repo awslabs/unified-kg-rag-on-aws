@@ -1016,8 +1016,8 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 설정은 `application/config.py`(`get_config`)가 읽는 중첩 Pydantic 트리(`domain/models/config.py`,
 루트 `Config`) 하나입니다. [docs/configuration.md](./configuration.md)는
 `scripts/gen_config_reference.py`가 이 트리에서 생성하며(오래되면
-`tests/unit/test_config_reference.py`가 실패), `config-template.yaml`은 주석이 달린 시작
-파일입니다. [docs/cli.md](./cli.md)도 같은 방식으로 CLI 파서에서 생성합니다
+`tests/unit/test_config_reference.py`가 실패), `config-template.yaml`은 대부분의 배포가
+지정하는 키만 담은 짧은 시작 파일입니다. [docs/cli.md](./cli.md)도 같은 방식으로 CLI 파서에서 생성합니다
 (`scripts/gen_cli_reference.py`, `tests/unit/test_cli_reference.py`).
 
 - **읽기**(`Config.as_input`). 설정은 계층(기본값 < `backend` 프리셋 < 파일 < 환경)에서 한
@@ -1102,7 +1102,7 @@ Neptune 세부 사항: 끊긴 연결은 버려지고 다음 질의나 재시도�
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어나며, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러를 봅니다. 렌더러가 import하는 선택 패키지가 없을 때 바로 실패하게 하려면 `check_dependencies`를 재정의합니다.
 - **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — `langchain_core` `BaseLoader` 하위 클래스면 무엇이든 됩니다(`adapters/ingestion/file_loaders.py`의 내장 로더가 예시입니다). 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
-- **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드를 설명하고 `docs/configuration.md`를 재생성한 뒤 `config-template.yaml`에 추가(§12 참고).
+- **새 설정 섹션**: Pydantic `BaseModel` 정의 → `Field(default_factory=...)`로 부모에 연결 → 모든 필드를 설명하고 `docs/configuration.md`를 재생성. `config-template.yaml`에는 대부분의 배포가 지정하는 키만 추가(§12 참고).
 
 
 ### 커스텀 백엔드 (AWS 없이 실행)

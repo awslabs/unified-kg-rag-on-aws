@@ -10,7 +10,8 @@ Every configuration key, its type, its built-in default and what it does,
 one table per section. How the configuration is loaded (file, `backend`
 preset, environment, CLI flags) and the settings most runs change are in the
 [User Guide §2](./user-guide.md#2-configuration);
-[`config-template.yaml`](../config-template.yaml) is a commented starting file.
+[`config-template.yaml`](../config-template.yaml) is a short starting file with
+the keys most deployments set.
 
 - **Defaults** are the built-in values a key takes when the file, the
   environment and the flags leave it unset. `null` usually means "derived":
@@ -41,6 +42,7 @@ preset, environment, CLI flags) and the settings most runs change are in the
 - [`observability`](#observability)
 - [`evaluation`](#evaluation)
 - [`custom_prompts`](#custom_prompts)
+- [Long defaults](#long-defaults)
 - [Moved keys](#moved-keys)
 
 ## Top-level keys
@@ -335,7 +337,7 @@ Graph extraction configuration
 | `max_entities_per_chunk` | integer (≥ 1) | `50` | Most entities the extraction prompt asks for per text chunk; it also sizes the extraction call's output-token floor. |
 | `max_relationships_per_chunk` | integer (≥ 1) | `50` | Maximum relationships per text chunk |
 | `entity_confidence_threshold` | number (≥ 0.0, ≤ 1.0) | `0.0` | Drop an entity from each chunk that scored it below this confidence, with that chunk's relationships naming it (per chunk, so the result does not depend on which documents are indexed together). Compared against the normalized confidence: the prompt's 1-10 score / 10. 0.0 keeps everything. |
-| `entity_types` | list[string] | see `config-template.yaml` | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...']. The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. |
+| `entity_types` | list[string] | see [Long defaults](#long-defaults) | Entity categories injected into the extraction prompt, each 'LABEL: short description' (the description is optional), e.g. ['GENE: ...', 'DISEASE: ...']. The cheapest and most effective domain-adaptation knob; an empty list lets the model choose any relevant types. |
 
 #### `processing.graph_extraction.description_summarization`
 
@@ -532,8 +534,8 @@ Configuration settings for OpenSearch vector and text indexing
 | `language_analyzers` | dict[string, string] | `{"en": "english", "ko": "nori"}` | Text analyzer per language code (en: english, ko: nori); languages without an entry use default_analyzer. nori needs the analysis-nori plugin, which an Amazon OpenSearch Service domain has only once its optional package is associated (the CDK stack maps ko to cjk). Setting the key replaces the whole map. |
 | `refresh_after_batch` | boolean | `true` | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
 | `max_query_size` | integer (≥ 1) | `100` | Maximum number of hits returned per OpenSearch query |
-| `index_settings` | dict[string, Any] | see `config-template.yaml` | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. Setting the key replaces the whole map; a left-out shard, replica or refresh setting is 1, 0 or 1s. |
-| `vector_search` | dict[string, Any] | see `config-template.yaml` | HNSW algorithm parameters for approximate nearest neighbor search. ef_search is the candidate list size of a query: on faiss and nmslib the index setting index.knn.algo_param.ef_search (fixed when the index is created), on lucene, which ignores that setting, the k of every kNN query (at least the hits requested), read at query time. |
+| `index_settings` | dict[string, Any] | see [Long defaults](#long-defaults) | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. Setting the key replaces the whole map; a left-out shard, replica or refresh setting is 1, 0 or 1s. |
+| `vector_search` | dict[string, Any] | see [Long defaults](#long-defaults) | HNSW algorithm parameters for approximate nearest neighbor search. ef_search is the candidate list size of a query: on faiss and nmslib the index setting index.knn.algo_param.ef_search (fixed when the index is created), on lucene, which ignores that setting, the k of every kNN query (at least the hits requested), read at query time. |
 | `vector_mode` | `"in_memory"` \| `"on_disk"` | `"in_memory"` | Vector workload mode of the knn_vector fields (OpenSearch 2.17+). on_disk keeps quantized vectors in memory and the full-precision ones on disk, and rescores each kNN search's candidates with them: far less memory at slightly more latency and a little recall, which pays off only at millions of vectors. in_memory (the default) sends no mode key. A changed mode applies to indices created afterwards: an incremental run refuses a live index built otherwise, so run once with indexing.reset: true. With the lucene engine set compression_level (4x); the embedded engine of local mode ignores it (exact search). |
 | `compression_level` | `"1x"` \| `"2x"` \| `"4x"` \| `"8x"` \| `"16x"` \| `"32x"` \| null | `null` | Quantization of the knn_vector fields as a memory reduction factor (OpenSearch 2.17+). Unset: the mode's own (on_disk: 32x on faiss; in_memory: 1x, no key sent). faiss takes 1x, 2x, 8x, 16x and 32x, lucene 1x and 4x (lucene 8x-32x need a later OpenSearch); on_disk refuses 1x. faiss with cosinesimil needs OpenSearch 2.19. Needs the l2, innerproduct or cosinesimil space type and the hnsw method. on_disk rescores with OpenSearch's default oversampling; in_memory above 1x does not rescore. Applies to indices created afterwards (reset to change it on a live namespace). |
 
@@ -704,7 +706,7 @@ Logging system configuration
 | `log_format` | string | `"structured"` | structured (JSON records, for CloudWatch and other log stores) or plain. |
 | `log_to_file` | boolean | `true` | Also write the CLIs' logs to log_file_path (dated per day; a relative path resolves against the working directory). The package configures no handler when imported as a library. |
 | `log_file_path` | string (min length 1) | `"logs/log.txt"` | Log file path (CLIs only); relative to the working directory |
-| `library_levels` | dict[string, string] | see `config-template.yaml` | Per-logger levels for chatty third-party libraries (logger name -> level). Setting the key replaces the whole map. |
+| `library_levels` | dict[string, string] | see [Long defaults](#long-defaults) | Per-logger levels for chatty third-party libraries (logger name -> level). Setting the key replaces the whole map. |
 
 ## `observability`
 
@@ -727,9 +729,9 @@ Evaluation configuration
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `outputs_directory` | string \| path | `"outputs/evaluation"` | Directory the evaluation results are written to. |
-| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"`] | see `config-template.yaml` | List of evaluator types to enable for this evaluation run. The deterministic ones (answer_match, retrieval, graph_aware) are free and skip a query that lacks their dataset fields, so they are on by default alongside the LLM judges (langchain, ragas). |
+| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"`] | see [Long defaults](#long-defaults) | List of evaluator types to enable for this evaluation run. The deterministic ones (answer_match, retrieval, graph_aware) are free and skip a query that lacks their dataset fields, so they are on by default alongside the LLM judges (langchain, ragas). |
 | `langchain_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"correctness"` \| `"faithfulness"` \| `"partial_correctness"` \| `"entity_coverage"` \| `"relationship_coverage"` \| `"retrieved_entity_coverage"` \| `"retrieved_relationship_coverage"` \| `"answer_length"` \| `"hit_at_k"` \| `"recall_at_k"` \| `"mrr"` \| `"attributable_fraction"` \| `"exact_match"` \| `"token_f1"` \| `"answer_contains"`] | `["correctness", "partial_correctness"]` | Specific evaluation metrics to calculate when using LangChain evaluator. |
-| `ragas_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"correctness"` \| `"faithfulness"` \| `"partial_correctness"` \| `"entity_coverage"` \| `"relationship_coverage"` \| `"retrieved_entity_coverage"` \| `"retrieved_relationship_coverage"` \| `"answer_length"` \| `"hit_at_k"` \| `"recall_at_k"` \| `"mrr"` \| `"attributable_fraction"` \| `"exact_match"` \| `"token_f1"` \| `"answer_contains"`] | see `config-template.yaml` | Specific evaluation metrics to calculate when using RAGAS evaluator. |
+| `ragas_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"correctness"` \| `"faithfulness"` \| `"partial_correctness"` \| `"entity_coverage"` \| `"relationship_coverage"` \| `"retrieved_entity_coverage"` \| `"retrieved_relationship_coverage"` \| `"answer_length"` \| `"hit_at_k"` \| `"recall_at_k"` \| `"mrr"` \| `"attributable_fraction"` \| `"exact_match"` \| `"token_f1"` \| `"answer_contains"`] | see [Long defaults](#long-defaults) | Specific evaluation metrics to calculate when using RAGAS evaluator. |
 | `max_context_tokens` | integer \| null (≥ 1) | `null` | Token cap on the retrieved context passed to the RAGAS judges. null (default) uses the answer model's budget (search.token_manager.max_context_tokens), so faithfulness and context_recall judge the answer against the context it was given; with that budget derived from the model window too, no extra cap applies (the contexts are already the answer model's selection). A value below the answer budget logs a warning: the judge then sees less context than the answer model did. |
 | `judge_effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` \| null | `"low"` | Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) on adaptive-thinking models (Claude 4.7+). Judge prompts are short extraction/classification calls, so a low effort keeps each metric well inside the RAGAS timeout. null inherits the effort of the judge model's tier (aws.bedrock.default_effort by default). Ignored by models without adaptive thinking. |
 | `ragas_timeout` | integer (≥ 1) | `300` | RAGAS RunConfig.timeout in seconds: the budget for scoring ONE metric on ONE sample, covering all of its LLM calls and retries. A timed-out job yields NaN for that metric. RAGAS' own default (180s) is too tight for thinking judges. |
@@ -777,6 +779,79 @@ Custom prompt configuration
 | `strategy_selection_human` | string \| null | `null` | Custom human prompt for selecting search strategy based on user query |
 | `global_map_system` | string \| null | `null` | Custom system prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
 | `global_map_human` | string \| null | `null` | Custom human prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
+
+## Long defaults
+
+The defaults too long for their table.
+
+### `processing.graph_extraction.entity_types`
+
+```yaml
+entity_types:
+- 'PERSON: Names, individuals, roles, titles'
+- 'ORGANIZATION: Companies, institutions, departments, groups'
+- 'LOCATION: Places, addresses, geographic areas, facilities'
+- 'CONCEPT: Ideas, theories, methodologies, frameworks, principles'
+- 'OBJECT: Documents, tools, products, systems, technologies'
+- 'EVENT: Meetings, projects, activities, processes, incidents'
+- 'TEMPORAL: Dates, time periods, schedules, deadlines'
+```
+
+### `indexing.opensearch.index_settings`
+
+```yaml
+index_settings:
+  number_of_shards: 1
+  number_of_replicas: 0
+  refresh_interval: 1s
+```
+
+### `indexing.opensearch.vector_search`
+
+```yaml
+vector_search:
+  engine: lucene
+  space_type: cosinesimil
+  ef_construction: 128
+  m: 24
+  ef_search: 100
+```
+
+### `logging.library_levels`
+
+```yaml
+library_levels:
+  langchain_aws: WARNING
+  botocore: WARNING
+  urllib3: WARNING
+  numba: WARNING
+  httpcore: WARNING
+  opensearch: ERROR
+  httpx: WARNING
+  opentelemetry: ERROR
+```
+
+### `evaluation.enabled_evaluators`
+
+```yaml
+enabled_evaluators:
+- langchain
+- ragas
+- answer_match
+- retrieval
+- graph_aware
+```
+
+### `evaluation.ragas_metrics`
+
+```yaml
+ragas_metrics:
+- answer_correctness
+- answer_relevancy
+- context_precision
+- context_recall
+- faithfulness
+```
 
 ## Moved keys
 

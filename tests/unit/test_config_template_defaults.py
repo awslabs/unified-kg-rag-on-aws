@@ -1,10 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""config-template.yaml must load as-is and document the real defaults.
+"""config-template.yaml must load as-is and show the real defaults.
 
-Operators copy the template and edit a few keys, so (a) it must validate as a
-``Config`` without edits, and (b) every value it shows must be the value the
-code uses when the key is omitted. A template value that silently differs from
+The template is a short starting file with the keys most deployments set;
+``docs/configuration.md`` (generated) documents every key. Operators copy the
+template and edit a few keys, so (a) it must validate as a ``Config`` without
+edits, (b) every value it shows must be the value the code uses when the key
+is omitted, and (c) every key it shows must be documented in the reference. A template value that silently differs from
 the model default reads as authoritative while the running system does
 something else. Intentional differences are listed in ``_INTENTIONAL`` with the
 reason; anything else is drift to fix in the template or the model.
@@ -21,6 +23,7 @@ AWS-free: only YAML parsing and Pydantic validation.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -43,12 +46,9 @@ _TEMPLATE = TEMPLATE_PATH
 _INTENTIONAL: dict[str, str] = {}
 
 # Commented-out keys that show an example rather than the default, and why.
-_COMMENTED_EXAMPLES: dict[str, str] = {
-    "graph.visualization.outputs_directory": (
-        "unset by default (outputs go under the pipeline cache directory); "
-        "the comment shows a path to set"
-    ),
-}
+_COMMENTED_EXAMPLES: dict[str, str] = {}
+
+_REFERENCE = TEMPLATE_PATH.parent / "docs" / "configuration.md"
 
 _MISSING = object()
 
@@ -94,17 +94,14 @@ def test_uncommented_view_finds_the_commented_defaults() -> None:
     assert {
         "aws.neptune.port",
         "aws.neptune.use_iam",
-        "aws.opensearch.allow_anonymous",
+        "aws.opensearch.use_iam",
         "providers.llm.kind",
-        "providers.rerank.batch_size",
-        "providers.doc_status.sqlite_path",
+        "providers.doc_status.enabled",
+        "processing.max_concurrency",
+        "search.token_manager.max_context_tokens",
     } <= paths
-    assert len(paths) >= 35
-    # Examples under free-form mappings and prose stay comments.
-    assert not any(
-        p.startswith(("aws.bedrock.model_overrides", "graph.visualization.embeddings"))
-        for p in paths
-    )
+    # Prose and examples stay comments.
+    assert not any(p.startswith("models.roles.") for p in paths)
 
 
 def test_uncommented_template_loads_as_config(full_template: dict[str, Any]) -> None:
@@ -140,27 +137,50 @@ def test_template_values_equal_model_defaults(
     )
 
 
-# Tuning knobs the template must keep documenting. The drift check above only
-# compares keys the template shows, so dropping one of these would pass it.
-_DOCUMENTED_KNOBS = (
-    "search.token_manager.type_budgets",
-    "search.token_manager.min_truncated_section_tokens",
-    "search.lightrag_search.kg_stream_top_k",
-    "search.lightrag_search.chunk_stream_top_k",
-    "search.lightrag_search.related_chunk_number",
-    "indexing.neptune.property_max_length",
-    "evaluation.judge_effort",
-    "evaluation.ragas_timeout",
-    "evaluation.ragas_max_workers",
-    "retry.judge_max_attempts",
-)
+def _documented_keys() -> set[str]:
+    """Dotted paths of the keys docs/configuration.md has a row for."""
+    keys: set[str] = set()
+    section = ""
+    for line in _REFERENCE.read_text(encoding="utf-8").splitlines():
+        heading = re.match(r"^#{2,4} `([^`]+)`$", line)
+        if heading:
+            section = heading[1]
+        elif line.startswith("## "):
+            section = ""
+        row = re.match(r"^\| `([^`]+)` \|", line)
+        if row:
+            keys.add(f"{section}.{row[1]}" if section else row[1])
+    return keys
 
 
-@pytest.mark.parametrize("dotted", _DOCUMENTED_KNOBS)
-def test_tuning_knobs_are_documented_in_the_template(
-    raw_template: dict[str, Any], dotted: str
+def test_the_template_points_to_the_reference() -> None:
+    header = TEMPLATE_PATH.read_text(encoding="utf-8").split("\n\n", 1)[0]
+    assert "docs/configuration.md" in header
+
+
+def test_every_template_key_is_documented_in_the_reference(
+    full_template: dict[str, Any],
 ) -> None:
-    assert _lookup(raw_template, tuple(dotted.split("."))) is not _MISSING
+    # The template is not complete, the reference is: each key the template
+    # shows (commented out or not) has its row there. A free-form mapping
+    # (language_analyzers) is documented as its key.
+    documented = _documented_keys()
+    undocumented = [
+        ".".join(path)
+        for path in _leaves(full_template)
+        if not any(
+            ".".join(path[:end]) in documented for end in range(len(path), 0, -1)
+        )
+    ]
+    assert not undocumented, f"template keys missing from {_REFERENCE.name}: " + (
+        ", ".join(undocumented)
+    )
+
+
+def test_the_template_stays_a_short_starting_file() -> None:
+    # The reference holds the long explanations; the template shows the keys
+    # most deployments set.
+    assert len(TEMPLATE_PATH.read_text(encoding="utf-8").splitlines()) <= 150
 
 
 def test_neptune_property_cap_exceeds_the_unsummarized_description_length() -> None:

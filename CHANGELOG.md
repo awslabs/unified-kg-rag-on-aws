@@ -1059,6 +1059,14 @@ changed once with the full-config keys (#332).
   25%-of-spend rule of thumb and the once-per-30-days limit (#459).
 
 ### Changed
+- `config-template.yaml` is a short starting file (131 lines, from 1,109)
+  with the keys most deployments set: the backend preset and providers,
+  models, AWS stores, chunking, translation, gleaning and claims, reset,
+  analyzers, routing, reranking and the log level, at their defaults. Every
+  other key is in the generated `docs/configuration.md`, which now lists the
+  defaults too long for its tables under Long defaults instead of pointing
+  to the template. A copy of the old template still loads (removed keys
+  warn) (#PR).
 - The parser reads `.txt`, `.csv`, `.pdf` and (with the `unstructured`
   extra) `.md`/`.html` with its own loaders on langchain-core
   (`adapters/ingestion/file_loaders.py`) instead of the langchain-community

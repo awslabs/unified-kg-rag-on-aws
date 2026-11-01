@@ -24,6 +24,7 @@ import typing
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -47,7 +48,8 @@ Every configuration key, its type, its built-in default and what it does,
 one table per section. How the configuration is loaded (file, `backend`
 preset, environment, CLI flags) and the settings most runs change are in the
 [User Guide §2](./user-guide.md#2-configuration);
-[`config-template.yaml`](../config-template.yaml) is a commented starting file.
+[`config-template.yaml`](../config-template.yaml) is a short starting file with
+the keys most deployments set.
 
 - **Defaults** are the built-in values a key takes when the file, the
   environment and the flags leave it unset. `null` usually means "derived":
@@ -117,8 +119,9 @@ def _constraints(field: FieldInfo) -> str:
     return ", ".join(bounds)
 
 
-def _default(value: Any) -> str:
-    """A default value as compact JSON in a code span."""
+def _default(value: Any, key: str, long_defaults: dict[str, Any]) -> str:
+    """A default value as compact JSON in a code span; one too long for a
+    table cell goes to ``long_defaults`` (the Long defaults section)."""
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
     if isinstance(value, enum.Enum):
@@ -127,7 +130,8 @@ def _default(value: Any) -> str:
         value = str(value)
     text = json.dumps(value, ensure_ascii=False, default=str)
     if len(text) > MAX_DEFAULT_CHARS:
-        return "see `config-template.yaml`"
+        long_defaults[key] = json.loads(text)
+        return "see [Long defaults](#long-defaults)"
     return "`" + text.replace("|", "\\|") + "`"
 
 
@@ -144,7 +148,11 @@ def _intro(cls: type[BaseModel], field: FieldInfo | None) -> str:
 
 
 def _section(
-    path: str, cls: type[BaseModel], value: BaseModel, field: FieldInfo | None
+    path: str,
+    cls: type[BaseModel],
+    value: BaseModel,
+    field: FieldInfo | None,
+    long_defaults: dict[str, Any],
 ) -> list[str]:
     """The tables of one section and, recursively, of its sub-sections."""
     rows, children = [], []
@@ -160,7 +168,7 @@ def _section(
         bounds = _constraints(info)
         type_cell = _type_name(info.annotation) + (f" ({bounds})" if bounds else "")
         rows.append(
-            f"| `{name}` | {type_cell} | {_default(current)} | "
+            f"| `{name}` | {type_cell} | {_default(current, key, long_defaults)} | "
             f"{_cell(info.description or '')} |"
         )
     lines = [f"{'#' * min(2 + path.count('.'), 4)} `{path}`", ""]
@@ -175,7 +183,7 @@ def _section(
             "",
         ]
     for key, sub, current, info in children:
-        lines += _section(key, sub, current, info)
+        lines += _section(key, sub, current, info, long_defaults)
     return lines
 
 
@@ -196,13 +204,15 @@ def render() -> str:
     )
     lines = [header, "## Contents", ""]
     sections, top_rows = [], []
+    long_defaults: dict[str, Any] = {}
     for name, info in Config.model_fields.items():
         sub = _model_in(info.annotation)
         if sub is None:
             bounds = _constraints(info)
             type_cell = _type_name(info.annotation) + (f" ({bounds})" if bounds else "")
+            default = _default(getattr(config, name), name, long_defaults)
             top_rows.append(
-                f"| `{name}` | {type_cell} | {_default(getattr(config, name))} | "
+                f"| `{name}` | {type_cell} | {default} | "
                 f"{_cell(info.description or '')} |"
             )
             continue
@@ -210,7 +220,7 @@ def render() -> str:
     if top_rows:
         lines.append("- [Top-level keys](#top-level-keys)")
     lines += [f"- [`{name}`](#{name})" for name, *_ in sections]
-    lines += ["- [Moved keys](#moved-keys)", ""]
+    lines += ["- [Long defaults](#long-defaults)", "- [Moved keys](#moved-keys)", ""]
     if top_rows:
         lines += [
             "## Top-level keys",
@@ -221,7 +231,13 @@ def render() -> str:
             "",
         ]
     for name, sub, value, info in sections:
-        lines += _section(name, sub, value, info)
+        lines += _section(name, sub, value, info, long_defaults)
+    lines += ["## Long defaults", "", "The defaults too long for their table.", ""]
+    for key, value in long_defaults.items():
+        dumped = yaml.safe_dump(
+            {key.rsplit(".", 1)[-1]: value}, allow_unicode=True, sort_keys=False
+        )
+        lines += [f"### `{key}`", "", "```yaml", dumped.rstrip(), "```", ""]
     lines += [
         "## Moved keys",
         "",
