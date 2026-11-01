@@ -150,3 +150,29 @@ def test_text_above_the_limit_is_cut_not_emptied(
     assert len(sent.split()) >= min(
         info.max_sequence_tokens // 2, info.max_sequence_length // 16
     )
+
+
+@pytest.mark.parametrize(
+    ("model_id", "limit"),
+    [
+        # 512-token window: the 512-token default buffer is capped at 512 // 8.
+        (EmbeddingModelId("cohere.embed-multilingual-v3"), 512 - 64),
+        # 8,192-token window: an eighth (1,024) is above the default, kept.
+        (EmbeddingModelId("amazon.titan-embed-text-v2:0"), 8192 - 512),
+    ],
+)
+def test_buffer_is_capped_only_for_small_windows(
+    model_id: EmbeddingModelId, limit: int, embed, mocker
+) -> None:
+    from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+
+    limits: list[int] = []
+    truncate = BedrockTokenCounter.truncate_to_token_limit
+
+    def spy(self: BedrockTokenCounter, text: str, max_tokens: int) -> Any:
+        limits.append(max_tokens)
+        return truncate(self, text, max_tokens)
+
+    mocker.patch.object(BedrockTokenCounter, "truncate_to_token_limit", spy)
+    embed(model_id, ["Vendor ships parts."])
+    assert limits and set(limits) == {limit}

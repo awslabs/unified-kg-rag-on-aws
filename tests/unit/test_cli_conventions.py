@@ -58,13 +58,6 @@ def _ctrl_c_raises():
     signal.signal(signal.SIGINT, previous)
 
 
-@pytest.fixture(autouse=True)
-def _restore_console():
-    # --output-format json moves the shared console to stderr.
-    yield
-    console.stderr = False
-
-
 PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
     "run-ingestion": run_ingestion_pipeline.CommandLineInterface._setup_arguments,
     "run-rag": run_rag_chain.CommandLineInterface._setup_arguments,

@@ -96,6 +96,18 @@ def get_renderer_class(name: str) -> type[BaseRenderer]:
         ) from None
 
 
+def resolve_renderers(
+    renderer_names: Iterable[str],
+) -> list[tuple[str, type[BaseRenderer]]]:
+    """The renderer class of each name, its dependencies checked: an unknown
+    name raises ``ValueError`` and a missing dependency
+    ``ConfigurationError`` (:meth:`BaseRenderer.check_dependencies`)."""
+    renderers = [(name, get_renderer_class(name)) for name in renderer_names]
+    for _, renderer_cls in renderers:
+        renderer_cls.check_dependencies()
+    return renderers
+
+
 def render_all(
     context: RenderContext,
     output_dir: Path,
@@ -104,16 +116,28 @@ def render_all(
 ) -> list[Path]:
     """Run each named renderer over ``context``; return the files written.
 
+    The names are resolved and checked (:func:`resolve_renderers`) before
+    anything renders; see :func:`render_resolved` for the rest.
+    """
+    return render_resolved(
+        context, output_dir, resolve_renderers(renderer_names), viz_config
+    )
+
+
+def render_resolved(
+    context: RenderContext,
+    output_dir: Path,
+    renderers: Iterable[tuple[str, type[BaseRenderer]]],
+    viz_config: Any,
+) -> list[Path]:
+    """Run renderers :func:`resolve_renderers` returned over ``context``;
+    return the files written.
+
     A renderer's config is the ``viz_config`` attribute named after it (an
     empty dict when there is none), so a newly registered renderer needs no
-    dispatch edit. An unknown name raises ``ValueError`` and a missing
-    dependency ``ConfigurationError`` (:meth:`BaseRenderer.check_dependencies`),
-    both before anything renders; a renderer that fails is logged and skipped
-    so the others still render.
+    dispatch edit. A renderer that fails is logged and skipped so the others
+    still render.
     """
-    renderers = [(name, get_renderer_class(name)) for name in renderer_names]
-    for _, renderer_cls in renderers:
-        renderer_cls.check_dependencies()
     written: list[Path] = []
     for name, renderer_cls in renderers:
         renderer_config = getattr(viz_config, name, None) or {}

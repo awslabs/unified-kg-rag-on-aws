@@ -58,6 +58,7 @@ def _periods(draw: st.DrawFn) -> tuple[str, date, date]:
                 [
                     f"{name} {year}",
                     f"{name}, {year}",
+                    f"{name},{year}",
                     f"{year}-{month:02d}",
                     f"{year}/{month}",
                 ]
@@ -95,6 +96,8 @@ _YEAR_1950 = ("1950", date(1950, 1, 1), date(1950, 12, 31))
 @given(_periods())
 @example(_JAN_1950)
 @example(("Sept., 2024", date(2024, 9, 1), date(2024, 9, 30)))
+@example(("Jan.,2024", date(2024, 1, 1), date(2024, 1, 31)))
+@example(("Jan . 2024", date(2024, 1, 1), date(2024, 1, 31)))
 def test_a_period_starts_on_its_first_day_and_ends_on_its_last(
     period: tuple[str, date, date],
 ) -> None:

@@ -184,6 +184,18 @@ class TestConfig:
     def test_the_default_sends_nothing(self) -> None:
         assert Config().indexing.opensearch.vector_storage() == {}
 
+    def test_the_method_is_checked_only_with_storage_keys(self) -> None:
+        # The default storage sends no keys, so any engine and method a
+        # deployment already uses (nmslib, ivf) still loads.
+        config = Config.model_validate(
+            {
+                "indexing": {
+                    "opensearch": {"vector_search": {"name": "ivf", "engine": "nmslib"}}
+                }
+            }
+        )
+        assert config.indexing.opensearch.vector_storage() == {}
+
 
 class TestPreflight:
     def test_a_cluster_before_2_17_is_refused_with_the_version(

@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from unified_kg_rag.adapters.ingestion.length_units import (
+    GrowingText,
     TokenBudgetTextSplitter,
     chunk_length_function,
-    max_chars,
 )
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProces
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.chunk_length import max_chars
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     ChunkLengthUnit,
@@ -373,12 +374,20 @@ class ChunkProcessor:
         i = 0
         while i < len(chunks):
             last = i
-            current = chunks[i]
-            while last + 1 < len(chunks) and size(current) < self.min_chunk_size:
-                candidate = joined(i, last + 1)
-                if size(candidate) > self.max_chunk_size:
+            # Each candidate extends the current text, so it is built and
+            # measured from what it adds.
+            current = GrowingText(chunks[i], size)
+            while last + 1 < len(chunks) and current.size < self.min_chunk_size:
+                if spans is None:
+                    candidate = self._join_pair(
+                        current.text, chunks[last + 1], max_overlap
+                    )
+                else:
+                    candidate = joined(i, last + 1)
+                candidate_size = current.size_of(candidate)
+                if candidate_size > self.max_chunk_size:
                     break
-                current = candidate
+                current.extend(candidate, candidate_size)
                 last += 1
             groups.append((i, last))
             i = last + 1
@@ -492,7 +501,7 @@ class BaseChunker(ABC):
         length_unit: ChunkLengthUnit = ChunkLengthUnit.CHARS,
     ) -> RecursiveCharacterTextSplitter:
         try:
-            if length_unit is ChunkLengthUnit.TOKENS:
+            if length_unit == ChunkLengthUnit.TOKENS:
                 return TokenBudgetTextSplitter(
                     chunk_size=size,
                     chunk_overlap=overlap,
@@ -1035,7 +1044,7 @@ class IntelligentTextChunker(BaseChunker):
         afterwards (merge and oversize split).
         """
         config = self.chunking_config
-        if self.length_unit is not ChunkLengthUnit.TOKENS:
+        if self.length_unit != ChunkLengthUnit.TOKENS:
             return config.min_chunk_size, config.max_chunk_size
         ratio = len(chunk) / max(estimate_token_count(chunk), 1)
         return (

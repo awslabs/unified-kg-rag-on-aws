@@ -35,14 +35,18 @@ jobs:
           version: "0.12.23"
           python-version: ${{ matrix.python-version }}
       - name: Install patched optional parsers
-        run: uv sync --locked --extra unstructured
+        # eval brings langchain-community (ragas' copy), so the .md/.html
+        # loaders are also compared side by side with the ones they replaced.
+        run: uv sync --locked --extra unstructured --extra eval
       - name: Check the optional parsers are importable
-        # The security test skips itself when unstructured is missing, which
-        # would let this job pass without testing anything.
-        run: uv run --frozen python -c "import unstructured"
+        # The security test skips itself when unstructured is missing, and the
+        # side-by-side loader comparison when langchain-community is, either
+        # of which would let this job pass without testing anything.
+        run: uv run --frozen python -c "import unstructured, langchain_community"
       - name: Check optional parsing, registration and private URL rejection
         # The parser-factory and loader tests take their unstructured-installed
-        # branch (.md/.html registered and parsed) only in this job.
+        # branch (.md/.html registered, parsed and golden-checked) only in this
+        # job.
         run: >-
           uv run --frozen pytest -q
           tests/unit/test_optional_parser_security.py
@@ -197,6 +201,7 @@ jobs:
           uv run pytest tests/integration/test_*conformance*.py
           tests/integration/test_store_parity.py
           tests/integration/test_neptune_vertex_ids.py
+          tests/integration/test_opensearch_vector_storage.py
 
       - name: Store logs
         if: failure()

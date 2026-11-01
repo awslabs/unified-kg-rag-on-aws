@@ -24,28 +24,16 @@ from typing import Any, NamedTuple
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from unified_kg_rag.adapters.llm.token_estimate import (
-    LATIN_CHARS_PER_TOKEN,
     dense_char_count,
     estimate_token_count,
 )
+from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.models import ChunkLengthUnit
 
 
 def chunk_length_function(unit: ChunkLengthUnit) -> Callable[[str], int]:
     """The measure of ``unit``."""
-    return estimate_token_count if unit is ChunkLengthUnit.TOKENS else len
-
-
-def max_chars(size: int, unit: ChunkLengthUnit) -> int:
-    """The most characters a text of ``size`` units can hold.
-
-    The token estimate counts at least ``other // 4`` tokens for ``other``
-    non-dense characters and one per dense character, so ``n`` tokens span
-    at most ``4 * n + 3`` characters.
-    """
-    if unit is ChunkLengthUnit.TOKENS:
-        return size * LATIN_CHARS_PER_TOKEN + LATIN_CHARS_PER_TOKEN - 1
-    return size
+    return estimate_token_count if unit == ChunkLengthUnit.TOKENS else len
 
 
 class _Piece(NamedTuple):
@@ -120,6 +108,54 @@ class _Window:
         return max(words, dense + other // LATIN_CHARS_PER_TOKEN, 1)
 
 
+class GrowingText:
+    """A text measured by ``length_function`` as it grows at its end.
+
+    In tokens the measure comes from running counts (:class:`_Window`), so
+    each extension costs its new characters, not the whole text again. The
+    text is measured only when asked.
+    """
+
+    def __init__(self, text: str, length_function: Callable[[str], int]) -> None:
+        self.text = text
+        self._length_function = length_function
+        self._size: int | None = None
+        self._window: _Window | None = None
+
+    @property
+    def size(self) -> int:
+        if self._size is None:
+            self._size = self._length_function(self.text)
+        return self._size
+
+    def _counts(self) -> _Window | None:
+        """The running counts of the text, in tokens only."""
+        if self._window is None and self._length_function is estimate_token_count:
+            self._window = _Window()
+            if self.text:
+                self._window.push(_Piece.of(self.text))
+        return self._window
+
+    def size_of(self, longer: str) -> int:
+        """The measure of ``longer``, a text that starts with this one."""
+        window = self._counts()
+        if window is None or not longer.startswith(self.text):
+            return self._length_function(longer)
+        tail = longer[len(self.text) :]
+        return window.tokens(_Piece.of(tail)) if tail else self.size
+
+    def extend(self, longer: str, size: int) -> None:
+        """Become ``longer``, whose measure :meth:`size_of` gave as ``size``."""
+        window = self._window
+        if window is not None and longer.startswith(self.text):
+            tail = longer[len(self.text) :]
+            if tail:
+                window.push(_Piece.of(tail))
+        else:
+            self._window = None
+        self.text, self._size = longer, size
+
+
 class TokenBudgetTextSplitter(RecursiveCharacterTextSplitter):
     """A recursive splitter whose chunks fit ``chunk_size`` estimated tokens.
 
@@ -130,33 +166,29 @@ class TokenBudgetTextSplitter(RecursiveCharacterTextSplitter):
     """
 
     def __init__(self, **kwargs: Any) -> None:
+        # With keep_separator the recursive split leaves each separator in
+        # a split and merges with separator "", which _merge_splits relies on.
+        if not kwargs.get("keep_separator", True):
+            raise ValueError("TokenBudgetTextSplitter needs keep_separator")
         super().__init__(length_function=estimate_token_count, **kwargs)
 
     def _merge_splits(self, splits: Iterable[str], separator: str) -> list[str]:
-        sep = _Piece.of(separator) if separator else None
         docs: list[str] = []
         current: list[str] = []
         window = _Window()
-
-        def appended(piece: _Piece) -> tuple[_Piece, ...]:
-            return (sep, piece) if current and sep is not None else (piece,)
-
         for split in splits:
             piece = _Piece.of(split)
-            if current and window.tokens(*appended(piece)) > self._chunk_size:
+            if current and window.tokens(piece) > self._chunk_size:
                 doc = self._join_docs(current, separator)
                 if doc is not None:
                     docs.append(doc)
                 while current and (
                     window.tokens() > self._chunk_overlap
-                    or window.tokens(*appended(piece)) > self._chunk_size
+                    or window.tokens(piece) > self._chunk_size
                 ):
                     current.pop(0)
                     window.pop_front()
-                    if current and sep is not None:
-                        window.pop_front()
-            for part in appended(piece):
-                window.push(part)
+            window.push(piece)
             current.append(split)
         doc = self._join_docs(current, separator)
         if doc is not None:

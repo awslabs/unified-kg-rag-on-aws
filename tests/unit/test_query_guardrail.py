@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.guardrail.bedrock import (
     GROUNDING_QUERY_MAX_CHARS,
     GROUNDING_SOURCE_MAX_CHARS,
     BedrockGuardrail,
+    grounding_from_response,
     select_grounding_source,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
@@ -39,6 +40,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
     SearchOutput,
+    _guard_record,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -779,6 +781,7 @@ async def test_ungrounded_answer_is_blocked(runtime, caplog) -> None:  # noqa: A
     assert verdict.action is GuardAction.BLOCKED and verdict.text == _REFUSAL
     assert verdict.policies == ["contextualGroundingPolicy:GROUNDING"]
     assert verdict.grounding is not None and verdict.grounding.failed == ["grounding"]
+    assert verdict.grounding.blocked
     assert "on an answer blocked" in caplog.text and "grounding 0.12" in caplog.text
 
 
@@ -794,7 +797,35 @@ async def test_detect_only_failure_passes_but_is_logged(
 
     assert verdict.action is GuardAction.NONE
     assert verdict.grounding is not None and verdict.grounding.failed == ["grounding"]
+    assert not verdict.grounding.blocked
     assert "failed but not blocked" in caplog.text
+
+
+async def test_another_policys_block_is_not_a_grounding_block(
+    runtime, caplog
+) -> None:  # noqa: ANN001
+    # Blocked for violence while the grounding check failed detect-only.
+    response = _scored(0.2, 0.9)
+    for entry in response["assessments"][0]["contextualGroundingPolicy"]["filters"]:
+        entry["action"] = "NONE"
+    response["assessments"][0]["contentPolicy"] = {
+        "filters": [{"type": "VIOLENCE", "confidence": "HIGH", "action": "BLOCKED"}]
+    }
+    with caplog.at_level(logging.WARNING):
+        verdict = await _ground(runtime, response)
+
+    assert verdict.action is GuardAction.BLOCKED
+    assert verdict.policies == ["contentPolicy:VIOLENCE"]
+    assert verdict.grounding is not None and verdict.grounding.failed == ["grounding"]
+    assert not verdict.grounding.blocked
+    assert "failed but not blocked" in caplog.text
+
+
+def test_a_blocking_entry_without_an_intervention_blocked_nothing() -> None:
+    response = _scored(0.2, 0.9)
+    response["action"], response["outputs"] = "NONE", []
+    check = grounding_from_response(response)
+    assert check.failed == ["grounding"] and not check.blocked
 
 
 async def test_guardrail_without_grounding_policy_is_logged(
@@ -987,6 +1018,34 @@ async def test_ungrounded_answer_takes_the_refusal_path(
         "relevance": 0.95,
     }
     assert memory.turns == [(_QUERY, _REFUSAL)]
+
+
+@pytest.mark.parametrize(
+    ("policies", "grounding", "reason"),
+    [
+        # Any guard: the reason comes from its grounding check, not from
+        # how it names its policies.
+        (["acme:ungrounded"], GroundingCheck(checked=True, blocked=True), True),
+        # Blocked by another policy while the check failed detect-only.
+        (
+            ["contentPolicy:VIOLENCE"],
+            GroundingCheck(checked=True, failed=["grounding"]),
+            False,
+        ),
+        (["contentPolicy:VIOLENCE"], None, False),
+    ],
+)
+def test_the_block_reason_follows_the_grounding_check(
+    policies: list[str], grounding: GroundingCheck | None, reason: bool
+) -> None:
+    verdict = GuardVerdict(
+        action=GuardAction.BLOCKED,
+        text=_REFUSAL,
+        policies=policies,
+        grounding=grounding,
+    )
+    record = _guard_record(GuardSource.OUTPUT, verdict)
+    assert record.get("reason") == ("contextual_grounding" if reason else None)
 
 
 def test_no_context_means_no_grounding_reference() -> None:

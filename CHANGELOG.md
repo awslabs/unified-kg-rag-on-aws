@@ -471,7 +471,10 @@ Library API (Python callers and custom backends).
   `Document.detected_language`, `DocStatus.PARSING` / `PROCESSING`,
   `NeptuneClient.delete_vertices_in_batches`, `BaseParser.parse_files`,
   `ParsingStats`, `GraphAnalyzer.centrality_cache`,
-  `registered_strategies` and `NeptuneRetriever.DEFAULT_MAX_HOPS`).
+  `registered_strategies` and `NeptuneRetriever.DEFAULT_MAX_HOPS`);
+  `GraphAnalyzer.set_community_data` / `export_graph_data` / `clear_cache`
+  and the `chunk_size` / `max_file_size_mb` / `enable_chunking` arguments
+  of `CacheManager` (#471).
 
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
@@ -538,7 +541,8 @@ From 0.2.3 (or a `main` checkout since):
   expansion (#354, #356, #360, #370, #381).
 - The guardrail's `ApplyGuardrail` screening (#319) and opt-in contextual
   grounding check `aws.bedrock.guardrail.contextual_grounding` (CDK
-  `-c guardrail_contextual_grounding=true`) (#462).
+  `-c guardrail_contextual_grounding=true`); `GroundingCheck.blocked` says
+  whether the check blocked the answer (#462, #PR).
 - Per-query rerank status (`metadata.rerank`) and opt-in
   `search.reranking.required` (#284).
 - Evaluation: `retrieval` and `answer_match` evaluators, grouped
@@ -631,8 +635,8 @@ From 0.2.3 (or a `main` checkout since):
 - The `graph_analysis` stage no longer computes centrality, which no later
   stage read (#248).
 - The parser uses its own loaders on langchain-core (same text and
-  metadata, so document ids are unchanged); `ParserFactory.register_loader`
-  takes any `BaseLoader` (#460).
+  metadata, so document ids are unchanged; a 4,000-page PDF loads in about
+  1 s); `ParserFactory.register_loader` takes any `BaseLoader` (#460, #PR).
 - Gleaning refines each text unit's own record and a correction changes only
   what that unit says (#322).
 - `run-ingestion --s3-sync` takes the bucket from `aws.s3.bucket_name` when

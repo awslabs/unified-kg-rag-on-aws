@@ -2056,7 +2056,8 @@ def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None
 def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
     """One guardrail intervention as reported in ``RAGOutput.metadata``.
 
-    An answer refused by the contextual grounding check carries the reason
+    An answer refused by the contextual grounding check (the guard says so
+    in ``GroundingCheck.blocked``) carries the reason
     ``contextual_grounding``, so it reads apart from a content-policy
     refusal."""
     record: dict[str, Any] = {
@@ -2064,7 +2065,7 @@ def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
         "action": verdict.action.value,
         "policies": verdict.policies,
     }
-    if any(p.startswith("contextualGroundingPolicy:") for p in verdict.policies):
+    if verdict.grounding is not None and verdict.grounding.blocked:
         record["reason"] = "contextual_grounding"
     return record
 

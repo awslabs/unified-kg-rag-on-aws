@@ -25,9 +25,9 @@ import networkx as nx
 
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
-    get_renderer_class,
     registered_renderers,
-    render_all,
+    render_resolved,
+    resolve_renderers,
 )
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
@@ -173,7 +173,7 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
         return
     if not context.layout:
         logger.info(
-            "No layout in the data; using a spring layout from the graph " "topology."
+            "No layout in the data; using a spring layout from the graph topology."
         )
         context.layout = spring_layout(
             context.graph,
@@ -194,13 +194,12 @@ def run_visualization(
         ConfigurationError: A renderer's dependency is not installed (the
             ``viz`` extra), checked before the data is loaded.
     """
-    for name in renderer_names:
-        get_renderer_class(name).check_dependencies()
+    renderers = resolve_renderers(renderer_names)
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
     _fill_missing_analysis(context, config)
-    written = render_all(
-        context, output_dir, renderer_names, config.graph.visualization
+    written = render_resolved(
+        context, output_dir, renderers, config.graph.visualization
     )
     if not written:
         logger.error(

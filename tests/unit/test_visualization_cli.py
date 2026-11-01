@@ -131,6 +131,33 @@ class TestRunVisualization:
         assert written == [out_dir / "fake.txt"]
         assert (out_dir / "fake.txt").read_text() == "ok"
 
+    @pytest.mark.usefixtures("restore_renderer_registry")
+    def test_checks_each_renderer_once_before_loading(
+        self, tmp_path: Path, config: Config
+    ) -> None:
+        checks: list[str] = []
+
+        @register_renderer("checked_for_cli_test")
+        class _Checked(BaseRenderer):
+            @classmethod
+            def check_dependencies(cls) -> None:
+                checks.append("checked")
+
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                return []
+
+        # Checked before the data is read: a missing file fails after it.
+        with pytest.raises(FileNotFoundError):
+            run_visualization(
+                tmp_path / "missing.json", tmp_path, ["checked_for_cli_test"], config
+            )
+        assert checks == ["checked"]
+        checks.clear()
+        data = tmp_path / "viz.json"
+        data.write_text(json.dumps({"nodes": [], "edges": []}), encoding="utf-8")
+        run_visualization(data, tmp_path / "out", ["checked_for_cli_test"], config)
+        assert checks == ["checked"]
+
     @requires_viz
     def test_data_only_export_gets_a_layout_and_centrality(
         self, tmp_path: Path, config: Config

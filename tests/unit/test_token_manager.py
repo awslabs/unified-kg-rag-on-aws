@@ -734,6 +734,29 @@ class TestBuildContextString:
         assert "[src-a]" in rendered
         assert "first chunk text" in rendered
 
+    def test_ranked_section_lines_put_the_highest_priority_first(self) -> None:
+        # A grounding check over its size limit keeps the head of this list.
+        def section(source_id: str, priority: float) -> ContextSection:
+            return ContextSection(
+                content=f"{source_id} text",
+                token_count=1,
+                priority=priority,
+                section_type=SectionType.TEXT,
+                source_id=source_id,
+            )
+
+        context = OptimizedContext(
+            sections=[section("low", 0.1), section("high", 0.9), section("mid", 0.5)],
+            total_tokens=3,
+            sections_included=3,
+            sections_excluded=0,
+        )
+        assert TokenManager.ranked_section_lines(context) == [
+            "[high] high text",
+            "[mid] mid text",
+            "[low] low text",
+        ]
+
 
 class TestContextTypeBudgetConfig:
     def test_all_zero_shares_are_rejected_at_config_load(self) -> None:

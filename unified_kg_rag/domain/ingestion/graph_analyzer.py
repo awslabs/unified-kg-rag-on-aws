@@ -73,26 +73,13 @@ class GraphAnalyzer:
         # Centrality only sizes and plots the visualization's nodes.
         self.centrality_config = config.graph.visualization.centrality
         self._graph = graph
-        self._centrality_cache: dict[str, dict[str, float]] = {}
         self._centrality: dict[str, CentralityMetrics] | None = None
         self._statistics_cache: GraphStatistics | None = None
 
-    def set_community_data(
-        self,
-        node_to_community_map: dict[str, str],
-        community_metrics: CommunityMetrics | None,
-    ) -> None:
-        if not self._graph:
-            return
-        nx.set_node_attributes(self._graph, node_to_community_map, "community_id")
-        if self._statistics_cache:
-            self._statistics_cache.community_metrics = community_metrics
-        logger.info("Community data integrated into the graph and statistics.")
-
     def calculate_centrality(self) -> dict[str, CentralityMetrics]:
         """Per-node centrality, computed once per graph (setting ``graph``
-        resets it): betweenness alone is O(V*E), and the analysis stage and
-        every visualization output read the same values."""
+        resets it): betweenness alone is O(V*E), and every visualization
+        renderer reads the same values (the ingestion stages compute none)."""
         if self._centrality is not None:
             return self._centrality
         if not self._graph or self._graph.number_of_nodes() == 0:
@@ -171,7 +158,7 @@ class GraphAnalyzer:
 
         for name, (enabled, func, kwargs) in centrality_methods.items():
             if enabled:
-                self._compute_and_cache_centrality(name, func, kwargs, centrality_data)
+                self._compute_centrality(name, func, kwargs, centrality_data)
 
         logger.info(
             "Centrality calculation completed for %s nodes", len(centrality_data)
@@ -205,7 +192,7 @@ class GraphAnalyzer:
             return threshold
         return None
 
-    def _compute_and_cache_centrality(
+    def _compute_centrality(
         self,
         metric_name: str,
         computation_func: Callable,
@@ -216,7 +203,6 @@ class GraphAnalyzer:
             logger.info("Calculating %s centrality...", metric_name)
             result = computation_func(self._graph, **kwargs)
             self._update_centrality_results(centrality_data, metric_name, result)
-            self._centrality_cache[metric_name] = result
         except (nx.PowerIterationFailedConvergence, nx.NetworkXError) as e:
             logger.warning("Failed to calculate %s centrality: %s", metric_name, e)
         except Exception as e:
@@ -234,49 +220,6 @@ class GraphAnalyzer:
         for node_id, value in result.items():
             if node_id in data:
                 setattr(data[node_id], name, value)
-
-    def clear_cache(self) -> None:
-        self._centrality_cache.clear()
-        self._centrality = None
-        self._statistics_cache = None
-        logger.info("Graph analyzer cache cleared.")
-
-    def export_graph_data(self) -> dict[str, Any]:
-        if not self._graph:
-            logger.warning("Cannot export data from an empty graph")
-            return {"nodes": [], "edges": [], "statistics": {}}
-
-        logger.info(
-            "Exporting graph data with %s nodes and %s edges",
-            self._graph.number_of_nodes(),
-            self._graph.number_of_edges(),
-        )
-
-        nodes_data = [
-            {
-                "id": str(node_id),
-                "attributes": self._graph.nodes[node_id],
-                **self._get_node_centrality(node_id),
-            }
-            for node_id in self._graph.nodes()
-        ]
-        edges_data = [
-            {"source": str(u), "target": str(v), "attributes": attrs}
-            for u, v, attrs in self._graph.edges(data=True)
-        ]
-        stats = self.get_graph_statistics()
-
-        return {
-            "nodes": nodes_data,
-            "edges": edges_data,
-            "statistics": stats.model_dump(exclude_none=True) if stats else {},
-        }
-
-    def _get_node_centrality(self, node_id: str) -> dict[str, float | None]:
-        centralities = {}
-        for name, values in self._centrality_cache.items():
-            centralities[f"{name}_centrality"] = values.get(node_id)
-        return centralities
 
     def get_graph_statistics(self) -> GraphStatistics:
         if self._statistics_cache is not None:
@@ -366,4 +309,5 @@ class GraphAnalyzer:
     @graph.setter
     def graph(self, graph: nx.Graph | None) -> None:
         self._graph = graph
-        self.clear_cache()
+        self._centrality = None
+        self._statistics_cache = None

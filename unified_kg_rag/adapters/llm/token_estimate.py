@@ -4,6 +4,8 @@
 
 import re
 
+from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
+
 # Codepoint ranges that tokenize at roughly ONE token per character (often more)
 # under BPE tokenizers: CJK ideographs + Japanese kana + Hangul + CJK
 # punctuation/full-width forms. A plain chars/4 estimate under-counts these ~4x,
@@ -28,10 +30,6 @@ _DENSE_SCRIPT_RANGES: tuple[tuple[int, int], ...] = (
 _DENSE_SCRIPT_RE = re.compile(
     "[" + "".join(f"\\u{lo:04X}-\\u{hi:04X}" for lo, hi in _DENSE_SCRIPT_RANGES) + "]"
 )
-
-
-# Characters per token of the text outside the dense scripts.
-LATIN_CHARS_PER_TOKEN = 4
 
 
 def dense_char_count(text: str) -> int:

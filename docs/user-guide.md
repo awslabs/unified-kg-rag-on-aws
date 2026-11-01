@@ -509,7 +509,7 @@ with the `ApplyGuardrail` API; the guardrail must exist in
   - A blocked answer takes the refusal path above, with
     `reason: contextual_grounding` in its `metadata.guardrail` record. Each
     checked answer carries `metadata.grounding` (`checked`, `scores`,
-    `failed`) and the `kg_rag.guardrail` span its scores. An answer that
+    `failed`, `blocked`) and the `kg_rag.guardrail` span its scores. An answer that
     fails without being blocked (a detect-only policy), and a guardrail that
     returns no scores (no grounding policy), are logged at WARNING.
   - **Limits.** Bedrock takes 100,000 characters of reference, 1,000 of
