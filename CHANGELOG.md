@@ -687,6 +687,9 @@ From 0.2.3 (or a `main` checkout since):
   `aws.bedrock.guardrail.contextual_grounding.enabled` is on and
   `check_output` off, however code set them: the nested flag is validated
   without `check_output`, and a refused assignment stays applied (#472).
+- A `processing.chunking.chunk_overlap` not below `fallback_chunk_size`
+  fails the load, naming both, instead of every chunker at the chunking
+  stage (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

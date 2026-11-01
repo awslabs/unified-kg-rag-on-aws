@@ -1425,6 +1425,9 @@ class ChunkingConfig(BaseModel):
             raise ValueError("min_chunk_size must be less than max_chunk_size")
         if self.chunk_overlap >= self.min_chunk_size:
             raise ValueError("chunk_overlap must be less than min_chunk_size")
+        if self.chunk_overlap >= self.fallback_chunk_size:
+            # The size-based splitter overlaps its chunks by chunk_overlap.
+            raise ValueError("chunk_overlap must be less than fallback_chunk_size")
         if self.pre_chunk_overlap >= self.pre_chunk_size:
             raise ValueError("pre_chunk_overlap must be less than pre_chunk_size")
         return self
