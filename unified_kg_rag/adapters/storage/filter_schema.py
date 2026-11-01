@@ -239,6 +239,8 @@ def opensearch_filter_fields(
                     "rank",
                     "confidence",
                     "text_unit_ids",
+                    "in_schema",
+                    "type_iri",
                 }
             ),
             _OPENSEARCH_ENTITY_PREFIXES,
@@ -255,6 +257,11 @@ def opensearch_filter_fields(
                     "weight",
                     "rank",
                     "text_unit_ids",
+                    # No ``type``: a relationship's type is not an entity
+                    # type, and ``type: PERSON`` would empty this index under
+                    # mix and hybrid.
+                    "in_schema",
+                    "predicate_iri",
                 }
             ),
             _OPENSEARCH_DOCUMENT_PREFIXES,
@@ -316,6 +323,8 @@ NEPTUNE_ENTITY_FILTER_FIELDS = FilterFields(
             "confidence",
             "text_unit_ids",
             "community_ids",
+            "in_schema",
+            "type_iri",
         }
     ),
     frozenset({ATTRIBUTE_KEY_PREFIX}),

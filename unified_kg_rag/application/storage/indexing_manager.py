@@ -42,6 +42,7 @@ from unified_kg_rag.domain.ingestion.merge import (
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )
+from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -113,19 +114,30 @@ def _reads_back(graph: GraphIndexer) -> bool:
 
 def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
     """What the vector store holds of an item besides its description,
-    lineage and rank, by field (see ``read_vector_copies``)."""
+    lineage and rank, by field (see ``read_vector_copies``); a schema
+    annotation is absent from a copy written without one (``None``)."""
     if isinstance(item, Entity):
         return {
             "name": item.name or "",
             "type": item.type or "",
             "confidence": item.confidence if item.confidence is not None else 1.0,
+            "in_schema": item.in_schema,
+            "type_iri": item.type_iri,
         }
     return {
         "source_id": item.source_id,
         "target_id": item.target_id,
         "source_name": item.source_name or "",
         "target_name": item.target_name or "",
+        "in_schema": item.in_schema,
+        "predicate_iri": item.predicate_iri,
     }
+
+
+def _annotations(item: Entity | Relationship) -> dict[str, Any]:
+    """The schema annotations of ``item`` in :func:`_vector_content`."""
+    names = ("in_schema", "type_iri", "predicate_iri")
+    return {k: v for k, v in _vector_content(item).items() if k in names}
 
 
 def _vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> bool:
@@ -279,6 +291,12 @@ class IndexingManager:
         # Built lazily on first cross-run merge so a manager only used for
         # indexing (no incremental read-back) never constructs a Bedrock client.
         self._description_summarizer: DescriptionSummarizer | None = None
+        # The schema annotations of every entity and relationship written,
+        # from its stored type (the pipeline loads a schema source into the
+        # inline keys before it builds the manager).
+        self._annotator = SchemaAnnotator(
+            config.processing.graph_extraction.extraction_schema()
+        )
         # Extraction-store keys named by removed text units, by suffix: the
         # candidates of collect_extraction_records.
         self._removed_record_keys: dict[str, set[str]] = {}
@@ -478,6 +496,10 @@ class IndexingManager:
         start_time = time.time()
         self._enrich_text_units(text_units, communities)
         attach_report_hierarchy(community_reports, communities)
+        if entities is not None:
+            entities = self._annotator.entities(entities)
+        if relationships is not None:
+            relationships = self._annotator.relationships(relationships)
         vector, graph = self.opensearch_indexer, self.neptune_indexer
         # (full-build writer, delta writer, items, result key)
         phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [
@@ -621,14 +643,18 @@ class IndexingManager:
         candidates = [r for r in relationships if r.id in rank_only]
         if not candidates:
             return vector.upsert_relationships(relationships)
-        stored: set[str] = set()
+        stored: dict[str, Mapping[str, Any]] = {}
         for suffix, group in self._group_by_suffix(candidates).items():
-            stored |= set(
-                vector.read_vector_copies(
-                    "relationships", [r.id for r in group], suffix=suffix
-                )
+            stored |= vector.read_vector_copies(
+                "relationships", [r.id for r in group], suffix=suffix
             )
-        partial = [r for r in candidates if r.id in stored]
+        # A copy whose schema annotations differ is written in full too.
+        partial = [
+            r
+            for r in candidates
+            if r.id in stored
+            and all(stored[r.id].get(k) == v for k, v in _annotations(r).items())
+        ]
         kept = {r.id for r in partial}
         full = [r for r in relationships if r.id not in kept]
         stats = vector.update_relationship_lineage(partial)
@@ -1466,7 +1492,9 @@ class IndexingManager:
         # copies): a run that wrote the entities but died before their edges
         # leaves edges a retry still finds stale.
         stored_extra = self.neptune_indexer.read_relationships(extra_ids, suffix=suffix)
-        extra = [
+        # Annotated as they will be written, so a vector copy is compared
+        # with what the write would store.
+        extra = self._annotator.relationships(
             r.model_copy(
                 deep=True,
                 update={
@@ -1475,7 +1503,7 @@ class IndexingManager:
                 },
             )
             for r in stored_extra
-        ]
+        )
         # A stored edge of a written edge's key (endpoints and type, as the
         # merge matches them) under another id, citing no unit the written
         # one does not, is that edge under an earlier id (the derivation
@@ -2182,6 +2210,10 @@ class IndexingManager:
         # vector copies themselves (name, type, confidence or endpoints, and
         # description), so a strip interrupted between the stores is repaired
         # whichever store it reached.
+        # Annotated as they are written (_write_artifacts), so a copy whose
+        # annotations the schema changed is written in full.
+        new_entities = self._annotator.entities(new_entities)
+        new_relationships = self._annotator.relationships(new_relationships)
         graph_copy = {e.id for e in entities} | {r.id for r in relationships}
         vector_copy = {
             **self.opensearch_indexer.read_vector_copies(

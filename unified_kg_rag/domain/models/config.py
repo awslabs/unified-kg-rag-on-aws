@@ -1691,7 +1691,8 @@ class GraphExtractionConfig(BaseModel):
             "Entity categories injected into the extraction prompt, each "
             "'LABEL: short description' (the description is optional), e.g. "
             "['GENE: ...', 'DISEASE: ...'], or {label, description, iri} "
-            "(iri: the ontology class the type maps to). The cheapest and "
+            "(iri: the ontology class the type maps to, stored as type_iri). "
+            "The cheapest and "
             "most effective domain-adaptation knob; an empty list lets the "
             "model choose any relevant types. Labels must differ in more "
             "than case and word separators."
@@ -1702,7 +1703,8 @@ class GraphExtractionConfig(BaseModel):
         description=(
             "Relationship types of the extraction schema, each 'LABEL: short "
             "description' or {label, description, iri} (iri: the ontology "
-            "property the type maps to). The extraction prompt lists them (and"
+            "property the type maps to, stored as predicate_iri). The "
+            "extraction prompt lists them (and"
             " relationship_patterns) instead of its example types, and unless "
             "schema_mode is off a type naming one, or an entity type naming a "
             "declared one, is written as declared. Empty: none declared, the "
@@ -1730,7 +1732,10 @@ class GraphExtractionConfig(BaseModel):
             "empty type with their relationships, relationships of an "
             "undeclared type, and relationships a pattern does not allow "
             "between two entities of declared types). Labels match by case "
-            "and word separators only, never by similarity."
+            "and word separators only, never by similarity. Where the schema "
+            "applies, indexing stores in_schema and the declared types' IRIs "
+            "(type_iri, predicate_iri) on entities and relationships, as "
+            "filter keys."
         ),
     )
     schema_source: SchemaSourceConfig = Field(

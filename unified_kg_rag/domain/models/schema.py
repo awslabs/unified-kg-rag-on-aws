@@ -13,7 +13,8 @@ spelling of word separators do not matter, anything else does (no synonyms,
 plurals or edit distance).
 
 An optional ``iri`` names the type in an external ontology (a class for an
-entity type, a property for a relationship type), so extracted items can be
+entity type, a property for a relationship type); indexing stores it on the
+items of the type (``domain.ingestion.schema_annotation``), so they can be
 linked to it.
 """
 
@@ -86,7 +87,9 @@ class EntityTypeSpec(_TypeSpec):
     """An entity type of the extraction schema."""
 
     iri: _Iri | None = Field(
-        default=None, description="IRI of the ontology class this type maps to"
+        default=None,
+        description="IRI of the ontology class this type maps to, stored as "
+        "type_iri on its entities",
     )
 
 
@@ -94,7 +97,9 @@ class RelationshipTypeSpec(_TypeSpec):
     """A relationship type of the extraction schema."""
 
     iri: _Iri | None = Field(
-        default=None, description="IRI of the ontology property this type maps to"
+        default=None,
+        description="IRI of the ontology property this type maps to, stored as "
+        "predicate_iri on its relationships",
     )
 
 

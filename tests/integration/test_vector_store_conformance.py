@@ -436,6 +436,33 @@ def test_vector_copy_reads_hold_the_compared_fields(harness: StoreHarness) -> No
     assert indexer.read_vector_copies("entities", ["e-depot"]) == {}
 
 
+def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) -> None:
+    indexer = harness.vector_indexer
+    iri = "https://example.org/onto#Location"
+    entities = _entities()
+    entities[2] = entities[2].model_copy(update={"in_schema": True, "type_iri": iri})
+    entities[1] = entities[1].model_copy(update={"in_schema": False})
+    relationships = _relationships()
+    relationships[1] = relationships[1].model_copy(update={"in_schema": False})
+    _write(harness, "entities", "upsert", entities)
+    _write(harness, "relationships", "upsert", relationships)
+    copies = indexer.read_vector_copies("entities", ["e-depot", "e-buyer", "e-vendor"])
+    annotations = {
+        i: {k: c[k] for k in ("in_schema", "type_iri") if k in c}
+        for i, c in copies.items()
+    }
+    # Written only when set.
+    assert annotations == {
+        "e-depot": {"in_schema": True, "type_iri": iri},
+        "e-buyer": {"in_schema": False},
+        "e-vendor": {},
+    }
+    copies = indexer.read_vector_copies("relationships", ["r-ships", "r-supplies"])
+    assert copies["r-ships"]["in_schema"] is False
+    assert "in_schema" not in copies["r-supplies"]
+    assert "predicate_iri" not in copies["r-ships"]
+
+
 def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:
     # The incremental probe that the vector store still holds the registry's
     # documents: [] without a live index, the stored ids with one.
@@ -633,6 +660,72 @@ def test_incremental_run_turns_date_detection_off_on_an_index_lacking_no_field(
     )
     _write(harness, "claims", "upsert", [_dated_claim("cl2", None, signed="pending")])
     assert harness.stored_ids("claims") >= {"cl1", "cl2"}
+
+
+def _earlier_entities_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, str]:
+    """An entities index as built before the schema annotations were mapped:
+    its search engine client and index name."""
+    indexer = harness.vector_indexer
+    current = indexer._get_entities_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        for name in ("in_schema", "type_iri"):
+            del mapping["mappings"]["properties"][name]
+        return mapping
+
+    monkeypatch.setattr(indexer, "_get_entities_mapping", earlier)
+    _write(harness, "entities", "index", _entities()[:1])
+    monkeypatch.undo()
+    client = indexer.opensearch_client
+    index_name = client.get_index_name_by_alias(
+        indexer._get_name(
+            harness.config.indexing.opensearch.entities_index_prefix, None
+        )
+    )
+    assert index_name
+    assert "in_schema" not in client.get_index_mappings(index_name)["properties"]
+    return client, index_name
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_maps_the_schema_annotations_of_an_earlier_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, index_name = _earlier_entities_index(harness, monkeypatch)
+    harness.vector_indexer.check_index_settings("default")  # the run's preflight
+    properties = client.get_index_mappings(index_name)["properties"]
+    assert properties["in_schema"] == {"type": "boolean"}
+    assert properties["type_iri"] == {"type": "keyword"}
+    annotated = [
+        e.model_copy(update={"in_schema": i == 1}) for i, e in enumerate(_entities())
+    ]
+    _write(harness, "entities", "upsert", annotated[1:])
+    copies = harness.vector_indexer.read_vector_copies(
+        "entities", ["e-vendor", "e-buyer", "e-depot"]
+    )
+    assert {i: c.get("in_schema") for i, c in copies.items()} == {
+        "e-vendor": None,
+        "e-buyer": True,
+        "e-depot": False,
+    }
+    harness.vector_indexer.check_index_settings("default")  # nothing left to add
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_refuses_an_annotation_mapped_as_another_type(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, index_name = _earlier_entities_index(harness, monkeypatch)
+    client.put_index_mapping(
+        index_name, {"properties": {"in_schema": {"type": "keyword"}}}
+    )
+    with pytest.raises(
+        ConfigurationError, match="'in_schema' is mapped as keyword \\(needs boolean\\)"
+    ):
+        harness.vector_indexer.check_index_settings("default")
 
 
 def test_a_date_like_filter_value_does_not_type_its_field(

@@ -28,7 +28,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     check_filter_values,
     opensearch_filter_fields,
 )
-from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.storage.neptune_codec import (
+    NAME_KEY_PROPERTY,
+    entity_properties,
+)
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
@@ -285,6 +288,26 @@ def test_opensearch_filter_fields(config: Config) -> None:
         assert not declared.declares(key), key
 
 
+def test_schema_annotations_are_declared_and_relationships_take_no_type(
+    config: Config,
+) -> None:
+    schema = opensearch_filter_fields(
+        config.processing.translation.target_language.value
+    )
+    for key in ("in_schema", "type_iri"):
+        assert schema["entities"].declares(key), key
+        assert NEPTUNE_ENTITY_FILTER_FIELDS.declares(key), key
+    for key in ("in_schema", "predicate_iri"):
+        assert schema["relationships"].declares(key), key
+    # A relationship's type is not an entity type: ``type: PERSON`` would
+    # empty the relationships index under mix and hybrid.
+    assert not schema["relationships"].declares("type")
+    assert not schema["relationships"].declares("type_iri")
+    assert not schema["entities"].declares("predicate_iri")
+    for kind in ("text_units", "claims", "community_reports"):
+        assert not schema[kind].declares("in_schema"), kind
+
+
 def _indexer(config: Config) -> OpenSearchIndexer:
     indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
     object.__setattr__(indexer, "config", config)
@@ -470,8 +493,6 @@ def test_neptune_filter_fields(config: Config) -> None:
 
 def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None:
     """Every property ``NeptuneIndexer`` writes on an entity is declared."""
-    indexer = NeptuneIndexer.__new__(NeptuneIndexer)
-    object.__setattr__(indexer, "neptune_config", config.indexing.neptune)
     entity = Entity(
         id="e1",
         name="Vendor",
@@ -482,20 +503,13 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
         text_unit_ids=["tu-1"],
         community_ids=["c1"],
         attributes={"region": "north"},
+        in_schema=True,
+        type_iri="https://example.org/onto#Organization",
     )
-    props = indexer._build_vertex_properties(
-        entity,
-        {
-            "name": entity.name,
-            "type": entity.type,
-            "description": entity.description,
-            "rank": entity.rank,
-            "confidence": entity.confidence,
-            "text_unit_ids": entity.text_unit_ids,
-            "community_ids": entity.community_ids,
-        },
-    )
-    assert "attr_region" in props
+    props = entity_properties(entity, config.indexing.neptune.property_max_length)
+    assert {"attr_region", "in_schema", "type_iri"} <= set(props)
+    # name_key is the merge's lookup key, not a filter.
+    props.pop(NAME_KEY_PROPERTY)
     assert all(NEPTUNE_ENTITY_FILTER_FIELDS.declares(k) for k in props)
 
 
