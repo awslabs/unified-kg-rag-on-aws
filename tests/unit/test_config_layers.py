@@ -483,6 +483,15 @@ def test_inconsistent_chunk_sizes_fail_at_load(
         ConfigLoader().load_config()
 
 
+def test_an_empty_source_directory_reads_as_unset(tmp_path: Path) -> None:
+    # The 0.2.3 template left `source_directory:` empty (null).
+    path = tmp_path / "config.yaml"
+    path.write_text("processing:\n  document_parsing:\n    source_directory:\n")
+    config = ConfigLoader(path).load_config()
+    assert config == Config()
+    assert config.processing.document_parsing.source_directory == "source"
+
+
 def test_chunk_sizes_set_in_code_one_at_a_time_in_any_order() -> None:
     chunking = Config().processing.chunking
     chunking.min_chunk_size = 9000  # above the default max until the next line

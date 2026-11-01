@@ -486,7 +486,9 @@ From 0.2.3 (or a `main` checkout since):
    `local`, `otel`, `unstructured`).
 2. Load your config once and fix what it reports: unknown keys (the table
    of removed 0.2.3 keys above), moved keys (the load names the
-   replacement), and removed keys (a WARNING names the replacement). Rename
+   replacement), and removed keys (a WARNING names the replacement). The
+   0.2.3 template's empty `processing.document_parsing.source_directory`
+   loads as unset (#PR). Rename
    environment variables to `UKR__...`, and set any 0.2.3 default you rely
    on (*Defaults* above). Update scripts for the renamed CLI flags and exit
    codes.

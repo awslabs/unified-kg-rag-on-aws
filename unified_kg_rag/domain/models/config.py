@@ -1266,7 +1266,7 @@ class DocumentParsingConfig(BaseModel):
         default="source",
         description=(
             "Directory to load documents from, for library "
-            "callers. run-ingestion requires "
+            "callers (null = the default). run-ingestion requires "
             "--source-directory (or UKR_SOURCE_DIRECTORY) "
             "instead."
         ),
@@ -1299,6 +1299,15 @@ class DocumentParsingConfig(BaseModel):
             "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE)."
         ),
     )
+
+    @field_validator("source_directory", mode="before")
+    @classmethod
+    def _unset_source_directory(cls, value: Any) -> Any:
+        # The 0.2.3 template left the key empty (null); run-ingestion takes
+        # the directory from its flag, so null reads as unset.
+        if value is None:
+            return cls.model_fields["source_directory"].default
+        return value
 
     @field_validator("index_value")
     @classmethod
