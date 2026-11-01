@@ -38,6 +38,7 @@ from unified_kg_rag.application.cli.display import (
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
+    missing_extras_error,
     strategy_roles,
 )
 from unified_kg_rag.application.cli.provider_args import (
@@ -231,7 +232,7 @@ class RAGChainRunner:
             return f"[dim]Index/Label Suffix:[/dim] [gray]{Constants.DEFAULT_SUFFIX.value}[/gray]"
 
     async def run(self) -> None:
-        error = missing_endpoints_error(
+        error = missing_extras_error(self.config) or missing_endpoints_error(
             self.config,
             strategy_roles(self.config, SearchStrategy(self.args.search_strategy)),
             f"search strategy '{self.args.search_strategy}'",

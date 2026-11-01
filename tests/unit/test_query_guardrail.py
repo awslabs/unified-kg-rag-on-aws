@@ -13,7 +13,7 @@ from __future__ import annotations
 import inspect
 import itertools
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import boto3
@@ -57,7 +57,7 @@ from unified_kg_rag.ports import (
     GuardVerdict,
 )
 from unified_kg_rag.ports.guardrail import GroundingCheck, GroundingContext
-from unified_kg_rag.shared import GuardrailError
+from unified_kg_rag.shared import ConfigurationError, GuardrailError
 
 pytestmark = pytest.mark.unit
 
@@ -922,6 +922,36 @@ def test_grounding_requires_the_output_check() -> None:
             check_output=False,
             contextual_grounding={"enabled": True},
         )
+
+
+def _grounding_on_after_check_output_turned_off(config: Config) -> None:
+    # The nested section validates alone: it cannot see check_output.
+    config.aws.bedrock.guardrail.check_output = False
+    config.aws.bedrock.guardrail.contextual_grounding.enabled = True
+
+
+def _check_output_refused_but_applied(config: Config) -> None:
+    config.aws.bedrock.guardrail.contextual_grounding.enabled = True
+    with pytest.raises(ValueError, match="requires check_output"):
+        config.aws.bedrock.guardrail.check_output = False
+
+
+@pytest.mark.parametrize(
+    "change",
+    [_grounding_on_after_check_output_turned_off, _check_output_refused_but_applied],
+)
+def test_the_chain_refuses_grounding_without_the_output_check_set_in_code(
+    change: Callable[[Config], None],
+) -> None:
+    # Either order of setting it in code ends with the grounding check on and
+    # check_output off; the chain refuses to build rather than never running
+    # the check.
+    config = _guarded_config()
+    change(config)
+    assert config.aws.bedrock.guardrail.contextual_grounding.enabled
+    assert not config.aws.bedrock.guardrail.check_output
+    with pytest.raises(ConfigurationError, match="requires check_output"):
+        GraphRAGChain(config=config, model_factory=_Factory())
 
 
 def test_adapter_accepts_the_port_call_shape() -> None:

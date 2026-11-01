@@ -268,6 +268,16 @@ class Providers:
 # Every builder imports its adapter on first use: selecting a provider never
 # imports another provider's dependencies (a local run loads no boto3).
 
+# The model server clients come from the [local] extra; the cross-encoder
+# reranker and the tiktoken counter degrade without it, so only these kinds
+# declare it.
+_LOCAL_EXTRA = (
+    "the local extra: uv sync --extra local (or pip install -e '.[local]' in "
+    "a source checkout)"
+)
+_OPENAI_CLIENT = ("langchain_openai", _LOCAL_EXTRA)
+_OLLAMA_CLIENT = ("langchain_ollama", _LOCAL_EXTRA)
+
 
 @register_provider(ProviderRole.LLM, BEDROCK)
 def _bedrock_llm(providers: Providers) -> LLMFactoryPort:
@@ -305,7 +315,7 @@ def _bedrock_token_counter(providers: Providers) -> TokenCounterFactory:
     )
 
 
-@register_provider(ProviderRole.LLM, OPENAI_COMPATIBLE)
+@register_provider(ProviderRole.LLM, OPENAI_COMPATIBLE, requires=_OPENAI_CLIENT)
 def _openai_compatible_llm(providers: Providers) -> LLMFactoryPort:
     from unified_kg_rag.adapters.local.models import (
         OpenAICompatibleLanguageModelFactory,
@@ -314,7 +324,7 @@ def _openai_compatible_llm(providers: Providers) -> LLMFactoryPort:
     return OpenAICompatibleLanguageModelFactory(providers.config)
 
 
-@register_provider(ProviderRole.LLM, OLLAMA)
+@register_provider(ProviderRole.LLM, OLLAMA, requires=_OLLAMA_CLIENT)
 def _ollama_llm(providers: Providers) -> LLMFactoryPort:
     from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 
@@ -332,7 +342,7 @@ def _local_token_counter(providers: Providers) -> TokenCounterFactory:
     return factory
 
 
-@register_provider(ProviderRole.EMBEDDING, OPENAI_COMPATIBLE)
+@register_provider(ProviderRole.EMBEDDING, OPENAI_COMPATIBLE, requires=_OPENAI_CLIENT)
 def _openai_compatible_embedding(providers: Providers) -> EmbeddingFactoryPort:
     from unified_kg_rag.adapters.local.embeddings import (
         OpenAICompatibleEmbeddingFactory,
@@ -341,7 +351,7 @@ def _openai_compatible_embedding(providers: Providers) -> EmbeddingFactoryPort:
     return OpenAICompatibleEmbeddingFactory(providers.config)
 
 
-@register_provider(ProviderRole.EMBEDDING, OLLAMA)
+@register_provider(ProviderRole.EMBEDDING, OLLAMA, requires=_OLLAMA_CLIENT)
 def _ollama_embedding(providers: Providers) -> EmbeddingFactoryPort:
     from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
 

@@ -49,6 +49,7 @@ from unified_kg_rag.application.cli.display import (
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
+    missing_extras_error,
     strategy_roles,
 )
 from unified_kg_rag.application.cli.provider_args import (
@@ -713,7 +714,7 @@ def main() -> None:
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 
-        error = missing_endpoints_error(
+        error = missing_extras_error(config) or missing_endpoints_error(
             config,
             {
                 role

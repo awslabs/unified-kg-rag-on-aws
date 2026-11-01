@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models.config import (
     MOVED_KEYS,
     REMOVED_KEYS,
     merge_over,
+    moved_key_hint,
     removed_keys,
 )
 from unified_kg_rag.domain.models.provider_config import SQLITE
@@ -157,7 +158,8 @@ def _unknown_variable(name: str) -> str:
     the variable to set instead."""
     for old, new in MOVED_KEYS.items():
         if name.upper() == env_var(old):
-            return f"environment variable {name} (moved: set {env_var(new)})"
+            hint = moved_key_hint(old, env_var(new))
+            return f"environment variable {name} (moved: set {hint})"
     settings = env_var("indexing.opensearch.index_settings")
     nested = f"{settings}__INDEX__"
     if name.upper().startswith(nested):

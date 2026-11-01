@@ -42,8 +42,12 @@ The rules:
   (``_DYNAMIC_IMPORTERS``) import a package module by a name string: any
   other dynamic import would be an edge a reader cannot see. A dynamic
   import whose name the scan cannot read (a variable, a concatenation, a
-  relative name, an f-string that could name a package module) is allowed
-  only where ``_RUNTIME_NAMED_IMPORTS`` says what it imports.
+  relative name, an f-string that could name a package module), and code
+  run or loaded by other means (``exec``, ``spec_from_file_location``), is
+  allowed only where ``_RUNTIME_NAMED_IMPORTS`` says what it imports. The
+  import functions are recognised under an alias (``from importlib import
+  import_module as load``) and through ``getattr(importlib,
+  "import_module")``, their name given positionally or as ``name=``.
 
 The scan sees edges, not what they load at run time: an allowed module can
 pass a backend on (an adapter module importing a store adapter, imported by
@@ -138,6 +142,11 @@ _DYNAMIC_IMPORT_CALLS = {"import_module", "__import__", "resolve_name", "find_sp
 # The calls that import the module they name (find_spec of a name in a
 # variable only looks an optional extra up).
 _NAME_IMPORTING_CALLS = _DYNAMIC_IMPORT_CALLS - {"find_spec"}
+# Calls that run or load code the scan cannot follow, whatever they are given
+# (``exec`` only as the builtin: other objects have ``exec`` methods).
+_CODE_LOADING_CALLS = {"exec", "spec_from_file_location"}
+# The modules those functions come from, for ``from <module> import f as g``.
+_DYNAMIC_IMPORT_MODULES = {"importlib", "importlib.util", "pkgutil", "builtins"}
 # Module -> what its dynamic imports of a name the scan cannot read import.
 _RUNTIME_NAMED_IMPORTS: dict[str, str] = {
     "adapters.local.models": (
@@ -190,16 +199,58 @@ def _is_module(root: Path, name: str) -> bool:
     return path.with_suffix(".py").is_file() or path.is_dir()
 
 
-def _dynamic_target(node: ast.Call) -> str | None:
+def _call_aliases(tree: ast.AST) -> dict[str, str]:
+    """Local name -> the dynamic import function it is bound to
+    (``from importlib import import_module as load``)."""
+    functions = _DYNAMIC_IMPORT_CALLS | _CODE_LOADING_CALLS
+    return {
+        alias.asname or alias.name: alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module in _DYNAMIC_IMPORT_MODULES
+        for alias in node.names
+        if alias.name in functions
+    }
+
+
+def _called_function(func: ast.expr, aliases: dict[str, str]) -> str:
+    """The function name a call's ``func`` names: an attribute, a name (or
+    what its alias is bound to), or ``getattr(module, "<literal>")``."""
+    if isinstance(func, ast.Attribute):
+        if func.attr == "exec":
+            # Only the builtin: other objects have exec methods.
+            builtin = isinstance(func.value, ast.Name) and func.value.id == "builtins"
+            return func.attr if builtin else ""
+        return func.attr
+    if isinstance(func, ast.Name):
+        return aliases.get(func.id, func.id)
+    if (
+        isinstance(func, ast.Call)
+        and isinstance(func.func, ast.Name)
+        and func.func.id == "getattr"
+        and len(func.args) >= 2
+        and isinstance(func.args[1], ast.Constant)
+        and isinstance(func.args[1].value, str)
+    ):
+        return func.args[1].value
+    return ""
+
+
+def _dynamic_target(node: ast.Call, aliases: dict[str, str]) -> str | None:
     """The module a dynamic import call names: a literal (``resolve_name``'s
     without its ``:attribute``), or an f-string's literal head up to its last
     dot; ``_UNREAD`` when the name could be a package module the scan cannot
-    read; None for other calls and for names outside the package."""
-    func = node.func
-    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-    if name not in _DYNAMIC_IMPORT_CALLS or not node.args:
+    read, and for code run or loaded by other means; None for other calls
+    and for names outside the package."""
+    name = _called_function(node.func, aliases)
+    if name in _CODE_LOADING_CALLS:
+        return _UNREAD
+    if name not in _DYNAMIC_IMPORT_CALLS:
         return None
-    arg = node.args[0]
+    arg = next(
+        iter(node.args or [k.value for k in node.keywords if k.arg == "name"]), None
+    )
+    if arg is None:  # the name in *args or **kwargs
+        return _UNREAD if name in _NAME_IMPORTING_CALLS else None
     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
         if arg.value.startswith("."):
             return _UNREAD  # relative to a package given at run time
@@ -211,7 +262,7 @@ def _dynamic_target(node: ast.Call) -> str | None:
             if text.startswith(f"{PACKAGE}."):
                 return text.rpartition(".")[0] or None
             # f"unstructured.partition.{x}" names no package module.
-            if not PACKAGE.startswith(text) and "." in text:
+            if "." in text:
                 return None
     return _UNREAD if name in _NAME_IMPORTING_CALLS else None
 
@@ -222,10 +273,11 @@ def package_imports(root: Path = _PACKAGE_ROOT) -> Iterator[Import]:
         module = _module_name(py_file, root)
         is_package = py_file.name == "__init__.py"
         tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        aliases = _call_aliases(tree)
         for node in ast.walk(tree):
             dynamic = False
             if isinstance(node, ast.Call):
-                if (literal := _dynamic_target(node)) is None:
+                if (literal := _dynamic_target(node, aliases)) is None:
                     continue
                 if literal == _UNREAD:
                     yield Import(module, _UNREAD, (), node.lineno, dynamic=True)
@@ -551,6 +603,60 @@ def test_dynamic_imports_are_flagged(
         assert len(found) == 1 and rule in found[0], found
 
 
+_BEDROCK = "'unified_kg_rag.adapters.aws.bedrock'"
+
+
+@pytest.mark.parametrize(
+    ("code", "rule"),
+    [
+        # Under an alias.
+        (
+            f"from importlib import import_module as load\nload({_BEDROCK})",
+            "a dynamic import; import it statically",
+        ),
+        ("from importlib import import_module as load\nload(name)", "cannot read"),
+        ("from builtins import __import__ as imp\nimp(name)", "cannot read"),
+        # Through getattr.
+        (
+            f"getattr(importlib, 'import_module')({_BEDROCK})",
+            "a dynamic import; import it statically",
+        ),
+        ("getattr(importlib, '__import__')(name)", "cannot read"),
+        # The name as a keyword, or not given at all.
+        (
+            f"importlib.import_module(name={_BEDROCK})",
+            "a dynamic import; import it statically",
+        ),
+        ("importlib.import_module(name=name)", "cannot read"),
+        ("importlib.import_module(*names)", "cannot read"),
+        # Code run or loaded by other means.
+        (f"exec('import ' + {_BEDROCK})", "cannot read"),
+        ("builtins.exec(code)", "cannot read"),
+        ("importlib.util.spec_from_file_location('m', path)", "cannot read"),
+        (
+            "from importlib.util import spec_from_file_location as spec\n"
+            "spec('m', path)",
+            "cannot read",
+        ),
+        # Not an import.
+        ("cursor.exec(statement)", None),
+        ("from importlib.util import find_spec as has\nhas(name)", None),
+        ("getattr(importlib, 'reload')(module)", None),
+    ],
+)
+def test_disguised_dynamic_imports_are_flagged(
+    tmp_path: Path, code: str, rule: str | None
+) -> None:
+    path = tmp_path / "domain" / "x.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(f"import importlib\n{code}\n")
+    found = violations(tmp_path)
+    if rule is None:
+        assert found == []
+    else:
+        assert len(found) == 1 and rule in found[0], found
+
+
 @pytest.mark.parametrize(
     ("source", "statement", "rule"),
     [
@@ -691,6 +797,14 @@ def test_injected_modules_load_no_store_backend() -> None:
     assert not any(".application.cli" in m or m.endswith("bootstrap") for m in modules)
     loaded = _loaded_by(modules)
     assert not loaded, f"backends loaded by injected modules: {loaded}"
+
+
+def test_every_injected_package_contributes_a_module() -> None:
+    # A renamed or emptied package would drop out of the runtime check
+    # silently.
+    modules = _injected_modules()
+    for package in _INJECTED:
+        assert any(m.startswith(f"{PACKAGE}.{package}") for m in modules), package
 
 
 def test_the_runtime_check_sees_a_backend_passed_on() -> None:

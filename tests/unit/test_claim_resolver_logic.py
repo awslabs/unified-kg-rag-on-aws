@@ -647,3 +647,8 @@ def test_an_earlier_reading_id_is_the_id_resolved_claim_id_gave_it(
     claim = _resolved_from(statement, object_id)
     stale = resolved_claim_id(claim.model_copy(update={"end_date": "2025-01-01"}))
     assert stale in earlier_claim_ids(claim, [statement])
+
+
+@pytest.mark.parametrize("text", ["15 January, 2024", "15 Jan, 2024", "15 Jan., 2024"])
+def test_a_day_month_date_with_a_comma_is_a_calendar_date(text: str) -> None:
+    assert claim_date_value(text) == "2024-01-15"

@@ -29,7 +29,12 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ENV_PREFIX
-from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS, Config
+from unified_kg_rag.domain.models.config import (
+    MOVED_KEY_NOTES,
+    MOVED_KEYS,
+    REMOVED_KEYS,
+    Config,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = REPO_ROOT / "docs" / "configuration.md"
@@ -252,6 +257,10 @@ def render() -> str:
         "| Former key | Now |",
         "|---|---|",
         *[f"| `{old}` | `{new}` |" for old, new in MOVED_KEYS.items()],
+        "",
+        "Each takes the value of the key it replaces, except:",
+        "",
+        *[f"- `{old}`: {_cell(note)}." for old, note in MOVED_KEY_NOTES.items()],
         "",
         "## Removed keys",
         "",

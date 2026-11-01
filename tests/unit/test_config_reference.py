@@ -55,12 +55,19 @@ def test_reference_lists_every_config_leaf() -> None:
 
 
 def test_reference_lists_every_moved_and_removed_key() -> None:
-    from unified_kg_rag.domain.models.config import MOVED_KEYS, REMOVED_KEYS
+    from unified_kg_rag.domain.models.config import (
+        MOVED_KEY_NOTES,
+        MOVED_KEYS,
+        REMOVED_KEYS,
+    )
 
     text = _generator().render()
     moved = text.split("## Moved keys", 1)[1].split("## Removed keys", 1)[0]
     removed = text.split("## Removed keys", 1)[1]
     for old, new in MOVED_KEYS.items():
         assert f"| `{old}` | `{new}` |" in moved, old
+    for old, note in MOVED_KEY_NOTES.items():
+        assert old in MOVED_KEYS
+        assert f"- `{old}`: {note}." in moved, old
     for old in REMOVED_KEYS:
         assert f"| `{old}` |" in removed, old

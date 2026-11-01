@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +215,33 @@ def test_a_tuned_old_retry_key_fails_naming_its_replacement(
         ConfigLoader(config_file).load_config()
     monkeypatch.setenv(env_var(old), "2")
     with pytest.raises(ConfigurationError, match=f"moved: set {env_var(new)}"):
+        ConfigLoader().load_config()
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "note"),
+    [
+        # 0.2.3 passed it to a pipeline setting nothing read: model calls
+        # made BatchProcessor's 5 attempts whatever it said.
+        ("processing.max_retries", "retry.max_attempts", "had no effect"),
+        # 0.2.3's Neptune indexer made max_retries + 1 attempts.
+        ("indexing.neptune.max_retries", "retry.graph_store_max_attempts", "N+1"),
+    ],
+)
+def test_a_0_2_3_retry_count_fails_saying_how_to_convert_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: str, note: str
+) -> None:
+    assert MOVED_KEYS[old] == new
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(old, 3)))
+    with pytest.raises(
+        ConfigurationError, match=rf"{old} -> {new} \(.*{re.escape(note)}"
+    ):
+        ConfigLoader(config_file).load_config()
+    monkeypatch.setenv(env_var(old), "3")
+    with pytest.raises(
+        ConfigurationError, match=rf"moved: set {env_var(new)} \(.*{re.escape(note)}"
+    ):
         ConfigLoader().load_config()
 
 

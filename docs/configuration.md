@@ -298,7 +298,7 @@ Document parsing configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `source_directory` | string \| path | `"source"` | Directory to load documents from, for library callers. run-ingestion requires --source-directory (or UKR_SOURCE_DIRECTORY) instead. |
+| `source_directory` | string \| path | `"source"` | Directory to load documents from, for library callers (null = the default). run-ingestion requires --source-directory (or UKR_SOURCE_DIRECTORY) instead. |
 | `target_directory` | string \| path \| null | `null` | Directory to export each parsed document to as <stem>.json for inspection (run-ingestion --output-directory). null = no export. Must not be the source directory. |
 | `index_value` | string \| null | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named <prefix>-<index_value>. null = 'default'. Query the corpus with the same value as run-rag / run-eval --suffix. run-ingestion has no flag for it: use one config file per tenant or corpus version. Lowercase letters, digits, '-' and '_'. |
 | `source_scope` | string \| null | `null` | Identity of the corpus source for incremental indexing: a run only treats registry documents of its own index suffix AND source scope as deleted. None = the resolved source directory. Set it when the local directory is a staging copy, e.g. the S3 URI a container syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). |
@@ -905,6 +905,13 @@ These keys are refused at load with the key that replaced them.
 | `indexing.neptune.retry_delay_seconds` | `retry.base_delay_seconds` |
 | `search.store_max_attempts` | `retry.query_store_max_attempts` |
 | `evaluation.ragas_max_attempts` | `retry.judge_max_attempts` |
+| `processing.max_retries` | `retry.max_attempts` |
+| `indexing.neptune.max_retries` | `retry.graph_store_max_attempts` |
+
+Each takes the value of the key it replaces, except:
+
+- `processing.max_retries`: it had no effect; each model call made 5 attempts, the retry.max_attempts default.
+- `indexing.neptune.max_retries`: it counted retries, so max_retries N is graph_store_max_attempts N+1.
 
 ## Removed keys
 

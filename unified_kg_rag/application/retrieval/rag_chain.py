@@ -101,6 +101,7 @@ from unified_kg_rag.ports.guardrail import (
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
+    ConfigurationError,
     InvalidFilterError,
     LanguageModelError,
     StoreConnectionError,
@@ -334,6 +335,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> None:
         super().__init__()
         self.config = config
+        try:
+            config.aws.bedrock.guardrail.check_contextual_grounding()
+        except ValueError as e:
+            raise ConfigurationError(f"aws.bedrock.guardrail: {e}") from e
         # Before any model is built, so the factory attaches the tracing
         # callback (no-op unless observability.enabled).
         configure_observability(config.observability)

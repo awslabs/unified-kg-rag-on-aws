@@ -544,6 +544,21 @@ MOVED_KEYS: dict[str, str] = {
     "indexing.neptune.retry_delay_seconds": "retry.base_delay_seconds",
     "search.store_max_attempts": "retry.query_store_max_attempts",
     "evaluation.ragas_max_attempts": "retry.judge_max_attempts",
+    # The 0.2.3 retry counts, which count otherwise (MOVED_KEY_NOTES).
+    "processing.max_retries": "retry.max_attempts",
+    "indexing.neptune.max_retries": "retry.graph_store_max_attempts",
+}
+
+# Moved key -> what to know when converting its value (a key whose
+# replacement counts the same needs none).
+MOVED_KEY_NOTES: dict[str, str] = {
+    "processing.max_retries": (
+        "it had no effect; each model call made 5 attempts, the "
+        "retry.max_attempts default"
+    ),
+    "indexing.neptune.max_retries": (
+        "it counted retries, so max_retries N is graph_store_max_attempts N+1"
+    ),
 }
 
 
@@ -603,9 +618,19 @@ def _sets(data: Any, path: str) -> bool:
     return node is not _ABSENT
 
 
+def moved_key_hint(old: str, new: str) -> str:
+    """``new``, with what to know when converting ``old``'s value, if any."""
+    note = MOVED_KEY_NOTES.get(old)
+    return f"{new} ({note})" if note else new
+
+
 def moved_keys(data: Any) -> list[str]:
     """``"old -> new"`` for each moved setting ``data`` sets."""
-    return [f"{old} -> {new}" for old, new in MOVED_KEYS.items() if _sets(data, old)]
+    return [
+        f"{old} -> {moved_key_hint(old, new)}"
+        for old, new in MOVED_KEYS.items()
+        if _sets(data, old)
+    ]
 
 
 def removed_keys(data: Any) -> list[str]:
@@ -718,14 +743,27 @@ class GuardrailConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_contextual_grounding(self) -> "GuardrailConfig":
-        # The grounding check rides on the answer's check: without it, an
-        # enabled check would silently never run.
+        self.check_contextual_grounding()
+        return self
+
+    def check_contextual_grounding(self) -> None:
+        """Refuse an enabled grounding check without ``check_output``.
+
+        The grounding check rides on the answer's check: without it, an
+        enabled check would silently never run. Checked at load and on
+        assignment here, and again by the query chain when it is built: a
+        refused assignment stays applied, and ``contextual_grounding.enabled``
+        set in code is validated by its own section, which cannot see
+        ``check_output``.
+
+        Raises:
+            ValueError: The grounding check is on and ``check_output`` off.
+        """
         if self.contextual_grounding.enabled and not self.check_output:
             raise ValueError(
                 "contextual_grounding.enabled requires check_output: the "
                 "grounding check runs on the answer's guardrail check"
             )
-        return self
 
 
 class TransientRetryConfig(BaseModel):
@@ -1228,7 +1266,7 @@ class DocumentParsingConfig(BaseModel):
         default="source",
         description=(
             "Directory to load documents from, for library "
-            "callers. run-ingestion requires "
+            "callers (null = the default). run-ingestion requires "
             "--source-directory (or UKR_SOURCE_DIRECTORY) "
             "instead."
         ),
@@ -1261,6 +1299,15 @@ class DocumentParsingConfig(BaseModel):
             "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE)."
         ),
     )
+
+    @field_validator("source_directory", mode="before")
+    @classmethod
+    def _unset_source_directory(cls, value: Any) -> Any:
+        # The 0.2.3 template left the key empty (null); run-ingestion takes
+        # the directory from its flag, so null reads as unset.
+        if value is None:
+            return cls.model_fields["source_directory"].default
+        return value
 
     @field_validator("index_value")
     @classmethod
@@ -1367,10 +1414,12 @@ class ChunkingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_chunk_sizes(self, info: ValidationInfo) -> "ChunkingConfig":
-        if info.field_name is not None:
+        if info.field_name in type(self).model_fields:
             # An assignment (one field at a time): the sizes are checked
             # together where they are given together, so code can set
-            # several in any order.
+            # several in any order. Validated as a nested section, the
+            # field name is the parent's (``chunking``) and the sizes are
+            # checked.
             return self
         if self.min_chunk_size >= self.max_chunk_size:
             raise ValueError("min_chunk_size must be less than max_chunk_size")

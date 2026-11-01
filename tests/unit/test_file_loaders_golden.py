@@ -210,6 +210,21 @@ def test_pdf_page_labels_are_read_once_per_file(corpus: Path, monkeypatch) -> No
     assert len(reads) == 1
 
 
+def test_pdf_page_labels_are_the_documents_own(corpus: Path, tmp_path: Path) -> None:
+    # A /PageLabels tree (front matter in roman numerals) is what a page's
+    # label says, not its position.
+    import pypdf
+
+    writer = pypdf.PdfWriter(clone_from=pypdf.PdfReader(corpus / "multi.pdf"))
+    writer.set_page_label(0, 1, style="/r")
+    writer.set_page_label(2, 2, style="/D", start=1)
+    path = tmp_path / "labelled.pdf"
+    with path.open("wb") as f:
+        writer.write(f)
+    pages = PdfFileLoader(path).load()
+    assert [page.metadata["page_label"] for page in pages] == ["i", "ii", "1"]
+
+
 def test_csv_rows_follow_dictreader_shapes(corpus: Path) -> None:
     rows = CsvFileLoader(corpus / "quotes.csv").load()
     assert [row.metadata["row"] for row in rows] == [0, 1, 2, 3, 4]
