@@ -35,6 +35,11 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     sum_weights,
     text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    document_first,
+    merged_iri,
+    seed_only,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Constants,
@@ -43,7 +48,10 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
+
+logger = get_logger(__name__)
 
 # Attributes a record's items take from their text unit (the index suffix and
 # the document filters), not from what the unit says: stored records drop
@@ -57,6 +65,10 @@ def _union_ids(values: list[Any]) -> list[str]:
     )
 
 
+def _max_confidence(values: list[Any]) -> float:
+    return max(value if value is not None else 0.0 for value in values)
+
+
 def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     """Merge entity statements by id (mutates the first of each id).
 
@@ -64,30 +76,61 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     unioned, the confidence is the max (monotonic in evidence), and the type
     and the name (the ids' names differ in case only) the most frequent of
     the statements (the smallest on a tie, whatever the order of the
-    statements).
+    statements). The IRI is the smallest one given.
+
+    Documents first: the type, name and confidence come from the statements
+    of document units when there are any (the type, when one of them gives
+    one), from a seed graph's only otherwise (``seed_graph.document_first``).
+    Without seed units, every statement counts.
     """
     field_mergers: dict[str, Callable[[list[Any]], Any]] = {
         "description": merge_descriptions,
         "text_unit_ids": _union_ids,
-        "confidence": lambda values: max(
-            value if value is not None else 0.0 for value in values
-        ),
+        "confidence": _max_confidence,
         "attributes": union_all_document_filters,
     }
-    spellings: dict[str, Counter[str]] = defaultdict(Counter)
+    statements: dict[str, list[Entity]] = defaultdict(list)
     for entity in entities:
-        if entity.id is not None and entity.name:
-            spellings[entity.id][entity.name] += 1
+        if entity.id is not None:
+            statements[entity.id].append(entity)
+    # The statements' own values, before the merge mutates the first one.
+    deciding = {
+        entity_id: [(e.name, e.confidence) for e in document_first(group)]
+        for entity_id, group in statements.items()
+    }
+    iris = {
+        entity_id: merged_iri(e.iri for e in group)
+        for entity_id, group in statements.items()
+    }
     merged = BaseProcessor._merge_items(
         items=entities,
         item_name="Entity",
         field_mergers=field_mergers,
         frequency_fields=["type"],
         describe_item=lambda e: f"Entity '{e.name}'",
+        vote_tier=lambda e: int(seed_only(e.text_unit_ids)),
     )
+    conflicting = 0
     for entity in merged:
-        if names := spellings.get(entity.id or ""):
+        group = statements.get(entity.id or "")
+        if not group:
+            continue
+        names = Counter(name for name, _ in deciding[entity.id] if name)
+        if names:
             entity.name = min(names, key=lambda n: (-names[n], n))
+        if len(deciding[entity.id]) < len(group):
+            # Documents decide: the seed statements' confidence is left out.
+            entity.confidence = _max_confidence(
+                [confidence for _, confidence in deciding[entity.id]]
+            )
+        entity.iri, conflict = iris[entity.id]
+        conflicting += conflict
+    if conflicting:
+        logger.info(
+            "Kept the smallest IRI of %d entities stated with several "
+            "(entities_with_conflicting_iris)",
+            conflicting,
+        )
     return merged
 
 
@@ -193,6 +236,8 @@ def _portable(item: Entity | Relationship | Claim) -> dict[str, Any]:
         "in_schema",
         "type_iri",
         "predicate_iri",
+        # Derived at indexing from the text units, like the annotations.
+        "source_kinds",
     }
     return item.model_dump(
         mode="json", exclude=excluded & set(type(item).model_fields)

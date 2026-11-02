@@ -10,8 +10,8 @@ contributed. Here the content of every item a run touches is recomputed from
 the records of the text units it cites now, by the full build's own code: the
 records are merged (``merge_contributions``) and resolved (``GraphResolver``,
 ``ClaimResolver``) as a full build does, and each stored item takes the
-name, type, description, confidence, attributes (and, for a claim, status
-and source text) of the resolved item it corresponds to.
+name, type, description, confidence, IRI, attributes (and, for a claim,
+status and source text) of the resolved item it corresponds to.
 
 An item cites every text unit any of its member names is stated in, so the
 records of its own text units hold all of its contributions: the result is
@@ -324,6 +324,7 @@ def derive(
                         "type": match.type,
                         "description": match.description,
                         "confidence": match.confidence,
+                        "iri": match.iri,
                         "text_unit_ids": _ordered_units(
                             (u for e in group for u in e.text_unit_ids or []),
                             match.text_unit_ids or [],

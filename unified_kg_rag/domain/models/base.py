@@ -39,9 +39,11 @@ class SchemaAnnotated(BaseModel):
     (``domain.ingestion.schema_annotation``); with no schema in effect they
     are ``None`` and a dump leaves them out, so the stores, the extraction
     records and the caches hold what they held before the fields existed.
+    The seed-graph fields (an entity's ``iri``, ``source_kinds``) are left
+    out the same way: an item no seed graph states dumps as before.
     """
 
-    # The annotation fields a dump leaves out while they are None.
+    # The fields a dump leaves out while they are None.
     _annotation_fields: ClassVar[tuple[str, ...]] = ()
 
     @model_serializer(mode="wrap")

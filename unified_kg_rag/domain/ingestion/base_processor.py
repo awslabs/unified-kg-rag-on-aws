@@ -102,6 +102,28 @@ def _union_filters(
     }
 
 
+# Attribute namespacing a seed statement's properties (a dict), so a seed key
+# never overwrites an attribute extraction stated. Merged per key, a later
+# map winning, where other attributes merge whole.
+SEED_PROPERTIES_ATTRIBUTE = "seed_properties"
+
+
+def _with_seed_properties(
+    merged: dict[str, Any] | None, attribute_maps: Iterable[dict[str, Any] | None]
+) -> dict[str, Any] | None:
+    """``merged`` with the ``seed_properties`` of ``attribute_maps`` merged
+    per key (a later map winning); ``merged`` itself when none has any."""
+    properties = [
+        value
+        for attrs in attribute_maps
+        if isinstance(value := (attrs or {}).get(SEED_PROPERTIES_ATTRIBUTE), dict)
+    ]
+    if not properties:
+        return merged
+    combined = {key: v for value in properties for key, v in value.items()}
+    return {**(merged or {}), SEED_PROPERTIES_ATTRIBUTE: combined}
+
+
 def union_document_filters(
     current: dict[str, Any] | None, new: dict[str, Any] | None
 ) -> dict[str, Any] | None:
@@ -120,23 +142,28 @@ def union_all_document_filters(
     belongs under each of their documents' filter values (see
     ``_union_filters``). Every other attribute is left as the first map has
     it. Without this the merged item kept the filters of whichever instance the
-    merge happened to keep.
+    merge happened to keep. A seed graph's ``seed_properties`` are merged per
+    key too (:data:`SEED_PROPERTIES_ATTRIBUTE`), so a document statement
+    first in line does not drop them.
     """
     key = Constants.FILTERS.value
     current = attribute_maps[0]
-    if not any(
+    if any(
         isinstance(filters, dict) and filters
         for filters in ((attrs or {}).get(key) for attrs in attribute_maps[1:])
     ):
-        return current
-    return {**(current or {}), key: _union_filters(attribute_maps)}
+        current = {**(current or {}), key: _union_filters(attribute_maps)}
+    if len(attribute_maps) > 1:
+        current = _with_seed_properties(current, attribute_maps)
+    return current
 
 
 def merge_attributes(
     attribute_maps: Iterable[dict[str, Any] | None],
 ) -> dict[str, Any] | None:
     """Union attribute maps, a later map winning on a shared key, except the
-    document ``filters``, whose values are unioned (``_union_filters``).
+    document ``filters``, whose values are unioned (``_union_filters``), and
+    the ``seed_properties``, merged per key.
 
     The one attribute rule of graph resolution and the cross-run merge, so a
     full build over N items and an incremental merge of them two at a time
@@ -151,7 +178,7 @@ def merge_attributes(
     filters = _union_filters(present)
     if filters is not None:
         merged[Constants.FILTERS.value] = filters
-    return merged
+    return _with_seed_properties(merged, present)
 
 
 def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
@@ -454,6 +481,7 @@ class BaseProcessor:
         field_mergers: dict[str, Callable[[list[Any]], Any]],
         frequency_fields: list[str] | None = None,
         describe_item: Callable[[T], str] | None = None,
+        vote_tier: Callable[[T], int] | None = None,
     ) -> list[T]:
         """Merge items by id into the first of each id (mutated).
 
@@ -462,6 +490,10 @@ class BaseProcessor:
         values that are not ``None``. Called once per id with a later value,
         so merging a hub's thousands of statements is linear in them, not
         quadratic (a pairwise fold re-merged the growing result each time).
+
+        A frequency field takes the most frequent value of the items of the
+        lowest ``vote_tier`` that give one (every item is one tier without
+        it): documents' statements outvote a seed graph's that way.
         """
         if not items:
             return []
@@ -481,6 +513,8 @@ class BaseProcessor:
             first = group[0]
             merged_items_map[item_id] = first
             merge_counts[item_id] = len(group)
+            # Before the field mergers change the first item.
+            item_tiers = [vote_tier(i) if vote_tier else 0 for i in group]
             if len(group) > 1:
                 for field, merger in field_mergers.items():
                     later = [
@@ -500,10 +534,11 @@ class BaseProcessor:
                 # applies when the attribute is missing, not when it is None.
                 # An empty value (a missing or empty element) is no vote: it
                 # stays only when no statement gives one.
-                counts: dict[str, int] = defaultdict(int)
-                for i in group:
+                tiers: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+                for i, tier in zip(group, item_tiers, strict=True):
                     if value := (getattr(i, field, "") or "").lower():
-                        counts[value] += 1
+                        tiers[tier][value] += 1
+                counts = tiers[min(tiers)] if tiers else {}
                 # The most frequent value, the smallest on a tie: the order
                 # of the group (of the text units) differs between corpora
                 # and namespaces of the same text.

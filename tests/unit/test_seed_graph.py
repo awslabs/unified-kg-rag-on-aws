@@ -590,6 +590,7 @@ def test_the_record_uses_extraction_ids_and_survives_the_store() -> None:
     acme = next(e for e in record.entities if e.name == "Acme Supplies")
     assert acme.id == BaseProcessor._generate_entity_id("acme supplies")
     assert acme.type == "VENDOR"
+    assert acme.iri == EX + "acme"
     assert acme.attributes == {
         "seed_properties": {"country": "DE"},
         "index": "tenant",
