@@ -423,7 +423,7 @@ Library API (Python callers and custom backends).
   and SQLite registries implement them (#488). A custom backend that
   rewrites schema annotations may override `holds_any_item(suffix)` on
   `GraphIndexer` / `VectorIndexer` with a bounded read; the default lists
-  the items through `read_schema_annotations` (#PR).
+  the items through `read_schema_annotations` (#490).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -692,7 +692,7 @@ From 0.2.3 (or a `main` checkout since):
   namespace whose registry holds none of its documents (a lost or replaced
   registry) records its digest without reading only when the stores hold
   no item of the suffix either, and the pipeline's own indexers no longer
-  hide that a store cannot list its items (#PR).
+  hide that a store cannot list its items (#490).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
@@ -707,7 +707,7 @@ From 0.2.3 (or a `main` checkout since):
   file silently: `--schema-out` or `--output-path` naming the
   `--config-path` file or the schema file the config loads exits 2, even
   with `--force`, and so does either naming an existing file unless
-  `--force` is given (#478, #480, #483, #PR).
+  `--force` is given (#478, #480, #483, #490).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -831,7 +831,7 @@ Queries and retrieval.
   boolean field takes no number (`in_schema: 1`), a numeric one no boolean
   (`rank: true`) and an integer one no fractional number (`level: 2.5`;
   `2.0` is `2`). The errors name the value as JSON does (`true`, `null`)
-  (#479, #483, #PR).
+  (#479, #483, #490).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
