@@ -17,7 +17,9 @@ cache), so no orchestrator imports a vendor binding.
 ``resolve_extraction_schema`` loads the extraction schema a registered
 source names (``processing.graph_extraction.schema_source``) once, into the
 inline keys of a copy of the config, so every stage, prompt and cache key
-reads the schema from the inline keys alone.
+reads the schema from the inline keys alone. ``load_seed_graphs`` then
+loads the seed graphs (``processing.seed_graphs``) through their registered
+sources and converts each against that schema into virtual documents.
 
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
@@ -46,11 +48,24 @@ from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
 )
+from unified_kg_rag.adapters.seed_sources import (
+    COMMON_OPTIONS,
+    SeedSourceContext,
+    SeedSourceOptions,
+    get_seed_source,
+    seed_options,
+)
 from unified_kg_rag.application.config import validation_summary
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SeedConversion,
+    SeedConversionSettings,
+    convert_seed,
+)
 from unified_kg_rag.domain.models import Config, PipelineConfig
 from unified_kg_rag.domain.models.config import (
     INLINE_SCHEMA_SOURCE,
     SchemaSourceConfig,
+    SeedGraphConfig,
     merge_over,
 )
 from unified_kg_rag.ports.guardrail import ContentGuardPort
@@ -219,6 +234,112 @@ def resolve_extraction_schema(
         schema.digest[:12],
     )
     return resolved
+
+
+def _session_factory(
+    providers: Providers | None, boto_session: boto3.Session | None
+) -> Callable[[], boto3.Session] | None:
+    """The session a source's AWS calls use: the bundle's, else
+    ``boto_session``, else None (one built from ``config.aws``)."""
+    if providers is not None:
+        return lambda: providers.boto_session
+    if boto_session is not None:
+        return lambda: boto_session
+    return None
+
+
+def seed_conversion_settings(seed: SeedGraphConfig) -> SeedConversionSettings:
+    """How ``seed`` is converted: its settings, and the options every kind
+    takes (``dangling``, ``qualifier_property``; the kind's own options are
+    its loader's).
+
+    Raises:
+        SeedGraphError: One of those options is invalid.
+    """
+    common = seed_options(
+        seed.model_copy(
+            update={
+                "options": {
+                    key: value
+                    for key, value in seed.options.items()
+                    if key in COMMON_OPTIONS
+                }
+            }
+        ),
+        SeedSourceOptions,
+    )
+    return SeedConversionSettings(
+        name=seed.name,
+        filters=seed.filters,
+        on_name_collision=seed.on_name_collision,
+        qualifier_property=common.qualifier_property,
+        description_properties=tuple(seed.description_properties),
+        confidence=seed.confidence,
+        shards=seed.shards,
+        max_items_per_unit=seed.max_items_per_unit,
+        max_nodes=seed.max_nodes,
+        max_edges=seed.max_edges,
+        max_property_keys=seed.max_property_keys,
+        max_description_chars=seed.max_description_chars,
+        dangling=common.dangling,
+    )
+
+
+def load_seed_graphs(
+    config: Config,
+    providers: Providers | None = None,
+    *,
+    boto_session: boto3.Session | None = None,
+) -> list[SeedConversion]:
+    """The seed graphs of ``processing.seed_graphs``, converted into virtual
+    documents, in configuration order (empty without seeds).
+
+    Each seed is loaded through the source registered for its kind and
+    converted against the run's extraction schema, so ``config`` must
+    already hold it in the inline keys (:func:`resolve_extraction_schema`
+    runs first). Call it once per run, before the first stage: a seed that
+    cannot be imported fails before any model call. A loader that calls AWS
+    gets the session of ``providers``, else ``boto_session``, else one built
+    from ``config.aws``; none is built unless it asks. One INFO line per
+    seed, with counts only (no name, description or property of the seed).
+
+    Raises:
+        SeedGraphError: A kind is not registered, a seed cannot be read, or
+            what it states breaks a rule of the import.
+        ConfigurationError: The extraction schema source is not resolved.
+    """
+    seeds = config.processing.seed_graphs
+    if not seeds:
+        return []
+    schema = config.processing.graph_extraction.extraction_schema()
+    factory = _session_factory(providers, boto_session)
+    conversions: list[SeedConversion] = []
+    for seed in seeds:
+        loader = get_seed_source(seed.kind)
+        settings = seed_conversion_settings(seed)
+        context = SeedSourceContext(seed, config, session_factory=factory)
+        graph = loader(context)
+        conversion = convert_seed(graph, settings, schema)
+        stats = conversion.stats
+        logger.info(
+            "Seed graph '%s' (%s '%s'): read %d nodes and %d edges from %d "
+            "files (%d bytes); %d nodes and %d edges in %d units over %d "
+            "documents (digest %s)",
+            seed.name,
+            seed.kind,
+            context.location,
+            stats.nodes_read,
+            stats.edges_read,
+            graph.report.files,
+            graph.report.bytes_read,
+            stats.nodes,
+            stats.edges,
+            stats.units,
+            stats.documents,
+            conversion.digest[:12],
+        )
+        conversions.append(conversion)
+    return conversions
 
 
 def with_provider_overrides(

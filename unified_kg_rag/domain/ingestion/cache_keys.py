@@ -45,7 +45,9 @@ removed file would otherwise resume from the previous corpus's documents (and,
 in incremental mode, its delta). The caller passes a corpus manifest
 fingerprint (:func:`corpus_manifest_fingerprint`: relative path + size +
 content hash per file), folded into every stage's key since parsing is the
-first stage.
+first stage. The seed graphs a run imports are part of its corpus: their
+converted content is folded into the same fingerprint
+(:func:`seed_corpus_fingerprint`).
 """
 
 from __future__ import annotations
@@ -261,6 +263,13 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "how the source loads: the schema loaded is keyed as the inline keys"
     ),
     "processing.graph_extraction.schema_source.secret_arn": _neutral(_WHERE),
+    # Start-up converts each seed graph into virtual documents; their digest
+    # is folded into the corpus fingerprint (seed_corpus_fingerprint), as the
+    # loaded schema is keyed through the inline keys. Where a seed is read
+    # from keys nothing, and no document re-extracts when a seed changes.
+    "processing.seed_graphs": _neutral(
+        "the converted seed content keys every stage through the corpus " "fingerprint"
+    ),
     **_keyed_at(
         _P.GLEANING,
         "processing.gleaning",
@@ -694,6 +703,27 @@ def corpus_manifest_fingerprint(
                 f"{relative.as_posix()}\t{path.stat().st_size}\t{_file_digest(path)}"
             )
     return compute_hash("\n".join(entries), length=FINGERPRINT_LENGTH)
+
+
+def seed_corpus_fingerprint(
+    corpus_fingerprint: str, seed_digests: Iterable[str] = ()
+) -> str:
+    """``corpus_fingerprint`` with the seed graphs' content folded in.
+
+    ``seed_digests`` are the converted seeds' digests
+    (``SeedConversion.digest``: their shard paths, so their names, and
+    texts, so their filters and statements), in configuration order. With
+    none it is ``corpus_fingerprint`` itself, so a run without seed graphs
+    keeps its keys. A seed read from another location with the same content
+    keys alike; an edited seed changes every stage's key.
+    """
+    digests = list(seed_digests)
+    if not digests:
+        return corpus_fingerprint
+    return compute_hash(
+        json.dumps({"corpus": corpus_fingerprint, "seed_graphs": digests}),
+        length=FINGERPRINT_LENGTH,
+    )
 
 
 # --- extraction settings -----------------------------------------------------

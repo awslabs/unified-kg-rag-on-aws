@@ -66,11 +66,13 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     changed_settings,
     corpus_manifest_fingerprint,
     extraction_settings,
+    seed_corpus_fingerprint,
     stage_cache_key,
 )
 from unified_kg_rag.domain.ingestion.contributions import record_keys
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
+from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
     Config,
     ExtractionSettings,
@@ -297,6 +299,10 @@ class DataIngestionPipeline:
     # Fingerprint of the run's corpus contents, computed in run(); part of every
     # stage cache key so a changed corpus is a cache miss, not a stale resume.
     corpus_fingerprint: str | None = None
+    # The seed graphs the run imports, converted
+    # (application.bootstrap.load_seed_graphs): part of its corpus, so their
+    # content is folded into the corpus fingerprint. None imported yet.
+    seed_conversions: tuple[SeedConversion, ...] = ()
     # The id of the latest run, once resolved (the CLI reports it on a stop).
     pipeline_id: str | None = None
 
@@ -1115,12 +1121,16 @@ class DataIngestionPipeline:
         return self.resume_manager.validate_pipeline_integrity(pipeline_id)
 
     def _compute_corpus_fingerprint(self, source_directory: Path) -> str:
-        """Fingerprint the files this run can ingest (see cache_keys)."""
+        """Fingerprint the files this run can ingest and the seed graphs it
+        imports (see cache_keys)."""
         extensions = {*ParserFactory.get_supported_extensions(), ".json"}
         owned = [Path(self.pipeline_config.local_directory)]
         if self.target_directory is not None:
             owned.append(self.target_directory)
-        fingerprint = corpus_manifest_fingerprint(source_directory, extensions, owned)
+        fingerprint = seed_corpus_fingerprint(
+            corpus_manifest_fingerprint(source_directory, extensions, owned),
+            [conversion.digest for conversion in self.seed_conversions],
+        )
         logger.info("Corpus manifest fingerprint: '%s'", fingerprint)
         return fingerprint
 

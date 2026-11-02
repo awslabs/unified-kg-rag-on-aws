@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     routable_strategies,
 )
 from unified_kg_rag.adapters.schema_sources import schema_source_requirement
+from unified_kg_rag.adapters.seed_sources import seed_source_requirement
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE
 
@@ -90,12 +91,13 @@ def _installed(module: str) -> bool:
 
 
 def missing_extras_error(config: Config) -> str | None:
-    """Message naming each optional module the selected providers and the
-    extraction schema source import that is not installed, or None if all
-    are.
+    """Message naming each optional module the selected providers, the
+    extraction schema source and the seed graph sources import that is not
+    installed, or None if all are.
 
     Only kinds that declare one (``register_provider(..., requires=...)``,
-    ``register_schema_source(..., requires=...)``) are checked.
+    ``register_schema_source(..., requires=...)``,
+    ``register_seed_source(..., requires=...)``) are checked.
     """
     # Importing the module registers the built-in kinds and their needs.
     import unified_kg_rag.adapters.providers  # noqa: F401
@@ -114,6 +116,11 @@ def missing_extras_error(config: Config) -> str | None:
         requirement = schema_source_requirement(source)
         if requirement is not None and not _installed(requirement[0]):
             setting = f"processing.graph_extraction.schema_source.kind '{source}'"
+            missing.setdefault(requirement, {})[setting] = None
+    for seed in config.processing.seed_graphs:
+        requirement = seed_source_requirement(seed.kind)
+        if requirement is not None and not _installed(requirement[0]):
+            setting = f"processing.seed_graphs '{seed.name}' kind '{seed.kind}'"
             missing.setdefault(requirement, {})[setting] = None
     if not missing:
         return None

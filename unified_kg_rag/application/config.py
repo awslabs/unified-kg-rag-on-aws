@@ -66,8 +66,8 @@ DOTENV_FILENAME = ".env"
 
 
 def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
-    """Resolve relative SQLite store paths and the extraction schema
-    source's path against ``config_path``'s directory.
+    """Resolve relative SQLite store paths, the extraction schema source's
+    path and the seed graphs' paths against ``config_path``'s directory.
 
     A store must be the same file on every run against it; relative to the
     working directory, a run started elsewhere would silently use an empty
@@ -75,7 +75,7 @@ def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
     graph and vector stores whose kind is SQLite, so a caller that switches
     the config to it afterwards (``--backend local`` over an ``aws`` config
     file) calls this again. A schema source path that is a URL
-    (``scheme://...``) is left as written.
+    (``scheme://...``) is left as written, and so is a seed graph's.
     """
     schema_source = config.processing.graph_extraction.schema_source
     if (
@@ -86,6 +86,19 @@ def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
         schema_source.path = str(
             (Path(config_path).parent / schema_source.path).resolve()
         )
+    processing = config.processing
+    seeds = [
+        (
+            seed
+            if "://" in seed.path or Path(seed.path).is_absolute()
+            else seed.model_copy(
+                update={"path": str((Path(config_path).parent / seed.path).resolve())}
+            )
+        )
+        for seed in processing.seed_graphs
+    ]
+    if seeds != processing.seed_graphs:
+        processing.seed_graphs = seeds
     providers = config.providers
     for section in (providers.doc_status, providers.graph, providers.vector):
         path = Path(section.sqlite_path)

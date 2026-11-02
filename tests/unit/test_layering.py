@@ -31,9 +31,9 @@ The rules:
   adapter package: a role package (storage, retrievers, ...) wraps a vendor
   binding, never the reverse.
 * **Plugins through their registry.** Outside its own package, a registered
-  plugin (renderer, search strategy, evaluator, schema source) is reached
-  through the package root or its base/registry module, never a concrete
-  module; the evaluator type map
+  plugin (renderer, search strategy, evaluator, schema or seed source) is
+  reached through the package root or its base/registry module, never a
+  concrete module; the evaluator type map
   (``EvaluationManager._resolve_evaluator_class``) is the one place that
   names the evaluators.
 * **The root facade** is imported only for ``__version__``: it re-exports
@@ -136,6 +136,7 @@ _PLUGINS: dict[str, tuple[str, ...]] = {
     "adapters.search_strategies": ("adapters.search_strategies",),
     "adapters.evaluators": ("adapters.evaluators", "adapters.evaluators.base"),
     "adapters.schema_sources": ("adapters.schema_sources",),
+    "adapters.seed_sources": ("adapters.seed_sources",),
 }
 # Plugin package -> the module holding its explicit type -> class map.
 _PLUGIN_MAPS = {"adapters.evaluators": "evaluation.evaluation_manager"}
