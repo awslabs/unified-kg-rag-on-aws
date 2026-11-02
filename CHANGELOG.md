@@ -786,8 +786,15 @@ From 0.2.3 (or a `main` checkout since):
   source (`kind`), a `path` (local, or an `s3://` object or prefix), its
   `filters`, `on_name_collision` (`error`/`merge`/`qualify`),
   `description_properties`, `confidence`, `shards` and caps that fail the
-  import instead of truncating (100,000 nodes, 500,000 edges, 256 MiB, 64
-  property keys). `run-ingestion` loads each seed once at start-up against
+  import instead of truncating (100,000 nodes, 500,000 edges, 256 MiB, or
+  32 MiB for `rdf`, whose parser holds 25 to 110 times the file size
+  before the node cap is checked, 64 property keys; a name of at most
+  1,000 characters, an IRI 4,000 and a type 256, so a store indexes each
+  as a keyword; no lone surrogate). Conversion is linear in the seed (the
+  100,000-node, 500,000-edge caps convert in about 40 s); a shard over
+  2,000 text units fails naming its largest node, and `qualify` checks
+  each homonym against the schema patterns by its own type.
+  `run-ingestion` loads each seed once at start-up against
   the resolved extraction schema, before any model is built (a seed that
   cannot be imported, or whose kind's extra is missing, exits 2, naming
   the file and line; the other CLIs load no seed and need no seed kind's
@@ -811,18 +818,22 @@ From 0.2.3 (or a `main` checkout since):
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509).
+  #503, #509, #PR).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
-  (unless `options.dangling: skip`), a non-scalar property or an
-  over-long line, naming the file and line (#500). `rdf` (the `ontology`
+  (unless `options.dangling: skip`), a non-scalar property, an
+  over-long line or one nested too deeply to decode, naming the file and
+  line; the size hint names `processing.seed_graphs[].max_bytes` (#500,
+  #PR). `rdf` (the `ontology`
   extra) reads an A-Box with the `owl` schema source's readers and
   checks: instances become nodes typed by the most specific class the
   schema maps, object triples edges, literals the name, description and
   CURIE-keyed properties by `languages`; blank nodes, reification,
   RDF-star, `owl:sameAs` and non-instance objects are counted and
-  skipped, nothing is inferred (#504). Schema and seed sources share
-  `adapters/source_files` (#497).
+  skipped, nothing is inferred; an invalid node or edge fails naming its
+  subject (#504, #PR). Schema and seed sources share
+  `adapters/source_files`, the RDF vocabulary and naming helpers in
+  `rdf_terms` included (#497, #PR).
 - `Entity.iri` (a stated IRI, the smallest when several merge) and
   `source_kinds` on entities and relationships (`["document",
   "seed_graph"]` or `["seed_graph"]`, written only on items a seed
@@ -841,9 +852,12 @@ From 0.2.3 (or a `main` checkout since):
   every text search and chunk quota, so seed statements reach answers as
   entities and relationships only, and a reported source a seed states
   carries `provenance` (`kind`, `seed_graphs`, `iri`) with no chunk; a
-  source without seed evidence is reported as before (#505).
-- Public API: `register_seed_source`, `SeedSourceContext`, `SeedGraph`,
-  `SeedNode`, `SeedEdge` and `SeedGraphError` (#498, #500).
+  source without seed evidence is reported as before. `local`, `drift`
+  and `auto` name the seed graphs of the entities the index matched, and
+  `source_kinds` is a list in every store (#505, #PR).
+- Public API: `register_seed_source`, `SeedSourceContext`,
+  `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge` and
+  `SeedGraphError` (#498, #500, #PR).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
   and §15 (#506).
 

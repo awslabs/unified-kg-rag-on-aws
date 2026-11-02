@@ -418,3 +418,27 @@ def test_restore_rank_empty_inputs_are_passthrough() -> None:
     assert BaseSearchStrategy._restore_rank([], ["c1"]) == []
     fetched = [_result("c1")]
     assert BaseSearchStrategy._restore_rank(fetched, []) == fetched
+
+
+def test_a_seed_entity_graph_node_takes_its_hits_document_filters() -> None:
+    # The graph vertex projects no filters: the provenance of a seed fact
+    # local search cites named no seed graph.
+    filters = {"seed_graph": "procure", "department": "ops"}
+    hits = [
+        _result("v", metadata={"id": "v", "attributes": {"filters": filters}}),
+        _result("d", metadata={"id": "d", "attributes": {"filters": {"k": "x"}}}),
+    ]
+    nodes = [
+        _result("v", metadata={"id": "v", "source_kinds": ["seed_graph"]}),
+        # A document entity is reported as before seed graphs.
+        _result("d", metadata={"id": "d"}),
+        # Reached, not a candidate: no hit names its filters.
+        _result("p", metadata={"id": "p", "source_kinds": ["seed_graph"]}),
+    ]
+
+    kept = LocalSearchStrategy._with_hit_filters(nodes, hits)
+
+    assert kept[0].metadata["attributes"] == {"filters": filters}
+    assert kept[0].metadata["source_kinds"] == ["seed_graph"]
+    assert kept[1] is nodes[1] and kept[2] is nodes[2]
+    assert "attributes" not in nodes[0].metadata

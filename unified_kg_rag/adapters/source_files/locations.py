@@ -57,6 +57,8 @@ class SourceTerms:
             source``, ``Ontology``); lower-cased inside a sentence.
         options: The config key of the source's options, for messages that
             name one (``schema_source.options``).
+        max_bytes: The config key of the source's size cap, for the size
+            hint (``schema_source.options.max_bytes``).
         kind: The source's kind, for messages that name it (``owl``).
         purpose: What the files serve, for the size hint (``the schema``).
         error: The exception raised; a ``ConfigurationError`` (exit 2).
@@ -64,6 +66,7 @@ class SourceTerms:
 
     noun: str = "Schema source"
     options: str = "schema_source.options"
+    max_bytes: str = "schema_source.options.max_bytes"
     kind: str = ""
     purpose: str = "the schema"
     error: type[ConfigurationError] = SchemaSourceError

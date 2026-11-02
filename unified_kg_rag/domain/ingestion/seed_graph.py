@@ -8,9 +8,10 @@ statements, against the run's extraction schema. Everything is a pure
 function of the seed, the settings and the schema, and does not depend on
 the order of the nodes or edges:
 
-1. Checks: a duplicate node id fails, as does a seed over ``max_nodes``,
-   ``max_edges`` or ``max_property_keys``; an edge naming an unknown node
-   fails or is skipped (``dangling``); a self-loop is dropped.
+1. Checks, each linear in the seed: a duplicate node id fails, as does a
+   seed over ``max_nodes``, ``max_edges`` or ``max_property_keys``; an edge
+   naming an unknown node fails or is skipped (``dangling``); a self-loop
+   is dropped.
 2. Types: a ``type_iri`` / ``predicate_iri`` that a schema type declares as
    its ``iri`` names that type (the type declared last when several do);
    else the label as written, as extraction writes it
@@ -18,7 +19,8 @@ the order of the nodes or edges:
    Edges with the same endpoints and type key merge (weights add,
    descriptions union).
 3. Conformance: :meth:`SchemaConformance.conform` over the whole seed at
-   once, so a pattern check sees both endpoint types. ``align`` counts,
+   once, so a pattern check sees both endpoint types (under ``qualify``,
+   each identity of a shared name by its own type). ``align`` counts,
    ``strict`` drops what extraction would drop, and the edges of a dropped
    node.
 4. Name collisions: nodes whose names share an ``entity_key`` (one entity)
@@ -89,6 +91,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
 from unified_kg_rag.domain.models.seed_graph import (
+    MAX_NAME_CHARS,
     SeedEdge,
     SeedGraph,
     SeedNode,
@@ -641,6 +644,11 @@ def _property_text(value: SeedPropertyValue) -> str:
     return value if isinstance(value, str) else _canonical_json(value)
 
 
+def _identity(node: _Node) -> str:
+    """What makes homonym nodes one entity: their IRI, else their id."""
+    return f"iri:{node.iri}" if node.iri else f"id:{node.id}"
+
+
 def _local_name(iri: str) -> str:
     return re.split(r"[#/:]", iri.rstrip("#/"))[-1] or iri
 
@@ -704,7 +712,9 @@ class _Converter:
         edges: list[SeedEdge] = []
         dangling: set[str] = set()
         for edge in self.graph.edges:
-            unknown = {edge.source, edge.target} - nodes.keys()
+            # A membership test per endpoint: a set difference against
+            # nodes.keys() walks every key, so a large seed went quadratic.
+            unknown = {e for e in (edge.source, edge.target) if e not in nodes}
             if unknown:
                 dangling |= unknown
                 self.stats["dangling_edges_skipped"] += 1
@@ -770,7 +780,8 @@ class _Converter:
         merged: list[_Edge] = []
         for group in groups.values():
             # A canonical order, so the merge does not depend on the input's.
-            group.sort(key=lambda e: _canonical_json(vars(e)))
+            if len(group) > 1:
+                group.sort(key=lambda e: _canonical_json(vars(e)))
             self.stats["duplicate_edges_merged"] += len(group) - 1
             first = group[0]
             iris = [e.predicate_iri for e in group if e.predicate_iri]
@@ -795,17 +806,18 @@ class _Converter:
     def conform(
         self, nodes: dict[str, _Node], edges: list[_Edge]
     ) -> tuple[dict[str, _Node], list[_Edge]]:
+        names = self.conformance_names(nodes)
         entities = [
-            Entity(id=node.id, name=node.name, type=node.type or "")
+            Entity(id=node.id, name=names[node.id], type=node.type or "")
             for node in nodes.values()
         ]
         relationships = [
             Relationship(
                 id=str(position),
                 source_id=edge.source,
-                source_name=nodes[edge.source].name,
+                source_name=names[edge.source],
                 target_id=edge.target,
-                target_name=nodes[edge.target].name,
+                target_name=names[edge.target],
                 type=edge.type,
             )
             for position, edge in enumerate(edges)
@@ -827,6 +839,24 @@ class _Converter:
                 self.stats["relationships_dropped_off_schema_endpoint"] += 1
         return kept_nodes, kept_edges
 
+    def conformance_names(self, nodes: Mapping[str, _Node]) -> dict[str, str]:
+        """The name each node is checked under: conformance types a pattern's
+        endpoints by name key, as one entity. Under ``qualify``, homonyms
+        that share neither an id nor an IRI become distinct entities (after
+        strict drops, :meth:`resolve_names`), so each such identity is
+        checked under a name of its own; else one name is one entity."""
+        if self.settings.on_name_collision != "qualify":
+            return {node_id: node.name for node_id, node in nodes.items()}
+        # "<name> #<n>", n unique per identity: distinct keys, readable logs.
+        identities: dict[tuple[str, str], str] = {}
+        return {
+            node_id: identities.setdefault(
+                (entity_key(node.name), _identity(node)),
+                f"{node.name} #{len(identities)}",
+            )
+            for node_id, node in nodes.items()
+        }
+
     # 4. Name collisions
 
     def collisions(self, nodes: Iterable[_Node]) -> list[list[list[_Node]]]:
@@ -834,8 +864,7 @@ class _Converter:
         grouped by IRI (a node without one alone), by smallest id."""
         by_key: dict[str, dict[str, list[_Node]]] = defaultdict(dict)
         for node in nodes:
-            identity = f"iri:{node.iri}" if node.iri else f"id:{node.id}"
-            by_key[entity_key(node.name)].setdefault(identity, []).append(node)
+            by_key[entity_key(node.name)].setdefault(_identity(node), []).append(node)
         found = []
         for _, groups in sorted(by_key.items()):
             if len(groups) > 1:
@@ -861,11 +890,20 @@ class _Converter:
         if policy == "merge":
             self.stats["name_collisions_merged"] += len(collisions)
             return
+        too_long = set()
         for parts in collisions:
             for part in parts[1:]:
                 for node in part:
                     node.name = f"{node.name} ({self.qualifier(node)})"
                     self.stats["names_qualified"] += 1
+                    if len(node.name) > MAX_NAME_CHARS:
+                        too_long.add(node.id)
+        if too_long:
+            raise self.fail(
+                f"qualified names of nodes {_listed(too_long)} are longer than "
+                f"{MAX_NAME_CHARS} characters; set qualifier_property to a "
+                "shorter property"
+            )
         if again := self.collisions(nodes.values()):
             raise self.fail(
                 f"{len(again)} qualified names still collide (ids "
@@ -949,6 +987,35 @@ class _Converter:
             units.append(current)
         return ["\n".join(unit) for unit in units]
 
+    def overfull(
+        self, index: int, units: int, nodes: Sequence[_Node], cards: list[list[str]]
+    ) -> SeedGraphError:
+        """The error of a shard over :data:`MAX_UNITS_PER_SHARD` units
+        (``cards[i]`` is the card of ``nodes[i]``), naming its largest card's
+        node: a hub (a node with many outgoing edges) stays in one shard
+        whatever ``shards`` is, so only ``max_items_per_unit`` shrinks it."""
+        settings, limit = self.settings, self.settings.max_items_per_unit
+        size, hub = max(
+            ((len(card), node) for card, node in zip(cards, nodes, strict=True)),
+            key=lambda pair: (pair[0], pair[1].id),
+        )
+        hub_units = -(-size // limit)
+        message = (
+            f"shard {index} would hold {units} text units, over "
+            f"{MAX_UNITS_PER_SHARD}; its largest card, node {hub.name!r} (id "
+            f"{hub.id!r}) and its outgoing edges, is {size} statements, "
+            f"{hub_units} units at max_items_per_unit {limit}: "
+        )
+        if hub_units > MAX_UNITS_PER_SHARD // 2:
+            # Most of the shard is one card, which no shard count splits.
+            return self.fail(
+                message + "raise max_items_per_unit (a node's card stays in "
+                "one shard, so more shards do not help)"
+            )
+        return self.fail(
+            message + f"raise shards (now {settings.shards}) or max_items_per_unit"
+        )
+
     def convert(self) -> SeedConversion:
         settings = self.settings
         self.check_caps()
@@ -978,9 +1045,8 @@ class _Converter:
         shards: list[SeedShard] = []
         for index in sorted(by_shard):
             cards = []
-            for node in sorted(
-                by_shard[index], key=lambda n: (entity_key(n.name), n.id)
-            ):
+            ordered = sorted(by_shard[index], key=lambda n: (entity_key(n.name), n.id))
+            for node in ordered:
                 card_edges = sorted(
                     outgoing[node.id],
                     key=lambda e: (
@@ -998,11 +1064,7 @@ class _Converter:
                 )
             units = self.pack(cards)
             if len(units) > MAX_UNITS_PER_SHARD:
-                raise self.fail(
-                    f"shard {index} would hold {len(units)} text units, over "
-                    f"{MAX_UNITS_PER_SHARD}: raise shards (now {settings.shards}) "
-                    "or max_items_per_unit"
-                )
+                raise self.overfull(index, len(units), ordered, cards)
             self.stats["units"] += len(units)
             shards.append(
                 SeedShard(
@@ -1051,14 +1113,3 @@ def convert_seed(
             error``, a cap).
     """
     return _Converter(graph, settings, schema).convert()
-
-
-def seed_statements(conversion: SeedConversion) -> Sequence[str]:
-    """Every statement line of a conversion, in document order."""
-    return [
-        line
-        for shard in conversion.documents_content
-        for unit in shard.page_content.split(_UNIT_SEPARATOR)[1:]
-        for line in unit.split("\n")
-        if line
-    ]

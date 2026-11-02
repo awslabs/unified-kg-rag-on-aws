@@ -38,6 +38,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
+    SOURCE_KINDS_FIELD,
     FilterFields,
     typed_filter_values,
 )
@@ -47,6 +48,10 @@ from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
+
+# Vertex list properties: a list however many values they hold, where a
+# value_map's one-element list is otherwise read as its value.
+_LIST_PROPERTIES = frozenset({SOURCE_KINDS_FIELD})
 
 
 class GraphExpansionRetriever(BaseGraphRAGRetriever):
@@ -177,7 +182,11 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
     @staticmethod
     def _clean_property_map(prop_map: dict[str, Any]) -> dict[str, Any]:
         return {
-            k: v[0] if isinstance(v, list) and len(v) == 1 else v
+            k: (
+                v[0]
+                if isinstance(v, list) and len(v) == 1 and k not in _LIST_PROPERTIES
+                else v
+            )
             for k, v in prop_map.items()
         }
 

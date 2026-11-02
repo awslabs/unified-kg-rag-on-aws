@@ -197,7 +197,7 @@ def _formats(
     if size > max_bytes:
         raise terms(
             f"{terms.noun} '{name}' holds {size} bytes, more than "
-            f"{terms.options}.max_bytes ({max_bytes}); point the path at the "
+            f"{terms.max_bytes} ({max_bytes}); point the path at the "
             f"files {terms.purpose} needs, or raise max_bytes"
         )
     return [

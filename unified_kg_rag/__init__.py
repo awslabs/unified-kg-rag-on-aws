@@ -122,6 +122,7 @@ _EXPORTS: dict[str, str] = {
     # Extension: seed graph sources
     "register_seed_source": "unified_kg_rag.adapters.seed_sources.registry",
     "SeedSourceContext": "unified_kg_rag.adapters.seed_sources.registry",
+    "SeedSourceOptions": "unified_kg_rag.adapters.seed_sources.registry",
     "SeedGraph": "unified_kg_rag.domain.models.seed_graph",
     "SeedNode": "unified_kg_rag.domain.models.seed_graph",
     "SeedEdge": "unified_kg_rag.domain.models.seed_graph",
@@ -155,6 +156,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.adapters.seed_sources.registry import (
         SeedSourceContext,
+        SeedSourceOptions,
         register_seed_source,
     )
     from unified_kg_rag.application.bootstrap import build_providers

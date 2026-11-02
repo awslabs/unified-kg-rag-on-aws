@@ -7,11 +7,19 @@ A seed source (JSONL, CSV, an RDF A-Box, ...) turns its input into a
 Its content depends only on the source bytes and options, never on their
 order: the conversion into virtual documents
 (``domain.ingestion.seed_graph.convert_seed``) sorts everything.
+
+Every text of a statement is valid Unicode: a lone surrogate (a JSON
+``"\\ud800"`` escape, say) fails validation instead of failing a store write
+later. Names, IRIs and type labels are capped (:data:`MAX_NAME_CHARS`,
+:data:`MAX_IRI_CHARS`, :data:`MAX_TYPE_CHARS`) so that each, at 4 UTF-8 bytes
+a character, stays far under the 32 766-byte limit of an indexed keyword
+(an OpenSearch ``name.keyword`` or ``iri`` field).
 """
 
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -21,16 +29,49 @@ from unified_kg_rag.shared.utils import clean_display_name
 # A property value: a JSON scalar. ``None`` is accepted and dropped.
 SeedPropertyValue = str | int | float | bool
 
+# The longest node name (a qualified name included): at most 4 000 UTF-8
+# bytes, a fraction of an indexed keyword's 32 766 (name.keyword); far over
+# any display name.
+MAX_NAME_CHARS = 1000
+# The longest IRI (iri, type_iri, predicate_iri): at most 16 000 UTF-8
+# bytes, under an indexed keyword's 32 766 (iri); twice the 8 000 octets
+# RFC 9110 recommends a URI support.
+MAX_IRI_CHARS = 4000
+# The longest type label: types are short labels (a mapped ontology type is
+# at most 64 characters).
+MAX_TYPE_CHARS = 256
+
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+def reject_lone_surrogates(value: str, what: str) -> str:
+    """``value``, unless it holds a lone surrogate (a surrogate pair decodes
+    to one character, so any surrogate left is lone): no UTF-8 encodes it.
+
+    Raises:
+        ValueError: It does.
+    """
+    if match := _SURROGATE.search(value):
+        raise ValueError(
+            f"{what} holds a lone surrogate (U+{ord(match.group()):04X}) at "
+            f"character {match.start()}: it is not valid Unicode"
+        )
+    return value
+
 
 def _scalar_properties(value: Any) -> dict[str, SeedPropertyValue]:
     if not isinstance(value, dict):
         return value  # type: ignore[no-any-return]  # the field type rejects it
     kept: dict[str, Any] = {}
     for key, item in value.items():
+        if isinstance(key, str):
+            reject_lone_surrogates(key, "a property key")
         if item is None:
             continue
         if isinstance(item, float) and not math.isfinite(item):
             raise ValueError(f"property {key!r} is not a finite number")
+        if isinstance(item, str):
+            reject_lone_surrogates(item, f"property {key!r}")
         kept[key] = item
     return kept
 
@@ -53,6 +94,13 @@ class _SeedStatement(BaseModel):
     def _drop_null_properties(cls, value: Any) -> Any:
         return _scalar_properties(value)
 
+    @field_validator("*", mode="after")
+    @classmethod
+    def _valid_unicode(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return reject_lone_surrogates(value, "the text")
+        return value
+
 
 class SeedNode(_SeedStatement):
     """An entity a seed graph states."""
@@ -63,16 +111,22 @@ class SeedNode(_SeedStatement):
     )
     name: str = Field(
         default="",
+        max_length=MAX_NAME_CHARS,
         description="Display name; the id when the source gives none. Entity "
         "identity is the name's entity_key, as for extracted entities",
     )
-    type: str | None = Field(default=None, description="Type label, as written")
+    type: str | None = Field(
+        default=None, max_length=MAX_TYPE_CHARS, description="Type label, as written"
+    )
     type_iri: str | None = Field(
         default=None,
+        max_length=MAX_IRI_CHARS,
         description="IRI of the node's class, mapped to a schema type through "
         "the schema's entity type IRIs",
     )
-    iri: str | None = Field(default=None, description="IRI of the node itself")
+    iri: str | None = Field(
+        default=None, max_length=MAX_IRI_CHARS, description="IRI of the node itself"
+    )
     confidence: float | None = Field(
         default=None,
         ge=0.0,
@@ -100,9 +154,12 @@ class SeedEdge(_SeedStatement):
 
     source: str = Field(min_length=1, description="Id of the source node")
     target: str = Field(min_length=1, description="Id of the target node")
-    type: str | None = Field(default=None, description="Type label, as written")
+    type: str | None = Field(
+        default=None, max_length=MAX_TYPE_CHARS, description="Type label, as written"
+    )
     predicate_iri: str | None = Field(
         default=None,
+        max_length=MAX_IRI_CHARS,
         description="IRI of the edge's property, mapped to a schema type "
         "through the schema's relationship type IRIs",
     )

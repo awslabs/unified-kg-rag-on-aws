@@ -59,6 +59,8 @@ class SeedTerms(SourceTerms):
 
     noun: str = "Seed source"
     options: str = OPTIONS_KEY
+    # A seed's size cap is one of its settings, not an option of its kind.
+    max_bytes: str = "processing.seed_graphs[].max_bytes"
     purpose: str = "the seed graph"
     error: type[ConfigurationError] = SeedGraphError
     seed: str = ""
@@ -68,10 +70,6 @@ class SeedTerms(SourceTerms):
         return self.error(
             f"seed graph '{self.seed}': {message}" if self.seed else message
         )
-
-
-# The terms of a seed source's errors, before a seed names them.
-SEED_TERMS = SeedTerms()
 
 
 class SeedSourceOptions(BaseModel):
@@ -195,6 +193,17 @@ def seed_options(source: SeedGraphConfig, model: type[OptionsT]) -> OptionsT:
                 for detail in e.errors(include_url=False, include_input=False)
             )
         ) from e
+
+
+def statement_problems(error: ValidationError) -> str:
+    """What makes a node or edge a source read invalid, each field named
+    (``name: String should have at most 1000 characters``)."""
+    return "; ".join(
+        ".".join(str(part) for part in detail["loc"])
+        + (": " if detail["loc"] else "")
+        + detail["msg"]
+        for detail in error.errors(include_url=False, include_input=False)
+    )
 
 
 SeedLoader = Callable[[SeedSourceContext], SeedGraph]

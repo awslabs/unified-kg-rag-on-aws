@@ -1912,6 +1912,13 @@ class ClaimExtractionConfig(BaseModel):
 # (domain.ingestion.seed_graph.SEED_FILTER_KEY): reserved in its filters.
 SEED_GRAPH_FILTER_KEY = "seed_graph"
 SeedNameCollision = Literal["error", "merge", "qualify"]
+# The default max_bytes of a seed graph, and of one of kind rdf: an RDF
+# parser holds the whole graph, about 25 (N-Triples) to 110 (Turtle) times
+# the file size in memory, before max_nodes can be checked, so 256 MiB of
+# Turtle needed some 28 GB; 32 MiB of it about 3.5 GB, within the default
+# 8 GiB ingestion task. jsonl and csv stop at the caps while reading.
+SEED_MAX_BYTES = 256 * 1024 * 1024
+RDF_SEED_MAX_BYTES = 32 * 1024 * 1024
 
 
 class SeedGraphConfig(BaseModel):
@@ -2047,11 +2054,16 @@ class SeedGraphConfig(BaseModel):
         description="Fail the import above this many edges (never truncated).",
     )
     max_bytes: int = Field(
-        default=256 * 1024 * 1024,
+        default=SEED_MAX_BYTES,
         ge=1,
         description=(
             "Fail the import when the source files hold more bytes together "
-            "(checked before they are read, and while reading)."
+            "(checked before they are read, and while reading). Kind 'rdf' "
+            "defaults to 32 MiB: its parser holds the whole graph, about 25 "
+            "(N-Triples) to 110 (Turtle) times the file size in memory, "
+            "before max_nodes and max_edges are checked, so size the task's "
+            "memory before raising it ('jsonl' and 'csv' stop at those caps "
+            "while reading)."
         ),
     )
     max_property_keys: int = Field(
@@ -2072,6 +2084,18 @@ class SeedGraphConfig(BaseModel):
             "summarizer."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _rdf_max_bytes(cls, data: Any) -> Any:
+        # Unless the item sets it: model_copy (a resolved path) keeps it.
+        if (
+            isinstance(data, dict)
+            and data.get("kind") == "rdf"
+            and "max_bytes" not in data
+        ):
+            return {**data, "max_bytes": RDF_SEED_MAX_BYTES}
+        return data
 
     @field_validator("name")
     @classmethod

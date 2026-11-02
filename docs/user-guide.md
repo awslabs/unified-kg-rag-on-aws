@@ -2432,14 +2432,21 @@ processing:
 | `max_items_per_unit` | `50` (1 to 500) | Node and edge statements per text unit, the unit of lineage |
 | `max_nodes` | `100000` | Fail above this many nodes |
 | `max_edges` | `500000` | Fail above this many edges |
-| `max_bytes` | `268435456` (256 MiB) | Fail when the files hold more bytes together (checked before they are read, and while reading) |
+| `max_bytes` | `268435456` (256 MiB); `33554432` (32 MiB) for `rdf` | Fail when the files hold more bytes together (checked before they are read, and while reading). An RDF parser holds the whole graph before `max_nodes` is checked, about 25 (N-Triples) to 110 (Turtle) times the file size in memory: size the task before raising it for `rdf` |
 | `max_property_keys` | `64` (0 to 512) | Fail when the seed uses more distinct property keys (each is a key of `attributes.seed_properties`) |
 | `max_description_chars` | `1000` (at least 50) | Cut descriptions here, at a word boundary with "…", so an item only the seed states never needs the description summarizer |
 
 - The caps fail the import; nothing is truncated, as a cut would change the
-  graph arbitrarily. A shard over 2,000 text units fails too (raise
-  `shards` or `max_items_per_unit`), and so does a JSONL line or CSV row
-  over 1 MiB.
+  graph arbitrarily. A shard over 2,000 text units fails too, naming its
+  largest node: raise `shards`, or, for a hub (a node and its outgoing
+  edges stay in one shard, so more shards do not split it),
+  `max_items_per_unit`. So does a JSONL line or CSV row over 1 MiB.
+- Every name, IRI and type is bounded so that a store can index it as a
+  keyword (at most 32,766 UTF-8 bytes): a node `name` (a qualified one
+  included) holds at most 1,000 characters, an `iri`, `type_iri` or
+  `predicate_iri` 4,000, a `type` 256. Text that is not valid Unicode (a
+  JSON `\ud800` escape: a lone surrogate) fails in any field, naming the
+  file and line, or the RDF subject.
 - Every kind takes two options: `dangling` (an edge naming an unknown
   node: `error`, the default, or `skip`, which leaves it out and counts
   it) and `qualifier_property` (for `on_name_collision: qualify`).
@@ -2484,8 +2491,9 @@ processing:
   `predicate_iri` a relationship type declares (one of them is required),
   `description`, `weight` (default 1) and `properties`.
 - Property values are strings, numbers or booleans; `null` is dropped. An
-  unknown key, a repeated node id, a non-scalar property, `NaN` and a line
-  that is not a JSON object fail the import, naming the file and line.
+  unknown key, a repeated node id, a non-scalar property, `NaN`, a line
+  that is not a JSON object and one nested too deeply to decode fail the
+  import, naming the file and line.
 - A self-loop is dropped (a full build draws none). Edges with the same
   endpoints and type merge: weights add, descriptions are unioned.
 
@@ -2530,7 +2538,9 @@ N-Triples, N-Quads, TriG, RDF/XML or JSON-LD. It needs the `ontology` extra
 files exactly as the `owl` schema source does (a file, a directory, an
 `s3://` object or prefix; `options.format`; nothing fetched, `owl:imports`
 not followed, the same refusals: [Not followed, not read](#from-an-owlrdfs-ontology)),
-within the seed's `max_bytes`. With the procure ontology as the schema:
+within the seed's `max_bytes` (32 MiB unless set: the parsed graph is held
+in memory, 25 to 110 times the file size). With the procure ontology as the
+schema:
 
 ```yaml
 processing:
@@ -2620,7 +2630,9 @@ so it is no instance and the `ex:headquarters` edge is skipped (counted as
 
 **How seeds meet the schema.** Each seed is converted against the run's
 resolved extraction schema (C), the whole seed at once, so a pattern check
-always sees both endpoint types:
+always sees both endpoint types. Under `on_name_collision: qualify`, nodes
+sharing a name are checked as the distinct entities they become, each by
+its own type; under `merge`, as the one entity, as a full build sees it:
 
 - A `type_iri` (or `predicate_iri`) names the declared type with that
   `iri`; one no type declares is counted (`nodes_unmapped_type_iri`) and
@@ -2694,8 +2706,11 @@ reach those strategies through the communities documents also state.
   ```
 
   A source no seed states is reported as before, with no `provenance` key.
-  An entity reached only by a graph walk has `"seed_graphs": []`: graph
-  vertices hold no document filters.
+  `local` (and `drift` and `auto`, which run it) reports the graph's copy
+  of an entity the entities index matched, which takes that hit's document
+  filters and so names its seed graphs; an entity reached only by a graph
+  walk has `"seed_graphs": []`, as graph vertices hold no document
+  filters. Its metadata `source_kinds` is a list in every store.
 - **Filters** ([Filters](#filters)):
   - `source_kinds` (entities, relationships, Neptune entity vertices):
     `seed_graph` keeps what a seed states, `document` what a document

@@ -591,17 +591,24 @@ of the documents plus the configured seeds. No model reads a seed.
   of truncating), maps types (a `type_iri` / `predicate_iri` a schema type
   declares, the last-declared winning, else the label through
   `SchemaConformance`), conforms the whole seed at once (both endpoint
-  types are known, so patterns always apply), applies
+  types are known, so patterns always apply; under `qualify` each
+  identity of a shared name, its IRI else its id, is checked by its own
+  type, as the distinct entity it becomes), applies
   `on_name_collision`, shards nodes by `int(sha256(id)[:8], 16) % shards`
   (an edge goes with its source node), packs node cards (a node and its
   outgoing edges, by `(entity_key(name), id)`) into units of at most
   `max_items_per_unit` statements (a hub card is split; a shard over 2,000
-  units fails, keeping a shard's registry record small) and renders
+  units fails naming its largest card's node, keeping a shard's registry
+  record small) and renders
   `seed_graphs/<name>/<k>-of-<n>.jsonl`: a header line (name,
   `SEED_FORMAT_VERSION`, filters), then the units' canonical JSON lines,
   a blank line before each unit. The content hash therefore covers the
   name, the filters, the format, the schema's effect and every statement,
-  and the output does not depend on the input's order.
+  and the output does not depend on the input's order. Every check is
+  linear in the seed (an edge's endpoints are dict lookups). The models
+  refuse what a store cannot write: a lone surrogate in any text, a name
+  over 1,000 characters, an IRI over 4,000 or a type over 256, so each
+  stays far under an indexed keyword's 32,766 bytes.
 - **Keying.** `processing.seed_graphs` is neutral in `CONFIG_KEYING`: the
   conversions' digests are folded into the corpus fingerprint
   (`cache_keys.seed_corpus_fingerprint`), which keys every stage, and
@@ -1136,9 +1143,13 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   documents holds the field, where it filters nothing. A reported source
   with seed evidence gets `provenance` (`rag_chain.seed_provenance`:
   kind, the seed graphs its document filters name, the entity IRI);
-  graph expansion projects a vertex's `iri` and `source_kinds`, but
-  vertices hold no document filters, so a source a graph walk alone
-  reached names no seed graph.
+  graph expansion projects a vertex's `iri` and `source_kinds` (kept a
+  list, `graph_expansion._LIST_PROPERTIES`, where a value map's
+  one-element list is otherwise read as its value), but vertices hold no
+  document filters: `local` copies a candidate entity hit's
+  `attributes.filters` onto the graph's copy of it
+  (`LocalSearchStrategy._with_hit_filters`), and a source a graph walk
+  alone reached names no seed graph.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set
@@ -1732,9 +1743,13 @@ This section is the single reference for extending the framework. Strategies, re
     for any source that reads RDF. `rdf_files.locate`/`locate_s3` pick the
     files and the format of each, `rdf_files.check_bytes` refuses what a
     parser must not see, and `rdf_parse.parse` (the only module there
-    importing rdflib) parses the bytes. A `SourceTerms` record carries the
-    exception type and how messages name the source, its options and its
-    kind, and any `SourceClientProvider` (`location`, `client(service)`)
+    importing rdflib) parses the bytes; `rdf_terms` holds the RDF
+    vocabulary IRIs and the pure naming helpers (`local_name`,
+    `upper_snake`, `best_text`, `Text`, ...) the mapping shares with the
+    `rdf` seed source. A `SourceTerms` record carries the exception type
+    and how messages name the source, its options, its size cap
+    (`max_bytes`, which a seed's terms name `processing.seed_graphs[].max_bytes`)
+    and its kind, and any `SourceClientProvider` (`location`, `client(service)`)
     gives `locations.SourceReader` its S3 client.
 
   A loader for an ontology held elsewhere (an ontology service, or a
@@ -1851,8 +1866,8 @@ This section is the single reference for extending the framework. Strategies, re
 - **New seed source** (a graph format, or a service holding a graph):
   register a loader for a new `processing.seed_graphs[].kind` with
   `@register_seed_source("kind")` (exported from `unified_kg_rag` with
-  `SeedSourceContext`, `SeedGraph`, `SeedNode`, `SeedEdge` and
-  `SeedGraphError`; the built-in `jsonl`, `csv` and `rdf` loaders live in
+  `SeedSourceContext`, `SeedSourceOptions`, `SeedGraph`, `SeedNode`,
+  `SeedEdge` and `SeedGraphError`; the built-in `jsonl`, `csv` and `rdf` loaders live in
   `adapters/seed_sources/`, imported by the package `__init__`). A loader
   that imports an optional package declares it, `requires=("module", "how
   to install it")`, and the CLIs check it before any model call, as for
@@ -1862,9 +1877,9 @@ This section is the single reference for extending the framework. Strategies, re
   - `source`: the `processing.seed_graphs` item (`name`, `kind`, `path`,
     left as written when it is a URL, `options`, `secret_arn` and the
     caps). Validate `options` with `context.options(Model)`, a subclass of
-    `SeedSourceOptions` (`from unified_kg_rag.adapters.seed_sources
-    import SeedSourceOptions`), which carries `dangling` and
-    `qualifier_property` and forbids unknown keys.
+    `SeedSourceOptions` (`from unified_kg_rag import SeedSourceOptions`),
+    which carries `dangling` and `qualifier_property` and forbids unknown
+    keys.
   - `config`: the run's config, the extraction schema already in the
     inline keys (`config.processing.graph_extraction.extraction_schema()`),
     for a loader that maps class IRIs itself.
@@ -1884,7 +1899,8 @@ This section is the single reference for extending the framework. Strategies, re
   it serves schema sources: `locations.SourceReader(context,
   terms=context.terms)` heads, lists and reads S3 objects within a byte
   cap, and `rdf_files` / `rdf_parse` locate, check and parse RDF files
-  with the `owl` source's safety checks (pass `context.terms`). The
+  with the `owl` source's safety checks (pass `context.terms`);
+  `rdf_terms` names RDF terms as both built-in RDF readers do. The
   property-graph helpers of the built-ins (`property_graph.FileReader`,
   `GraphBuilder`: sized reads, line caps, refusals naming the file and
   line) are for kinds added inside `adapters/seed_sources/`. A reader of
@@ -1903,8 +1919,14 @@ This section is the single reference for extending the framework. Strategies, re
 
   from pydantic import Field
 
-  from unified_kg_rag import SeedEdge, SeedGraph, SeedNode, SeedSourceContext, register_seed_source
-  from unified_kg_rag.adapters.seed_sources import SeedSourceOptions
+  from unified_kg_rag import (
+      SeedEdge,
+      SeedGraph,
+      SeedNode,
+      SeedSourceContext,
+      SeedSourceOptions,
+      register_seed_source,
+  )
 
 
   class ServiceOptions(SeedSourceOptions):

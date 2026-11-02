@@ -1345,8 +1345,9 @@ def test_graph_expansion_returns_the_seed_graph_fields(
     found = {r.source: r.metadata for r in results}
     assert set(found) == {"a", "p", "v"}
     assert found["p"]["iri"] == iri
-    # A one-element vertex list reads back as its value (Gremlin).
-    assert found["p"]["source_kinds"] in ("seed_graph", ["seed_graph"])
+    # A list however many kinds it holds: Gremlin returns a one-element
+    # vertex list as its value, which a reader of the sources must not see.
+    assert found["p"]["source_kinds"] == ["seed_graph"]
     assert sorted(found["v"]["source_kinds"]) == ["document", "seed_graph"]
     assert "iri" not in found["v"]
     assert not {"iri", "source_kinds"} & set(found["a"])

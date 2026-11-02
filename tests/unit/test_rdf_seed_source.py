@@ -30,8 +30,8 @@ import pytest
 from tests.fixtures.extras import requires_ontology
 from unified_kg_rag.adapters.schema_sources import INSTALL_HINT
 from unified_kg_rag.adapters.seed_sources import (
-    SEED_TERMS,
     SeedSourceContext,
+    SeedTerms,
     get_seed_source,
     registered_seed_sources,
     seed_source_requirement,
@@ -257,7 +257,7 @@ def test_the_mapping_and_the_registry_import_without_rdflib() -> None:
         "from unified_kg_rag.domain.models.schema import ExtractionSchema\n"
         "t = [(m.iri('urn:a'), m.iri(m.RDF_TYPE), m.iri('urn:C'))]\n"
         "g = m.map_abox(t, m.AboxMappingOptions(), ExtractionSchema(),\n"
-        "               terms=s.SEED_TERMS).graph\n"
+        "               terms=s.SeedTerms()).graph\n"
         "assert [n.type for n in g.nodes] == ['C']\n"
         "import unified_kg_rag.application.cli.preflight\n"
     )
@@ -283,7 +283,7 @@ def _typed(subject: str, *types: str) -> list[Triple]:
 
 def _map(triples: list[Triple], **options: Any) -> SeedGraph:
     return map_abox(
-        triples, AboxMappingOptions(**options), SCHEMA, terms=SEED_TERMS
+        triples, AboxMappingOptions(**options), SCHEMA, terms=SeedTerms()
     ).graph
 
 
@@ -444,7 +444,7 @@ def test_an_unbound_curie_in_the_options_is_refused() -> None:
             [],
             AboxMappingOptions(properties=["zz:x"]),
             SCHEMA,
-            terms=SEED_TERMS.__class__(seed="procure", kind="rdf"),
+            terms=SeedTerms(seed="procure", kind="rdf"),
         )
 
 
@@ -458,15 +458,32 @@ def test_property_keys_use_the_options_then_well_known_then_file_prefixes() -> N
     ]
     options = AboxMappingOptions()
     keys = (
-        map_abox(triples, options, SCHEMA, terms=SEED_TERMS).graph.nodes[0].properties
+        map_abox(triples, options, SCHEMA, terms=SeedTerms()).graph.nodes[0].properties
     )
     assert set(keys) == {EX + "country", "skos:note", "urn:x:flag"}
     graph = map_abox(
-        triples, options, SCHEMA, prefixes={"p": EX, "a": EX}, terms=SEED_TERMS
+        triples, options, SCHEMA, prefixes={"p": EX, "a": EX}, terms=SeedTerms()
     ).graph
     assert set(graph.nodes[0].properties) == {"a:country", "skos:note", "urn:x:flag"}
     graph = _map(triples, prefixes={"proc": EX})
     assert "proc:country" in graph.nodes[0].properties
+
+
+def test_an_invalid_node_fails_naming_it_instead_of_a_validation_error() -> None:
+    long = EX + "x" * 4000
+    with pytest.raises(SeedGraphError, match="iri: String should have at most 4000"):
+        map_abox(
+            _typed(long, VENDOR),
+            AboxMappingOptions(),
+            SCHEMA,
+            terms=SeedTerms(seed="procure", kind="rdf"),
+        )
+    lone = [
+        *_typed(EX + "acme", VENDOR),
+        (iri(EX + "acme"), iri(RDFS + "label"), literal("A\ud800")),
+    ]
+    with pytest.raises(SeedGraphError, match=r"node <.*acme>: name: Input should"):
+        _map(lone)
 
 
 def test_the_order_of_the_triples_changes_nothing() -> None:
@@ -498,7 +515,7 @@ def test_unfollowed_imports_and_relative_iris_are_reported() -> None:
         *_typed(base + "acme", VENDOR),
         *_typed("s3://bucket/seed.ttl#globex", BUYER),
     ]
-    mapping = map_abox(triples, AboxMappingOptions(), SCHEMA, terms=SEED_TERMS)
+    mapping = map_abox(triples, AboxMappingOptions(), SCHEMA, terms=SeedTerms())
     assert mapping.unfollowed_imports == ["urn:other"]
     assert mapping.relative_iris == [base + "acme", "s3://bucket/seed.ttl#globex"]
 
@@ -742,7 +759,11 @@ def test_more_than_max_bytes_is_refused_before_reading(
         Path, "read_bytes", lambda self: pytest.fail(f"read {self} past the cap")
     )
     seed = _seed(tmp_path, max_bytes=100)
-    with pytest.raises(SeedGraphError, match="more than .*max_bytes \\(100\\)"):
+    # The hint names the seed's own setting, not an option of the kind.
+    with pytest.raises(
+        SeedGraphError,
+        match=r"more than processing\.seed_graphs\[\]\.max_bytes \(100\)",
+    ):
         get_seed_source("rdf")(SeedSourceContext(seed, _resolved()))
 
 

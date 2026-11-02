@@ -22,15 +22,10 @@ from tests.fixtures.ontology_models import (
 from unified_kg_rag.adapters.schema_sources.ontology_mapping import (
     MappingOptions,
     OntologyMapping,
-    best_text,
-    local_name,
     map_ontology,
-    preserve_case,
     truncate,
-    upper_snake,
 )
 from unified_kg_rag.adapters.schema_sources.ontology_model import (
-    OWL,
     RDFS_COMMENT,
     RDFS_LABEL,
     SKOS_DEFINITION,
@@ -38,7 +33,14 @@ from unified_kg_rag.adapters.schema_sources.ontology_model import (
     OntologyClass,
     OntologyModel,
     OntologyProperty,
+)
+from unified_kg_rag.adapters.source_files.rdf_terms import (
+    OWL,
     Text,
+    best_text,
+    local_name,
+    preserve_case,
+    upper_snake,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.shared.exceptions import SchemaSourceError

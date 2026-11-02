@@ -19,10 +19,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import event, given
+from hypothesis import event, given, settings
 from hypothesis import strategies as st
 
 from tests.fixtures.extras import requires_ontology
+from tests.fixtures.seed_graphs import seed_statements
 from unified_kg_rag.adapters.seed_sources import SeedSourceContext, get_seed_source
 from unified_kg_rag.application.bootstrap import (
     load_seed_graphs,
@@ -32,7 +33,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedConversion,
     SeedConversionSettings,
     convert_seed,
-    seed_statements,
     shard_of,
 )
 from unified_kg_rag.domain.models import Config, ExtractionSchema
@@ -276,6 +276,9 @@ def rdf_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @requires_ontology
+# rdflib parses two files per example: the per-example deadline flakes under
+# a loaded -n auto run.
+@settings(deadline=None)
 @given(
     triples=_abox,
     mode=st.sampled_from(["off", "align", "strict"]),

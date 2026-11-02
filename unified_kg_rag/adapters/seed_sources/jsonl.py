@@ -123,6 +123,9 @@ def _read(builder: GraphBuilder, file: SourceFile, text: str) -> None:
             record = json.loads(line, parse_constant=_reject_constant)
         except ValueError as e:
             raise builder.fail(where, f"not valid JSON ({e})") from e
+        except RecursionError as e:
+            # Arrays or objects nested deeper than the decoder recurses.
+            raise builder.fail(where, "not valid JSON (nested too deeply)") from e
         if not isinstance(record, dict):
             raise builder.fail(where, "not a JSON object")
         kind = record.pop("kind", None)
