@@ -52,6 +52,11 @@ code that was added and fixed again before any release.
   `predicate_iri` filter keys, and drafted from a corpus by
   `run-prompt-tuning --schema-out`; the defaults change nothing (#475-#477,
   #478).
+- Seed graphs: an existing knowledge graph (JSONL, CSV or an RDF A-Box)
+  merged into the extracted graph as virtual documents of the corpus.
+  Documents decide types, names, confidence and ranks; a seed adds
+  description lines, properties, IRIs and edges, and incremental runs,
+  removal and resets treat it like any file (#497-#505).
 - Evaluation: three LLM-free evaluators (`graph_aware`, `retrieval`,
   `answer_match`), paired strategy comparison with bootstrap CIs and a
   pairwise judge, and a MuSiQue benchmark preparer (#121, #315, #324).
@@ -777,6 +782,56 @@ From 0.2.3 (or a `main` checkout since):
   `--config-path` file or the schema file the config loads exits 2, even
   with `--force`, and so does either naming an existing file unless
   `--force` is given (#478, #480, #483, #490).
+- Seed graphs under `processing.seed_graphs`: each item names a registered
+  source (`kind`), a `path` (local, or an `s3://` object or prefix), its
+  `filters`, `on_name_collision` (`error`/`merge`/`qualify`),
+  `description_properties`, `confidence`, `shards` and caps that fail the
+  import instead of truncating (100,000 nodes, 500,000 edges, 256 MiB, 64
+  property keys). `run-ingestion` loads each seed once at start-up against
+  the resolved extraction schema, before any model is built (a seed that
+  cannot be imported exits 2, naming the file and line), checks it as a
+  whole under `schema_mode`, shards it by a stable hash of the node ids
+  and imports the shards as documents of the run's source scope: no model
+  reads them, the registry diffs them, an edit re-imports only its
+  shards, a model-settings change none, and an empty corpus is a
+  seed-only run. What a seed converts to keys every stage, where it is
+  read from keys nothing, and no document re-extracts for it. Merges are
+  document-first: a seed fills a type, name or confidence only where no
+  document states one, its description lines follow the documents', its
+  properties sit under `attributes.seed_properties`. A community only
+  seeds evidence gets no report (`communities_seed_only`); loading,
+  chunking and extraction report `seed_documents`, `seed_units`,
+  `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
+  #503).
+- Seed sources: `jsonl` and `csv` read local files or S3, sized before
+  any byte is fetched, and refuse a duplicate node id, a dangling edge
+  (unless `options.dangling: skip`), a non-scalar property or an
+  over-long line, naming the file and line (#500). `rdf` (the `ontology`
+  extra) reads an A-Box with the `owl` schema source's readers and
+  checks: instances become nodes typed by the most specific class the
+  schema maps, object triples edges, literals the name, description and
+  CURIE-keyed properties by `languages`; blank nodes, reification,
+  RDF-star, `owl:sameAs` and non-instance objects are counted and
+  skipped, nothing is inferred (#504). Schema and seed sources share
+  `adapters/source_files` (#497).
+- `Entity.iri` (a stated IRI, the smallest when several merge) and
+  `source_kinds` on entities and relationships (`["document",
+  "seed_graph"]` or `["seed_graph"]`, written only on items a seed
+  states), stored in Neptune, OpenSearch and the embedded stores and
+  added to live indices by the incremental preflight. Both are filter
+  keys: `source_kinds: document` keeps what documents state, items
+  without the field included, `seed_graph` what a seed states; `iri` on
+  entities and entity vertices. A store without seeds holds exactly what
+  it held (#499, #501).
+- Seed facts in retrieval: a seed's text units are stored but left out of
+  every text search and chunk quota, so seed statements reach answers as
+  entities and relationships only, and a reported source a seed states
+  carries `provenance` (`kind`, `seed_graphs`, `iri`) with no chunk; a
+  source without seed evidence is reported as before (#505).
+- Public API: `register_seed_source`, `SeedSourceContext`, `SeedGraph`,
+  `SeedNode`, `SeedEdge` and `SeedGraphError` (#498, #500).
+- Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
+  and §15 (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -874,6 +929,15 @@ From 0.2.3 (or a `main` checkout since):
   extraction records keep their keys (#475).
 - An `entity_types` list with two labels that differ only in case or word
   separators (`PERSON`, `person`) fails the load (#475).
+- Entity and relationship ranks, and the order and rank of community
+  report entities, count document-backed edges only: an edge every text
+  unit of which is a seed graph's adds to no degree, while Leiden still
+  clusters every edge. Without seed graphs every rank and report is
+  unchanged (#502).
+- `run-ingestion --yes` also answers a reset that would drop another
+  source scope's seed graph documents (asked before any write; without a
+  terminal the run fails), and `DataIngestionPipeline(confirm=)` takes the
+  callable that answers it from Python (#503).
 
 ### Fixed
 Bugs present in 0.2.3.

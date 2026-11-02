@@ -134,7 +134,7 @@ unified_kg_rag/
 │  ├─ models/           #   Pydantic domain models
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_builder/resolver/analyzer,
 │  │  │                 #   claim_resolver, contributions, derivation, cache_keys,
-│  │  │                 #   document_identity, visualization_data (+ layout helpers)
+│  │  │                 #   document_identity, seed_graph, visualization_data (+ layout helpers)
 │  │  └─ merge/         #   cross-run merger
 │  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   version-controlled prompt templates
@@ -158,6 +158,7 @@ unified_kg_rag/
 │  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
 │  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
+│  ├─ seed_sources/     #   @register_seed_source: seed graph loaders (jsonl, csv, rdf)
 │  ├─ source_files/     #   shared readers of a source's files: local/S3 locations, RDF files, checks, parse
 │  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
@@ -173,7 +174,8 @@ unified_kg_rag/
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
-│  │                    #   build_checkpoint_sync, resolve_extraction_schema
+│  │                    #   build_checkpoint_sync, resolve_extraction_schema,
+│  │                    #   load_seed_graphs
 │  ├─ config.py         #   get_config / ConfigLoader: file + environment -> Config
 │  └─ observability.py  #   configure_observability: installs the tracing backend
 ├─ shared/              # leaf kernel (logging, exceptions, metrics, observability hooks,
@@ -247,6 +249,9 @@ backend fills each role is open (`providers.graph.kind` /
 - **Schema sources**: `@register_schema_source("kind")`
   (`adapters/schema_sources/registry.py`): the loader
   `processing.graph_extraction.schema_source.kind` selects (§12).
+- **Seed sources**: `@register_seed_source("kind")`
+  (`adapters/seed_sources/registry.py`): the loader each
+  `processing.seed_graphs[].kind` selects (§4.5).
 - **Evaluators**: one lazy-import branch per `EvaluatorType` in
   `EvaluationManager._resolve_evaluator_class`.
 
@@ -296,9 +301,10 @@ dependency:
 
 - `Entity` (`name`, `description`, `type`, `text_unit_ids`, `community_ids`,
   `rank`, `confidence`, embedding fields, the schema annotations
-  `in_schema` / `type_iri`), `Relationship` (`source_id` / `target_id`,
-  `description`, `weight`, `text_unit_ids`, `in_schema` / `predicate_iri`;
-  §4.2),
+  `in_schema` / `type_iri`, the stated `iri` and the derived
+  `source_kinds`), `Relationship` (`source_id` / `target_id`,
+  `description`, `weight`, `text_unit_ids`, `in_schema` / `predicate_iri`,
+  `source_kinds`; §4.2, §4.5),
   `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim);
 - `DocStatus` (a `PENDING` write-ahead record, then `PROCESSED` / `FAILED` /
   `QUARANTINED`), `DocStatusRecord` (content hash, the document's text units,
@@ -306,7 +312,9 @@ dependency:
   quarantined, quarantined-unchanged, deferred and settings-changed ids),
   `DocumentLineage` (the text units one document produced);
 - `SearchQuery` / `SearchResult` / `RetrievalResult`, `SearchStrategy` /
-  `SearchType` / `RetrieverRole`.
+  `SearchType` / `RetrieverRole`;
+- `SeedGraph` / `SeedNode` / `SeedEdge` (`seed_graph.py`): what a seed source
+  reads, before conversion (§4.5).
 
 **Lineage is the core data.** Entities and relationships record the
 `text_unit_ids` they were stated in. This lineage, not a token-overlap
@@ -316,7 +324,9 @@ language, and incremental removal follows it (§5).
 **Rank (MS GraphRAG parity).** An entity's `rank` is its degree, a
 relationship's the sum of its endpoints' degrees (`domain/ingestion/graph_rank.py`).
 A full build sets them; an incremental merge recomputes them for what it
-writes over the stored graph's neighbours.
+writes over the stored graph's neighbours. Only document-backed edges
+count: an edge every text unit of which is a seed graph's adds to no
+degree (§4.5), so with no seed graph the rank is the plain degree.
 
 **Index suffix.** Every OpenSearch index and Neptune label is named
 `<prefix>-<suffix>[-<additional_suffix>]`: ingestion writes
@@ -525,7 +535,7 @@ gets its models and stores from the run's `Providers` bundle.
   sorts nodes and edges and renumbers each level by its smallest member id:
   the same graph and `random_state` always yield the same communities and ids.
 - **Reports (MS GraphRAG parity).** A report's input sorts the community's
-  entities by degree, caps them at `max_entities_per_report` and packs them
+  entities by degree (document-backed, §4.5), caps them at `max_entities_per_report` and packs them
   into `max_report_context_tokens` (the top entity always fits). Reports are
   generated bottom-up, so a parent whose context would overflow folds in its
   children's report summaries instead of truncating
@@ -562,6 +572,125 @@ gets its models and stores from the run's `Providers` bundle.
 - **Resources.** The pipeline releases indexer and client resources in
   `close()`, which `run-ingestion` calls in `finally` (§8.2).
 
+### 4.5 Seed graphs as virtual documents
+
+A seed graph (`processing.seed_graphs`,
+[User Guide §9 D](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph))
+is a knowledge graph the user brings. It is imported as virtual documents
+of the run's own corpus rather than through a second write path, so
+lineage, removal, derivation, the extraction store and the write-ahead
+protocol apply unchanged, and an incremental run converges to a full build
+of the documents plus the configured seeds. No model reads a seed.
+
+- **Load and convert.** `DataIngestionPipeline.__init__` calls
+  `bootstrap.load_seed_graphs` right after `resolve_extraction_schema`,
+  before any model is built: each item's registered loader returns a
+  `SeedGraph`, and `convert_seed(graph, SeedConversionSettings, schema)`
+  (`domain/ingestion/seed_graph.py`, pure) turns it into shard documents.
+  It checks (duplicate ids, dangling edges, the caps, which fail instead
+  of truncating), maps types (a `type_iri` / `predicate_iri` a schema type
+  declares, the last-declared winning, else the label through
+  `SchemaConformance`), conforms the whole seed at once (both endpoint
+  types are known, so patterns always apply), applies
+  `on_name_collision`, shards nodes by `int(sha256(id)[:8], 16) % shards`
+  (an edge goes with its source node), packs node cards (a node and its
+  outgoing edges, by `(entity_key(name), id)`) into units of at most
+  `max_items_per_unit` statements (a hub card is split; a shard over 2,000
+  units fails, keeping a shard's registry record small) and renders
+  `seed_graphs/<name>/<k>-of-<n>.jsonl`: a header line (name,
+  `SEED_FORMAT_VERSION`, filters), then the units' canonical JSON lines,
+  a blank line before each unit. The content hash therefore covers the
+  name, the filters, the format, the schema's effect and every statement,
+  and the output does not depend on the input's order.
+- **Keying.** `processing.seed_graphs` is neutral in `CONFIG_KEYING`: the
+  conversions' digests are folded into the corpus fingerprint
+  (`cache_keys.seed_corpus_fingerprint`), which keys every stage, and
+  nothing enters `extraction_settings`, so where a seed is read from keys
+  nothing and a seed edit re-extracts no document. Without seeds the
+  fingerprint is the one it was.
+- **Stages.** Loading appends the shards after deduplication
+  (`assign_document_identity` keeps their path), so the registry diffs
+  them like files. Chunking cuts them with `seed_text_units` into `sg-`
+  units (the chunker's stable id, prefixed: they sort after every hex
+  document unit id, and `is_seed_unit` is the one test anywhere).
+  Translation, extraction, gleaning and claims leave them out; a seed
+  unit's record is `parse_seed_unit(unit)`, a pure function of its text,
+  stored under `SEED_RECORD_FINGERPRINT` (the format only, never a model
+  setting), and its text unit names only that graph record. A failed
+  report never fails a seed unit. With seeds configured an empty corpus
+  is a valid run.
+- **Document-first merge.** Every merge path (the records' merge, graph
+  resolution, the incremental merge, derivation) applies one rule keyed
+  on `is_seed_unit` (`document_first`): the type vote counts document
+  statements and falls back to seed votes only when none gives a type;
+  a resolved group's name is keyed `(-document units, -seed units,
+  name)`; confidence is the maximum over document statements when any
+  exist. Descriptions stay a union, document lines first because records
+  merge in unit-id order. `Entity.iri` is a stated field, kept in
+  records, merged as the smallest non-null value (groups with several
+  are counted). Seed properties live in `attributes.seed_properties`,
+  merged per key, never over an extracted attribute. The rules hold per
+  name key: names that only resolve together (a legal-form variant, or
+  fuzzy matching) let seed units break a tie between document spellings,
+  and a document entity named only as a relationship endpoint (no type)
+  takes the seed's type and confidence, as a gap filled.
+- **Source kinds.** `annotate_sources` sets `source_kinds` where indexing
+  sets the schema annotations: `None` for an item no seed unit cites,
+  else the sorted kinds (`["document", "seed_graph"]` or
+  `["seed_graph"]`). It is derived, left out of records, and written only
+  when set, so an item no seed states is stored byte for byte as before
+  and nothing is embedded again. Seed text units carry a `source_kind`
+  keyword (no filter key). Graph edges store the list as a sorted JSON
+  string (`encoded_source_kinds`); `SEED_ONLY_SOURCE_KINDS` is the one
+  encoding of a seed-only edge.
+- **Ranks.** `with_graph_ranks(counts=is_document_backed)` counts an edge
+  unless every text unit it cites is a seed unit, in the full build,
+  derivation and both incremental rank paths, which read stored
+  neighbours through `GraphIndexer.read_neighbor_ids(document_backed=True)`
+  (Neptune `bothE().not(has("source_kinds", '["seed_graph"]')).otherV()`;
+  the SQLite graph and the fakes apply the same predicate; an edge
+  without the property is document-backed). `count_neighbors` keeps every
+  edge: it sizes the community walk, which clusters seeds too. The
+  community detector ranks and selects report entities by
+  document-backed degree, while Leiden sees every edge at its full
+  weight. A large catalog seed therefore enriches the corpus's entities
+  without turning its hubs into the top-ranked entities. Query-time
+  `entity_importance_source: degree` counts the live edges, seeds
+  included.
+- **Communities.** A community whose text units are all seed units is
+  stored without a report and counts as neither generated nor failed
+  (`communities_seed_only`); a parent with one evidenced child is
+  evidenced, and a child without a report leaves the parent its raw
+  context. Global search answers from the corpus, so seed-only content
+  is not in its reports.
+- **Scope (decided).** The shards belong to the source scope of the run
+  that configures them. A separate `seed:<name>` scope per seed was
+  rejected: every run-level registry path (the diff, attempts,
+  write-ahead, commit, the per-scope extraction-settings record) assumes
+  one scope per run, a reset clears every scope of the namespace, and a
+  registry-off build has no scope at all. A seed-only scope is still a
+  run whose corpus is only seeds, with a fixed `source_scope`. The
+  trade-off: one seed configured on two scopes of a namespace is imported
+  twice (the same ids, seed edge weights counted twice).
+- **Model settings never re-import a seed**
+  (`delta_detector.keep_seed_settings_unchanged`, in `detect_delta` and
+  `delta_still_applies`): a shard the diff lists only as
+  `settings_changed` is unchanged, since no model setting changes what it
+  states; re-importing would only delete and re-embed its items. Its
+  record keeps the earlier fingerprint, so later runs exempt it again. A
+  schema change that changes the converted statements changes the content
+  hash and re-imports the shard.
+- **Reset.** A reset (or a registry-off full build) processes the whole
+  corpus, configured seeds included, so the sweep keeps them. Before any
+  write, `incremental._confirm_reset_of_seed_scopes` lists the namespace
+  and, when another scope holds seed paths (`is_seed_path`), asks the
+  pipeline's `confirm` (the CLI's terminal prompt, `--yes`); with no
+  `confirm` the run fails. Refusing every such reset was rejected: it
+  would make the common case, a seed on the corpus, impossible to rebuild.
+- **Not in v1.** IRI-based identity and aliases, `owl:sameAs`, a
+  retrievable fact card (seed units as TEXT context), and federation
+  (§15, *New seed source*).
+
 ---
 
 ## 5. Incremental Indexing
@@ -590,7 +719,9 @@ unless noted.
    records are never adopted (a move cannot be told from another host's corpus
    on the same path) until a run retires the old scope
    (`indexing.retire_source_scopes`). Documents whose processing keeps killing
-   the run are quarantined or deferred (§5.3).
+   the run are quarantined or deferred (§5.3). A seed graph's shards are
+   documents of the run's scope; one only an extraction setting changed
+   for reads unchanged (§4.5).
 2. **Write-ahead** (`write_ahead`). Before any store write, every new and
    changed document is recorded `PENDING` (content hash `"pending"`, which no
    document hashes to) with the union of its stored text units and the ones
@@ -696,6 +827,10 @@ failed rebuild drops nothing. A rebuild whose graph writes partly failed
 (within `indexing.max_failure_rate`) skips the drop, so a retry still finds the
 previous copies, and is reported failed (`neptune_sweep`) rather than recorded:
 clearing the replaced documents' records would orphan their vertices and edges.
+
+The corpus a reset rebuilds includes the run's configured seed graphs;
+when another scope of the namespace holds seed graph shards, the run asks
+before its first write (§4.5).
 
 A generation switch (new labels plus a pointer) was rejected: Neptune labels
 cannot be renamed, so every retriever would resolve the current generation on
@@ -843,6 +978,9 @@ leaving delta communities of already clustered entities out of the cuts
 (their reports are the only ones describing the delta, and stored community
 ids still name removed communities), and re-detecting the full graph on every
 delta run (it would regenerate every report, an LLM call each).
+A seed graph added by a delta run is clustered on its own shards' entities
+the same way, until a rebuild; a delta community only seed units evidence
+gets no report (§4.5).
 
 ### 5.6 Concurrency
 
@@ -951,6 +1089,30 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   (`_graph_unapplied_filters`), to LightRAG's seeds too (its relationship
   endpoints were found under no entity key; `local`'s and `drift`'s seeds
   were found under the filters).
+- **Seed graph facts are entities and relationships, never text.** A
+  seed graph's text units are stored (removal and derivation read
+  them) but never retrieved as chunks: the
+  OpenSearch retriever (OpenSearch and the embedded engine) adds one
+  `must_not` on their `source_kind` to every text-units search, a fetch
+  by id included, inside the kNN filter (efficient filtering on lucene
+  and faiss, so seed units take none of the k). OpenSearch 2.13 refuses a
+  kNN filter on an unmapped field, so unless the alias's mappings show
+  `source_kind`, a kNN search first probes once per query for a unit
+  holding it; an index built before the field gets no clause. An ids-only
+  filter check keeps them: it returns no text. Local search ranks and
+  fetches document units only and its `entity_frequency_threshold` counts
+  document units; the LightRAG chunk follow drops seed units. The
+  `source_kinds` and `iri` filter keys are probed like the schema
+  annotations (`LATE_MAPPED_FIELDS`); `source_kinds: document` means
+  document evidence, items without the field included (OpenSearch
+  `should[term, must_not exists]`, Gremlin `or(has, hasNot)`, the SQLite
+  vertex filter alike), and is dropped on an index none of whose
+  documents holds the field, where it filters nothing. A reported source
+  with seed evidence gets `provenance` (`rag_chain.seed_provenance`:
+  kind, the seed graphs its document filters name, the entity IRI);
+  graph expansion projects a vertex's `iri` and `source_kinds`, but
+  vertices hold no document filters, so a source a graph walk alone
+  reached names no seed graph.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
   the union of what both need (MS GraphRAG builds no relationship vector
   index, LightRAG no communities). A LightRAG-only deployment can set
@@ -1475,7 +1637,7 @@ by default**.
 
 ## 15. Extension Guide
 
-This section is the single reference for extending the framework. Strategies, renderers, parsers and schema sources extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
+This section is the single reference for extending the framework. Strategies, renderers, parsers, schema sources and seed sources extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
 
 - **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
@@ -1660,6 +1822,112 @@ This section is the single reference for extending the framework. Strategies, re
   patterns naming declared types), and the content keys the caches, so the
   snapshot a run used is the one it is keyed by. Raise `SchemaSourceError`
   for anything unreadable; it is a `ConfigurationError`, so the CLIs exit 2.
+- **New seed source** (a graph format, or a service holding a graph):
+  register a loader for a new `processing.seed_graphs[].kind` with
+  `@register_seed_source("kind")` (exported from `unified_kg_rag` with
+  `SeedSourceContext`, `SeedGraph`, `SeedNode`, `SeedEdge` and
+  `SeedGraphError`; the built-in `jsonl`, `csv` and `rdf` loaders live in
+  `adapters/seed_sources/`, imported by the package `__init__`). A loader
+  that imports an optional package declares it, `requires=("module", "how
+  to install it")`, and the CLIs check it before any model call, as for
+  schema sources (`rdf` declares rdflib). The loader receives a
+  `SeedSourceContext` and returns a `SeedGraph` of `SeedNode`s and
+  `SeedEdge`s:
+  - `source`: the `processing.seed_graphs` item (`name`, `kind`, `path`,
+    left as written when it is a URL, `options`, `secret_arn` and the
+    caps). Validate `options` with `context.options(Model)`, a subclass of
+    `SeedSourceOptions` (`from unified_kg_rag.adapters.seed_sources
+    import SeedSourceOptions`), which carries `dangling` and
+    `qualifier_property` and forbids unknown keys.
+  - `config`: the run's config, the extraction schema already in the
+    inline keys (`config.processing.graph_extraction.extraction_schema()`),
+    for a loader that maps class IRIs itself.
+  - `boto_session()`, `client(service)` and `location`, as on
+    `SchemaSourceContext`; and `terms`, whose call builds a
+    `SeedGraphError` naming the seed (`raise context.terms("...")`). Log
+    and raise with `location`, never with `path` or the secret's value.
+
+  What it returns must depend only on what it read and the options, never
+  on the order (`convert_seed` sorts, applies the schema, the collisions,
+  the caps and the sharding). Ids are the seed's own (edges name them);
+  identity in the graph is the node's name. Nothing else changes: the
+  conversion's digest keys the stages, and the shards are documents of the
+  run's corpus (§4.5).
+
+  **Reusing the readers.** `adapters/source_files/` serves seed sources as
+  it serves schema sources: `locations.SourceReader(context,
+  terms=context.terms)` heads, lists and reads S3 objects within a byte
+  cap, and `rdf_files` / `rdf_parse` locate, check and parse RDF files
+  with the `owl` source's safety checks (pass `context.terms`). The
+  property-graph helpers of the built-ins (`property_graph.FileReader`,
+  `GraphBuilder`: sized reads, line caps, refusals naming the file and
+  line) are for kinds added inside `adapters/seed_sources/`. A reader of
+  RDF from elsewhere (a SPARQL endpoint's `CONSTRUCT` result, say) hands
+  its triples as `abox_mapping.RdfTerm` tuples to
+  `abox_mapping.map_abox(triples, options, schema, terms=context.terms)`
+  (pure, no rdflib) and gets the `rdf` kind's rules: instances, names and
+  descriptions by language, the most specific mapped class, CURIE
+  property keys, nothing inferred. Its options model subclasses
+  `AboxMappingOptions`.
+
+  A service loader fetches a snapshot once per run:
+
+  ```python
+  import json
+
+  from pydantic import Field
+
+  from unified_kg_rag import SeedEdge, SeedGraph, SeedNode, SeedSourceContext, register_seed_source
+  from unified_kg_rag.adapters.seed_sources import SeedSourceOptions
+
+
+  class ServiceOptions(SeedSourceOptions):
+      graph: str = Field(description="The service's graph to read")
+
+
+  @register_seed_source("ontology_service")
+  def load_ontology_service(context: SeedSourceContext) -> SeedGraph:
+      options = context.options(ServiceOptions)
+      source = context.source
+      token = None
+      if source.secret_arn:
+          secret = context.client("secretsmanager").get_secret_value(
+              SecretId=source.secret_arn
+          )
+          token = json.loads(secret["SecretString"])["token"]
+      try:
+          # fetch_instances: your client of the service (HTTP, SPARQL, or an
+          # MCP session calling the server's tool).
+          snapshot = fetch_instances(source.path, graph=options.graph, token=token)
+      except OSError as e:
+          raise context.terms(f"cannot read '{context.location}': {e}") from e
+      return SeedGraph(
+          nodes=tuple(
+              SeedNode(id=n["iri"], iri=n["iri"], name=n["label"], type_iri=n["class"])
+              for n in snapshot["instances"]
+          ),
+          edges=tuple(
+              SeedEdge(source=e["from"], target=e["to"], predicate_iri=e["property"])
+              for e in snapshot["links"]
+          ),
+      )
+  ```
+
+  selected with `seed_graphs: [{name: catalog, kind: ontology_service,
+  path: "https://ontology.example.com/v1", options: {graph: products},
+  secret_arn: ...}]`, from Python after importing the module (the CLIs
+  import only the built-in sources).
+
+  **Copy, or federate.** Such a loader copies: the snapshot becomes part
+  of the graph, embedded, clustered and keyed like the rest, and its IRIs
+  line up with the service's through `Entity.iri`, `type_iri` and
+  `predicate_iri`. Federation, querying the service at retrieval time
+  instead, is not built. Its seam would be a retrieval-time port (look up
+  the IRIs of names, a node's neighbours, a node's description) that
+  expands stored entities by `iri` without copying; nodes it returns would
+  be in neither Leiden nor the vectors, so global search would not see
+  them, and the `source_kinds` vocabulary can name them. The registry,
+  `Entity.iri` and `source_kinds` are the seams either way.
 - **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 
 

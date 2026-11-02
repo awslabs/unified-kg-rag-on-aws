@@ -1937,8 +1937,8 @@ class SeedGraphConfig(BaseModel):
         description=(
             "Registered seed source that reads the graph: 'jsonl' (nodes and "
             "edges, one JSON object per line), 'csv' (a nodes file and an "
-            "edges file), or a kind a deployment registers "
-            "(register_seed_source)."
+            "edges file), 'rdf' (an RDF A-Box, with the ontology extra), or a "
+            "kind a deployment registers (register_seed_source)."
         ),
     )
     path: str = Field(
@@ -1964,6 +1964,9 @@ class SeedGraphConfig(BaseModel):
             "and 'edges' (the file names in the directory, default "
             "nodes.csv and edges.csv; edges: null reads no edges file) and "
             "'property_columns' (the only extra columns kept as properties). "
+            "'rdf' takes 'prefixes', 'name_properties', "
+            "'description_properties', 'languages', 'labels', 'properties', "
+            "'exclude_properties' and 'format' (user guide section 9 D). "
             "An unknown option fails the import. Not keyed: the converted "
             "content is."
         ),

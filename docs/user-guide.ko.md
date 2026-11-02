@@ -836,11 +836,11 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 | 저장소 | 필터 가능한 필드 |
 |---|---|
 | 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `attr_<key>`, `attributes.<path>` |
-| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `attr_<key>`, `attributes.filters.<key>` |
+| 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
+| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
 | 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `attr_<key>`(있는 경우) |
+| Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`(있는 경우) |
 
 - OpenSearch에서 `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목입니다(여러
   문서에서 나온 항목은 그 값을 모두 가짐). Neptune 엔티티 정점에서는 엔티티 자체의
@@ -848,7 +848,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 `term`은 정확히 일치해야
   하므로 `type:PERSON`이 아니라 `type:person`으로 필터링하세요. 관계에는 `type` 필터가
   없습니다(관계 인덱스에 유형을 저장하지 않음). `in_schema`, `type_iri`,
-  `predicate_iri`는 [추출 스키마](#c-추출-스키마) 표시입니다. keyword나 숫자 필드를
+  `predicate_iri`는 [추출 스키마](#c-추출-스키마) 표시이고, `iri`와
+  `source_kinds`(`document`, `seed_graph`)는
+  [시드 그래프](#d-시드-그래프가지고-있는-지식-그래프-가져오기)에서 옵니다. keyword나 숫자 필드를
   쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
   일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
   `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
@@ -1480,7 +1482,8 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
 ## 9. 도메인 적응
 
 파이프라인을 의료, 법률, 금융 같은 도메인에 맞추는 방법은 엔티티 유형(A), 프롬프트(B),
-추출 스키마(C) 세 가지입니다.
+추출 스키마(C) 세 가지입니다. 이미 가지고 있는 지식 그래프는 시드 그래프(D)로 추출한
+그래프에 합칩니다.
 
 ### A. `entity_types`(비용이 가장 적고 효과가 가장 큼)
 
@@ -2096,6 +2099,359 @@ properties dropped, ... ends lifted, ...` 형식이며, DEBUG에는 빠지거나
   유지), 초안을 검토해 `kind: file`로 읽으세요(더한 유형 때문에 스키마가 바뀌므로
   다시 추출함).
 
+### D. 시드 그래프(가지고 있는 지식 그래프 가져오기)
+
+시드 그래프(seed graph)는 이미 가지고 있는 지식 그래프(공급업체 마스터, 제품 카탈로그,
+온톨로지의 인스턴스 등)를 문서에서 추출한 그래프에 합친 것입니다. 시드마다 실행 자신의
+코퍼스에 속한 가상 문서(`seed_graphs/<name>/<k>-of-<n>.jsonl`)로 나뉘므로, 증분 실행,
+삭제, 재개와 저장소가 시드를 다른 파일과 똑같이 다룹니다. 시드는 어떤 모델도 읽지
+않습니다. 시드의 진술(statement)은 파싱할 뿐이며, 모델로 청킹하거나 번역, 추출,
+글리닝(gleaning), 주장 추출을 하지 않습니다.
+
+문서가 언급하는 엔티티를 정리된 원천이 이미 설명하고 있고 답변이 그 설명, 속성, IRI를
+쓰게 하고 싶을 때, 또는 텍스트에 없는 에지(조직도, 누가 누구에게 공급하는지)가 있어야
+로컬 검색과 그래프 확장이 따라갈 수 있을 때 씁니다. 시드는 문서를 덮어쓰지 않으며(아래
+*우선순위*), 유형이 아니라 인스턴스를 가져옵니다. 유형 어휘는 추출 스키마(C)가 정합니다.
+
+**설정.** 시드는 `processing.seed_graphs` 목록에 선언합니다.
+
+```yaml
+processing:
+  graph_extraction:
+    entity_types:
+      - {label: VENDOR, description: "Companies that sell goods", iri: "https://example.org/procure#Vendor"}
+      - {label: BUYER, description: "Companies that buy goods", iri: "https://example.org/procure#Buyer"}
+    relationship_types:
+      - {label: SUPPLIES, iri: "https://example.org/procure#supplies"}
+    relationship_patterns:
+      - "VENDOR -SUPPLIES-> BUYER"
+    schema_mode: align
+  seed_graphs:
+    - name: procure
+      kind: jsonl
+      path: seed/procure.jsonl         # 이 파일 기준 상대 경로
+      filters: {department: purchasing}
+      description_properties: [country]
+```
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `name` | 필수 | 샤드 문서의 이름과, 시드가 진술한 모든 항목의 `seed_graph` 문서 필터 값이 됩니다. 소문자, 숫자, `-`, `_`로 64자까지이며 문자나 숫자로 시작하고 시드끼리 겹치면 안 됩니다. 이름을 바꾸면 시드를 다시 가져옵니다 |
+| `kind` | 필수 | `jsonl`, `csv`, `rdf`(`ontology` extra 필요), 또는 배포에서 등록한 종류([설계 문서 §15](./design.md#15-extension-guide), 영문) |
+| `path` | 필수 | 로컬 파일이나 디렉터리(설정 파일 기준 상대 경로이며 환경 변수로 지정해도 같음), S3 객체(`s3://bucket/key`), 또는 디렉터리로 읽는 S3 접두사(`s3://bucket/seed/`, 끝의 `/` 필수)입니다. 실행의 AWS 세션으로 읽습니다. 그 밖의 URL은 실패합니다 |
+| `options` | `{}` | 종류별 설정(아래). 모르는 옵션이 있으면 가져오기가 실패합니다 |
+| `secret_arn` | `null` | 등록한 서비스 소스가 읽는 Secrets Manager 비밀. `jsonl`, `csv`, `rdf`는 받지 않습니다 |
+| `filters` | `{}` | 시드 항목의 문서 필터로, 문서의 메타데이터 필터와 같습니다(문자열, 숫자, 불리언 값). `seed_graph: <name>`이 항상 더해지므로 `seed_graph` 키는 쓸 수 없습니다 |
+| `on_name_collision` | `error` | 이름으로 보아 한 엔티티인 시드 노드 두 개를 다루는 방법: `error`, `merge`, `qualify`(*우선순위*) |
+| `description_properties` | `[]` | 설명 뒤에 `key: value` 줄로 적을 속성 키. 답변이 이 값을 쓸 수 있습니다 |
+| `confidence` | `1.0` | 시드 진술의 신뢰도. 노드에 `confidence`가 있으면 그 값을 씁니다 |
+| `shards` | `16`(1~1,024) | 노드 id의 안정적인 해시로 시드를 나눌 가상 문서 수 |
+| `max_items_per_unit` | `50`(1~500) | 텍스트 단위 하나에 담는 노드·에지 진술 수. 계보(lineage)의 단위입니다 |
+| `max_nodes` | `100000` | 노드가 이보다 많으면 실패 |
+| `max_edges` | `500000` | 에지가 이보다 많으면 실패 |
+| `max_bytes` | `268435456`(256 MiB) | 파일 크기 합이 이보다 크면 실패(읽기 전과 읽는 중에 확인) |
+| `max_property_keys` | `64`(0~512) | 서로 다른 속성 키가 이보다 많으면 실패(키마다 `attributes.seed_properties` 아래 저장 필드가 하나씩 생김) |
+| `max_description_chars` | `1000`(50 이상) | 설명을 단어 경계에서 이 길이로 자르고 "…"를 붙입니다. 시드만 진술한 항목은 설명 요약기가 필요 없게 됩니다 |
+
+- 한도를 넘으면 가져오기가 실패하며 아무것도 잘라내지 않습니다. 잘라내면 그래프가
+  임의로 바뀌기 때문입니다. 텍스트 단위가 2,000개를 넘는 샤드(`shards`나
+  `max_items_per_unit`을 늘리세요), 1 MiB를 넘는 JSONL 줄이나 CSV 행도 실패합니다.
+- 모든 종류가 옵션 두 개를 받습니다. `dangling`(없는 노드를 가리키는 에지:
+  기본값 `error`, 또는 그 에지를 빼고 개수만 세는 `skip`)과
+  `qualifier_property`(`on_name_collision: qualify`용)입니다.
+- 환경 변수에서는 목록을 JSON으로 씁니다.
+  `UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'`
+- `run-ingestion`은 시작할 때 추출 스키마를 읽은 다음, 모델을 만들기 전에 시드마다 한 번
+  읽습니다. 가져올 수 없는 시드는 시드 이름과, 잘못된 레코드라면 파일과 줄을 알려 주고
+  종료 코드 2로 끝납니다. 다른 CLI는 시드를 읽지 않지만(`run-prompt-tuning`은 문서만
+  분석), 설정한 종류에 필요한 extra(`rdf`)가 없으면 `run-ingestion`처럼 종료 코드 2로
+  끝납니다.
+- 시드를 설정하면 코퍼스가 비어 있어도 됩니다. 빈 `--source-directory`는 시드만 가져오는
+  실행입니다(*수명 주기*).
+- **AWS에서는** 시드 파일을 이미지 안 설정 파일 옆에 두거나 수집 태스크 역할이 읽을 수
+  있는 S3 위치에 두어야 합니다
+  ([운영 런북: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3), 영문).
+  수집 원본 접두사에는 두지 마세요. 그곳의 `.csv`는 문서로도 파싱됩니다.
+
+**JSONL**(`kind: jsonl`): 파일 하나(이름은 상관없음), 또는 `*.jsonl` 파일을 하위까지
+정렬된 순서로 읽는 디렉터리입니다(`.`으로 시작하는 이름은 건너뜀). 빈 줄이 아닌 줄은
+`"kind"`가 `node`나 `edge`인 JSON 객체입니다.
+
+```json
+{"kind": "node", "id": "v1", "name": "Acme Supplies", "type": "VENDOR", "iri": "https://example.org/procure#acme", "description": "Industrial valve vendor.", "properties": {"country": "DE"}}
+{"kind": "node", "id": "b1", "name": "Globex Buyer", "type_iri": "https://example.org/procure#Buyer"}
+{"kind": "edge", "source": "v1", "target": "b1", "type": "SUPPLIES", "description": "Acme supplies Globex with valves.", "weight": 2}
+```
+
+- 노드는 `id`(필수, 중복 불가), `name`(기본값: id), `type`(레이블), `type_iri`(스키마가
+  대응하는 클래스 IRI), `description`, `iri`(노드 자신의 IRI), `confidence`,
+  `properties`를 받습니다.
+- 에지는 `source`와 `target`(노드 id), `type` 또는 관계 유형이 선언한 `predicate_iri`(둘
+  중 하나는 필수), `description`, `weight`(기본값 1), `properties`를 받습니다.
+- 속성 값은 문자열, 숫자, 불리언이며 `null`은 버립니다. 모르는 키, 중복된 노드 id,
+  스칼라가 아닌 속성, `NaN`, JSON 객체가 아닌 줄은 파일과 줄을 알려 주며 실패합니다.
+- 자기 자신을 가리키는 에지는 버립니다(전체 빌드도 그리지 않음). 양 끝과 유형이 같은
+  에지는 합칩니다. 가중치는 더하고 설명은 합집합으로 모읍니다.
+
+**CSV**(`kind: csv`): `path`는 `nodes.csv`와 `edges.csv`가 든 디렉터리(또는 `/`로
+끝나는 S3 접두사)입니다. 첫 행이 열 이름이며, 위의 노드·에지 키가 열이 되고 그 밖의
+열은 문자열 속성입니다.
+
+```text
+id,name,type,type_iri,description,iri,confidence,country
+v1,Acme Supplies,VENDOR,,Industrial valve vendor.,https://example.org/procure#acme,,DE
+b1,Globex Buyer,,https://example.org/procure#Buyer,,,,
+```
+
+```text
+source,target,type,predicate_iri,description,weight
+v1,b1,SUPPLIES,,Acme supplies Globex with valves.,2
+```
+
+```yaml
+  seed_graphs:
+    - name: procure
+      kind: csv
+      path: seed/procure               # nodes.csv와 edges.csv가 든 디렉터리
+      filters: {department: purchasing}
+      description_properties: [country]
+      options:
+        property_columns: [country]
+```
+
+이 파일들은 JSONL 예시와 같은 그래프를 진술합니다. 빈 칸은 값이 없는 것입니다.
+`options.nodes`와 `options.edges`로 디렉터리 안의 다른 파일을 지정하고(`edges: null`이면
+노드만 읽음), `options.property_columns`는 나열한 추가 열만 남깁니다. UTF-8이며 바이트
+순서 표시(BOM)는 있어도 됩니다. 열보다 칸이 많은 행, 반복된 열, `id`(`source`,
+`target`) 열이 없는 파일, Python CSV 한도(131,072자)를 넘는 필드는 실패합니다.
+
+**RDF**(`kind: rdf`): Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD로 쓴
+온톨로지의 인스턴스(A-Box)입니다. `ontology` extra가 필요하며(이미지도
+`--build-arg UV_EXTRAS="--extra ontology"`로 빌드), `owl` 스키마 소스와 똑같이 파일을
+읽습니다(파일, 디렉터리, `s3://` 객체나 접두사, `options.format`, 아무것도 가져오지 않고
+`owl:imports`를 따라가지 않으며 같은 형식을 거부:
+[가져오지 않는 것, 읽지 않는 것](#owlrdfs-온톨로지에서-읽기)). 크기는 시드의
+`max_bytes`를 따릅니다. procure 온톨로지를 스키마로 쓰면 다음과 같습니다.
+
+```yaml
+processing:
+  graph_extraction:
+    schema_source: {kind: owl, path: ontology/procure.ttl}
+    schema_mode: strict
+  seed_graphs:
+    - name: procure
+      kind: rdf
+      path: seed/procure-abox.ttl
+      options:
+        languages: [en, ""]            # 기본값. [ko, en, ""]이면 Acme 이름이 한국어로 됨
+```
+
+```turtle
+@prefix ex: <https://example.org/procure#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:acme a ex:Organization, ex:Vendor ;
+    rdfs:label "Acme Supplies"@en, "애크미 서플라이"@ko ;
+    skos:definition "Industrial valve vendor."@en ;
+    ex:country "DE" ;
+    ex:rating "4"^^xsd:integer ;
+    ex:supplies ex:globex ;
+    ex:headquarters ex:berlin .
+
+ex:globex a ex:Buyer ;
+    rdfs:label "Globex Buyer" .
+
+ex:berlin rdfs:label "Berlin"@en .
+```
+
+이 파일은 노드 두 개와 에지 하나가 됩니다. `Acme Supplies`(두 클래스 중 가장 구체적인
+`VENDOR`, 속성 `ex:country` = `DE`, `ex:rating` = 4), `Globex Buyer`(`BUYER`), 그리고
+`predicate_iri`가 `ex:supplies`인 `Acme Supplies -SUPPLIES-> Globex Buyer`입니다.
+`ex:berlin`은 유형이 없어 인스턴스가 아니므로 `ex:headquarters` 에지는 건너뜁니다
+(`objects_not_instances`로 셈).
+
+- **인스턴스**는 RDF, RDFS, OWL, XSD, SKOS 어휘 밖의 `rdf:type`이 있는 이름 있는 주어
+  가운데 그 자신이 클래스나 속성이 아닌 것입니다. 노드의 `id`와 `iri`는 그 IRI입니다.
+- **이름**은 `name_properties`(기본값 `skos:prefLabel`, `rdfs:label`, `schema:name`)에서
+  `languages`(기본값 `[en, ""]`, `""`는 태그 없음, 그 밖의 태그는 그 뒤) 순서로 고르고,
+  없으면 IRI의 로컬 이름을 퍼센트 디코딩해 그대로 씁니다. **설명**도 같은 방식으로
+  `description_properties`(기본값 `skos:definition`, `rdfs:comment`,
+  `schema:description`)에서 읽습니다.
+- **유형.** `rdf:type`마다 스키마의 엔티티 유형 IRI에서 찾고, 여러 개가 대응하면 스키마가
+  마지막에 선언한 유형을 씁니다. `owl` 스키마는 클래스를 하위 클래스보다 먼저 나열하므로
+  그것이 가장 구체적인 클래스입니다(위에서는 `ORGANIZATION`이 아니라 `VENDOR`). 어떤
+  유형도 선언하지 않은 클래스는 그 IRI를 `type_iri`로 두고 레이블은 `labels`가 준 값,
+  없으면 로컬 이름을 `UPPER_SNAKE`로 바꾼 값입니다. 그러면 `strict`는 그 노드를 버리고
+  `align`과 `off`는 남깁니다.
+- **에지**는 목적어가 인스턴스인 트리플이며, 술어를 IRI로 가진 관계 유형, 없으면
+  `labels`, 없으면 술어의 로컬 이름을 `UPPER_SNAKE`로 바꾼 값이 유형입니다. 인스턴스가
+  아닌 목적어는 건너뛰고 셉니다(`dangling`은 적용되지 않음).
+- **속성**은 나머지 리터럴이며, 키는 `options.prefixes`, 잘 알려진 접두사, 파일 자신의
+  접두사 순으로 만든 CURIE입니다. 어느 것도 그 이름공간을 묶지 않으면 전체 IRI가
+  키입니다(N-Triples는 접두사를 선언하지 않으므로 `options.prefixes`로 묶지 않으면 키가
+  전체 IRI). 숫자와 불리언 타입 리터럴은 숫자와 불리언이 됩니다. 값이 여러 개인 술어는
+  언어 기준으로 선호하는 문자열, 없으면 가장 작은 값을 남깁니다. `properties`는 나열한
+  술어만 남기고 `exclude_properties`는 일부를 뺍니다.
+- **읽지 않는 것**: 빈 노드(blank node), 구체화(reification)한 진술, RDF-star,
+  `owl:sameAs`는 건너뛰고 셀 뿐 따라가지 않습니다. 아무것도 추론하지 않습니다. 역관계,
+  대칭, 하위 속성 에지를 만들지 않고 하위 클래스 진술이 함의하는 유형도 붙이지 않습니다.
+  시드마다 INFO 로그 한 줄에 개수가 나옵니다.
+- **파일 기준 상대 IRI**(`@base` 없음)는 경고합니다. 파일을 옮기면 노드 이름이 바뀌어
+  다시 가져오게 됩니다.
+
+| 옵션 | 기본값 | 의미 |
+|---|---|---|
+| `prefixes` | `{}` | 이 옵션들과 속성 키의 CURIE에 쓸 접두사 → 이름공간 |
+| `name_properties` | `skos:prefLabel`, `rdfs:label`, `schema:name`(`https`와 `http`) | 이름을 읽을 리터럴 |
+| `description_properties` | `skos:definition`, `rdfs:comment`, `schema:description`(`https`와 `http`) | 설명을 읽을 리터럴 |
+| `languages` | `[en, ""]` | 이름, 설명, 문자열 속성의 선호 언어 태그 |
+| `labels` | `{}` | 스키마 유형이 선언하지 않은 클래스나 속성(IRI 또는 CURIE) → 쓸 유형 레이블 |
+| `properties` | `null`: 나머지 리터럴 전부 | 속성으로 남길 리터럴 술어 |
+| `exclude_properties` | `[]` | 남기지 않을 리터럴 술어 |
+| `format` | `auto` | `auto`(확장자), `turtle`, `xml`, `json-ld`, `nt`, `nquads`, `trig` |
+
+**스키마와 맞추기.** 시드는 실행이 읽은 추출 스키마(C)에 맞춰 시드 전체를 한 번에
+변환하므로, 패턴 검사는 언제나 양 끝 유형을 압니다.
+
+- `type_iri`(또는 `predicate_iri`)는 그 `iri`를 가진 선언 유형을 가리킵니다. 어떤
+  유형도 선언하지 않은 IRI는 개수를 세고(`nodes_unmapped_type_iri`) 대신 `type`
+  레이블을 씁니다. `type` 레이블은 추출과 같은 방식으로 씁니다(관계 유형을 선언하면
+  `vendor`가 `VENDOR`가 됨).
+- `off`는 아무것도 검사하지 않습니다. `align`은 전부 남기고 스키마 밖 항목을 셉니다.
+  `strict`는 스키마 밖 노드와 그 에지, 선언하지 않은 유형의 에지, 패턴이 허용하지 않는
+  에지를 버립니다. JSONL 예시에 `DISTRIBUTOR` 노드와 그 `SUPPLIES` 에지,
+  `BUYER -SUPPLIES-> VENDOR` 에지를 더하면 `align`에서는 `entities_off_schema=1`,
+  `relationships_off_pattern=1`을 세고, `strict`에서는 그 노드와 두 에지도 버립니다.
+- 개수는 INFO 로그 `Seed graph 'procure': ...`에 추출과 같은 카운터 이름으로 나옵니다.
+  시드 항목도 추출한 항목처럼 `in_schema`, `type_iri`, `predicate_iri`를 받습니다.
+  `iri`는 노드 자신의 IRI입니다.
+
+**우선순위: 문서가 정합니다.** 이름이 같은 엔티티로 보이는(정규화 후 같거나, 추출이
+합치는 것처럼 법인 형태만 다른) 시드 노드와 문서 속 언급은 한 엔티티가 됩니다.
+
+| 대상 | 규칙 |
+|---|---|
+| 유형, 이름, 신뢰도 | 그 엔티티를 진술한 문서가 있으면 문서의 진술이 정합니다. 시드의 진술은 빈 곳만 채웁니다. 문서가 진술하지 않은 엔티티, 또는 문서가 관계의 끝점으로만 언급해 유형이 없는 엔티티입니다 |
+| 설명 | 합집합이며 문서의 줄이 먼저, 시드의 줄이 그 뒤에 옵니다 |
+| 속성 | `attributes.seed_properties` 아래에 두며, 추출한 속성을 덮어쓰지 않습니다 |
+| IRI | 진술된 IRI 중 가장 작은 값. 여러 IRI로 진술된 엔티티는 셉니다(`entities_with_conflicting_iris`, INFO) |
+| 에지 | 더합니다. 양 끝과 유형이 같은 시드 에지와 문서 에지는 한 관계이며 가중치를 더합니다 |
+| 순위(rank) | 문서가 뒷받침하는 에지만 셉니다(인용한 텍스트 단위가 모두 시드의 것이면 시드 전용 에지). 시드는 엔티티를 더 중요하게 만들지 않으며, 시드 에지로만 이어진 엔티티의 순위는 0입니다. Leiden은 여전히 모든 에지를 원래 가중치로 군집화합니다. `indexing.neptune.entity_importance_source: degree`는 질의 시점에 에지를 세므로 시드 에지도 셉니다 |
+| 커뮤니티 | 시드만 진술한 엔티티로 이루어진 커뮤니티는 리포트 없이 저장합니다(단계 지표 `communities_seed_only`). 섞인 커뮤니티의 리포트는 문서 기준 순위가 높은 엔티티부터 나열합니다 |
+
+- **동음이의어.** 정체성은 이름입니다. 관계없는 시드 노드 "Mercury"(행성)와 문서의
+  "Mercury"(원소)는 한 엔티티가 되어 시드의 설명 줄과 IRI를 얻지만 유형은 문서의 것을
+  유지합니다. `on_name_collision`은 한 시드 안의 이름만 다룹니다. 이름을 다듬거나 시드
+  안에서 한정어를 붙이세요.
+- **철자 변형.** 위 규칙은 이름 단위로 성립합니다. 같지는 않지만 한 엔티티로 해석되는
+  이름(문서의 "Acme", 시드의 "Acme Inc")에서는 시드도 영향을 줍니다. 문서 철자 두 개가
+  동률이면 시드의 단위가 이름을 정할 수 있고, 변형들의 설명 줄이 섞입니다.
+  `processing.fuzzy_entity_resolution`을 켜면 시드 철자가 문서 철자 두 개를 이어 붙일 수도
+  있습니다.
+- **`on_name_collision`**은 이름으로 보아 한 엔티티이지만 id도 IRI도 같지 않은 한 시드의
+  노드 두 개에 적용됩니다. `error`(기본값)는 그 노드를 나열하며 가져오기를 실패시킵니다
+  (`1 names are shared by distinct nodes (ids v1, v2); set on_name_collision to merge or qualify`).
+  `merge`는 한 엔티티로 합칩니다(가장 작은 IRI 유지). `qualify`는 id가 가장 작은 노드의 이름은 그대로
+  두고 나머지 이름에 ` (<qualifier>)`를 붙입니다. 한정어는 `qualifier_property` 값, 없으면 IRI의 로컬 이름,
+  없으면 id입니다(`ACME supplies (v2)`). 한정어를 붙인 이름은 문서 속 언급과 더는 이어지지
+  않습니다.
+
+**검색.** 시드의 사실은 엔티티와 관계를 읽는 모든 전략(벡터·키워드 검색, 시드 에지를
+따라가는 그래프 확장)에서 엔티티와 관계로 답변에 들어가며, 텍스트 청크로는 들어가지
+않습니다. 시드의 텍스트 단위는 계보 때문에 저장하지만 모든 텍스트 검색이 이를 빼고,
+`local`과 `mix`는 청크 할당량을 여기에 쓰지 않습니다. `global`과 `drift`의 프라이머는
+리포트만 읽으므로 시드만 진술한 것은 보지 못합니다. `naive`는 텍스트 단위만 읽습니다.
+
+- **인용.** 시드가 진술한 출처의 메타데이터에는 `provenance`가 있고 청크는 없습니다
+  (`chunk_id`는 `None`).
+
+  ```python
+  {"kind": "seed_graph",          # 또는 "document+seed_graph"
+   "seed_graphs": ["procure"],
+   "iri": "https://example.org/procure#acme"}
+  ```
+
+  시드가 진술하지 않은 출처는 전과 같이 `provenance` 키 없이 보고합니다. 그래프 탐색으로만
+  도달한 엔티티는 `"seed_graphs": []`입니다. 그래프 정점에는 문서 필터가 없기 때문입니다.
+- **필터**([필터](#필터)):
+  - `source_kinds`(엔티티, 관계, Neptune 엔티티 정점): `seed_graph`는 시드가 진술한 것,
+    `document`는 문서가 진술한 것(둘 다 진술한 엔티티도 시드 설명 줄과 함께 포함)을
+    남깁니다. 목록은 둘 중 하나와 일치합니다. 대소문자는 상관없습니다.
+  - `iri`(엔티티, Neptune 엔티티 정점): 정확한 IRI.
+  - `attr_seed_graph: procure`는 모든 인덱스가 가진 문서 필터로 그 시드가 진술한 것을
+    남깁니다. `attr_department: legal` 같은 테넌트 필터는 시드의 `filters`에 그 키가 없으면
+    시드만 진술한 것을 빼며, 문서와 같은 규칙입니다.
+
+```python
+RAGInput(query="...", search_strategy="local", filters={"source_kinds": "document"})
+RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procure"})
+```
+
+**무엇을 다시 인덱싱하나.** 파일이 아니라 변환된 진술을 키로 씁니다.
+
+| 변경 | 다음 증분 실행 |
+|---|---|
+| 노드나 에지 수정 | 진술이 바뀐 샤드만 다시 가져옵니다(삭제 후 추가, 모델 호출 없음). 문서는 다시 추출하지 않습니다 |
+| `shards` 변경 | 시드 전체를 다시 가져옵니다. 샤드 경로가 모두 바뀝니다 |
+| 시드 이름이나 `filters` 변경 | 시드 전체를 다시 가져옵니다. 샤드마다 이 값을 적습니다 |
+| `description_properties`, `confidence`, `max_description_chars`, `max_items_per_unit`, `on_name_collision` 변경 | 진술이 바뀌는 샤드를 다시 가져옵니다 |
+| 변환된 진술을 바꾸는 스키마 변경(레이블, `schema_mode`, `type_iri`, `predicate_iri`, RDF 클래스가 대응하는 IRI) | 영향받는 샤드를 다시 가져옵니다(문서는 다른 스키마 변경과 같이 다시 추출) |
+| 모델이나 추출 설정 | 문서는 다시 추출하고, 시드 샤드는 그대로 둡니다. 어떤 설정도 시드가 진술하는 내용을 바꾸지 않습니다 |
+| 파일 이동이나 재직렬화, 시드가 이미 지키는 한도 변경 | 아무것도 하지 않습니다 |
+
+충돌 후 시드가 바뀐 상태로 재개한 실행은 단계를 다시 계산합니다. 시드 내용이 모든 단계의
+캐시 키에 들어가기 때문입니다.
+
+**수명 주기.** 아래 동작에는 문서 상태 레지스트리(`providers.doc_status.enabled`)가
+필요합니다. 레지스트리가 없으면 매 실행이 코퍼스와 설정한 시드의 전체 빌드입니다.
+
+- **삭제.** 설정에서 시드를 빼면 다음 증분 실행이 그 샤드를 삭제합니다. 그 시드만 진술한
+  것은 사라지고, 문서도 진술한 엔티티는 그 시드의 설명 줄, 속성, IRI, 에지를 잃습니다.
+- **재설정.** `indexing.reset: true`는 설정한 시드를 포함한 실행의 코퍼스로 네임스페이스를
+  다시 만듭니다. 네임스페이스의 다른 소스 범위가 시드 문서를 가지고 있어(아래 시드 전용
+  범위) 재설정이 그것을 지우게 되면, 실행은 먼저 묻습니다. `run-ingestion`은 터미널에서
+  묻고 `--yes`는 '예'로 답하며, 터미널이 없으면 쓰기 전에 실패합니다(종료 코드 1).
+  Python에서는 `DataIngestionPipeline(..., confirm=callable)`을 넘기세요. 없으면 이런
+  재설정은 실패합니다.
+- **시드 전용 범위.** 시드를 설정하고 빈 `--source-directory`와 고정한
+  `processing.document_parsing.source_scope`(예: `seeds-procure`)로 실행하면 시드가 자기
+  범위에 따로 있고 모델 호출도 없습니다. 같은 네임스페이스의 다른 범위 실행은 이를
+  건드리지 않으며, 재설정만 예외입니다.
+- **시드 하나, 코퍼스 둘.** 시드는 그것을 설정한 실행의 범위에 속합니다. 한 네임스페이스의
+  두 범위에 설정하면 두 번 가져옵니다. 엔티티는 같지만 에지 가중치가 두 번 셉니다. 공유
+  시드는 한 범위에만 설정하거나 시드 전용 범위를 주세요.
+
+**비용과 한계.**
+
+- 시드를 읽는 LLM 호출은 없지만 항목은 임베딩합니다. 노드마다 벡터 두 개(이름, 설명),
+  에지마다 하나(`indexing.opensearch.build_relationship_vector_index`, 기본값 켜짐),
+  텍스트 단위마다 하나로, 기본값에서 대략 2 × 노드 + 에지 + (노드 + 에지) / 50개입니다.
+  노드 100,000개, 에지 500,000개 한도에서는 임베딩 약 712,000개입니다. 문서도 진술한
+  엔티티는 합친 설명이 요약기 임계값을 넘으면 전처럼 요약하고, 그 엔티티가 속한
+  커뮤니티의 리포트가 그 엔티티를 설명합니다. 시드 전체를 메모리와 단계 캐시에 둡니다.
+- **증분 실행은 델타만 군집화합니다**(§5). 증분 실행으로 더한 시드는 재설정으로 그래프
+  전체를 다시 군집화할 때까지 자기 샤드의 엔티티끼리만 군집화됩니다.
+- **번역.** 시드 진술은 번역하지 않지만 문서의 엔티티는 번역된 텍스트에서 추출합니다.
+  시드 이름이 문서와 이어지려면 `processing.translation.target_language`로 쓰세요.
+- **로컬 백엔드.** SQLite 그래프와 임베디드 벡터 저장소도 같은 필드를 두고 같은 필터를
+  적용합니다.
+
+**미리 보기.** 모델 호출도 저장소도 없이 시드가 무엇으로 변환되는지 봅니다.
+
+```python
+from unified_kg_rag import get_config
+from unified_kg_rag.application.bootstrap import load_seed_graphs, resolve_extraction_schema
+
+config = resolve_extraction_schema(get_config("config.yaml"))
+for conversion in load_seed_graphs(config):
+    print(conversion.name, conversion.stats.model_dump(exclude_defaults=True))
+```
+
+JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'edges': 1,
+'units': 2, 'documents': 2}`가 출력됩니다.
+
 ---
 
 ## 10. 운영과 문제 해결
@@ -2218,7 +2574,12 @@ finally:
   `GraphRAGException`입니다. `DataIngestionPipeline.run`은 `ConfigurationError`,
   `StoreConnectionError`, `NamespaceLeaseError`는 그대로 올리고, 단계 밖의 다른
   오류는 `PipelineExecutionError`로 감쌉니다. 모델 클라이언트 자체의 전송 오류(로컬 모델 서버의
-  `httpx.ConnectError` 등)는 그대로 전달됩니다.
+  `httpx.ConnectError` 등)는 그대로 전달됩니다. `DataIngestionPipeline(...)`은 가져올 수
+  없는 시드 그래프에 `SeedGraphError`(`ConfigurationError`의 하위 클래스)를 던집니다.
+- `DataIngestionPipeline(..., confirm=callable)`은 실행이 묻는 질문에 답합니다
+  (`callable(question) -> bool`). 지금은 다른 소스 범위의 시드 그래프 문서를 지우게 되는
+  재설정만 묻습니다. 넘기지 않으면 그런 실행은 실패합니다
+  ([시드 그래프](#d-시드-그래프가지고-있는-지식-그래프-가져오기)).
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다(`search_strategy`, `search_type`,
   `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`,
   `use_memory`, `target_language`). 일반 딕셔너리도 됩니다.
@@ -2287,6 +2648,10 @@ finally:
   문서는 기다립니다.
 - **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너
   이미지에는 기본으로 빠져 있습니다.
+- **시드 그래프는 이름으로만 이어집니다**(*우선순위*,
+  [§9 D](#d-시드-그래프가지고-있는-지식-그래프-가져오기)). 시드 노드와 이름이 같은 관계없는
+  문서 엔티티는 한 엔티티가 됩니다. IRI는 저장하고 필터로 쓸 수 있지만 정체성이 아니며,
+  `owl:sameAs`는 따라가지 않고 아무것도 추론하지 않습니다.
 - **임베딩 모델(또는 차원)을 바꾸면** `indexing.reset: true`가 필요합니다. 증분 실행은
   다른 모델의 인덱스에 쓰지 않습니다([작업 흐름](#작업-흐름)).
 

@@ -907,11 +907,11 @@ steps on Neptune. Each store accepts the fields its indexer writes:
 | Store | Filterable fields |
 |---|---|
 | Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `attr_<key>`, `attributes.filters.<key>` |
+| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
 | Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
 | Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `attr_<key>` (where present) |
+| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>` (where present) |
 
 - On OpenSearch, `attr_<key>` is entry `<key>` of a document's `filters`
   metadata (an item from several documents carries all their values); on
@@ -920,7 +920,9 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   matches exactly: filter `type:person`, not `type:PERSON`. Relationships
   take no `type` filter (their type is not stored on the relationships
   index). `in_schema`, `type_iri` and `predicate_iri` are the
-  [extraction schema](#c-extraction-schema) annotations. Prefer keyword or
+  [extraction schema](#c-extraction-schema) annotations; `iri` and
+  `source_kinds` (`document`, `seed_graph`) come from
+  [seed graphs](#d-seed-graphs-bring-your-own-knowledge-graph). Prefer keyword or
   numeric fields; a `term` on an analyzed field such as `description` matches
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
@@ -1679,6 +1681,8 @@ domain and entity types. **Review it**, then copy the prompts you want under
 
 Three levers specialize the pipeline for a domain (medical, legal, finance,
 ...): the entity types (A), the prompts (B) and the extraction schema (C).
+A knowledge graph you already have joins the extracted one as a seed graph
+(D).
 
 ### A. `entity_types` (cheapest, highest-impact)
 
@@ -2375,6 +2379,402 @@ the graph:
   it with `kind: file` (the added types change the schema, so that
   re-extracts).
 
+### D. Seed graphs (bring your own knowledge graph)
+
+A seed graph is a knowledge graph you already have (a supplier master, a
+product catalog, the instances of an ontology) merged into the graph that
+extraction builds from the documents. Each seed is split into virtual
+documents of the run's own corpus (`seed_graphs/<name>/<k>-of-<n>.jsonl`),
+so incremental runs, removal, resume and the stores treat it like any
+file. No model reads a seed: its statements are parsed, never chunked by a
+model, translated, extracted, gleaned or mined for claims.
+
+Use one when the documents name entities a curated source already
+describes and answers should use its descriptions, properties and IRIs,
+or when the graph needs edges the text does not state (an org chart, who
+supplies whom) for local search and graph expansion to walk. It does not
+override the documents (*Precedence*, below), and it brings instances, not
+types: the vocabulary of types is the extraction schema (C).
+
+**Configure.** Seeds are declared under `processing.seed_graphs`, a list:
+
+```yaml
+processing:
+  graph_extraction:
+    entity_types:
+      - {label: VENDOR, description: "Companies that sell goods", iri: "https://example.org/procure#Vendor"}
+      - {label: BUYER, description: "Companies that buy goods", iri: "https://example.org/procure#Buyer"}
+    relationship_types:
+      - {label: SUPPLIES, iri: "https://example.org/procure#supplies"}
+    relationship_patterns:
+      - "VENDOR -SUPPLIES-> BUYER"
+    schema_mode: align
+  seed_graphs:
+    - name: procure
+      kind: jsonl
+      path: seed/procure.jsonl         # relative to this file
+      filters: {department: purchasing}
+      description_properties: [country]
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Names the shard documents and the `seed_graph` document filter of everything the seed states. Up to 64 lowercase letters, digits, `-` and `_`, starting with a letter or digit; unique. Renaming it imports the seed again |
+| `kind` | required | `jsonl`, `csv`, `rdf` (with the `ontology` extra), or a kind a deployment registers ([Design Doc §15](./design.md#15-extension-guide)) |
+| `path` | required | A local file or directory, relative to the config file (also when set from the environment), an S3 object (`s3://bucket/key`) or an S3 prefix read as a directory (`s3://bucket/seed/`, the trailing `/` required), read with the run's AWS session. Other URLs fail |
+| `options` | `{}` | Settings of the kind (below). An unknown option fails the import |
+| `secret_arn` | `null` | A Secrets Manager secret a registered service source reads; `jsonl`, `csv` and `rdf` refuse one |
+| `filters` | `{}` | Document filters of the seed's items, as a document's metadata filters (string, number or boolean values). `seed_graph: <name>` is always added, so the key `seed_graph` is reserved |
+| `on_name_collision` | `error` | Two nodes of the seed that are one entity by name: `error`, `merge` or `qualify` (*Precedence*) |
+| `description_properties` | `[]` | Property keys written as `key: value` lines after the description, so answers can use them |
+| `confidence` | `1.0` | Confidence of the seed's statements; a node's own `confidence` wins |
+| `shards` | `16` (1 to 1,024) | Virtual documents the seed is split into, by a stable hash of each node's id |
+| `max_items_per_unit` | `50` (1 to 500) | Node and edge statements per text unit, the unit of lineage |
+| `max_nodes` | `100000` | Fail above this many nodes |
+| `max_edges` | `500000` | Fail above this many edges |
+| `max_bytes` | `268435456` (256 MiB) | Fail when the files hold more bytes together (checked before they are read, and while reading) |
+| `max_property_keys` | `64` (0 to 512) | Fail when the seed uses more distinct property keys (each becomes a stored field under `attributes.seed_properties`) |
+| `max_description_chars` | `1000` (at least 50) | Cut descriptions here, at a word boundary with "…", so an item only the seed states never needs the description summarizer |
+
+- The caps fail the import; nothing is truncated, as a cut would change the
+  graph arbitrarily. A shard over 2,000 text units fails too (raise
+  `shards` or `max_items_per_unit`), and so does a JSONL line or CSV row
+  over 1 MiB.
+- Every kind takes two options: `dangling` (an edge naming an unknown
+  node: `error`, the default, or `skip`, which leaves it out and counts
+  it) and `qualifier_property` (for `on_name_collision: qualify`).
+- From the environment the list is JSON:
+  `UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'`.
+- `run-ingestion` loads every seed once at start-up, after the extraction
+  schema and before any model is built: a seed that cannot be imported
+  exits 2, naming the seed and, for a bad record, the file and line. The
+  other CLIs do not load seeds (`run-prompt-tuning` profiles the documents
+  only) but, like `run-ingestion`, exit 2 when a configured kind needs an
+  extra that is missing (`rdf`).
+- The corpus may be empty when seeds are configured: an empty
+  `--source-directory` is a seed-only run (*Lifecycle*).
+- **On AWS** the seed files must be in the image next to the config, or in
+  S3 where the ingestion task role reads
+  ([Operator Runbook: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3)).
+  Keep them out of the ingestion source prefix: a `.csv` there is also
+  parsed as a document.
+
+**JSONL** (`kind: jsonl`): one file (any name), or a directory whose
+`*.jsonl` files are read recursively in sorted order (names starting with
+`.` skipped). Each non-blank line is a JSON object whose `"kind"` is
+`node` or `edge`:
+
+```json
+{"kind": "node", "id": "v1", "name": "Acme Supplies", "type": "VENDOR", "iri": "https://example.org/procure#acme", "description": "Industrial valve vendor.", "properties": {"country": "DE"}}
+{"kind": "node", "id": "b1", "name": "Globex Buyer", "type_iri": "https://example.org/procure#Buyer"}
+{"kind": "edge", "source": "v1", "target": "b1", "type": "SUPPLIES", "description": "Acme supplies Globex with valves.", "weight": 2}
+```
+
+- A node takes `id` (required, unique), `name` (default: the id), `type`
+  (a label), `type_iri` (a class IRI the schema maps), `description`,
+  `iri` (the node's own IRI), `confidence` and `properties`.
+- An edge takes `source` and `target` (node ids), `type` or a
+  `predicate_iri` a relationship type declares (one of them is required),
+  `description`, `weight` (default 1) and `properties`.
+- Property values are strings, numbers or booleans; `null` is dropped. An
+  unknown key, a repeated node id, a non-scalar property, `NaN` and a line
+  that is not a JSON object fail the import, naming the file and line.
+- A self-loop is dropped (a full build draws none). Edges with the same
+  endpoints and type merge: weights add, descriptions are unioned.
+
+**CSV** (`kind: csv`): `path` is a directory (or an S3 prefix ending in
+`/`) holding `nodes.csv` and `edges.csv`. The first row names the columns;
+the node and edge keys above are columns, and any other column is a
+string property:
+
+```text
+id,name,type,type_iri,description,iri,confidence,country
+v1,Acme Supplies,VENDOR,,Industrial valve vendor.,https://example.org/procure#acme,,DE
+b1,Globex Buyer,,https://example.org/procure#Buyer,,,,
+```
+
+```text
+source,target,type,predicate_iri,description,weight
+v1,b1,SUPPLIES,,Acme supplies Globex with valves.,2
+```
+
+```yaml
+  seed_graphs:
+    - name: procure
+      kind: csv
+      path: seed/procure               # a directory holding nodes.csv and edges.csv
+      filters: {department: purchasing}
+      description_properties: [country]
+      options:
+        property_columns: [country]
+```
+
+These files state the same graph as the JSONL example. An empty cell is an
+unset value. `options.nodes` and `options.edges` name other files in the
+directory (`edges: null` reads nodes only) and `options.property_columns`
+keeps only the listed extra columns. UTF-8 with an optional byte-order
+mark; a row with more cells than columns, a repeated column, a missing
+`id` (`source`, `target`) column and a field over Python's CSV limit
+(131,072 characters) fail the import.
+
+**RDF** (`kind: rdf`): the instances of an ontology (an A-Box) in Turtle,
+N-Triples, N-Quads, TriG, RDF/XML or JSON-LD. It needs the `ontology` extra
+(the image too: `--build-arg UV_EXTRAS="--extra ontology"`), and reads the
+files exactly as the `owl` schema source does (a file, a directory, an
+`s3://` object or prefix; `options.format`; nothing fetched, `owl:imports`
+not followed, the same refusals: [Not followed, not read](#from-an-owlrdfs-ontology)),
+within the seed's `max_bytes`. With the procure ontology as the schema:
+
+```yaml
+processing:
+  graph_extraction:
+    schema_source: {kind: owl, path: ontology/procure.ttl}
+    schema_mode: strict
+  seed_graphs:
+    - name: procure
+      kind: rdf
+      path: seed/procure-abox.ttl
+      options:
+        languages: [en, ""]            # the default; [ko, en, ""] names Acme in Korean
+```
+
+```turtle
+@prefix ex: <https://example.org/procure#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:acme a ex:Organization, ex:Vendor ;
+    rdfs:label "Acme Supplies"@en, "애크미 서플라이"@ko ;
+    skos:definition "Industrial valve vendor."@en ;
+    ex:country "DE" ;
+    ex:rating "4"^^xsd:integer ;
+    ex:supplies ex:globex ;
+    ex:headquarters ex:berlin .
+
+ex:globex a ex:Buyer ;
+    rdfs:label "Globex Buyer" .
+
+ex:berlin rdfs:label "Berlin"@en .
+```
+
+gives two nodes and one edge: `Acme Supplies` (`VENDOR`, the most specific
+of its two classes, with the properties `ex:country` = `DE` and
+`ex:rating` = 4), `Globex Buyer` (`BUYER`) and `Acme Supplies -SUPPLIES->
+Globex Buyer` with `predicate_iri` `ex:supplies`. `ex:berlin` has no type,
+so it is no instance and the `ex:headquarters` edge is skipped (counted as
+`objects_not_instances`).
+
+- **Instances** are named subjects with an `rdf:type` outside the RDF,
+  RDFS, OWL, XSD and SKOS vocabularies that are not classes or properties
+  themselves. A node's `id` and `iri` are its IRI.
+- **Names** come from `name_properties` (default `skos:prefLabel`,
+  `rdfs:label`, `schema:name`) in the order of `languages` (default `[en,
+  ""]`, `""` = untagged; any other tag after them), else the IRI's
+  percent-decoded local name as written. **Descriptions** likewise from
+  `description_properties` (default `skos:definition`, `rdfs:comment`,
+  `schema:description`).
+- **Types.** Each `rdf:type` is looked up among the schema's entity type
+  IRIs; when several map, the one the schema declares last wins. An `owl`
+  schema lists a class before its subclasses, so that is the most specific
+  class (`VENDOR` above, not `ORGANIZATION`). A class no type declares
+  keeps its IRI as `type_iri` with the label `labels` gives it, else its
+  local name in `UPPER_SNAKE`: `strict` then drops the node, `align` and
+  `off` keep it.
+- **Edges** are triples whose object is an instance, typed by the
+  relationship type whose IRI is the predicate, else `labels`, else the
+  predicate's local name in `UPPER_SNAKE`. An object that is not an
+  instance is skipped and counted (`dangling` does not apply).
+- **Properties** are the other literals, keyed by CURIE through
+  `options.prefixes`, the well-known prefixes, then the files' own
+  bindings, and by the full IRI when none binds the namespace (N-Triples
+  binds none, so its keys are full IRIs unless `options.prefixes` binds
+  them). Typed numbers and booleans become numbers and booleans. A
+  predicate with several values keeps the preferred string by language,
+  else the smallest value. `properties` keeps only the listed predicates,
+  `exclude_properties` drops some.
+- **Not read**: blank nodes, reified statements, RDF-star and
+  `owl:sameAs` are skipped and counted, never followed. Nothing is
+  inferred: no inverse, symmetric or sub-property edge, no type a
+  subclass statement implies. One INFO line per seed gives the counts.
+- **IRIs relative to their file** (no `@base`) are warned about: moving
+  the file renames the nodes, which then re-import.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `prefixes` | `{}` | Prefix → namespace for the CURIEs of these options and of the property keys |
+| `name_properties` | `skos:prefLabel`, `rdfs:label`, `schema:name` (`https` and `http`) | Literals a name is read from |
+| `description_properties` | `skos:definition`, `rdfs:comment`, `schema:description` (`https` and `http`) | Literals a description is read from |
+| `languages` | `[en, ""]` | Preferred language tags of names, descriptions and string properties |
+| `labels` | `{}` | Class or property (IRI or CURIE) no schema type declares → the type label to use |
+| `properties` | `null`: every other literal | The literal predicates kept as properties |
+| `exclude_properties` | `[]` | Literal predicates never kept |
+| `format` | `auto` | `auto` (by suffix), `turtle`, `xml`, `json-ld`, `nt`, `nquads` or `trig` |
+
+**How seeds meet the schema.** Each seed is converted against the run's
+resolved extraction schema (C), the whole seed at once, so a pattern check
+always sees both endpoint types:
+
+- A `type_iri` (or `predicate_iri`) names the declared type with that
+  `iri`; one no type declares is counted (`nodes_unmapped_type_iri`) and
+  the `type` label is used instead. A `type` label is written as
+  extraction writes it (`vendor` becomes `VENDOR` once relationship types
+  are declared).
+- `off` checks nothing. `align` keeps everything and counts what falls
+  outside the schema. `strict` drops off-schema nodes with their edges,
+  edges of undeclared types and edges a pattern does not allow. Adding a
+  `DISTRIBUTOR` node with a `SUPPLIES` edge, and a `BUYER -SUPPLIES->
+  VENDOR` edge, to the JSONL example counts `entities_off_schema=1` and
+  `relationships_off_pattern=1` under `align`, and under `strict` also
+  drops the node and both edges.
+- The counts are in the INFO line `Seed graph 'procure': ...`, with the
+  counter names extraction uses. Seed items get `in_schema`, `type_iri`
+  and `predicate_iri` like extracted ones; `iri` is the node's own IRI.
+
+**Precedence: documents decide.** A seed node and a document mention whose
+names are one entity (equal after normalization, or a legal-form variant,
+as extraction merges names) become one entity:
+
+| What | Rule |
+|---|---|
+| Type, name, confidence | The documents' statements decide whenever any states the entity. A seed's fill only a gap: an entity no document states, or one documents name only as a relationship endpoint, with no type |
+| Description | Unioned, document lines first, the seed's lines after them |
+| Properties | Kept under `attributes.seed_properties`, never over an extracted attribute |
+| IRI | The smallest one stated; an entity stated with several is counted (`entities_with_conflicting_iris`, INFO) |
+| Edges | Added. A seed edge and a document edge with the same endpoints and type are one relationship, their weights added |
+| Ranks | Count document-backed edges only (an edge is seed-only when every text unit it cites is a seed's): a seed never makes an entity more important, and an entity only seed edges join has rank 0. Leiden still clusters every edge at its full weight. `indexing.neptune.entity_importance_source: degree` counts the edges at query time, seed edges included |
+| Communities | A community whose members only seeds state is stored without a report (`communities_seed_only` in the stage metrics); a report on a mixed community lists the document-ranked entities first |
+
+- **Homonyms.** Identity is the name: an unrelated seed node "Mercury" (a
+  planet) and the documents' "Mercury" (an element) are one entity, which
+  gains the seed's description line and IRI but keeps the documents'
+  type. `on_name_collision` covers names within one seed only. Curate the
+  names, or qualify them in the seed.
+- **Spelling variants.** The rules hold per name. Names that resolve to
+  one entity without being equal ("Acme" in a document, "Acme Inc" in the
+  seed) still let the seed take part: where two document spellings tie,
+  the seed's units can decide the name, and the variants' description
+  lines interleave. With `processing.fuzzy_entity_resolution` on, a seed
+  spelling can also join two document spellings.
+- **`on_name_collision`**, for two nodes of one seed whose names are one
+  entity but that share neither an id nor an IRI: `error` (the default)
+  fails the import listing them (`1 names are shared by distinct nodes
+  (ids v1, v2); set on_name_collision to merge or qualify`); `merge` makes
+  them one entity (the smallest IRI kept); `qualify` appends
+  ` (<qualifier>)` to every name but the one of the smallest id: the
+  `qualifier_property` value, else the IRI's local name, else the id
+  (`ACME supplies (v2)`). A qualified name no longer links to a document
+  mention.
+
+**Retrieval.** Seed facts reach answers through the entities and
+relationships, in every strategy that reads them (vector and keyword
+search, graph expansion over seed edges), never as text chunks: the seed's
+text units are stored for their lineage, every text search leaves them
+out, and `local` and `mix` spend no chunk slot on them. `global` and the
+`drift` primer read reports only, so what only seeds state is invisible to
+them. `naive` reads text units only.
+
+- **Citations.** A source a seed states carries `provenance` in its
+  metadata, with no chunk (`chunk_id` is `None`):
+
+  ```python
+  {"kind": "seed_graph",          # or "document+seed_graph"
+   "seed_graphs": ["procure"],
+   "iri": "https://example.org/procure#acme"}
+  ```
+
+  A source no seed states is reported as before, with no `provenance` key.
+  An entity reached only by a graph walk has `"seed_graphs": []`: graph
+  vertices hold no document filters.
+- **Filters** ([Filters](#filters)):
+  - `source_kinds` (entities, relationships, Neptune entity vertices):
+    `seed_graph` keeps what a seed states, `document` what a document
+    states (also an entity both state, with its seed description lines);
+    a list matches either. Any case.
+  - `iri` (entities, Neptune entity vertices): the exact IRI.
+  - `attr_seed_graph: procure` keeps what that seed states, through the
+    document filters every index carries. A tenant filter such as
+    `attr_department: legal` excludes what only a seed states unless the
+    seed's `filters` declare the key, as for documents.
+
+```python
+RAGInput(query="...", search_strategy="local", filters={"source_kinds": "document"})
+RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procure"})
+```
+
+**What re-indexes.** The converted statements are keyed, not the files:
+
+| Change | Next incremental run |
+|---|---|
+| Edit a node or edge | Imports again only the shards whose statements changed (a removal and an add, no model call). No document is extracted again |
+| Change `shards` | Imports the whole seed again: every shard path changes |
+| Rename the seed, change `filters` | Imports the whole seed again: every shard names them |
+| Change `description_properties`, `confidence`, `max_description_chars`, `max_items_per_unit` or `on_name_collision` | Imports again the shards whose statements change |
+| A schema change that changes the converted statements (a label, `schema_mode`, an IRI a `type_iri`, `predicate_iri` or RDF class maps through) | Imports again the affected shards (and extracts the documents again, as for any schema change) |
+| A model or extraction setting | Extracts the documents again; the seed's shards stay unchanged, as no setting changes what they state |
+| Move or re-serialise the files, change a cap the seed fits | Nothing |
+
+A resumed run whose seed changed since the crash recomputes its stages:
+the seeds' content is part of every stage's cache key.
+
+**Lifecycle.** Seeds need the doc-status registry
+(`providers.doc_status.enabled`) for these; without it every run is a full
+build of the corpus and the configured seeds.
+
+- **Removal.** Drop the seed from the config: the next incremental run
+  deletes its shards, so what only it stated goes, and entities documents
+  state lose its description lines, properties, IRIs and edges.
+- **Reset.** `indexing.reset: true` rebuilds the namespace from the run's
+  corpus, its configured seeds included. When another source scope of the
+  namespace holds seed documents (a seed-only scope, below), which the
+  reset would drop, the run asks first: `run-ingestion` asks on the
+  terminal, `--yes` answers yes, and without a terminal the run fails
+  (exit 1) before it writes. From Python, pass
+  `DataIngestionPipeline(..., confirm=callable)`; without it such a reset
+  fails.
+- **A seed-only scope.** A run with seeds, an empty `--source-directory`
+  and a fixed `processing.document_parsing.source_scope` (say
+  `seeds-procure`) keeps a seed in a scope of its own, with no model call.
+  Other scopes' runs on the namespace leave it alone, except a reset.
+- **One seed, two corpora.** A seed belongs to the scope of the run that
+  configures it. Configured on two scopes of one namespace, it is imported
+  twice: the same entities, but its edge weights count twice. Configure a
+  shared seed on one scope, or give it a seed-only scope.
+
+**Cost and limits.**
+
+- No LLM call reads a seed, but its items are embedded: two vectors per
+  node (name and description), one per edge (with
+  `indexing.opensearch.build_relationship_vector_index`, the default) and
+  one per text unit, about 2 × nodes + edges + (nodes + edges) / 50 at the
+  defaults. The 100,000-node, 500,000-edge caps are about 712,000
+  embeddings. An entity documents also state is summarized as before when
+  its merged description outgrows the summarizer's threshold, and the
+  report of a community it is in describes it. The whole seed is held in
+  memory and in the stage cache.
+- **Delta runs cluster the delta** (§5): a seed added by an incremental run
+  is clustered on its own shards' entities until a reset re-clusters the
+  graph.
+- **Translation.** Seed statements are never translated, while the
+  documents' entities are extracted from the translated text: write seed
+  names in `processing.translation.target_language` for them to link.
+- **Local backend.** The SQLite graph and the embedded vector store hold
+  the same fields and apply the same filters.
+
+**Preview** what the seeds convert to, with no model call and no store:
+
+```python
+from unified_kg_rag import get_config
+from unified_kg_rag.application.bootstrap import load_seed_graphs, resolve_extraction_schema
+
+config = resolve_extraction_schema(get_config("config.yaml"))
+for conversion in load_seed_graphs(config):
+    print(conversion.name, conversion.stats.model_dump(exclude_defaults=True))
+```
+
+For the JSONL example this prints `procure {'nodes_read': 2, 'edges_read':
+1, 'nodes': 2, 'edges': 1, 'units': 2, 'documents': 2}`.
+
 ---
 
 ## 10. Operations & troubleshooting
@@ -2513,6 +2913,12 @@ finally:
   them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
   `NamespaceLeaseError`, `PipelineExecutionError` and `PipelineInterrupted`
   (a `KeyboardInterrupt`); all but the last are `GraphRAGException`s.
+  `DataIngestionPipeline(...)` raises `SeedGraphError` (a
+  `ConfigurationError`) for a seed graph it cannot import.
+- `DataIngestionPipeline(..., confirm=callable)` answers the questions a run
+  asks (`callable(question) -> bool`), today only a reset that would drop
+  another source scope's seed graph documents; without it such a run fails
+  ([Seed graphs](#d-seed-graphs-bring-your-own-knowledge-graph)).
   `DataIngestionPipeline.run` raises `ConfigurationError`,
   `StoreConnectionError` and `NamespaceLeaseError` as they are, and wraps
   any other crash outside a stage in `PipelineExecutionError`. A
@@ -2597,6 +3003,11 @@ closes it.
   died together, while the deferred ones wait.
 - **Markdown and HTML** need the `unstructured` extra, which
   the container image leaves out by default.
+- **Seed graphs link by name only** (*Precedence*,
+  [§9 D](#d-seed-graphs-bring-your-own-knowledge-graph)): a seed node and an
+  unrelated document entity of the same name are one entity. IRIs are
+  stored and filterable but are no identity, `owl:sameAs` is not followed,
+  and nothing is inferred.
 - **Changing the embedding model** or dimension needs `indexing.reset: true`;
   an incremental run refuses to write into another model's indices
   ([Workflows](#workflows)).
