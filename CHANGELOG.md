@@ -659,7 +659,7 @@ From 0.2.3 (or a `main` checkout since):
   truncated; `on_collision: qualify` takes the suffix from
   `options.prefixes`, then the well-known prefixes, before the files' own
   bindings, and a `description_properties` entry other than the defaults
-  that the ontology never uses fails the load (#491, #PR).
+  that the ontology never uses fails the load (#491, #496).
 - `schema_source.kind: owl` fills the schema from an OWL or RDFS ontology:
   a local file or a directory of Turtle, RDF/XML, JSON-LD, N-Triples,
   N-Quads or TriG files, read with the `ontology` extra and mapped by the
@@ -692,7 +692,7 @@ From 0.2.3 (or a `main` checkout since):
   draft over such a source freezes it: the types the source declares keep
   only its patterns (none under `patterns: none`), so a draft that adds
   nothing loads as the same schema, and the header names the relationship
-  types it adds and counts their patterns (#492, #PR).
+  types it adds and counts their patterns (#492, #496).
 - Schema sources in S3: `schema_source.path` of kinds `file` and `owl` may
   be an `s3://bucket/key` object, and for `owl` an `s3://bucket/prefix/`
   read as a directory (every page of the listing, filtered, sorted and
@@ -710,7 +710,7 @@ From 0.2.3 (or a `main` checkout since):
   refused (#493).
 - Docs: ontology schema sources in user guide §9 C and the runbook, with
   their load cost and what a re-serialisation or a new equivalent class
-  can change (#494, #PR).
+  can change (#494, #496).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
