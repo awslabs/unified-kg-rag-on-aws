@@ -21,16 +21,18 @@ import json
 import re
 import unicodedata
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import yaml
 from langchain_core.output_parsers import StrOutputParser
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.ingestion.contributions import unit_entities
 from unified_kg_rag.domain.ingestion.schema_conformance import unit_entity_types
 from unified_kg_rag.domain.models import (
@@ -42,6 +44,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.domain.models.schema import (
     EntityTypeSpec,
     ExtractionSchema,
@@ -277,9 +280,66 @@ class PromptTuner:
         *,
         providers: Providers | None = None,
     ) -> None:
-        self.config = config
-        self.providers = Providers.resolve(config, providers)
+        """Load the config's extraction schema source, as ingestion does.
+
+        Raises:
+            SchemaSourceError: The extraction schema source cannot be loaded.
+        """
+        # The examples and the draft are built on the schema the corpus will
+        # be extracted with.
+        self.config = resolve_extraction_schema(config, providers=providers)
+        self.providers = Providers.resolve(self.config, providers)
         self.factory = self.providers.llm_factory
+
+    @property
+    def schema_configured(self) -> bool:
+        """Whether the config declares the entity types (or patterns, which
+        name them): the examples are then extracted with them, else with the
+        corpus profile's (:meth:`example_entity_types`)."""
+        extraction = self.config.processing.graph_extraction
+        return "entity_types" in extraction.model_fields_set or bool(
+            extraction.relationship_patterns
+        )
+
+    def example_entity_types(self, profile: CorpusProfile) -> list[str]:
+        """The entity types the examples are extracted with and a schema
+        draft lists: the configured ones when :attr:`schema_configured`,
+        else the profile's (one per :func:`schema_key`; none keeps the
+        default ones).
+
+        The profile's types replace the defaults so that the examples state
+        the types the draft lists, and the draft can infer patterns; a
+        configured schema is honoured instead.
+        """
+        if self.schema_configured:
+            schema = self.config.processing.graph_extraction.extraction_schema()
+            return [spec.label for spec in schema.entity_types]
+        types: dict[str, str] = {}
+        for item in profile.entity_types:
+            spec = entity_type_spec(item)
+            if spec is not None:
+                types.setdefault(schema_key(spec.label), spec.label)
+        return list(types.values())
+
+    def _example_config(self, entity_types: list[str] | None) -> Config:
+        """The config the examples are extracted with: this one, with
+        ``entity_types`` in place of its entity types when given and not
+        already configured."""
+        if not entity_types or self.schema_configured:
+            return self.config
+        data = merge_over(
+            self.config.as_input(),
+            {"processing": {"graph_extraction": {"entity_types": entity_types}}},
+        )
+        try:
+            return Config.model_validate(data)
+        except ValidationError as e:
+            logger.warning(
+                "Extracting the examples with the configured entity types: "
+                "the profile's are not a valid schema (%s)",
+                validation_summary(e),
+            )
+            return self.config
 
     def sample_corpus(self, texts: list[str]) -> str:
         """Concatenate document texts up to the sampling budget."""
@@ -369,14 +429,17 @@ class PromptTuner:
         string if the corpus is empty or extraction yields nothing (extraction
         still works without examples, so this degrades gracefully).
         """
-        return self.render_examples(*self.extract_examples(texts))
+        return self.render_examples(
+            *self.extract_examples(texts, self.example_entity_types(profile))
+        )
 
     def extract_examples(
-        self, texts: list[str]
+        self, texts: list[str], entity_types: list[str] | None = None
     ) -> tuple[list[TextUnit], list[TextUnitExtraction]]:
         """The sampled example chunks and the real ``GraphExtractor``'s
-        records of them; no records if extraction fails (examples are
-        best-effort)."""
+        records of them, extracted with ``entity_types`` when given and the
+        config does not declare its own (:attr:`schema_configured`); no
+        records if extraction fails (examples are best-effort)."""
         chunks = self._sample_chunks(texts)
         if not chunks:
             return [], []
@@ -391,7 +454,9 @@ class PromptTuner:
             for idx, chunk in enumerate(chunks)
         ]
         try:
-            extractor = GraphExtractor(self.config, providers=self.providers)
+            extractor = GraphExtractor(
+                self._example_config(entity_types), providers=self.providers
+            )
             extractor.show_progress = False
             records, _ = extractor.extract_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort
@@ -637,11 +702,14 @@ class PromptTuner:
     ) -> dict[str, Any]:
         """End-to-end: profile the corpus, generate examples, return overrides.
 
+        The examples are extracted with the profile's entity types, or with
+        the configured schema when there is one (:meth:`example_entity_types`).
         With ``schema_draft`` the result also holds ``"schema_draft"``, the
-        :class:`SchemaDraft` of the profile and the examples' records.
+        :class:`SchemaDraft` of those entity types and the examples' records.
         """
         profile = await self.profile_corpus(texts)
-        text_units, records = self.extract_examples(texts)
+        entity_types = self.example_entity_types(profile)
+        text_units, records = self.extract_examples(texts, entity_types)
         profile.few_shot_examples = self.render_examples(text_units, records)
         logger.info(
             "Corpus profile: domain='%s', language='%s', %d entity types, examples=%s",
@@ -657,10 +725,14 @@ class PromptTuner:
                 "persona": profile.persona,
                 "entity_types": profile.entity_types,
             },
-            "custom_prompts": self.build_custom_prompts(profile),
+            # A configured schema's entity types, not the profile's, are the
+            # ones the tuned prompt recommends.
+            "custom_prompts": self.build_custom_prompts(
+                replace(profile, entity_types=entity_types)
+                if self.schema_configured
+                else profile
+            ),
         }
         if schema_draft:
-            result["schema_draft"] = SchemaDraft.from_examples(
-                profile.entity_types, records
-            )
+            result["schema_draft"] = SchemaDraft.from_examples(entity_types, records)
         return result

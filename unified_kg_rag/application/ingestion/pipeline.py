@@ -343,8 +343,11 @@ class DataIngestionPipeline:
                 both given.
             SchemaSourceError: The extraction schema source cannot be loaded.
         """
-        # Loaded once: every stage reads the schema from the inline keys.
-        config = resolve_extraction_schema(config)
+        # Loaded once: every stage reads the schema from the inline keys. A
+        # source's AWS calls use the run's session.
+        config = resolve_extraction_schema(
+            config, providers=providers, boto_session=boto_session
+        )
         self.config = config
         # The write lease of the latest run (see _namespace_lease).
         self._lease: NamespaceLease | None = None

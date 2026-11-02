@@ -249,6 +249,10 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "processing.graph_extraction.schema_source.path": _neutral(
         "a location: the schema loaded from it is keyed as the inline keys"
     ),
+    "processing.graph_extraction.schema_source.options": _neutral(
+        "how the source loads: the schema loaded is keyed as the inline keys"
+    ),
+    "processing.graph_extraction.schema_source.secret_arn": _neutral(_WHERE),
     **_keyed_at(
         _P.GLEANING,
         "processing.gleaning",

@@ -1640,13 +1640,20 @@ domain and entity types. **Review it**, then copy the prompts you want under
   generated few-shot examples come last.
 - Entity categories still come from `processing.graph_extraction.entity_types`
   (`{entity_types}`): copy the profile's `entity_types` there.
+- The few-shot examples are extracted with the profile's entity types, so
+  they show the types the profile found. A config that declares its own
+  entity types or patterns (inline or from a `schema_source`, which tuning
+  loads as ingestion does; one that cannot be loaded exits 2) is honoured
+  instead: the examples, and the entity types the tuned prompt names, are
+  the configured ones.
 - `--schema-out schema.yaml` also writes an
-  [extraction schema](#c-extraction-schema) draft: the profile's entity
-  types, the relationship types the tuning examples state most often (at
-  most 12, with their counts in a comment) and a pattern only where every
-  pair of endpoint types of a relationship type appears at least twice. It
-  is a `schema_source: {kind: file}` file, to load with `schema_mode:
-  align` after review; the same model answers give the same file.
+  [extraction schema](#c-extraction-schema) draft: the entity types the
+  examples were extracted with (above), the relationship types the tuning
+  examples state most often (at most 12, with their counts in a comment)
+  and a pattern only where every pair of endpoint types of a relationship
+  type appears at least twice. It is a `schema_source: {kind: file}` file,
+  to load with `schema_mode: align` after review (its comment names the
+  path as you gave it); the same model answers give the same file.
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
@@ -1790,8 +1797,16 @@ processing:
   optionally, `entity_types` from a YAML or JSON file of the same shape (a
   relative path is resolved against the config file). Leave those keys out
   of the config then: a file and a config that both set `entity_types` fail
-  the load. Other formats (OWL, SHACL, a schema service) plug in as a
-  registered schema source ([Design Doc §15](./design.md#15-extension-guide)).
+  the load. The path is a local file: an `s3://` or `https://` location
+  fails the load (it needs a source registered for it). Other formats
+  (OWL, SHACL, a schema service) plug in as a registered schema source
+  ([Design Doc §15](./design.md#15-extension-guide)).
+- **On AWS** the ingestion task reads the config baked into the image
+  (`docker/Dockerfile` copies only `docker/config.yaml`, to
+  `/app/config.yaml`), so a `kind: file` schema must be in the image too:
+  add a `COPY` of the file next to it and rebuild, or declare the schema
+  inline in that config or through the `UKR__PROCESSING__GRAPH_EXTRACTION__*`
+  variables above.
 
 **What extraction does.**
 
@@ -1882,8 +1897,9 @@ its live OpenSearch indices before its first write.
 schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-prompt-tuning)):
 
 1. Run it over a representative sample of the corpus.
-2. Review the draft: it lists the profile's entity types and the
-   relationship types the tuning examples state most often, with a count
+2. Review the draft: it lists the profile's entity types (the configured
+   ones when the config declares them) and the relationship types the
+   tuning examples state most often, with a count
    each, and a pattern only where the examples support it. Merge synonyms,
    drop noise, add descriptions and IRIs.
 3. Load it with `schema_source: {kind: file, path: schema.yaml}` and

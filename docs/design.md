@@ -1338,8 +1338,12 @@ checks that its values are the defaults and each key is in the reference).
   its own key) and nothing looser: no synonyms, plurals or edit distance. `schema_source` names where the schema comes
   from: `inline`, or a registered source (`file` today) that
   `application/bootstrap.resolve_extraction_schema` loads once at start-up
-  (`DataIngestionPipeline`, `EvaluationManager`) into the inline keys of a
-  config copy, whose source is then `inline`. The extractor, the prompts
+  (`DataIngestionPipeline`, `EvaluationManager`, `PromptTuner`) into the
+  inline keys of a config copy, whose source is then `inline`.
+  `GraphExtractionConfig.extraction_schema()` raises `ConfigurationError`
+  on a config whose source is not loaded yet, so a component built straight
+  from one (an `IndexingManager`, an extractor) fails instead of reading
+  the default schema. The extractor, the prompts
   and the cache keys read only the inline keys, so the loaded content is
   keyed and its location (`schema_source.path`) is not: a moved file
   re-extracts nothing, an edited one re-extracts. The extractor and the
@@ -1432,24 +1436,88 @@ This section is the single reference for extending the framework. Strategies, re
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 - **New schema source** (an ontology format or service): register a loader
   for a new `schema_source.kind` with `@register_schema_source("kind")`
-  (`adapters/schema_sources/`, imported by the package `__init__`). It
-  receives the `SchemaSourceConfig` (`kind`, `path`) and returns a
-  `SchemaDocument`: the `entity_types` (or `None` to keep the config's),
-  `relationship_types` and `relationship_patterns` it supplies, each a
-  string or a spec. The loader translates, it does not reason: an OWL/RDFS
-  loader would parse with rdflib, map classes to `EntityTypeSpec(label,
-  description, iri)` and object properties to `RelationshipTypeSpec`, take
-  its patterns from the properties' domain and range (closure over
-  `subClassOf` / `subPropertyOf` computed in the loader), and import the
-  parser inside the function, raising `SchemaSourceError` naming the extra
-  when it is missing; a SHACL or LinkML loader maps node shapes or classes
-  the same way, and a service loader (an ontology API or an MCP
-  `describe_schema` tool) fetches its snapshot once. Nothing else changes:
-  start-up writes the result into the inline keys, the config validates it
-  (unique labels, patterns naming declared types), and the content keys the
-  caches, so the snapshot a run used is the one it is keyed by. Raise
-  `SchemaSourceError` for anything unreadable; it is a `ConfigurationError`,
-  so the CLIs exit 2.
+  (exported from `unified_kg_rag`; the built-in `file` loader lives in
+  `adapters/schema_sources/`, imported by the package `__init__`). It
+  receives a `SchemaSourceContext` and returns a `SchemaDocument`: the
+  `entity_types` (or `None` to keep the config's), `relationship_types` and
+  `relationship_patterns` it supplies, each a string or a spec. The context
+  holds:
+  - `source`: the `schema_source` settings: `kind`, `path` (left as written
+    when it is a URL), `options` (a free mapping for the loader's own
+    settings, not keyed: the loaded content is) and `secret_arn` (a Secrets
+    Manager secret to read credentials from at load time).
+  - `config`: the run's config (its schema keys are not loaded yet).
+  - `boto_session()`: the run's AWS session (the injected `Providers`
+    one, else one from `aws.profile_name` and `aws.region_name`), built on
+    the first call only, and `client(service)`, a client in the region the
+    config sends that service to (`aws.bedrock_region` for Bedrock,
+    `aws.region_name` for the rest).
+  - `location`: `path` without the userinfo, query and fragment of a URL.
+    Log and raise with it, never with `path` or the secret's value.
+
+  The loader must return the types in the same order for the same content
+  (sort what a set, a graph or a paged API yields): the order is part of
+  the prompt and of the cache keys, so a reordered snapshot re-extracts the
+  corpus. It translates, it does not reason: an OWL/RDFS loader would parse
+  with rdflib, map classes to `EntityTypeSpec(label, description, iri)` and
+  object properties to `RelationshipTypeSpec`, take its patterns from the
+  properties' domain and range (closure over `subClassOf` /
+  `subPropertyOf` computed in the loader), and import the parser inside
+  the function, raising `SchemaSourceError` naming the extra when it is
+  missing; a SHACL or LinkML loader maps node shapes or classes the same
+  way. A service loader (an ontology API, or an MCP server's schema tool)
+  fetches its snapshot once:
+
+  ```python
+  import json
+
+  from unified_kg_rag import (
+      SchemaDocument,
+      SchemaSourceContext,
+      SchemaSourceError,
+      register_schema_source,
+  )
+
+  @register_schema_source("ontology_service")
+  def load_ontology_service(context: SchemaSourceContext) -> SchemaDocument:
+      source = context.source
+      token = None
+      if source.secret_arn:
+          secret = context.client("secretsmanager").get_secret_value(
+              SecretId=source.secret_arn
+          )
+          token = json.loads(secret["SecretString"])["token"]
+      try:
+          # fetch_snapshot: your client of the service (HTTP, or an MCP
+          # session calling the server's schema tool).
+          snapshot = fetch_snapshot(
+              source.path, graph=source.options.get("graph"), token=token
+          )
+      except OSError as e:
+          raise SchemaSourceError(
+              f"Cannot read the ontology service at '{context.location}': {e}"
+          ) from e
+      return SchemaDocument(
+          entity_types=[
+              {"label": c["name"], "description": c.get("doc", ""), "iri": c["iri"]}
+              for c in sorted(snapshot["classes"], key=lambda c: c["iri"])
+          ],
+          relationship_types=[
+              {"label": p["name"], "iri": p["iri"]}
+              for p in sorted(snapshot["properties"], key=lambda p: p["iri"])
+          ],
+      )
+  ```
+
+  selected with `schema_source: {kind: ontology_service, path:
+  "https://ontology.example.com/v1", options: {graph: products},
+  secret_arn: ...}`. Registration happens on import, and the CLIs import
+  only the built-in sources, so a run with a custom source starts from
+  Python after importing its module. Nothing else changes: start-up writes
+  the result into the inline keys, the config validates it (unique labels,
+  patterns naming declared types), and the content keys the caches, so the
+  snapshot a run used is the one it is keyed by. Raise `SchemaSourceError`
+  for anything unreadable; it is a `ConfigurationError`, so the CLIs exit 2.
 - **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 
 

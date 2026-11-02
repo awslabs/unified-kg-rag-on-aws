@@ -13,7 +13,9 @@ from typing import Any
 import pytest
 
 from unified_kg_rag.adapters.schema_sources import (
+    SchemaSourceContext,
     get_schema_source,
+    redact_location,
     register_schema_source,
     registered_schema_sources,
 )
@@ -72,6 +74,15 @@ def _file_config(path: Path, **extraction: Any) -> Config:
     return _config(schema_source={"kind": "file", "path": str(path)}, **extraction)
 
 
+def _load_file(path: str, **source: Any) -> SchemaDocument:
+    """The ``file`` loader's document of ``path``."""
+    return get_schema_source("file")(
+        SchemaSourceContext(
+            SchemaSourceConfig(kind="file", path=path, **source), Config()
+        )
+    )
+
+
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     return path
@@ -100,17 +111,18 @@ def test_file_is_registered() -> None:
 
 
 def test_a_registered_kind_fills_the_inline_keys(custom_kind: str) -> None:
-    seen: list[SchemaSourceConfig] = []
+    seen: list[SchemaSourceContext] = []
 
     @register_schema_source(custom_kind)
-    def _load(source: SchemaSourceConfig) -> SchemaDocument:
-        seen.append(source)
+    def _load(context: SchemaSourceContext) -> SchemaDocument:
+        seen.append(context)
         return SchemaDocument(**_INLINE)
 
     assert get_schema_source(custom_kind) is _load
     config = _config(schema_source={"kind": custom_kind, "path": "urn:service:x"})
     resolved = resolve_extraction_schema(config)
-    assert seen and seen[0].path == "urn:service:x"
+    assert seen and seen[0].source.path == "urn:service:x"
+    assert seen[0].config is config
     extraction = resolved.processing.graph_extraction
     assert extraction.schema_source == SchemaSourceConfig()
     inline = _config(**_INLINE).processing.graph_extraction
@@ -119,9 +131,9 @@ def test_a_registered_kind_fills_the_inline_keys(custom_kind: str) -> None:
 
 
 def test_a_later_registration_replaces_the_earlier(custom_kind: str) -> None:
-    register_schema_source(custom_kind)(lambda source: SchemaDocument())
+    register_schema_source(custom_kind)(lambda context: SchemaDocument())
     replacement = register_schema_source(custom_kind)(
-        lambda source: SchemaDocument(**_INLINE)
+        lambda context: SchemaDocument(**_INLINE)
     )
     assert get_schema_source(custom_kind) is replacement
 
@@ -147,9 +159,7 @@ def test_an_unknown_kind_fails_naming_the_registered_ones() -> None:
 def test_file_loader_reads_yaml_and_json(tmp_path: Path, suffix: str) -> None:
     text = json.dumps(_INLINE) if suffix == ".json" else _SCHEMA_YAML
     path = _write(tmp_path / f"schema{suffix}", text)
-    document = get_schema_source("file")(
-        SchemaSourceConfig(kind="file", path=str(path))
-    )
+    document = _load_file(str(path))
     assert document.entity_types is None
     assert document.model_dump(mode="json") == SchemaDocument(**_INLINE).model_dump(
         mode="json"
@@ -306,12 +316,12 @@ def test_the_pipeline_loads_the_schema_once(tmp_path: Path, mocker: Any) -> None
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
     path = _write(tmp_path / "schema.yaml", _SCHEMA_YAML)
-    calls: list[SchemaSourceConfig] = []
+    calls: list[SchemaSourceContext] = []
     load_file = get_schema_source("file")
 
-    def counting(source: SchemaSourceConfig) -> SchemaDocument:
-        calls.append(source)
-        return load_file(source)
+    def counting(context: SchemaSourceContext) -> SchemaDocument:
+        calls.append(context)
+        return load_file(context)
 
     mocker.patch.dict(schema_registry._REGISTRY, {"file": counting})
     config = Config.model_validate(
@@ -344,3 +354,179 @@ def test_the_pipeline_loads_the_schema_once(tmp_path: Path, mocker: Any) -> None
         if pipeline.name_to_type_map[s.name] is PipelineStageType.GRAPH_EXTRACTION
     )
     assert stage.config is pipeline.config
+
+
+# --- the loader contract -------------------------------------------------------
+
+
+def test_an_unloaded_source_is_not_read_as_the_inline_schema() -> None:
+    # The inline keys of an unloaded source are the defaults, not its schema.
+    config = _config(schema_source={"kind": "file", "path": "schema.yaml"})
+    with pytest.raises(ConfigurationError, match="resolve_extraction_schema"):
+        config.processing.graph_extraction.extraction_schema()
+    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+
+    with pytest.raises(ConfigurationError, match="not loaded yet"):
+        BaseProcessor(config)
+
+
+def test_the_loader_gets_the_options_and_the_secret_arn(custom_kind: str) -> None:
+    seen: list[SchemaSourceContext] = []
+
+    @register_schema_source(custom_kind)
+    def _load(context: SchemaSourceContext) -> SchemaDocument:
+        seen.append(context)
+        return SchemaDocument(**_INLINE)
+
+    arn = "arn:aws:secretsmanager:us-west-2:111122223333:secret:synthetic"
+    resolved = resolve_extraction_schema(
+        _config(
+            schema_source={
+                "kind": custom_kind,
+                "options": {"graph": "synthetic", "depth": 2},
+                "secret_arn": arn,
+            }
+        )
+    )
+    assert seen[0].source.options == {"graph": "synthetic", "depth": 2}
+    assert seen[0].source.secret_arn == arn
+    # The loaded config is inline: no option or secret survives the load.
+    assert resolved.processing.graph_extraction.schema_source == SchemaSourceConfig()
+
+
+def test_options_and_the_secret_key_nothing(custom_kind: str) -> None:
+    plain = _config(schema_source={"kind": custom_kind})
+    tuned = _config(
+        schema_source={
+            "kind": custom_kind,
+            "options": {"graph": "other"},
+            "secret_arn": "arn:aws:secretsmanager:us-west-2:111122223333:secret:x",
+        }
+    )
+    assert _keys(plain) == _keys(tuned)
+    assert extraction_fingerprint(plain) == extraction_fingerprint(tuned)
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ({"options": {"a": 1}}, "schema_source.options is set but"),
+        (
+            {"secret_arn": "arn:aws:secretsmanager:us-west-2:1:secret:x"},
+            "schema_source.secret_arn is set but",
+        ),
+        ({"kind": "svc", "secret_arn": "my-secret"}, "secret_arn"),
+    ],
+)
+def test_source_settings_are_checked(source: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        SchemaSourceConfig(**source)
+
+
+class _Session:
+    """Records the clients asked for; makes none."""
+
+    def __init__(self) -> None:
+        self.clients: list[tuple[str, dict[str, Any]]] = []
+
+    def client(self, service_name: str, **kwargs: Any) -> str:
+        self.clients.append((service_name, kwargs))
+        return f"client:{service_name}"
+
+
+def test_the_session_is_built_once_and_only_when_asked() -> None:
+    built: list[_Session] = []
+
+    def factory() -> Any:
+        built.append(_Session())
+        return built[-1]
+
+    config = Config.model_validate(
+        {"aws": {"region_name": "eu-west-1", "bedrock": {"region_name": "us-east-1"}}}
+    )
+    context = SchemaSourceContext(
+        SchemaSourceConfig(kind="svc"), config, session_factory=factory
+    )
+    assert built == []
+    assert context.client("s3") == "client:s3"
+    assert context.client("bedrock-runtime") == "client:bedrock-runtime"
+    assert context.client("sts", region_name="ap-south-1") == "client:sts"
+    assert len(built) == 1 and context.boto_session() is built[0]
+    assert built[0].clients == [
+        ("s3", {"region_name": "eu-west-1"}),
+        ("bedrock-runtime", {"region_name": "us-east-1"}),
+        ("sts", {"region_name": "ap-south-1"}),
+    ]
+
+
+def test_the_run_session_reaches_the_loader(custom_kind: str) -> None:
+    from unified_kg_rag.adapters.providers import Providers
+
+    sessions: list[Any] = []
+
+    @register_schema_source(custom_kind)
+    def _load(context: SchemaSourceContext) -> SchemaDocument:
+        sessions.append(context.boto_session())
+        return SchemaDocument(**_INLINE)
+
+    config = _config(schema_source={"kind": custom_kind})
+    session = _Session()
+    resolve_extraction_schema(config, providers=Providers(config, boto_session=session))  # type: ignore[arg-type]
+    resolve_extraction_schema(config, boto_session=session)  # type: ignore[arg-type]
+    assert sessions == [session, session]
+
+
+@pytest.mark.parametrize(
+    ("path", "shown"),
+    [
+        (
+            "https://user:token@schemas.example.com:8443/v1/onto.ttl?sig=abc#frag",
+            "https://schemas.example.com:8443/v1/onto.ttl",
+        ),
+        ("s3://bucket/schemas/onto.yaml", "s3://bucket/schemas/onto.yaml"),
+        ("/srv/schemas/onto.yaml", "/srv/schemas/onto.yaml"),
+        (None, "<no path>"),
+    ],
+)
+def test_locations_are_shown_without_credentials(path: str | None, shown: str) -> None:
+    assert redact_location(path) == shown
+
+
+def test_errors_never_show_a_url_credential(custom_kind: str) -> None:
+    register_schema_source(custom_kind)(
+        lambda context: SchemaDocument(relationship_patterns=["GENE -R-> PERSON"])
+    )
+    path = "https://user:token@schemas.example.com/onto?sig=secret-sig"
+    with pytest.raises(SchemaSourceError) as caught:
+        resolve_extraction_schema(
+            _config(schema_source={"kind": custom_kind, "path": path})
+        )
+    message = str(caught.value)
+    assert "https://schemas.example.com/onto" in message
+    assert "token" not in message and "secret-sig" not in message
+    with pytest.raises(SchemaSourceError) as caught:
+        resolve_extraction_schema(_config(schema_source={"kind": "file", "path": path}))
+    message = str(caught.value)
+    assert "local path only" in message
+    assert "token" not in message and "secret-sig" not in message
+
+
+@pytest.mark.parametrize(
+    "path", ["s3://bucket/schema.yaml", "https://example.com/schema.yaml"]
+)
+def test_the_file_loader_refuses_urls(path: str) -> None:
+    with pytest.raises(SchemaSourceError, match="is a URL; kind 'file' reads a local"):
+        _load_file(path)
+
+
+def test_the_file_loader_takes_no_options(tmp_path: Path) -> None:
+    path = _write(tmp_path / "schema.yaml", _SCHEMA_YAML)
+    with pytest.raises(SchemaSourceError, match="takes no schema_source.options"):
+        _load_file(str(path), options={"a": 1})
+
+
+def test_a_directory_is_an_unreadable_schema_file(tmp_path: Path) -> None:
+    folder = tmp_path / "schema.yaml"
+    folder.mkdir()
+    with pytest.raises(SchemaSourceError, match="Cannot read schema file"):
+        _load_file(str(folder))

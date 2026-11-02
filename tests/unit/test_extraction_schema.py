@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     RelationshipTypeSpec,
     schema_key,
 )
+from unified_kg_rag.domain.models.schema import schema_problems
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
@@ -158,6 +159,42 @@ def test_pattern_string_form(text: str, expected: tuple[str, str, str]) -> None:
     pattern = RelationshipPattern.parse(text)
     assert (pattern.source_type, pattern.relation, pattern.target_type) == expected
     assert RelationshipPattern.parse(str(pattern)) == pattern
+
+
+def test_a_relation_ends_at_the_first_arrow() -> None:
+    # A relation label holding "->" takes the mapping form; the string form
+    # reads it as the end of the relation.
+    pattern = RelationshipPattern.parse("A -R-> B -> C")
+    assert (pattern.source_type, pattern.relation, pattern.target_type) == (
+        "A",
+        "R",
+        "B -> C",
+    )
+    assert RelationshipPattern.parse("A -R->X-> B").relation == "R"
+
+
+def test_duplicate_labels_differing_in_case_or_separator_are_problems() -> None:
+    assert schema_problems(
+        [EntityTypeSpec(label="PERSON"), EntityTypeSpec(label="Person")], [], []
+    ) == ["entity_types: 'PERSON' and 'Person' name the same type"]
+    assert schema_problems(
+        [],
+        [
+            RelationshipTypeSpec(label="Works For"),
+            RelationshipTypeSpec(label="WORKS_FOR"),
+        ],
+        [],
+    ) == ["relationship_types: 'Works For' and 'WORKS_FOR' name the same type"]
+
+
+def test_schema_key_casefolds() -> None:
+    # Case-folding, not lower-casing: "ß" folds to "ss".
+    assert schema_key("Straße") == schema_key("STRASSE") == "strasse"
+
+
+def test_an_iri_is_trimmed() -> None:
+    assert EntityTypeSpec(label="X", iri=" urn:x:a ").iri == "urn:x:a"
+    assert RelationshipTypeSpec(label="R", iri="\turn:x:r\n").iri == "urn:x:r"
 
 
 @pytest.mark.parametrize(

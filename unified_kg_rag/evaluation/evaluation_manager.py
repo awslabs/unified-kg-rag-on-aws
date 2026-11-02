@@ -160,7 +160,7 @@ class EvaluationManager:
         providers: Providers | None = None,
     ) -> None:
         # The run manifest hashes the loaded schema, not where it was read.
-        config = resolve_extraction_schema(config)
+        config = resolve_extraction_schema(config, providers=providers)
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")

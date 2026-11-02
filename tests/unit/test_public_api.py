@@ -58,6 +58,7 @@ PUBLIC_API = sorted(
         "NamespaceLeaseError",
         "PipelineExecutionError",
         "PipelineInterrupted",
+        "SchemaSourceError",
         "StoreConnectionError",
         "StoreRequestRejectedError",
         # Extending it
@@ -79,11 +80,14 @@ PUBLIC_API = sorted(
         "QueryInput",
         "RerankFactoryPort",
         "RetrieverRole",
+        "SchemaDocument",
+        "SchemaSourceContext",
         "TokenCounterPort",
         "VectorIndexer",
         "build_providers",
         "register_provider",
         "register_renderer",
+        "register_schema_source",
         "register_strategy",
     ]
 )
