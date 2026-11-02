@@ -652,7 +652,7 @@ From 0.2.3 (or a `main` checkout since):
   (`UPPER_SNAKE`, Hangul kept), and the output depends only on the
   statements. Colliding labels and more types or patterns than the caps
   allow fail instead of being truncated. No schema-source kind reads RDF
-  yet (#PR).
+  yet (#491).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
