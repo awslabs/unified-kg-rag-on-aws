@@ -704,6 +704,20 @@ class IndexingManager:
         (``SchemaAnnotator.digest``)."""
         return self._annotator.digest
 
+    def stores_hold_items(self, suffix: str) -> bool:
+        """Whether either store holds an entity or relationship of
+        ``suffix`` (``holds_any_item``, a bounded read each). A store that
+        cannot tell counts as empty, and so do stores :meth:`reannotate`
+        cannot rewrite (a pass would read nothing). A read that fails
+        raises."""
+        stores: tuple[GraphIndexer | VectorIndexer, ...] = (
+            self.neptune_indexer,
+            self.opensearch_indexer,
+        )
+        if not all(rewrites_schema_annotations(store) for store in stores):
+            return False
+        return any(store.holds_any_item(suffix) for store in stores)
+
     def reannotate(self, suffixes: Collection[str]) -> SchemaReannotation:
         """Rewrite the schema annotations of every stored entity and
         relationship of ``suffixes`` (every scope's) to what the current

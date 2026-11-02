@@ -482,8 +482,10 @@ gets its models and stores from the run's `Providers` bundle.
   null for an unset one), so the stores end as a full build leaves them.
   Neptune lists the ids in one traversal and reads the annotations in
   `batch_size` batches; OpenSearch pages by id. A store that inherits the
-  port's defaults (`rewrites_schema_annotations`) makes the pass read
-  nothing; a store error ends the pass with a warning, not the run.
+  port's defaults (`rewrites_schema_annotations`, which compares the
+  functions its methods are bound to, so a forwarding wrapper answers for
+  the store it wraps) makes the pass read nothing; a store error ends the
+  pass with a warning, not the run.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
   re-summarizes those over a token budget with a cheap model (map-reduce when
   one exceeds a call's input); a failed call keeps the concatenation. The
@@ -1363,7 +1365,9 @@ checks that its values are the defaults and each key is in the reference).
   records its digest only once the pass completed, so a pass that stopped
   is made again by the next run under any schema. A namespace without a
   record is unknown (one pass), unless the registry held none of its
-  documents before the run (recorded without reading). A reset marks its
+  documents before the run and neither store holds an item of the suffix
+  (`holds_any_item`, one bounded read each; recorded without reading): a
+  lost or replaced registry is no proof the stores are empty. A reset marks its
   namespaces before the rebuild and records its digest when every item
   was written (`record_rebuilt_annotations`). Adding a section: §15.
 - **Extraction schema** (`domain/models/schema.py`). The entity and

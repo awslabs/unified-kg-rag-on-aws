@@ -322,6 +322,10 @@ class FakeGraphStore:
             if s == scope
         }
 
+    def holds_any_item(self, suffix: str | None = None) -> bool:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        return any(s == scope for s, _ in self.data.get("entities", {}))
+
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         scope = suffix or Constants.DEFAULT_SUFFIX.value
         return [
@@ -535,6 +539,14 @@ class FakeVectorStore(_Recorder):
 
     def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
         return self._update("entities", entities, ("text_unit_ids", "rank"))
+
+    def holds_any_item(self, suffix: str | None = None) -> bool:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return any(
+            BaseIndexer.get_suffix(item) == wanted
+            for kind in ("entities", "relationships")
+            for item in self.data.get(kind, {}).values()
+        )
 
     def read_schema_annotations(
         self, kind: AnnotatedKind, suffix: str | None = None

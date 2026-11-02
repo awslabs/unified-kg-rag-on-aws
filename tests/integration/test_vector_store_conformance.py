@@ -1493,3 +1493,16 @@ def test_deleted_communities_leave_the_text_units_naming_them(
     assert set(indexer.find_documents(prefix, "community_ids", ["c1"], tenant)) == {
         "t9"
     }
+
+
+@pytest.mark.parametrize("kind", ["entities", "relationships"])
+def test_holds_any_item_tells_a_suffix_with_items(
+    harness: StoreHarness, kind: str
+) -> None:
+    indexer = harness.vector_indexer
+    tenant, other = harness.suffix("held"), harness.suffix("none")
+    assert indexer.holds_any_item(suffix=tenant) is False
+    items = _entities(tenant) if kind == "entities" else _relationships(tenant)
+    _write(harness, kind, "upsert", items)
+    assert indexer.holds_any_item(suffix=tenant) is True
+    assert indexer.holds_any_item(suffix=other) is False

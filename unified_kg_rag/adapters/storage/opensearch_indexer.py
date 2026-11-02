@@ -985,6 +985,28 @@ class OpenSearchIndexer(VectorIndexer):
                 return annotations
             after = str((page[-1].get("_source") or {}).get("id") or page[-1]["_id"])
 
+    def holds_any_item(self, suffix: str | None = None) -> bool:
+        """Whether the entities or relationships index holds a document
+        (see the port): one size-1 search of each live index."""
+        kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
+        for kind in kinds:
+            prefix, _ = _VECTOR_COPY_FIELDS[kind]
+            alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
+            if not self.opensearch_client.get_index_name_by_alias(alias_name):
+                continue
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": 1,
+                    "query": {"match_all": {}},
+                    "_source": False,
+                    "track_total_hits": False,
+                },
+            )
+            if response.get("hits", {}).get("hits"):
+                return True
+        return False
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,

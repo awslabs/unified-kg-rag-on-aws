@@ -630,3 +630,12 @@ def test_a_failed_annotation_write_is_a_failed_item(
         patch.setattr(graph, "_execute_with_retries", lost)
         with pytest.raises(NamespaceLeaseError):
             graph.write_schema_annotations("entities", {"a": (True, None)})
+
+
+def test_holds_any_item_tells_a_suffix_with_items(harness: StoreHarness) -> None:
+    graph = harness.graph_indexer
+    tenant, other = harness.suffix("held"), harness.suffix("none")
+    assert graph.holds_any_item(suffix=tenant) is False
+    graph.upsert_entities([_entity("a", tenant)])
+    assert graph.holds_any_item(suffix=tenant) is True
+    assert graph.holds_any_item(suffix=other) is False

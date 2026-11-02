@@ -96,6 +96,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     DocStatusRegistryError,
+    NamespaceLeaseError,
     PipelineStageError,
     get_logger,
 )
@@ -2138,10 +2139,11 @@ def annotations_due(incremental: IncrementalIndexer, delta: DocumentDelta) -> bo
     stops before its pass completes (killed, or a store failed) leaves the
     next run, under any schema, a pass to make. A namespace without a
     record (written before the record existed) is read as unknown: one pass,
-    unless the registry held none of its documents before this run, when
-    the stores hold only what this run writes and the run's digest is
-    recorded without reading them. A new scope of an annotated namespace
-    therefore reads nothing.
+    unless the registry held none of its documents before this run and the
+    stores hold no item of its suffix (one bounded read each), when they
+    hold only what this run writes and the run's digest is recorded without
+    reading them. A new scope of an annotated namespace therefore reads
+    nothing.
     """
     namespace = scope_namespace(incremental.scope)
     if namespace is None:
@@ -2152,7 +2154,7 @@ def annotations_due(incremental: IncrementalIndexer, delta: DocumentDelta) -> bo
     if recorded == current:
         return False
     check_write_fence()
-    if recorded is None and _namespace_was_empty(store, namespace, delta):
+    if recorded is None and _namespace_was_empty(incremental, namespace, delta):
         store.put_annotation_digest(namespace, current)
         return False
     if recorded != REANNOTATING_DIGEST:
@@ -2161,15 +2163,33 @@ def annotations_due(incremental: IncrementalIndexer, delta: DocumentDelta) -> bo
 
 
 def _namespace_was_empty(
-    store: DocStatusPort, namespace: str, delta: DocumentDelta
+    incremental: IncrementalIndexer, namespace: str, delta: DocumentDelta
 ) -> bool:
-    """Whether the registry held none of ``namespace``'s documents before the
-    run: its diff read none, and every record it holds now is one of the
-    run's new documents (``open_attempts`` recorded them)."""
+    """Whether ``namespace`` held nothing before the run: the registry held
+    none of its documents (its diff read none, and every record it holds
+    now is one of the run's new documents, which ``open_attempts``
+    recorded) and the stores hold no item of the run's suffix
+    (``IndexingManager.stores_hold_items``). A lost or replaced registry
+    leaves the stores as they were; a probe that fails is read as unknown.
+    """
     if delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes:
         return False
     new = set(delta.new)
-    return all(record.doc_id in new for record in store.list_namespace(namespace))
+    records = incremental.doc_status.list_namespace(namespace)
+    if not all(record.doc_id in new for record in records):
+        return False
+    try:
+        return not incremental.indexing_manager.stores_hold_items(incremental.suffix)
+    except NamespaceLeaseError:
+        raise
+    except Exception as e:  # noqa: BLE001 - the pass reads them again
+        logger.warning(
+            "Could not tell whether the stores hold items of '%s' (%s); "
+            "reading their schema annotations",
+            incremental.suffix,
+            e,
+        )
+        return False
 
 
 def record_rebuilt_annotations(

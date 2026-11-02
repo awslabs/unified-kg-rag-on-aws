@@ -816,7 +816,7 @@ def test_a_namespace_without_a_record_is_read_once() -> None:
 
 def test_a_new_namespace_records_its_digest_without_reading() -> None:
     config = _config(**_SCHEMA_CONFIG)
-    vector, graph = _written_without_a_schema()
+    _, vector, graph = _manager(Config())
     store = FakeDocStatusStore()
     # Only the run's own new documents are recorded (open_attempts).
     store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
@@ -831,6 +831,97 @@ def test_a_new_namespace_records_its_digest_without_reading() -> None:
     store = FakeDocStatusStore()
     store.put(DocStatusRecord(doc_id="ns#other", content_hash="h", scope="ns|B"))
     assert _index(_incremental(config, vector, graph, store), new)
+
+
+@pytest.mark.parametrize("held_by", ["graph", "vector"])
+def test_a_lost_registry_is_no_proof_the_stores_are_empty(held_by: str) -> None:
+    # The registry was lost or replaced, the stores kept: its only records
+    # are the run's new documents, yet the stores hold items written
+    # without a schema. They are read once, as a namespace without a
+    # record is, and hold what a full build writes.
+    config = _config(**_SCHEMA_CONFIG)
+    vector, graph = _written_without_a_schema()
+    if held_by == "graph":
+        vector.data.clear()
+    else:
+        graph.data.clear()
+    store = FakeDocStatusStore()
+    store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
+    new = DocumentDelta(new=["ns#new"])
+    incremental = _incremental(config, vector, graph, store)
+    assert annotations_due(incremental, new)
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+    reannotate_on_schema_change(incremental, [])
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+    if held_by == "graph":
+        assert _stored(vector, graph)[:2] == _ANNOTATED[:2]
+    else:  # Vector relationships without an edge keep theirs.
+        assert _stored(vector, graph)[2] == _ANNOTATED[2]
+
+
+def test_a_failed_store_probe_reads_the_namespace(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    _, vector, graph = _manager(Config())
+    store = FakeDocStatusStore()
+
+    def unreachable(suffix: Any = None) -> Any:
+        raise AWSServiceError("Neptune holds_any_item failed: timeout")
+
+    graph.holds_any_item = unreachable  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING):
+        assert annotations_due(
+            _incremental(config, vector, graph, store), DocumentDelta(new=["ns#n"])
+        )
+    assert "Could not tell whether the stores hold items" in caplog.text
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+    def lost(suffix: Any = None) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    graph.holds_any_item = lost  # type: ignore[method-assign]
+    with pytest.raises(NamespaceLeaseError):
+        annotations_due(
+            _incremental(config, vector, graph, FakeDocStatusStore()),
+            DocumentDelta(new=["ns#n"]),
+        )
+
+
+def test_stores_that_cannot_rewrite_are_not_probed() -> None:
+    # A pass could not read them: the new namespace records its digest, as
+    # before the probe.
+    config = _config(**_SCHEMA_CONFIG)
+    graph = _UnlistedGraph(Config())
+    graph.holds_any_item = None  # type: ignore[assignment,method-assign]
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    store = FakeDocStatusStore()
+    assert not annotations_due(
+        _incremental(config, vector, graph, store), DocumentDelta(new=["ns#n"])
+    )
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+
+
+@pytest.mark.parametrize("kind", ["entities", "relationships"])
+def test_the_ports_default_probe_lists_the_items(kind: str) -> None:
+    graph = _UnlistedGraph(Config())
+    assert GraphIndexer.holds_any_item(graph) is None
+    listing = type(
+        "Listing",
+        (_UnlistedGraph,),
+        {
+            "read_schema_annotations": lambda self, k, suffix=None: (
+                {"x": object()} if k == kind else {}
+            )
+        },
+    )
+    assert GraphIndexer.holds_any_item(listing(Config())) is True
+    empty = type(
+        "Empty",
+        (_UnlistedGraph,),
+        {"read_schema_annotations": lambda self, k, suffix=None: {}},
+    )
+    assert GraphIndexer.holds_any_item(empty(Config())) is False
 
 
 def test_a_rebuild_marks_its_namespaces_until_it_wrote_everything() -> None:

@@ -416,6 +416,19 @@ class GraphIndexer(BaseIndexer):
         """
         return None
 
+    def holds_any_item(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s graph holds any entity or relationship (an
+        item :meth:`read_schema_annotations` lists).
+
+        An incremental run whose registry holds none of its namespace's
+        documents asks it before it records, without reading them, that the
+        stores hold only what it writes: a lost or replaced registry is no
+        proof the stores are empty. Default: from
+        :meth:`read_schema_annotations` (``None`` when it cannot list);
+        adapters that override it read one item and raise when a read fails.
+        """
+        return _holds_any_item(self, suffix)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,
@@ -631,6 +644,12 @@ class VectorIndexer(BaseIndexer):
         the backend cannot enumerate its documents."""
         return None
 
+    def holds_any_item(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s live indices hold any entity or relationship
+        (see :meth:`GraphIndexer.holds_any_item`). Default: from
+        :meth:`read_schema_annotations`."""
+        return _holds_any_item(self, suffix)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,
@@ -793,6 +812,20 @@ class VectorIndexer(BaseIndexer):
 
 
 _ANNOTATION_METHODS = ("read_schema_annotations", "write_schema_annotations")
+
+
+def _holds_any_item(
+    store: GraphIndexer | VectorIndexer, suffix: str | None
+) -> bool | None:
+    """The ports' default ``holds_any_item``: a full listing of each kind."""
+    kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
+    for kind in kinds:
+        listed = store.read_schema_annotations(kind, suffix)
+        if listed is None:
+            return None
+        if listed:
+            return True
+    return False
 
 
 def rewrites_schema_annotations(store: object) -> bool:

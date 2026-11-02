@@ -622,6 +622,28 @@ class NeptuneIndexer(GraphIndexer):
                 )
         return annotations
 
+    def holds_any_item(self, suffix: str | None = None) -> bool:
+        """Whether the label holds a vertex (see the port): one bounded
+        read. An edge of the label joins two of its vertices, so a vertex
+        is there whenever an item is.
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            found = self._execute_with_retries(
+                lambda g: g.V().hasLabel(label).limit(1).id_(),
+                "holds_any_item",
+                results=True,
+                fenced=False,
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:
+            raise AWSServiceError(f"Neptune holds_any_item failed: {e}") from e
+        return bool(found)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,

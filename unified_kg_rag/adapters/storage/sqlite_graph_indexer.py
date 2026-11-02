@@ -511,6 +511,15 @@ class SQLiteGraphIndexer(GraphIndexer):
             annotations[item_id] = stored_annotation(props, kind, item_type)
         return annotations
 
+    def holds_any_item(self, suffix: str | None = None) -> bool:
+        """Whether the label holds a vertex (an edge joins two of them)."""
+        with self.store.read("holds any item") as connection:
+            row = connection.execute(
+                "SELECT 1 FROM vertices WHERE label = ? LIMIT 1",
+                (self._entity_label(suffix),),
+            ).fetchone()
+        return row is not None
+
     def read_neighbor_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> dict[str, list[str]]:
