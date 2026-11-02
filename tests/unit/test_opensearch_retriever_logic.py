@@ -786,6 +786,92 @@ async def test_attribute_filter_probe_runs_alongside_the_searches(
         assert len(client.requests) == searches
 
 
+class _SourceKindsClient(_Client):
+    """``_Client`` over an index whose documents hold no ``source_kinds``
+    (``seeded``: some do); unmapped, OpenSearch 2.13 refuses a kNN filter on
+    the field (a 400, "Rewrite first")."""
+
+    def __init__(self, hits: dict[str, list[tuple[str, float]]], *, seeded: bool):
+        super().__init__(hits)
+        self.seeded = seeded
+
+    async def asearch(self, **request) -> dict:
+        body = request["body"]
+        query = str(body["query"])
+        if body.get("_source") is False:
+            self.requests.append(request)
+            if "exists" in query and "must_not" not in query:
+                hits = [{"_id": "e1"}] if self.seeded else []
+                return {"hits": {"hits": hits}}
+            # The attribute probe: a seed_graph term matches nothing here.
+            matched = self.seeded or "seed_graph" not in query
+            return {"hits": {"hits": [{"_id": "e1"}] if matched else []}}
+        if not self.seeded and "knn" in query and "source_kinds" in query:
+            self.requests.append(request)
+            raise StoreRequestRejectedError("status=400", reason="Rewrite first")
+        return await super().asearch(**request)
+
+
+@pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.VECTOR])
+@pytest.mark.parametrize(
+    ("value", "seeded", "filtered", "found"),
+    [
+        # No document holds the field (an index built before it was
+        # mapped): document evidence is every document's, so the filter is
+        # dropped and the kNN search is not refused.
+        ("document", False, False, True),
+        (["document", "seed_graph"], False, False, True),
+        # Some do: the filter stays.
+        ("document", True, True, True),
+        # seed_graph on such an index matches nothing (the attribute probe).
+        ("seed_graph", False, True, False),
+    ],
+)
+async def test_a_document_source_kinds_filter_on_an_index_without_the_field(
+    retriever, config, mocker, search_type, value, seeded, filtered, found
+) -> None:
+    prefix = config.indexing.opensearch.entities_index_prefix
+    client = _SourceKindsClient({prefix: [("e1", 1.0)]}, seeded=seeded)
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=search_type,
+            index_prefixes=[prefix],
+            filters={"source_kinds": value},
+        )
+    )
+    assert bool(results) == found
+    searches = [b for b in client.bodies if b.get("_source") is not False]
+    if found:
+        assert searches
+        assert all(("source_kinds" in str(b["query"])) == filtered for b in searches)
+
+
+async def test_a_lexical_source_kinds_filter_is_not_probed_for_the_field(
+    retriever, config, mocker
+) -> None:
+    # A lexical filter on an unmapped field is no error: sent as given.
+    prefix = config.indexing.opensearch.entities_index_prefix
+    client = _SourceKindsClient({prefix: [("e1", 1.0)]}, seeded=False)
+    object.__setattr__(retriever, "_opensearch_client", client)
+    results = await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=SearchType.LEXICAL,
+            index_prefixes=[prefix],
+            filters={"source_kinds": "document"},
+        )
+    )
+    assert [r.source for r in results] == ["e1"]
+    assert all(b.get("_source") is not False for b in client.bodies)
+    assert all("source_kinds" in str(b["query"]) for b in client.bodies)
+
+
 async def test_an_attribute_probe_is_reused_by_the_next_sub_search(
     retriever, config, mocker
 ) -> None:

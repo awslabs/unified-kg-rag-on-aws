@@ -79,7 +79,16 @@ _KNN_SETTINGS = ("knn", "knn.algo_param.ef_search")
 _VECTOR_COPY_FIELDS = {
     "entities": (
         "entities_index_prefix",
-        ["name", "type", "confidence", "description", "in_schema", "type_iri"],
+        [
+            "name",
+            "type",
+            "confidence",
+            "description",
+            "in_schema",
+            "type_iri",
+            "iri",
+            "source_kinds",
+        ],
     ),
     "relationships": (
         "relationships_index_prefix",
@@ -91,6 +100,7 @@ _VECTOR_COPY_FIELDS = {
             "description",
             "in_schema",
             "predicate_iri",
+            "source_kinds",
         ],
     ),
 }
@@ -107,8 +117,9 @@ _EXACT_TYPES = frozenset({"keyword", "boolean"})
 
 
 def _present(**fields: Any) -> dict[str, Any]:
-    """``fields`` but the ``None`` ones: a schema annotation is written only
-    when set, so a document without one is what it was before the field."""
+    """``fields`` but the ``None`` ones: a schema annotation (or a seed-graph
+    field) is written only when set, so a document without one is what it
+    was before the field."""
     return {name: value for name, value in fields.items() if value is not None}
 
 
@@ -343,7 +354,9 @@ class OpenSearchIndexer(VectorIndexer):
         An index that passes gets, in one additive mapping update, the fields
         this release maps that it lacks (the claim dates of an index built
         before #444, the schema annotations of one built before
-        ``in_schema``) and date detection turned off, before any write.
+        ``in_schema``, the seed-graph fields ``iri``, ``source_kinds`` and
+        ``source_kind`` of one built before them) and date detection turned
+        off, before any write.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -713,7 +726,12 @@ class OpenSearchIndexer(VectorIndexer):
             # Chunk lineage: lets LightRAG mix follow entity -> source chunks
             # instead of relying solely on a separate naive vector query.
             "text_unit_ids": list(entity.text_unit_ids or []),
-            **_present(in_schema=entity.in_schema, type_iri=entity.type_iri),
+            **_present(
+                in_schema=entity.in_schema,
+                type_iri=entity.type_iri,
+                iri=entity.iri,
+                source_kinds=entity.source_kinds or None,
+            ),
         }
 
     @classmethod
@@ -734,7 +752,11 @@ class OpenSearchIndexer(VectorIndexer):
             # Chunk lineage: lets LightRAG mix follow relationship -> source
             # chunks (LightRAG's _find_related_text_unit_from_relationships).
             "text_unit_ids": list(rel.text_unit_ids or []),
-            **_present(in_schema=rel.in_schema, predicate_iri=rel.predicate_iri),
+            **_present(
+                in_schema=rel.in_schema,
+                predicate_iri=rel.predicate_iri,
+                source_kinds=rel.source_kinds or None,
+            ),
         }
 
     def index_relationships(
@@ -2160,6 +2182,9 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_embedding": self._get_knn_vector_mapping(),
                 "community_ids": {"type": "keyword"},
                 "n_tokens": {"type": "integer"},
+                # "seed_graph" on a seed graph's units, absent on a
+                # document's: text searches leave the seed units out.
+                "source_kind": {"type": "keyword"},
                 "attributes": {
                     "type": "object",
                     "dynamic": True,
@@ -2195,6 +2220,8 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_unit_ids": {"type": "keyword"},
                 "in_schema": {"type": "boolean"},
                 "type_iri": {"type": "keyword"},
+                "iri": {"type": "keyword"},
+                "source_kinds": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
@@ -2214,6 +2241,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "text_unit_ids": {"type": "keyword"},
                 "in_schema": {"type": "boolean"},
                 "predicate_iri": {"type": "keyword"},
+                "source_kinds": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

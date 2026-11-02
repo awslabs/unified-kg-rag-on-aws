@@ -681,7 +681,12 @@ class FakeVectorStore(_Recorder):
                     "type": item.type or "",
                     "confidence": confidence if confidence is not None else 1.0,
                 }
-                annotations = {"in_schema": item.in_schema, "type_iri": item.type_iri}
+                annotations = {
+                    "in_schema": item.in_schema,
+                    "type_iri": item.type_iri,
+                    "iri": item.iri,
+                    "source_kinds": item.source_kinds,
+                }
             else:
                 fields = {
                     "source_id": item.source_id,
@@ -692,8 +697,10 @@ class FakeVectorStore(_Recorder):
                 annotations = {
                     "in_schema": item.in_schema,
                     "predicate_iri": item.predicate_iri,
+                    "source_kinds": item.source_kinds,
                 }
-            # A schema annotation is written only when set.
+            # A schema annotation (or seed-graph field) is written only when
+            # set.
             fields |= {k: v for k, v in annotations.items() if v is not None}
             out[i] = {"id": i, **fields, "description": item.description or ""}
         return out

@@ -44,6 +44,7 @@ from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
+from unified_kg_rag.domain.ingestion.seed_graph import annotate_sources
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -70,7 +71,7 @@ from unified_kg_rag.shared.write_fence import check_write_fence
 
 logger = get_logger(__name__)
 
-# A graph item whose description the cross-run merge reads back.
+# A graph item: an entity or a relationship.
 _Described = TypeVar("_Described", Entity, Relationship)
 
 # Extraction-store key of a suffix's strip note: the stored items a
@@ -119,7 +120,9 @@ def _reads_back(graph: GraphIndexer) -> bool:
 def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
     """What the vector store holds of an item besides its description,
     lineage and rank, by field (see ``read_vector_copies``); a schema
-    annotation is absent from a copy written without one (``None``)."""
+    annotation or seed-graph field is absent from a copy written without
+    one (``None``), so an item without one compares equal to a copy written
+    before the field existed."""
     if isinstance(item, Entity):
         return {
             "name": item.name or "",
@@ -127,6 +130,8 @@ def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
             "confidence": item.confidence if item.confidence is not None else 1.0,
             "in_schema": item.in_schema,
             "type_iri": item.type_iri,
+            "iri": item.iri,
+            "source_kinds": item.source_kinds or None,
         }
     return {
         "source_id": item.source_id,
@@ -135,13 +140,24 @@ def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
         "target_name": item.target_name or "",
         "in_schema": item.in_schema,
         "predicate_iri": item.predicate_iri,
+        "source_kinds": item.source_kinds or None,
     }
 
 
 def _annotations(item: Entity | Relationship) -> dict[str, Any]:
-    """The schema annotations of ``item`` in :func:`_vector_content`."""
-    names = ("in_schema", "type_iri", "predicate_iri")
+    """The annotations of ``item`` in :func:`_vector_content`: the schema's
+    and its ``source_kinds``, which follow its lineage."""
+    names = ("in_schema", "type_iri", "predicate_iri", "source_kinds")
     return {k: v for k, v in _vector_content(item).items() if k in names}
+
+
+def _with_sources(item: _Described) -> _Described:
+    """``item`` with its ``source_kinds`` (``annotate_sources``: ``None``
+    unless it cites a seed graph's unit); itself when they already hold."""
+    kinds = annotate_sources(item)
+    if item.source_kinds == kinds:
+        return item
+    return item.model_copy(update={"source_kinds": kinds})
 
 
 def _vector_stale(item: Entity | Relationship, stored: Mapping[str, Any]) -> bool:
@@ -509,6 +525,18 @@ class IndexingManager:
             suffixes=None,
         )
 
+    def _annotated_entities(self, entities: Iterable[Entity]) -> list[Entity]:
+        """``entities`` annotated as they are written: the schema annotations
+        and ``source_kinds``."""
+        return [_with_sources(e) for e in self._annotator.entities(entities)]
+
+    def _annotated_relationships(
+        self, relationships: Iterable[Relationship]
+    ) -> list[Relationship]:
+        """``relationships`` annotated as they are written (see
+        :meth:`_annotated_entities`)."""
+        return [_with_sources(r) for r in self._annotator.relationships(relationships)]
+
     def _write_artifacts(
         self,
         text_units: list[TextUnit] | None,
@@ -532,9 +560,9 @@ class IndexingManager:
         self._enrich_text_units(text_units, communities)
         attach_report_hierarchy(community_reports, communities)
         if entities is not None:
-            entities = self._annotator.entities(entities)
+            entities = self._annotated_entities(entities)
         if relationships is not None:
-            relationships = self._annotator.relationships(relationships)
+            relationships = self._annotated_relationships(relationships)
         vector, graph = self.opensearch_indexer, self.neptune_indexer
         # (full-build writer, delta writer, items, result key)
         phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [
@@ -1642,7 +1670,7 @@ class IndexingManager:
         stored_extra = self.neptune_indexer.read_relationships(extra_ids, suffix=suffix)
         # Annotated as they will be written, so a vector copy is compared
         # with what the write would store.
-        extra = self._annotator.relationships(
+        extra = self._annotated_relationships(
             r.model_copy(
                 deep=True,
                 update={
@@ -2360,8 +2388,8 @@ class IndexingManager:
         # whichever store it reached.
         # Annotated as they are written (_write_artifacts), so a copy whose
         # annotations the schema changed is written in full.
-        new_entities = self._annotator.entities(new_entities)
-        new_relationships = self._annotator.relationships(new_relationships)
+        new_entities = self._annotated_entities(new_entities)
+        new_relationships = self._annotated_relationships(new_relationships)
         graph_copy = {e.id for e in entities} | {r.id for r in relationships}
         vector_copy = {
             **self.opensearch_indexer.read_vector_copies(

@@ -3,7 +3,7 @@
 """The OpenSearch query DSL subset of the embedded search engine, over one index.
 
 Exactly the clauses ``OpenSearchRetriever`` and ``OpenSearchIndexer`` build:
-``match_all``, ``match_none``, ``ids``, ``term``, ``terms``, ``range``,
+``match_all``, ``match_none``, ``ids``, ``term``, ``terms``, ``range``, ``exists``,
 ``multi_match`` (``best_fields``; ``fuzziness``/``max_expansions`` are
 accepted and ignored), ``bool`` (``must``/``should``/``filter``/``must_not``)
 and ``knn`` (``vector``/``k``/``filter``). A body's ``sort`` takes ``{field: {"order":
@@ -16,7 +16,7 @@ Scoring follows OpenSearch: ``multi_match`` takes the best field's BM25
 (``bm25``); ``bool`` sums its ``must`` and ``should`` scores (``filter`` adds
 nothing; ``should`` is optional next to ``must`` or ``filter``, else one must
 match; ``must_not`` leaves out what it matches); ``match_all``, ``ids`` and a
-``term``/``terms``/``range`` clause outside a filter score 1; ``knn`` is an exact search (filter first, then the
+``term``/``terms``/``range``/``exists`` clause outside a filter score 1; ``knn`` is an exact search (filter first, then the
 top ``k``) scored by the field's ``space_type``.
 
 Field values: a ``keyword`` field or an array matches when any element does;
@@ -299,6 +299,16 @@ def _term(index: LoadedIndex, body: Any) -> Scores:
     if isinstance(value, list | dict) or value is None:
         raise rejected(f"[term] takes one value for [{path}], got {value!r}")
     return _term_docs(index, path, [value])
+
+
+@_clause("exists")
+def _exists(index: LoadedIndex, body: Any) -> Scores:
+    """The documents with a value at the field (``null`` and ``[]`` are none,
+    as OpenSearch indexes neither)."""
+    path = _require_keys("exists", body, {"field"}).get("field")
+    if not isinstance(path, str):
+        raise rejected(f"[exists] takes a field name, got {path!r}")
+    return _matching(index, path, lambda doc_values, _spec: bool(doc_values))
 
 
 @_clause("terms")

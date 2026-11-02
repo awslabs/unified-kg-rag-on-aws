@@ -27,8 +27,13 @@ from unified_kg_rag.adapters.aws.neptune import (
 )
 from unified_kg_rag.adapters.retrieval.base import seed_share
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
-from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
+from unified_kg_rag.adapters.storage.filter_schema import (
+    ATTRIBUTE_KEY_PREFIX,
+    SOURCE_KINDS_FIELD,
+    source_kinds_values,
+)
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
+from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.logging import warn_once
@@ -140,6 +145,20 @@ class NeptuneRetriever(GraphExpansionRetriever):
             matched = matched.has(*step)
         return __.or_(matched, __.hasNot(key))
 
+    @staticmethod
+    def _source_kinds_predicate(value: Any) -> GraphTraversal:
+        """Anonymous traversal a vertex must match for a ``source_kinds``
+        entry (``filter_schema``): a vertex holds one of the kinds (a
+        multi-valued property: any value), or, when they name ``document``,
+        holds no ``source_kinds`` (an entity no seed graph states)."""
+        kinds = source_kinds_values(value)
+        held = __.has(
+            SOURCE_KINDS_FIELD, kinds[0] if len(kinds) == 1 else P.within(kinds)
+        )
+        if DOCUMENT_SOURCE_KIND not in kinds:
+            return held
+        return __.or_(held, __.hasNot(SOURCE_KINDS_FIELD))
+
     @classmethod
     def _apply_filters(
         cls,
@@ -151,6 +170,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         for key, value in filters.items():
             if key == "id":
+                continue
+            if key == SOURCE_KINDS_FIELD and isinstance(value, str | list) and value:
+                traversal = traversal.where(cls._source_kinds_predicate(value))
                 continue
             steps = cls._filter_steps(key, value)
             if not steps:

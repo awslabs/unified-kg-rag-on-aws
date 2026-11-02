@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRe
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
     TYPED_FILTER_FIELDS,
+    UNDECLARED_MAPPED_FIELDS,
     IndexLimits,
     check_filter_values,
     opensearch_filter_fields,
@@ -311,6 +312,22 @@ def test_schema_annotations_are_declared_and_relationships_take_no_type(
         assert not schema[kind].declares("in_schema"), kind
 
 
+def test_seed_graph_fields_are_declared_where_written(config: Config) -> None:
+    schema = opensearch_filter_fields(
+        config.processing.translation.target_language.value
+    )
+    for key in ("iri", "source_kinds"):
+        assert schema["entities"].declares(key), key
+        assert NEPTUNE_ENTITY_FILTER_FIELDS.declares(key), key
+    assert schema["relationships"].declares("source_kinds")
+    # An IRI is stated of an entity; a relationship's is its predicate_iri.
+    assert not schema["relationships"].declares("iri")
+    for kind in ("text_units", "claims", "community_reports"):
+        assert not schema[kind].declares("source_kinds"), kind
+    # A text unit's source_kind is mapped, but no filter key.
+    assert not schema["text_units"].declares("source_kind")
+
+
 def _indexer(config: Config) -> OpenSearchIndexer:
     indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
     object.__setattr__(indexer, "config", config)
@@ -339,6 +356,7 @@ def test_schema_matches_indexer_mappings(config: Config) -> None:
         config.processing.translation.target_language.value
     )
     assert set(mapping_funcs) == set(schema)
+    assert set(UNDECLARED_MAPPED_FIELDS) <= set(schema)
     for kind, func in mapping_funcs.items():
         mapped: set[str] = set()
         for name, spec in func()["mappings"]["properties"].items():
@@ -346,7 +364,15 @@ def test_schema_matches_indexer_mappings(config: Config) -> None:
                 continue
             mapped.add(name)
             mapped |= {f"{name}.{sub}" for sub in spec.get("fields", {})}
-        assert schema[kind].fields == mapped, kind
+        undeclared = UNDECLARED_MAPPED_FIELDS.get(kind, frozenset())
+        assert undeclared <= mapped, kind
+        assert schema[kind].fields == mapped - undeclared, kind
+    entities = indexer._get_entities_mapping()["mappings"]["properties"]
+    relationships = indexer._get_relationships_mapping()["mappings"]["properties"]
+    units = indexer._get_text_units_mapping()["mappings"]["properties"]
+    assert entities["iri"] == entities["source_kinds"] == {"type": "keyword"}
+    assert relationships["source_kinds"] == {"type": "keyword"}
+    assert units["source_kind"] == {"type": "keyword"}
 
 
 def test_attribute_prefixes_match_documents_carrying_attributes(
@@ -430,14 +456,15 @@ def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
             key, want = args
             if key not in vertex:
                 return False
-            value = vertex[key]
+            # A multi-valued property matches when any value does.
+            values = vertex[key] if isinstance(vertex[key], list) else [vertex[key]]
             if isinstance(want, P) and want.operator == "within":
-                ok = value in want.value
+                ok = any(v in want.value for v in values)
             elif isinstance(want, P):
                 assert want.operator == "gte", want.operator
-                ok = value >= want.value
+                ok = any(v >= want.value for v in values)
             else:
-                ok = value == want
+                ok = want in values
             if not ok:
                 return False
         elif name == "hasNot":
@@ -485,6 +512,51 @@ def test_neptune_strict_key_stays_strict() -> None:
     assert _kept({"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
 
 
+_SOURCED = [
+    {"id": "doc", "type": "ORG"},
+    {"id": "both", "type": "ORG", "source_kinds": ["document", "seed_graph"]},
+    {"id": "seed", "type": "ORG", "source_kinds": ["seed_graph"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("value", "kept"),
+    [
+        ("seed_graph", ["both", "seed"]),
+        ("document", ["doc", "both"]),
+        ("Document", ["doc", "both"]),
+        (["seed_graph"], ["both", "seed"]),
+        (["document", "seed_graph"], ["doc", "both", "seed"]),
+    ],
+)
+def test_neptune_source_kinds_filter_names_the_evidence_a_vertex_holds(
+    value: Any, kept: list[str]
+) -> None:
+    # ``document``: has document evidence, a vertex without the property
+    # (no seed graph states it) included.
+    scoped = NeptuneRetriever._scope_filters_to_label(
+        "Entity-default", {"source_kinds": value}
+    )
+    traversal = NeptuneRetriever._apply_filters(__.identity(), scoped)
+    steps = traversal.bytecode.step_instructions
+    assert [v["id"] for v in _SOURCED if _matches(v, steps)] == kept
+
+
+def test_neptune_document_source_kinds_is_or_has_or_has_not() -> None:
+    traversal = NeptuneRetriever._apply_filters(
+        __.identity(), {"source_kinds": "document"}
+    )
+    expected = __.identity().where(
+        __.or_(__.has("source_kinds", "document"), __.hasNot("source_kinds"))
+    )
+    assert traversal.bytecode == expected.bytecode
+    plain = NeptuneRetriever._apply_filters(
+        __.identity(), {"source_kinds": "seed_graph"}
+    )
+    expected = __.identity().where(__.has("source_kinds", "seed_graph"))
+    assert plain.bytecode == expected.bytecode
+
+
 def test_neptune_filter_fields(config: Config) -> None:
     declared = _neptune(config).filter_fields()
     for key in ("id", "type", "description", "attr_role"):
@@ -508,9 +580,11 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
         attributes={"region": "north"},
         in_schema=True,
         type_iri="https://example.org/onto#Organization",
+        iri="https://example.org/procure#vendor",
+        source_kinds=["document", "seed_graph"],
     )
     props = entity_properties(entity, config.indexing.neptune.property_max_length)
-    assert {"attr_region", "in_schema", "type_iri"} <= set(props)
+    assert {"attr_region", "in_schema", "type_iri", "iri", "source_kinds"} <= set(props)
     # name_key is the merge's lookup key, not a filter.
     props.pop(NAME_KEY_PROPERTY)
     assert all(NEPTUNE_ENTITY_FILTER_FIELDS.declares(k) for k in props)
@@ -1595,3 +1669,78 @@ def test_a_filter_error_names_the_value_as_json(
     assert str(error.value).endswith(shown)
     with pytest.raises(InvalidFilterError, match=r"has no value \(null\)"):
         GraphRAGChain.check_filter_values({"rank": None})
+
+
+# --------------------------------------------------------------------------- #
+# source_kinds: the evidence an item holds
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("given", "typed"),
+    [
+        ({"source_kinds": "seed_graph"}, {"source_kinds": "seed_graph"}),
+        ({"source_kinds": " Document "}, {"source_kinds": "document"}),
+        (
+            {"source_kinds": ["SEED_GRAPH", "document"]},
+            {"source_kinds": ["seed_graph", "document"]},
+        ),
+    ],
+)
+def test_typed_filter_values_reads_the_source_kinds(
+    given: dict[str, Any], typed: dict[str, Any]
+) -> None:
+    assert typed_filter_values(given) == typed
+
+
+@pytest.mark.parametrize(
+    "value", ["seed", "", ["document", "web"], 1, True, {"gte": "document"}]
+)
+def test_a_source_kind_that_is_none_is_refused_before_any_model_call(
+    value: Any,
+) -> None:
+    message = "Filter 'source_kinds' takes document or seed_graph"
+    with pytest.raises(InvalidFilterError, match=message):
+        typed_filter_values({"source_kinds": value})
+    with pytest.raises(InvalidFilterError, match=message):
+        GraphRAGChain._prepare_invoke(
+            {"query": "q", "filters": {"source_kinds": value}}
+        )
+
+
+def test_a_null_source_kind_is_refused_as_any_null_filter() -> None:
+    with pytest.raises(InvalidFilterError, match="has no value"):
+        GraphRAGChain.check_filter_values({"source_kinds": None})
+
+
+def test_opensearch_source_kinds_clauses() -> None:
+    build = OpenSearchRetriever._build_filter_clauses
+    unstated = {"bool": {"must_not": [{"exists": {"field": "source_kinds"}}]}}
+    assert build({"source_kinds": "seed_graph"}) == [
+        {"term": {"source_kinds": "seed_graph"}}
+    ]
+    assert build({"source_kinds": ["seed_graph"]}) == [
+        {"term": {"source_kinds": "seed_graph"}}
+    ]
+    # document: document evidence, or no seed graph states the item.
+    assert build({"source_kinds": "document"}) == [
+        {
+            "bool": {
+                "should": [{"term": {"source_kinds": "document"}}, unstated],
+            }
+        }
+    ]
+    assert build({"source_kinds": ["document", "seed_graph"]}) == [
+        {
+            "bool": {
+                "should": [
+                    {"terms": {"source_kinds": ["document", "seed_graph"]}},
+                    unstated,
+                ],
+            }
+        }
+    ]
+    # Another key named like it is a plain term.
+    assert build({"source_kind": "seed_graph"}) == [
+        {"term": {"source_kind": "seed_graph"}}
+    ]

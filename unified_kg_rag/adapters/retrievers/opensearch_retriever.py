@@ -23,16 +23,19 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
-    SCHEMA_ANNOTATION_FIELDS,
+    LATE_MAPPED_FIELDS,
+    SOURCE_KINDS_FIELD,
     FilterFields,
     IndexLimits,
     check_filter_values,
     opensearch_filter_fields,
+    source_kinds_values,
     union_filter_fields,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
+from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -137,6 +140,22 @@ def _scope(
     if must_not:
         scope["must_not"] = must_not
     return scope
+
+
+def _source_kinds_clause(value: str | list[str]) -> dict[str, Any]:
+    """The clause of a ``source_kinds`` filter (``filter_schema``): a
+    document holds one of the kinds, or, when they name ``document``, holds
+    no ``source_kinds`` (an item no seed graph states)."""
+    kinds = source_kinds_values(value)
+    held: dict[str, Any] = (
+        {"term": {SOURCE_KINDS_FIELD: kinds[0]}}
+        if len(kinds) == 1
+        else {"terms": {SOURCE_KINDS_FIELD: kinds}}
+    )
+    if DOCUMENT_SOURCE_KIND not in kinds:
+        return held
+    unstated = {"bool": {"must_not": [{"exists": {"field": SOURCE_KINDS_FIELD}}]}}
+    return {"bool": {"should": [held, unstated]}}
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -268,7 +287,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         )
 
     def _filters_for_index(
-        self, prefix: str, filters: dict[str, Any] | None
+        self, prefix: str, filters: dict[str, Any] | None, *, seedless: bool = False
     ) -> dict[str, Any] | None:
         """``filters`` restricted to the keys the ``prefix`` index declares.
 
@@ -276,11 +295,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         matches no document, so one caller filter shared across sub-queries
         (e.g. ``type`` on entities, ``attr_category`` on text units) would empty
         every other index. See ``filter_schema`` for the declared fields.
+        On a ``seedless`` index (``_seedless_prefixes``) a ``source_kinds``
+        filter naming ``document`` matches every document and is dropped.
         """
         declared = self._index_filter_fields.get(prefix)
         if not filters or declared is None:
             return filters
-        kept = {k: v for k, v in filters.items() if declared.declares(k)}
+        kept = {
+            k: v
+            for k, v in filters.items()
+            if declared.declares(k) and not (seedless and k == SOURCE_KINDS_FIELD)
+        }
         if len(kept) != len(filters):
             logger.debug(
                 "Dropped filter keys absent from index '%s': %s",
@@ -329,8 +354,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     # Not sent: OpenSearch refuses an empty terms clause
                     # beside a kNN query ("query must be rewritten first").
                     return []
+                seedless = await self._seedless_prefixes(
+                    asked, search_type, index_prefixes, query_vector
+                )
                 search_tasks = self._create_search_tasks(
-                    asked, search_type, index_prefixes, query_vector, limits
+                    asked, search_type, index_prefixes, query_vector, limits, seedless
                 )
 
                 if not search_tasks:
@@ -449,9 +477,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         index_prefixes: list[str],
         query_vector: list[float] | None,
         limits: dict[str, IndexLimits],
+        seedless: Collection[str] = (),
     ) -> list[Coroutine[Any, Any, list[RetrievalResult]]]:
         """One search per index, each with the filters that index declares,
-        sized by the index's ``limits``."""
+        sized by the index's ``limits`` (``seedless``: see
+        :meth:`_filters_for_index`)."""
         search_tasks = []
         for prefix in index_prefixes:
             mapping = self._field_mappings.get(prefix)
@@ -469,7 +499,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             index_query = query
             if query.filters:
                 index_query = query.model_copy(
-                    update={"filters": self._filters_for_index(prefix, query.filters)}
+                    update={
+                        "filters": self._filters_for_index(
+                            prefix, query.filters, seedless=prefix in seedless
+                        )
+                    }
                 )
 
             window = limits[prefix].max_result_window
@@ -504,6 +538,55 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return search_tasks
 
+    async def _seedless_prefixes(
+        self,
+        query: SearchQuery,
+        search_type: SearchType,
+        index_prefixes: list[str],
+        query_vector: list[float] | None,
+    ) -> set[str]:
+        """The indexes of ``index_prefixes`` none of whose documents holds
+        ``source_kinds``, when a vector or hybrid search filters on it with
+        ``document``.
+
+        Such a filter matches every document without the field (document
+        evidence only), so on an index without seed-graph items it filters
+        nothing. An index built before the field was mapped is one, and
+        OpenSearch 2.13 refuses a kNN filter on a field the index does not
+        map (a 400, "Rewrite first"), as it does for ``attr_*`` keys
+        (``_attribute_probe``): the filter is dropped there instead. One
+        size-1 search per index, kept for the query (``_probe``); an index
+        whose probe fails keeps the filter (its search degrades alike).
+        """
+        value = (query.filters or {}).get(SOURCE_KINDS_FIELD)
+        if (
+            value is None
+            or query_vector is None
+            or search_type == SearchType.LEXICAL
+            or DOCUMENT_SOURCE_KIND not in source_kinds_values(value)
+        ):
+            return set()
+        prefixes = [
+            prefix
+            for prefix in index_prefixes
+            if (declared := self._index_filter_fields.get(prefix)) is not None
+            and declared.declares(SOURCE_KINDS_FIELD)
+        ]
+        probe = {
+            "size": 1,
+            "query": {"exists": {"field": SOURCE_KINDS_FIELD}},
+            "_source": False,
+        }
+        found = await gather_or_cancel(
+            self._probe(self._get_name(prefix, query.suffix), probe)
+            for prefix in prefixes
+        )
+        return {
+            prefix
+            for prefix, hits in zip(prefixes, found, strict=True)
+            if not isinstance(hits, Exception) and not hits
+        }
+
     def _attribute_probe(
         self, prefix: str, filters: dict[str, Any] | None
     ) -> dict[str, Any] | None:
@@ -516,10 +599,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         whose documents lack the attribute, community reports above all. When
         no document matches the attribute clauses the kNN search could find
         nothing anyway, so the index is skipped instead (fail-closed, as
-        ``filter_schema`` documents). The schema annotations are probed too:
-        an index built before they were mapped lacks them until an ingestion
-        run maps them, and a filter on one then matches nothing as well.
-        None when the filters have no such key.
+        ``filter_schema`` documents). The schema annotations and the
+        seed-graph fields are probed too: an index built before they were
+        mapped lacks them until an ingestion run maps them, and a filter on
+        one then matches nothing as well (a ``source_kinds`` filter naming
+        ``document`` is dropped there first: ``_seedless_prefixes``). None
+        when the filters have no such key.
         """
         declared = self._index_filter_fields.get(prefix) if filters else None
         if declared is None:
@@ -527,7 +612,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         attributes = {
             key: value
             for key, value in (filters or {}).items()
-            if key not in declared.fields or key in SCHEMA_ANNOTATION_FIELDS
+            if key not in declared.fields or key in LATE_MAPPED_FIELDS
         }
         if not attributes:
             return None
@@ -1050,7 +1135,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         clauses: list[dict[str, Any]] = []
         for key, value in filters.items():
-            if isinstance(value, dict):
+            if key == SOURCE_KINDS_FIELD and isinstance(value, str | list):
+                clauses.append(_source_kinds_clause(value))
+            elif isinstance(value, dict):
                 clauses.append({"range": {key: value}})
             elif isinstance(value, list):
                 clauses.append({"terms": {key: value}})
