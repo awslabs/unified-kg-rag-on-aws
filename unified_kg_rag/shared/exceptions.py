@@ -43,6 +43,12 @@ class SchemaSourceError(ConfigurationError):
     missing or invalid file) or holds a schema the config refuses."""
 
 
+class SeedGraphError(ConfigurationError):
+    """A seed graph cannot be imported: its source cannot be read, or what
+    it states breaks a rule of the import (a dangling edge, a duplicate node
+    id, a name collision, a cap)."""
+
+
 class DataProcessingError(GraphRAGException):
     pass
 
