@@ -46,6 +46,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     dedup_preferences,
     filter_to_delta,
     index_delta,
+    record_rebuilt_annotations,
     reset_namespaces,
     run_failures,
     run_incremental_indexer,
@@ -1853,6 +1854,14 @@ class IndexingStage(_RegistryStage):
                 incremental.write_ahead(
                     context.incremental_delta, lineages, dropped=dropped
                 )
+                # Until the rebuild wrote every item, the stores may hold
+                # the annotations of two schemas (annotations_due).
+                record_rebuilt_annotations(
+                    incremental.doc_status,
+                    self.indexing_manager,
+                    reset_namespaces(self.config, context, text_units),
+                    rebuilt=False,
+                )
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
             # incrementally later (see VectorIndexer.check_index_settings).
@@ -1901,6 +1910,17 @@ class IndexingStage(_RegistryStage):
                         self._build_doc_status_store,
                         reset_namespaces(self.config, context, text_units),
                         keep=context.incremental_fingerprints,
+                    )
+                if recorded and not any(
+                    stats.failed_items for stats in indexing_results.values()
+                ):
+                    # Every stored item was written by the rebuild (a failed
+                    # graph write keeps the earlier graph's items).
+                    record_rebuilt_annotations(
+                        incremental.doc_status,
+                        self.indexing_manager,
+                        reset_namespaces(self.config, context, text_units),
+                        rebuilt=True,
                     )
 
         total_indexed = sum(

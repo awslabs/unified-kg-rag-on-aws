@@ -41,6 +41,7 @@ class FakeDocStatusStore:
         # namespace -> (owner, expires_at); ``clock`` is replaceable in tests.
         self.leases: dict[str, tuple[str, float]] = {}
         self.extraction_settings: dict[str, tuple[str, ExtractionSettings]] = {}
+        self.annotation_digests: dict[str, str] = {}
         self.clock = time.time
 
     def try_acquire_lease(self, namespace: str, owner: str, seconds: float) -> bool:
@@ -67,6 +68,12 @@ class FakeDocStatusStore:
         self, scope: str, fingerprint: str, settings: ExtractionSettings
     ) -> None:
         self.extraction_settings[scope] = (fingerprint, settings)
+
+    def get_annotation_digest(self, namespace: str) -> str | None:
+        return self.annotation_digests.get(namespace)
+
+    def put_annotation_digest(self, namespace: str, digest: str) -> None:
+        self.annotation_digests[namespace] = digest
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         return self._records.get(doc_id)

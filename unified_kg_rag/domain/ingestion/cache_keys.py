@@ -591,8 +591,8 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
     and ``align`` extract alike and key as the default. What the schema
     changes only in what indexing stores (its IRIs, ``off`` against
     ``align`` with entity types alone) keys the indexing stage
-    (``_schema_iris``) and is recorded with an incremental commit as the
-    annotation digest (``schema_annotation_digest``).
+    (``_schema_iris``), and its digest (``schema_annotation_digest``) is
+    recorded per index namespace once the stores hold its annotations.
     """
     if path in _SCHEMA_TYPE_FIELDS:
         return [_type_as_extracted(item) for item in value]

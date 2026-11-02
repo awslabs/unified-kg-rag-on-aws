@@ -334,6 +334,24 @@ def test_extraction_settings_are_kept_per_scope_and_are_no_record(
     assert store.diff({}, scope="ns|corpus-a").deleted == ["ns#d1"]
 
 
+def test_annotation_digests_are_kept_per_namespace_and_are_no_record(
+    store: DocStatusPort,
+) -> None:
+    assert store.get_annotation_digest("ns") is None
+    store.put(_record("ns#d1", scope="ns|corpus-a"))
+    store.put_annotation_digest("ns", "reannotating")
+    store.put_annotation_digest("other", "d-2")
+    assert store.get_annotation_digest("ns") == "reannotating"
+    store.put_annotation_digest("ns", "d-1")
+    assert store.get_annotation_digest("ns") == "d-1"
+    assert store.get_annotation_digest("other") == "d-2"
+    # Not a scope's extraction settings, never listed or diffed as a document.
+    assert store.get_extraction_settings("ns") is None
+    assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
+    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    assert store.diff({}, scope="ns|corpus-a").deleted == ["ns#d1"]
+
+
 def test_namespaces_partition_the_registry(store: DocStatusPort) -> None:
     # A registry key names its index namespace (compute_doc_id): a scoped
     # diff and list_namespace read that namespace's records only.

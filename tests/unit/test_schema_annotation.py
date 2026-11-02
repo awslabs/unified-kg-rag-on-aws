@@ -28,7 +28,9 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
+    annotations_due,
     reannotate_on_schema_change,
+    record_rebuilt_annotations,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import (
@@ -37,11 +39,14 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.ingestion.contributions import record_payload
 from unified_kg_rag.domain.ingestion.schema_annotation import (
+    REANNOTATING_DIGEST,
     UNANNOTATED_DIGEST,
     SchemaAnnotator,
 )
 from unified_kg_rag.domain.models import (
     Config,
+    DocStatusRecord,
+    DocumentDelta,
     Entity,
     Relationship,
     TextUnitExtraction,
@@ -51,7 +56,15 @@ from unified_kg_rag.domain.models.schema import (
     ExtractionSchema,
     RelationshipTypeSpec,
 )
-from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import (
+    GraphIndexer,
+    IndexingStats,
+    rewrites_schema_annotations,
+)
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    NamespaceLeaseError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -509,56 +522,268 @@ def test_reannotate_skips_a_store_that_cannot_list_its_items(
     assert set(vector_edges.values()) == {(None, None)}
 
 
+_NAMESPACE = "ns"
+# The registry holds earlier documents of the namespace.
+_EXISTING = DocumentDelta(unchanged=["ns#earlier"], stored_scopes=["ns|A"])
+
+
 def _incremental(
-    config: Config, vector: FakeVectorStore, graph: FakeGraphStore
+    config: Config,
+    vector: FakeVectorStore,
+    graph: Any,
+    store: FakeDocStatusStore | None = None,
+    scope: str = "ns|A",
 ) -> IncrementalIndexer:
-    settings = extraction_settings(config).model_copy(
-        update={"annotation_digest": schema_annotation_digest(config)}
-    )
+    settings = extraction_settings(config)
     return IncrementalIndexer(
-        FakeDocStatusStore(),
+        store if store is not None else FakeDocStatusStore(),
         IndexingManager(config, vector_indexer=vector, graph_indexer=graph),
-        scope="ns#scope",
+        scope=scope,
         extraction_fingerprint=settings.fingerprint,
         extraction_settings=settings,
     )
 
 
-def test_a_scope_recorded_without_a_digest_reads_as_unannotated() -> None:
+def _index(incremental: IncrementalIndexer, delta: DocumentDelta = _EXISTING) -> bool:
+    """What ``index_delta`` does about the annotations: whether a pass is
+    due, then the pass."""
+    due = annotations_due(incremental, delta)
+    if due:
+        reannotate_on_schema_change(incremental, [])
+    return due
+
+
+def _digest(config: Config) -> str:
+    return schema_annotation_digest(config)
+
+
+def _reads(*stores: Any) -> list[str]:
+    """Records every ``read_schema_annotations`` call of ``stores``."""
+    reads: list[str] = []
+    for store in stores:
+        read = store.read_schema_annotations
+
+        def record(kind: Any, suffix: Any = None, r=read) -> Any:
+            reads.append(kind)
+            return r(kind, suffix)
+
+        store.read_schema_annotations = record
+    return reads
+
+
+def _full_build(config: Config) -> tuple[dict[str, Any], ...]:
+    manager, vector, graph = _manager(config)
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    return _stored(vector, graph)
+
+
+def test_a_changed_digest_marks_the_namespace_then_records_the_pass() -> None:
     vector, graph = _written_without_a_schema()
-    incremental = _incremental(Config(), vector, graph)
-    old = extraction_settings(Config())  # recorded before the digest
-    incremental.doc_status.put_extraction_settings("ns#scope", old.fingerprint, old)
-    calls: list[Any] = []
-    incremental.indexing_manager.reannotate = calls.append  # type: ignore[method-assign]
+    config = _config(**_SCHEMA_CONFIG)
+    incremental = _incremental(config, vector, graph)
+    store = incremental.doc_status
+    assert isinstance(store, FakeDocStatusStore)
+    store.put_annotation_digest(_NAMESPACE, UNANNOTATED_DIGEST)
+
+    # Marked before the run writes anything; recorded once rewritten.
+    assert annotations_due(incremental, _EXISTING)
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
     reannotate_on_schema_change(incremental, [])
-    assert calls == []
+    assert _stored(vector, graph) == _ANNOTATED
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+
+    # The next run, of any scope, has nothing to read.
+    reads = _reads(vector, graph)
+    other = _incremental(config, vector, graph, store, scope="ns|B")
+    assert not _index(other)
+    assert reads == []
 
 
-def test_a_changed_digest_rewrites_and_a_failed_rewrite_keeps_the_old_one(
+def test_a_new_scope_of_an_annotated_namespace_reads_nothing() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    manager, vector, graph = _manager(config)
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, _digest(config))
+    reads = _reads(vector, graph)
+    incremental = _incremental(config, vector, graph, store, scope="ns|B")
+    assert not _index(incremental, DocumentDelta(new=["ns#b"], stored_scopes=["ns|A"]))
+    assert reads == []
+
+
+S1 = {
+    "schema_mode": "align",
+    "entity_types": ["ORGANIZATION", "PRODUCT"],
+    "relationship_types": ["SUPPLIES"],
+}
+S2 = {**S1, "entity_types": [{"label": "ORGANIZATION", "iri": "urn:x:org"}, "PRODUCT"]}
+
+
+def test_a_schema_reverted_on_another_scope_is_rewritten() -> None:
+    # Scope A annotates the namespace by S2, scope B then runs with S1: the
+    # namespace holds S2's annotations, not those B's scope last wrote.
+    first, second = _config(**S1), _config(**S2)
+    manager, vector, graph = _manager(first)
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, _digest(first))
+
+    assert _index(_incremental(second, vector, graph, store, scope="ns|A"))
+    assert _stored(vector, graph) == _full_build(second)
+    assert _index(_incremental(first, vector, graph, store, scope="ns|B"))
+    assert _stored(vector, graph) == _full_build(first)
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(first)
+
+
+def test_a_pass_stopped_midway_is_made_again_under_any_schema() -> None:
+    first, second = _config(**S1), _config(**S2)
+    manager, vector, graph = _manager(first)
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, _digest(first))
+
+    # Killed after the vector store was rewritten for S2, before the graph.
+    write = vector.write_schema_annotations
+
+    def killed(kind: Any, annotations: Any, suffix: Any = None) -> Any:
+        write(kind, annotations, suffix)
+        raise KeyboardInterrupt
+
+    vector.write_schema_annotations = killed  # type: ignore[method-assign]
+    with pytest.raises(KeyboardInterrupt):
+        _index(_incremental(second, vector, graph, store))
+    vector.write_schema_annotations = write  # type: ignore[method-assign]
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+    # Back to S1, the schema the record held before: rewritten all the same.
+    assert _index(_incremental(first, vector, graph, store))
+    assert _stored(vector, graph) == _full_build(first)
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(first)
+
+
+def test_a_failed_rewrite_keeps_the_namespace_marked(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     vector, graph = _written_without_a_schema()
     config = _config(**_SCHEMA_CONFIG)
-    incremental = _incremental(config, vector, graph)
-    current = incremental.extraction_settings
-    assert current is not None and current.annotation_digest != UNANNOTATED_DIGEST
-    reannotate_on_schema_change(incremental, [])
-    assert _stored(vector, graph) == _ANNOTATED
-    assert incremental.extraction_settings == current
-
-    vector, graph = _written_without_a_schema()
-    incremental = _incremental(config, vector, graph)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, UNANNOTATED_DIGEST)
     graph.write_schema_annotations = (  # type: ignore[method-assign]
         lambda kind, annotations, suffix=None: IndexingStats(
             total_items=len(annotations), failed_items=len(annotations)
         )
     )
     with caplog.at_level(logging.WARNING):
-        reannotate_on_schema_change(incremental, [])
-    assert incremental.extraction_settings is not None
-    assert incremental.extraction_settings.annotation_digest == UNANNOTATED_DIGEST
+        assert _index(_incremental(config, vector, graph, store))
+    assert "4 writes failed" in caplog.text
     assert "the next run tries again" in caplog.text
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+    # And the next run, with the same schema, tries again.
+    assert annotations_due(_incremental(config, vector, graph, store), _EXISTING)
+
+
+def test_a_store_error_in_the_pass_warns_and_leaves_it_to_the_next_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vector, graph = _written_without_a_schema()
+    config = _config(**_SCHEMA_CONFIG)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, UNANNOTATED_DIGEST)
+
+    def unreachable(kind: Any, suffix: Any = None) -> Any:
+        raise AWSServiceError("Neptune read_schema_annotations failed: timeout")
+
+    graph.read_schema_annotations = unreachable  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING):
+        assert _index(_incremental(config, vector, graph, store))
+    assert "a store failed: AWSServiceError" in caplog.text
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+
+def test_a_lost_lease_stops_the_pass() -> None:
+    vector, graph = _written_without_a_schema()
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, UNANNOTATED_DIGEST)
+
+    def lost(kind: Any, annotations: Any, suffix: Any = None) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    graph.write_schema_annotations = lost  # type: ignore[method-assign]
+    with pytest.raises(NamespaceLeaseError):
+        _index(_incremental(_config(**_SCHEMA_CONFIG), vector, graph, store))
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+
+class _UnlistedGraph(FakeGraphStore):
+    """A graph store with the port's default annotation methods."""
+
+    read_schema_annotations = GraphIndexer.read_schema_annotations  # type: ignore[assignment]
+    write_schema_annotations = GraphIndexer.write_schema_annotations  # type: ignore[assignment]
+
+
+def test_a_store_that_cannot_list_its_items_lets_no_store_be_read() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    graph = _UnlistedGraph(Config())
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    reads = _reads(vector)
+    result = IndexingManager(
+        config, vector_indexer=vector, graph_indexer=graph
+    ).reannotate({"default"})
+    assert result.unsupported and not result.complete
+    assert reads == []
+    assert rewrites_schema_annotations(FakeGraphStore(config))
+    assert not rewrites_schema_annotations(graph)
+
+
+def test_a_namespace_without_a_record_is_read_once() -> None:
+    # Written before the record existed (or by #482, which recorded it per
+    # scope): what the stores hold is unknown, so one pass, then recorded.
+    vector, graph = _written_without_a_schema()
+    config = _config(**_SCHEMA_CONFIG)
+    store = FakeDocStatusStore()
+    assert _index(_incremental(config, vector, graph, store))
+    assert _stored(vector, graph) == _ANNOTATED
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+    assert not _index(_incremental(config, vector, graph, store))
+
+
+def test_a_new_namespace_records_its_digest_without_reading() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    vector, graph = _written_without_a_schema()
+    store = FakeDocStatusStore()
+    # Only the run's own new documents are recorded (open_attempts).
+    store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
+    reads = _reads(vector, graph)
+    new = DocumentDelta(new=["ns#new"])
+    assert not _index(_incremental(config, vector, graph, store), new)
+    assert reads == []
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+
+    # A registry that does not report stored_scopes, holding another
+    # scope's document: not new.
+    store = FakeDocStatusStore()
+    store.put(DocStatusRecord(doc_id="ns#other", content_hash="h", scope="ns|B"))
+    assert _index(_incremental(config, vector, graph, store), new)
+
+
+def test_a_rebuild_marks_its_namespaces_until_it_wrote_everything() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    manager, _, _ = _manager(config)
+    store = FakeDocStatusStore()
+    store.put_annotation_digest("a", _digest(config))
+    store.put_annotation_digest("b", UNANNOTATED_DIGEST)
+    record_rebuilt_annotations(store, manager, {"a", "b", "c"}, rebuilt=False)
+    assert store.annotation_digests == {
+        "a": _digest(config),
+        "b": REANNOTATING_DIGEST,
+        "c": REANNOTATING_DIGEST,
+    }
+    record_rebuilt_annotations(store, manager, {"a", "b", "c"}, rebuilt=True)
+    assert set(store.annotation_digests.values()) == {_digest(config)}
 
 
 def test_a_manager_built_with_a_schema_file_loads_it(tmp_path: Path) -> None:
@@ -583,9 +808,9 @@ def test_a_manager_built_with_a_schema_file_loads_it(tmp_path: Path) -> None:
 
 def test_stores_written_under_the_earlier_rule_are_reannotated_once() -> None:
     # strict with entity types alone: before #481 the relationships got no
-    # in_schema (the store as an upgrade finds it, its scope recorded
-    # without a digest); now every one is in schema. The first run after the
-    # upgrade rewrites them, the next has nothing to rewrite.
+    # in_schema (the store as an upgrade finds it, with no namespace
+    # record); now every one is in schema. The first run after the upgrade
+    # rewrites them, the next has nothing to rewrite.
     config = _config(schema_mode="strict", entity_types=["ORGANIZATION", "VENDOR"])
     manager, vector, graph = _manager(config)
     entities, relationships = _items()
@@ -593,21 +818,10 @@ def test_stores_written_under_the_earlier_rule_are_reannotated_once() -> None:
     earlier = [r.model_copy(update={"in_schema": None}) for r in relationships]
     graph.upsert_relationships(earlier)
     vector.upsert_relationships(earlier)
-    incremental = _incremental(config, vector, graph)
-    old = extraction_settings(config)
-    incremental.doc_status.put_extraction_settings("ns#scope", old.fingerprint, old)
+    store = FakeDocStatusStore()
 
-    reannotate_on_schema_change(incremental, [])
+    assert _index(_incremental(config, vector, graph, store))
     stored = _stored(vector, graph)
     edges = {"ab": (True, None), "ba": (True, None)}
     assert (stored[1], stored[3]) == (edges, edges)
-
-    settings = incremental.extraction_settings
-    assert settings is not None and settings.annotation_digest is not None
-    incremental.doc_status.put_extraction_settings(
-        "ns#scope", settings.fingerprint, settings
-    )
-    calls: list[Any] = []
-    incremental.indexing_manager.reannotate = calls.append  # type: ignore[method-assign]
-    reannotate_on_schema_change(incremental, [])
-    assert calls == []
+    assert not _index(_incremental(config, vector, graph, store))

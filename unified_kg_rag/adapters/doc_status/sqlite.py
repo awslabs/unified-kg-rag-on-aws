@@ -73,6 +73,12 @@ _SCHEMA = (
         settings TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS annotation_digests (
+        namespace TEXT PRIMARY KEY,
+        digest TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -263,6 +269,24 @@ class SQLiteDocStatusStore:
                 "INSERT OR REPLACE INTO extraction_settings "
                 "(scope, fingerprint, settings) VALUES (?, ?, ?)",
                 (scope, fingerprint, settings.model_dump_json()),
+            )
+
+    # --- the schema annotations the stores hold, per namespace ----------------
+
+    def get_annotation_digest(self, namespace: str) -> str | None:
+        with self._lock, self._registry_errors("read the annotation digest"):
+            row = self.connection.execute(
+                "SELECT digest FROM annotation_digests WHERE namespace = ?",
+                (namespace,),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def put_annotation_digest(self, namespace: str, digest: str) -> None:
+        with self._transaction("record the annotation digest") as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO annotation_digests (namespace, digest) "
+                "VALUES (?, ?)",
+                (namespace, digest),
             )
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:

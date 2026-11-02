@@ -669,8 +669,14 @@ From 0.2.3 (or a `main` checkout since):
   `align` with entity types alone) is applied by the next incremental run
   without a model call: it rewrites the annotations of every stored entity
   and relationship of the index suffix, every scope's, from their stored
-  types, records what it wrote with the scope's extraction settings and
-  logs the counts, so the stores hold what a full build writes (#482).
+  types and logs the counts, so the stores hold what a full build writes
+  (#482). The registry records what the stores hold once per index
+  namespace, so the rewrite runs once per namespace, a schema reverted on
+  one scope after another scope's run is rewritten too, and a new scope
+  reads nothing. A rewrite that stops (a kill, a failed write, a store
+  that cannot be read, which now warns instead of failing the run) is made
+  again by the next run under any schema; Neptune reads the annotations in
+  bounded batches; a reset records the annotations it wrote (#PR).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
