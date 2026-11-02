@@ -1483,8 +1483,10 @@ This section is the single reference for extending the framework. Strategies, re
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 - **New schema source** (an ontology format or service): register a loader
   for a new `schema_source.kind` with `@register_schema_source("kind")`
-  (exported from `unified_kg_rag`; the built-in `file` loader lives in
-  `adapters/schema_sources/`, imported by the package `__init__`). It
+  (exported from `unified_kg_rag`; the built-in `file` and `owl` loaders
+  live in `adapters/schema_sources/`, imported by the package `__init__`,
+  and read an `s3://` path through `locations.py`: HeadObject size check,
+  paged prefix listing, S3 errors as `SchemaSourceError`). It
   receives a `SchemaSourceContext` and returns a `SchemaDocument`: the
   `entity_types` (or `None` to keep the config's), `relationship_types` and
   `relationship_patterns` it supplies, each a string or a spec. The context

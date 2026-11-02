@@ -667,6 +667,18 @@ From 0.2.3 (or a `main` checkout since):
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
   draft over such a source says which relationship types it lacks
   (#492).
+- Schema sources in S3: `schema_source.path` of kinds `file` and `owl` may
+  be an `s3://bucket/key` object, and for `owl` an `s3://bucket/prefix/`
+  read as a directory (every page of the listing, filtered, sorted and
+  refused as a local directory is). Objects are read with the run's AWS
+  session; the size is checked with HeadObject (or the listing) before any
+  byte is fetched (`file`: 16 MiB, `owl`: `options.max_bytes`), and a
+  missing object, a denied access (naming `s3:GetObject`/`s3:ListBucket`),
+  an empty prefix or an oversized object fails the load with what to fix.
+  The content keys the caches, so moving the schema between a local path
+  and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
+  against its `s3://` URL (declare `@base`). Other URL schemes stay
+  refused (#PR).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
