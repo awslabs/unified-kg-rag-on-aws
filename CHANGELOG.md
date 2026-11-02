@@ -666,7 +666,7 @@ From 0.2.3 (or a `main` checkout since):
   source's optional dependency, which the CLIs check before any model
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
   draft over such a source says which relationship types it lacks
-  (#PR).
+  (#492).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
