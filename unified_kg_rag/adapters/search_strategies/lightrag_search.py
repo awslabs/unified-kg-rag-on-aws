@@ -38,6 +38,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -522,7 +523,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _lineages(results: list[RetrievalResult]) -> list[list[str]]:
-        """Per-hit ``text_unit_ids`` lineage, in retrieval (importance) order."""
+        """Per-hit ``text_unit_ids`` lineage, in retrieval (importance) order,
+        without the seed graphs' units: they are no chunks to follow (a hit
+        only a seed graph states has none)."""
         lineages: list[list[str]] = []
         for result in results:
             metadata = result.metadata or {}
@@ -537,7 +540,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 unit_ids = [unit_ids]
             if not isinstance(unit_ids, list):
                 continue
-            lineage = [uid for uid in unit_ids if isinstance(uid, str) and uid]
+            lineage = [
+                uid
+                for uid in unit_ids
+                if isinstance(uid, str) and uid and not is_seed_unit(uid)
+            ]
             if lineage:
                 lineages.append(lineage)
         return lineages

@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import contextvars
+import json
 import re
 import threading
 import time
@@ -64,6 +65,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    ATTRIBUTE_KEY_PREFIX,
     SCHEMA_ANNOTATION_FIELDS,
     check_filter_values,
     typed_filter_values,
@@ -76,6 +78,12 @@ from unified_kg_rag.application.bootstrap import (
 )
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    SEED_FILTER_KEY,
+    SEED_SOURCE_KIND,
+    SOURCE_KINDS_FIELD,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -128,6 +136,57 @@ if TYPE_CHECKING:
     import boto3
 
 logger = get_logger(__name__)
+
+
+def _listed(value: Any) -> list[str]:
+    """A stored list value as a list of strings: a store may return a
+    one-element list as its value (Gremlin), and a graph edge holds a list
+    as its JSON string."""
+    if isinstance(value, str) and value.startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return [value]
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list | tuple | set):
+        return [str(v) for v in value if v is not None and v != ""]
+    return []
+
+
+def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """Where a result's statement comes from, when a seed graph states it.
+
+    ``kind`` is ``seed_graph`` for an item only seed graphs state and
+    ``document+seed_graph`` for one documents state as well; ``seed_graphs``
+    names the graphs (their ``seed_graph`` document filter, where the store
+    keeps the filters) and ``iri`` the entity's IRI. ``None`` for an item
+    without seed evidence (no ``source_kinds``): its source is reported as
+    before.
+    """
+    kinds = _listed(metadata.get(SOURCE_KINDS_FIELD))
+    if SEED_SOURCE_KIND not in kinds:
+        return None
+    attributes = metadata.get("attributes")
+    filters = (
+        attributes.get(Constants.FILTERS.value)
+        if isinstance(attributes, dict)
+        else None
+    )
+    names = filters.get(SEED_FILTER_KEY) if isinstance(filters, dict) else None
+    if names is None:
+        names = metadata.get(f"{ATTRIBUTE_KEY_PREFIX}{SEED_FILTER_KEY}")
+    iri = metadata.get("iri")
+    return {
+        "kind": (
+            f"{DOCUMENT_SOURCE_KIND}+{SEED_SOURCE_KIND}"
+            if DOCUMENT_SOURCE_KIND in kinds
+            else SEED_SOURCE_KIND
+        ),
+        "seed_graphs": sorted(set(_listed(names))),
+        "iri": iri if isinstance(iri, str) and iri else None,
+    }
+
 
 # Fixed reply when retrieval produced no context; the output metadata then
 # carries ``abstained=True`` so evaluation can tell it from a real answer.
@@ -1553,7 +1612,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         Embedding vectors are dropped (any retriever, not only OpenSearch, may
         carry them in metadata). Provenance keys are added without overwriting
-        retriever-supplied metadata of the same name.
+        retriever-supplied metadata of the same name. A statement a seed
+        graph makes adds ``provenance`` (:func:`seed_provenance`); it has no
+        chunk, so its ``chunk_id`` stays ``None``. A source without seed
+        evidence gets no ``provenance`` key.
         """
         metadata = strip_embedding_fields(result.metadata or {})
         raw_doc_ids = metadata.get("document_ids") or metadata.get("document_id")
@@ -1565,13 +1627,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         chunk_id = result.chunk_id
         if chunk_id is None and result.retriever_type == SectionType.TEXT.value:
             chunk_id = metadata.get("id") or result.source
-        provenance = {
+        provenance: dict[str, Any] = {
             "source_id": result.source,
             "document_ids": document_ids,
             "chunk_id": chunk_id,
             "section_type": result.retriever_type,
             "score": result.score,
         }
+        if (seeded := seed_provenance(metadata)) is not None:
+            provenance["provenance"] = seeded
         for key, value in provenance.items():
             metadata.setdefault(key, value)
         metadata["truncated"] = truncated

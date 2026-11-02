@@ -789,6 +789,7 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_embedding_dimension", _QUERY_DIMENSION)
     object.__setattr__(inst, "_embedding_checked_aliases", set())
     object.__setattr__(inst, "_embedding_check_denied_logged", False)
+    object.__setattr__(inst, "_unit_kind_mapped", set())
     return inst
 
 
@@ -1840,6 +1841,9 @@ async def test_a_fatal_search_error_cancels_the_searches_beside_it(
     retriever = _opensearch_retriever(config)
     _set_asearch_raising(retriever, RuntimeError("unused"))
     object.__setattr__(retriever, "_opensearch_client", _MockSearchClient(_asearch))
+    # Its mappings map the seed units' kind: no probe before the searches.
+    text_units = config.indexing.opensearch.text_units_index_prefix
+    retriever._unit_kind_mapped.add(retriever._get_name(text_units, None))
     with pytest.raises(StoreConnectionError, match="refused"):
         await asyncio.wait_for(
             retriever.aretrieve(SearchQuery(query="hello", search_type=search_type)),

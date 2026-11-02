@@ -536,6 +536,88 @@ def test_a_seed_graph_filter_on_an_index_without_the_fields(
     ]
 
 
+_SEED_UNIT = "sg-00000000-0000-0000-0000-000000000001"
+
+
+def _seed_unit() -> TextUnit:
+    """A seed graph's unit, worded like the corpus (its id says so)."""
+    return TextUnit(
+        id=_SEED_UNIT,
+        text='{"kind":"edge","source":"Vendor","target":"Depot",'
+        '"type":"SHIPS_WIDGETS_FROM"}',
+        attributes={"filters": {"category": "logistics", "seed_graph": "procure"}},
+    )
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_a_seed_graphs_units_are_never_text_hits(
+    harness: StoreHarness, search_type: SearchType
+) -> None:
+    # Stored for their lineage, never retrieved as a text chunk: a search
+    # (the kNN filter included) and a fetch by id leave them out, a
+    # document's unit lacking the field is never excluded, and an ids-only
+    # check still sees one (the filter check of the units an item cites).
+    harness.initialize()
+    units = [*_text_units(), _seed_unit()]
+    assert harness.vector_indexer.index_text_units(units).failed_items == 0
+    o = _prefixes(harness)
+    text, entities = o.text_units_index_prefix, o.entities_index_prefix
+    ids = ["t2", _SEED_UNIT]
+    searched, fetched, together, checked = _search(
+        harness,
+        _query("Vendor ships widgets from the Depot", text, search_type=search_type),
+        _query(
+            "",
+            text,
+            search_type=search_type,
+            top_k=2,
+            retrieval_multiplier=1,
+            filters={"id": ids, "attr_category": "logistics"},
+        ),
+        _query("Vendor widgets", [text, entities], search_type=search_type),
+        _query(
+            "",
+            text,
+            search_type=SearchType.LEXICAL,
+            top_k=2,
+            filters={"id": ids},
+            source_fields=[],
+        ),
+    )
+    assert searched and _SEED_UNIT not in {r.source for r in searched}
+    assert [r.source for r in fetched] == ["t2"]
+    assert _SEED_UNIT not in {r.source for r in together}
+    assert sorted(r.source for r in checked) == sorted(ids)
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_text_searches_on_a_units_index_without_the_kind_field(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    search_type: SearchType,
+) -> None:
+    # A text-units index built before source_kind was mapped holds no seed
+    # unit: OpenSearch 2.13 refuses a kNN filter on an unmapped field, so
+    # its searches carry no exclusion and still find every unit.
+    harness.initialize()
+    _earlier_index(harness, monkeypatch, "text_units", ("source_kind",), _text_units())
+    text = _prefixes(harness).text_units_index_prefix
+    searched, fetched = _search(
+        harness,
+        _query("Vendor ships widgets", text, search_type=search_type, top_k=3),
+        _query(
+            "",
+            text,
+            search_type=search_type,
+            top_k=3,
+            retrieval_multiplier=1,
+            filters={"id": ["t1", "t2", "t3"]},
+        ),
+    )
+    assert {r.source for r in searched} >= {"t1", "t2"}
+    assert sorted(r.source for r in fetched) == ["t1", "t2", "t3"]
+
+
 def test_cli_filter_values_match_as_the_api_values(harness: StoreHarness) -> None:
     # run-rag --filters gives every value as a string; typed at the CLI they
     # select what the Python API's booleans and numbers select.
@@ -1224,6 +1306,50 @@ def test_graph_expansion_filters_on_the_source_kinds_and_iri(
         ["a", "b", "c", "d"],
         ["c"],
     ]
+
+
+def test_graph_expansion_returns_the_seed_graph_fields(
+    graph_harness: StoreHarness,
+) -> None:
+    # A reached vertex's iri and source_kinds name a seed fact's provenance
+    # in the sources; a vertex no seed graph states comes back as before.
+    harness = graph_harness
+    iri = "https://example.org/procure#port"
+    entities = [
+        Entity(id="a", name="A", type="org", rank=1),
+        Entity(
+            id="p",
+            name="Port",
+            type="location",
+            rank=0,
+            iri=iri,
+            source_kinds=["seed_graph"],
+        ),
+        Entity(
+            id="v",
+            name="Vendor",
+            type="org",
+            rank=1,
+            source_kinds=["document", "seed_graph"],
+        ),
+    ]
+    relationships = [
+        Relationship(id=f"a{t}", source_id="a", target_id=t, description=f"a-{t}")
+        for t in "pv"
+    ]
+    assert harness.graph_indexer.index_entities(entities).failed_items == 0
+    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
+    (results,) = _graph_retrieve(
+        harness, SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"]})
+    )
+    found = {r.source: r.metadata for r in results}
+    assert set(found) == {"a", "p", "v"}
+    assert found["p"]["iri"] == iri
+    # A one-element vertex list reads back as its value (Gremlin).
+    assert found["p"]["source_kinds"] in ("seed_graph", ["seed_graph"])
+    assert sorted(found["v"]["source_kinds"]) == ["document", "seed_graph"]
+    assert "iri" not in found["v"]
+    assert not {"iri", "source_kinds"} & set(found["a"])
 
 
 def test_graph_expansion_filters_cli_values_as_the_api_values(
