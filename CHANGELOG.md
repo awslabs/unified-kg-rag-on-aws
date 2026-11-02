@@ -660,14 +660,27 @@ From 0.2.3 (or a `main` checkout since):
   (an import no file declares is logged once), a JSON-LD context naming a
   document is refused, XML external entities are not resolved, and
   OWL/XML, functional and Manchester syntax, OBO and Notation3 are refused
-  with how to convert them. Re-serialising or moving the ontology keys
+  with how to convert them. Shapes the RDF/XML and N-Triples parsers take
+  quadratic time over (entities expanding past the amplification limit, an
+  element of more than 10,000 text pieces, more than 1,000 elements in XML
+  literals, a line over 256 KiB) are refused before parsing, naming the
+  limit, and so are an IRI with whitespace and a cyclic `rdf:List`; a
+  parse error names the line, never the ontology's text. schema.org data
+  types (`schema:Text`, `URL`, `Number`, ...) are literal ranges, not
+  entity types; a class's `owl:intersectionOf` superclass or definition
+  and a covering `owl:unionOf` place it in the hierarchy; sub-properties
+  of an `rdf:Property` are read, and properties the reader cannot type
+  are logged; a class named only in a datatype property's domain is no
+  entity type. A directory skips an OASIS XML catalog (Protégé's
+  `catalog-v001.xml`) and, with `options.format`, reads every file.
+  Re-serialising or moving the ontology keys
   nothing when its IRIs are absolute or it declares `@base`; an IRI-only
   edit re-annotates without re-extracting.
   `register_schema_source(kind, requires=(module, install))` declares a
   source's optional dependency, which the CLIs check before any model
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
   draft over such a source says which relationship types it lacks
-  (#492).
+  (#492, #495).
 - Schema sources in S3: `schema_source.path` of kinds `file` and `owl` may
   be an `s3://bucket/key` object, and for `owl` an `s3://bucket/prefix/`
   read as a directory (every page of the listing, filtered, sorted and
@@ -676,6 +689,9 @@ From 0.2.3 (or a `main` checkout since):
   byte is fetched (`file`: 16 MiB, `owl`: `options.max_bytes`), and a
   missing object, a denied access (naming `s3:GetObject`/`s3:ListBucket`),
   an empty prefix or an oversized object fails the load with what to fix.
+  `run-rag` loads the schema on the first query with a schema filter key
+  and, when the load fails in any way, skips that check once instead of
+  reloading on every query (#495).
   The content keys the caches, so moving the schema between a local path
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay

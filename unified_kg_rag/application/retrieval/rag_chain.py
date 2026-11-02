@@ -1173,6 +1173,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 e,
             )
             return None
+        # A loader that breaks its contract (raises something else) must not
+        # fail, and reload on, every filtered query: the check is advisory.
+        except Exception as e:  # noqa: BLE001
+            self._schema_fields_unreadable = True
+            logger.warning(
+                "Not checking schema filter keys against the extraction schema: "
+                "loading the schema source failed (%s: %s)",
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
+            return None
         fields = SchemaAnnotator(schema).fields
         self._schema_fields = fields
         return fields

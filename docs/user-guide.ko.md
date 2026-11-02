@@ -1790,11 +1790,12 @@ processing:
 - `path`는 로컬 파일이나 디렉터리이며 설정 파일 기준 상대 경로입니다(`file://` URL도
   됨). `s3://` 객체나 디렉터리로 읽는 `s3://bucket/prefix/`도 됩니다
   ([Schema sources in S3](./operations.md#schema-sources-in-s3), 영문). 디렉터리는 하위까지 읽어 온톨로지 하나로 다룹니다(파일은 정렬하고 `.`으로
-  시작하는 이름은 건너뜀). 그 밖의 URL이나 `secret_arn`을 주면 설정을 읽지 못합니다.
+  시작하는 이름과 Protégé의 `catalog-v001.xml` 같은 OASIS XML 카탈로그는 건너뜀). 그 밖의 URL이나 `secret_arn`을 주면 설정을 읽지 못합니다.
 - 형식은 확장자로 정합니다. `.ttl`은 Turtle, `.rdf` / `.owl` / `.xml`은 RDF/XML,
   `.jsonld` / `.json-ld`는 JSON-LD, `.nt`는 N-Triples, `.nq`는 N-Quads, `.trig`는
-  TriG입니다. `options.format`을 주면 확장자와 상관없이 모든 파일을 그 형식으로
-  읽습니다.
+  TriG입니다. 디렉터리의 다른 파일은 건너뜁니다. `options.format`을 주면 확장자와
+  상관없이 모든 파일을 그 형식으로 읽습니다(디렉터리도 마찬가지이므로 온톨로지 파일만
+  두세요).
 
 **옵션**은 `schema_source.options` 아래에 둡니다. 모르는 옵션이나 잘못된 값은
 `schema_source.options.<name>`을 알려 주며 설정을 읽지 못합니다. 용어는 전체 IRI나
@@ -1831,13 +1832,26 @@ CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `r
 **읽는 것.** 파일에 있는 문장 중 이름 있는 용어만 읽습니다.
 
 - 클래스: `owl:Class`나 `rdfs:Class`로 선언한 것, `rdfs:subClassOf`와
-  `owl:equivalentClass`의 양 끝, 속성의 정의역이나 치역에 나온 클래스.
+  `owl:equivalentClass`의 양 끝, 관계 유형의 정의역이나 치역에 나온 클래스. 데이터 타입
+  속성의 정의역에만 나온 클래스는 클래스로 읽지 않습니다.
+- 상위 클래스: 클래스의 이름 있는 `rdfs:subClassOf` 대상, 그리고 클래스가 하위이거나
+  동치인 `owl:intersectionOf`의 이름 있는 구성원입니다(`ex:Vendor owl:equivalentClass
+  [owl:intersectionOf (ex:Organization [a owl:Restriction ...])]`이면 `ex:Vendor`는
+  `ex:Organization` 아래). `owl:unionOf`와 동치인 클래스는 그 합집합을 덮으므로, 합집합의
+  이름 있는 구성원이 그 클래스 아래에 놓입니다.
 - 관계 유형: 객체 속성(`owl:ObjectProperty`나 `owl:SymmetricProperty` 같은 그 특성,
-  `owl:inverseOf`의 양 끝, 객체 속성의 하위·상위·동치 속성)과 리터럴 치역이 없는
-  `rdf:Property`.
-- 빼는 것: 데이터 타입 속성과 주석 속성(건너뛴 것으로 보고), `owl:FunctionalProperty`로만
-  선언한 속성, 개체(individual), RDF·RDFS·OWL·XSD 어휘, 정의역이나 치역에 쓴 이름 있는
-  클래스의 `owl:unionOf`를 뺀 익명 클래스. 레이블과 설명은 문자열 리터럴만 읽습니다.
+  `owl:inverseOf`의 양 끝, 객체 속성의 하위·상위·동치 속성), 리터럴 유형이 아닌 치역이
+  있는 `rdf:Property`, 그런 `rdf:Property`의 하위·상위·동치 속성. 리터럴 유형은 XSD 유형,
+  `rdfs:Literal`, `rdf:langString` 같은 RDF 리터럴 유형, `rdfs:Datatype`, 그리고
+  schema.org 데이터 유형(`http`와 `https`의 `schema:Text`, `URL`, `Number`, `Integer`,
+  `Float`, `Boolean`, `Date`, `DateTime`, `Time`, `CssSelectorType`,
+  `PronounceableText`, `XPathType`, `schema:DataType`으로 선언한 것)이며 엔터티 유형이
+  되지 않습니다.
+- 빼는 것: 데이터 타입 속성(`owl:DatatypeProperty`, 또는 치역이 모두 리터럴 유형인
+  `rdf:Property`)과 주석 속성(건너뛴 것으로 보고), `owl:FunctionalProperty`로만 선언했거나
+  정의역·치역만 있는 속성(INFO 로그 `N properties not read ...`가 이름을 알려 줌),
+  개체(individual), RDF·RDFS·OWL·XSD 어휘, 위의 클래스 식을 뺀 익명 클래스. 레이블과
+  설명은 문자열 리터럴만 읽습니다.
 
 **매핑 규칙.**
 
@@ -2010,6 +2024,14 @@ RDF/XML은 `xml:base`, JSON-LD는 컨텍스트의 `@base`입니다. 상대 IRI(`
   문법(`.ofn`), 맨체스터 문법(`.omn`), OBO(`.obo`), Notation3(`.n3`)은 거부합니다. 먼저
   변환하세요. ROBOT은 `robot convert --input onto.owx --output onto.ttl`, Protégé는
   *File > Save as > Turtle*입니다.
+- 파서가 이차 시간(quadratic time)이 걸리는 모양은 파싱 전에 한도를 알려 주며
+  거부합니다. 엔티티가 XML 파서의 증폭 한도를 넘게 펼쳐지는 RDF/XML, 텍스트 조각이
+  10,000개를 넘는 RDF/XML 요소(`MAX_XML_TEXT_CHUNKS`. 줄바꿈과 엔티티 참조가 각각 한
+  조각), 파일 하나의 `rdf:parseType="Literal"` 값 안에 요소가 1,000개를 넘는 경우
+  (`MAX_XML_LITERAL_ELEMENTS`), 256 KiB를 넘는 N-Triples·N-Quads 줄(`MAX_LINE_BYTES`)입니다.
+  이런 파일은 Turtle로 변환하세요. RDF/XML이 통과시키는 공백 있는 IRI와 순환하는
+  `rdf:List`도 설정을 읽지 못하게 합니다. 파싱 오류는 줄 번호와 무엇이 잘못됐는지만
+  알려 주고 파일 내용은 보여 주지 않습니다.
 
 **미리 보기.** 모델을 호출하지 않고 추출이 쓸 스키마를 봅니다.
 
@@ -2034,7 +2056,9 @@ print(yaml.safe_dump(
 읽을 때마다 INFO 로그도 한 줄 남깁니다. `Ontology '<path>' (N files): ... entity types,
 ... relationship types and ... patterns from ... classes and ... properties; ...
 properties dropped, ... ends lifted, ...` 형식이며, DEBUG에는 빠지거나 올려보내지거나
-합쳐지거나 건너뛰거나 접미사가 붙은 용어가 하나씩 나옵니다.
+합쳐지거나 건너뛰거나 접미사가 붙은 용어가 하나씩 나옵니다. 종류를 정할 수 없는
+속성(정의역, 치역, `owl:FunctionalProperty`만 있음)은 따로 INFO 로그
+`Ontology: N properties not read ...`에 앞의 다섯 개까지 이름이 나옵니다.
 
 **매핑 고정하기.** 온톨로지 수정이 그래프에 닿지 않게 하는 방법은 두 가지입니다.
 

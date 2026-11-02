@@ -139,9 +139,11 @@ looks deleted. Check a reused bucket's own lifecycle rules.
 
 A `schema_source` of kind `file` or `owl` may name an `s3://` object (or,
 for `owl`, an `s3://bucket/prefix/` directory). Every entry point that loads
-the schema reads it at start-up with the task's role: ingestion, prompt
-tuning, evaluation, and `run-rag` (which checks schema filter keys against
-it and, when it cannot load the source, skips that check with a WARNING).
+the schema reads it with the task's role: ingestion, prompt tuning and
+evaluation at start-up, and `run-rag` on the first query with a schema
+filter key (`in_schema`, `type_iri`, `predicate_iri`), which it checks
+against the schema. When `run-rag` cannot load the source it skips that
+check with one WARNING and does not retry on later queries.
 The loader needs `s3:GetObject` on the objects and, for a prefix,
 `s3:ListBucket` on the bucket (without `s3:ListBucket` a missing object is
 reported as access denied too), plus `kms:Decrypt` on the key of a
@@ -1072,6 +1074,8 @@ model or credential error fails a query rather than answering from no context.
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it or convert the files |
 | `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --extra ontology`, or build the image with it ([Ontology schema in the image](#ontology-schema-in-the-image)) |
 | `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([User Guide](./user-guide.md#from-an-owlrdfs-ontology)) |
+| `Ontology file '...' holds ... (MAX_XML_TEXT_CHUNKS)` / `... (MAX_XML_LITERAL_ELEMENTS)` / `... has a line of N bytes ... (MAX_LINE_BYTES)` / `... limit on input amplification factor ...` (exit 2) | A shape the RDF/XML or N-Triples parser takes quadratic time over (refused before parsing) | Convert the file to Turtle (`robot convert --input onto.rdf --output onto.ttl`) |
+| `Ontology IRIs with whitespace: ...` / `Ontology rdf:List is cyclic ...` (exit 2) | An IRI the RDF/XML or JSON-LD parser let through, or a malformed list | Fix the named IRI (`%20` for a space), or end the list with `rdf:nil` |
 
 ### Credentials and models
 

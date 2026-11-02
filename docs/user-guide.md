@@ -2023,12 +2023,14 @@ processing:
   `file://` URL works too), or an `s3://` object or `s3://bucket/prefix/`
   read as a directory ([Schema sources in S3](./operations.md#schema-sources-in-s3)).
   A directory is read recursively as one ontology (files sorted, names
-  starting with `.` skipped). Any other URL, and a `secret_arn`, fail the
+  starting with `.` skipped, an OASIS XML catalog such as Protégé's
+  `catalog-v001.xml` skipped). Any other URL, and a `secret_arn`, fail the
   load.
 - The format follows the suffix: `.ttl` Turtle, `.rdf` / `.owl` / `.xml`
   RDF/XML, `.jsonld` / `.json-ld` JSON-LD, `.nt` N-Triples, `.nq` N-Quads,
-  `.trig` TriG. `options.format` reads every file in one format instead,
-  whatever its suffix.
+  `.trig` TriG; other files of a directory are skipped. `options.format`
+  reads every file in one format instead, whatever its suffix (in a
+  directory too, so keep only ontology files there).
 
 **Options** go under `schema_source.options`; an unknown option or a bad
 value fails the load naming `schema_source.options.<name>`. A term is a full
@@ -2067,16 +2069,32 @@ the load, so a typo does not silently select nothing.
 
 - Classes: what is typed `owl:Class` or `rdfs:Class`, the ends of
   `rdfs:subClassOf` and `owl:equivalentClass`, and the classes named in a
-  property's domain or range.
+  relationship type's domain or range. A class named only in a datatype
+  property's domain is none.
+- Parents: a class's named `rdfs:subClassOf` objects, and the named
+  members of an `owl:intersectionOf` it is a subclass of or equivalent to
+  (`ex:Vendor owl:equivalentClass [owl:intersectionOf (ex:Organization
+  [a owl:Restriction ...])]` puts `ex:Vendor` below `ex:Organization`). A
+  class equivalent to an `owl:unionOf` covers it: the union's named
+  members are below it.
 - Relationship types: object properties (`owl:ObjectProperty` or one of
   its characteristics such as `owl:SymmetricProperty`, an end of
   `owl:inverseOf`, or a sub-, super- or equivalent property of an object
-  property) and an `rdf:Property` without a literal range.
-- Left out: datatype and annotation properties (reported as skipped), a
-  property typed only `owl:FunctionalProperty`, individuals, the RDF, RDFS,
-  OWL and XSD vocabularies, and anonymous classes other than an
-  `owl:unionOf` of named classes in a domain or range. Labels and
-  descriptions are string literals.
+  property), an `rdf:Property` with a range that is not a literal type,
+  and a sub-, super- or equivalent property of such an `rdf:Property`.
+  Literal types are the XSD types, `rdfs:Literal`, `rdf:langString` and
+  the other RDF literal types, an `rdfs:Datatype`, and the schema.org data
+  types (`schema:Text`, `URL`, `Number`, `Integer`, `Float`, `Boolean`,
+  `Date`, `DateTime`, `Time`, `CssSelectorType`, `PronounceableText`,
+  `XPathType`, and anything typed `schema:DataType`, over `http` or
+  `https`); they are never entity types.
+- Left out: datatype properties (`owl:DatatypeProperty`, or an
+  `rdf:Property` whose ranges are all literal types) and annotation
+  properties (reported as skipped), a property typed only
+  `owl:FunctionalProperty` or with only a domain or range (an INFO line
+  names them: `N properties not read ...`), individuals, the RDF, RDFS,
+  OWL and XSD vocabularies, and anonymous classes other than the class
+  expressions above. Labels and descriptions are string literals.
 
 **Mapping rules.**
 
@@ -2273,6 +2291,16 @@ load warns `N terms have IRIs relative to their file`.
   OBO (`.obo`) and Notation3 (`.n3`) are refused. Convert them first:
   `robot convert --input onto.owx --output onto.ttl` (ROBOT), or Protégé's
   *File > Save as > Turtle*.
+- Shapes the parsers take quadratic time over are refused before parsing,
+  naming the limit: RDF/XML whose entities expand past the XML parser's
+  amplification limit, an RDF/XML element of more than 10,000 pieces of
+  text (`MAX_XML_TEXT_CHUNKS`: each line break and entity reference is
+  one), more than 1,000 elements inside `rdf:parseType="Literal"` values
+  of a file (`MAX_XML_LITERAL_ELEMENTS`), and an N-Triples or N-Quads line
+  over 256 KiB (`MAX_LINE_BYTES`). Convert such a file to Turtle. An IRI
+  with whitespace, which RDF/XML lets through, and a cyclic `rdf:List`
+  fail the load too. A parse error names the line and what is wrong,
+  never the file's text.
 
 **Preview.** What extraction will use, with no model call:
 
@@ -2297,7 +2325,10 @@ print(yaml.safe_dump(
 Each load also logs one INFO line, `Ontology '<path>' (N files): ... entity
 types, ... relationship types and ... patterns from ... classes and ...
 properties; ... properties dropped, ... ends lifted, ...`; DEBUG names each
-dropped, lifted, merged, skipped and qualified term.
+dropped, lifted, merged, skipped and qualified term. A property the
+reader cannot type (only a domain, range or `owl:FunctionalProperty`)
+gets its own INFO line, `Ontology: N properties not read ...`, naming the
+first five.
 
 **Freezing the mapping.** Two ways to stop ontology edits from reaching
 the graph:

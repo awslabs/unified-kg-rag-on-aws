@@ -1534,7 +1534,9 @@ This section is the single reference for extending the framework. Strategies, re
     and depends only on `domain`.
   - `owl_reader.py` (the only module importing rdflib) builds the model
     from parsed statements; `owl.py` is the loader: it locates and checks
-    the files, parses their bytes, reads the model and maps it with
+    the files (formats, size, and the shapes the parsers take quadratic
+    time over, refused before parsing), parses their bytes, reads the
+    model and maps it with
     `OwlSourceOptions`, which is `MappingOptions` plus the reader's
     `format` and `max_bytes`.
 

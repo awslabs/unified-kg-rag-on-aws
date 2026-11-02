@@ -13,6 +13,7 @@ via ``__new__`` with fake clients.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -1319,6 +1320,38 @@ def test_a_schema_filter_loads_the_source_once_with_the_chains_session(
     # Loaded with the session the chain's providers hold (not one built
     # from config.aws), and a failed load is not retried on each query.
     assert sessions == [chain.providers.boto_session]
+
+
+def test_a_schema_load_failing_otherwise_is_not_retried_either(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Regression: only SchemaSourceError was cached, so a loader raising
+    # anything else failed (and reloaded the source on) every query.
+    from unified_kg_rag.adapters.schema_sources import (
+        SchemaSourceContext,
+        register_schema_source,
+        registry,
+    )
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    calls: list[str] = []
+
+    @register_schema_source("test_broken_source")
+    def _load(context: SchemaSourceContext) -> Any:
+        calls.append(context.location)
+        raise ValueError("a loader bug")
+
+    try:
+        chain = _strategy_chain(
+            _schema_config(schema_source={"kind": "test_broken_source"})
+        )
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
+    finally:
+        registry._REGISTRY.pop("test_broken_source", None)
+    assert len(calls) == 1
+    assert "ValueError: a loader bug" in caplog.text
 
 
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
