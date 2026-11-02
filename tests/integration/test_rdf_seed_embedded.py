@@ -7,7 +7,8 @@ The schema is ``tests/fixtures/ontologies/procure.ttl``; the seed is
 ``tests/fixtures/seeds/procure-abox.ttl``. Strict mode keeps the instances
 and edges whose classes and properties the ontology declares, under their
 schema types and with their IRIs, and drops the rest (a class and a
-property it does not declare); no seed statement reaches the model.
+property it does not declare); no seed statement reaches the model; a reset
+re-imports the seed.
 """
 
 from __future__ import annotations
@@ -72,4 +73,16 @@ def test_an_rdf_seed_under_a_strict_owl_schema(tmp_path: Path) -> None:
     units = "\n".join(unit["text"] for unit in harness.seed_units())
     assert '"type":"SUPPLIES"' in units and '"type":"EMPLOYS"' in units
     assert "PARTNER_OF" not in units and "Initech" not in units
+    harness.assert_no_seed_text_prompted()
+
+    # A reset re-imports the RDF seed: the namespace is rebuilt as it was.
+    built = harness.state()
+    registry = harness.registry()
+    seed_paths = {path for path in registry if path.startswith("seed_graphs/procure/")}
+    assert seed_paths and set(registry) == set(CORPUS) | seed_paths
+    harness.config.indexing.reset = True
+    context = harness.ok()
+    assert context.incremental_delta is not None
+    assert len(context.incremental_delta.new) == len(registry)
+    assert harness.state() == built
     harness.assert_no_seed_text_prompted()

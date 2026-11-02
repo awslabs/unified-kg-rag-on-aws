@@ -6,17 +6,28 @@ Over random seeds (declared, respelled and undeclared types, colliding
 names, duplicate edges and self-loops): the documents do not depend on the
 order of the nodes and edges, a node added without edges changes only its
 own shard, and strict keeps a subset of the statements align keeps.
+
+Through the rdf source (the ontology extra): an A-Box read as N-Triples or
+Turtle gives the same graph and documents whatever the order of its lines
+and the labels of its blank nodes.
 """
 
 from __future__ import annotations
 
 from functools import cache
+from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import given
+from hypothesis import event, given
 from hypothesis import strategies as st
 
+from tests.fixtures.extras import requires_ontology
+from unified_kg_rag.adapters.seed_sources import SeedSourceContext, get_seed_source
+from unified_kg_rag.application.bootstrap import (
+    load_seed_graphs,
+    resolve_extraction_schema,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedConversion,
     SeedConversionSettings,
@@ -24,7 +35,8 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     seed_statements,
     shard_of,
 )
-from unified_kg_rag.domain.models import ExtractionSchema
+from unified_kg_rag.domain.models import Config, ExtractionSchema
+from unified_kg_rag.domain.models.config import SeedGraphConfig
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
 
 pytestmark = pytest.mark.property
@@ -158,3 +170,149 @@ def test_strict_keeps_a_subset_of_what_align_keeps(seed: SeedGraph) -> None:
     assert strict.stats.nodes <= align.stats.nodes
     assert strict.stats.edges <= align.stats.edges
     assert align.stats.entities_dropped_off_schema == 0
+
+
+# --- through the RDF loader -------------------------------------------------------
+
+_EX = "https://example.org/procure#"
+_RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+_RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+_ONTOLOGY = Path(__file__).parents[1] / "fixtures" / "ontologies" / "procure.ttl"
+# Declared classes (a subclass and its parent), an undeclared one; declared
+# predicates and an undeclared one.
+_CLASSES = ["Vendor", "Organization", "Buyer", "Person", "Distributor"]
+_PREDICATES = ["supplies", "employs", "partnerOf"]
+_INSTANCES = [f"i{n}" for n in range(4)]
+_BLANKS = [f"b{n}" for n in range(3)]
+
+
+def _iri(local: str) -> str:
+    return f"<{_EX}{local}>"
+
+
+def _literal(text: str, language: str) -> str:
+    return f'"{text}"@{language}' if language else f'"{text}"'
+
+
+_instance = st.sampled_from(_INSTANCES).map(_iri)
+_blank = st.sampled_from(_BLANKS).map(lambda label: f"_:{label}")
+
+
+def _typing(subjects: st.SearchStrategy[str]) -> st.SearchStrategy:
+    return st.tuples(
+        subjects, st.just(f"<{_RDF_TYPE}>"), st.sampled_from(_CLASSES).map(_iri)
+    )
+
+
+def _linking(
+    subjects: st.SearchStrategy[str], objects: st.SearchStrategy[str]
+) -> st.SearchStrategy:
+    return st.tuples(
+        subjects, st.sampled_from([*_PREDICATES, "contact"]).map(_iri), objects
+    )
+
+
+_describing = st.one_of(
+    st.tuples(
+        _instance | _blank,
+        st.just(f"<{_RDFS_LABEL}>"),
+        st.tuples(
+            st.sampled_from(["Acme", "Globex", "공급업체"]),
+            st.sampled_from(["en", "ko", ""]),
+        ).map(lambda label: _literal(*label)),
+    ),
+    st.tuples(
+        _instance | _blank, st.just(_iri("country")), st.sampled_from(['"DE"', '"FR"'])
+    ),
+)
+# Typed subjects (instances, with several classes), links and literals.
+_abox = st.tuples(
+    st.lists(_typing(_instance), min_size=1, max_size=6),
+    st.lists(_typing(_blank), max_size=2),
+    st.lists(_linking(_instance, _instance), max_size=6),
+    st.lists(_linking(_instance | _blank, _instance | _blank), max_size=2),
+    st.lists(_describing, max_size=5),
+).map(lambda parts: list(dict.fromkeys(t for part in parts for t in part)))
+
+
+@cache
+def _rdf_config(mode: str) -> Config:
+    """A config whose extraction schema is the procure ontology (resolved
+    once per mode)."""
+    return resolve_extraction_schema(
+        Config.model_validate(
+            {
+                "processing": {
+                    "graph_extraction": {
+                        "schema_mode": mode,
+                        "schema_source": {"kind": "owl", "path": str(_ONTOLOGY)},
+                    }
+                }
+            }
+        )
+    )
+
+
+def _load_rdf(path: Path, mode: str) -> tuple[SeedGraph, SeedConversion]:
+    """The rdf source's graph of ``path`` and its conversion by bootstrap."""
+    config = _rdf_config(mode).model_copy(deep=True)
+    seed = SeedGraphConfig(
+        name="procure",
+        kind="rdf",
+        path=str(path),
+        shards=3,
+        on_name_collision="merge",
+        options={"prefixes": {"ex": _EX}},
+    )
+    config.processing.seed_graphs = [seed]
+    graph = get_seed_source("rdf")(SeedSourceContext(seed, config))
+    (conversion,) = load_seed_graphs(config)
+    return graph, conversion
+
+
+@pytest.fixture(scope="module")
+def rdf_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("rdf-seeds")
+
+
+@requires_ontology
+@given(
+    triples=_abox,
+    mode=st.sampled_from(["off", "align", "strict"]),
+    suffix=st.sampled_from([".nt", ".ttl"]),
+    data=st.data(),
+)
+def test_rdf_conversion_does_not_depend_on_triple_order_or_blank_labels(
+    rdf_dir: Path,
+    triples: list[tuple[str, str, str]],
+    mode: str,
+    suffix: str,
+    data: st.DataObject,
+) -> None:
+    """The same A-Box, its lines permuted and its blank nodes renamed, read
+    by the rdf source (N-Triples, or the same lines as Turtle), gives the
+    same graph, counts and shard documents."""
+    labels = data.draw(st.permutations([f"x{n}" for n in range(len(_BLANKS))]))
+    renamed = dict(zip(_BLANKS, labels, strict=True))
+
+    def rename(term: str) -> str:
+        return f"_:{renamed[term[2:]]}" if term.startswith("_:") else term
+
+    lines = [" ".join(triple) + " ." for triple in triples]
+    shuffled = [
+        " ".join(rename(term) for term in triple) + " ."
+        for triple in data.draw(st.permutations(triples))
+    ]
+    first, second = rdf_dir / f"first{suffix}", rdf_dir / f"second{suffix}"
+    first.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    second.write_text("\n".join(shuffled) + "\n", encoding="utf-8")
+
+    graph, conversion = _load_rdf(first, mode)
+    other_graph, other_conversion = _load_rdf(second, mode)
+
+    event(f"{len(graph.nodes)} nodes, {len(graph.edges)} edges")
+    assert (graph.nodes, graph.edges) == (other_graph.nodes, other_graph.edges)
+    assert graph.report.skipped == other_graph.report.skipped
+    assert _texts(conversion) == _texts(other_conversion)
+    assert conversion.digest == other_conversion.digest
+    assert conversion.stats == other_conversion.stats

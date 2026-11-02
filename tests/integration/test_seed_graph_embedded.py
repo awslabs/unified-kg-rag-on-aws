@@ -6,8 +6,9 @@
 container, no AWS), with the fake Ollama server of ``test_embedded_e2e``. A
 JSONL seed beside a small corpus, a seed-only run, an edit that re-indexes
 one shard, an LLM settings change that re-imports none, a reset that keeps
-the seed, its removal restoring the document-only graph, and an interrupted
-seed run that resumes and converges. The fake model records every prompt:
+the seed, its removal restoring the document-only graph, an interrupted
+seed run that resumes and converges, and a seed-only source scope beside a
+document scope of the same namespace. The fake model records every prompt:
 no seed statement ever reaches it.
 """
 
@@ -375,6 +376,64 @@ def test_a_reset_asks_before_it_drops_another_scopes_seed(tmp_path: Path) -> Non
     assert len(asked) == 1 and question in asked[0]
     assert seeded.registry() == {"contract.txt": DocStatus.PROCESSED}
     assert seeded.graph_names() == {"Vendor", "Buyer"}
+
+
+def test_a_seed_only_scope_lives_beside_a_document_scope(tmp_path: Path) -> None:
+    harness = _Harness(tmp_path, corpus={})
+    seeds_source = harness.source
+    seeds_config = harness.config
+    seeds_config.processing.document_parsing.source_scope = "seeds-procure"
+    documents_source = tmp_path / "documents"
+    documents_source.mkdir()
+    for name, text in CORPUS.items():
+        (documents_source / name).write_text(text)
+    documents_config: Config = seeds_config.model_copy(deep=True)
+    documents_config.processing.document_parsing.source_scope = "documents"
+    documents_config.processing.seed_graphs = []
+
+    def use(config: Config, source: Path) -> None:
+        harness.config, harness.source = config, source
+
+    harness.ok()
+    # The document scope's incremental run diffs its own records only: the
+    # seed scope's shards stay, and Vendor is one entity of both.
+    use(documents_config, documents_source)
+    harness.ok()
+    assert harness.registry() == {**_corpus_paths(), **_seed_paths()}
+    assert harness.graph_names() == {"Vendor", "Buyer", "Depot"} | SEED_NAMES
+    entities = harness.entities()
+    assert entities["Vendor"]["source_kinds"] == ["document", "seed_graph"]
+    assert entities["Vendor"].get("iri") == "urn:x:v"
+    assert "source_kinds" not in entities["Depot"]
+    both = harness.state()
+    # The seed scope again, unchanged: nothing to do, nothing dropped.
+    use(seeds_config, seeds_source)
+    context = harness.ok()
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.is_empty
+    assert harness.state() == both
+
+    # A reset of the document scope drops the seed scope's shards: it asks
+    # first, and a no leaves both scopes as they were.
+    use(documents_config, documents_source)
+    documents_config.indexing.reset = True
+    asked: list[str] = []
+    context = harness.run(confirm=lambda q: asked.append(q) or False)
+    assert context.status is PipelineStageStatus.FAILED
+    assert len(asked) == 1 and "seeds-procure" in asked[0]
+    assert harness.state() == both
+    # A reset of the seed scope asks nothing (no other scope holds a seed)
+    # and rebuilds the namespace with the seed alone.
+    use(seeds_config, seeds_source)
+    seeds_config.indexing.reset = True
+    asked.clear()
+    harness.ok(confirm=lambda q: asked.append(q) or True)
+    assert asked == []
+    assert harness.registry() == _seed_paths()
+    assert harness.graph_names() == SEED_NAMES
+    assert {name: hit["source_kinds"] for name, hit in harness.entities().items()} == (
+        dict.fromkeys(SEED_NAMES, ["seed_graph"])
+    )
 
 
 SEED_ONLY = SEED_NAMES - {"Vendor"}

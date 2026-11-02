@@ -20,11 +20,13 @@ handlers.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.seed_graphs import seed_shard_extraction
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
@@ -49,6 +51,7 @@ from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import annotate_sources
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
@@ -62,7 +65,8 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports import DocStatusPort
 
 Content = list[list[tuple[str, str, int]]]
-Corpus = dict[str, Content]
+# A path's content, or a seed graph's shard document under its relative path.
+Corpus = dict[str, Content | Document]
 
 _TYPE = "RELATED_TO"
 
@@ -85,10 +89,14 @@ class Killed(BaseException):
 
 def _unit_id(path: str, index: int, unit: list[tuple[str, str, int]]) -> str:
     digest = hashlib.sha256(f"{path}|{index}|{sorted(unit)}".encode()).hexdigest()
-    return f"tu-{digest[:16]}"
+    # Lowercase hex, as the chunker's ids are: they sort before every seed
+    # unit id ("sg-..."), so records merge documents first.
+    return str(uuid.UUID(digest[:32]))
 
 
-def document(path: str, content: Content) -> Document:
+def document(path: str, content: Content | Document) -> Document:
+    if isinstance(content, Document):
+        return content
     return Document(
         page_content=repr(content),
         document_id=path,
@@ -177,11 +185,17 @@ def _unit_records(
 
 def extract(corpus: Corpus) -> Extraction:
     """Text units, their records, and the graph a build over ``corpus``
-    produces: the records merged and resolved by the full build's code."""
+    produces: the records merged and resolved by the full build's code. A
+    seed shard's units and records are the pipeline's; it states no claim."""
     units: list[TextUnit] = []
     records: list[TextUnitExtraction] = []
     claim_records: dict[str, list[Claim]] = {}
     for path, content in corpus.items():
+        if isinstance(content, Document):
+            seed_units, seed_records = seed_shard_extraction(content)
+            units += seed_units
+            records += seed_records
+            continue
         for index, unit in enumerate(content):
             text_unit, record, claims = _unit_records(path, index, unit)
             units.append(text_unit)
@@ -245,11 +259,27 @@ def claim_state(claim: Claim) -> tuple[Any, ...]:
     )
 
 
+def _provenance(
+    entities: Iterable[Entity],
+    relationships: Iterable[Relationship],
+    kinds: Callable[[Entity | Relationship], list[str] | None],
+) -> dict[str, Any]:
+    """Each item's stated IRI (entities) and source kinds."""
+    return {
+        **{e.id: (e.iri, kinds(e)) for e in entities},
+        **{r.id: kinds(r) for r in relationships},
+    }
+
+
 def expected_state(corpus: Corpus) -> dict[str, Any]:
     """What a fresh full build of ``corpus`` stores (see :meth:`state`)."""
     built = extract(corpus)
     entity_units = {e.id: frozenset(e.text_unit_ids or []) for e in built.entities}
+    # The indexing annotates an item's source kinds from its text units.
+    provenance = _provenance(built.entities, built.relationships, annotate_sources)
     return {
+        "graph_provenance": provenance,
+        "vector_provenance": provenance,
         "graph_entities": entity_units,
         "graph_edges": {
             r.id: (frozenset(r.text_unit_ids or []), round(r.weight or 0.0, 9))
@@ -324,7 +354,10 @@ class IncrementalRun:
         built = extract({d.file_path: corpus[d.file_path] for d in extracted})
         # The extraction stages store the units' records before indexing.
         self.vector.write_extraction_records(
-            {f"g-{r.text_unit_id}": record_payload(r) for r in built.records}
+            {
+                record_keys(unit)["graph"]: record_payload(record)
+                for unit, record in zip(built.units, built.records, strict=True)
+            }
         )
         self.vector.write_extraction_records(
             {
@@ -425,7 +458,17 @@ class IncrementalRun:
     def state(self) -> dict[str, Any]:
         entities = self.graph.read_entities(sorted(self.graph.ids("entities")))
         edges = self.graph.read_relationships(sorted(self.graph.ids("relationships")))
+
+        def stored(item: Entity | Relationship) -> list[str] | None:
+            return item.source_kinds
+
         return {
+            "graph_provenance": _provenance(entities, edges, stored),
+            "vector_provenance": _provenance(
+                self.vector.data.get("entities", {}).values(),
+                self.vector.data.get("relationships", {}).values(),
+                stored,
+            ),
             "graph_entities": {
                 e.id: frozenset(e.text_unit_ids or []) for e in entities
             },
