@@ -697,9 +697,10 @@ From 0.2.3 (or a `main` checkout since):
   relationship type with configured patterns gets no other. It names
   `schema_mode: align` (the comment's path relative to the config file's
   directory), and a fixed model gives the same file. It never replaces a
-  file silently: `--schema-out` (or `--output-path`) naming the schema file
-  the config loads exits 2, and so does an existing `--schema-out` file
-  unless `--force` is given (#478, #480, #483).
+  file silently: `--schema-out` or `--output-path` naming the
+  `--config-path` file or the schema file the config loads exits 2, even
+  with `--force`, and so does either naming an existing file unless
+  `--force` is given (#478, #480, #483, #PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

@@ -716,20 +716,28 @@ def test_the_file_writes_descriptions_and_iris_back(tmp_path: Path) -> None:
     assert _load(path) == declared
 
 
+_LOADS_CURATED = (
+    "processing:\n  graph_extraction:\n"
+    "    schema_source: {kind: file, path: curated.yaml}\n"
+)
+
+
 def _curated_main(
-    tmp_path: Path, mocker, monkeypatch, schema_out: str, *extra: str
+    tmp_path: Path,
+    mocker,
+    monkeypatch,
+    schema_out: str,
+    *extra: str,
+    config: str = _LOADS_CURATED,
+    config_path: str = "conf/config.yaml",
 ) -> int:
-    """Run the CLI from ``tmp_path`` with ``conf/config.yaml``, which loads
-    ``conf/curated.yaml``, over ``REVERSED``."""
+    """Run the CLI from ``tmp_path`` with ``conf/config.yaml`` (``config``,
+    by default one that loads ``conf/curated.yaml``) over ``REVERSED``."""
     monkeypatch.chdir(tmp_path)
     conf = tmp_path / "conf"
     conf.mkdir(exist_ok=True)
     (conf / "curated.yaml").write_text(CURATED, encoding="utf-8")
-    (conf / "config.yaml").write_text(
-        "processing:\n  graph_extraction:\n"
-        "    schema_source: {kind: file, path: curated.yaml}\n",
-        encoding="utf-8",
-    )
+    (conf / "config.yaml").write_text(config, encoding="utf-8")
     source = tmp_path / "corpus"
     source.mkdir(exist_ok=True)
     for index, text in enumerate(REVERSED):
@@ -744,7 +752,7 @@ def _curated_main(
         [
             "run-prompt-tuning",
             "--config-path",
-            "conf/config.yaml",
+            config_path,
             "--source-directory",
             "corpus",
             "--output-path",
@@ -818,3 +826,81 @@ def test_schema_out_and_output_path_must_differ(
         tmp_path, mocker, monkeypatch, "same.yaml", "--output-path", "same.yaml"
     )
     assert code == 2
+
+
+def test_schema_out_absolute_and_output_path_relative_name_one_file(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any
+) -> None:
+    # Neither exists yet: compared resolved.
+    code = _curated_main(tmp_path, mocker, monkeypatch, str(tmp_path / "prompts.yaml"))
+    assert code == 2
+    assert "name one file" in capsys.readouterr().err
+
+
+_INLINE = (
+    "processing:\n  graph_extraction:\n    schema_mode: align\n"
+    "    entity_types: [VENDOR, BUYER]\n    relationship_types: [SUPPLIES]\n"
+)
+
+
+@pytest.mark.parametrize("flag", ["--output-path", "--schema-out"])
+@pytest.mark.parametrize(
+    "name", ["conf/config.yaml", "conf/../conf/config.yaml", "link.yaml", "abs"]
+)
+def test_no_output_replaces_the_config_file(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any, flag: str, name: str
+) -> None:
+    # The inline schema lives in the config file itself; --force does not
+    # let either output replace it, under any spelling or a symlink.
+    tmp_path.joinpath("conf").mkdir()
+    tmp_path.joinpath("link.yaml").symlink_to("conf/config.yaml")
+    if name == "abs":
+        name = str(tmp_path / "conf" / "config.yaml")
+    extra = [flag, name] if flag == "--output-path" else []
+    schema_out = name if flag == "--schema-out" else "draft.yaml"
+    code = _curated_main(
+        tmp_path, mocker, monkeypatch, schema_out, *extra, "--force", config=_INLINE
+    )
+    assert code == 2
+    assert "is the --config-path file" in capsys.readouterr().err
+    assert (tmp_path / "conf" / "config.yaml").read_text(encoding="utf-8") == _INLINE
+
+
+def test_output_path_replaces_an_existing_file_only_with_force(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any
+) -> None:
+    existing = tmp_path / "prompts.yaml"
+    existing.write_text("custom_prompts: {kept: true}\n", encoding="utf-8")
+    assert _curated_main(tmp_path, mocker, monkeypatch, "draft.yaml") == 2
+    assert "--output-path 'prompts.yaml' exists; pass --force" in (
+        capsys.readouterr().err
+    )
+    assert existing.read_text(encoding="utf-8") == "custom_prompts: {kept: true}\n"
+    assert not (tmp_path / "draft.yaml").exists()
+
+    mocker.stopall()
+    assert _curated_main(tmp_path, mocker, monkeypatch, "draft.yaml", "--force") == 0
+    assert set(yaml.safe_load(existing.read_text(encoding="utf-8"))) == {
+        "profile",
+        "custom_prompts",
+    }
+
+
+def test_the_comment_path_is_relative_to_a_symlinked_configs_own_directory(
+    tmp_path: Path, mocker, monkeypatch
+) -> None:
+    # sub/config.yaml links to conf/config.yaml: the loader resolves a
+    # relative schema_source path against sub/, where the link is.
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "config.yaml").symlink_to("../conf/config.yaml")
+    code = _curated_main(
+        tmp_path,
+        mocker,
+        monkeypatch,
+        "sub/draft.yaml",
+        config=_INLINE,
+        config_path="sub/config.yaml",
+    )
+    assert code == 0
+    text = (tmp_path / "sub" / "draft.yaml").read_text(encoding="utf-8")
+    assert '#       schema_source: {kind: file, path: "draft.yaml"}' in text

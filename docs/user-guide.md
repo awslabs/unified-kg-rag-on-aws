@@ -1659,10 +1659,11 @@ domain and entity types. **Review it**, then copy the prompts you want under
   configured patterns gets no other. It is a `schema_source: {kind: file}`
   file, to load with `schema_mode: align` after review (its comment names
   the path relative to the `--config-path` file's directory); the same
-  model answers give the same file. It never replaces your schema: naming
-  the schema file the config loads (with `--schema-out` or
-  `--output-path`) exits 2, and so does an existing `--schema-out` file
-  unless you add `--force`.
+  model answers give the same file. It never replaces your config or
+  schema: naming the `--config-path` file or the schema file the config
+  loads (with `--schema-out` or `--output-path`) exits 2, even with
+  `--force`, and so does naming an existing file with either unless you
+  add `--force`.
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
