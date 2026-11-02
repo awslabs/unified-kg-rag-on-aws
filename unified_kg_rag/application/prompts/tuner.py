@@ -21,6 +21,7 @@ import json
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -46,6 +47,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.domain.models.schema import (
+    EntityTypeItem,
     EntityTypeSpec,
     ExtractionSchema,
     RelationshipPattern,
@@ -129,6 +131,15 @@ def _draft_label(label: str) -> str:
     ).upper()
 
 
+def _type_item(spec: EntityTypeSpec | RelationshipTypeSpec) -> str | dict[str, str]:
+    """``spec`` as a schema file writes it: ``LABEL`` or ``LABEL:
+    description``, or a mapping when it has an IRI or its label a ':'
+    (which would read as ``LABEL: description``)."""
+    if spec.iri is None and ":" not in spec.label:
+        return f"{spec.label}: {spec.description}" if spec.description else spec.label
+    return spec.model_dump(mode="json", exclude_defaults=True)
+
+
 def _parses_back(pattern: RelationshipPattern) -> bool:
     try:
         return RelationshipPattern.parse(str(pattern)) == pattern
@@ -139,33 +150,47 @@ def _parses_back(pattern: RelationshipPattern) -> bool:
 class SchemaDraft(BaseModel):
     """An extraction schema drafted by prompt tuning, for review.
 
-    ``entity_types`` are the corpus profile's; ``relationship_types`` the
-    ones the grounded examples state most often (at most
-    ``MAX_DRAFT_RELATIONSHIP_TYPES``, ``relationship_type_counts`` how
-    often). A relationship type gets patterns only when the examples state
-    it between two of the entity types and every such (source type, target
-    type) at least ``MIN_PATTERN_SUPPORT`` times, so the draft never flags
-    its own examples as off pattern. Written as a ``schema_source`` file
-    (:meth:`to_yaml`) and meant for ``schema_mode: align``.
+    ``entity_types`` are the corpus profile's, or the configured ones;
+    ``relationship_types`` the configured ones, then those the grounded
+    examples state most often (at most ``MAX_DRAFT_RELATIONSHIP_TYPES``
+    more; ``relationship_type_counts`` how often each is stated). A
+    configured type keeps its description and IRI, and a configured
+    pattern is kept. A relationship type the config gives no pattern gets
+    patterns only when the examples state it between two of the entity
+    types and every such (source type, target type) at least
+    ``MIN_PATTERN_SUPPORT`` times, so the draft never flags its own
+    examples as off pattern; one the config gives patterns gets no other.
+    Written as a ``schema_source`` file (:meth:`to_yaml`) and meant for
+    ``schema_mode: align``.
     """
 
-    entity_types: list[str] = Field(default_factory=list)
-    relationship_types: list[str] = Field(default_factory=list)
+    entity_types: list[EntityTypeSpec] = Field(default_factory=list)
+    relationship_types: list[RelationshipTypeSpec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipPattern] = Field(default_factory=list)
     relationship_type_counts: dict[str, int] = Field(default_factory=dict)
 
     @classmethod
     def from_examples(
-        cls, entity_types: list[str], records: list[TextUnitExtraction]
+        cls,
+        entity_types: Sequence[EntityTypeItem],
+        records: list[TextUnitExtraction],
+        *,
+        relationship_types: Sequence[RelationshipTypeSpec] = (),
+        relationship_patterns: Sequence[RelationshipPattern] = (),
     ) -> SchemaDraft:
-        """The draft of a profile's ``entity_types`` and the example
-        extraction ``records``; the same input gives the same draft."""
-        entities: dict[str, str] = {}
+        """The draft of the ``entity_types`` (a profile's or the
+        configured ones), the configured ``relationship_types`` and
+        ``relationship_patterns``, and the example extraction ``records``;
+        the same input gives the same draft."""
+        entities: dict[str, EntityTypeSpec] = {}
         for item in entity_types:
             spec = entity_type_spec(item)
             if spec is not None:
-                entities.setdefault(schema_key(spec.label), spec.label)
+                entities.setdefault(schema_key(spec.label), spec)
 
+        declared: dict[str, RelationshipTypeSpec] = {}
+        for rel_spec in relationship_types:
+            declared.setdefault(schema_key(rel_spec.label), rel_spec)
         counts: Counter[str] = Counter()
         spellings: dict[str, Counter[str]] = defaultdict(Counter)
         for record in records:
@@ -174,13 +199,21 @@ class SchemaDraft(BaseModel):
                     counts[schema_key(label)] += 1
                     spellings[schema_key(label)][label] += 1
         ranked = sorted(
-            counts,
+            (key for key in counts if key not in declared),
             key=lambda key: (-counts[key], min(spellings[key])),
         )[:MAX_DRAFT_RELATIONSHIP_TYPES]
-        relations = {
-            key: min(spellings[key], key=lambda s: (-spellings[key][s], s))
-            for key in ranked
+        relations: dict[str, RelationshipTypeSpec] = {
+            **declared,
+            **{
+                key: RelationshipTypeSpec(
+                    label=min(spellings[key], key=lambda s: (-spellings[key][s], s))
+                )
+                for key in ranked
+            },
         }
+        # A relation the config gives patterns keeps only those: its
+        # examples in another direction are counted off pattern instead.
+        patterned = {schema_key(pattern.relation) for pattern in relationship_patterns}
 
         # Relation key -> (source key, target key) -> statements.
         triples: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
@@ -192,14 +225,15 @@ class SchemaDraft(BaseModel):
                 target = schema_key(types.get(entity_key(rel.target_name or ""), ""))
                 if relation in relations and source in entities and target in entities:
                     triples[relation][(source, target)] += 1
-        patterns = [
+        patterns = list(relationship_patterns) + [
             RelationshipPattern(
-                source_type=entities[source],
-                relation=relations[relation],
-                target_type=entities[target],
+                source_type=entities[source].label,
+                relation=relations[relation].label,
+                target_type=entities[target].label,
             )
-            for relation in ranked
-            if triples[relation]
+            for relation in relations
+            if relation not in patterned
+            and triples[relation]
             and min(triples[relation].values()) >= MIN_PATTERN_SUPPORT
             for source, target in sorted(triples[relation])
         ]
@@ -207,7 +241,9 @@ class SchemaDraft(BaseModel):
             entity_types=list(entities.values()),
             relationship_types=list(relations.values()),
             relationship_patterns=patterns,
-            relationship_type_counts={relations[key]: counts[key] for key in ranked},
+            relationship_type_counts={
+                spec.label: counts[key] for key, spec in relations.items()
+            },
         )
         draft.extraction_schema()  # A draft is a valid schema (raises if not).
         return draft
@@ -219,9 +255,7 @@ class SchemaDraft(BaseModel):
             ValueError: The draft is inconsistent (``schema_problems``).
         """
         return ExtractionSchema.from_items(
-            [EntityTypeSpec(label=label) for label in self.entity_types],
-            [RelationshipTypeSpec(label=label) for label in self.relationship_types],
-            self.relationship_patterns,
+            self.entity_types, self.relationship_types, self.relationship_patterns
         )
 
     def document(self) -> dict[str, Any]:
@@ -229,13 +263,12 @@ class SchemaDraft(BaseModel):
         stay, so the file then leaves ``entity_types`` out."""
         document: dict[str, Any] = {}
         if self.entity_types:
-            document["entity_types"] = list(self.entity_types)
-        # A label with ':' would read as 'LABEL: description', and a pattern
-        # whose labels hold its separators would not parse back: mappings.
+            document["entity_types"] = [_type_item(spec) for spec in self.entity_types]
         document["relationship_types"] = [
-            {"label": label} if ":" in label else label
-            for label in self.relationship_types
+            _type_item(spec) for spec in self.relationship_types
         ]
+        # A pattern whose labels hold its separators would not parse back:
+        # a mapping.
         document["relationship_patterns"] = [
             (str(pattern) if _parses_back(pattern) else pattern.model_dump(mode="json"))
             for pattern in self.relationship_patterns
@@ -734,5 +767,20 @@ class PromptTuner:
             ),
         }
         if schema_draft:
-            result["schema_draft"] = SchemaDraft.from_examples(entity_types, records)
+            result["schema_draft"] = self.schema_draft(entity_types, records)
         return result
+
+    def schema_draft(
+        self, entity_types: list[str], records: list[TextUnitExtraction]
+    ) -> SchemaDraft:
+        """The :class:`SchemaDraft` of the examples' ``entity_types`` and
+        ``records`` and of every type and pattern the config declares, each
+        with its description and IRI: a draft written over a reviewed
+        schema drops nothing it declares."""
+        schema = self.config.processing.graph_extraction.extraction_schema()
+        return SchemaDraft.from_examples(
+            list(schema.entity_types) if self.schema_configured else entity_types,
+            records,
+            relationship_types=schema.relationship_types,
+            relationship_patterns=schema.relationship_patterns,
+        )

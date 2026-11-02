@@ -677,8 +677,14 @@ From 0.2.3 (or a `main` checkout since):
   counts) and patterns only where every endpoint-type pair of a type is
   seen at least twice. The examples are extracted with the profile's
   entity types, or with the configured schema when the config declares
-  one (a schema source it cannot load exits 2). It names `schema_mode:
-  align`, and a fixed model gives the same file (#478, #480).
+  one (a schema source it cannot load exits 2). Every type and pattern the
+  config declares stays in the draft with its description and IRI, and a
+  relationship type with configured patterns gets no other. It names
+  `schema_mode: align` (the comment's path relative to the config file's
+  directory), and a fixed model gives the same file. It never replaces a
+  file silently: `--schema-out` (or `--output-path`) naming the schema file
+  the config loads exits 2, and so does an existing `--schema-out` file
+  unless `--force` is given (#478, #480, #PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

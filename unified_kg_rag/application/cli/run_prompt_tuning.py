@@ -11,6 +11,7 @@ writes an extraction schema draft for ``schema_source: {kind: file}``.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -124,7 +125,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "profile's entity types (the configured ones when the config "
             "declares them) and the relationship types the tuning examples "
             "use most, for schema_source: {kind: file, path: PATH} with "
-            "schema_mode: align"
+            "schema_mode: align. Every type and pattern the config declares "
+            "is kept, with its description and IRI. An existing file is "
+            "refused unless --force, and so is the schema file the config "
+            "loads, always: write the draft elsewhere and merge it"
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Let --schema-out replace an existing file (never the schema "
+            "file the config loads)"
         ),
     )
     parser.add_argument(
@@ -137,6 +149,54 @@ def _build_parser() -> argparse.ArgumentParser:
     add_output_format_argument(parser)
     add_provider_arguments(parser)
     return parser
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if a.exists() and b.exists():
+        return a.samefile(b)
+    return a.resolve() == b.resolve()
+
+
+def _check_outputs(args: argparse.Namespace, config: Config) -> None:
+    """Exit 2 before any model call when an output would replace the schema
+    file the config loads, ``--schema-out`` names an existing file without
+    ``--force``, or both outputs name one file."""
+    source = config.processing.graph_extraction.schema_source.path
+    loaded = Path(source) if source and "://" not in source else None
+    outputs = [("--output-path", args.output_path)]
+    if args.schema_out is not None:
+        outputs.append(("--schema-out", args.schema_out))
+    for flag, path in outputs:
+        if loaded is not None and _same_file(path, loaded):
+            usage_error(
+                f"{flag} '{path}' is the schema file the config loads "
+                "(processing.graph_extraction.schema_source); write the draft "
+                "to another file and merge what you keep"
+            )
+    if args.schema_out is None:
+        return
+    if _same_file(args.schema_out, args.output_path):
+        usage_error(
+            f"--schema-out and --output-path name one file: '{args.schema_out}'"
+        )
+    if args.schema_out.exists() and not args.force:
+        usage_error(
+            f"--schema-out '{args.schema_out}' exists; pass --force to replace "
+            "it, or name another file"
+        )
+
+
+def _schema_source_path(schema_out: Path, config_path: str | None) -> str:
+    """The ``schema_source.path`` that names ``schema_out`` in the config
+    file: relative to its directory, as the config loader resolves it (as
+    given without a config file: relative to the working directory)."""
+    if config_path is None or schema_out.is_absolute():
+        return str(schema_out)
+    # pathlib's relative_to cannot walk up ('..') before Python 3.12.
+    try:
+        return os.path.relpath(schema_out.resolve(), Path(config_path).resolve().parent)
+    except ValueError:  # Another drive (Windows): no relative path.
+        return str(schema_out.resolve())
 
 
 @exits_on_sigterm
@@ -154,6 +214,7 @@ def main() -> int:
             ".yml",
         ):
             usage_error(f"--schema-out must end in .yaml or .yml: '{args.schema_out}'")
+        _check_outputs(args, config)
         if error := missing_extras_error(config):
             usage_error(error)
         setup_logging(config, stream=sys.stderr if as_json else None)
@@ -180,9 +241,9 @@ def main() -> int:
         logger.info("Detected domain: '%s'", result["profile"]["domain"])
         summary = {"output_path": str(args.output_path), "profile": result["profile"]}
         if draft is not None:
-            # The path as given: the comment shows the schema_source to set.
             args.schema_out.write_text(
-                draft.to_yaml(str(args.schema_out)), encoding="utf-8"
+                draft.to_yaml(_schema_source_path(args.schema_out, args.config_path)),
+                encoding="utf-8",
             )
             logger.info(
                 "Wrote an extraction schema draft to '%s' (%d entity types, "

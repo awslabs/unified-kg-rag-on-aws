@@ -37,7 +37,12 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.models.config import SchemaSourceConfig
-from unified_kg_rag.domain.models.schema import ExtractionSchema, RelationshipPattern
+from unified_kg_rag.domain.models.schema import (
+    EntityTypeSpec,
+    ExtractionSchema,
+    RelationshipPattern,
+    RelationshipTypeSpec,
+)
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 pytestmark = pytest.mark.unit
@@ -69,6 +74,10 @@ def _record(
 ORGS = [_entity("Vendor", "ORGANIZATION"), _entity("Buyer", "organization")]
 
 
+def _labels(specs: list[Any]) -> list[str]:
+    return [spec.label for spec in specs]
+
+
 # --------------------------------------------------------------------------- #
 # SchemaDraft.from_examples
 # --------------------------------------------------------------------------- #
@@ -93,7 +102,7 @@ def test_relationship_types_are_counted_across_spellings_and_ranked() -> None:
     draft = SchemaDraft.from_examples(["ORGANIZATION", "PRODUCT"], records)
     # Most frequent first, ties by label; spellings of one type are one,
     # written uppercase with '_' separators; an empty type is not counted.
-    assert draft.relationship_types == ["SUPPLIES", "WORKS_FOR", "AUDITS"]
+    assert _labels(draft.relationship_types) == ["SUPPLIES", "WORKS_FOR", "AUDITS"]
     assert draft.relationship_type_counts == {
         "SUPPLIES": 3,
         "WORKS_FOR": 2,
@@ -105,15 +114,15 @@ def test_only_the_most_frequent_relationship_types_are_kept(monkeypatch) -> None
     monkeypatch.setattr(tuner_module, "MAX_DRAFT_RELATIONSHIP_TYPES", 2)
     rels = [_rel("Vendor", "Buyer", t) for t in ("A", "B", "B", "C", "C", "C")]
     draft = SchemaDraft.from_examples([], [_record("t1", ORGS, rels)])
-    assert draft.relationship_types == ["C", "B"]
+    assert _labels(draft.relationship_types) == ["C", "B"]
 
 
 def test_entity_types_come_from_the_profile_once_each() -> None:
     draft = SchemaDraft.from_examples(
         ["ORGANIZATION", "Organization", "LEGAL ENTITY", "DRUG: medicines", ""], []
     )
-    assert draft.entity_types == ["ORGANIZATION", "LEGAL ENTITY", "DRUG"]
-    assert draft.relationship_types == []
+    assert _labels(draft.entity_types) == ["ORGANIZATION", "LEGAL ENTITY", "DRUG"]
+    assert _labels(draft.relationship_types) == []
     assert draft.relationship_patterns == []
 
 
@@ -329,7 +338,7 @@ def _tuner(config: Config) -> PromptTuner:
 async def test_tuning_drafts_the_schema_of_its_examples() -> None:
     result = await _tuner(Config()).tune(CORPUS, schema_draft=True)
     draft: SchemaDraft = result["schema_draft"]
-    assert draft.entity_types == ["ORGANIZATION", "PRODUCT"]
+    assert _labels(draft.entity_types) == ["ORGANIZATION", "PRODUCT"]
     assert draft.relationship_type_counts == {
         "STOCKS": 2,
         "SUPPLIES": 2,
@@ -470,7 +479,7 @@ async def test_examples_use_the_profile_types_so_the_draft_has_patterns() -> Non
     tuner = _listing_tuner(Config(), ["VENDOR", "BUYER", "Vendor"])
     result = await tuner.tune(TRADE, schema_draft=True)
     draft: SchemaDraft = result["schema_draft"]
-    assert draft.entity_types == ["VENDOR", "BUYER"]
+    assert _labels(draft.entity_types) == ["VENDOR", "BUYER"]
     # Extracted with the default types, the vendor and the buyer would both
     # be organizations, which the profile does not list: no pattern.
     assert [str(p) for p in draft.relationship_patterns] == ["VENDOR -SUPPLIES-> BUYER"]
@@ -504,7 +513,7 @@ async def test_a_configured_schema_is_honoured(tmp_path: Path) -> None:
     corpus = ["Supplier supplies Customer.", "Supplier supplies Customer again."]
     result = await tuner.tune([*corpus, TRADE[0]], schema_draft=True)
     draft: SchemaDraft = result["schema_draft"]
-    assert draft.entity_types == ["SUPPLIER", "CUSTOMER"]
+    assert _labels(draft.entity_types) == ["SUPPLIER", "CUSTOMER"]
     assert [str(p) for p in draft.relationship_patterns] == [
         "SUPPLIER -SUPPLIES-> CUSTOMER"
     ]
@@ -513,6 +522,61 @@ async def test_a_configured_schema_is_honoured(tmp_path: Path) -> None:
     assert "VENDOR" not in system
     # The profile still reports what the model saw.
     assert result["profile"]["entity_types"] == ["VENDOR", "BUYER"]
+
+
+def _extraction(**extraction: Any) -> Config:
+    return Config.model_validate({"processing": {"graph_extraction": extraction}})
+
+
+def test_patterns_alone_make_the_schema_configured() -> None:
+    config = _extraction(
+        relationship_types=["SUPPLIES"],
+        relationship_patterns=["ORGANIZATION -SUPPLIES-> ORGANIZATION"],
+    )
+    assert _listing_tuner(config, ["VENDOR"]).schema_configured
+    assert not _listing_tuner(
+        _extraction(relationship_types=["SUPPLIES"]), ["VENDOR"]
+    ).schema_configured
+
+
+def test_profile_types_are_one_per_schema_key_first_spelling_kept() -> None:
+    tuner = _listing_tuner(Config(), [])
+    profile = tuner_module.CorpusProfile(
+        entity_types=["Vendor", "VENDOR", "buyer", "Big Vendor", "big_vendor"]
+    )
+    assert tuner.example_entity_types(profile) == ["Vendor", "buyer", "Big Vendor"]
+
+
+def test_a_configured_schema_reaches_the_examples_unchanged() -> None:
+    # Descriptions and IRIs kept, not rebuilt from the labels.
+    config = _extraction(
+        entity_types=[
+            {"label": "SUPPLIER", "description": "Sells goods", "iri": "urn:x:S"},
+            "CUSTOMER",
+        ]
+    )
+    tuner = _listing_tuner(config, ["VENDOR"])
+    profile = tuner_module.CorpusProfile(entity_types=["VENDOR"])
+    example = tuner._example_config(tuner.example_entity_types(profile))
+    schema = example.processing.graph_extraction.extraction_schema()
+    assert [(s.label, s.description, s.iri) for s in schema.entity_types] == [
+        ("SUPPLIER", "Sells goods", "urn:x:S"),
+        ("CUSTOMER", "", None),
+    ]
+
+
+async def test_generate_examples_uses_the_profile_types(monkeypatch) -> None:
+    tuner = _listing_tuner(Config(), ["VENDOR"])
+    seen: list[Any] = []
+
+    def extract(texts: list[str], entity_types: list[str] | None = None) -> Any:
+        seen.append(entity_types)
+        return [], []
+
+    monkeypatch.setattr(tuner, "extract_examples", extract)
+    profile = tuner_module.CorpusProfile(entity_types=["VENDOR", "BUYER"])
+    await tuner.generate_examples(profile, ["text"])
+    assert seen == [["VENDOR", "BUYER"]]
 
 
 def test_a_broken_schema_source_fails_the_tuner(tmp_path: Path) -> None:
@@ -569,3 +633,188 @@ def test_a_broken_schema_source_exits_2(tmp_path: Path, mocker) -> None:
     )
     assert run_prompt_tuning.main() == 2
     assert not (tmp_path / "prompts.yaml").exists()
+
+
+# --------------------------------------------------------------------------- #
+# A draft over a curated schema
+# --------------------------------------------------------------------------- #
+
+CURATED = """\
+entity_types:
+  - {label: VENDOR, description: "Sellers", iri: "https://example.org/onto#Vendor"}
+  - "BUYER: Purchasers"
+  - "PERSON: People"
+relationship_types:
+  - {label: SUPPLIES, description: "Sells to", iri: "https://example.org/onto#supplies"}
+  - "WORKS_FOR: Employment"
+relationship_patterns:
+  - "VENDOR -SUPPLIES-> BUYER"
+"""
+# The buyer supplies the vendor twice: without the curated pattern the draft
+# would allow SUPPLIES in that direction.
+REVERSED = ["Buyer supplies Vendor.", "Buyer supplies Vendor again."]
+
+
+def test_a_draft_keeps_every_declared_type_and_pattern() -> None:
+    records = [
+        _record(
+            "t1",
+            [_entity("Vendor", "VENDOR"), _entity("Buyer", "BUYER")],
+            [_rel("Buyer", "Vendor", "supplies"), _rel("Buyer", "Vendor", "audits")],
+        ),
+        _record(
+            "t2",
+            [_entity("Vendor", "VENDOR"), _entity("Buyer", "BUYER")],
+            [_rel("Buyer", "Vendor", "SUPPLIES"), _rel("Buyer", "Vendor", "AUDITS")],
+        ),
+    ]
+    declared = ExtractionSchema.from_items(
+        [
+            EntityTypeSpec(label="VENDOR", iri="urn:x:Vendor"),
+            "BUYER: Purchasers",
+        ],
+        [
+            RelationshipTypeSpec(label="SUPPLIES", iri="urn:x:supplies"),
+            "UNSEEN: Never stated",
+        ],
+        ["VENDOR -SUPPLIES-> BUYER"],
+    )
+    draft = SchemaDraft.from_examples(
+        list(declared.entity_types),
+        records,
+        relationship_types=declared.relationship_types,
+        relationship_patterns=declared.relationship_patterns,
+    )
+    # The declared types first, as declared; then the examples' own.
+    assert draft.entity_types == list(declared.entity_types)
+    assert draft.relationship_types[:2] == list(declared.relationship_types)
+    assert _labels(draft.relationship_types) == ["SUPPLIES", "UNSEEN", "AUDITS"]
+    assert draft.relationship_type_counts == {"SUPPLIES": 2, "UNSEEN": 0, "AUDITS": 2}
+    # SUPPLIES keeps its pattern only; AUDITS, declaring none, gets one.
+    assert [str(p) for p in draft.relationship_patterns] == [
+        "VENDOR -SUPPLIES-> BUYER",
+        "BUYER -AUDITS-> VENDOR",
+    ]
+
+
+def test_the_file_writes_descriptions_and_iris_back(tmp_path: Path) -> None:
+    curated = tmp_path / "curated.yaml"
+    curated.write_text(CURATED, encoding="utf-8")
+    declared = _load(curated)
+    draft = SchemaDraft.from_examples(
+        list(declared.entity_types),
+        [],
+        relationship_types=declared.relationship_types,
+        relationship_patterns=declared.relationship_patterns,
+    )
+    path = tmp_path / "draft.yaml"
+    path.write_text(draft.to_yaml(), encoding="utf-8")
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["entity_types"][1:] == [
+        "BUYER: Purchasers",
+        "PERSON: People",
+    ]
+    assert _load(path) == declared
+
+
+def _curated_main(
+    tmp_path: Path, mocker, monkeypatch, schema_out: str, *extra: str
+) -> int:
+    """Run the CLI from ``tmp_path`` with ``conf/config.yaml``, which loads
+    ``conf/curated.yaml``, over ``REVERSED``."""
+    monkeypatch.chdir(tmp_path)
+    conf = tmp_path / "conf"
+    conf.mkdir(exist_ok=True)
+    (conf / "curated.yaml").write_text(CURATED, encoding="utf-8")
+    (conf / "config.yaml").write_text(
+        "processing:\n  graph_extraction:\n"
+        "    schema_source: {kind: file, path: curated.yaml}\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "corpus"
+    source.mkdir(exist_ok=True)
+    for index, text in enumerate(REVERSED):
+        (source / f"{index}.txt").write_text(text, encoding="utf-8")
+    tuner = mocker.patch.object(
+        run_prompt_tuning,
+        "PromptTuner",
+        side_effect=lambda config: _listing_tuner(config, ["VENDOR", "BUYER"]),
+    )
+    mocker.patch(
+        "sys.argv",
+        [
+            "run-prompt-tuning",
+            "--config-path",
+            "conf/config.yaml",
+            "--source-directory",
+            "corpus",
+            "--output-path",
+            "prompts.yaml",
+            "--schema-out",
+            schema_out,
+            *extra,
+        ],
+    )
+    try:
+        return run_prompt_tuning.main()
+    except SystemExit as exc:
+        # Refused before the tuner (and so any model call) is built.
+        tuner.assert_not_called()
+        assert isinstance(exc.code, int)
+        return exc.code
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_schema_out_never_replaces_the_loaded_schema(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any, force: bool
+) -> None:
+    extra = ["--force"] if force else []
+    code = _curated_main(tmp_path, mocker, monkeypatch, "conf/curated.yaml", *extra)
+    assert code == 2
+    assert "is the schema file the config loads" in capsys.readouterr().err
+    assert (tmp_path / "conf" / "curated.yaml").read_text(encoding="utf-8") == CURATED
+    # --output-path neither.
+    mocker.stopall()
+    code = _curated_main(
+        tmp_path,
+        mocker,
+        monkeypatch,
+        "draft.yaml",
+        "--output-path",
+        "conf/curated.yaml",
+    )
+    assert code == 2
+    assert (tmp_path / "conf" / "curated.yaml").read_text(encoding="utf-8") == CURATED
+
+
+def test_schema_out_replaces_an_existing_file_only_with_force(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any
+) -> None:
+    (tmp_path / "conf").mkdir()
+    existing = tmp_path / "conf" / "draft.yaml"
+    existing.write_text("relationship_types: [KEPT]\n", encoding="utf-8")
+    assert _curated_main(tmp_path, mocker, monkeypatch, "conf/draft.yaml") == 2
+    assert "exists; pass --force" in capsys.readouterr().err
+    assert existing.read_text(encoding="utf-8") == "relationship_types: [KEPT]\n"
+
+    mocker.stopall()
+    code = _curated_main(tmp_path, mocker, monkeypatch, "conf/draft.yaml", "--force")
+    assert code == 0
+    text = existing.read_text(encoding="utf-8")
+    # The comment names the path relative to the config file's directory,
+    # as the config loader resolves it.
+    assert '#       schema_source: {kind: file, path: "draft.yaml"}' in text
+    curated = _load(tmp_path / "conf" / "curated.yaml")
+    draft = _load(existing)
+    # Every curated type keeps its description and IRI, nothing is dropped,
+    # and the reversed statements add no SUPPLIES pattern.
+    assert draft == curated
+    assert "#   SUPPLIES: 2" in text
+
+
+def test_schema_out_and_output_path_must_differ(
+    tmp_path: Path, mocker, monkeypatch
+) -> None:
+    code = _curated_main(
+        tmp_path, mocker, monkeypatch, "same.yaml", "--output-path", "same.yaml"
+    )
+    assert code == 2

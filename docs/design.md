@@ -1275,12 +1275,17 @@ fails the run (`BaseRenderer.check_dependencies`) before anything renders.
   fingerprint hashes the template with it filled in, so the change re-keys
   no record.
 - **Schema drafts** (`run-prompt-tuning --schema-out`, `SchemaDraft` in
-  `application/prompts/tuner.py`): the profile's entity types and the
-  relationship types the grounded examples state most often, counted by
-  `schema_key` (at most `MAX_DRAFT_RELATIONSHIP_TYPES`). A type gets
-  patterns only when every (source type, target type) the examples give it
-  between two profile types appears `MIN_PATTERN_SUPPORT` times, so `align`
-  never counts the draft's own examples off pattern. The file is a
+  `application/prompts/tuner.py`): the profile's entity types (the
+  configured specs when the config declares them), the configured
+  relationship types, then those the grounded examples state most often,
+  counted by `schema_key` (at most `MAX_DRAFT_RELATIONSHIP_TYPES` more).
+  Configured patterns are kept, and a type that has them gets no other;
+  any other type gets patterns only when every (source type, target type)
+  the examples give it between two draft entity types appears
+  `MIN_PATTERN_SUPPORT` times, so `align` never counts the draft's own
+  examples off pattern. A draft over the loaded schema therefore drops
+  nothing it declares; the CLI still refuses to write over that file or,
+  without `--force`, any existing one. The file is a
   `schema_source: {kind: file}` document validated as a schema before it is
   written, and names `align`, never `strict`: a draft from a few chunks
   would drop what they did not show. A pure function of the profile and the

@@ -1651,9 +1651,15 @@ domain and entity types. **Review it**, then copy the prompts you want under
   examples were extracted with (above), the relationship types the tuning
   examples state most often (at most 12, with their counts in a comment)
   and a pattern only where every pair of endpoint types of a relationship
-  type appears at least twice. It is a `schema_source: {kind: file}` file,
-  to load with `schema_mode: align` after review (its comment names the
-  path as you gave it); the same model answers give the same file.
+  type appears at least twice. Every type and pattern the config declares
+  stays, with its description and IRI, and a relationship type with
+  configured patterns gets no other. It is a `schema_source: {kind: file}`
+  file, to load with `schema_mode: align` after review (its comment names
+  the path relative to the `--config-path` file's directory); the same
+  model answers give the same file. It never replaces your schema: naming
+  the schema file the config loads (with `--schema-out` or
+  `--output-path`) exits 2, and so does an existing `--schema-out` file
+  unless you add `--force`.
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
@@ -1939,7 +1945,10 @@ schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-pro
    ones when the config declares them) and the relationship types the
    tuning examples state most often, with a count
    each, and a pattern only where the examples support it. Merge synonyms,
-   drop noise, add descriptions and IRIs.
+   drop noise, add descriptions and IRIs. To refine a schema the config
+   already loads, write the draft to another file (the command refuses to
+   overwrite the loaded one): the draft keeps every declared type and
+   pattern with its description and IRI, so you merge only what it adds.
 3. Load it with `schema_source: {kind: file, path: schema.yaml}` and
    `schema_mode: align` (the draft comes from a few chunks, so `strict`
    would drop what they did not show), and remove `entity_types` from the
