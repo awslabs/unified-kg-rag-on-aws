@@ -14,6 +14,11 @@ A random case can name a point its run never reaches (no removal, fewer
 writes than ``k``), so each case records whether the interruption fired
 (``hypothesis.event``), and ``test_each_interruption_point_fires`` pins cases
 that reach every point (also run as explicit examples of the property).
+
+The seed variant puts a seed graph's shard documents beside the documents
+of each corpus (its nodes name document entities): the interrupted run
+adds, edits, re-shards or removes the seed, and the follow-up converges the
+same way.
 """
 
 from __future__ import annotations
@@ -29,6 +34,9 @@ from tests.fixtures.incremental_runs import (
     IncrementalRun,
     expected_state,
 )
+from tests.fixtures.seed_graphs import EX, Seed, random_seeds, seeded_corpus
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedNode
 
 pytestmark = pytest.mark.property
 
@@ -175,4 +183,112 @@ def _check_follow_up(
 def test_each_interruption_point_fires(case: dict) -> None:
     # The examples above reach their point, so every point is exercised
     # whatever the random cases draw.
+    assert _check_follow_up(**case)
+
+
+# --- seed graphs ------------------------------------------------------------------
+
+_SCHEMA = Config().processing.graph_extraction.extraction_schema()
+_seed = st.none() | random_seeds(
+    [*_NAMES, "Harbor"], (None, "ORG", "PRODUCT"), ("RELATED_TO", "SUPPLIES")
+)
+_seeded_corpus = st.tuples(_corpus, _seed).map(
+    lambda drawn: seeded_corpus(drawn[0], {"alpha": drawn[1]}, _SCHEMA)
+)
+
+
+def _with_seed(corpus: Corpus, seed: Seed | None) -> Corpus:
+    return seeded_corpus(corpus, {"alpha": seed}, _SCHEMA)
+
+
+_SEED_NODES = (
+    SeedNode(id="vendor", name=_V, type="PRODUCT", iri=EX + "vendor"),
+    SeedNode(id="harbor", name="Harbor", description="Harbor seed fact"),
+    SeedNode(id="depot", name=_D),
+)
+_SEED_EDGES = (
+    SeedEdge(source="vendor", target="harbor", type="RELATED_TO", weight=2.5),
+    SeedEdge(source="vendor", target="depot", type="RELATED_TO", description="seed"),
+)
+_SEED_V1: Seed = (1, _SEED_NODES, _SEED_EDGES)
+# Re-sharded, Vendor's card edited.
+_SEED_V2: Seed = (
+    3,
+    (_SEED_NODES[0].model_copy(update={"description": "edited"}), *_SEED_NODES[1:]),
+    _SEED_EDGES,
+)
+_SEED_CASES = [
+    {
+        "before": _with_seed(_BEFORE, _SEED_V1),
+        "interrupted": _with_seed(_CHANGED_AND_REMOVED, _SEED_V2),
+        "point": point,
+        "k": k,
+        "follow": follow,
+    }
+    for point, k in [
+        ("after_write_ahead", 1),
+        ("mid_removal", 2),
+        ("in_merge", 1),
+        ("mid_index_delta", 2),
+        ("mid_commit", 2),
+    ]
+    for follow in ("same", "reverted")
+] + [
+    # The interrupted run removes the seed (its shards are deleted).
+    {
+        "before": _with_seed(_BEFORE, _SEED_V1),
+        "interrupted": _BEFORE,
+        "point": "mid_record_deletes",
+        "k": 1,
+        "follow": "same",
+    },
+    # It adds one: the follow-up drops it again.
+    {
+        "before": _BEFORE,
+        "interrupted": _with_seed(_BEFORE, _SEED_V2),
+        "point": "mid_index_delta",
+        "k": 1,
+        "follow": "new_docs_removed",
+    },
+]
+
+
+def _with_seed_examples(test):  # noqa: ANN001, ANN202
+    for case in _SEED_CASES:
+        test = example(**case)(test)
+    return test
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(
+    before=_seeded_corpus,
+    interrupted=_seeded_corpus,
+    point=st.sampled_from(POINTS),
+    k=st.integers(1, 3),
+    follow=st.sampled_from(["same", "reverted", "new_docs_removed"]),
+)
+@_with_seed_examples
+def test_an_interrupted_seed_round_converges(
+    before: Corpus,
+    interrupted: Corpus,
+    point: str,
+    k: int,
+    follow: str,
+) -> None:
+    fired = _check_follow_up(before, interrupted, point, k, follow)
+    event(f"{point}: {'interrupted' if fired else 'not reached'}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    _SEED_CASES,
+    ids=[f"{c['point']}-k{c['k']}-{c['follow']}" for c in _SEED_CASES],
+)
+def test_each_seed_interruption_fires(case: dict) -> None:
     assert _check_follow_up(**case)

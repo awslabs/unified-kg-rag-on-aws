@@ -17,14 +17,26 @@ under exact resolution (names that resolve only to their own key):
 - ranks count document-backed edges only: every entity and edge of the
   document-only graph keeps its rank there, in a full build and a
   derivation, and an entity only a seed states ranks 0.
+
+The same holds end to end through the indexing path (registry, graph and
+vector stores, the incremental merge and removal), whether the seeds are
+indexed with the documents, before or after them: and a run without the
+seeds leaves exactly what a document-only build stores.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.property import test_incremental_rebuild_properties as rebuild
+from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import merge_contributions
 from unified_kg_rag.domain.ingestion.derivation import derive
@@ -284,3 +296,158 @@ def test_seeds_never_change_document_ranks(
         }
         for entity_id in ranked_entities.keys() - expected_entities.keys():
             assert ranked_entities[entity_id].rank == 0
+
+
+# --- through the indexing path ---------------------------------------------------
+
+# Documents of the incremental rebuild harness over the exact names above.
+_exact_edge = st.tuples(
+    st.sampled_from(_DOCUMENT_NAMES),
+    st.sampled_from(_DOCUMENT_NAMES),
+    st.integers(1, 3),
+).filter(lambda e: _id(e[0]) != _id(e[1]))
+_exact_edges = st.lists(
+    _exact_edge, max_size=3, unique_by=lambda e: (_id(e[0]), _id(e[1]))
+)
+_exact_unit = st.tuples(
+    st.lists(st.sampled_from(_DOCUMENT_NAMES), max_size=2, unique_by=_id),
+    _exact_edges,
+    _exact_edges,
+).filter(lambda u: u[0] or u[1] or u[2])
+_corpus = st.fixed_dictionaries(
+    {
+        path: st.none() | st.lists(_exact_unit, min_size=1, max_size=2)
+        for path in rebuild._PATHS
+    }
+).map(lambda state: {path: content for path, content in state.items() if content})
+_configured_seeds = st.fixed_dictionaries(
+    {
+        name: st.none()
+        | rebuild._seeds(
+            names=[*_DOCUMENT_NAMES, *_SEED_ONLY_NAMES],
+            entity_types=("BUYER", "PRODUCT", None),
+        )
+        for name in rebuild._SEED_GRAPHS
+    }
+).filter(lambda seeds: any(seed is not None for seed in seeds.values()))
+
+
+class _Stores:
+    """A registry, a graph store and a vector store, indexed run after run
+    as the indexing stage does (``rebuild._run``)."""
+
+    def __init__(self) -> None:
+        config = Config()
+        self.graph = FakeGraphStore()
+        self.vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+        manager = IndexingManager(
+            config=config, vector_indexer=self.vector, graph_indexer=self.graph
+        )
+        self.inc = IncrementalIndexer(FakeDocStatusStore(), manager)
+
+    def run(self, corpus: dict[str, Any]) -> None:
+        rebuild._run(self.inc, corpus)
+
+    def entities(self) -> list[dict[str, Entity]]:
+        """The graph's and the vector index's copies, by id."""
+        return [
+            {
+                e.id: e
+                for e in self.graph.read_entities(sorted(self.graph.ids("entities")))
+            },
+            {e.id: e for e in self.vector.data.get("entities", {}).values()},
+        ]
+
+    def relationships(self) -> list[dict[str, Relationship]]:
+        return [
+            {
+                r.id: r
+                for r in self.graph.read_relationships(
+                    sorted(self.graph.ids("relationships"))
+                )
+            },
+            {r.id: r for r in self.vector.data.get("relationships", {}).values()},
+        ]
+
+    def dump(self) -> dict[str, Any]:
+        """Everything the stores hold of the graph. Communities are not
+        built here; a removal leaves an entity's vector copy with no
+        community as ``[]`` (documents or seeds alike)."""
+        return {
+            "entities": [
+                {i: e.model_dump(exclude={"community_ids"}) for i, e in copy.items()}
+                for copy in self.entities()
+            ],
+            "relationships": [
+                {i: r.model_dump() for i, r in copy.items()}
+                for copy in self.relationships()
+            ],
+            "text_units": self.vector.ids("text_units"),
+        }
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(
+    documents=_corpus,
+    seeds=_configured_seeds,
+    order=st.sampled_from(["together", "seeds_first", "seeds_after"]),
+)
+def test_indexed_seeds_never_change_what_documents_decide(
+    documents: dict[str, Any], seeds: dict[str, Any], order: str
+) -> None:
+    """Through the indexing path: seeds indexed with the documents, before
+    them or after them leave every document entity the name, type,
+    confidence and rank of a document-only build, its description starting
+    with that build's; removing every seed leaves exactly that build."""
+    seeded = rebuild._seeded_corpus(documents, seeds, Config())
+    shards = {path: d for path, d in seeded.items() if path not in documents}
+    reference = _Stores()
+    reference.run(documents)
+    stores = _Stores()
+    runs = {
+        "together": [seeded],
+        "seeds_first": [shards, seeded],
+        "seeds_after": [documents, seeded],
+    }[order]
+    for corpus in runs:
+        stores.run(corpus)
+    stated = {
+        _id(name)
+        for content in documents.values()
+        for listed, _, _ in content
+        for name in listed
+    }
+
+    for expected, indexed in zip(reference.entities(), stores.entities(), strict=True):
+        for entity_id, document_only in expected.items():
+            entity = indexed[entity_id]
+            assert (entity.description or "").startswith(
+                document_only.description or ""
+            )
+            assert entity.rank == document_only.rank
+            if entity_id in stated:
+                assert (entity.name, entity.type, entity.confidence) == (
+                    document_only.name,
+                    document_only.type,
+                    document_only.confidence,
+                )
+        for entity_id in indexed.keys() - expected.keys():
+            assert seed_only(indexed[entity_id].text_unit_ids)
+            assert indexed[entity_id].rank == 0
+            assert indexed[entity_id].source_kinds == ["seed_graph"]
+    for expected_edges, indexed_edges in zip(
+        reference.relationships(), stores.relationships(), strict=True
+    ):
+        assert {i: indexed_edges[i].rank for i in expected_edges} == {
+            i: r.rank for i, r in expected_edges.items()
+        }
+
+    stores.run(documents)
+
+    assert stores.dump() == reference.dump()
