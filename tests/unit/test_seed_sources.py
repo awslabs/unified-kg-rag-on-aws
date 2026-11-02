@@ -329,8 +329,9 @@ def test_the_pipeline_folds_its_seeds_into_the_corpus_fingerprint(
 
 
 def test_the_built_in_kinds_are_registered() -> None:
-    assert {"jsonl", "csv"} <= set(registered_seed_sources())
-    assert "rdf" not in registered_seed_sources()
+    assert {"jsonl", "csv", "rdf"} <= set(registered_seed_sources())
+    # rdf needs the ontology extra (test_rdf_seed_source.py).
+    assert (seed_source_requirement("rdf") or ("",))[0] == "rdflib"
     assert seed_source_requirement("jsonl") is None
     assert seed_source_requirement("csv") is None
 
@@ -369,8 +370,8 @@ def test_invalid_kinds_cannot_register(kind: str) -> None:
 
 
 def test_an_unknown_kind_fails_naming_the_registered_ones() -> None:
-    config = _config({"name": "procure", "kind": "rdf", "path": "abox.ttl"})
-    with pytest.raises(SeedGraphError, match="'rdf'; registered: csv, jsonl"):
+    config = _config({"name": "procure", "kind": "owl", "path": "abox.ttl"})
+    with pytest.raises(SeedGraphError, match="'owl'; registered: csv, jsonl, rdf"):
         load_seed_graphs(config)
     # A configuration error: the CLIs exit 2 on it.
     assert issubclass(SeedGraphError, ConfigurationError)

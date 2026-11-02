@@ -1,0 +1,48 @@
+# A synthetic procurement A-Box: instances of the classes and properties of
+# tests/fixtures/ontologies/procure.ttl, plus what the rdf seed source
+# skips (a blank node, a reified statement, owl:sameAs, an object that is no
+# instance). procure-abox.nt, .jsonld and .rdf state the same triples.
+@prefix ex: <https://example.org/procure#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <https://schema.org/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Typed with a class and its subclass: the subclass (VENDOR) is kept.
+ex:acme a ex:Organization, ex:Vendor ;
+    rdfs:label "Acme Supplies"@en ;
+    skos:definition "Industrial valve vendor."@en ;
+    ex:country "DE" ;
+    ex:rating "4"^^xsd:integer ;
+    ex:creditLimit "1500.5"^^xsd:decimal ;
+    ex:certified "true"^^xsd:boolean ;
+    ex:supplies ex:globex ;
+    ex:partnerOf ex:Initech%20Corp ;
+    ex:headquarters ex:berlin ;
+    ex:contact [ ex:email "sales@example.org" ] ;
+    owl:sameAs <https://example.org/registry#acme> .
+
+ex:globex a ex:Buyer ;
+    rdfs:label "Globex Buyer" ;
+    ex:employs ex:jane .
+
+ex:jane a ex:Person, owl:NamedIndividual ;
+    schema:name "Jane Roe" .
+
+# A class no schema type declares, and no label: named by its local name.
+ex:Initech%20Corp a ex:Distributor .
+
+# Named, but no instance (no type).
+ex:berlin rdfs:label "Berlin"@en .
+
+# An instance without an IRI.
+[] a ex:Vendor ;
+    rdfs:label "Anonymous Vendor"@en .
+
+# A reified statement.
+ex:claim1 a rdf:Statement ;
+    rdf:subject ex:acme ;
+    rdf:predicate ex:supplies ;
+    rdf:object ex:globex .

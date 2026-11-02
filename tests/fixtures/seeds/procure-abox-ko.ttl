@@ -1,0 +1,17 @@
+# The procurement A-Box of procure-abox.ttl, labelled in Korean and English
+# (synthetic). A local name in Hangul is percent-encoded in the IRI.
+@prefix ex: <https://example.org/procure#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+ex:acme a ex:Vendor ;
+    skos:prefLabel "에이스 공급"@ko, "Acme Supplies"@en ;
+    skos:definition "산업용 밸브 공급업체."@ko, "Industrial valve vendor."@en ;
+    ex:region "유럽"@ko, "Europe"@en ;
+    ex:supplies ex:globex .
+
+ex:globex a ex:Buyer ;
+    rdfs:label "글로벡스 구매자"@ko .
+
+ex:%EB%8C%80%EB%A6%AC%EC%A0%90 a ex:Distributor ;
+    ex:tradesWith ex:acme .

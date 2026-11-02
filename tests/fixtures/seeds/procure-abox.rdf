@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The triples of procure-abox.ttl (synthetic), as RDF/XML. -->
+<rdf:RDF
+  xmlns:ex="https://example.org/procure#"
+  xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:schema="https://schema.org/"
+  xmlns:skos="http://www.w3.org/2004/02/skos/core#"
+  xmlns:owl="http://www.w3.org/2002/07/owl#"
+>
+  <rdf:Statement rdf:about="https://example.org/procure#claim1">
+    <rdf:subject>
+      <ex:Organization rdf:about="https://example.org/procure#acme">
+        <rdf:type rdf:resource="https://example.org/procure#Vendor"/>
+        <rdfs:label xml:lang="en">Acme Supplies</rdfs:label>
+        <skos:definition xml:lang="en">Industrial valve vendor.</skos:definition>
+        <ex:country>DE</ex:country>
+        <ex:rating rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">4</ex:rating>
+        <ex:creditLimit rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1500.5</ex:creditLimit>
+        <ex:certified rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</ex:certified>
+        <ex:supplies rdf:resource="https://example.org/procure#globex"/>
+        <ex:partnerOf rdf:resource="https://example.org/procure#Initech%20Corp"/>
+        <ex:headquarters rdf:resource="https://example.org/procure#berlin"/>
+        <ex:contact>
+          <rdf:Description rdf:nodeID="contact">
+            <ex:email>sales@example.org</ex:email>
+          </rdf:Description>
+        </ex:contact>
+        <owl:sameAs rdf:resource="https://example.org/registry#acme"/>
+      </ex:Organization>
+    </rdf:subject>
+    <rdf:predicate rdf:resource="https://example.org/procure#supplies"/>
+    <rdf:object>
+      <ex:Buyer rdf:about="https://example.org/procure#globex">
+        <rdfs:label>Globex Buyer</rdfs:label>
+        <ex:employs rdf:resource="https://example.org/procure#jane"/>
+      </ex:Buyer>
+    </rdf:object>
+  </rdf:Statement>
+  <ex:Vendor rdf:nodeID="anonymous">
+    <rdfs:label xml:lang="en">Anonymous Vendor</rdfs:label>
+  </ex:Vendor>
+  <ex:Person rdf:about="https://example.org/procure#jane">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+    <schema:name>Jane Roe</schema:name>
+  </ex:Person>
+  <ex:Distributor rdf:about="https://example.org/procure#Initech%20Corp"/>
+  <rdf:Description rdf:about="https://example.org/procure#berlin">
+    <rdfs:label xml:lang="en">Berlin</rdfs:label>
+  </rdf:Description>
+</rdf:RDF>
