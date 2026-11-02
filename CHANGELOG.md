@@ -618,7 +618,7 @@ From 0.2.3 (or a `main` checkout since):
   a type's label and description, the patterns, and `schema_mode` where it
   changes extraction (`strict`, or `off` once relationship types are
   declared). An IRI, `off` against `align` with entity types alone, or a
-  string item rewritten as the same mapping re-extracts nothing (#PR).
+  string item rewritten as the same mapping re-extracts nothing (#482).
 - Schema sources: `schema_source.kind: file` reads the schema keys from a
   local YAML or JSON file at start-up, keyed by its content, not its path,
   and `@register_schema_source` (exported from `unified_kg_rag` with
@@ -670,7 +670,7 @@ From 0.2.3 (or a `main` checkout since):
   without a model call: it rewrites the annotations of every stored entity
   and relationship of the index suffix, every scope's, from their stored
   types, records what it wrote with the scope's extraction settings and
-  logs the counts, so the stores hold what a full build writes (#PR).
+  logs the counts, so the stores hold what a full build writes (#482).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
