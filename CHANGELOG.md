@@ -616,9 +616,16 @@ From 0.2.3 (or a `main` checkout since):
   defaults they change no cache key, extraction record or recorded
   extraction settings (#475).
 - Schema sources: `schema_source.kind: file` reads the schema keys from a
-  YAML or JSON file at start-up, keyed by its content, not its path, and
-  `@register_schema_source` (`adapters/schema_sources/`) adds a source for
-  another format or service (#475).
+  local YAML or JSON file at start-up, keyed by its content, not its path,
+  and `@register_schema_source` (exported from `unified_kg_rag` with
+  `SchemaSourceContext`, `SchemaDocument` and `SchemaSourceError`) adds a
+  source for another format or service. A loader gets the source settings
+  (`path`, `options` for its own settings and `secret_arn`, neither keyed),
+  the run's config and its AWS session, built only when asked for; logs
+  and errors show a URL path without userinfo or query. Ingestion,
+  evaluation and prompt tuning load the source, and reading the schema of
+  a config whose source is not loaded raises `ConfigurationError` instead
+  of using the default schema (#475, #PR).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
@@ -652,8 +659,10 @@ From 0.2.3 (or a `main` checkout since):
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
   counts) and patterns only where every endpoint-type pair of a type is
-  seen at least twice. It names `schema_mode: align`, and a fixed model
-  gives the same file (#478).
+  seen at least twice. The examples are extracted with the profile's
+  entity types, or with the configured schema when the config declares
+  one (a schema source it cannot load exits 2). It names `schema_mode:
+  align`, and a fixed model gives the same file (#478, #PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
