@@ -29,6 +29,10 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     record_key,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_RECORD_FINGERPRINT,
+    is_seed_unit,
+)
 from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
@@ -69,7 +73,8 @@ def with_record_keys(
     and, when the run extracted ``claims``, its claims record unless it is
     in ``claims_failed`` too. The keys follow from the record's settings and
     the unit's text (``ExtractionStore.key``), so they are the ones the
-    extraction stages stored the records under.
+    extraction stages stored the records under. A seed graph's unit names
+    its graph record only, under the seed fingerprint (it has no claims).
     """
     gleaned = {r.text_unit_id: r.gleaned for r in records}
     # The fingerprint depends only on the settings: one per (gleaned, claims).
@@ -86,7 +91,10 @@ def with_record_keys(
     keyed: list[TextUnit] = []
     for unit in units:
         keys: dict[str, str] = {}
-        if unit.id in gleaned and unit.id not in graph_failed:
+        if is_seed_unit(unit.id):
+            if unit.id in gleaned and unit.id not in graph_failed:
+                keys["graph"] = record_key(SEED_RECORD_FINGERPRINT, unit.text)
+        elif unit.id in gleaned and unit.id not in graph_failed:
             text = processed_text(config, unit)
             keys["graph"] = record_key(fingerprint(gleaned[unit.id], False), text)
             if claims and unit.id not in claims_failed:

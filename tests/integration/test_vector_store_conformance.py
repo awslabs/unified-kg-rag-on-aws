@@ -494,6 +494,27 @@ def test_vector_copy_reads_hold_the_seed_graph_fields(harness: StoreHarness) -> 
     assert "source_kinds" not in copies["r-supplies"]
 
 
+@pytest.mark.parametrize("mode", ["index", "upsert"])
+def test_a_seed_graph_unit_is_stored_with_its_source_kind(
+    harness: StoreHarness, mode: str
+) -> None:
+    # The top-level keyword a text search leaves seed units out by; a
+    # document's unit is written without it, as before seed graphs.
+    seed = TextUnit(
+        id="sg-00000000-0000-0000-0000-000000000001",
+        text='{"id":"v1","kind":"node","name":"Vendor"}',
+    )
+    _write(harness, "text_units", mode, [*_text_units(), seed])
+    found = harness.vector_indexer.find_documents(
+        harness.config.indexing.opensearch.text_units_index_prefix,
+        "source_kind",
+        ["seed_graph"],
+        "default",
+    )
+    assert set(found) == {seed.id}
+    assert harness.stored_ids("text_units") == {"t1", "t2", seed.id}
+
+
 def test_schema_annotations_are_listed_and_rewritten_in_place(
     harness: StoreHarness,
 ) -> None:

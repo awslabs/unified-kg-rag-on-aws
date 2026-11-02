@@ -23,6 +23,7 @@ from unified_kg_rag.application.bootstrap import (
     CheckpointSync,
     build_checkpoint_sync,
     build_providers,
+    load_seed_graphs,
     resolve_extraction_schema,
 )
 from unified_kg_rag.application.ingestion.cache_manager import (
@@ -303,6 +304,8 @@ class DataIngestionPipeline:
     # (application.bootstrap.load_seed_graphs): part of its corpus, so their
     # content is folded into the corpus fingerprint. None imported yet.
     seed_conversions: tuple[SeedConversion, ...] = ()
+    # Asks the questions a run needs answered (see __init__'s confirm).
+    _confirm: Callable[[str], bool] | None = None
     # The id of the latest run, once resolved (the CLI reports it on a stop).
     pipeline_id: str | None = None
 
@@ -330,6 +333,7 @@ class DataIngestionPipeline:
         doc_status: DocStatusPort | None = None,
         vector_indexer: VectorIndexer | None = None,
         graph_indexer: GraphIndexer | None = None,
+        confirm: Callable[[str], bool] | None = None,
     ) -> None:
         """Build the stages; every backend may be injected.
 
@@ -343,17 +347,28 @@ class DataIngestionPipeline:
                 incremental indexing on, as on ``Providers``). Set them on
                 ``providers`` instead when passing one. The caller owns the
                 indexers given here: the pipeline never closes them.
+            confirm: Asks a yes/no question a run needs answered, today only
+                a reset that drops another source scope's seed graph
+                documents (the CLI asks on the terminal, ``--yes`` answers).
+                ``None`` cannot ask, so such a run fails.
 
         Raises:
             ValueError: ``providers`` and one of the shorthand components are
                 both given.
             SchemaSourceError: The extraction schema source cannot be loaded.
+            SeedGraphError: A seed graph cannot be imported.
         """
         # Loaded once: every stage reads the schema from the inline keys. A
         # source's AWS calls use the run's session.
         config = resolve_extraction_schema(
             config, providers=providers, boto_session=boto_session
         )
+        # Against that schema, before any model is built or called: a seed
+        # that cannot be imported fails here.
+        self.seed_conversions = tuple(
+            load_seed_graphs(config, providers, boto_session=boto_session)
+        )
+        self._confirm = confirm
         self.config = config
         # The write lease of the latest run (see _namespace_lease).
         self._lease: NamespaceLease | None = None
@@ -483,6 +498,8 @@ class DataIngestionPipeline:
             PipelineStageType.DOCUMENT_LOADING: {
                 "source_directory": self.source_directory,
                 "doc_status": doc_status,
+                "seed_conversions": self.seed_conversions,
+                "confirm": self._confirm,
             },
             # --force-rebuild re-extracts every unit (and refreshes the
             # extraction store) instead of reusing the stored records.
@@ -1101,6 +1118,8 @@ class DataIngestionPipeline:
                     providers=self.providers,
                     source_directory=source_directory,
                     doc_status=stage._doc_status,
+                    seed_conversions=stage.seed_conversions,
+                    confirm=stage.confirm,
                 )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:
