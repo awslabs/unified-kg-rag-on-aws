@@ -25,6 +25,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 from unified_kg_rag.adapters.storage.filter_schema import (
     LATE_MAPPED_FIELDS,
     SOURCE_KINDS_FIELD,
+    TEXT_UNIT_KIND_FIELD,
     FilterFields,
     IndexLimits,
     check_filter_values,
@@ -35,7 +36,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
-from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    SEED_SOURCE_KIND,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -211,6 +215,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         )
         # Aliases whose indices were checked to hold this model's embeddings.
         self._embedding_checked_aliases: set[str] = set()
+        # Text-unit aliases every index of which maps the source_kind of seed
+        # units, as their mappings read (_excludes_seed_units).
+        self._unit_kind_mapped: set[str] = set()
         # Whether skipping the check for want of permission was logged.
         self._embedding_check_denied_logged = False
         self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
@@ -357,8 +364,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 seedless = await self._seedless_prefixes(
                     asked, search_type, index_prefixes, query_vector
                 )
+                no_seed_units = await self._excludes_seed_units(
+                    asked, search_type, index_prefixes, query_vector
+                )
                 search_tasks = self._create_search_tasks(
-                    asked, search_type, index_prefixes, query_vector, limits, seedless
+                    asked,
+                    search_type,
+                    index_prefixes,
+                    query_vector,
+                    limits,
+                    seedless,
+                    no_seed_units=no_seed_units,
                 )
 
                 if not search_tasks:
@@ -478,10 +494,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         query_vector: list[float] | None,
         limits: dict[str, IndexLimits],
         seedless: Collection[str] = (),
+        *,
+        no_seed_units: bool = False,
     ) -> list[Coroutine[Any, Any, list[RetrievalResult]]]:
         """One search per index, each with the filters that index declares,
         sized by the index's ``limits`` (``seedless``: see
-        :meth:`_filters_for_index`)."""
+        :meth:`_filters_for_index`); with ``no_seed_units`` the text-units
+        search leaves the seed graphs' units out (``_excludes_seed_units``)."""
+        text_units = self._opensearch_config.text_units_index_prefix
         search_tasks = []
         for prefix in index_prefixes:
             mapping = self._field_mappings.get(prefix)
@@ -503,6 +523,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                         "filters": self._filters_for_index(
                             prefix, query.filters, seedless=prefix in seedless
                         )
+                    }
+                )
+            if no_seed_units and prefix == text_units:
+                # Beside the caller's exclusions, in the kNN filter as well:
+                # efficient filtering, so seed units take none of the k.
+                index_query = index_query.model_copy(
+                    update={
+                        "exclude": {
+                            **(index_query.exclude or {}),
+                            TEXT_UNIT_KIND_FIELD: SEED_SOURCE_KIND,
+                        }
                     }
                 )
 
@@ -537,6 +568,48 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
 
         return search_tasks
+
+    async def _excludes_seed_units(
+        self,
+        query: SearchQuery,
+        search_type: SearchType,
+        index_prefixes: list[str],
+        query_vector: list[float] | None,
+    ) -> bool:
+        """Whether the text-units search of ``query`` leaves the seed graphs'
+        units out (a ``must_not`` on their ``source_kind``).
+
+        A seed unit is stored for its lineage, never retrieved as a text
+        chunk, so every text search excludes them, a fetch by id included;
+        an ids-only check (``source_fields=[]``, a filter check of the
+        units an item cites) returns no text and is left as is. A document's
+        unit lacks the field, so it is never excluded. OpenSearch 2.13
+        refuses a kNN filter on a field the index does not map (a 400,
+        "Rewrite first"), and an index built before the field lacks it until
+        an ingestion run maps it: unless the alias's mappings showed the
+        field (``_unit_kind_mapped``; they were not read, could not be, or
+        lack it), a kNN search excludes them only when a size-1 probe finds
+        a unit holding the field, kept for the query (``_probe``). An index
+        none of whose units holds it has none to exclude; a failed probe
+        excludes them (the search reports its own failure).
+        """
+        prefix = self._opensearch_config.text_units_index_prefix
+        if prefix not in index_prefixes or query.source_fields == []:
+            return False
+        alias = self._get_name(prefix, query.suffix)
+        if (
+            query_vector is None
+            or search_type == SearchType.LEXICAL
+            or alias in self._unit_kind_mapped
+        ):
+            return True
+        probe = {
+            "size": 1,
+            "query": {"exists": {"field": TEXT_UNIT_KIND_FIELD}},
+            "_source": False,
+        }
+        found = await self._probe(alias, probe)
+        return isinstance(found, Exception) or bool(found)
 
     async def _seedless_prefixes(
         self,
@@ -760,6 +833,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         ]
         if not aliases:
             return
+        text_units = self._get_name(
+            self._opensearch_config.text_units_index_prefix, suffix
+        )
         for alias, mappings in zip(
             aliases,
             await gather_or_cancel(self._index_mappings(alias) for alias in aliases),
@@ -769,6 +845,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 continue
             for index_name, index_mappings in mappings.items():
                 self._raise_on_embedding_mismatch(index_name, index_mappings)
+            if alias == text_units and all(
+                TEXT_UNIT_KIND_FIELD in (index_mappings.get("properties") or {})
+                for index_mappings in mappings.values()
+            ):
+                self._unit_kind_mapped.add(alias)
             self._embedding_checked_aliases.add(alias)
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:

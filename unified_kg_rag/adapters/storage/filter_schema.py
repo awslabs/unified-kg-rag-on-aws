@@ -367,10 +367,13 @@ SCHEMA_ANNOTATION_FIELDS = frozenset({"in_schema", "type_iri", "predicate_iri"})
 SEED_GRAPH_FIELDS = frozenset({"iri", SOURCE_KINDS_FIELD})
 LATE_MAPPED_FIELDS = SCHEMA_ANNOTATION_FIELDS | SEED_GRAPH_FIELDS
 
-# Fields an index maps that are no filter key: the ``source_kind`` of a seed
-# graph's text units, which the retriever itself keeps out of text searches.
+# The keyword a seed graph's text units hold (``seed_graph``; a document's
+# units lack it), by which the retriever itself keeps them out of every text
+# search: it is no filter key.
+TEXT_UNIT_KIND_FIELD = "source_kind"
+# Fields an index maps that are no filter key.
 UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
-    "text_units": frozenset({"source_kind"}),
+    "text_units": frozenset({TEXT_UNIT_KIND_FIELD}),
 }
 
 

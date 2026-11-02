@@ -40,6 +40,18 @@ from unified_kg_rag.shared.logging import warn_once
 
 logger = get_logger(__name__)
 
+# The vertex properties a traversal row projects (the shape
+# ``GraphExpansionRetriever`` reads).
+_PROJECTED_PROPERTIES = (
+    "id",
+    "name",
+    "description",
+    "rank",
+    "text_unit_ids",
+    "iri",
+    SOURCE_KINDS_FIELD,
+)
+
 
 class NeptuneRetriever(GraphExpansionRetriever):
     """Graph expansion from seed entities over Neptune (Gremlin).
@@ -430,7 +442,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
             keys.append("vertex_id")
         projected = (
             traversal.project(*keys)
-            .by(__.value_map("id", "name", "description", "rank", "text_unit_ids"))
+            # A seed graph's iri and source_kinds, for the source's
+            # provenance: absent from a vertex no seed graph states.
+            .by(__.value_map(*_PROJECTED_PROPERTIES))
             .by(__.path().by(__.value_map("name")))
             .by(__.label())
         )

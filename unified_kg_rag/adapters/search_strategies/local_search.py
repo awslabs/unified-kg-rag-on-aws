@@ -384,6 +384,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # score each chunk by (number of referencing entities, best referencing
         # entity score) and return ids in descending order, so downstream
         # truncation keeps the chunks with the most graph support.
+        #
+        # A seed graph's units are no text chunks (the retriever leaves them
+        # out of every text search too): they take no slot of the quota.
         hit_count: dict[str, int] = {}
         best_score: dict[str, float] = {}
         for node in entity_nodes:
@@ -395,6 +398,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
             score = node.score
             for raw_id in ids:
                 unit_id = str(raw_id)
+                if is_seed_unit(unit_id):
+                    continue
                 hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
                 if score > best_score.get(unit_id, float("-inf")):
                     best_score[unit_id] = score

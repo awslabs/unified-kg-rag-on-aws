@@ -23,6 +23,11 @@ from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
+    RAGInput,
+    RAGOutput,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
     is_seed_document,
@@ -35,6 +40,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
+    SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import SeedGraphConfig
 
@@ -369,3 +375,95 @@ def test_a_reset_asks_before_it_drops_another_scopes_seed(tmp_path: Path) -> Non
     assert len(asked) == 1 and question in asked[0]
     assert seeded.registry() == {"contract.txt": DocStatus.PROCESSED}
     assert seeded.graph_names() == {"Vendor", "Buyer"}
+
+
+SEED_ONLY = SEED_NAMES - {"Vendor"}
+
+
+def _sources_named(out: RAGOutput, names: set[str]) -> list[dict[str, Any]]:
+    return [
+        source
+        for source in out.sources
+        if source["metadata"].get("name") in names
+        or source["metadata"].get("target_name") in names
+        or source["metadata"].get("source_name") in names
+    ]
+
+
+def _assert_no_seed_text(out: RAGOutput, strategy: SearchStrategy) -> None:
+    """No seed unit reached a TEXT section, its sources or the answer prompt."""
+    for result in out.search_results.results:
+        if result.retriever_type == "text":
+            assert not str(result.source).startswith("sg-"), strategy
+            assert '"kind":' not in result.content, strategy
+    for source in out.sources:
+        if source["metadata"].get("section_type") == "text":
+            assert not str(source["source"]).startswith("sg-"), strategy
+
+
+def test_seed_facts_are_retrieved_and_cited_but_never_as_text(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    harness.ok()
+    assert harness.seed_units()
+    chain = GraphRAGChain(harness.config, providers=harness.providers)
+    asked = len(harness.server.prompts)
+    try:
+        # Every strategy: seed units are stored but never a text chunk.
+        for strategy in SearchStrategy:
+            out = _ask(chain, strategy)
+            assert out.answer == e2e.ANSWER, strategy
+            _assert_no_seed_text(out, strategy)
+
+        # "Harbor Port" is only a seed edge away from Vendor: local search
+        # reaches it through the graph and mix through the relationship
+        # index; either cites the seed as its provenance, with no chunk.
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            out = _ask(chain, strategy)
+            cited = _sources_named(out, SEED_ONLY)
+            assert cited, strategy
+            named: set[str] = set()
+            for source in cited:
+                provenance = source["metadata"]["provenance"]
+                assert provenance["kind"] == "seed_graph", strategy
+                assert source["metadata"]["chunk_id"] is None, strategy
+                # The graph's name where the store keeps the document
+                # filters (the vector indices, not graph vertices).
+                assert provenance["seed_graphs"] in ([], ["procure"]), strategy
+                named.update(provenance["seed_graphs"])
+            assert named == {"procure"}, strategy
+            (vendor,) = [
+                s for s in out.sources if s["metadata"].get("name") == "Vendor"
+            ]
+            assert vendor["metadata"]["provenance"]["kind"] == "document+seed_graph"
+            assert vendor["metadata"]["provenance"]["iri"] == "urn:x:v"
+            # A document's source is reported as before seed graphs.
+            for source in out.sources:
+                if source["metadata"].get("name") in {"Buyer", "Depot"}:
+                    assert "provenance" not in source["metadata"]
+
+        # source_kinds: document keeps what documents state only.
+        out = chain.invoke(
+            RAGInput(
+                query="Who stores the gadgets for Vendor?",
+                search_strategy=SearchStrategy.LOCAL,
+                filters={"source_kinds": "document"},
+            )
+        )
+        assert out.sources
+        assert _sources_named(out, SEED_ONLY) == []
+        _assert_no_seed_text(out, SearchStrategy.LOCAL)
+    finally:
+        chain.close()
+    # The answer prompts held no seed statement either.
+    assert len(harness.server.prompts) > asked
+    harness.assert_no_seed_text_prompted()
+
+
+def _ask(chain: GraphRAGChain, strategy: SearchStrategy) -> RAGOutput:
+    out = chain.invoke(
+        RAGInput(query="Where does Vendor ship from?", search_strategy=strategy)
+    )
+    assert isinstance(out, RAGOutput), strategy
+    return out

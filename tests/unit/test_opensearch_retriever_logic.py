@@ -39,6 +39,7 @@ def retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_window_cut_warned", set())
     object.__setattr__(inst, "_configured_limits", IndexLimits())
     object.__setattr__(inst, "_index_limits", {})
+    object.__setattr__(inst, "_unit_kind_mapped", set())
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
     object.__setattr__(
         inst, "_index_filter_fields", inst._initialize_index_filter_fields()
@@ -683,6 +684,8 @@ async def test_hybrid_fuses_the_two_searches_client_side(
         OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
     )
     mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    # Its mappings map the seed units' kind: no probe before the searches.
+    retriever._unit_kind_mapped.add(retriever._get_name(prefix, None))
     results = await retriever.aretrieve(
         SearchQuery(query="x", top_k=3, index_prefixes=[prefix])
     )

@@ -80,8 +80,16 @@ _SCHEMA = (
 BATCH_SIZE = 400
 
 # The vertex properties a traversal row projects (NeptuneRetriever's
-# ``value_map``).
-_NODE_KEYS = ("id", "name", "description", "rank", "text_unit_ids")
+# ``value_map``): the seed-graph fields only where a vertex holds them.
+_NODE_KEYS = (
+    "id",
+    "name",
+    "description",
+    "rank",
+    "text_unit_ids",
+    "iri",
+    "source_kinds",
+)
 
 # A vertex filter for a traversal: its stored valueMap -> kept.
 VertexFilter = Callable[[dict[str, Any]], bool]
