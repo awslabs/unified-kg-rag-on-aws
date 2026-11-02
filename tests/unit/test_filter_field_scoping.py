@@ -1167,6 +1167,110 @@ async def test_a_stream_refuses_an_explicit_strategys_key_before_any_model_call(
             pass
 
 
+_IRI_SCHEMA: dict[str, Any] = {
+    "entity_types": [{"label": "ORGANIZATION", "iri": "https://ex.org/Org"}],
+    "relationship_types": [{"label": "SUPPLIES", "iri": "https://ex.org/sup"}],
+}
+_SCHEMA_FILTERS = {
+    "in_schema": True,
+    "type_iri": "https://ex.org/Org",
+    "predicate_iri": "https://ex.org/sup",
+}
+
+
+def _schema_config(**extraction: Any) -> Config:
+    return Config.model_validate({"processing": {"graph_extraction": extraction}})
+
+
+@pytest.mark.parametrize(
+    ("extraction", "written"),
+    [
+        # The defaults: align with entity types alone writes nothing.
+        pytest.param({}, set(), id="default"),
+        pytest.param({"schema_mode": "off", **_IRI_SCHEMA}, set(), id="off"),
+        # Every relationship strict kept is in schema, so in_schema applies
+        # to both kinds; no IRI is declared.
+        pytest.param(
+            {"schema_mode": "strict", "entity_types": ["ORGANIZATION"]},
+            {"in_schema"},
+            id="strict-entity-types-alone",
+        ),
+        pytest.param(
+            {"entity_types": [_IRI_SCHEMA["entity_types"][0]]},
+            {"type_iri"},
+            id="align-entity-iri",
+        ),
+        pytest.param(
+            {"schema_mode": "align", **_IRI_SCHEMA},
+            {"in_schema", "type_iri", "predicate_iri"},
+            id="align-iris",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "strategy", ["local", "mix", "hybrid", "drift", "simple", "auto"]
+)
+def test_a_schema_filter_the_schema_never_writes_is_refused(
+    extraction: dict[str, Any], written: set[str], strategy: str
+) -> None:
+    # Every index declares the annotation fields, so a filter on one the
+    # configured schema writes on no item passed the key check and emptied
+    # each stream reading that index: all relationships under in_schema:
+    # true with strict entity types alone, every entity under a type_iri no
+    # type declares.
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(_schema_config(**extraction))
+    for key, value in _SCHEMA_FILTERS.items():
+        if key in written:
+            chain.check_filter_keys({key: value}, SearchStrategy(strategy))
+            continue
+        with pytest.raises(InvalidFilterError, match=f"Filter key\\(s\\) {key}: "):
+            chain.check_filter_keys({key: value}, SearchStrategy(strategy))
+
+
+@pytest.mark.parametrize("strategy", ["local", "mix", "auto"])
+async def test_a_schema_filter_is_refused_before_any_model_call(
+    config: Config, strategy: str
+) -> None:
+    chain = _strategy_chain(config)
+
+    async def no_model_calls(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the query ran past the filter check")
+
+    chain._ainvoke = no_model_calls  # type: ignore[method-assign]
+    chain._screen_input = no_model_calls  # type: ignore[method-assign]
+    message = "schema_mode align\\) stores no such field .*\\(in_schema is stored"
+    with pytest.raises(InvalidFilterError, match=message):
+        await chain.ainvoke(
+            {"query": "q", "search_strategy": strategy, "filters": {"in_schema": True}}
+        )
+    with pytest.raises(InvalidFilterError, match=message):
+        async for _ in chain.astream(
+            {"query": "q", "search_strategy": strategy, "filters": {"in_schema": True}}
+        ):
+            pass
+
+
+def test_a_schema_filter_reads_the_schema_source(tmp_path: Any, caplog) -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    path = tmp_path / "schema.yaml"
+    path.write_text('relationship_types: ["SUPPLIES"]\n', encoding="utf-8")
+    source = {"schema_source": {"kind": "file", "path": str(path)}}
+    chain = _strategy_chain(_schema_config(**source))
+    chain.check_filter_keys({"in_schema": True}, SearchStrategy.LOCAL)
+    with pytest.raises(InvalidFilterError, match="type_iri"):
+        chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
+    # A source that cannot be read leaves the keys unchecked, logged once.
+    path.unlink()
+    chain = _strategy_chain(_schema_config(**source))
+    for _ in range(2):
+        chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
+    warnings = [r for r in caplog.records if "Not checking schema filter" in r.message]
+    assert len(warnings) == 1
+
+
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
     import json
 

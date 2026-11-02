@@ -35,7 +35,7 @@ from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
-from tests.fixtures.store_backends import local_store_config
+from tests.fixtures.store_backends import clear_extraction_records, local_store_config
 from tests.integration.test_incremental_source_scopes import (
     A_TEXT,
     B_TEXT,
@@ -427,6 +427,7 @@ def test_two_source_scopes_with_the_same_relative_path_keep_their_content(
     finally:
         graph.clear([_SUFFIX])
         vectors.clear([_SUFFIX])
+        clear_extraction_records(vectors, [_SUFFIX])
         graph.close()
         vectors.close()
 
@@ -533,6 +534,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         vectors = providers.build_vector_indexer()
         graph.clear([_SUFFIX])
         vectors.clear([_SUFFIX])
+        clear_extraction_records(vectors, [_SUFFIX])
         graph.close()
         vectors.close()
 

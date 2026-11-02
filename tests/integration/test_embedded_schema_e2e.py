@@ -8,17 +8,21 @@ type and a reversed pattern, and gleaning proposes an entity of an
 undeclared type. The full ingest stores only what the schema allows, under
 the declared labels; an incremental run (a document added, one changed, one
 deleted) leaves the graph a fresh full build of the final corpus produces.
+The schema filter test also runs on the local containers (``LOCAL_STORES=1``).
 """
 
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.store_backends import clear_extraction_records, local_store_config
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401
@@ -26,6 +30,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 from unified_kg_rag.domain.models import Config, PipelineStageStatus, SearchStrategy
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = pytest.mark.integration
 
@@ -360,3 +365,75 @@ def test_align_with_entity_types_alone_stores_declared_iris_only(
         name: iri for name, (_, iri) in stored.items()
     }
     assert not any("in_schema" in source for source in by_name.values())
+
+
+def _on_containers(config: Config) -> None:
+    """``config`` on the Gremlin and OpenSearch containers, in a namespace of
+    its own."""
+    local = local_store_config()
+    config.providers.graph.kind = "gremlin"
+    config.providers.vector.kind = "opensearch"
+    config.aws.opensearch = local.aws.opensearch
+    config.aws.neptune = local.aws.neptune
+    config.indexing.neptune.vertex_ids = local.indexing.neptune.vertex_ids
+    config.indexing.additional_suffix = f"sf{uuid.uuid4().hex[:8]}"
+
+
+@pytest.mark.parametrize("stores", ["embedded", "container"])
+def test_schema_filters_never_empty_a_stream_silently(
+    tmp_path: Path, no_aws, stores: str  # noqa: F811
+) -> None:
+    # strict with entity types alone: relationships had no in_schema, so
+    # in_schema: true dropped every relationship (mix, hybrid, local, drift,
+    # auto); and no type declares an IRI, so an IRI filter emptied its kind.
+    if stores == "container" and os.getenv("LOCAL_STORES") != "1":
+        pytest.skip("set LOCAL_STORES=1 with docker/compose.local.yaml running")
+
+    def entity_types_only(config: Config) -> None:
+        extraction = config.processing.graph_extraction
+        extraction.relationship_patterns = []
+        extraction.relationship_types = []
+        if stores == "container":
+            _on_containers(config)
+
+    config, providers, _, _ = _run(tmp_path, stores, FIRST, change=entity_types_only)
+    rag = GraphRAGChain(config, providers=providers)
+
+    def relationships(strategy: SearchStrategy, filters: dict | None) -> list:
+        results = rag.search(
+            RAGInput(
+                query="Who supplies Buyer?", search_strategy=strategy, filters=filters
+            )
+        ).search_results.results
+        return [r for r in results if r.retriever_type == "relationship"]
+
+    try:
+        for strategy in (
+            SearchStrategy.LOCAL,
+            SearchStrategy.MIX,
+            SearchStrategy.HYBRID,
+            SearchStrategy.DRIFT,
+            SearchStrategy.AUTO,
+        ):
+            unfiltered = relationships(strategy, None)
+            in_schema = relationships(strategy, {"in_schema": True})
+            assert unfiltered, strategy
+            # Every relationship strict kept is in schema.
+            assert len(in_schema) == len(unfiltered), strategy
+            assert all(r.metadata.get("in_schema") is True for r in in_schema)
+            assert relationships(strategy, {"in_schema": False}) == [], strategy
+            for key in ("type_iri", "predicate_iri"):
+                with pytest.raises(InvalidFilterError, match=key):
+                    relationships(strategy, {key: "https://example.org/onto#x"})
+    finally:
+        rag.close()
+        if stores == "container":
+            graph = providers.build_graph_indexer()
+            vectors = providers.build_vector_indexer()
+            try:
+                graph.clear(["default"])
+                vectors.clear(["default"])
+                clear_extraction_records(vectors, ["default"])
+            finally:
+                graph.close()
+                vectors.close()

@@ -1838,22 +1838,36 @@ processing:
   entity stated twice as `VENDOR` and once as `ORGANIZATION` stays a
   `vendor`.
 - Drops are not failures: a text unit whose items were all dropped is
-  extracted (with nothing), counts as a success and is not retried. Claims
-  are not checked.
+  extracted (with nothing), counts as a success and is not retried.
+- Claims are not checked against the schema, but a claim's subject must be
+  an entity its text unit states: under `strict`, a claim about an entity
+  dropped as off schema in that unit is dropped with it. An object outside
+  the graph is kept as the claim's literal value, as without a schema.
 - The graph extraction stage reports `entities_off_schema`,
   `entities_dropped_off_schema`, `relationships_off_schema`,
   `relationships_dropped_off_schema`,
   `relationships_dropped_off_schema_endpoint`, `relationships_off_pattern`
-  and `relationships_dropped_off_pattern` in its `extraction_stats`, and the
-  gleaning stage its strict drops in `gleaning_stats`; each logs one summary
-  line. The off-schema labels themselves are logged at DEBUG only.
+  and `relationships_dropped_off_pattern` in its `extraction_stats`. The
+  gleaning stage reports the same counters for what gleaning proposes in
+  its `gleaning_stats` (kept and counted under `align`, dropped under
+  `strict`), with `corrections_ignored_off_schema`. Both are in the stage
+  metrics of `<cache directory>/<pipeline_id>/pipeline_metadata.json`, and
+  each stage logs one summary line; the off-schema labels themselves are
+  logged at DEBUG only.
+- A relationship of an undeclared type is counted in
+  `relationships_off_schema` whatever its endpoints, so the count is the
+  same under `align` and `strict`. Each strict drop is counted once: an
+  undeclared type first, then an endpoint dropped as off schema
+  (`relationships_dropped_off_schema_endpoint`), then a pattern. The counters
+  count statements per text unit; an `in_schema: false` listing shows the
+  merged items, one per entity or relationship.
 
 **What is stored.** Indexing writes these fields on entities and
 relationships, in the graph and the vector stores:
 
 | Field | On | Value | Written |
 |---|---|---|---|
-| `in_schema` | entities, relationships | whether the stored type is a declared type of that kind (an empty type is not) | under `strict`, and under `align` once relationship types are declared; per kind, only when that kind has declared types |
+| `in_schema` | entities, relationships | whether the stored type is a declared type of that kind (an empty type is not); `true` for every item of a kind with no declared type (nothing of it is off schema) | under `strict`, and under `align` once relationship types are declared, on both kinds |
 | `type_iri` | entities | the `iri` of the declared entity type the stored type names | whenever such a type has an `iri` and the mode is not `off`, with entity types alone too |
 | `predicate_iri` | relationships | the `iri` of the declared relationship type | as `type_iri` |
 
@@ -1862,7 +1876,7 @@ relationships, in the graph and the vector stores:
   pattern is not stored: it depends on the endpoints' types, which other
   documents can change.
 - An entity named only as a relationship endpoint has no type and is off
-  schema, under `strict` too.
+  schema when entity types are declared, under `strict` too.
 - A field that does not apply is not written at all, so a config without
   relationship types or IRIs (the default included) stores exactly what it
   stored before these fields existed. Ids never change because of them.
@@ -1880,15 +1894,26 @@ RAGInput(query="...", search_strategy="mix",
 The first returns only off-schema entities (and, with `mix`, `hybrid`,
 `local` or `drift`, off-schema relationships): the review list of what
 `align` kept outside the schema. An item stored without the field matches
-no value of it.
+no value of it, and so does an index built before the field existed (until
+an ingestion run maps it; no query fails for it).
+
+A filter on a field the configured schema writes on no item is refused
+before any model call (`InvalidFilterError`), as it could only empty the
+results: `in_schema` under `off` or under `align` with entity types alone,
+`type_iri` when no entity type declares an `iri` (or the mode is `off`),
+`predicate_iri` likewise for relationship types. The check reads the
+query's config, its schema source included; when the source cannot be
+read, the key is not checked and a warning is logged once.
 
 **Changing the schema.** A change of a type, pattern, description, IRI or
 the mode is a change of extraction settings: an incremental run
 re-extracts its scope, which also rewrites the stored annotations, and
 moving a schema file without editing it re-extracts nothing (the content is
 keyed, not the path). Items that run does not rewrite (other index scopes)
-keep the annotations of the run that wrote them; re-run with
-`indexing.reset: true` to annotate the whole corpus. Upgrading with the
+keep the annotations of the run that wrote them, and with them what the old
+schema let through: off-schema items a newly `strict` schema drops, and
+type labels in another spelling than a newly declared type. Re-run with
+`indexing.reset: true` to apply the schema to the whole corpus. Upgrading with the
 defaults, or with entity types alone and no IRI, changes no cache key,
 extraction record or stored item; an incremental run maps the new fields on
 its live OpenSearch indices before its first write.

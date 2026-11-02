@@ -36,7 +36,8 @@ class Entity(Named, SchemaAnnotated):
     in_schema: bool | None = Field(
         default=None,
         description="Whether the entity's type is a declared entity type of the "
-        "extraction schema, set at indexing; None when no schema applies",
+        "extraction schema (any type, when it declares none), set at indexing; "
+        "None when no schema applies",
     )
     type_iri: str | None = Field(
         default=None,

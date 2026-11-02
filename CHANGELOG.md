@@ -637,9 +637,11 @@ From 0.2.3 (or a `main` checkout since):
   two endpoints of declared types (never flipped); gleaning follows the
   same rules. `align` keeps everything and counts. New counters in the
   graph extraction stage's `extraction_stats` and the gleaning stage's
-  `gleaning_stats`; drops are not failures. With the defaults, or entity
-  types alone, every cache key, extraction record and prompt is unchanged
-  (#476).
+  `gleaning_stats` (gleaning counts its off-schema additions under `align`
+  too; an undeclared relationship type counts whatever its endpoints, so
+  `relationships_off_schema` is the same in both modes); drops are not
+  failures. With the defaults, or entity types alone, every cache key,
+  extraction record and prompt is unchanged (#476, #481).
 - Schema annotations in the stores: indexing writes `in_schema` and
   `type_iri` on entities and `in_schema` and `predicate_iri` on
   relationships (Neptune and SQLite graph properties, OpenSearch and
@@ -648,13 +650,19 @@ From 0.2.3 (or a `main` checkout since):
   keys on the entities, relationships and graph stores (`filters:
   {in_schema: false}` returns the off-schema items `align` kept). A
   declared `iri` is written whenever the mode is not `off`, with entity
-  types alone too (`type_iri` then comes without `in_schema`). Under `off`,
-  with entity types alone and no `iri`, and for relationships when none are
-  declared, nothing is written and the stored documents and properties are
-  unchanged; the entities and relationships mappings gain the fields, and
-  an incremental run adds them to its live indices before its first write
-  (re-run with `indexing.reset: true` after a schema change to annotate
-  items it does not rewrite) (#477, #478).
+  types alone too (`type_iri` then comes without `in_schema`). Where
+  `in_schema` is written, both kinds get it: every item of a kind with no
+  declared type is in schema (`strict` with entity types alone no longer
+  leaves relationships without it, which emptied them under `in_schema:
+  true`). Under `off`, and with entity types alone and no `iri`, nothing is
+  written and the stored documents and properties are unchanged; the
+  entities and relationships mappings gain the fields, and an incremental
+  run adds them to its live indices before its first write (re-run with
+  `indexing.reset: true` after a schema change to annotate items it does
+  not rewrite). A filter on an annotation the configured schema writes on
+  no item raises `InvalidFilterError` before any model call, and one on an
+  OpenSearch index built before the fields were mapped matches nothing
+  instead of failing every vector and hybrid query (#477, #478, #481).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their

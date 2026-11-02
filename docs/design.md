@@ -459,8 +459,10 @@ gets its models and stores from the run's `Providers` bundle.
   of the merged type, it gives a full build and an incremental run the same
   values; pattern conformance is not stored, since it depends on endpoint
   types other documents can change. Where the schema does not apply
-  (`SchemaConformance.applies`: `off`, `align` with entity types alone) and
-  for a kind with no declared type, `in_schema` is `None`; an IRI is written
+  (`SchemaConformance.applies`: `off`, `align` with entity types alone),
+  `in_schema` is `None`; where it applies, both kinds get it, and every item
+  of a kind with no declared type is in schema (nothing of it is off schema,
+  so `in_schema: true` never empties a kind); an IRI is written
   whenever the stored type names a declared type with an `iri` and the mode
   is not `off` (so `align` with entity types alone still links them), and is
   `None` otherwise. `None` is never written: models drop it from their dumps
@@ -1365,7 +1367,12 @@ checks that its values are the defaults and each key is in the reference).
   filter schema (`adapters/storage/filter_schema.py`) declares `in_schema`
   and `type_iri` on entities and Neptune entity vertices and `in_schema` and
   `predicate_iri` on relationships, but no `type` on relationships, which
-  would empty that index under `mix` and `hybrid`.
+  would empty that index under `mix` and `hybrid`. `GraphRAGChain` refuses a
+  filter on an annotation the configured schema writes on no item
+  (`SchemaAnnotator.fields`), which could only empty the streams reading it,
+  and the OpenSearch retriever probes the annotation keys as it probes
+  `attr_*` keys, so an index built before they were mapped matches no value
+  of them instead of failing the kNN filter.
 
 ---
 

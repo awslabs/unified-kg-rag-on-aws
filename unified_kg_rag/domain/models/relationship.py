@@ -33,8 +33,8 @@ class Relationship(Identified, SchemaAnnotated):
     in_schema: bool | None = Field(
         default=None,
         description="Whether the relationship's type is a declared relationship "
-        "type of the extraction schema, set at indexing; None when no schema "
-        "applies",
+        "type of the extraction schema (any type, when it declares none), set "
+        "at indexing; None when no schema applies",
     )
     predicate_iri: str | None = Field(
         default=None,

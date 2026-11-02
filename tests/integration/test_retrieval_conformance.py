@@ -368,6 +368,73 @@ def test_schema_annotation_filters_on_entities_and_relationships(
     ]
 
 
+def _earlier_index(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    fields: tuple[str, ...],
+    items: list[Any],
+) -> None:
+    """``kind``'s index built as before the schema annotations were mapped
+    (``fields`` left out of its mapping), holding ``items``."""
+    indexer = harness.vector_indexer
+    current = getattr(indexer, f"_get_{kind}_mapping")
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        for name in fields:
+            del mapping["mappings"]["properties"][name]
+        return mapping
+
+    monkeypatch.setattr(indexer, f"_get_{kind}_mapping", earlier)
+    stats = getattr(indexer, f"index_{kind}")(items)
+    monkeypatch.undo()
+    assert stats.failed_items == 0, stats.errors
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_a_schema_filter_on_an_index_without_the_fields_matches_nothing(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    search_type: SearchType,
+) -> None:
+    # An index built before the annotations were mapped, queried before an
+    # ingestion maps them: OpenSearch 2.13 refused the kNN filter on the
+    # unmapped field (query_shard_exception), failing every vector and
+    # hybrid query; no stored item holds the field, so none matches.
+    harness.initialize()
+    _earlier_index(
+        harness, monkeypatch, "entities", ("in_schema", "type_iri"), _entities()
+    )
+    _earlier_index(
+        harness,
+        monkeypatch,
+        "relationships",
+        ("in_schema", "predicate_iri"),
+        _relationships(),
+    )
+    o = _prefixes(harness)
+    both = [o.entities_index_prefix, o.relationships_index_prefix]
+    results = _search(
+        harness,
+        *(
+            _query("widgets", both, search_type=search_type, filters=filters)
+            for filters in (
+                {"in_schema": True},
+                {"in_schema": False},
+                {"type_iri": "https://example.org/onto#Organization"},
+                {"predicate_iri": "https://example.org/onto#supplies"},
+            )
+        ),
+        _query("widgets", both, search_type=search_type),
+    )
+    assert [sorted(r.source for r in hits) for hits in results[:2]] == [[], []]
+    # An IRI applies to its kind only: the other index is searched unfiltered.
+    assert sorted(r.source for r in results[2]) == ["r-ships", "r-supplies"]
+    assert sorted(r.source for r in results[3]) == ["e-buyer", "e-depot", "e-vendor"]
+    assert len(results[4]) == 5
+
+
 def test_cli_filter_values_match_as_the_api_values(harness: StoreHarness) -> None:
     # run-rag --filters gives every value as a string; typed at the CLI they
     # select what the Python API's booleans and numbers select.

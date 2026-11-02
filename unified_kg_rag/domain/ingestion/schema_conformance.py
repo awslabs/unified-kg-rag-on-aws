@@ -229,15 +229,10 @@ class SchemaConformance:
         for rel in relationships:
             source = entity_key(rel.source_name or "")
             target = entity_key(rel.target_name or "")
-            if self.strict and {source, target} & result.off_schema_keys:
-                result.relationships_dropped_off_schema_endpoint += 1
-                logger.debug(
-                    "Dropping relationship '%s': an endpoint was dropped as off "
-                    "schema in chunk '%s'",
-                    rel.short_id,
-                    unit,
-                )
-                continue
+            # The type first, as gleaning checks a proposed relationship's
+            # type before its endpoints: an off-schema type is counted in
+            # either mode (relationships_off_schema is the same under align
+            # and strict), and each strict drop is counted once.
             if self.relationship_off_schema(rel.type):
                 result.relationships_off_schema += 1
                 result.off_schema_labels[rel.type or ""] += 1
@@ -251,6 +246,15 @@ class SchemaConformance:
                         unit,
                     )
                     continue
+            elif self.strict and {source, target} & result.off_schema_keys:
+                result.relationships_dropped_off_schema_endpoint += 1
+                logger.debug(
+                    "Dropping relationship '%s': an endpoint was dropped as off "
+                    "schema in chunk '%s'",
+                    rel.short_id,
+                    unit,
+                )
+                continue
             elif self.off_pattern(rel.type, types.get(source), types.get(target)):
                 result.relationships_off_pattern += 1
                 if self.strict:

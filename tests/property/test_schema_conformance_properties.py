@@ -101,6 +101,8 @@ def test_strict_keeps_a_subset_of_align(entities, relationships) -> None:
     # Counted alike in both modes; strict drops what it counts.
     assert strict.entities_off_schema == strict.entities_dropped_off_schema
     assert align.entities_off_schema == strict.entities_off_schema
+    assert strict.relationships_off_schema == strict.relationships_dropped_off_schema
+    assert align.relationships_off_schema == strict.relationships_off_schema
 
 
 @given(entities=_entities, relationships=_relationships)
