@@ -34,6 +34,10 @@ from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SOURCE_KINDS_FIELD,
+    encoded_source_kinds,
+)
 from unified_kg_rag.domain.models import Constants, Entity, Relationship
 from unified_kg_rag.ports.indexer import AnnotatedKind, StoredAnnotation
 from unified_kg_rag.shared import get_logger
@@ -105,7 +109,7 @@ def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
             # Not truncated: a cut IRI names another resource.
             "type_iri": entity.type_iri,
             "iri": entity.iri,
-            "source_kinds": _kinds(entity.source_kinds),
+            SOURCE_KINDS_FIELD: _kinds(entity.source_kinds),
         },
         max_length,
         whole=("type_iri", "iri"),
@@ -125,10 +129,14 @@ def relationship_properties(rel: Relationship, max_length: int) -> dict[str, Any
             "text_unit_ids": rel.text_unit_ids,
             "in_schema": rel.in_schema,
             "predicate_iri": rel.predicate_iri,
-            "source_kinds": _kinds(rel.source_kinds),
+            # The one edge encoding (seed_graph.SEED_ONLY_SOURCE_KINDS is the
+            # value a seed-only edge holds, which the neighbour reads skip).
+            SOURCE_KINDS_FIELD: (
+                encoded_source_kinds(rel.source_kinds) if rel.source_kinds else None
+            ),
         },
         max_length,
-        whole=("predicate_iri",),
+        whole=("predicate_iri", SOURCE_KINDS_FIELD),
     )
     return {
         key: json.dumps(value) if isinstance(value, list) else value
@@ -256,9 +264,9 @@ def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
     iri = _single(value_map.get("iri"))
     if isinstance(iri, str):
         fields["iri"] = iri
-    kinds = _vertex_list(value_map.get("source_kinds"))
+    kinds = _vertex_list(value_map.get(SOURCE_KINDS_FIELD))
     if kinds:
-        fields["source_kinds"] = sorted(kinds)
+        fields[SOURCE_KINDS_FIELD] = sorted(kinds)
     return Entity.model_validate(fields)
 
 
@@ -287,7 +295,7 @@ def relationship_from_edge(
         if value is not None:
             fields[key] = value
     fields.update(_annotations(value_map, "predicate_iri"))
-    kinds = _edge_list("source_kinds", _single(value_map.get("source_kinds")))
+    kinds = _edge_list(SOURCE_KINDS_FIELD, _single(value_map.get(SOURCE_KINDS_FIELD)))
     if kinds:
-        fields["source_kinds"] = sorted(kinds)
+        fields[SOURCE_KINDS_FIELD] = sorted(kinds)
     return Relationship.model_validate(fields)

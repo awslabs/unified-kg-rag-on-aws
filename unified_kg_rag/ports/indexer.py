@@ -368,14 +368,22 @@ class GraphIndexer(BaseIndexer):
         return None
 
     def read_neighbor_ids(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        *,
+        document_backed: bool = False,
     ) -> dict[str, list[str]]:
         """Return ``{entity id: ids of the entities it is related to}``.
 
         Scoped to ``suffix``'s graph. Used to recompute the rank (degree) of
-        the entities an incremental merge writes. Default returns ``{}`` (the
-        rank then counts the delta's relationships only); adapters that can
-        read the graph override it and raise when the read fails.
+        the entities an incremental merge writes, over the document-backed
+        edges only (``document_backed``): an edge whose stored
+        ``source_kinds`` is ``SEED_ONLY_SOURCE_KINDS`` (every one of its text
+        units a seed unit) is then not followed; one without the property
+        is. Default returns ``{}`` (the rank then counts the delta's
+        relationships only); adapters that can read the graph override it
+        and raise when the read fails.
         """
         return {}
 

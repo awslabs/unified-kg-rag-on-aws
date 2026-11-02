@@ -44,7 +44,10 @@ from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
-from unified_kg_rag.domain.ingestion.seed_graph import annotate_sources
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    annotate_sources,
+    is_document_backed,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -1647,6 +1650,9 @@ class IndexingManager:
             for r in stored_relationships
             if r.id in dropped_ids
         }
+        dropped_links |= self._demoted_links(
+            suffix, relationships, stored_relationships, rekey, dropped_ids
+        )
         entities, relationships = self._rank_with_stored_graph(
             suffix, entities, relationships, rekey, rewired, dropped_links
         )
@@ -1708,6 +1714,7 @@ class IndexingManager:
             [],
             [*relationships, *extra],
             self._stored_neighbors(suffix, endpoints, rekey, rewired, dropped_links),
+            counts=is_document_backed,
         )
         ranks = {r.id: r.rank for r in ranked}
         for rel in extra:
@@ -1818,7 +1825,62 @@ class IndexingManager:
             entities,
             relationships,
             self._stored_neighbors(suffix, ids, rekey, rewired, dropped_links),
+            counts=is_document_backed,
         )
+
+    def _demoted_links(
+        self,
+        suffix: str,
+        relationships: Sequence[Relationship],
+        stored_relationships: Sequence[Relationship],
+        rekey: Mapping[str, str],
+        dropped: Collection[str],
+    ) -> set[frozenset[str]]:
+        """Stored id pairs whose stored link no longer counts toward ranks.
+
+        A stored edge some document backed that ``relationships`` write as
+        seed-only (the units a strip removed were its document evidence) is
+        still stored as document-backed until it is written, so the stored
+        read counts its link. The link is left out unless another stored
+        document-backed edge, not rewritten here, joins the pair. Nothing is
+        read unless a written edge is seed-only.
+        """
+        seed_only_ids = {r.id for r in relationships if not is_document_backed(r)}
+        if not seed_only_ids:
+            return set()
+        demoted = [
+            r
+            for r in stored_relationships
+            if rekey.get(r.id, r.id) in seed_only_ids and is_document_backed(r)
+        ]
+        if not demoted:
+            return set()
+        links = {frozenset((r.source_id, r.target_id)) for r in demoted}
+        written = {r.id for r in relationships}
+
+        def left(item_id: str) -> bool:
+            # A stored edge neither rewritten (the written copy decides) nor
+            # dropped.
+            return rekey.get(item_id, item_id) not in written and item_id not in dropped
+
+        ends = sorted({i for link in links for i in link})
+        others = [
+            i
+            for i in self.neptune_indexer.find_incident_relationship_ids(
+                ends, suffix=suffix
+            )
+            if left(i)
+        ]
+        backed = {
+            frozenset((r.source_id, r.target_id))
+            for r in (
+                self.neptune_indexer.read_relationships(sorted(others), suffix=suffix)
+                if others
+                else []
+            )
+            if left(r.id) and is_document_backed(r)
+        }
+        return links - backed
 
     def _stored_neighbors(
         self,
@@ -1828,12 +1890,13 @@ class IndexingManager:
         rewired: Collection[str] = (),
         dropped_links: Collection[frozenset[str]] = (),
     ) -> dict[str, list[str]]:
-        """``read_neighbor_ids`` of ``ids``, some of which may be re-keyed
+        """``read_neighbor_ids`` of ``ids`` over the document-backed edges
+        (as ranks count them), some of which may be re-keyed
         (``rekey``: stored id -> new id), stated in the new ids, without the
         links of the ``rewired`` stored entities (the caller holds all their
         edges) or the ``dropped_links`` (stored id pairs of dropped edges)."""
         stored = self.neptune_indexer.read_neighbor_ids(
-            _with_old_ids(ids, rekey), suffix=suffix
+            _with_old_ids(ids, rekey), suffix=suffix, document_backed=True
         )
         merged: dict[str, set[str]] = defaultdict(set)
         for i, neighbors in stored.items():

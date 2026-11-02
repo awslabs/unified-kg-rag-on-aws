@@ -36,6 +36,10 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
     stored_annotation,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_ONLY_SOURCE_KINDS,
+    SOURCE_KINDS_FIELD,
+)
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
@@ -521,12 +525,25 @@ class SQLiteGraphIndexer(GraphIndexer):
         return row is not None
 
     def read_neighbor_ids(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        *,
+        document_backed: bool = False,
     ) -> dict[str, list[str]]:
-        """``{id: sorted ids of its neighbours}`` for the stored entities."""
+        """``{id: sorted ids of its neighbours}`` for the stored entities;
+        with ``document_backed``, over the edges whose ``source_kinds`` is
+        not the seed-only value (as Neptune reads them)."""
         if not entity_ids:
             return {}
         label = self._entity_label(suffix)
+        # IS NOT: an edge without the property (NULL) is document-backed.
+        backed = (
+            f"AND json_extract(props, '$.{SOURCE_KINDS_FIELD}') IS NOT ? "
+            if document_backed
+            else ""
+        )
+        kinds = [SEED_ONLY_SOURCE_KINDS] if document_backed else []
         with self.store.read("read neighbour ids") as connection:
             stored = self.store.vertex_maps(connection, label, entity_ids)
             neighbors: dict[str, set[str]] = {i: set() for i in stored}
@@ -536,11 +553,11 @@ class SQLiteGraphIndexer(GraphIndexer):
                 # the label).
                 rows = connection.execute(
                     "SELECT source_id, target_id FROM edges WHERE label = ? "
-                    f"AND source_id IN ({marks}) "
+                    f"AND source_id IN ({marks}) {backed}"
                     "UNION ALL "
                     "SELECT source_id, target_id FROM edges WHERE label = ? "
-                    f"AND target_id IN ({marks})",
-                    [label, *batch, label, *batch],
+                    f"AND target_id IN ({marks}) {backed}",
+                    [label, *batch, *kinds, label, *batch, *kinds],
                 ).fetchall()
                 for source_id, target_id in rows:
                     if source_id in neighbors:

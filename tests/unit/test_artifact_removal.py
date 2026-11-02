@@ -914,7 +914,9 @@ def test_a_rewritten_stored_edge_is_ranked_without_a_dropped_link(mocker) -> Non
     mocker.patch.object(
         graph,
         "read_neighbor_ids",
-        side_effect=lambda ids, suffix=None: {i: neighbours.get(i, []) for i in ids},
+        side_effect=lambda ids, suffix=None, **_: {
+            i: neighbours.get(i, []) for i in ids
+        },
     )
     mocker.patch.object(graph, "find_incident_relationship_ids", return_value=["r-ac"])
     stored = Relationship(

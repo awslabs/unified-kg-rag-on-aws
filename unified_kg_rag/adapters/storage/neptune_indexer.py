@@ -46,6 +46,10 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
     stored_annotation,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_ONLY_SOURCE_KINDS,
+    SOURCE_KINDS_FIELD,
+)
 from unified_kg_rag.domain.models import (
     Community,
     Config,
@@ -463,24 +467,40 @@ class NeptuneIndexer(GraphIndexer):
         return sorted({str(row) for row in rows})
 
     def read_neighbor_ids(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        *,
+        document_backed: bool = False,
     ) -> dict[str, list[str]]:
         """Read the ids of the entities each entity is related to.
 
         Scoped to this suffix's entity label (community vertices are not
-        neighbours). Raises :class:`AWSServiceError` when the read fails, as
-        :meth:`read_entities` does.
+        neighbours); with ``document_backed``, over the edges whose
+        ``source_kinds`` is not the seed-only value (an edge written without
+        the property is document-backed). Raises :class:`AWSServiceError`
+        when the read fails, as :meth:`read_entities` does.
         """
         if not entity_ids:
             return {}
         entity_label = self._label(self.neptune_config.entity_label_prefix, suffix)
+
+        def neighbors() -> GraphTraversal:
+            if not document_backed:
+                return __.both()
+            return (
+                __.bothE()
+                .not_(__.has(SOURCE_KINDS_FIELD, SEED_ONLY_SOURCE_KINDS))
+                .otherV()
+            )
+
         try:
             rows = self._read_batches(
                 entity_ids,
                 lambda g, batch: self._vertices(g, (entity_label,), batch)
                 .project("id", "neighbors")
                 .by("id")
-                .by(__.both().hasLabel(entity_label).values("id").dedup().fold()),
+                .by(neighbors().hasLabel(entity_label).values("id").dedup().fold()),
                 "read_neighbor_ids",
             )
             return {str(row["id"]): [str(n) for n in row["neighbors"]] for row in rows}

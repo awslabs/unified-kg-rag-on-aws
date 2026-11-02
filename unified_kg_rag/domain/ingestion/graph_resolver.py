@@ -26,6 +26,7 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 )
 from unified_kg_rag.domain.ingestion.seed_graph import (
     document_first,
+    is_document_backed,
     is_seed_unit,
     merged_iri,
 )
@@ -624,8 +625,9 @@ class GraphResolver:
         # A relationship re-pointed at a merged entity's id still names the
         # entity it was extracted with ("Acme" for "Acme Inc").
         sync_relationship_endpoint_names(resolved_relationships, resolved_entities)
+        # Over the document-backed edges only: a seed's edges never rank.
         resolved_entities, resolved_relationships = with_graph_ranks(
-            resolved_entities, resolved_relationships
+            resolved_entities, resolved_relationships, counts=is_document_backed
         )
 
         stats = GraphResolutionStats(

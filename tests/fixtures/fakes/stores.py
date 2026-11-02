@@ -27,6 +27,10 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     stored_annotation,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_ONLY_SOURCE_KINDS,
+    SOURCE_KINDS_FIELD,
+)
 from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
@@ -380,13 +384,22 @@ class FakeGraphStore:
         )
 
     def read_neighbor_ids(
-        self, entity_ids: list[str], suffix: str | None = None
+        self,
+        entity_ids: list[str],
+        suffix: str | None = None,
+        *,
+        document_backed: bool = False,
     ) -> dict[str, list[str]]:
         scope = suffix or Constants.DEFAULT_SUFFIX.value
         stored = {i for s, i in self.data.get("entities", {}) if s == scope}
         neighbors: dict[str, set[str]] = {i: set() for i in entity_ids if i in stored}
         for (s, _), edge in self.data.get("relationships", {}).items():
             if s != scope:
+                continue
+            # The stores' predicate: the edge's stored source kinds, as the
+            # graph codec encodes them (a list as a JSON string).
+            kinds = edge["props"].get(SOURCE_KINDS_FIELD)
+            if document_backed and kinds == SEED_ONLY_SOURCE_KINDS:
                 continue
             for a, b in (
                 (edge["source_id"], edge["target_id"]),

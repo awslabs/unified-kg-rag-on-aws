@@ -24,6 +24,10 @@ from tests.fixtures.store_backends import (
     StoreHarness,
     open_harness,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    annotate_sources,
+    seed_unit_id,
+)
 from unified_kg_rag.domain.models import Community, Entity, Relationship
 from unified_kg_rag.ports.indexer import StoredAnnotation
 from unified_kg_rag.shared import NamespaceLeaseError
@@ -333,6 +337,37 @@ def test_neighbor_incident_and_name_reads(harness: StoreHarness) -> None:
     assert sorted(graph.read_entity_names(tenant)) == [("a", "A"), ("x", "X")]
     assert graph.read_entities(["ghost"]) == []
     assert graph.read_relationships(["ghost"]) == []
+
+
+def test_document_backed_neighbor_reads(harness: StoreHarness) -> None:
+    graph = harness.graph_indexer
+    seed = seed_unit_id("seed-doc", 0)
+    graph.upsert_entities([_entity(i) for i in ("a", "b", "c", "d", "e")])
+    edges = [
+        # Seed-only: not followed.
+        _rel("a-b", "a", "b", text_unit_ids=[seed]),
+        # Document and seed evidence: followed.
+        _rel("a-c", "a", "c", text_unit_ids=["u1", seed]),
+        # No source_kinds stored (a document-only edge): followed.
+        _rel("a-d", "a", "d", text_unit_ids=["u2"]),
+        # A seed-only edge beside a document one: the pair stays linked.
+        _rel("e-b", "e", "b", text_unit_ids=[seed]),
+        _rel("b-e", "b", "e", type="PAYS", text_unit_ids=["u3"]),
+    ]
+    # As indexing annotates them: the graph codec writes source_kinds.
+    stats = graph.upsert_relationships(
+        [e.model_copy(update={"source_kinds": annotate_sources(e)}) for e in edges]
+    )
+    assert stats.failed_items == 0
+    backed = graph.read_neighbor_ids(["a", "b", "ghost"], document_backed=True)
+    assert {k: sorted(v) for k, v in backed.items()} == {"a": ["c", "d"], "b": ["e"]}
+    every = graph.read_neighbor_ids(["a", "b"])
+    assert {k: sorted(v) for k, v in every.items()} == {
+        "a": ["b", "c", "d"],
+        "b": ["a", "e"],
+    }
+    # The community walk counts every edge (Leiden clusters seeds too).
+    assert graph.count_neighbors(["a", "b"]) == {"a": 3, "b": 2}
 
 
 def test_find_ids_citing_reads_entities_and_communities_of_a_suffix(
