@@ -1905,18 +1905,31 @@ results: `in_schema` under `off` or under `align` with entity types alone,
 query's config, its schema source included; when the source cannot be
 read, the key is not checked and a warning is logged once.
 
-**Changing the schema.** A change of a type, pattern, description, IRI or
-the mode is a change of extraction settings: an incremental run
-re-extracts its scope, which also rewrites the stored annotations, and
-moving a schema file without editing it re-extracts nothing (the content is
-keyed, not the path). Items that run does not rewrite (other index scopes)
-keep the annotations of the run that wrote them, and with them what the old
-schema let through: off-schema items a newly `strict` schema drops, and
-type labels in another spelling than a newly declared type. Re-run with
-`indexing.reset: true` to apply the schema to the whole corpus. Upgrading with the
-defaults, or with entity types alone and no IRI, changes no cache key,
-extraction record or stored item; an incremental run maps the new fields on
-its live OpenSearch indices before its first write.
+**Changing the schema.** What the next incremental run does depends on
+whether the model sees the change:
+
+- **Re-extracts its scope**: a change the prompt or the schema check
+  reads. That is a type's label or description, a pattern, `strict` on or
+  off, and `off` against `align` once relationship types are declared.
+  Items of other index scopes keep what their own runs extracted (labels as
+  the model wrote them, off-schema items `strict` would drop) until those
+  scopes run again or `indexing.reset: true` rebuilds the corpus.
+- **Re-annotates only**: an IRI added, changed or removed, `off` against
+  `align` with entity types alone, or another form of the same item
+  (`"GENE: A gene"` or `{label: GENE, description: A gene}`; a pattern as a
+  string or a mapping). Nothing is extracted or embedded again. The run
+  rewrites `in_schema`, `type_iri` and `predicate_iri` of every stored
+  entity and relationship of the index suffix, of every scope, from their
+  stored types, and logs one INFO line with the counts; the stores then
+  hold what a full build writes. The registry records the annotations each
+  scope's last commit wrote, so the next run has nothing to rewrite. A
+  custom store adapter that cannot list its items is skipped with a
+  warning; `indexing.reset: true` rewrites it.
+- **Changes nothing**: moving a schema file without editing it (the content
+  is keyed, not the path). Upgrading with the defaults, or with entity
+  types written as strings and no IRI, changes no cache key, extraction
+  record or stored item; an incremental run maps the new fields on its live
+  OpenSearch indices before its first write.
 
 **Drafting a schema with prompt tuning.** `run-prompt-tuning --schema-out
 schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-prompt-tuning)):

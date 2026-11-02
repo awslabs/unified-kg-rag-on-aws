@@ -472,7 +472,14 @@ gets its models and stores from the run's `Providers` bundle.
   `in_schema` (boolean) and the IRI keyword fields, added to live indices
   by the incremental preflight (`check_index_settings` →
   `_add_missing_fields`). Ids are unchanged; the IRIs are the seam for
-  linking items to an external ontology.
+  linking items to an external ontology. A schema edit that changes only
+  the annotations (the digest, §12 "Extraction settings") is applied by
+  `IndexingManager.reannotate`: each store lists its items' annotations
+  with their types (`read_schema_annotations`; a relationship's vector copy,
+  which holds no type, takes its edge's), and only those that differ are
+  rewritten in place (`write_schema_annotations`: Neptune and the SQLite
+  graph drop and set the two properties, OpenSearch a partial update with
+  null for an unset one), so the stores end as a full build leaves them.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
   re-summarizes those over a token budget with a cheap model (map-reduce when
   one exceeds a call's input); a failed call keeps the concatenation. The
@@ -1329,7 +1336,19 @@ checks that its values are the defaults and each key is in the reference).
   holds its default). A field added to a keyed section whose default keeps
   the earlier behaviour is listed in `_KEYED_ONCE_SET`: it counts for no key
   until set otherwise, so an upgrade re-keys no stage cache or extraction
-  record. Adding a section: §15.
+  record. The schema keys count as extraction sees them
+  (`cache_keys._as_extracted`): a type by its label and description (a
+  string item as written, a mapping as the string that reads back the
+  same), a pattern by its relation and ends, `schema_mode` only where
+  `SchemaConformance.applies` would differ, never an IRI. What only
+  indexing reads of the schema (the IRIs, `off` against `align` with entity
+  types alone) is the annotation digest (`SchemaAnnotator.digest`), keyed
+  into the indexing stage and recorded with the scope's settings
+  (`ExtractionSettings.annotation_digest`, outside the fingerprint); an
+  incremental run whose digest differs from the recorded one rewrites the
+  stored annotations of its suffixes without extracting
+  (`incremental.reannotate_on_schema_change` →
+  `IndexingManager.reannotate`). Adding a section: §15.
 - **Extraction schema** (`domain/models/schema.py`). The entity and
   relationship types and the allowed patterns live inline in
   `processing.graph_extraction` (`entity_types`, `relationship_types`,

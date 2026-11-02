@@ -437,3 +437,153 @@ def test_schema_filters_never_empty_a_stream_silently(
             finally:
                 graph.close()
                 vectors.close()
+
+
+def _annotations(config: Config, providers: Providers) -> dict[str, dict]:
+    """Every stored item's schema annotations, by store, item kind and a
+    readable key (an absent annotation reads as ``None``)."""
+    graph = providers.build_graph_indexer()
+    try:
+        entities = graph.read_schema_annotations("entities") or {}
+        edges = graph.read_schema_annotations("relationships") or {}
+        names = dict(graph.read_entity_names())
+        rels = {r.id: r for r in graph.read_relationships(sorted(edges))}
+    finally:
+        graph.close()
+    prefixes = config.indexing.opensearch
+    vector = {
+        prefix: {
+            hit["_id"]: hit["_source"]
+            for hit in e2e._stored(config, providers, getattr(prefixes, prefix))
+        }
+        for prefix in ("entities_index_prefix", "relationships_index_prefix")
+    }
+
+    def edge(rel_id: str) -> tuple[str, str, str]:
+        rel = rels[rel_id]
+        return (rel.source_name or "", rel.type or "", rel.target_name or "")
+
+    return {
+        "graph entities": {names[i]: (a.in_schema, a.iri) for i, a in entities.items()},
+        "graph relationships": {
+            edge(i): (a.in_schema, a.iri) for i, a in edges.items()
+        },
+        "vector entities": {
+            doc["name"]: (doc.get("in_schema"), doc.get("type_iri"))
+            for doc in vector["entities_index_prefix"].values()
+        },
+        "vector relationships": {
+            edge(i): (doc.get("in_schema"), doc.get("predicate_iri"))
+            for i, doc in vector["relationships_index_prefix"].items()
+        },
+    }
+
+
+COMPANY_IRI = "https://example.org/onto#Company"
+STOCKS_IRI = "https://example.org/onto#stocks"
+
+
+def _annotated(config: Config) -> None:
+    extraction = config.processing.graph_extraction
+    extraction.schema_mode = "align"
+    extraction.entity_types = [
+        {"label": "ORGANIZATION", "description": "Companies", "iri": ORG_IRI},
+        "PRODUCT: Goods",
+    ]
+    extraction.relationship_types = [
+        {"label": "SUPPLIES", "description": "Sells to", "iri": SUPPLIES_IRI},
+        "STOCKS: Holds goods",
+    ]
+
+
+def _iris_and_forms_edited(config: Config) -> None:
+    # Other IRIs (one moved, one dropped, one added) and other spellings of
+    # the same items: nothing extraction sees.
+    _annotated(config)
+    extraction = config.processing.graph_extraction
+    extraction.entity_types = [
+        {"label": "ORGANIZATION", "description": "Companies", "iri": COMPANY_IRI},
+        {"label": "PRODUCT", "description": "Goods"},
+    ]
+    extraction.relationship_types = [
+        "SUPPLIES: Sells to",
+        {"label": "STOCKS", "description": "Holds goods", "iri": STOCKS_IRI},
+    ]
+    extraction.relationship_patterns = [
+        {
+            "source_type": "ORGANIZATION",
+            "relation": "SUPPLIES",
+            "target_type": "ORGANIZATION",
+        },
+        "ORGANIZATION -STOCKS-> PRODUCT",
+    ]
+
+
+def _entity_types_off(config: Config) -> None:
+    extraction = config.processing.graph_extraction
+    extraction.schema_mode = "off"
+    extraction.relationship_patterns = []
+    extraction.relationship_types = []
+    extraction.entity_types = [
+        {"label": "ORGANIZATION", "description": "Companies", "iri": ORG_IRI},
+        "PRODUCT: Goods",
+    ]
+
+
+def _entity_types_align(config: Config) -> None:
+    _entity_types_off(config)
+    config.processing.graph_extraction.schema_mode = "align"
+
+
+@pytest.mark.parametrize(
+    ("first", "edited"),
+    [
+        (_annotated, _iris_and_forms_edited),
+        (_entity_types_off, _entity_types_align),
+    ],
+    ids=["iris-and-forms", "off-to-align-entity-types"],
+)
+def test_an_edit_extraction_does_not_see_rewrites_the_annotations_without_a_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_aws,  # noqa: F811
+    first: Callable[[Config], None],
+    edited: Callable[[Config], None],
+) -> None:
+    config, providers, _, source = _run(tmp_path, "inc", FIRST, change=first)
+    before = _annotations(config, providers)
+
+    changed = _config(tmp_path / "inc" / "stores", tmp_path / "inc" / "viz", edited)
+    server = FakeOllama(_Model(), e2e.ANSWER, e2e.DIM)
+    changed_providers = e2e._providers(changed, server, e2e.FakeCrossEncoder("r"))
+    context = e2e._ingest(
+        changed, changed_providers, source, tmp_path / "inc" / "run-2"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    # Nothing extracted again, nothing embedded again.
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.is_empty
+    assert server.chat_models == []
+    assert server.embed_models == []
+    after = _annotations(changed, changed_providers)
+    assert after != before
+
+    # What a full build of the edited config stores.
+    _, full_providers, _, _ = _run(tmp_path, "full", FIRST, change=edited)
+    full_config = _config(
+        tmp_path / "full" / "stores", tmp_path / "full" / "viz", edited
+    )
+    assert after == _annotations(full_config, full_providers)
+
+    # Recorded: the next run has nothing to rewrite.
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "unified_kg_rag.application.storage.indexing_manager.IndexingManager.reannotate",
+        lambda self, suffixes: calls.append(suffixes),
+    )
+    context = e2e._ingest(
+        changed, changed_providers, source, tmp_path / "inc" / "run-3"
+    )
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls == []
+    assert server.chat_models == []

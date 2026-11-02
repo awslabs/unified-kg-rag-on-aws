@@ -31,6 +31,7 @@ from typing import Any
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.models import Constants, Entity, Relationship
+from unified_kg_rag.ports.indexer import AnnotatedKind, StoredAnnotation
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -197,6 +198,27 @@ def _annotations(value_map: Mapping[Any, Any], iri_key: str) -> dict[str, Any]:
     if isinstance(iri, str):
         fields[iri_key] = iri
     return fields
+
+
+# The IRI property of each annotated kind.
+IRI_PROPERTY: dict[AnnotatedKind, str] = {
+    "entities": "type_iri",
+    "relationships": "predicate_iri",
+}
+
+
+def stored_annotation(
+    value_map: Mapping[Any, Any], kind: AnnotatedKind, item_type: Any
+) -> StoredAnnotation:
+    """The schema annotations a vertex or edge ``valueMap()`` holds, with
+    the item's type (``read_schema_annotations``)."""
+    iri_key = IRI_PROPERTY[kind]
+    fields = _annotations(value_map, iri_key)
+    return StoredAnnotation(
+        type=None if item_type is None else str(item_type),
+        in_schema=fields.get("in_schema"),
+        iri=fields.get(iri_key),
+    )
 
 
 def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:

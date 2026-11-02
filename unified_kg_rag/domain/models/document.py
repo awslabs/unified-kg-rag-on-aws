@@ -81,6 +81,12 @@ class ExtractionSettings(BaseModel):
     values: dict[str, Any] = Field(
         default_factory=dict, description="Configuration path -> value in effect"
     )
+    annotation_digest: str | None = Field(
+        default=None,
+        description="Digest of the schema annotations indexing wrote "
+        "(SchemaAnnotator.digest): not an extraction setting, so not in the "
+        "fingerprint; None: recorded without one (none written)",
+    )
 
     @property
     def fingerprint(self) -> str:

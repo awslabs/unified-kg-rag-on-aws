@@ -19,6 +19,7 @@ import pytest
 
 from tests.fixtures.store_backends import GRAPH_BACKENDS, StoreHarness, open_harness
 from unified_kg_rag.domain.models import Community, Entity, Relationship
+from unified_kg_rag.ports.indexer import StoredAnnotation
 
 pytestmark = pytest.mark.integration
 
@@ -454,3 +455,53 @@ def test_schema_annotations_round_trip_and_an_upsert_clears_them(
     assert [(e.in_schema, e.type_iri) for e in read] == [(None, None)] * 2
     (rel,) = graph.read_relationships(["ab"])
     assert (rel.in_schema, rel.predicate_iri) == (None, None)
+
+
+def test_schema_annotations_are_listed_and_rewritten_alone(
+    harness: StoreHarness,
+) -> None:
+    graph = harness.graph_indexer
+    tenant = harness.suffix("ann")
+    iri = "https://example.org/onto#Organization"
+    graph.upsert_entities(
+        [
+            _entity("a", type="organization", in_schema=True, type_iri=iri),
+            _entity("b", type="vendor", description="kept"),
+            _entity("a", tenant, type="organization", in_schema=True, type_iri=iri),
+        ]
+    )
+    graph.upsert_relationships(
+        [_rel("ab", "a", "b", type="SUPPLIES", in_schema=False, description="d")]
+    )
+    assert graph.read_schema_annotations("entities") == {
+        "a": StoredAnnotation(type="organization", in_schema=True, iri=iri),
+        "b": StoredAnnotation(type="vendor"),
+    }
+    assert graph.read_schema_annotations("relationships") == {
+        "ab": StoredAnnotation(type="SUPPLIES", in_schema=False)
+    }
+
+    company = "https://example.org/onto#Company"
+    supplies = "https://example.org/onto#supplies"
+    stats = graph.write_schema_annotations(
+        "entities", {"a": (None, company), "b": (False, None), "gone": (True, None)}
+    )
+    assert stats.failed_items == 0
+    stats = graph.write_schema_annotations("relationships", {"ab": (True, supplies)})
+    assert stats.failed_items == 0
+
+    a, b = sorted(graph.read_entities(["a", "b"]), key=lambda e: e.id)
+    assert (a.in_schema, a.type_iri, a.type) == (None, company, "organization")
+    assert (b.in_schema, b.type_iri, b.description) == (False, None, "kept")
+    (rel,) = graph.read_relationships(["ab"])
+    assert (rel.in_schema, rel.predicate_iri, rel.type, rel.description) == (
+        True,
+        supplies,
+        "SUPPLIES",
+        "d",
+    )
+    assert graph.read_entities(["gone"]) == []
+    # Another suffix keeps its own.
+    (other,) = graph.read_entities(["a"], suffix=tenant)
+    assert (other.in_schema, other.type_iri) == (True, iri)
+    assert graph.read_schema_annotations("relationships", suffix=tenant) == {}

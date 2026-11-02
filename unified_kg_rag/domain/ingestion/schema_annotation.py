@@ -27,6 +27,8 @@ get, which the query side checks a filter key against.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
 
 from unified_kg_rag.domain.ingestion.schema_conformance import SchemaConformance
@@ -35,6 +37,11 @@ from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
 
 # (in_schema, iri) of one item.
 Annotation = tuple[bool | None, str | None]
+
+# Bump when the annotation rules change for the same schema: every recorded
+# digest then differs, and the next incremental run rewrites the annotations.
+# 2: a kind with no declared type is in schema wherever the schema applies.
+ANNOTATION_VERSION = 2
 
 
 class SchemaAnnotator:
@@ -76,6 +83,24 @@ class SchemaAnnotator:
             )
             if written
         )
+
+    @property
+    def digest(self) -> str:
+        """Identifies the annotations this annotator gives: two with one
+        digest annotate every item alike (SHA-256, hex, of the type keys
+        that get ``in_schema`` where the schema applies, and the IRI of each
+        type key). Recorded with what an incremental run indexed, so a
+        schema edit that changes only the annotations rewrites them without
+        extracting again (``IndexingManager.reannotate``)."""
+        state = [
+            ANNOTATION_VERSION,
+            sorted(self._entity_keys) if self._applies else None,
+            sorted(self._relationship_keys) if self._applies else None,
+            sorted(self._entity_iris.items()),
+            sorted(self._relationship_iris.items()),
+        ]
+        payload = json.dumps(state, ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _annotation(
         self, keys: frozenset[str], iris: dict[str, str], label: str | None
@@ -119,3 +144,8 @@ class SchemaAnnotator:
     ) -> list[Relationship]:
         """Each of ``relationships`` annotated (:meth:`relationship`)."""
         return [self.relationship(r) for r in relationships]
+
+
+# The digest of an annotator that annotates nothing: what every item written
+# without schema annotations holds (no schema, or one that gives none).
+UNANNOTATED_DIGEST = SchemaAnnotator(ExtractionSchema()).digest

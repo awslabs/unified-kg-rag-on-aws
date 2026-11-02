@@ -614,7 +614,11 @@ From 0.2.3 (or a `main` checkout since):
   and `schema_source` keys are validated on load: labels are unique by
   case and word separators, and patterns name declared types. At their
   defaults they change no cache key, extraction record or recorded
-  extraction settings (#475).
+  extraction settings (#475). They key extraction by what the model sees:
+  a type's label and description, the patterns, and `schema_mode` where it
+  changes extraction (`strict`, or `off` once relationship types are
+  declared). An IRI, `off` against `align` with entity types alone, or a
+  string item rewritten as the same mapping re-extracts nothing (#482).
 - Schema sources: `schema_source.kind: file` reads the schema keys from a
   local YAML or JSON file at start-up, keyed by its content, not its path,
   and `@register_schema_source` (exported from `unified_kg_rag` with
@@ -657,12 +661,16 @@ From 0.2.3 (or a `main` checkout since):
   true`). Under `off`, and with entity types alone and no `iri`, nothing is
   written and the stored documents and properties are unchanged; the
   entities and relationships mappings gain the fields, and an incremental
-  run adds them to its live indices before its first write (re-run with
-  `indexing.reset: true` after a schema change to annotate items it does
-  not rewrite). A filter on an annotation the configured schema writes on
+  run adds them to its live indices before its first write. A filter on an annotation the configured schema writes on
   no item raises `InvalidFilterError` before any model call, and one on an
   OpenSearch index built before the fields were mapped matches nothing
-  instead of failing every vector and hybrid query (#477, #478, #481).
+  instead of failing every vector and hybrid query (#477, #478, #481). A
+  schema edit that changes only the annotations (an IRI, `off` against
+  `align` with entity types alone) is applied by the next incremental run
+  without a model call: it rewrites the annotations of every stored entity
+  and relationship of the index suffix, every scope's, from their stored
+  types, records what it wrote with the scope's extraction settings and
+  logs the counts, so the stores hold what a full build writes (#482).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their

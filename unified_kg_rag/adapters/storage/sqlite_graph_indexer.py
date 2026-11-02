@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.local.sqlite_graph import (
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
+    IRI_PROPERTY,
     NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
@@ -33,9 +34,16 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_from_edge,
     relationship_label,
     relationship_properties,
+    stored_annotation,
 )
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
-from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    AnnotatedKind,
+    GraphIndexer,
+    IndexingStats,
+    SchemaAnnotation,
+    StoredAnnotation,
+)
 from unified_kg_rag.shared import GraphRAGException, get_logger
 
 logger = get_logger(__name__)
@@ -251,6 +259,46 @@ class SQLiteGraphIndexer(GraphIndexer):
                 stats.add_success(len(comms))
         return stats
 
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set the annotations by id (see the port), in one transaction:
+        each stored vertex or edge gets them in its properties, nothing else
+        changes."""
+        stats = IndexingStats(total_items=len(annotations))
+        if not annotations:
+            return stats
+        label = self._entity_label(suffix)
+        iri = IRI_PROPERTY[kind]
+        table = "vertices" if kind == "entities" else "edges"
+        with self.store.transaction("write schema annotations") as connection:
+            for batch in batches(sorted(annotations)):
+                rows = connection.execute(
+                    f"SELECT id, props FROM {table} "
+                    f"WHERE label = ? AND id IN ({placeholders(batch)})",
+                    [label, *batch],
+                ).fetchall()
+                updates = []
+                for item_id, stored in rows:
+                    props = json.loads(stored)
+                    for key, value in zip(
+                        ("in_schema", iri), annotations[item_id], strict=True
+                    ):
+                        props.pop(key, None)
+                        if value is not None:
+                            # A vertex's values are one-value lists (valueMap).
+                            props[key] = [value] if table == "vertices" else value
+                    updates.append((json.dumps(props), label, item_id))
+                connection.executemany(
+                    f"UPDATE {table} SET props = ? WHERE label = ? AND id = ?",
+                    updates,
+                )
+        stats.add_success(len(annotations))
+        return stats
+
     def _community_properties(self, comm: Community) -> dict[str, Any]:
         return item_properties(
             comm,
@@ -436,6 +484,32 @@ class SQLiteGraphIndexer(GraphIndexer):
             if names:
                 pairs.append((entity_id, str(names[0])))
         return pairs
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation]:
+        """Every stored entity's (or edge's) annotations by id, with its type
+        (see the port)."""
+        label = self._entity_label(suffix)
+        with self.store.read("read schema annotations") as connection:
+            rows = connection.execute(
+                (
+                    "SELECT id, NULL, props FROM vertices WHERE label = ?"
+                    if kind == "entities"
+                    else "SELECT id, type, props FROM edges WHERE label = ?"
+                ),
+                (label,),
+            ).fetchall()
+        annotations: dict[str, StoredAnnotation] = {}
+        for item_id, edge_type, stored in rows:
+            props = json.loads(stored)
+            item_type = (
+                edge_type
+                if kind == "relationships"
+                else (props.get("type") or [None])[0]
+            )
+            annotations[item_id] = stored_annotation(props, kind, item_type)
+        return annotations
 
     def read_neighbor_ids(
         self, entity_ids: list[str], suffix: str | None = None

@@ -3,7 +3,7 @@
 import re
 import time
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
@@ -34,7 +34,13 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
-from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
+from unified_kg_rag.ports.indexer import (
+    AnnotatedKind,
+    IndexingStats,
+    SchemaAnnotation,
+    StoredAnnotation,
+    VectorIndexer,
+)
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -87,6 +93,12 @@ _VECTOR_COPY_FIELDS = {
             "predicate_iri",
         ],
     ),
+}
+
+# The IRI field of each annotated kind's documents.
+_IRI_FIELD: dict[AnnotatedKind, str] = {
+    "entities": "type_iri",
+    "relationships": "predicate_iri",
 }
 
 # Field types a dynamic mapping can give a field of another type, which then
@@ -929,6 +941,99 @@ class OpenSearchIndexer(VectorIndexer):
                 getattr(self.opensearch_config, prefix), ids, suffix, fields=fields
             )
         }
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation]:
+        """Every stored copy's annotations by id (see the port), read in id
+        order a window at a time, as :meth:`find_documents` reads."""
+        prefix, _ = _VECTOR_COPY_FIELDS[kind]
+        alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
+        index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+        if not index_name:
+            return {}
+        iri = _IRI_FIELD[kind]
+        fields = ["id", "in_schema", iri, *(["type"] if kind == "entities" else [])]
+        window = self._limits(index_name).max_result_window
+        annotations: dict[str, StoredAnnotation] = {}
+        after: str | None = None
+        while True:
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": window,
+                    "query": (
+                        {"match_all": {}}
+                        if after is None
+                        else {"bool": {"filter": [{"range": {"id": {"gt": after}}}]}}
+                    ),
+                    "sort": [{"id": {"order": "asc"}}],
+                    "_source": {"includes": fields},
+                    "track_total_hits": False,
+                },
+            )
+            page = list(response.get("hits", {}).get("hits", []))
+            for hit in page:
+                source = hit.get("_source") or {}
+                in_schema, iri_value = source.get("in_schema"), source.get(iri)
+                annotations[str(hit["_id"])] = StoredAnnotation(
+                    type=source.get("type") if kind == "entities" else None,
+                    in_schema=in_schema if isinstance(in_schema, bool) else None,
+                    iri=iri_value if isinstance(iri_value, str) else None,
+                )
+            if len(page) < window:
+                return annotations
+            after = str((page[-1].get("_source") or {}).get("id") or page[-1]["_id"])
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set the annotations by id in place (see the port)."""
+        stats = IndexingStats(total_items=len(annotations))
+        if not annotations:
+            return stats
+        prefix, _ = _VECTOR_COPY_FIELDS[kind]
+        alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
+        iri = _IRI_FIELD[kind]
+        ids = sorted(annotations)
+        try:
+            index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+            if not index_name:
+                stats.add_success(len(ids))
+                return stats
+            for start in range(0, len(ids), _READ_BATCH_SIZE):
+                batch = ids[start : start + _READ_BATCH_SIZE]
+                response = self.opensearch_client.bulk_update(
+                    index_name,
+                    [
+                        {
+                            "id": item_id,
+                            "in_schema": annotations[item_id][0],
+                            iri: annotations[item_id][1],
+                        }
+                        for item_id in batch
+                    ],
+                    refresh=self.opensearch_config.refresh_after_batch,
+                )
+                failed = [next(iter(r.values())) for r in response.get("items", [])]
+                stats.add_success(len(batch) - len(failed))
+                if failed:
+                    stats.add_error(
+                        f"Bulk update errors: {len(failed)}",
+                        len(failed),
+                        ids=[str(f["_id"]) for f in failed if "_id" in f],
+                    )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:
+            stats.add_error(
+                f"Update of '{alias_name}' failed: {e}",
+                len(ids) - stats.successful_items - stats.failed_items,
+            )
+        return stats
 
     def prune_text_unit_communities(
         self, community_ids: list[str], suffix: str | None = None

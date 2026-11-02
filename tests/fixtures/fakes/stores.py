@@ -13,20 +13,28 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any, Literal
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    IRI_PROPERTY,
     NAME_KEY_PROPERTY,
     entity_from_vertex,
     entity_properties,
     relationship_from_edge,
     relationship_label,
     relationship_properties,
+    stored_annotation,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
-from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    AnnotatedKind,
+    BaseIndexer,
+    IndexingStats,
+    SchemaAnnotation,
+    StoredAnnotation,
+)
 
 # The claim fields the OpenSearch claims index stores (``_prepare_claim_doc``).
 _STORED_CLAIM_FIELDS = {
@@ -255,6 +263,29 @@ class FakeGraphStore:
         ]:
             del edges[key]
 
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        # In place: a vertex's values are one-value lists, an edge's bare.
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get(kind, {})
+        iri = IRI_PROPERTY[kind]
+        for item_id, values in annotations.items():
+            stored = bucket.get((scope, item_id))
+            if stored is None:
+                continue
+            props = stored if kind == "entities" else stored["props"]
+            for key, value in zip(("in_schema", iri), values, strict=True):
+                props.pop(key, None)
+                if value is not None:
+                    props[key] = [value] if kind == "entities" else value
+        return IndexingStats(
+            total_items=len(annotations), successful_items=len(annotations)
+        )
+
     # --- reads ---------------------------------------------------------------
 
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Any]:
@@ -276,6 +307,20 @@ class FakeGraphStore:
             for row in rows
         )
         return [r for r in rels if r]
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation]:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        return {
+            item_id: (
+                stored_annotation(row, kind, (row.get("type") or [None])[0])
+                if kind == "entities"
+                else stored_annotation(row["props"], kind, row["label"])
+            )
+            for (s, item_id), row in self.data.get(kind, {}).items()
+            if s == scope
+        }
 
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         scope = suffix or Constants.DEFAULT_SUFFIX.value
@@ -490,6 +535,41 @@ class FakeVectorStore(_Recorder):
 
     def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
         return self._update("entities", entities, ("text_unit_ids", "rank"))
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation]:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        iri = IRI_PROPERTY[kind]
+        return {
+            item_id: StoredAnnotation(
+                # The relationships index does not store the type.
+                type=(item.type or "") if kind == "entities" else None,
+                in_schema=item.in_schema,
+                iri=getattr(item, iri),
+            )
+            for item_id, item in self.data.get(kind, {}).items()
+            if BaseIndexer.get_suffix(item) == wanted
+        }
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get(kind, {})
+        iri = IRI_PROPERTY[kind]
+        for item_id, (in_schema, iri_value) in annotations.items():
+            stored = bucket.get(item_id)
+            if stored is not None and BaseIndexer.get_suffix(stored) == wanted:
+                bucket[item_id] = stored.model_copy(
+                    update={"in_schema": in_schema, iri: iri_value}
+                )
+        return IndexingStats(
+            total_items=len(annotations), successful_items=len(annotations)
+        )
 
     def read_text_unit_attributes(
         self, ids: list[str], suffix: str | None = None

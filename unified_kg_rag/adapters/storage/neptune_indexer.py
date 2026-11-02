@@ -6,7 +6,8 @@ import random
 import threading
 import time
 import uuid
-from collections.abc import Callable, Collection, Iterator
+from collections import defaultdict
+from collections.abc import Callable, Collection, Iterator, Mapping
 from concurrent.futures import as_completed
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,6 +35,7 @@ from unified_kg_rag.adapters.aws.neptune import (
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
+    IRI_PROPERTY,
     NAME_KEY_PROPERTY,
     edge_text_unit_ids,
     entity_from_vertex,
@@ -42,6 +44,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_from_edge,
     relationship_label,
     relationship_properties,
+    stored_annotation,
 )
 from unified_kg_rag.domain.models import (
     Community,
@@ -49,7 +52,13 @@ from unified_kg_rag.domain.models import (
     Entity,
     Relationship,
 )
-from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    AnnotatedKind,
+    GraphIndexer,
+    IndexingStats,
+    SchemaAnnotation,
+    StoredAnnotation,
+)
 from unified_kg_rag.shared import (
     AWSServiceError,
     GraphRAGException,
@@ -538,6 +547,112 @@ class NeptuneIndexer(GraphIndexer):
                 "read_entity_names failed (%s); fuzzy cross-run merge disabled", e
             )
             return []
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation]:
+        """Every stored entity's (or relationship edge's) annotations by id,
+        with its type (see the port): one label scan, as
+        :meth:`read_entity_names`, in either vertex-id mode (each vertex
+        holds its ``id`` property).
+
+        Raises:
+            AWSServiceError: The read failed.
+        """
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        iri = IRI_PROPERTY[kind]
+        try:
+            if kind == "entities":
+                rows = self._execute_with_retries(
+                    lambda g: g.V()
+                    .hasLabel(label)
+                    .valueMap("id", "type", "in_schema", iri),
+                    "read_schema_annotations",
+                    results=True,
+                    fenced=False,
+                )
+                pairs = [(row, (row.get("type") or [None])[0]) for row in rows]
+            else:
+                # Between the label's entities only: an older build's
+                # MemberOf edges lead to its communities.
+                rows = self._execute_with_retries(
+                    lambda g: g.V()
+                    .hasLabel(label)
+                    .outE()
+                    .where(__.inV().hasLabel(label))
+                    .project("props", "label")
+                    .by(__.valueMap("id", "in_schema", iri))
+                    .by(__.label()),
+                    "read_schema_annotations",
+                    results=True,
+                    fenced=False,
+                )
+                pairs = [(row.get("props") or {}, row.get("label")) for row in rows]
+        except Exception as e:
+            raise AWSServiceError(f"Neptune read_schema_annotations failed: {e}") from e
+        annotations: dict[str, StoredAnnotation] = {}
+        for value_map, item_type in pairs:
+            item_id = value_map.get("id")
+            if isinstance(item_id, list):
+                item_id = item_id[0] if item_id else None
+            if item_id is not None:
+                annotations[str(item_id)] = stored_annotation(
+                    value_map, kind, item_type
+                )
+        return annotations
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set the annotations by id (see the port): one traversal per batch
+        of the items that get the same values, which drops the stored ones
+        and writes the set ones, so a retry writes the same."""
+        stats = IndexingStats(total_items=len(annotations))
+        if not annotations:
+            return stats
+        label = self._label(self.neptune_config.entity_label_prefix, suffix)
+        iri = IRI_PROPERTY[kind]
+        by_value: dict[SchemaAnnotation, list[str]] = defaultdict(list)
+        for item_id, value in annotations.items():
+            by_value[value].append(item_id)
+        for (in_schema, iri_value), ids in by_value.items():
+            for batch in self._batch_iterator(sorted(ids)):
+
+                def build(
+                    g: GraphTraversalSource,
+                    batch: list[str] = batch,
+                    in_schema: bool | None = in_schema,
+                    iri_value: str | None = iri_value,
+                ) -> GraphTraversal:
+                    t: Any = (
+                        self._vertices(g, (label,), batch)
+                        if kind == "entities"
+                        else g.E()
+                        .has("id", P.within(batch))
+                        .where(__.outV().hasLabel(label))
+                    )
+                    t = t.sideEffect(__.properties("in_schema", iri).drop())
+                    for key, value in (("in_schema", in_schema), (iri, iri_value)):
+                        if value is not None:
+                            t = (
+                                t.property(Cardinality.single, key, value)
+                                if kind == "entities"
+                                else t.property(key, value)
+                            )
+                    return cast(GraphTraversal, t)
+
+                try:
+                    self._execute_with_retries(build, "Writing schema annotations")
+                    stats.add_success(len(batch))
+                except NamespaceLeaseError:
+                    raise
+                except Exception as e:
+                    stats.add_error(str(e), len(batch), ids=list(batch))
+                    logger.warning("Failed to write schema annotations: %s", e)
+        return stats
 
     def index_entities(
         self, entities: list[Entity], *, suffixes: Collection[str] = ()
