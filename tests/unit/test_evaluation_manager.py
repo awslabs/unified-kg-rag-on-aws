@@ -1304,3 +1304,25 @@ class TestAbstention:
         )
         with pytest.raises(EvaluationException, match="answerable"):
             EvaluationManager.load_data(path)
+
+
+def test_the_manager_loads_the_schema_source(tmp_path) -> None:
+    # The run manifest hashes the loaded schema, not the default one.
+    path = tmp_path / "schema.yaml"
+    path.write_text('relationship_types: ["WORKS_FOR"]\n', encoding="utf-8")
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {"kind": "file", "path": str(path)}
+                }
+            }
+        }
+    )
+    manager = _graph_aware_manager(config)
+    extraction = manager.config.processing.graph_extraction
+    assert extraction.schema_source.kind == "inline"
+    assert extraction.relationship_types == ["WORKS_FOR"]
+    assert [s.label for s in extraction.extraction_schema().relationship_types] == [
+        "WORKS_FOR"
+    ]

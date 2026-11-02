@@ -107,7 +107,9 @@ class RelationshipTypeSpec(_TypeSpec):
 
 
 # "SOURCE -RELATION-> TARGET": whitespace before the opening '-'; the
-# relation runs to the last '->'.
+# relation runs to the first '->' after it, so a relation label holding
+# "->" needs the mapping form ("A -R-> B -> C" is relation R, target
+# "B -> C").
 _PATTERN = re.compile(
     r"^\s*(?P<source>\S.*?)\s+-\s*(?P<relation>\S.*?)\s*->\s*(?P<target>\S.*?)\s*$"
 )
