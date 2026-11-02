@@ -157,7 +157,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
-│  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file)
+│  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
 │  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
@@ -1378,7 +1378,7 @@ checks that its values are the defaults and each key is in the reference).
   a content `digest`). Labels compare by `schema_key` (NFKC, each run of
   whitespace and `_` one `_`, case-folded and normalized again, so a key is
   its own key) and nothing looser: no synonyms, plurals or edit distance. `schema_source` names where the schema comes
-  from: `inline`, or a registered source (`file` today) that
+  from: `inline`, or a registered source (`file`, `owl`) that
   `application/bootstrap.resolve_extraction_schema` loads once at start-up
   (`DataIngestionPipeline`, `EvaluationManager`, `PromptTuner`) into the
   inline keys of a config copy, whose source is then `inline`.
@@ -1486,7 +1486,15 @@ This section is the single reference for extending the framework. Strategies, re
   (exported from `unified_kg_rag`; the built-in `file` and `owl` loaders
   live in `adapters/schema_sources/`, imported by the package `__init__`,
   and read an `s3://` path through `locations.py`: HeadObject size check,
-  paged prefix listing, S3 errors as `SchemaSourceError`). It
+  paged prefix listing, S3 errors as `SchemaSourceError`).
+  A loader that imports an optional package declares it:
+  `@register_schema_source("kind", requires=("module", "how to install
+  it"))`, and the CLIs check that the module is importable before any model
+  call, exiting 2 with the install hint (`owl` declares `("rdflib", "the
+  ontology extra: uv sync --extra ontology ...")`). Import the package
+  inside the loader, not at module level, so registering the kind needs
+  nothing, and raise `SchemaSourceError` naming the extra when the import
+  fails; re-registering a kind replaces its loader and its requirement. It
   receives a `SchemaSourceContext` and returns a `SchemaDocument`: the
   `entity_types` (or `None` to keep the config's), `relationship_types` and
   `relationship_patterns` it supplies, each a string or a spec. The context
@@ -1507,15 +1515,89 @@ This section is the single reference for extending the framework. Strategies, re
   The loader must return the types in the same order for the same content
   (sort what a set, a graph or a paged API yields): the order is part of
   the prompt and of the cache keys, so a reordered snapshot re-extracts the
-  corpus. It translates, it does not reason: an OWL/RDFS loader would parse
-  with rdflib, map classes to `EntityTypeSpec(label, description, iri)` and
-  object properties to `RelationshipTypeSpec`, take its patterns from the
-  properties' domain and range (closure over `subClassOf` /
-  `subPropertyOf` computed in the loader), and import the parser inside
-  the function, raising `SchemaSourceError` naming the extra when it is
-  missing; a SHACL or LinkML loader maps node shapes or classes the same
-  way. A service loader (an ontology API, or an MCP server's schema tool)
-  fetches its snapshot once:
+  corpus. It translates, it does not reason.
+
+  **Reusing the ontology mapping.** The `owl` source is split so that its
+  mapping does not depend on RDF:
+  - `ontology_model.py`: `OntologyModel`, a pure Pydantic model of the named
+    classes and properties a reader found and what it stated about them
+    (annotations as language-tagged `Text`, parents, equivalents,
+    deprecation; per property its kind, domains and ranges as sets of
+    unions, inverses and symmetry) plus the prefix bindings. Statements,
+    not inferences, and no blank nodes.
+  - `ontology_mapping.py`: `MappingOptions` (selection, labels, collisions,
+    descriptions and hints, patterns, caps) and `map_ontology(model,
+    options) -> OntologyMapping` (`document`, the `SchemaDocument`, and
+    `report`, a `MappingReport` of what was dropped, lifted, merged,
+    skipped or qualified). It owns every rule: the RDFS-style closure, the
+    flat hierarchy with push-down and lift, labels, order and the caps,
+    and depends only on `domain`.
+  - `owl_reader.py` (the only module importing rdflib) builds the model
+    from parsed statements; `owl.py` is the loader: it locates and checks
+    the files, parses their bytes, reads the model and maps it with
+    `OwlSourceOptions`, which is `MappingOptions` plus the reader's
+    `format` and `max_bytes`.
+
+  A loader for an ontology held elsewhere (an ontology service, or a
+  non-RDF format such as LinkML) added to `adapters/schema_sources/` builds
+  the same `OntologyModel` from its snapshot and calls `map_ontology`, so
+  its users get the same labels, collisions, closure, patterns, hints,
+  order and caps as `kind: owl`, and the same IRIs end up in `type_iri` and
+  `predicate_iri`. Its options model subclasses `MappingOptions` with the
+  reader's own settings, validated from `context.source.options` (wrap a
+  `ValidationError` in `SchemaSourceError`, as `owl._options` does):
+
+  ```python
+  from pydantic import Field
+
+  from unified_kg_rag import SchemaDocument, SchemaSourceContext, register_schema_source
+  from unified_kg_rag.adapters.schema_sources.ontology_mapping import (
+      MappingOptions,
+      map_ontology,
+  )
+  from unified_kg_rag.adapters.schema_sources.ontology_model import (
+      RDFS_LABEL,
+      OntologyClass,
+      OntologyModel,
+      OntologyProperty,
+      Text,
+  )
+
+
+  class ServiceOptions(MappingOptions):
+      graph: str = Field(description="The service's graph to read")
+
+
+  @register_schema_source("ontology_service")
+  def load_ontology_service(context: SchemaSourceContext) -> SchemaDocument:
+      options = ServiceOptions.model_validate(context.source.options)
+      snapshot = fetch_snapshot(context.source.path, graph=options.graph)
+      model = OntologyModel(
+          classes=tuple(
+              OntologyClass(
+                  iri=c["iri"],
+                  annotations={RDFS_LABEL: (Text(value=c["name"], language="en"),)},
+                  parents=frozenset(c.get("parents", ())),
+              )
+              for c in snapshot["classes"]
+          ),
+          properties=tuple(
+              OntologyProperty(
+                  iri=p["iri"],
+                  domains=frozenset({frozenset(p["domain"])}),
+                  ranges=frozenset({frozenset(p["range"])}),
+              )
+              for p in snapshot["properties"]
+          ),
+      )
+      return map_ontology(model, options).document
+  ```
+
+  The order of the model's terms does not matter (`map_ontology` sorts).
+  A loader that maps its snapshot itself returns a `SchemaDocument`
+  directly, as a SHACL loader mapping node shapes would. A service loader
+  (an ontology API, or an MCP server's schema tool) fetches its snapshot
+  once:
 
   ```python
   import json

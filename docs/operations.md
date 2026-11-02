@@ -21,6 +21,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
 | Look Neptune vertices up by custom vertex ids | [Custom Neptune vertex ids](#custom-neptune-vertex-ids) |
 | Cut the vector memory of a large corpus | [On-disk vector storage](#on-disk-vector-storage) |
+| Ship an OWL/RDFS ontology schema in the image | [Ontology schema in the image](#ontology-schema-in-the-image) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -405,6 +406,61 @@ indexing:
   vectors of '...' as ...`); run once with `indexing.reset: true`.
 - **Local mode.** The embedded engine ignores both (one warning per process)
   and keeps searching exactly at full precision.
+
+### Ontology schema in the image
+
+A config with `schema_source: {kind: owl}`
+([User Guide: From an OWL/RDFS ontology](./user-guide.md#from-an-owlrdfs-ontology))
+needs the `ontology` extra and the ontology files in every image that runs
+it: ingestion, and also the query and evaluation tasks, which read the
+schema to check filter keys. (To keep the ontology out of the image, put
+it in S3 instead of steps 1-3: [Schema sources in S3](#schema-sources-in-s3);
+the extra is still needed.) The data-plane image has neither by default,
+and a task without the extra exits 2 before any model call (`Not
+installed: 'rdflib' (for processing.graph_extraction.schema_source.kind
+'owl')`).
+
+1. Put the ontology next to the baked-in config, for example
+   `docker/ontology/procure.ttl` (a directory of files is read as one
+   ontology). Give it absolute IRIs or a declared base (`@base`,
+   `xml:base`): a relative IRI resolves against the file's path in the
+   image, so the same file read elsewhere names other terms.
+2. Copy it into the image after the config in `docker/Dockerfile`:
+
+   ```dockerfile
+   COPY docker/config.yaml /app/config.yaml
+   COPY docker/ontology /app/ontology
+   ```
+
+3. Select it in `docker/config.yaml` (a relative path is resolved against
+   `/app/config.yaml`, so this reads `/app/ontology`), or with
+   `UKR__PROCESSING__GRAPH_EXTRACTION__SCHEMA_SOURCE__KIND=owl` and
+   `UKR__PROCESSING__GRAPH_EXTRACTION__SCHEMA_SOURCE__PATH=ontology` on the
+   task:
+
+   ```yaml
+   processing:
+     graph_extraction:
+       schema_source:
+         kind: owl
+         path: ontology
+   ```
+
+4. Build with the extra, then push and deploy as for any image change
+   ([`iac/README.md`](../iac/README.md#after-deploy)); several extras go in
+   one argument (`"--extra ontology --extra unstructured"`):
+
+   ```bash
+   docker build --platform linux/amd64 --build-arg UV_EXTRAS="--extra ontology" \
+     -f docker/Dockerfile -t "$REGISTRY/graphrag-app:<tag>" .
+   ```
+
+The ontology is read at start-up and keyed by the schema it maps to, so
+rebuilding the image with an unchanged ontology, or moving it to another
+path with absolute IRIs, re-extracts nothing. Before the first full
+ingest, preview the mapped schema locally (User Guide, *Preview*) and
+settle the options: a label or description change re-extracts the
+corpus.
 
 ## When a run fails
 
@@ -1014,6 +1070,8 @@ model or credential error fails a query rather than answering from no context.
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
 | `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it or convert the files |
+| `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --extra ontology`, or build the image with it ([Ontology schema in the image](#ontology-schema-in-the-image)) |
+| `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([User Guide](./user-guide.md#from-an-owlrdfs-ontology)) |
 
 ### Credentials and models
 
