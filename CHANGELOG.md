@@ -680,7 +680,7 @@ From 0.2.3 (or a `main` checkout since):
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay
   refused (#493).
-- Docs: ontology schema sources in user guide §9 C and the runbook (#PR).
+- Docs: ontology schema sources in user guide §9 C and the runbook (#494).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
