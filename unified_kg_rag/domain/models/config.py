@@ -1633,12 +1633,16 @@ class SchemaSourceConfig(BaseModel):
         default=None,
         description=(
             "Location the schema source reads. For 'file', a local file "
-            "path; for 'owl', a local file or directory (or a file:// URL). "
-            "A relative path is resolved against the config file's "
-            "directory (the working directory without one); an S3 or HTTP "
-            "location needs a source registered for it, which receives a "
-            "URL as written. Logs and errors show it without userinfo, "
-            "query or fragment. Must be unset for 'inline'."
+            "path or an S3 object (s3://bucket/key.yaml); for 'owl', a local "
+            "file or directory (or a file:// URL), an S3 object, or an S3 "
+            "prefix read as a directory (s3://bucket/prefix/, the trailing "
+            "'/' required). S3 is read with the run's AWS session "
+            "(s3:GetObject, and s3:ListBucket for a prefix). A relative path "
+            "is resolved against the config file's directory (the working "
+            "directory without one); an HTTP location needs a source "
+            "registered for it, which receives a URL as written. Logs and "
+            "errors show it without userinfo, query or fragment. Must be "
+            "unset for 'inline'."
         ),
     )
     options: dict[str, Any] = Field(

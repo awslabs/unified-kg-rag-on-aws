@@ -134,6 +134,33 @@ Coming from 0.2.3 or an earlier `main` checkout: see
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
 looks deleted. Check a reused bucket's own lifecycle rules.
 
+### Schema sources in S3
+
+A `schema_source` of kind `file` or `owl` may name an `s3://` object (or,
+for `owl`, an `s3://bucket/prefix/` directory). Every entry point that loads
+the schema reads it at start-up with the task's role: ingestion, prompt
+tuning, evaluation, and `run-rag` (which checks schema filter keys against
+it and, when it cannot load the source, skips that check with a WARNING).
+The loader needs `s3:GetObject` on the objects and, for a prefix,
+`s3:ListBucket` on the bucket (without `s3:ListBucket` a missing object is
+reported as access denied too), plus `kms:Decrypt` on the key of a
+KMS-encrypted object (the stacks grant it for the deployment's own key).
+
+The CDK stacks grant no schema-specific permission; place the schema where
+the roles already read:
+
+| Location | Ingestion task role | Query task role (`run-rag`, `run-eval`) |
+|---|---|---|
+| The `corpus_bucket_name` bucket (any key) | Read | Read |
+| The cache bucket, outside `pipeline-runs/` (expired after 30 days) | Read | No |
+| The cache bucket under `eval/` | Read | Read |
+
+In private mode the S3 gateway endpoint also reaches only these two
+buckets, so a schema in any other bucket fails with access denied even
+after you grant the role `s3:GetObject` on it. To keep it elsewhere, grant
+both roles read on it and add the bucket to the endpoint policy in your own
+stack.
+
 ### OpenSearch replicas
 
 On the CDK stack a multi-node domain (`opensearch_count` > 1) gets one replica

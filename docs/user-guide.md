@@ -1807,16 +1807,23 @@ processing:
   optionally, `entity_types` from a YAML or JSON file of the same shape (a
   relative path is resolved against the config file). Leave those keys out
   of the config then: a file and a config that both set `entity_types` fail
-  the load. The path is a local file: an `s3://` or `https://` location
-  fails the load (it needs a source registered for it). Other formats
-  (OWL, SHACL, a schema service) plug in as a registered schema source
-  ([Design Doc §15](./design.md#15-extension-guide)).
+  the load. The path is a local file or an S3 object
+  (`s3://bucket/schemas/schema.yaml`, at most 16 MiB), read with the run's
+  AWS session; an `https://` location fails the load (it needs a source
+  registered for it). `kind: owl` reads an OWL or RDFS ontology the same
+  way: a local file or directory, an S3 object, or an S3 prefix read as a
+  directory (`s3://bucket/ontology/`, the trailing `/` required). Declare
+  `@base` (or `xml:base`) in an ontology with relative IRIs: without it they
+  resolve against the file's location, so moving the file renames them.
+  Other formats (SHACL, a schema service) plug in as a registered schema
+  source ([Design Doc §15](./design.md#15-extension-guide)).
 - **On AWS** the ingestion task reads the config baked into the image
   (`docker/Dockerfile` copies only `docker/config.yaml`, to
-  `/app/config.yaml`), so a `kind: file` schema must be in the image too:
-  add a `COPY` of the file next to it and rebuild, or declare the schema
-  inline in that config or through the `UKR__PROCESSING__GRAPH_EXTRACTION__*`
-  variables above.
+  `/app/config.yaml`), so a local `kind: file` schema must be in the image
+  too: add a `COPY` of the file next to it and rebuild, keep the schema in
+  S3 (the task roles' permissions: [Operations Guide](./operations.md#schema-sources-in-s3)),
+  or declare it inline in that config or through the
+  `UKR__PROCESSING__GRAPH_EXTRACTION__*` variables above.
 
 **What extraction does.**
 

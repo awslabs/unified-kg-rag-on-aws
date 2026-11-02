@@ -1600,15 +1600,21 @@ processing:
   두면 같은 모양의 YAML 또는 JSON 파일에서 `relationship_types`,
   `relationship_patterns`와 선택적으로 `entity_types`를 읽습니다(상대 경로는 설정 파일
   기준). 이때 설정에서는 그 키를 빼세요. 파일과 설정이 모두 `entity_types`를 정하면
-  설정을 읽지 못합니다. 경로는 로컬 파일이어야 하며, `s3://`나 `https://` 위치는 그
-  위치용 스키마 소스를 등록해야 하므로 설정을 읽지 못합니다. 다른 형식(OWL, SHACL,
-  스키마 서비스)은 스키마 소스로 등록해 붙입니다([설계 문서 §15](./design.md#15-extension-guide),
+  설정을 읽지 못합니다. 경로는 로컬 파일이나 S3 객체(`s3://bucket/schemas/schema.yaml`,
+  최대 16 MiB)이며, S3는 실행의 AWS 세션으로 읽습니다. `https://` 위치는 그 위치용
+  스키마 소스를 등록해야 하므로 설정을 읽지 못합니다. `kind: owl`도 같은 방식으로
+  OWL 또는 RDFS 온톨로지를 읽습니다. 로컬 파일이나 디렉터리, S3 객체, 또는 디렉터리로
+  읽는 S3 접두사(`s3://bucket/ontology/`, 끝의 `/` 필수)를 줄 수 있습니다. 상대 IRI를
+  쓰는 온톨로지에는 `@base`(또는 `xml:base`)를 선언하세요. 선언하지 않으면 IRI가 파일
+  위치를 기준으로 정해져 파일을 옮기면 이름이 바뀝니다. 다른 형식(SHACL, 스키마
+  서비스)은 스키마 소스로 등록해 붙입니다([설계 문서 §15](./design.md#15-extension-guide),
   영문).
 - **AWS에서는** 수집 작업이 이미지에 들어 있는 설정을 읽습니다(`docker/Dockerfile`은
-  `docker/config.yaml`만 `/app/config.yaml`로 복사). 따라서 `kind: file` 스키마도
+  `docker/config.yaml`만 `/app/config.yaml`로 복사). 따라서 로컬 `kind: file` 스키마도
   이미지에 넣어야 합니다. 파일을 설정 옆에 복사하는 `COPY`를 추가해 이미지를 다시
-  빌드하거나, 그 설정에 스키마를 인라인으로 선언하거나, 위의
-  `UKR__PROCESSING__GRAPH_EXTRACTION__*` 환경 변수로 지정하세요.
+  빌드하거나, 스키마를 S3에 두거나(작업 역할 권한은
+  [운영 가이드](./operations.md#schema-sources-in-s3), 영문), 그 설정에 인라인으로
+  선언하거나, 위의 `UKR__PROCESSING__GRAPH_EXTRACTION__*` 환경 변수로 지정하세요.
 
 **추출이 하는 일.**
 

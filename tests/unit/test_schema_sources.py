@@ -586,12 +586,13 @@ def test_errors_never_show_a_url_credential(custom_kind: str) -> None:
     with pytest.raises(SchemaSourceError) as caught:
         resolve_extraction_schema(_config(schema_source={"kind": "file", "path": path}))
     message = str(caught.value)
-    assert "local path only" in message
+    assert "local path or an s3:// object only" in message
     assert "token" not in message and "secret-sig" not in message
 
 
 @pytest.mark.parametrize(
-    "path", ["s3://bucket/schema.yaml", "https://example.com/schema.yaml"]
+    "path",
+    ["https://example.com/schema.yaml", "ftp://example.com/schema.yaml"],
 )
 def test_the_file_loader_refuses_urls(path: str) -> None:
     with pytest.raises(SchemaSourceError, match="is a URL; kind 'file' reads a local"):

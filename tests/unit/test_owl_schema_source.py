@@ -639,8 +639,8 @@ def test_relative_iris_are_warned(
     ("source", "message"),
     [
         ({}, "schema_source.path is required for kind 'owl'"),
-        ({"path": "s3://bucket/onto.ttl"}, "is a URL; kind 'owl' reads a local"),
-        ({"path": "https://example.org/onto.ttl"}, "is a URL"),
+        ({"path": "https://example.org/onto.ttl"}, "is a URL; kind 'owl' reads a"),
+        ({"path": "s3://B_ad/onto.ttl"}, "does not name an S3 bucket"),
         ({"path": "file://host/onto.ttl"}, "is a URL"),
         (
             {

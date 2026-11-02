@@ -30,7 +30,6 @@ import json
 import logging
 import re
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Any
 
 from rdflib import Dataset, Graph, Literal, URIRef
@@ -121,16 +120,20 @@ class Statements:
         }
 
 
-def parse(statements: Statements, path: Path, data: bytes, format_: str) -> None:
-    """Add what ``data``, the bytes of ``path`` in ``format_``, states.
+def parse(
+    statements: Statements, name: str, base: str, data: bytes, format_: str
+) -> None:
+    """Add what ``data``, the bytes of the file ``name`` in ``format_``,
+    states.
 
-    ``data`` is parsed as given, never re-read from ``path`` (the file's
-    URI is only the base of its relative IRIs).
+    ``data`` is parsed as given, never re-read from its location: ``base``
+    (the file's ``file://`` URI or ``s3://`` URL) is only the base of its
+    relative IRIs.
 
     Raises:
         SchemaSourceError: ``data`` does not parse.
     """
-    public_id = path.resolve().as_uri()
+    public_id = base
     try:
         if format_ in _QUAD_FORMATS:
             dataset = Dataset()
@@ -147,7 +150,7 @@ def parse(statements: Statements, path: Path, data: bytes, format_: str) -> None
     # ...): each is a file that does not parse.
     except Exception as e:  # noqa: BLE001
         raise SchemaSourceError(
-            f"Ontology file '{path}' does not parse as {format_}: {_first_line(e)}"
+            f"Ontology file '{name}' does not parse as {format_}: {_first_line(e)}"
         ) from e
     # The dataset parsers bind the library's own prefixes too: read the
     # file's.
