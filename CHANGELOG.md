@@ -680,7 +680,7 @@ From 0.2.3 (or a `main` checkout since):
   source's optional dependency, which the CLIs check before any model
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
   draft over such a source says which relationship types it lacks
-  (#492, #PR).
+  (#492, #495).
 - Schema sources in S3: `schema_source.path` of kinds `file` and `owl` may
   be an `s3://bucket/key` object, and for `owl` an `s3://bucket/prefix/`
   read as a directory (every page of the listing, filtered, sorted and
@@ -691,7 +691,7 @@ From 0.2.3 (or a `main` checkout since):
   an empty prefix or an oversized object fails the load with what to fix.
   `run-rag` loads the schema on the first query with a schema filter key
   and, when the load fails in any way, skips that check once instead of
-  reloading on every query (#PR).
+  reloading on every query (#495).
   The content keys the caches, so moving the schema between a local path
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay
