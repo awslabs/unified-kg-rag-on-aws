@@ -19,6 +19,9 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.schema_sources import SchemaSourceContext
+from unified_kg_rag.adapters.schema_sources import registry as schema_registry
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
     entity_properties,
@@ -36,6 +39,7 @@ from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     schema_annotation_digest,
+    stage_input_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.contributions import record_payload
 from unified_kg_rag.domain.ingestion.schema_annotation import (
@@ -48,7 +52,9 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
     Entity,
+    PipelineStageType,
     Relationship,
+    SchemaDocument,
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.models.schema import (
@@ -63,6 +69,7 @@ from unified_kg_rag.ports.indexer import (
 )
 from unified_kg_rag.shared import (
     AWSServiceError,
+    ConfigurationError,
     NamespaceLeaseError,
 )
 
@@ -467,6 +474,41 @@ def test_the_digest_follows_the_annotations_only() -> None:
     assert schema_annotation_digest(_config(**off)) == UNANNOTATED_DIGEST
 
 
+def test_the_digest_follows_the_type_keys_and_every_iri() -> None:
+    strict = {"schema_mode": "strict", "relationship_types": ["SUPPLIES"]}
+    assert schema_annotation_digest(
+        _config(**strict, entity_types=["ORGANIZATION"])
+    ) != schema_annotation_digest(_config(**strict, entity_types=["PRODUCT"]))
+    assert schema_annotation_digest(
+        _config(**{**strict, "relationship_types": ["SUPPLIES"]})
+    ) != schema_annotation_digest(
+        _config(**{**strict, "relationship_types": ["STOCKS"]})
+    )
+    # A predicate IRI alone: the digest and the indexing stage's key.
+    configs = [
+        _config(relationship_types=[{"label": "SUPPLIES", "iri": iri}])
+        for iri in ("urn:x:a", "urn:x:b")
+    ]
+    assert len({schema_annotation_digest(c) for c in configs}) == 2
+    assert (
+        len(
+            {
+                stage_input_fingerprint(c, PipelineStageType.INDEXING, "corpus")
+                for c in configs
+            }
+        )
+        == 2
+    )
+
+
+def test_the_digest_and_the_indexing_key_need_the_schema_loaded() -> None:
+    config = _config(schema_source={"kind": "file", "path": "schema.yaml"})
+    with pytest.raises(ConfigurationError, match="not loaded yet"):
+        schema_annotation_digest(config)
+    with pytest.raises(ConfigurationError, match="not loaded yet"):
+        stage_input_fingerprint(config, PipelineStageType.INDEXING, "corpus")
+
+
 def _written_without_a_schema() -> tuple[FakeVectorStore, FakeGraphStore]:
     manager, vector, graph = _manager(Config())
     entities, relationships = _items()
@@ -804,6 +846,27 @@ def test_a_manager_built_with_a_schema_file_loads_it(tmp_path: Path) -> None:
     graph_entities, graph_edges, _, _ = _stored(vector, graph)
     assert graph_entities == {"a": (True, ORG), "b": (False, None)}
     assert graph_edges == {"ab": (True, None), "ba": (False, None)}
+
+
+def test_a_manager_loads_a_schema_source_with_the_run_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions: list[Any] = []
+
+    def load(context: SchemaSourceContext) -> SchemaDocument:
+        sessions.append(context.boto_session())
+        return SchemaDocument(relationship_types=["SUPPLIES"])
+
+    monkeypatch.setitem(schema_registry._REGISTRY, "c69_session", load)
+    config = _config(schema_source={"kind": "c69_session"})
+    session = object()
+    providers = Providers(config, boto_session=session)  # type: ignore[arg-type]
+    graph = FakeGraphStore(config)
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    IndexingManager(
+        config, vector_indexer=vector, graph_indexer=graph, providers=providers
+    )
+    assert sessions == [session]
 
 
 def test_stores_written_under_the_earlier_rule_are_reannotated_once() -> None:

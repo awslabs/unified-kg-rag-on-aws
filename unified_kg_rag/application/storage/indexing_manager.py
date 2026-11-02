@@ -311,7 +311,7 @@ class IndexingManager:
     ) -> None:
         # The schema a schema source names, loaded once (the pipeline loads
         # it before it builds the manager; then this changes nothing).
-        config = resolve_extraction_schema(config)
+        config = resolve_extraction_schema(config, providers=providers)
         self.config = config
         # Session, embedding/LLM providers and store builders shared with the
         # pipeline, used for the default indexers and the merge summarizer.
