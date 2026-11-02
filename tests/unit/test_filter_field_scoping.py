@@ -1271,6 +1271,56 @@ def test_a_schema_filter_reads_the_schema_source(tmp_path: Any, caplog) -> None:
     assert len(warnings) == 1
 
 
+def test_check_filter_keys_types_the_values_as_a_query_does() -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(
+        _schema_config(schema_mode="strict", entity_types=["ORGANIZATION"])
+    )
+    chain.check_filter_keys({"in_schema": "true"}, SearchStrategy.LOCAL)
+    for strategy in (SearchStrategy.LOCAL, SearchStrategy.AUTO):
+        with pytest.raises(InvalidFilterError, match="boolean field"):
+            chain.check_filter_keys({"in_schema": "maybe"}, strategy)
+
+
+def test_a_schema_filter_loads_the_source_once_with_the_chains_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    import boto3
+
+    from unified_kg_rag.adapters.schema_sources import (
+        SchemaSourceContext,
+        register_schema_source,
+        registry,
+    )
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.shared.exceptions import SchemaSourceError
+
+    # A session built from config.aws instead would be this one.
+    monkeypatch.setattr(boto3, "Session", MagicMock(name="config-session"))
+    sessions: list[Any] = []
+
+    @register_schema_source("test_unreadable_source")
+    def _load(context: SchemaSourceContext) -> Any:
+        sessions.append(context.boto_session())
+        raise SchemaSourceError("the service is down")
+
+    try:
+        chain = _strategy_chain(
+            _schema_config(schema_source={"kind": "test_unreadable_source"})
+        )
+        chain.providers = MagicMock(name="providers")
+        for _ in range(3):
+            chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
+    finally:
+        registry._REGISTRY.pop("test_unreadable_source", None)
+    # Loaded with the session the chain's providers hold (not one built
+    # from config.aws), and a failed load is not retried on each query.
+    assert sessions == [chain.providers.boto_session]
+
+
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
     import json
 
