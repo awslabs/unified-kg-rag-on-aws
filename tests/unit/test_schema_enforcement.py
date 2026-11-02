@@ -36,9 +36,11 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.ingestion.schema_conformance import (
     SCHEMA_COUNTERS,
     SchemaConformance,
+    unit_entity_types,
 )
 from unified_kg_rag.domain.models import (
     Config,
+    Entity,
     ExtractionSchema,
     TextUnit,
     TextUnitExtraction,
@@ -183,6 +185,21 @@ def test_strict_is_a_subset_of_align(patched) -> None:
     assert {r.id for r in strict.relationships} <= {r.id for r in align.relationships}
 
 
+def test_an_off_schema_type_is_counted_whatever_its_endpoints(patched) -> None:
+    # Regression: strict checked the endpoints first, so a relationship of an
+    # undeclared type naming a dropped entity counted only as an endpoint
+    # drop, and relationships_off_schema differed between align and strict.
+    output = _output(
+        [_entity("Alice", "person"), _entity("Springfield", "city")],
+        [_rel("Alice", "Springfield", "likes"), _rel("Springfield", "Alice", "MAKES")],
+    )
+    _, strict = _extract(_config(), output)
+    _, align = _extract(_config("align"), output)
+    assert strict.relationships_off_schema == align.relationships_off_schema == 1
+    assert strict.relationships_dropped_off_schema == 1
+    assert strict.relationships_dropped_off_schema_endpoint == 1  # MAKES
+
+
 def test_an_in_schema_statement_lifts_the_rejection(patched) -> None:
     output = _output(
         [_entity("Acme Corp", "vendor"), _entity("Acme Corp", "organization")],
@@ -319,6 +336,15 @@ def test_conform_is_idempotent_and_order_independent(patched) -> None:
     assert {e.id for e in backwards.entities} == {e.id for e in once.entities}
     assert {r.id for r in backwards.relationships} == {r.id for r in once.relationships}
     assert backwards.off_schema_keys == once.off_schema_keys
+
+
+def test_a_unit_type_tie_takes_the_smallest_label() -> None:
+    entities = [
+        Entity(id="x", name="X", type="PERSON"),
+        Entity(id="x", name="X", type="ORGANIZATION"),
+    ]
+    assert unit_entity_types(entities) == {"x": "organization"}
+    assert unit_entity_types(entities[::-1]) == {"x": "organization"}
 
 
 def test_strict_without_declared_types_checks_nothing() -> None:
@@ -510,7 +536,42 @@ def test_align_gleaning_keeps_everything(patched) -> None:
     assert _names(record)["Gizmo Ltd"] == "spaceship"
     assert _names(record)["Alice"] == "wizard"
     assert ("Gizmo Ltd", "likes", "Acme Corp") in _edges(record)
-    assert set(_counts(gleaner).values()) == {0}
+    # Kept, and counted as extraction counts what align keeps.
+    counts = _counts(gleaner)
+    assert counts.pop("entities_off_schema") == 1
+    assert counts.pop("relationships_off_schema") == 1
+    assert set(counts.values()) == {0}
+
+
+@pytest.mark.parametrize("mode", ["align", "strict"])
+def test_gleaning_counts_its_off_schema_additions_in_either_mode(
+    patched, mode: str
+) -> None:
+    # Regression: only strict's drops were counted, so align's gleaned
+    # off-schema items reached the stores (and in_schema: false listings)
+    # without a count.
+    config = _config(mode)
+    gleaner, record = _gleaner(config), _seed(config)
+    _apply(
+        gleaner,
+        record,
+        _missing_entity("Gizmo Ltd", "spaceship"),
+        _missing_rel("Alice", "Widget", "likes"),
+        # Reversed: no pattern allows product -> organization.
+        _missing_rel("Widget", "Acme Corp", "makes"),
+    )
+    counts = _counts(gleaner)
+    assert (
+        counts["entities_off_schema"],
+        counts["relationships_off_schema"],
+        counts["relationships_off_pattern"],
+    ) == (1, 1, 1)
+    dropped = 1 if mode == "strict" else 0
+    assert (
+        counts["entities_dropped_off_schema"],
+        counts["relationships_dropped_off_schema"],
+        counts["relationships_dropped_off_pattern"],
+    ) == (dropped, dropped, dropped)
 
 
 def test_glean_reports_the_strict_counters(patched, mocker, caplog) -> None:
@@ -529,3 +590,59 @@ def test_glean_reports_the_strict_counters(patched, mocker, caplog) -> None:
     summary = [r for r in caplog.records if "Gleaning schema" in r.getMessage()]
     assert len(summary) == 1
     assert "Gizmo" not in caplog.text and "spaceship" not in caplog.text
+
+
+# --- pins ----------------------------------------------------------------------
+
+
+def test_entity_types_alone_keep_labels_as_written(patched) -> None:
+    # align with entity types alone changes nothing: no label is rewritten.
+    config = Config.model_validate(
+        {"processing": {"graph_extraction": {"entity_types": ["LEGAL_ENTITY"]}}}
+    )
+    output = _output([_entity("Acme Corp", "legal entity")], [])
+    record, _ = _extract(config, output)
+    assert _names(record)["Acme Corp"] == "legal entity"
+
+
+def test_strict_ignores_a_type_correction_no_pattern_allows(patched) -> None:
+    # MAKES is declared, but its pattern joins organization -> product only.
+    config = _config()
+    gleaner, record = _gleaner(config), _seed(config)
+    _apply(
+        gleaner,
+        record,
+        {
+            "issue_type": "RELATIONSHIP_CORRECTION",
+            "details": {
+                "source": "Alice",
+                "target": "Acme Corp",
+                "corrected_type": "makes",
+            },
+        },
+    )
+    assert _edges(record) == {("Alice", "WORKS_FOR", "Acme Corp")}
+    assert _counts(gleaner)["corrections_ignored_off_schema"] == 1
+    assert _counts(gleaner)["relationships_dropped_off_pattern"] == 0
+
+
+def test_a_listed_entity_restated_off_schema_is_not_rejected(patched) -> None:
+    # Strict drops the restatement but keeps the entity the unit lists.
+    config = _config()
+    gleaner, record = _gleaner(config), _seed(config)
+    _apply(gleaner, record, _missing_entity("Alice", "wizard"))
+    assert "alice" not in record.rejected
+    assert _names(record)["Alice"] == "person"
+    assert _counts(gleaner)["entities_dropped_off_schema"] == 1
+
+
+def test_glean_counters_restart_with_each_call(patched, mocker) -> None:
+    config = _config()
+    gleaner = _gleaner(config)
+    gleaner.graph_refiner = mocker.Mock()
+    gleaner.graph_refiner.invoke.return_value = {
+        "refinement_plan": _answer(_missing_entity("Gizmo Ltd", "spaceship"))
+    }
+    gleaner.glean([UNIT], [_seed(config)])
+    _, stats = gleaner.glean([UNIT], [_seed(config)])
+    assert stats.entities_off_schema == stats.entities_dropped_off_schema == 1

@@ -147,12 +147,19 @@ class GleaningStats(BaseModel):
     # Gleaned relationships dropped (entity grounding on) because an endpoint
     # is an entity the unit does not list and whose name it does not contain.
     relationships_dropped_ungrounded_endpoint_name: int = 0
-    # Strict schema_mode (domain.ingestion.schema_conformance): gleaned
-    # entities and relationships of an undeclared type dropped, gleaned
-    # relationships naming an entity rejected as off schema for their unit,
-    # relationships of the unit's record no pattern allows once the answer is
-    # applied, and corrections to an undeclared type or to a direction or
-    # type no pattern allows, ignored. None of them is a failure.
+    # Where the schema applies (domain.ingestion.schema_conformance), as
+    # extraction counts them: the gleaned entities and relationships of an
+    # undeclared type and the gleaned relationships no pattern allows, kept
+    # under align and dropped under strict.
+    entities_off_schema: int = 0
+    relationships_off_schema: int = 0
+    relationships_off_pattern: int = 0
+    # Strict schema_mode: gleaned entities and relationships of an
+    # undeclared type dropped, gleaned relationships naming an entity
+    # rejected as off schema for their unit, relationships of the unit's
+    # record no pattern allows once the answer is applied, and corrections
+    # to an undeclared type or to a direction or type no pattern allows,
+    # ignored. None of them is a failure.
     entities_dropped_off_schema: int = 0
     relationships_dropped_off_schema: int = 0
     relationships_dropped_off_schema_endpoint: int = 0
@@ -165,8 +172,11 @@ class GleaningStats(BaseModel):
         return sum(r.units_gleaned for r in self.rounds)
 
 
-# The GleaningStats counters of the strict schema.
+# The GleaningStats counters of the schema.
 _SCHEMA_STATS = (
+    "entities_off_schema",
+    "relationships_off_schema",
+    "relationships_off_pattern",
     "entities_dropped_off_schema",
     "relationships_dropped_off_schema",
     "relationships_dropped_off_schema_endpoint",
@@ -323,14 +333,19 @@ class GraphGleaner(BaseProcessor):
         stats.total_processing_time = time.time() - start_time
 
         self._log_completion_summary(stats, units_still_gaining=len(units_to_glean))
-        if self.conformance.strict:
+        if self.conformance.applies:
             logger.info(
-                "Gleaning schema (strict) - Entities dropped off schema: %s, "
-                "Relationships dropped off schema: %s, with an off-schema "
-                "endpoint: %s, off pattern: %s, Corrections ignored: %s",
+                "Gleaning schema (%s) - Entities off schema: %s (dropped %s), "
+                "Relationships off schema: %s (dropped %s), dropped with an "
+                "off-schema endpoint: %s, off pattern: %s (dropped %s), "
+                "Corrections ignored: %s",
+                self.conformance.schema.mode,
+                stats.entities_off_schema,
                 stats.entities_dropped_off_schema,
+                stats.relationships_off_schema,
                 stats.relationships_dropped_off_schema,
                 stats.relationships_dropped_off_schema_endpoint,
+                stats.relationships_off_pattern,
                 stats.relationships_dropped_off_pattern,
                 stats.corrections_ignored_off_schema,
             )
@@ -498,6 +513,7 @@ class GraphGleaner(BaseProcessor):
                 new_relationships, unit, listed, record
             )
             self._add_to_record(record, new_entities, new_relationships)
+            self._count_off_pattern(record, new_relationships)
             # Every issue of the answer names entities as its prompt listed
             # them, so the renames it asks for apply last (to its additions
             # too).
@@ -782,9 +798,10 @@ class GraphGleaner(BaseProcessor):
         lists the entity already), so a relationship naming it is dropped
         too, as extraction drops the relationships of an entity it drops.
         """
-        if not self.conformance.strict or not self.conformance.entity_off_schema(
-            entity.type
-        ):
+        if not self.conformance.entity_off_schema(entity.type):
+            return False
+        self._schema_counts.entities_off_schema += 1
+        if not self.conformance.strict:
             return False
         key = entity_key(entity.name)
         if key not in {entity_key(e.name) for e in record.entities}:
@@ -800,10 +817,11 @@ class GraphGleaner(BaseProcessor):
 
     def _off_schema_relationship(self, rel: Relationship, unit: TextUnit) -> bool:
         """Whether strict mode drops a gleaned relationship of an undeclared
-        type."""
-        if not self.conformance.strict or not self.conformance.relationship_off_schema(
-            rel.type
-        ):
+        type (counted off schema in either mode)."""
+        if not self.conformance.relationship_off_schema(rel.type):
+            return False
+        self._schema_counts.relationships_off_schema += 1
+        if not self.conformance.strict:
             return False
         self._schema_counts.relationships_dropped_off_schema += 1
         logger.debug(
@@ -813,6 +831,24 @@ class GraphGleaner(BaseProcessor):
             unit.short_id,
         )
         return True
+
+    def _count_off_pattern(
+        self, record: TextUnitExtraction, relationships: list[Relationship]
+    ) -> None:
+        """Count the answer's ``relationships`` no pattern allows between the
+        unit's types of their endpoints (strict then drops them,
+        :meth:`_conform_record`)."""
+        if not self.conformance.applies or not relationships:
+            return
+        types = unit_entity_types(record.entities)
+        self._schema_counts.relationships_off_pattern += sum(
+            self.conformance.off_pattern(
+                rel.type,
+                types.get(entity_key(rel.source_name or "")),
+                types.get(entity_key(rel.target_name or "")),
+            )
+            for rel in relationships
+        )
 
     def _ignore_correction(self, kind: str, unit: TextUnit, why: str) -> bool:
         """Count and log a correction strict mode ignores; True."""
