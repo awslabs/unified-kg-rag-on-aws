@@ -870,6 +870,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   `False`(불리언은 대소문자 구분 없이 `true`/`false`, `1`/`0`, `yes`/`no`를 받음),
   `rank:2`는 `2`가 됩니다. 유형에 맞지 않는 문자열(`in_schema:maybe`, `rank:high`,
   `level:1.5`)은 `InvalidFilterError`를 일으킵니다(명령줄에서는 사용법 오류, 종료 코드 2).
+  유형이 다른 값도 마찬가지입니다. 불리언 필드의 숫자(`in_schema: 1`), 숫자 필드의
+  불리언(`rank: true`), 정수 필드의 소수(`level: 2.5`. `2.0`은 `2`가 됨)는
+  `InvalidFilterError`를 일으킵니다.
   그 밖의 필드 값은 `attr_<key>`와 `attributes.<path>`를 포함해 주어진 그대로 비교합니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
@@ -1458,9 +1461,13 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
 - `--schema-out schema.yaml`을 주면 [추출 스키마](#c-추출-스키마) 초안도 씁니다. 초안에는
   예시를 추출한 엔티티 유형(위 항목), 튜닝 예시가 가장 자주 쓴 관계 유형(최대 12개,
   개수는 주석), 그리고 어떤 관계 유형의 끝점 유형 쌍이 모두 두 번 이상 나왔을 때만 그
-  패턴이 들어 있습니다. `schema_source: {kind: file}` 파일이므로 검토한 뒤
-  `schema_mode: align`으로 읽으세요(주석에는 지정한 경로가 그대로 들어감). 모델 답이
-  같으면 같은 파일이 나옵니다.
+  패턴이 들어 있습니다. 설정이 선언한 유형과 패턴은 설명, IRI와 함께 모두 남고, 설정에
+  패턴이 있는 관계 유형에는 다른 패턴을 더하지 않습니다. `schema_source: {kind: file}`
+  파일이므로 검토한 뒤 `schema_mode: align`으로 읽으세요(주석의 경로는 `--config-path`
+  파일의 디렉터리 기준 상대 경로). 모델 답이 같으면 같은 파일이 나옵니다. 사용 중인 스키마는
+  덮어쓰지 않습니다. 설정이 읽는 스키마 파일을 `--schema-out`이나 `--output-path`로
+  지정하면 종료 코드 2로 끝나고, 이미 있는 `--schema-out` 파일도 `--force`가 없으면
+  종료 코드 2로 끝납니다.
 - 텍스트가 아닌 형식은 수집과 같은 로더(`ParserFactory.register_loader`로 추가한 형식
   포함)를 거치며, 파싱하지 못한 파일은 경고와 함께 건너뜁니다.
 - 모델이 JSON 프로필을 돌려주지 않으면 0이 아닌 코드로 끝나고 아무것도 쓰지 않습니다.
@@ -1717,6 +1724,9 @@ RAGInput(query="...", search_strategy="mix",
 2. 초안을 검토합니다. 초안에는 프로필의 엔티티 유형(설정이 선언하면 설정한 유형)과,
    튜닝 예시가 가장 자주 쓴 관계 유형이 각각의 개수와 함께 있고, 패턴은 예시가
    뒷받침할 때만 있습니다. 동의어를 합치고, 잡음을 지우고, 설명과 IRI를 더하세요.
+   설정이 이미 읽는 스키마를 다듬을 때는 초안을 다른 파일에 쓰세요(명령은 읽는 파일을
+   덮어쓰지 않음). 초안에는 선언한 유형과 패턴이 설명, IRI와 함께 모두 남으므로 초안이
+   더한 것만 합치면 됩니다.
 3. `schema_source: {kind: file, path: schema.yaml}`과 `schema_mode: align`으로
    읽습니다(초안은 청크 몇 개에서 나오므로 `strict`는 그 청크에 없던 것을 버림). 초안이
    `entity_types`를 정하면 설정에서 `entity_types`를 빼세요.

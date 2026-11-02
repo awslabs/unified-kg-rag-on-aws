@@ -418,8 +418,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._cache_lock = threading.RLock()
         # The schema annotation fields the configured extraction schema
         # writes (_schema_annotation_fields), loaded on the first filter on
-        # one of them; None until then.
+        # one of them; None until then, and for good once a load failed.
         self._schema_fields: frozenset[str] | None = None
+        self._schema_fields_unreadable = False
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
@@ -1155,22 +1156,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _schema_annotation_fields(self) -> frozenset[str] | None:
         """The annotation fields the configured extraction schema writes
         (``SchemaAnnotator.fields``), or ``None`` when its schema source
-        cannot be loaded (the check is then skipped, logged once)."""
+        cannot be loaded (the check is then skipped, logged once). The
+        source is loaded once, with the chain's session: a failed load is
+        not retried on each query."""
         fields: frozenset[str] | None = getattr(self, "_schema_fields", None)
-        if fields is not None:
+        if fields is not None or getattr(self, "_schema_fields_unreadable", False):
             return fields
         try:
             schema = resolve_extraction_schema(
-                self.config
+                self.config, providers=getattr(self, "providers", None)
             ).processing.graph_extraction.extraction_schema()
         except SchemaSourceError as e:
-            if not getattr(self, "_schema_fields_warned", False):
-                self._schema_fields_warned = True
-                logger.warning(
-                    "Not checking schema filter keys against the extraction "
-                    "schema: %s",
-                    e,
-                )
+            self._schema_fields_unreadable = True
+            logger.warning(
+                "Not checking schema filter keys against the extraction schema: %s",
+                e,
+            )
             return None
         fields = SchemaAnnotator(schema).fields
         self._schema_fields = fields

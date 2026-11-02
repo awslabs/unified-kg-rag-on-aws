@@ -416,6 +416,8 @@ def test_options_and_the_secret_key_nothing(custom_kind: str) -> None:
             "schema_source.secret_arn is set but",
         ),
         ({"kind": "svc", "secret_arn": "my-secret"}, "secret_arn"),
+        # An ARN of another service is no secret.
+        ({"kind": "svc", "secret_arn": "arn:aws:s3:::bucket"}, "secret_arn"),
     ],
 )
 def test_source_settings_are_checked(source: dict[str, Any], message: str) -> None:
@@ -457,6 +459,68 @@ def test_the_session_is_built_once_and_only_when_asked() -> None:
         ("bedrock-runtime", {"region_name": "us-east-1"}),
         ("sts", {"region_name": "ap-south-1"}),
     ]
+
+
+def test_the_default_session_uses_the_configured_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import boto3
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(boto3, "Session", lambda **kw: calls.append(kw) or "session")
+    config = Config.model_validate(
+        {"aws": {"profile_name": "dev", "region_name": "eu-west-1"}}
+    )
+    context = SchemaSourceContext(SchemaSourceConfig(kind="svc"), config)
+    assert context.boto_session() == "session"
+    assert calls == [{"profile_name": "dev", "region_name": "eu-west-1"}]
+
+
+def test_every_entry_point_hands_the_loader_its_run_session(
+    custom_kind: str, tmp_path: Path
+) -> None:
+    from unittest.mock import MagicMock
+
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.prompts.tuner import PromptTuner
+    from unified_kg_rag.domain.models import PipelineConfig
+    from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
+    from unified_kg_rag.shared.exceptions import EvaluationException
+
+    sessions: list[Any] = []
+
+    @register_schema_source(custom_kind)
+    def _load(context: SchemaSourceContext) -> SchemaDocument:
+        sessions.append(context.boto_session())
+        return SchemaDocument(**_INLINE)
+
+    config = Config.model_validate(
+        {
+            "backend": "local",
+            "providers": {
+                "rerank": {"kind": "none"},
+                "graph": {"sqlite_path": str(tmp_path / "g.sqlite3")},
+                "vector": {"sqlite_path": str(tmp_path / "v.sqlite3")},
+            },
+            "processing": {
+                "graph_extraction": {"schema_source": {"kind": custom_kind}}
+            },
+        }
+    )
+    session = MagicMock(name="run-session")
+    providers = Providers(config, boto_session=session)
+    PromptTuner(config, providers=providers)
+    # The schema loads before the missing chain is noticed.
+    with pytest.raises(EvaluationException):
+        EvaluationManager(config, None, providers=providers)
+    DataIngestionPipeline(
+        config,
+        PipelineConfig(local_directory=str(tmp_path / "cache")),
+        source_directory=tmp_path,
+        providers=providers,
+    )
+    assert sessions == [session, session, session]
 
 
 def test_the_run_session_reaches_the_loader(custom_kind: str) -> None:
@@ -519,10 +583,19 @@ def test_the_file_loader_refuses_urls(path: str) -> None:
         _load_file(path)
 
 
-def test_the_file_loader_takes_no_options(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"options": {"a": 1}},
+        {"secret_arn": "arn:aws:secretsmanager:us-east-1:111122223333:secret:x"},
+    ],
+)
+def test_the_file_loader_takes_no_options(
+    tmp_path: Path, source: dict[str, Any]
+) -> None:
     path = _write(tmp_path / "schema.yaml", _SCHEMA_YAML)
     with pytest.raises(SchemaSourceError, match="takes no schema_source.options"):
-        _load_file(str(path), options={"a": 1})
+        _load_file(str(path), **source)
 
 
 def test_a_directory_is_an_unreadable_schema_file(tmp_path: Path) -> None:

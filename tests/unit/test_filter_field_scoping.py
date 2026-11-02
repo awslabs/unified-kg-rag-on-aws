@@ -1271,6 +1271,56 @@ def test_a_schema_filter_reads_the_schema_source(tmp_path: Any, caplog) -> None:
     assert len(warnings) == 1
 
 
+def test_check_filter_keys_types_the_values_as_a_query_does() -> None:
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    chain = _strategy_chain(
+        _schema_config(schema_mode="strict", entity_types=["ORGANIZATION"])
+    )
+    chain.check_filter_keys({"in_schema": "true"}, SearchStrategy.LOCAL)
+    for strategy in (SearchStrategy.LOCAL, SearchStrategy.AUTO):
+        with pytest.raises(InvalidFilterError, match="boolean field"):
+            chain.check_filter_keys({"in_schema": "maybe"}, strategy)
+
+
+def test_a_schema_filter_loads_the_source_once_with_the_chains_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    import boto3
+
+    from unified_kg_rag.adapters.schema_sources import (
+        SchemaSourceContext,
+        register_schema_source,
+        registry,
+    )
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.shared.exceptions import SchemaSourceError
+
+    # A session built from config.aws instead would be this one.
+    monkeypatch.setattr(boto3, "Session", MagicMock(name="config-session"))
+    sessions: list[Any] = []
+
+    @register_schema_source("test_unreadable_source")
+    def _load(context: SchemaSourceContext) -> Any:
+        sessions.append(context.boto_session())
+        raise SchemaSourceError("the service is down")
+
+    try:
+        chain = _strategy_chain(
+            _schema_config(schema_source={"kind": "test_unreadable_source"})
+        )
+        chain.providers = MagicMock(name="providers")
+        for _ in range(3):
+            chain.check_filter_keys({"type_iri": "x"}, SearchStrategy.LOCAL)
+    finally:
+        registry._REGISTRY.pop("test_unreadable_source", None)
+    # Loaded with the session the chain's providers hold (not one built
+    # from config.aws), and a failed load is not retried on each query.
+    assert sessions == [chain.providers.boto_session]
+
+
 def _eval_dataset(tmp_path: Any, filters: dict[str, Any], **metadata: Any) -> Any:
     import json
 
@@ -1415,6 +1465,59 @@ def test_typed_filter_values_refuses_a_string_its_type_cannot_take(
         GraphRAGChain._prepare_invoke({"query": "q", "filters": filters})
     with pytest.raises(InvalidFilterError, match=message):
         GraphRAGChain.check_filter_values(filters)
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        # A boolean field takes a boolean, not a number.
+        ({"in_schema": 1}, "Filter 'in_schema' is a boolean field"),
+        ({"in_schema": 0.0}, "Filter 'in_schema' is a boolean field"),
+        ({"in_schema": [True, 0]}, "Filter 'in_schema' is a boolean field"),
+        # A numeric field no boolean (bool is an int subclass).
+        ({"rank": True}, "Filter 'rank' is a number field"),
+        ({"weight": {"gte": False}}, "Filter 'weight' is a number field"),
+        ({"level": [1, True]}, "Filter 'level' is an integer field"),
+        # An integer field no fractional or infinite number.
+        ({"level": 2.5}, "Filter 'level' is an integer field"),
+        ({"depth": {"lt": float("inf")}}, "Filter 'depth' is an integer field"),
+        ({"confidence": float("nan")}, "Filter 'confidence' is a number field"),
+    ],
+)
+def test_typed_filter_values_refuses_a_value_of_another_type(
+    filters: dict[str, Any], message: str, tmp_path: Any
+) -> None:
+    from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
+    from unified_kg_rag.shared import EvaluationException
+
+    with pytest.raises(InvalidFilterError, match=message):
+        typed_filter_values(filters)
+    # The Python API, a query file (run-eval) and a kept filter alike.
+    with pytest.raises(InvalidFilterError, match=message):
+        GraphRAGChain._prepare_invoke({"query": "q", "filters": filters})
+    with pytest.raises(InvalidFilterError, match=message):
+        GraphRAGChain.check_filter_values(filters)
+    dataset = _eval_dataset(tmp_path, filters, search_strategy="local")
+    with pytest.raises(EvaluationException, match="index 0 .*field"):
+        EvaluationManager.load_data(dataset)
+
+
+@pytest.mark.parametrize(
+    ("given", "typed"),
+    [
+        ({"in_schema": True, "rank": 2, "confidence": 0.5}, None),
+        ({"rank": 2.0, "weight": {"gte": 1}}, None),
+        # An integral float is an integer field's integer.
+        ({"level": 2.0, "n_tokens": [3, 4.0]}, {"level": 2, "n_tokens": [3, 4]}),
+    ],
+)
+def test_typed_filter_values_keeps_values_of_the_fields_type(
+    given: dict[str, Any], typed: dict[str, Any] | None
+) -> None:
+    out = typed_filter_values(given)
+    expected = given if typed is None else typed
+    assert out == expected
+    assert repr(out) == repr(expected)
 
 
 def test_prepare_invoke_types_a_library_callers_string_values() -> None:

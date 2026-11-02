@@ -951,7 +951,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   value: `in_schema:false` is `False` (a boolean takes `true`/`false`,
   `1`/`0` or `yes`/`no`, in any case) and `rank:2` is `2`. A string its
   type cannot take (`in_schema:maybe`, `rank:high`, `level:1.5`) raises
-  `InvalidFilterError` (a usage error, exit 2, on the command line). The
+  `InvalidFilterError` (a usage error, exit 2, on the command line), and so
+  does a typed value of another type: a number for a boolean field
+  (`in_schema: 1`), a boolean for a numeric one (`rank: true`) or a
+  fractional number for an integer one (`level: 2.5`; `2.0` is `2`). The
   values of every other field are matched as given, `attr_<key>` and
   `attributes.<path>` included.
 - A filter applies only to the stores that declare its field
@@ -1651,9 +1654,15 @@ domain and entity types. **Review it**, then copy the prompts you want under
   examples were extracted with (above), the relationship types the tuning
   examples state most often (at most 12, with their counts in a comment)
   and a pattern only where every pair of endpoint types of a relationship
-  type appears at least twice. It is a `schema_source: {kind: file}` file,
-  to load with `schema_mode: align` after review (its comment names the
-  path as you gave it); the same model answers give the same file.
+  type appears at least twice. Every type and pattern the config declares
+  stays, with its description and IRI, and a relationship type with
+  configured patterns gets no other. It is a `schema_source: {kind: file}`
+  file, to load with `schema_mode: align` after review (its comment names
+  the path relative to the `--config-path` file's directory); the same
+  model answers give the same file. It never replaces your schema: naming
+  the schema file the config loads (with `--schema-out` or
+  `--output-path`) exits 2, and so does an existing `--schema-out` file
+  unless you add `--force`.
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
@@ -1939,7 +1948,10 @@ schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-pro
    ones when the config declares them) and the relationship types the
    tuning examples state most often, with a count
    each, and a pattern only where the examples support it. Merge synonyms,
-   drop noise, add descriptions and IRIs.
+   drop noise, add descriptions and IRIs. To refine a schema the config
+   already loads, write the draft to another file (the command refuses to
+   overwrite the loaded one): the draft keeps every declared type and
+   pattern with its description and IRI, so you merge only what it adds.
 3. Load it with `schema_source: {kind: file, path: schema.yaml}` and
    `schema_mode: align` (the draft comes from a few chunks, so `strict`
    would drop what they did not show), and remove `entity_types` from the

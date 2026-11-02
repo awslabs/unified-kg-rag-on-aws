@@ -677,8 +677,14 @@ From 0.2.3 (or a `main` checkout since):
   counts) and patterns only where every endpoint-type pair of a type is
   seen at least twice. The examples are extracted with the profile's
   entity types, or with the configured schema when the config declares
-  one (a schema source it cannot load exits 2). It names `schema_mode:
-  align`, and a fixed model gives the same file (#478, #480).
+  one (a schema source it cannot load exits 2). Every type and pattern the
+  config declares stays in the draft with its description and IRI, and a
+  relationship type with configured patterns gets no other. It names
+  `schema_mode: align` (the comment's path relative to the config file's
+  directory), and a fixed model gives the same file. It never replaces a
+  file silently: `--schema-out` (or `--output-path`) naming the schema file
+  the config loads exits 2, and so does an existing `--schema-out` file
+  unless `--force` is given (#478, #480, #483).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -797,7 +803,10 @@ Queries and retrieval.
   with OpenSearch and the Python API's typed values. A boolean takes
   `true`/`false`, `1`/`0` or `yes`/`no` (any case); a string the type
   cannot take (`in_schema:maybe`) raises `InvalidFilterError` (exit 2 on
-  the command line) (#479).
+  the command line). A typed value must be of the field's type too: a
+  boolean field takes no number (`in_schema: 1`), a numeric one no boolean
+  (`rank: true`) and an integer one no fractional number (`level: 2.5`;
+  `2.0` is `2`) (#479, #483).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).
