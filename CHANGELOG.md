@@ -499,7 +499,7 @@ Library API (Python callers and custom backends).
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
 1. Install on Python 3.11 or 3.12, with the extras you use (`eval`, `viz`,
-   `local`, `otel`, `unstructured`). Without the `local` extra a CLI whose
+   `local`, `otel`, `unstructured`, `ontology`). Without the `local` extra a CLI whose
    providers need it exits 2 at start-up, naming it (#472).
 2. Load your config once and fix what it reports: unknown keys (the table
    of removed 0.2.3 keys above), moved keys (the load names the
@@ -642,6 +642,17 @@ From 0.2.3 (or a `main` checkout since):
   evaluation and prompt tuning load the source, and reading the schema of
   a config whose source is not loaded raises `ConfigurationError` instead
   of using the default schema (#475, #480).
+- The `ontology` extra (`uv sync --extra ontology`: rdflib 7.6,
+  BSD-3-Clause) and the mapping the ontology schema sources share: selected
+  named classes become entity types and object properties relationship
+  types (with their IRIs), patterns come from a fixed RDFS-style closure of
+  the domains and ranges (sub-classes and sub-properties, unions, inverses,
+  symmetric properties) on a flattened hierarchy, labels from
+  `skos:prefLabel`/`rdfs:label` by language preference or the local name
+  (`UPPER_SNAKE`, Hangul kept), and the output depends only on the
+  statements. Colliding labels and more types or patterns than the caps
+  allow fail instead of being truncated. No schema-source kind reads RDF
+  yet (#491).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a

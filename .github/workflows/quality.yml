@@ -68,13 +68,13 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked --extra otel --extra eval --extra viz
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology
 
-      - name: Check the eval and viz extras are importable
+      - name: Check the eval, viz and ontology extras are importable
         # The tests that need them skip themselves without them
         # (tests/fixtures/extras.py), which would let this job pass without
         # running them.
-        run: uv run --frozen python -c "import bokeh, datasets, langchain_openai, pandas, pyvis, ragas"
+        run: uv run --frozen python -c "import bokeh, datasets, langchain_openai, pandas, pyvis, ragas, rdflib"
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
@@ -144,7 +144,7 @@ jobs:
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
           present = [m for m in ('bokeh', 'datasets', 'langchain_community',
-          'langchain_openai', 'pandas', 'pyvis', 'ragas')
+          'langchain_openai', 'pandas', 'pyvis', 'ragas', 'rdflib')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end
@@ -229,7 +229,7 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.11 --frozen --extra eval --extra viz
+        run: uv sync --python 3.11 --frozen --extra eval --extra viz --extra ontology
 
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -m "not aws" -q
@@ -259,7 +259,7 @@ jobs:
           uv lock
 
       - name: Sync dependencies
-        run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz
+        run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
         run: uv run --python 3.13 --frozen pytest -m "not aws" -q -n auto

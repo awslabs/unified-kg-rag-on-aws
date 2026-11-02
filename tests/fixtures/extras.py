@@ -23,10 +23,15 @@ EVAL_INSTALLED = _installed("ragas", "datasets", "pandas", "langchain_openai")
 LANGCHAIN_JUDGE_INSTALLED = _installed("langchain_openai")
 # The built-in renderers' packages (the viz extra).
 VIZ_INSTALLED = _installed("pyvis", "bokeh")
+# The RDF reader of the ontology schema sources (the ontology extra).
+ONTOLOGY_INSTALLED = _installed("rdflib")
 
 requires_eval = pytest.mark.skipif(
     not EVAL_INSTALLED, reason="needs the eval extra (uv sync --extra eval)"
 )
 requires_viz = pytest.mark.skipif(
     not VIZ_INSTALLED, reason="needs the viz extra (uv sync --extra viz)"
+)
+requires_ontology = pytest.mark.skipif(
+    not ONTOLOGY_INSTALLED, reason="needs the ontology extra (uv sync --extra ontology)"
 )
