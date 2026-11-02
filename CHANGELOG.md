@@ -831,7 +831,7 @@ From 0.2.3 (or a `main` checkout since):
 - Public API: `register_seed_source`, `SeedSourceContext`, `SeedGraph`,
   `SeedNode`, `SeedEdge` and `SeedGraphError` (#498, #500).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
-  and §15 (#PR).
+  and §15 (#506).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
