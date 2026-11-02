@@ -827,7 +827,7 @@ From 0.2.3 (or a `main` checkout since):
   no key or value of a seed fails an entity's write and none is a filter
   key, a removed seed takes its properties out of both stores, and an
   incremental run refuses an entities index an earlier build mapped them
-  in, until `indexing.reset: true` (#PR).
+  in, until `indexing.reset: true` (#508).
 - Seed facts in retrieval: a seed's text units are stored but left out of
   every text search and chunk quota, so seed statements reach answers as
   entities and relationships only, and a reported source a seed states
