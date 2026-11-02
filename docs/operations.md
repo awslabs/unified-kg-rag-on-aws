@@ -22,6 +22,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Look Neptune vertices up by custom vertex ids | [Custom Neptune vertex ids](#custom-neptune-vertex-ids) |
 | Cut the vector memory of a large corpus | [On-disk vector storage](#on-disk-vector-storage) |
 | Ship an OWL/RDFS ontology schema in the image | [Ontology schema in the image](#ontology-schema-in-the-image) |
+| Ship a seed graph (a knowledge graph to merge), or reset a namespace that holds one | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -471,6 +472,70 @@ the default `max_bytes` of 64 MiB a load can take about 5 GB of the task's
 memory before ingestion starts. Lower `options.max_bytes` to the size you
 ship, or raise `fargate_memory`, when the ontology is large (User Guide,
 *Load cost*).
+
+### Seed graphs in the image or S3
+
+A config with `processing.seed_graphs`
+([User Guide: Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph))
+is read by the ingestion task only, once at start-up: a seed that cannot be
+read or imported exits 2 before any model call, naming the seed. Put the
+files in one of two places.
+
+- **In the image**, next to the baked-in config: copy them in
+  `docker/Dockerfile` (`COPY docker/seed /app/seed` after the config) and
+  give a path relative to `/app/config.yaml` (`path: seed/procure.jsonl`).
+- **In S3**: `path: s3://bucket/seed/procure.jsonl`, or a prefix read as a
+  directory (`s3://bucket/seed/`, the trailing `/` required; kind `csv`
+  always names a prefix). The ingestion task role needs `s3:GetObject` on
+  the objects, `s3:ListBucket` on the bucket for a prefix (and to tell a
+  missing object from a denied one), and `kms:Decrypt` on the key of a
+  KMS-encrypted object. The CDK stacks grant nothing seed-specific; put
+  the files where the role already reads:
+
+| Location | Ingestion task role |
+|---|---|
+| The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`: its files are ingested as documents, a `.csv` seed too) | Read |
+| The cache bucket, outside `pipeline-runs/` (expired after 30 days) | Read |
+| The cache bucket under `eval/` | Read |
+
+In private mode the S3 gateway endpoint reaches only these two buckets
+(see [Schema sources in S3](#schema-sources-in-s3)). Moving a seed between
+the image and S3 re-indexes nothing: what it converts to is keyed, not
+where it is read from. Size the task for it: the whole seed is held in
+memory, and each node costs about two embeddings and each edge one
+(User Guide, *Cost and limits*).
+
+A seed of kind `rdf` needs the `ontology` extra in every image whose
+config declares it, the query and evaluation tasks too: every CLI checks
+the extras a configured seed kind needs before any model call (`Not
+installed: 'rdflib' (for processing.seed_graphs 'procure' kind 'rdf')`,
+exit 2). Build with `--build-arg UV_EXTRAS="--extra ontology"` as in
+[Ontology schema in the image](#ontology-schema-in-the-image), step 4.
+
+**A reset where another scope holds seeds.** `indexing.reset: true`
+rebuilds the namespace from the run's corpus and drops the other source
+scopes' documents, as always. When one of those scopes holds seed graph
+documents (a seed-only scope), `run-ingestion` asks first, and an ECS task
+has no terminal to ask on: the run fails at `document_loading`, before it
+writes (`... needs confirmation, but stdin is not a terminal. Re-run with
+--yes to proceed.`, exit 1). The Step Functions pipeline runs a fixed
+command without `--yes`, so run that one reset as a one-off task of the
+ingestion task definition (`.States.Ingest.Parameters.TaskDefinition`, in
+the network of the query example in
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)) whose
+command override adds `--yes`:
+
+```json
+{"containerOverrides": [{"name": "app",
+  "command": ["run-ingestion", "--config-path", "/app/config.yaml",
+              "--metrics-sink", "cloudwatch", "--s3-sync",
+              "--s3-bucket-name", "<cache bucket>", "--yes"],
+  "environment": [{"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
+                  {"name": "UKR_PIPELINE_ID", "value": "reset-001"}]}]}
+```
+
+Or avoid the question: configure the seed on the corpus's own scope
+instead of a seed-only scope, so the reset re-imports it and asks nothing.
 
 ## When a run fails
 
@@ -1084,6 +1149,12 @@ model or credential error fails a query rather than answering from no context.
 | `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([User Guide](./user-guide.md#from-an-owlrdfs-ontology)) |
 | `Ontology file '...' holds ... (MAX_XML_TEXT_CHUNKS)` / `... (MAX_XML_LITERAL_ELEMENTS)` / `... has a line of N bytes ... (MAX_LINE_BYTES)` / `... limit on input amplification factor ...` (exit 2) | A shape the RDF/XML or N-Triples parser takes quadratic time over (refused before parsing) | Convert the file to Turtle (`robot convert --input onto.rdf --output onto.ttl`) |
 | `Ontology IRIs with whitespace: ...` / `Ontology rdf:List is cyclic ...` (exit 2) | An IRI the RDF/XML or JSON-LD parser let through, or a malformed list | Fix the named IRI (`%20` for a space), or end the list with `rdf:nil` |
+| `SeedGraphError: seed graph '<name>': '<file>' line N: ...` (`duplicate node id ...`, `property ... is not a string, number, boolean or null`, `not valid JSON`, `"kind" is ...`) (exit 2) | A seed record the import refuses | Fix the named line ([User Guide: Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph)) |
+| `seed graph '<name>': edges name unknown nodes ...` / `... the edge from ... has no type ...` (exit 2) | An edge to a node the seed does not state, or with neither a `type` nor a `predicate_iri` a relationship type declares | Add the node, set `options.dangling: skip`, or type the edge |
+| `seed graph '<name>': N names are shared by distinct nodes (ids ...); set on_name_collision to merge or qualify` (exit 2) | Two nodes of the seed are one entity by name | Rename them, or set `on_name_collision` |
+| `seed graph '<name>': ... more nodes than max_nodes (N)` (or edges, `max_edges`) / `... exceed max_property_keys ...` / `... more than max_bytes ...` / `shard N would hold M text units, over 2000 ...` (exit 2) | The seed is over a cap (nothing is truncated) | Raise the cap, or for a shard `shards` or `max_items_per_unit` |
+| `Unknown processing.seed_graphs[].kind '<kind>'; registered: csv, jsonl, rdf` / `Not installed: 'rdflib' (for processing.seed_graphs '<name>' kind 'rdf')` (exit 2) | A kind no source registers (a custom source starts from Python after importing its module), or the `ontology` extra missing | Fix the kind, or install the extra ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)) |
+| `Access to seed source '<path>' denied (...)` / `Seed source '<path>' not found (no such S3 object)` (exit 2) | The ingestion task role cannot read the seed | Grant `s3:GetObject` (and `s3:ListBucket`), or move the seed ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)) |
 
 ### Credentials and models
 
@@ -1118,6 +1189,7 @@ model or credential error fails a query rather than answering from no context.
 | `Pipeline resume failed: ...` (`PipelineResumeError`, exit 1, before any model call) | The pipeline id cannot be resumed as asked: a stage this run must rerun is not enabled (the message names it), an explicit `--resume-from-stage` past a stage whose cached output is gone, or its saved state could not be read | Enable the named stage or resume from it (`--resume-from-stage <stage>`); for unreadable state, a new `--pipeline-id` or `--force-rebuild` |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
+| `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --yes does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, and no one answered | Re-run with `--yes` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
