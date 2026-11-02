@@ -678,7 +678,7 @@ From 0.2.3 (or a `main` checkout since):
   The content keys the caches, so moving the schema between a local path
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay
-  refused (#PR).
+  refused (#493).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
