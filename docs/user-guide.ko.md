@@ -870,6 +870,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   `False`(불리언은 대소문자 구분 없이 `true`/`false`, `1`/`0`, `yes`/`no`를 받음),
   `rank:2`는 `2`가 됩니다. 유형에 맞지 않는 문자열(`in_schema:maybe`, `rank:high`,
   `level:1.5`)은 `InvalidFilterError`를 일으킵니다(명령줄에서는 사용법 오류, 종료 코드 2).
+  유형이 다른 값도 마찬가지입니다. 불리언 필드의 숫자(`in_schema: 1`), 숫자 필드의
+  불리언(`rank: true`), 정수 필드의 소수(`level: 2.5`. `2.0`은 `2`가 됨)는
+  `InvalidFilterError`를 일으킵니다.
   그 밖의 필드 값은 `attr_<key>`와 `attributes.<path>`를 포함해 주어진 그대로 비교합니다.
 - 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
   거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,

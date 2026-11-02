@@ -951,7 +951,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   value: `in_schema:false` is `False` (a boolean takes `true`/`false`,
   `1`/`0` or `yes`/`no`, in any case) and `rank:2` is `2`. A string its
   type cannot take (`in_schema:maybe`, `rank:high`, `level:1.5`) raises
-  `InvalidFilterError` (a usage error, exit 2, on the command line). The
+  `InvalidFilterError` (a usage error, exit 2, on the command line), and so
+  does a typed value of another type: a number for a boolean field
+  (`in_schema: 1`), a boolean for a numeric one (`rank: true`) or a
+  fractional number for an integer one (`level: 2.5`; `2.0` is `2`). The
   values of every other field are matched as given, `attr_<key>` and
   `attributes.<path>` included.
 - A filter applies only to the stores that declare its field

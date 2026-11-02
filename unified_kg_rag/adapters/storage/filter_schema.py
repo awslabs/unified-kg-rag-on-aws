@@ -205,7 +205,24 @@ _FALSE = frozenset({"false", "0", "no"})
 
 
 def _typed(key: str, kind: str, value: Any) -> Any:
-    """``value`` as a ``kind`` value when it is a string; else unchanged."""
+    """``value`` as a ``kind`` value: a string converted, a number or
+    boolean checked against the type (``True`` is no number, ``1`` no
+    boolean, ``2.5`` no integer); any other value unchanged, for
+    :func:`check_filter_values` to judge."""
+    if isinstance(value, bool):
+        if kind == _BOOLEAN:
+            return value
+        expected = "an integer" if kind == _INTEGER else "a number"
+        raise InvalidFilterError(
+            f"Filter '{key}' is {expected} field; give {expected}, not {value}."
+        )
+    if isinstance(value, int | float):
+        if kind == _BOOLEAN:
+            raise InvalidFilterError(
+                f"Filter '{key}' is a boolean field; give true or false, "
+                f"not {value!r}."
+            )
+        return _number(key, kind, value, value)
     if not isinstance(value, str):
         return value
     text = value.strip()
@@ -226,10 +243,18 @@ def _typed(key: str, kind: str, value: Any) -> Any:
         number = float(text)
     except ValueError:
         number = math.nan
+    return _number(key, kind, number, f"'{value}'")
+
+
+def _number(key: str, kind: str, number: float, given: Any) -> int | float:
+    """``number`` as a ``kind`` (number or integer) value; ``given`` is how
+    the error names the value."""
+    if isinstance(number, int):
+        return number
     if not math.isfinite(number) or (kind == _INTEGER and not number.is_integer()):
         expected = "an integer" if kind == _INTEGER else "a number"
         raise InvalidFilterError(
-            f"Filter '{key}' is {expected} field; give {expected}, not '{value}'."
+            f"Filter '{key}' is {expected} field; give {expected}, not {given}."
         )
     return int(number) if kind == _INTEGER else number
 
@@ -242,11 +267,13 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     one itself, but the graph stores compare it as written and matched
     nothing, so every store sees typed values instead. A boolean takes
     ``true``/``false``, ``1``/``0`` or ``yes``/``no`` (any case); a number
-    is kept an integer when it reads as one. Values of other fields and
-    values already typed are unchanged.
+    is kept an integer when it reads as one. A value already typed must
+    be of the field's type: a boolean field takes only ``True``/``False``,
+    a numeric one no boolean, an integer one no fractional number (``2.0``
+    becomes ``2``). Values of other fields are unchanged.
 
     Raises:
-        InvalidFilterError: A string is not a value of its field's type.
+        InvalidFilterError: A value is not a value of its field's type.
     """
     if not filters:
         return filters
