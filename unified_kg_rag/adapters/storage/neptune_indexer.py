@@ -552,42 +552,63 @@ class NeptuneIndexer(GraphIndexer):
         self, kind: AnnotatedKind, suffix: str | None = None
     ) -> dict[str, StoredAnnotation]:
         """Every stored entity's (or relationship edge's) annotations by id,
-        with its type (see the port): one label scan, as
-        :meth:`read_entity_names`, in either vertex-id mode (each vertex
-        holds its ``id`` property).
+        with its type (see the port), in either vertex-id mode (each vertex
+        and edge holds its ``id`` property).
+
+        Read in bounded requests: one that lists the ids alone, then the
+        annotations of ``indexing.neptune.batch_size`` items per request
+        (:meth:`_read_batches`, each retried), so no single traversal reads
+        every item's properties.
 
         Raises:
-            AWSServiceError: The read failed.
+            AWSServiceError: A read failed.
         """
         label = self._label(self.neptune_config.entity_label_prefix, suffix)
         iri = IRI_PROPERTY[kind]
         try:
             if kind == "entities":
-                rows = self._execute_with_retries(
-                    lambda g: g.V()
-                    .hasLabel(label)
-                    .valueMap("id", "type", "in_schema", iri),
-                    "read_schema_annotations",
+                ids = self._execute_with_retries(
+                    lambda g: g.V().hasLabel(label).values("id"),
+                    "read_schema_annotations (ids)",
                     results=True,
                     fenced=False,
+                )
+                rows = self._read_batches(
+                    sorted({str(i) for i in ids}),
+                    lambda g, batch: self._vertices(g, (label,), batch).valueMap(
+                        "id", "type", "in_schema", iri
+                    ),
+                    "read_schema_annotations",
                 )
                 pairs = [(row, (row.get("type") or [None])[0]) for row in rows]
             else:
                 # Between the label's entities only: an older build's
-                # MemberOf edges lead to its communities.
-                rows = self._execute_with_retries(
+                # MemberOf edges lead to its communities, and another
+                # suffix's edges may share an id.
+                ids = self._execute_with_retries(
                     lambda g: g.V()
                     .hasLabel(label)
                     .outE()
+                    .where(__.inV().hasLabel(label))
+                    .values("id"),
+                    "read_schema_annotations (ids)",
+                    results=True,
+                    fenced=False,
+                )
+                rows = self._read_batches(
+                    sorted({str(i) for i in ids}),
+                    lambda g, batch: g.E()
+                    .has("id", P.within(batch))
+                    .where(__.outV().hasLabel(label))
                     .where(__.inV().hasLabel(label))
                     .project("props", "label")
                     .by(__.valueMap("id", "in_schema", iri))
                     .by(__.label()),
                     "read_schema_annotations",
-                    results=True,
-                    fenced=False,
                 )
                 pairs = [(row.get("props") or {}, row.get("label")) for row in rows]
+        except NamespaceLeaseError:
+            raise
         except Exception as e:
             raise AWSServiceError(f"Neptune read_schema_annotations failed: {e}") from e
         annotations: dict[str, StoredAnnotation] = {}

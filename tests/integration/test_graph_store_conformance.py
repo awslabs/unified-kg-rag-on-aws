@@ -11,15 +11,22 @@ one of them, whichever is right.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.fixtures.store_backends import GRAPH_BACKENDS, StoreHarness, open_harness
+from tests.fixtures.store_backends import (
+    CUSTOM_IDS,
+    GRAPH_BACKENDS,
+    StoreHarness,
+    open_harness,
+)
 from unified_kg_rag.domain.models import Community, Entity, Relationship
 from unified_kg_rag.ports.indexer import StoredAnnotation
+from unified_kg_rag.shared import NamespaceLeaseError
 
 pytestmark = pytest.mark.integration
 
@@ -505,3 +512,121 @@ def test_schema_annotations_are_listed_and_rewritten_alone(
     (other,) = graph.read_entities(["a"], suffix=tenant)
     assert (other.in_schema, other.type_iri) == (True, iri)
     assert graph.read_schema_annotations("relationships", suffix=tenant) == {}
+
+
+def test_relationship_annotations_are_kept_per_suffix(harness: StoreHarness) -> None:
+    # Relationship ids are suffix-independent: another suffix's edge with
+    # the same id is neither read nor rewritten.
+    graph = harness.graph_indexer
+    tenant = harness.suffix("ann")
+    graph.upsert_entities(
+        [_entity("a"), _entity("b"), _entity("a", tenant), _entity("b", tenant)]
+    )
+    graph.upsert_relationships(
+        [
+            _rel("ab", "a", "b", type="SUPPLIES", in_schema=False),
+            _rel("ab", "a", "b", tenant, type="SUPPLIES", in_schema=False),
+        ]
+    )
+    stats = graph.write_schema_annotations("relationships", {"ab": (True, "urn:x:s")})
+    assert stats.failed_items == 0
+    assert graph.read_schema_annotations("relationships") == {
+        "ab": StoredAnnotation(type="SUPPLIES", in_schema=True, iri="urn:x:s")
+    }
+    assert graph.read_schema_annotations("relationships", suffix=tenant) == {
+        "ab": StoredAnnotation(type="SUPPLIES", in_schema=False)
+    }
+    # A None removes the IRI again.
+    graph.write_schema_annotations("relationships", {"ab": (True, None)})
+    assert graph.read_schema_annotations("relationships") == {
+        "ab": StoredAnnotation(type="SUPPLIES", in_schema=True)
+    }
+
+
+def test_schema_annotations_are_read_in_bounded_requests(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = harness.graph_indexer
+    ids = [f"e{i}" for i in range(5)]
+    graph.upsert_entities([_entity(i, type="ORG", in_schema=True) for i in ids])
+    graph.upsert_relationships(
+        [
+            _rel(f"r{i}", a, b, type="SUPPLIES")
+            for i, (a, b) in enumerate(zip(ids, ids[1:], strict=False))
+        ]
+    )
+    rows: list[int] = []
+    if hasattr(graph, "_execute_with_retries"):
+        # Gremlin: at most batch_size items' properties per request.
+        monkeypatch.setattr(graph.neptune_config, "batch_size", 2)
+        execute = graph._execute_with_retries
+
+        def record(build: Any, operation_name: str, **kwargs: Any) -> Any:
+            result = execute(build, operation_name, **kwargs)
+            if operation_name == "read_schema_annotations":
+                rows.append(len(result))
+            return result
+
+        monkeypatch.setattr(graph, "_execute_with_retries", record)
+    assert graph.read_schema_annotations("entities") == {
+        i: StoredAnnotation(type="ORG", in_schema=True) for i in ids
+    }
+    assert set(graph.read_schema_annotations("relationships") or {}) == {
+        "r0",
+        "r1",
+        "r2",
+        "r3",
+    }
+    if hasattr(graph, "_execute_with_retries"):
+        assert rows == [2, 2, 1, 2, 2]
+
+
+@pytest.mark.parametrize("harness", ["sqlite"], indirect=True)
+def test_rewritten_vertex_annotations_match_the_vertex_filters(
+    harness: StoreHarness,
+) -> None:
+    # Stored as a vertex's one-value lists, as every other vertex property.
+    from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+        vertex_filter,
+    )
+
+    graph = harness.graph_indexer
+    graph.upsert_entities([_entity("a", type="organization")])
+    graph.write_schema_annotations("entities", {"a": (False, "urn:x:org")})
+    with graph.store.read("test") as connection:
+        (props,) = connection.execute(
+            "SELECT props FROM vertices WHERE id = 'a'"
+        ).fetchone()
+    value_map = json.loads(props)
+    for filters in ({"in_schema": False}, {"type_iri": "urn:x:org"}):
+        keep = vertex_filter(filters)
+        assert keep is not None and keep(value_map)
+
+
+@pytest.mark.parametrize(
+    "harness", ["container", f"container+{CUSTOM_IDS}"], indirect=True
+)
+def test_a_failed_annotation_write_is_a_failed_item(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = harness.graph_indexer
+    graph.upsert_entities([_entity("a"), _entity("b")])
+
+    def refused(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("write refused")
+
+    def lost(*args: Any, **kwargs: Any) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    # Undone before the harness clears the stores.
+    with monkeypatch.context() as patch:
+        patch.setattr(graph, "_execute_with_retries", refused)
+        stats = graph.write_schema_annotations(
+            "entities", {"a": (True, None), "b": (True, None)}
+        )
+        assert (stats.successful_items, stats.failed_items) == (0, 2)
+        assert sorted(stats.failed_ids) == ["a", "b"]
+
+        patch.setattr(graph, "_execute_with_retries", lost)
+        with pytest.raises(NamespaceLeaseError):
+            graph.write_schema_annotations("entities", {"a": (True, None)})
