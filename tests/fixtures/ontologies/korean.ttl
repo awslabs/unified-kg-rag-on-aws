@@ -1,0 +1,26 @@
+# A synthetic ontology labelled in Korean only. 소속 has no label: its
+# percent-encoded local name is its label.
+@prefix gg: <https://example.org/gonggeup#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+gg:조직 a owl:Class ;
+    rdfs:label "조직"@ko .
+
+gg:공급업체 a owl:Class ;
+    rdfs:subClassOf gg:조직 ;
+    rdfs:label "공급 업체"@ko ;
+    rdfs:comment "물품을 파는 조직."@ko .
+
+gg:구매자 a owl:Class ;
+    rdfs:subClassOf gg:조직 ;
+    rdfs:label "구매자"@ko .
+
+gg:공급한다 a owl:ObjectProperty ;
+    rdfs:domain gg:공급업체 ;
+    rdfs:range gg:구매자 ;
+    rdfs:label "공급한다"@ko .
+
+<https://example.org/gonggeup#%EC%86%8C%EC%86%8D> a owl:ObjectProperty ;
+    rdfs:domain gg:조직 ;
+    rdfs:range gg:조직 .

@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Extraction-schema sources and their registry.
 
-Importing this package registers the built-in sources (``file``).
+Importing this package registers the built-in sources (``file``, and
+``owl``, whose loader imports the ``ontology`` extra only when it runs).
 """
 
 # Importing a source module registers it.
-from . import file  # noqa: F401
+from . import file, owl  # noqa: F401
 from .registry import (
     SchemaLoader,
     SchemaSourceContext,
@@ -14,6 +15,7 @@ from .registry import (
     redact_location,
     register_schema_source,
     registered_schema_sources,
+    schema_source_requirement,
 )
 
 __all__ = [
@@ -23,4 +25,5 @@ __all__ = [
     "redact_location",
     "register_schema_source",
     "registered_schema_sources",
+    "schema_source_requirement",
 ]

@@ -26,7 +26,9 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
     routable_strategies,
 )
+from unified_kg_rag.adapters.schema_sources import schema_source_requirement
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
+from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE
 
 
 def _role_endpoint(config: Config, role: RetrieverRole) -> tuple[str, str] | None:
@@ -88,11 +90,12 @@ def _installed(module: str) -> bool:
 
 
 def missing_extras_error(config: Config) -> str | None:
-    """Message naming each optional module the selected providers import
-    that is not installed, or None if all are.
+    """Message naming each optional module the selected providers and the
+    extraction schema source import that is not installed, or None if all
+    are.
 
-    Only kinds that declare one (``register_provider(..., requires=...)``)
-    are checked.
+    Only kinds that declare one (``register_provider(..., requires=...)``,
+    ``register_schema_source(..., requires=...)``) are checked.
     """
     # Importing the module registers the built-in kinds and their needs.
     import unified_kg_rag.adapters.providers  # noqa: F401
@@ -105,6 +108,12 @@ def missing_extras_error(config: Config) -> str | None:
         requirement = provider_requirement(role, kind)
         if requirement is not None and not _installed(requirement[0]):
             setting = f"providers.{role.section}.kind '{kind}'"
+            missing.setdefault(requirement, {})[setting] = None
+    source = config.processing.graph_extraction.schema_source.kind
+    if source != INLINE_SCHEMA_SOURCE:
+        requirement = schema_source_requirement(source)
+        if requirement is not None and not _installed(requirement[0]):
+            setting = f"processing.graph_extraction.schema_source.kind '{source}'"
             missing.setdefault(requirement, {})[setting] = None
     if not missing:
         return None

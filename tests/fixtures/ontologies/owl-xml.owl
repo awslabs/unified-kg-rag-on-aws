@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- OWL/XML (not RDF/XML): refused with a conversion hint. -->
+<Ontology xmlns="http://www.w3.org/2002/07/owl#"
+     ontologyIRI="https://example.org/procure">
+    <Declaration>
+        <Class IRI="https://example.org/procure#Vendor"/>
+    </Declaration>
+</Ontology>

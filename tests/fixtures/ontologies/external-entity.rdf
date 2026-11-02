@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An external DTD and two external entities: none is read (a label
+     keeps its text, the reference is dropped). -->
+<!DOCTYPE rdf:RDF SYSTEM "https://example.org/rdf.dtd" [
+  <!ENTITY local SYSTEM "secret.txt">
+  <!ENTITY remote SYSTEM "https://example.org/secret.txt">
+]>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+  xmlns:owl="http://www.w3.org/2002/07/owl#">
+  <owl:Class rdf:about="https://example.org/procure#Vendor">
+    <rdfs:label xml:lang="en">Vendor&local;</rdfs:label>
+    <rdfs:comment xml:lang="en">Sells goods.&remote;</rdfs:comment>
+  </owl:Class>
+</rdf:RDF>

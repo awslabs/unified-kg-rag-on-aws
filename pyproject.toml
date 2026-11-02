@@ -289,6 +289,8 @@ module = [
     "pandas.*",
     "pyvis.*",
     "ragas.*",
+    # [ontology] extra only.
+    "rdflib.*",
     "snowballstemmer",
     "datasets.*",
     "lxml.*",

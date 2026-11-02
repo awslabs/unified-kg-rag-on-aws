@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from tests.fixtures.extras import requires_ontology
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import (
@@ -353,6 +354,80 @@ async def test_tuning_drafts_the_schema_of_its_examples() -> None:
     plain = await _tuner(Config()).tune(CORPUS)
     assert "schema_draft" not in plain
     assert plain == {k: v for k, v in result.items() if k != "schema_draft"}
+
+
+_ONTOLOGY = """\
+@prefix ex: <https://example.org/trade#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:Organization a owl:Class .
+ex:Product a owl:Class .
+ex:supplies a owl:ObjectProperty ; rdfs:comment "Delivers goods to"@en ;
+    rdfs:domain ex:Organization ; rdfs:range ex:Organization .
+"""
+
+
+@requires_ontology
+async def test_a_draft_over_an_ontology_says_what_it_lacks(tmp_path: Path) -> None:
+    ontology = tmp_path / "trade.ttl"
+    ontology.write_text(_ONTOLOGY, encoding="utf-8")
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {"kind": "owl", "path": str(ontology)}
+                }
+            }
+        }
+    )
+    result = await _tuner(config).tune(CORPUS, schema_draft=True)
+    draft: SchemaDraft = result["schema_draft"]
+    assert draft.schema_source == ("owl", str(ontology))
+    # The ontology's types, IRIs and descriptions, then what it lacks.
+    assert [(s.label, s.iri) for s in draft.relationship_types] == [
+        ("SUPPLIES", "https://example.org/trade#supplies"),
+        ("STOCKS", None),
+        ("PARTNERS_WITH", None),
+    ]
+    assert draft.added_relationship_types == ["STOCKS", "PARTNERS_WITH"]
+    text = draft.to_yaml("draft.yaml")
+    header = [line for line in text.splitlines() if line.startswith("#")]
+    assert header[:4] == [
+        "# Extraction schema draft written by run-prompt-tuning: copied from",
+        f"# owl '{ontology}' plus 2 relationship types the source lacks (STOCKS, "
+        "PARTNERS_WITH).",
+        "# Add them to the source (keep kind: owl), or review this file",
+        "# and load it with kind: file to freeze the mapping:",
+    ]
+    assert '#       schema_source: {kind: file, path: "draft.yaml"}' in header
+    # Loaded with kind: file, the draft is the ontology's schema plus them.
+    path = tmp_path / "draft.yaml"
+    path.write_text(text, encoding="utf-8")
+    frozen = _load(path)
+    assert frozen.entity_type("ORGANIZATION").iri == (  # type: ignore[union-attr]
+        "https://example.org/trade#Organization"
+    )
+    assert frozen.relationship_type("SUPPLIES").description == "Delivers goods to"  # type: ignore[union-attr]
+
+
+def test_a_draft_over_a_file_or_no_source_keeps_its_header() -> None:
+    draft = SchemaDraft.from_examples(
+        ["ORGANIZATION"], [_record("t1", ORGS, [_rel("Vendor", "Buyer", "SUPPLIES")])]
+    )
+    assert draft.schema_source is None
+    assert draft.to_yaml().startswith(
+        "# Extraction schema draft written by run-prompt-tuning. Review it\n"
+    )
+    one = SchemaDraft.from_examples(
+        ["ORGANIZATION"],
+        [_record("t1", ORGS, [_rel("Vendor", "Buyer", "SUPPLIES")])],
+        schema_source=("synthetic_service", "urn:schemas:trade"),
+    )
+    assert "plus 1 relationship type the source lacks (SUPPLIES)." in one.to_yaml()
+    none = SchemaDraft.from_examples(
+        ["ORGANIZATION"], [], schema_source=("synthetic_service", "urn:schemas:trade")
+    )
+    assert "plus 0 relationship types the source lacks." in none.to_yaml()
 
 
 def _main(tmp_path: Path, mocker, name: str, *extra: str) -> tuple[int, Path]:

@@ -12,7 +12,9 @@ than opaque runtime behaviour.
 
 On request it also drafts an extraction schema (:class:`SchemaDraft`): the
 profile's entity types and the relationship types the grounded examples
-use, as a file for ``schema_source: {kind: file}``.
+use, as a file for ``schema_source: {kind: file}``. Over a schema another
+source loads (an ontology), the draft keeps its types and says which
+relationship types the source lacks.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from pydantic import BaseModel, Field, ValidationError
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.schema_sources import redact_location
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.ingestion.contributions import unit_entities
@@ -45,7 +48,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.domain.models.config import merge_over
+from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, merge_over
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
     EntityTypeSpec,
@@ -161,13 +164,17 @@ class SchemaDraft(BaseModel):
     ``MIN_PATTERN_SUPPORT`` times, so the draft never flags its own
     examples as off pattern; one the config gives patterns gets no other.
     Written as a ``schema_source`` file (:meth:`to_yaml`) and meant for
-    ``schema_mode: align``.
+    ``schema_mode: align``. ``schema_source`` is the ``(kind, location)`` of
+    the schema source the configured types came from when it is not a file,
+    and ``added_relationship_types`` the types the examples add to them.
     """
 
     entity_types: list[EntityTypeSpec] = Field(default_factory=list)
     relationship_types: list[RelationshipTypeSpec] = Field(default_factory=list)
     relationship_patterns: list[RelationshipPattern] = Field(default_factory=list)
     relationship_type_counts: dict[str, int] = Field(default_factory=dict)
+    added_relationship_types: list[str] = Field(default_factory=list)
+    schema_source: tuple[str, str] | None = None
 
     @classmethod
     def from_examples(
@@ -177,11 +184,13 @@ class SchemaDraft(BaseModel):
         *,
         relationship_types: Sequence[RelationshipTypeSpec] = (),
         relationship_patterns: Sequence[RelationshipPattern] = (),
+        schema_source: tuple[str, str] | None = None,
     ) -> SchemaDraft:
         """The draft of the ``entity_types`` (a profile's or the
         configured ones), the configured ``relationship_types`` and
-        ``relationship_patterns``, and the example extraction ``records``;
-        the same input gives the same draft."""
+        ``relationship_patterns`` (loaded from ``schema_source`` when that
+        is not a file), and the example extraction ``records``; the same
+        input gives the same draft."""
         entities: dict[str, EntityTypeSpec] = {}
         for item in entity_types:
             spec = entity_type_spec(item)
@@ -244,6 +253,8 @@ class SchemaDraft(BaseModel):
             relationship_type_counts={
                 spec.label: counts[key] for key, spec in relations.items()
             },
+            added_relationship_types=[relations[key].label for key in ranked],
+            schema_source=schema_source,
         )
         draft.extraction_schema()  # A draft is a valid schema (raises if not).
         return draft
@@ -277,9 +288,23 @@ class SchemaDraft(BaseModel):
 
     def to_yaml(self, path: str = "schema.yaml") -> str:
         """The schema file: a comment on how to use it, then the keys."""
-        lines = [
-            "# Extraction schema draft written by run-prompt-tuning. Review it",
-            "# (rename, merge or drop types, add descriptions and iri), then load it:",
+        if self.schema_source is None:
+            lines = [
+                "# Extraction schema draft written by run-prompt-tuning. Review it",
+                "# (rename, merge or drop types, add descriptions and iri), then load it:",
+            ]
+        else:
+            kind, location = self.schema_source
+            added = len(self.added_relationship_types)
+            lines = [
+                "# Extraction schema draft written by run-prompt-tuning: copied from",
+                f"# {kind} '{location}' plus {added} relationship type"
+                f"{'' if added == 1 else 's'} the source lacks"
+                + (f" ({', '.join(self.added_relationship_types)})." if added else "."),
+                f"# Add them to the source (keep kind: {kind}), or review this file",
+                "# and load it with kind: file to freeze the mapping:",
+            ]
+        lines += [
             "#   processing:",
             "#     graph_extraction:",
             f"#       schema_source: {{kind: file, path: {json.dumps(path)}}}",
@@ -320,6 +345,12 @@ class PromptTuner:
         """
         # The examples and the draft are built on the schema the corpus will
         # be extracted with.
+        source = config.processing.graph_extraction.schema_source
+        self.schema_source: tuple[str, str] | None = (
+            None
+            if source.kind in (INLINE_SCHEMA_SOURCE, "file")
+            else (source.kind, redact_location(source.path))
+        )
         self.config = resolve_extraction_schema(config, providers=providers)
         self.providers = Providers.resolve(self.config, providers)
         self.factory = self.providers.llm_factory
@@ -783,4 +814,5 @@ class PromptTuner:
             records,
             relationship_types=schema.relationship_types,
             relationship_patterns=schema.relationship_patterns,
+            schema_source=self.schema_source,
         )

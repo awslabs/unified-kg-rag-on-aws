@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.extras import requires_ontology
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.schema_annotation import schema_annotation_digest
 from tests.fixtures.store_backends import clear_extraction_records, local_store_config
@@ -125,10 +126,13 @@ class _Model:
 
 
 def _config(
-    stores: Path, viz: Path, change: Callable[[Config], None] | None = None
+    stores: Path,
+    viz: Path,
+    change: Callable[[Config], None] | None = None,
+    schema: dict[str, Any] = SCHEMA,
 ) -> Config:
     config = e2e._config(stores, viz)
-    for key, value in SCHEMA.items():
+    for key, value in schema.items():
         setattr(config.processing.graph_extraction, key, value)
     config.processing.gleaning.enabled = True
     config.processing.gleaning.max_rounds = 1
@@ -166,10 +170,13 @@ def _run(
     name: str,
     corpus: dict[str, str],
     change: Callable[[Config], None] | None = None,
+    schema: dict[str, Any] = SCHEMA,
 ):
-    """A fresh store set with one full ingest of ``corpus`` (the schema
-    config, then ``change``)."""
-    config = _config(tmp_path / name / "stores", tmp_path / name / "viz", change)
+    """A fresh store set with one full ingest of ``corpus`` (the ``schema``
+    settings, then ``change``)."""
+    config = _config(
+        tmp_path / name / "stores", tmp_path / name / "viz", change, schema
+    )
     model = _Model()
     providers = e2e._providers(
         config, FakeOllama(model, e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
@@ -243,6 +250,60 @@ def test_strict_schema_end_to_end_and_incremental_matches_full(
 
 ORG_IRI = "https://example.org/onto#Organization"
 SUPPLIES_IRI = "https://example.org/onto#supplies"
+
+# SCHEMA as an ontology: the same labels, descriptions and patterns, with
+# IRIs.
+ONTOLOGY = """\
+@prefix ex: <https://example.org/onto#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:Organization a owl:Class ; rdfs:comment "Companies"@en .
+ex:Product a owl:Class ; rdfs:comment "Goods"@en .
+ex:supplies a owl:ObjectProperty ; rdfs:comment "Sells to"@en ;
+    rdfs:domain ex:Organization ; rdfs:range ex:Organization .
+ex:stocks a owl:ObjectProperty ; rdfs:comment "Holds goods"@en ;
+    rdfs:domain ex:Organization ; rdfs:range ex:Product .
+ex:name a owl:DatatypeProperty ; rdfs:domain ex:Organization .
+"""
+
+
+@requires_ontology
+def test_an_owl_schema_source_end_to_end(tmp_path: Path, no_aws) -> None:  # noqa: F811
+    ontology = tmp_path / "onto.ttl"
+    ontology.write_text(ONTOLOGY, encoding="utf-8")
+
+    schema = {
+        "schema_mode": "strict",
+        "schema_source": {"kind": "owl", "path": str(ontology)},
+    }
+    _, providers, model, _ = _run(tmp_path, "owl", FIRST, schema=schema)
+    prompt = model.extraction_prompts[0]
+    assert "- **SUPPLIES**: Sells to" in prompt
+    assert "- (ORGANIZATION)-[STOCKS]->(PRODUCT)" in prompt
+    entities, edges = _graph(providers)
+    # What the inline strict schema stores.
+    assert entities == {
+        "Vendor": "organization",
+        "Buyer": "organization",
+        "Gadget": "product",
+    }
+    assert edges == {
+        ("Vendor", "SUPPLIES", "Buyer"),
+        ("Buyer", "SUPPLIES", "Vendor"),
+        ("Vendor", "STOCKS", "Gadget"),
+    }
+    graph = providers.build_graph_indexer()
+    try:
+        names = dict(graph.read_entity_names())
+        iris = {e.name: e.type_iri for e in graph.read_entities(sorted(names))}
+    finally:
+        graph.close()
+    # With the ontology's IRIs.
+    assert iris == {
+        "Vendor": ORG_IRI,
+        "Buyer": ORG_IRI,
+        "Gadget": "https://example.org/onto#Product",
+    }
 
 
 def test_align_stores_the_annotations_and_in_schema_filters_entities(
