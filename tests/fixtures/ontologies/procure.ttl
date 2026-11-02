@@ -1,0 +1,53 @@
+# A synthetic procurement ontology (the worked example of the ontology
+# mapping; tests/fixtures/ontology_models.py holds it as a model and the
+# schema it maps to). procure.rdf, procure.jsonld and procure.nt state the
+# same triples.
+@prefix ex: <https://example.org/procure#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/procure> a owl:Ontology .
+
+ex:Organization a owl:Class ;
+    rdfs:label "Organization"@en, "조직"@ko .
+
+ex:Vendor a owl:Class ;
+    rdfs:subClassOf ex:Organization ;
+    rdfs:label "Vendor"@en, "공급업체"@ko ;
+    rdfs:comment "An organization that sells goods."@en .
+
+ex:Buyer a owl:Class ;
+    rdfs:subClassOf ex:Organization ;
+    rdfs:label "Buyer"@en, "구매자"@ko .
+
+ex:Person a owl:Class ;
+    rdfs:label "Person"@en, "사람"@ko .
+
+ex:tradesWith a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain ex:Organization ;
+    rdfs:range ex:Organization ;
+    rdfs:label "trades with"@en, "거래한다"@ko .
+
+ex:supplies a owl:ObjectProperty ;
+    rdfs:subPropertyOf ex:tradesWith ;
+    rdfs:domain ex:Vendor ;
+    rdfs:range ex:Buyer ;
+    rdfs:label "supplies"@en, "공급한다"@ko .
+
+ex:suppliedBy a owl:ObjectProperty ;
+    owl:inverseOf ex:supplies .
+
+ex:employs a owl:ObjectProperty ;
+    rdfs:domain ex:Organization ;
+    rdfs:range ex:Person ;
+    rdfs:label "employs"@en, "고용한다"@ko .
+
+ex:worksFor a owl:ObjectProperty ;
+    owl:inverseOf ex:employs ;
+    rdfs:label "works for"@en, "근무한다"@ko .
+
+ex:name a owl:DatatypeProperty ;
+    rdfs:domain ex:Organization ;
+    rdfs:range xsd:string .

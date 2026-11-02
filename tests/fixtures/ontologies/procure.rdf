@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- procure.ttl as RDF/XML (an internal DTD entity abbreviates ex:). -->
+<!DOCTYPE rdf:RDF [
+  <!ENTITY ex "https://example.org/procure#">
+]>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+  xmlns:owl="http://www.w3.org/2002/07/owl#"
+  xmlns:ex="https://example.org/procure#">
+  <owl:Ontology rdf:about="https://example.org/procure"/>
+
+  <owl:Class rdf:about="&ex;Organization">
+    <rdfs:label xml:lang="en">Organization</rdfs:label>
+    <rdfs:label xml:lang="ko">조직</rdfs:label>
+  </owl:Class>
+  <owl:Class rdf:about="&ex;Vendor">
+    <rdfs:subClassOf rdf:resource="&ex;Organization"/>
+    <rdfs:label xml:lang="en">Vendor</rdfs:label>
+    <rdfs:label xml:lang="ko">공급업체</rdfs:label>
+    <rdfs:comment xml:lang="en">An organization that sells goods.</rdfs:comment>
+  </owl:Class>
+  <owl:Class rdf:about="&ex;Buyer">
+    <rdfs:subClassOf rdf:resource="&ex;Organization"/>
+    <rdfs:label xml:lang="en">Buyer</rdfs:label>
+    <rdfs:label xml:lang="ko">구매자</rdfs:label>
+  </owl:Class>
+  <owl:Class rdf:about="&ex;Person">
+    <rdfs:label xml:lang="en">Person</rdfs:label>
+    <rdfs:label xml:lang="ko">사람</rdfs:label>
+  </owl:Class>
+
+  <owl:ObjectProperty rdf:about="&ex;tradesWith">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#SymmetricProperty"/>
+    <rdfs:domain rdf:resource="&ex;Organization"/>
+    <rdfs:range rdf:resource="&ex;Organization"/>
+    <rdfs:label xml:lang="en">trades with</rdfs:label>
+    <rdfs:label xml:lang="ko">거래한다</rdfs:label>
+  </owl:ObjectProperty>
+  <owl:ObjectProperty rdf:about="&ex;supplies">
+    <rdfs:subPropertyOf rdf:resource="&ex;tradesWith"/>
+    <rdfs:domain rdf:resource="&ex;Vendor"/>
+    <rdfs:range rdf:resource="&ex;Buyer"/>
+    <rdfs:label xml:lang="en">supplies</rdfs:label>
+    <rdfs:label xml:lang="ko">공급한다</rdfs:label>
+  </owl:ObjectProperty>
+  <owl:ObjectProperty rdf:about="&ex;suppliedBy">
+    <owl:inverseOf rdf:resource="&ex;supplies"/>
+  </owl:ObjectProperty>
+  <owl:ObjectProperty rdf:about="&ex;employs">
+    <rdfs:domain rdf:resource="&ex;Organization"/>
+    <rdfs:range rdf:resource="&ex;Person"/>
+    <rdfs:label xml:lang="en">employs</rdfs:label>
+    <rdfs:label xml:lang="ko">고용한다</rdfs:label>
+  </owl:ObjectProperty>
+  <owl:ObjectProperty rdf:about="&ex;worksFor">
+    <owl:inverseOf rdf:resource="&ex;employs"/>
+    <rdfs:label xml:lang="en">works for</rdfs:label>
+    <rdfs:label xml:lang="ko">근무한다</rdfs:label>
+  </owl:ObjectProperty>
+
+  <owl:DatatypeProperty rdf:about="&ex;name">
+    <rdfs:domain rdf:resource="&ex;Organization"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </owl:DatatypeProperty>
+</rdf:RDF>

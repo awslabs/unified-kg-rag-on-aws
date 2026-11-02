@@ -1,0 +1,80 @@
+{
+  "@context": {
+    "ex": "https://example.org/procure#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "subClassOf": {"@id": "rdfs:subClassOf", "@type": "@id"},
+    "subPropertyOf": {"@id": "rdfs:subPropertyOf", "@type": "@id"},
+    "domain": {"@id": "rdfs:domain", "@type": "@id"},
+    "range": {"@id": "rdfs:range", "@type": "@id"},
+    "inverseOf": {"@id": "owl:inverseOf", "@type": "@id"},
+    "label": {"@id": "rdfs:label", "@container": "@language"},
+    "comment": {"@id": "rdfs:comment", "@container": "@language"}
+  },
+  "@graph": [
+    {"@id": "https://example.org/procure", "@type": "owl:Ontology"},
+    {
+      "@id": "ex:Organization",
+      "@type": "owl:Class",
+      "label": {"en": "Organization", "ko": "조직"}
+    },
+    {
+      "@id": "ex:Vendor",
+      "@type": "owl:Class",
+      "subClassOf": "ex:Organization",
+      "label": {"en": "Vendor", "ko": "공급업체"},
+      "comment": {"en": "An organization that sells goods."}
+    },
+    {
+      "@id": "ex:Buyer",
+      "@type": "owl:Class",
+      "subClassOf": "ex:Organization",
+      "label": {"en": "Buyer", "ko": "구매자"}
+    },
+    {
+      "@id": "ex:Person",
+      "@type": "owl:Class",
+      "label": {"en": "Person", "ko": "사람"}
+    },
+    {
+      "@id": "ex:tradesWith",
+      "@type": ["owl:ObjectProperty", "owl:SymmetricProperty"],
+      "domain": "ex:Organization",
+      "range": "ex:Organization",
+      "label": {"en": "trades with", "ko": "거래한다"}
+    },
+    {
+      "@id": "ex:supplies",
+      "@type": "owl:ObjectProperty",
+      "subPropertyOf": "ex:tradesWith",
+      "domain": "ex:Vendor",
+      "range": "ex:Buyer",
+      "label": {"en": "supplies", "ko": "공급한다"}
+    },
+    {
+      "@id": "ex:suppliedBy",
+      "@type": "owl:ObjectProperty",
+      "inverseOf": "ex:supplies"
+    },
+    {
+      "@id": "ex:employs",
+      "@type": "owl:ObjectProperty",
+      "domain": "ex:Organization",
+      "range": "ex:Person",
+      "label": {"en": "employs", "ko": "고용한다"}
+    },
+    {
+      "@id": "ex:worksFor",
+      "@type": "owl:ObjectProperty",
+      "inverseOf": "ex:employs",
+      "label": {"en": "works for", "ko": "근무한다"}
+    },
+    {
+      "@id": "ex:name",
+      "@type": "owl:DatatypeProperty",
+      "domain": "ex:Organization",
+      "range": "xsd:string"
+    }
+  ]
+}

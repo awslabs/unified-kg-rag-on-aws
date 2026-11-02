@@ -120,9 +120,10 @@ jobs:
           if-no-files-found: ignore
 
   core-install:
-    # The default install has neither the eval nor the viz extra: check the
-    # public API, the CLIs and an embedded end-to-end run work without them,
-    # and that run-eval and run-visualization fail naming the extra instead.
+    # The default install has neither the eval, the viz nor the ontology
+    # extra: check the public API, the CLIs and an embedded end-to-end run
+    # work without them, and that run-eval, run-visualization and an owl
+    # schema source fail naming the extra instead.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -154,6 +155,7 @@ jobs:
           tests/unit/test_evaluation_manager.py
           tests/unit/test_visualization_cli.py
           tests/unit/test_layering.py
+          tests/unit/test_owl_schema_source.py
           tests/integration/test_embedded_e2e.py
 
   local-stores:

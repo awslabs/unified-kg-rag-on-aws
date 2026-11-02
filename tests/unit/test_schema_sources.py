@@ -158,8 +158,10 @@ def test_invalid_kinds_cannot_register(kind: str) -> None:
 
 
 def test_an_unknown_kind_fails_naming_the_registered_ones() -> None:
-    config = _config(schema_source={"kind": "owl", "path": "x.ttl"})
-    with pytest.raises(SchemaSourceError, match="'owl'; registered: inline, file"):
+    config = _config(schema_source={"kind": "shacl", "path": "x.ttl"})
+    with pytest.raises(
+        SchemaSourceError, match="'shacl'; registered: inline, file, owl"
+    ):
         resolve_extraction_schema(config)
     # A configuration error: the CLIs exit 2 on it.
     assert issubclass(SchemaSourceError, ConfigurationError)

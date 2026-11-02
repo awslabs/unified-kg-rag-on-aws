@@ -126,18 +126,26 @@ SchemaLoader = Callable[[SchemaSourceContext], SchemaDocument]
 LoaderT = TypeVar("LoaderT", bound=SchemaLoader)
 
 _REGISTRY: dict[str, SchemaLoader] = {}
+# Kind -> (module, how to install it) of the optional dependency its loader
+# imports.
+_REQUIRES: dict[str, tuple[str, str]] = {}
 # The form schema_source.kind takes (SchemaSourceConfig.kind).
 _KIND = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def register_schema_source(kind: str) -> Callable[[LoaderT], LoaderT]:
+def register_schema_source(
+    kind: str, *, requires: tuple[str, str] | None = None
+) -> Callable[[LoaderT], LoaderT]:
     """Register the decorated loader under ``kind``.
 
     The loader is called as ``loader(context)`` with a
     :class:`SchemaSourceContext` and returns a ``SchemaDocument``, its types
     in a deterministic order; it raises ``SchemaSourceError`` for a source it
-    cannot read. A later registration of the same kind replaces the earlier
-    one, so a deployment can override a built-in.
+    cannot read. ``requires`` is the ``(module, how to install it)`` of the
+    optional dependency the loader imports, or None: the CLIs check it is
+    installed before any model call. A later registration of the same kind
+    replaces the earlier one, requirement included, so a deployment can
+    override a built-in.
 
     Raises:
         ValueError: ``kind`` is ``inline`` (the inline keys themselves) or
@@ -152,6 +160,10 @@ def register_schema_source(kind: str) -> Callable[[LoaderT], LoaderT]:
 
     def decorator(loader: LoaderT) -> LoaderT:
         _REGISTRY[kind] = loader
+        if requires is None:
+            _REQUIRES.pop(kind, None)
+        else:
+            _REQUIRES[kind] = requires
         return loader
 
     return decorator
@@ -170,6 +182,11 @@ def get_schema_source(kind: str) -> SchemaLoader:
             f"registered: {', '.join([INLINE_SCHEMA_SOURCE, *registered_schema_sources()])}"
         )
     return loader
+
+
+def schema_source_requirement(kind: str) -> tuple[str, str] | None:
+    """The ``(module, how to install it)`` ``kind`` declared, or None."""
+    return _REQUIRES.get(kind)
 
 
 def registered_schema_sources() -> list[str]:

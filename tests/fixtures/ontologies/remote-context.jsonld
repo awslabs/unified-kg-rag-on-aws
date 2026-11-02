@@ -1,0 +1,5 @@
+{
+  "@context": "https://example.org/procure/context.jsonld",
+  "@id": "https://example.org/procure#Vendor",
+  "@type": "http://www.w3.org/2002/07/owl#Class"
+}
