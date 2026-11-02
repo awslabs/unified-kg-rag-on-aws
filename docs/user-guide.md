@@ -2054,8 +2054,8 @@ the load, so a typo does not silently select nothing.
 | `label_case` | `upper_snake` | `upper_snake` (`supplyChain` → `SUPPLY_CHAIN`, `공급 업체` → `공급_업체`) or `preserve` (as written, punctuation made spaces) |
 | `languages` | `[en, ""]` | Preferred language tags of labels and descriptions, in order (`""`: untagged; `en` also matches `en-US`, after an exact `en`); any other tag comes after them |
 | `labels` | `{}` | IRI or CURIE → the label to use, as written |
-| `on_collision` | `error` | Two terms of one kind with one label: fail, or `qualify`: suffix each with its namespace's prefix (`BANK_EX`, `BANK_GEO`; a short hash of the namespace when no prefix is bound) |
-| `description_properties` | `[skos:definition, rdfs:comment]` | Annotation properties a description is read from, the first in the preferred language |
+| `on_collision` | `error` | Two terms of one kind with one label: fail, or `qualify`: suffix each with its namespace's prefix (`BANK_EX`, `BANK_GEO`): one `prefixes` binds, else a well-known one, else one the files bind, else a short hash of the namespace. Pin the colliding namespaces in `prefixes` (see *What a change re-runs*) |
+| `description_properties` | `[skos:definition, rdfs:comment]` | Annotation properties a description is read from, the first in the preferred language. Another property named here must be a property of the ontology or a literal annotation of one of its terms, or the load fails |
 | `max_description_chars` | `300` | Longer descriptions are cut at a word boundary with "…" (`0`: no description from the ontology) |
 | `hierarchy_hints` | `true` | Append "Kind of X.", "Narrower than P." and "Inverse of Q." to the descriptions |
 | `patterns` | `closure` | `closure`: patterns from the domains and ranges; `none`: no patterns |
@@ -2063,7 +2063,7 @@ the load, so a typo does not silently select nothing.
 | `max_relationship_types` | `64` | Fail when more properties are mapped |
 | `max_patterns` | `256` | Fail when more patterns result |
 | `format` | `auto` | `auto` (by suffix), `turtle`, `xml`, `json-ld`, `nt`, `nquads` or `trig` |
-| `max_bytes` | `67108864` (64 MiB) | Fail when the files hold more bytes together |
+| `max_bytes` | `67108864` (64 MiB) | Fail when the files hold more bytes together (see *Load cost*) |
 
 **What is read.** Only named terms of the files' statements:
 
@@ -2108,8 +2108,10 @@ the load, so a typo does not silently select nothing.
   property's `schema:domainIncludes` together, and allows any of its
   classes. `owl:Thing` and `rdfs:Resource` allow anything. A symmetric
   property, or one that is its own inverse, allows its domain and range at
-  both ends. Transitivity, functionality, cardinality and restrictions are
-  ignored.
+  both ends; with statements on one end only it takes them for the other,
+  and its sub-properties and inverses inherit both (decided on the whole
+  closure, so a range an inverse supplies is not overridden).
+  Transitivity, functionality, cardinality and restrictions are ignored.
 - **Selection.** Namespaces and deprecation first, then the `classes`
   subtrees down to `max_depth`, minus the `exclude_classes` subtrees; then
   properties the same way. Selecting a class does not select its
@@ -2148,6 +2150,11 @@ the load, so a typo does not silently select nothing.
   RAGInput(query="...", search_strategy="local",
            filters={"type_iri": [EX + "Organization", EX + "Vendor", EX + "Buyer"]})
   ```
+
+  The command line cannot say this: `run-rag --filters` takes each key
+  once and `set-filter` one value, and a comma is read as part of the
+  value. Use `RAGInput.filters` or the `filters` of a `run-eval` dataset
+  item for a list.
 
 - The pattern check is not hierarchy-aware: under `strict`, an
   `ORGANIZATION` pattern does not admit a `VENDOR` endpoint, which is why
@@ -2218,6 +2225,18 @@ Narrow with `namespaces`, `classes`, `max_depth` and the `exclude_*`
 options, set `patterns: none` (types only; `strict` then checks types but
 no pattern), or raise the cap knowing the prompt grows.
 
+**Load cost.** The files are parsed into memory once per process, at
+start-up (`run-rag`: at the first filtered query), and the mapping then
+runs in time and memory about linear in the ontology's size, however deep
+its hierarchy. Parsing dominates: a 14 MB Turtle file of 110,000 classes
+and 500 properties took about 45 s and 1.2 GB peak memory (parse 30 s,
+reading the classes and properties 10 s, mapping 5 s), that is about 3 s
+and 85 MB per MB of Turtle; a 20,000-deep `subClassOf` chain maps in
+under a second. At the default `max_bytes` (64 MiB) that would be about
+5 GB, within the default 8 GiB task but not alongside a large ingestion,
+so lower `max_bytes` to what you load, give the task memory to match, or
+map a module of the ontology (its own files) instead of all of it.
+
 **Korean labels.** For an ontology labelled in Korean:
 
 ```yaml
@@ -2260,12 +2279,21 @@ an incremental run reacts to what the mapping yields
   (`ex:Vendor` renamed `ex:Supplier`, its label kept), including an
   equivalent class with a smaller IRI, which then names the type
   (`ex:Supplier owl:equivalentClass ex:Vendor` makes `type_iri`
-  `ex:Supplier`).
+  `ex:Supplier`). Only while the label stays, though: a merged type takes
+  the best label of all its members, or under `label_source: local_name`
+  (or with no label) the local name of its smallest IRI, so a new
+  equivalent class with a label of its own, or with a smaller IRI under
+  `local_name`, can relabel the type and re-extract. Pin such a type in
+  `labels`.
 - **Nothing**: re-serialising (Turtle to RDF/XML), moving or renaming the
   files (with absolute IRIs, below), `owl:versionInfo`, `rdfs:seeAlso`,
   a datatype property's label or comment, edits to terms outside the
   selection that the closure does not use, and adding statements the
-  closure already infers.
+  closure already infers. With `on_collision: qualify`, bind every
+  colliding namespace in `options.prefixes`: otherwise the suffix may come
+  from the prefixes the files declare, which re-serialising can rename or
+  drop (turning `BANK_EX` into a hash), and a relative IRI's namespace,
+  and so its hash, follows the file's location.
 
 **Declare a base IRI.** Write absolute IRIs, or declare a base: `@base`
 in Turtle and TriG, `xml:base` in RDF/XML, `@base` in a JSON-LD context. A
@@ -2339,9 +2367,13 @@ the graph:
 - `run-prompt-tuning --schema-out draft.yaml` over the `kind: owl` config
   ([Drafting a schema](#c-extraction-schema)) writes the ontology's types,
   patterns and IRIs plus the relationship types the sample states that
-  the ontology lacks, and its header names them: add them to the ontology
-  (keep `kind: owl`), or review the draft and load it with `kind: file`
-  (the added types change the schema, so that re-extracts).
+  the ontology lacks, and its header names them and counts the patterns
+  it adds for them. A type the ontology declares keeps exactly the
+  ontology's patterns (none under `patterns: none`), so with nothing added
+  the draft loads as the same schema and nothing re-extracts. Add the new
+  types to the ontology (keep `kind: owl`), or review the draft and load
+  it with `kind: file` (the added types change the schema, so that
+  re-extracts).
 
 ---
 

@@ -1818,8 +1818,8 @@ CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `r
 | `label_case` | `upper_snake` | `upper_snake`(`supplyChain` → `SUPPLY_CHAIN`, `공급 업체` → `공급_업체`) 또는 `preserve`(쓴 그대로, 문장 부호는 공백으로) |
 | `languages` | `[en, ""]` | 레이블과 설명에서 선호하는 언어 태그, 순서대로(`""`: 태그 없음. `en`은 정확히 `en`인 값 다음으로 `en-US`도 맞춤). 그 밖의 태그는 이 뒤 |
 | `labels` | `{}` | IRI 또는 CURIE → 쓸 레이블(쓴 그대로) |
-| `on_collision` | `error` | 같은 종류의 두 용어가 같은 레이블일 때 실패하거나, `qualify`면 각 레이블 뒤에 네임스페이스 접두사를 붙임(`BANK_EX`, `BANK_GEO`. 묶인 접두사가 없으면 네임스페이스의 짧은 해시) |
-| `description_properties` | `[skos:definition, rdfs:comment]` | 설명을 읽을 주석 속성. 선호 언어에서 처음 찾은 값 |
+| `on_collision` | `error` | 같은 종류의 두 용어가 같은 레이블일 때 실패하거나, `qualify`면 각 레이블 뒤에 네임스페이스 접두사를 붙임(`BANK_EX`, `BANK_GEO`). 접두사는 `prefixes`가 묶은 것, 없으면 잘 알려진 접두사, 없으면 파일이 묶은 것, 그것도 없으면 네임스페이스의 짧은 해시. 충돌하는 네임스페이스는 `prefixes`에 고정하세요(*바꾸면 다시 실행되는 것* 참고) |
+| `description_properties` | `[skos:definition, rdfs:comment]` | 설명을 읽을 주석 속성. 선호 언어에서 처음 찾은 값. 기본값 외에 적은 속성은 온톨로지의 속성이거나 어떤 용어의 리터럴 주석이어야 하며, 아니면 읽기가 실패함 |
 | `max_description_chars` | `300` | 더 긴 설명은 단어 경계에서 잘라 "…"를 붙임(`0`: 온톨로지에서 설명을 가져오지 않음) |
 | `hierarchy_hints` | `true` | 설명 뒤에 "Kind of X.", "Narrower than P.", "Inverse of Q."를 덧붙임 |
 | `patterns` | `closure` | `closure`: 정의역과 치역에서 패턴을 만듦. `none`: 패턴 없음 |
@@ -1827,7 +1827,7 @@ CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `r
 | `max_relationship_types` | `64` | 매핑된 속성이 더 많으면 실패 |
 | `max_patterns` | `256` | 패턴이 더 많이 나오면 실패 |
 | `format` | `auto` | `auto`(확장자로), `turtle`, `xml`, `json-ld`, `nt`, `nquads`, `trig` |
-| `max_bytes` | `67108864`(64 MiB) | 파일 전체 크기가 더 크면 실패 |
+| `max_bytes` | `67108864`(64 MiB) | 파일 전체 크기가 더 크면 실패(*읽기 비용* 참고) |
 
 **읽는 것.** 파일에 있는 문장 중 이름 있는 용어만 읽습니다.
 
@@ -1862,8 +1862,10 @@ CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `r
   허용하는 것이고, 치역은 그 반대입니다. 문장 하나는 클래스, 클래스의 `owl:unionOf`,
   또는 그 속성의 `schema:domainIncludes` 전체이며, 그 안의 클래스 중 어느 것이든
   허용합니다. `owl:Thing`과 `rdfs:Resource`는 무엇이든 허용합니다. 대칭 속성(또는
-  자기 자신이 역속성인 속성)은 정의역과 치역을 양쪽 끝에서 모두 허용합니다. 추이성,
-  함수성, 카디널리티, 제약(restriction)은 무시합니다.
+  자기 자신이 역속성인 속성)은 정의역과 치역을 양쪽 끝에서 모두 허용합니다. 한쪽
+  끝에만 문장이 있으면 다른 쪽도 같은 문장을 쓰고, 하위 속성과 역속성은 양쪽을 모두
+  물려받습니다. 이 판단은 폐포 전체를 본 뒤에 하므로, 역속성이 채워 주는 치역을
+  덮어쓰지 않습니다. 추이성, 함수성, 카디널리티, 제약(restriction)은 무시합니다.
 - **선택.** 먼저 네임스페이스와 폐기 여부를 보고, `classes` 하위 트리를 `max_depth`까지
   고른 뒤 `exclude_classes` 하위 트리를 뺍니다. 속성도 같은 방식입니다. 클래스를 골라도
   그 상위 클래스는 선택되지 않지만, 폐포는 선택하지 않은 클래스를 거쳐 계산합니다.
@@ -1897,6 +1899,10 @@ CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `r
   RAGInput(query="...", search_strategy="local",
            filters={"type_iri": [EX + "Organization", EX + "Vendor", EX + "Buyer"]})
   ```
+
+  명령줄로는 이렇게 거를 수 없습니다. `run-rag --filters`는 키 하나에 값 하나만,
+  `set-filter`도 값 하나만 받고, 쉼표는 값의 일부로 읽습니다. 목록이 필요하면
+  `RAGInput.filters`나 `run-eval` 데이터셋 항목의 `filters`를 쓰세요.
 
 - 패턴 검사는 계층을 모릅니다. `strict`에서 `ORGANIZATION` 패턴은 `VENDOR` 끝점을
   허용하지 않으므로, 매핑이 하위 클래스 패턴을 풀어 씁니다. 엔티티에 저장되는 유형은
@@ -1960,6 +1966,16 @@ schema_source.options: the selection yields 17 patterns, more than max_patterns 
 두거나(유형만 남고 `strict`는 유형만 검사하며 패턴은 검사하지 않음), 프롬프트가 커지는
 것을 감안하고 상한을 올리세요.
 
+**읽기 비용.** 파일은 프로세스마다 한 번, 시작할 때(`run-rag`는 필터를 쓴 첫
+질의 때) 메모리로 파싱하며, 이어지는 매핑은 계층이 아무리 깊어도 온톨로지 크기에
+거의 비례하는 시간과 메모리를 씁니다. 비용 대부분은 파싱입니다. 클래스 110,000개와
+속성 500개인 14 MB Turtle 파일은 약 45초, 최대 메모리 1.2 GB가 들었습니다(파싱 30초,
+클래스와 속성 읽기 10초, 매핑 5초). Turtle 1 MB당 약 3초, 85 MB인 셈이며, 깊이
+20,000인 `subClassOf` 사슬은 1초 안에 매핑됩니다. 기본 `max_bytes`(64 MiB)라면 약 5 GB로,
+기본 8 GiB 태스크에 들어가지만 큰 수집과 함께라면 부족할 수 있습니다. `max_bytes`를
+실제로 읽을 크기로 낮추고 태스크 메모리를 그에 맞추거나, 온톨로지 전체 대신 필요한
+모듈(그 파일들)만 매핑하세요.
+
 **한국어 레이블.** 한국어로 레이블을 단 온톨로지라면 다음처럼 씁니다.
 
 ```yaml
@@ -1998,11 +2014,18 @@ schema_source.options: the selection yields 17 patterns, more than max_patterns 
 - **표시만 다시 씀**: 레이블은 그대로인데 IRI만 바뀔 때입니다(`ex:Vendor`를 레이블은
   두고 `ex:Supplier`로 바꾼 경우). IRI가 더 작은 동치 클래스가 생겨 유형의 IRI가 되는
   경우도 같습니다(`ex:Supplier owl:equivalentClass ex:Vendor`를 더하면 `type_iri`가
-  `ex:Supplier`가 됨).
+  `ex:Supplier`가 됨). 단, 레이블이 그대로일 때만입니다. 합쳐진 유형은 구성원 전체 중
+  가장 알맞은 레이블을, `label_source: local_name`이거나 레이블이 없으면 가장 작은
+  IRI의 로컬 이름을 쓰므로, 자기 레이블이 있는 동치 클래스나 `local_name`에서 IRI가 더
+  작은 동치 클래스가 생기면 유형의 레이블이 바뀌어 다시 추출합니다. 그런 유형은
+  `labels`로 고정하세요.
 - **아무것도 바뀌지 않음**: 다른 형식으로 다시 저장(Turtle에서 RDF/XML로), 파일 이동이나
   이름 변경(절대 IRI일 때, 아래 참고), `owl:versionInfo`, `rdfs:seeAlso`, 데이터 타입
   속성의 레이블이나 주석, 폐포가 쓰지 않는 선택 밖 용어의 수정, 폐포가 이미 추론하는
-  문장 추가입니다.
+  문장 추가입니다. `on_collision: qualify`를 쓴다면 충돌하는 네임스페이스를 모두
+  `options.prefixes`에 묶으세요. 그러지 않으면 접미사가 파일이 선언한 접두사에서 올 수
+  있는데, 다시 저장하면 그 접두사가 바뀌거나 사라질 수 있고(`BANK_EX`가 해시로 바뀜),
+  상대 IRI의 네임스페이스와 그 해시는 파일 위치를 따릅니다.
 
 **기준 IRI 선언.** 절대 IRI를 쓰거나 기준 IRI를 선언하세요. Turtle과 TriG는 `@base`,
 RDF/XML은 `xml:base`, JSON-LD는 컨텍스트의 `@base`입니다. 상대 IRI(`<#Vendor>`)는
@@ -2066,9 +2089,12 @@ properties dropped, ... ends lifted, ...` 형식이며, DEBUG에는 빠지거나
   읽습니다. 같은 스키마이므로 다시 추출하지 않고, extra도 더는 필요 없습니다.
 - `kind: owl` 설정으로 `run-prompt-tuning --schema-out draft.yaml`을 실행하면
   ([프롬프트 튜닝으로 스키마 초안 만들기](#c-추출-스키마)) 온톨로지의 유형, 패턴, IRI에
-  표본이 언급했지만 온톨로지에 없는 관계 유형을 더해 쓰고, 머리말에 그 유형을 적습니다.
-  그 유형을 온톨로지에 더하거나(`kind: owl` 유지), 초안을 검토해 `kind: file`로
-  읽으세요(더한 유형 때문에 스키마가 바뀌므로 다시 추출함).
+  표본이 언급했지만 온톨로지에 없는 관계 유형을 더해 쓰고, 머리말에 그 유형과 그
+  유형에 더한 패턴 수를 적습니다. 온톨로지가 선언한 유형은 온톨로지의 패턴만
+  그대로 가지므로(`patterns: none`이면 패턴 없음), 더한 것이 없으면 초안은 같은
+  스키마로 읽히고 다시 추출하지 않습니다. 새 유형을 온톨로지에 더하거나(`kind: owl`
+  유지), 초안을 검토해 `kind: file`로 읽으세요(더한 유형 때문에 스키마가 바뀌므로
+  다시 추출함).
 
 ---
 

@@ -6,8 +6,9 @@ hierarchies.
 The mapping depends on the statements only (not their order); stating what
 its closure already implies changes nothing; what it returns is a valid
 extraction schema with one label per type, or it raises; narrowing the
-classes never adds a type; and every pattern end is a class the property's
-domain or range allows, or the nearest selected ancestor of one.
+classes never adds a type; and every pattern end is a class the domain or
+range in effect allows (inherited, from an inverse, or from a symmetric
+property's other end), or the nearest selected ancestor of one.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import random
 from collections.abc import Iterable
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from unified_kg_rag.adapters.schema_sources.ontology_mapping import (
@@ -169,19 +170,90 @@ def _closed(
     return up
 
 
+def _both_ways(
+    terms: Iterable[OntologyProperty | OntologyClass],
+) -> dict[str, set[str]]:
+    same: dict[str, set[str]] = {term.iri: set(term.equivalents) for term in terms}
+    for term in terms:
+        for other in term.equivalents:
+            same.setdefault(other, set()).add(term.iri)
+    return same
+
+
+Ends = frozenset[frozenset[str]]
+
+
+def _property_closure(
+    model: OntologyModel,
+) -> tuple[dict[str, tuple[Ends, Ends]], set[str]]:
+    """Every property's domain and range statements in effect, by a naive
+    fixpoint: its own, its super-properties' (and equivalents') same end,
+    its inverses' other end; then a symmetric property with statements on
+    one end only takes them for the other, and the fixpoint runs again.
+    And the symmetric properties (flagged, or their own inverse)."""
+    by_iri = {p.iri: p for p in model.properties}
+    up = _closed(
+        {p.iri: set(p.parents) for p in model.properties}, _both_ways(model.properties)
+    )
+
+    def group(iri: str) -> frozenset[str]:
+        return frozenset({iri} | {m for m in up[iri] if iri in up.get(m, set())})
+
+    inverses: dict[str, set[str]] = {iri: set() for iri in by_iri}
+    for p in model.properties:
+        for other in p.inverses & by_iri.keys():
+            inverses[p.iri].add(other)
+            inverses[other].add(p.iri)
+    symmetric = {
+        iri
+        for iri in by_iri
+        if any(
+            by_iri[m].symmetric or inverses[m] & group(iri)
+            for m in group(iri)
+            if m in by_iri
+        )
+    }
+
+    def fixpoint(
+        own: dict[str, tuple[set[frozenset[str]], set[frozenset[str]]]],
+    ) -> dict[str, tuple[set[frozenset[str]], set[frozenset[str]]]]:
+        ends = {iri: (set(d), set(r)) for iri, (d, r) in own.items()}
+        changed = True
+        while changed:
+            changed = False
+            for iri in by_iri:
+                domain, range_ = set(ends[iri][0]), set(ends[iri][1])
+                for above in up[iri] & by_iri.keys():
+                    domain |= ends[above][0]
+                    range_ |= ends[above][1]
+                for inverse in inverses[iri]:
+                    if inverse not in group(iri):
+                        domain |= ends[inverse][1]
+                        range_ |= ends[inverse][0]
+                if (domain, range_) != ends[iri]:
+                    ends[iri] = (domain, range_)
+                    changed = True
+        return ends
+
+    own = {p.iri: (set(p.domains), set(p.ranges)) for p in model.properties}
+    ends = fixpoint(own)
+    for iri in symmetric:
+        domain, range_ = ends[iri]
+        if bool(domain) != bool(range_):
+            own[iri] = (domain or range_, range_ or domain)
+    ends = fixpoint(own)
+    return (
+        {iri: (frozenset(d), frozenset(r)) for iri, (d, r) in ends.items()},
+        symmetric,
+    )
+
+
 def _with_inferences(model: OntologyModel) -> OntologyModel:
     """``model`` plus statements the closure implies: transitive
-    subsumptions, both directions of each equivalence and inverse, and the
-    domains and ranges of every super-property on its sub-properties."""
-
-    def symmetric(terms) -> dict[str, set[str]]:
-        same: dict[str, set[str]] = {term.iri: set(term.equivalents) for term in terms}
-        for term in terms:
-            for other in term.equivalents:
-                same.setdefault(other, set()).add(term.iri)
-        return same
-
-    class_same = symmetric(model.classes)
+    subsumptions, both directions of each equivalence and inverse, and on
+    every property the domains and ranges in effect (its super-properties',
+    its inverses' and, symmetric, its other end's)."""
+    class_same = _both_ways(model.classes)
     class_up = _closed({c.iri: set(c.parents) for c in model.classes}, class_same)
     classes = tuple(
         c.model_copy(
@@ -192,37 +264,33 @@ def _with_inferences(model: OntologyModel) -> OntologyModel:
         )
         for c in model.classes
     )
-    prop_same = symmetric(model.properties)
+    prop_same = _both_ways(model.properties)
     prop_up = _closed({p.iri: set(p.parents) for p in model.properties}, prop_same)
     inverses: dict[str, set[str]] = {p.iri: set(p.inverses) for p in model.properties}
     for p in model.properties:
         for other in p.inverses:
             inverses.setdefault(other, set()).add(p.iri)
-    by_iri = {p.iri: p for p in model.properties}
-    properties = []
-    for p in model.properties:
-        domains = set(p.domains)
-        ranges = set(p.ranges)
-        for above in prop_up[p.iri]:
-            if above in by_iri:
-                domains |= by_iri[above].domains
-                ranges |= by_iri[above].ranges
-        properties.append(
-            p.model_copy(
-                update={
-                    "parents": frozenset(prop_up[p.iri]),
-                    "equivalents": frozenset(prop_same[p.iri] - {p.iri}),
-                    "inverses": frozenset(inverses[p.iri]),
-                    "domains": frozenset(domains),
-                    "ranges": frozenset(ranges),
-                }
-            )
+    ends, _ = _property_closure(model)
+    properties = tuple(
+        p.model_copy(
+            update={
+                "parents": frozenset(prop_up[p.iri]),
+                "equivalents": frozenset(prop_same[p.iri] - {p.iri}),
+                "inverses": frozenset(inverses[p.iri]),
+                "domains": ends[p.iri][0],
+                "ranges": ends[p.iri][1],
+            }
         )
+        for p in model.properties
+    )
     return OntologyModel(
-        classes=classes, properties=tuple(properties), prefixes=model.prefixes
+        classes=classes, properties=properties, prefixes=model.prefixes
     )
 
 
+# More examples than the default: a symmetric property with one end and
+# something inheriting from it is rare among them.
+@settings(max_examples=300)
 @given(model=models(), options=_OPTIONS)
 def test_stating_the_closure_changes_nothing(
     model: OntologyModel, options: MappingOptions
@@ -297,32 +365,42 @@ def test_narrowing_never_adds_a_type(
             assert {spec.iri for spec in narrow[1].entity_types} <= wide_iris
 
 
-@given(model=models(equivalences=False, symmetric=False), options=_OPTIONS)
-def test_pattern_ends_fit_the_declared_domain_and_range(
-    model: OntologyModel, options: MappingOptions
+@pytest.mark.parametrize("symmetric", [False, True])
+@settings(max_examples=300)
+@given(data=st.data(), options=_OPTIONS)
+def test_pattern_ends_fit_the_domain_and_range_in_effect(
+    symmetric: bool, data: st.DataObject, options: MappingOptions
 ) -> None:
+    model = data.draw(models(equivalences=False, symmetric=symmetric))
     outcome = _outcome(model, options)
     if outcome[0] == "error":
         return
     document, report = outcome[1], outcome[2]
     up = _closed({c.iri: set(c.parents) for c in model.classes}, {})
+    ends, symmetric_iris = _property_closure(model)
 
     def at_or_below(child: str, ancestor: str) -> bool:
         return child == ancestor or ancestor in up.get(child, set())
 
     iri_of = {spec.label: spec.iri for spec in document.entity_types}
     prop_of = {spec.label: spec.iri for spec in document.relationship_types}
-    by_iri = {p.iri: p for p in model.properties}
     lifted = {(note.iri, note.detail.split()[0]) for note in report.lifted}
+
+    def fits(prop: str, side: str, end: str) -> bool:
+        unions = ends[prop][0 if side == "domain" else 1]
+        if (prop, side) in lifted:
+            # Lifted: an ancestor of a class each statement allows.
+            return all(any(at_or_below(c, end) for c in union) for union in unions)
+        return all(any(at_or_below(end, c) for c in union) for union in unions)
+
     for pattern in document.relationship_patterns:
-        prop = by_iri[prop_of[pattern.relation]]
-        for side, end, unions in (
-            ("domain", iri_of[pattern.source_type], prop.domains),
-            ("range", iri_of[pattern.target_type], prop.ranges),
+        prop = prop_of[pattern.relation]
+        for side, end in (
+            ("domain", iri_of[pattern.source_type]),
+            ("range", iri_of[pattern.target_type]),
         ):
-            for union in unions:
-                if (prop.iri, side) in lifted:
-                    # Lifted: an ancestor of a class the statement allows.
-                    assert any(at_or_below(allowed, end) for allowed in union)
-                else:
-                    assert any(at_or_below(end, allowed) for allowed in union)
+            if prop in symmetric_iris:
+                # Either end of a symmetric property may come from either.
+                assert fits(prop, "domain", end) or fits(prop, "range", end)
+            else:
+                assert fits(prop, side, end)

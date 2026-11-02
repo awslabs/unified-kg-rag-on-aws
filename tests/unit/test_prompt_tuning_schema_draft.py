@@ -410,6 +410,90 @@ async def test_a_draft_over_an_ontology_says_what_it_lacks(tmp_path: Path) -> No
     assert frozen.relationship_type("SUPPLIES").description == "Delivers goods to"  # type: ignore[union-attr]
 
 
+_UNPATTERNED = _ONTOLOGY + "ex:stocks a owl:ObjectProperty .\n"
+
+
+@requires_ontology
+@pytest.mark.parametrize("patterns", ["closure", "none"])
+def test_a_frozen_ontology_draft_is_the_ontologys_schema(
+    tmp_path: Path, patterns: str
+) -> None:
+    ontology = tmp_path / "trade.ttl"
+    ontology.write_text(_UNPATTERNED, encoding="utf-8")
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {
+                        "kind": "owl",
+                        "path": str(ontology),
+                        "options": {"patterns": patterns},
+                    }
+                }
+            }
+        }
+    )
+    schema = resolve_extraction_schema(
+        config
+    ).processing.graph_extraction.extraction_schema()
+    # The examples state both declared types, twice each, in directions the
+    # ontology does not give.
+    entities = [_entity("Vendor", "ORGANIZATION"), _entity("Gadget", "PRODUCT")]
+    records = [
+        _record(
+            unit,
+            entities,
+            [_rel("Vendor", "Gadget", "SUPPLIES"), _rel("Vendor", "Gadget", "STOCKS")],
+        )
+        for unit in ("t1", "t2")
+    ]
+    draft = SchemaDraft.from_examples(
+        list(schema.entity_types),
+        records,
+        relationship_types=schema.relationship_types,
+        relationship_patterns=schema.relationship_patterns,
+        schema_source=("owl", str(ontology)),
+    )
+    # Every type the ontology declares keeps its patterns (none under
+    # patterns: none) and gets no other.
+    assert draft.added_relationship_types == []
+    assert draft.relationship_patterns == list(schema.relationship_patterns)
+    text = draft.to_yaml("draft.yaml")
+    assert "plus 0 relationship types the source lacks." in text
+    path = tmp_path / "draft.yaml"
+    path.write_text(text, encoding="utf-8")
+    assert _load(path).digest == schema.digest
+
+
+def test_a_draft_over_another_source_counts_the_patterns_it_adds() -> None:
+    declared = ExtractionSchema.from_items(
+        ["ORGANIZATION"], ["SUPPLIES"], ["ORGANIZATION -SUPPLIES-> ORGANIZATION"]
+    )
+    records = [
+        _record(
+            unit,
+            ORGS,
+            [_rel("Vendor", "Buyer", "AUDITS"), _rel("Buyer", "Vendor", "SUPPLIES")],
+        )
+        for unit in ("t1", "t2")
+    ]
+    draft = SchemaDraft.from_examples(
+        list(declared.entity_types),
+        records,
+        relationship_types=declared.relationship_types,
+        relationship_patterns=declared.relationship_patterns,
+        schema_source=("synthetic_service", "urn:schemas:trade"),
+    )
+    assert [str(p) for p in draft.relationship_patterns] == [
+        "ORGANIZATION -SUPPLIES-> ORGANIZATION",
+        "ORGANIZATION -AUDITS-> ORGANIZATION",
+    ]
+    assert (
+        "# synthetic_service 'urn:schemas:trade' plus 1 relationship type the "
+        "source lacks (AUDITS) and 1 pattern for it." in draft.to_yaml()
+    )
+
+
 def test_a_draft_over_a_file_or_no_source_keeps_its_header() -> None:
     draft = SchemaDraft.from_examples(
         ["ORGANIZATION"], [_record("t1", ORGS, [_rel("Vendor", "Buyer", "SUPPLIES")])]

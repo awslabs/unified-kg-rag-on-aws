@@ -14,9 +14,13 @@ Closure.
     type (named by its smallest selected IRI), and likewise for properties.
     A property's domain is what its own ``rdfs:domain`` statements, its
     super-properties' and its inverses' ranges all allow (the range
-    mirrors it); ``owl:unionOf`` and ``schema:domainIncludes`` allow any of
-    their classes; ``owl:Thing`` and ``rdfs:Resource`` allow anything.
-    Transitivity, functionality and cardinality are ignored.
+    mirrors it); a symmetric property with statements on one end only
+    takes them for the other, and what inherits from it sees both.
+    ``owl:unionOf`` and ``schema:domainIncludes`` allow any of their
+    classes; ``owl:Thing`` and ``rdfs:Resource`` allow anything.
+    Transitivity, functionality and cardinality are ignored. Each of these
+    is one pass over the hierarchy: time and memory grow about linearly
+    with its size, however deep.
 
 Selection.
     Every class and object property outside the RDF, RDFS, OWL, XSD, SKOS
@@ -63,7 +67,7 @@ import re
 import unicodedata
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple, TypeVar
 from urllib.parse import unquote
 
 from pydantic import (
@@ -120,6 +124,8 @@ _CORE_NAMESPACES = (RDF, RDFS, OWL, XSD)
 _DESCRIPTIVE_NAMESPACES = (SKOS, DCTERMS, "http://purl.org/dc/elements/1.1/")
 # Domains and ranges that allow anything.
 _UNRESTRICTED = frozenset({OWL + "Thing", RDFS + "Resource"})
+# The default ``description_properties``, which an ontology need not use.
+_DEFAULT_DESCRIPTIONS = frozenset({SKOS + "definition", RDFS + "comment"})
 # The longest label a type may get (a longer one needs a ``labels`` entry).
 MAX_LABEL_CHARS = 64
 
@@ -205,12 +211,14 @@ class MappingOptions(BaseModel):
     on_collision: Literal["error", "qualify"] = Field(
         default="error",
         description="Two terms with one label: fail (error), or suffix each "
-        "label with its namespace's prefix (qualify)",
+        "label with its namespace's prefix (qualify): one prefixes binds, "
+        "else a well-known one, else the ontology's, else a hash",
     )
     description_properties: tuple[_Option, ...] = Field(
         default=("skos:definition", "rdfs:comment"),
         description="Annotation properties a type's description is read "
-        "from, first match wins (within the preferred language)",
+        "from, first match wins (within the preferred language); one other "
+        "than the defaults must occur in the ontology",
     )
     max_description_chars: int = Field(
         default=300,
@@ -450,13 +458,20 @@ def truncate(text: str, limit: int) -> str:
 
 # -- Hierarchy ---------------------------------------------------------------
 
+# A term or group (``str``), or one end of a property group (``(group,
+# DOMAIN)`` or ``(group, RANGE)``).
+_Node = TypeVar("_Node", str, tuple[str, int])
+
 
 class _Hierarchy:
     """A subsumption graph with its cycles and equivalences collapsed.
 
     A group is the set of terms one cycle or chain of equivalences joins,
-    identified by its smallest IRI; ``ancestors[g]`` holds ``g`` and every
-    group above it.
+    identified by its smallest IRI; ``order`` lists the groups parents
+    first. Nothing here holds a group's full set of ancestors (on a deep
+    hierarchy those sets alone grow with the square of its depth): what is
+    above or below a group is asked of the few groups that matter
+    (:meth:`reach`).
     """
 
     def __init__(
@@ -488,25 +503,7 @@ class _Hierarchy:
                 if other != group:
                     self.parents[group].add(other)
                     self.children[other].add(group)
-        self.ancestors = self._ancestors()
-
-    def _ancestors(self) -> dict[str, frozenset[str]]:
-        ancestors: dict[str, frozenset[str]] = {}
-        # Parents before children.
-        self.order: list[str] = []
-        waiting = {group: len(above) for group, above in self.parents.items()}
-        ready = deque(sorted(group for group, count in waiting.items() if not count))
-        while ready:
-            group = ready.popleft()
-            self.order.append(group)
-            ancestors[group] = frozenset({group}).union(
-                *(ancestors[parent] for parent in self.parents[group])
-            )
-            for child in sorted(self.children[group]):
-                waiting[child] -= 1
-                if not waiting[child]:
-                    ready.append(child)
-        return ancestors
+        self.order = _topological(self.parents, self.children)
 
     def descendants(
         self, roots: Iterable[str], max_depth: int | None = None
@@ -537,27 +534,83 @@ class _Hierarchy:
                 )
         return {group for group, level in depth.items() if level <= max_depth}
 
-    def nearest(self, group: str, among: set[str]) -> set[str]:
+    def topmost(self, among: set[str]) -> set[str]:
+        """The groups of ``among`` below no other one."""
+        # Whether a group is below one of ``among``, parents first.
+        covered: dict[str, bool] = {}
+        for group in self.order:
+            covered[group] = any(
+                parent in among or covered[parent] for parent in self.parents[group]
+            )
+        return {group for group in among if not covered[group]}
+
+    def reach(self, among: Iterable[str]) -> _Reach:
+        """What of ``among`` is at or above, and at or below, each group."""
+        return _Reach(self, among)
+
+
+class _Reach:
+    """For every group of a hierarchy, the groups of ``among`` at or above
+    it (``up``) and at or below it (``down``), as bit sets over ``among``
+    parents first (a higher bit is never above a lower one). A group's set
+    is its parents' (children's) joined, so a chain shares one integer and
+    the cost is the edges times the size of ``among`` in machine words,
+    not the square of the depth."""
+
+    def __init__(self, tree: _Hierarchy, among: Iterable[str]) -> None:
+        among = set(among)
+        self.groups = [group for group in tree.order if group in among]
+        self.bit = {group: 1 << index for index, group in enumerate(self.groups)}
+        self.all = (1 << len(self.groups)) - 1
+        self.up = self._join(tree.order, tree.parents)
+        self.down = self._join(reversed(tree.order), tree.children)
+
+    def _join(
+        self, order: Iterable[str], before: Mapping[str, set[str]]
+    ) -> dict[str, int]:
+        masks: dict[str, int] = {}
+        for group in order:
+            mask = self.bit.get(group, 0)
+            for other in before[group]:
+                # Shared, not copied, while nothing is added to it.
+                mask = mask | masks[other] if mask else masks[other]
+            masks[group] = mask
+        return masks
+
+    def of(self, mask: int) -> set[str]:
+        """The groups of ``among`` in ``mask``."""
+        found = set()
+        while mask:
+            low = mask & -mask
+            found.add(self.groups[low.bit_length() - 1])
+            mask ^= low
+        return found
+
+    def lowest(self, mask: int) -> set[str]:
+        """The groups of ``mask`` above no other one of it."""
+        found = set()
+        while mask:
+            # The highest bit is below no other one; drop it and what is
+            # above it.
+            group = self.groups[mask.bit_length() - 1]
+            found.add(group)
+            mask &= ~self.up[group]
+        return found
+
+    def nearest(self, group: str) -> set[str]:
         """The groups of ``among`` just above ``group``: its proper
         ancestors in ``among`` that are below no other one."""
-        above = (self.ancestors[group] & among) - {group}
-        return {
-            candidate
-            for candidate in above
-            if not any(
-                candidate in self.ancestors[other] for other in above - {candidate}
-            )
-        }
+        return self.lowest(self.up[group] & ~self.bit.get(group, 0))
 
 
-def _strongly_connected(edges: Mapping[str, set[str]]) -> dict[str, str]:
+def _strongly_connected(edges: Mapping[_Node, set[_Node]]) -> dict[_Node, _Node]:
     """Node -> the smallest node of its strongly connected component
     (Tarjan's algorithm, iterative, nodes and edges visited sorted)."""
-    index: dict[str, int] = {}
-    low: dict[str, int] = {}
-    on_stack: set[str] = set()
-    stack: list[str] = []
-    component: dict[str, str] = {}
+    index: dict[_Node, int] = {}
+    low: dict[_Node, int] = {}
+    on_stack: set[_Node] = set()
+    stack: list[_Node] = []
+    component: dict[_Node, _Node] = {}
     counter = 0
     for start in sorted(edges):
         if start in index:
@@ -601,9 +654,74 @@ def _strongly_connected(edges: Mapping[str, set[str]]) -> dict[str, str]:
     return component
 
 
+def _topological(
+    parents: Mapping[_Node, set[_Node]], children: Mapping[_Node, set[_Node]]
+) -> list[_Node]:
+    """The nodes of an acyclic graph, parents before children (Kahn's
+    algorithm, nodes visited sorted)."""
+    order: list[_Node] = []
+    waiting = {node: len(above) for node, above in parents.items()}
+    ready = deque(sorted(node for node, count in waiting.items() if not count))
+    while ready:
+        node = ready.popleft()
+        order.append(node)
+        for child in sorted(children[node]):
+            waiting[child] -= 1
+            if not waiting[child]:
+                ready.append(child)
+    return order
+
+
 # -- Mapping -----------------------------------------------------------------
 
 _Ends = frozenset[frozenset[str]]
+DOMAIN, RANGE = 0, 1
+
+
+class _Fit(NamedTuple):
+    """What a set of domain (or range) statements allows of the selected
+    classes, as bit sets of a :class:`_Reach`: the classes at or below a
+    class of every statement (``down``), and those at or above one
+    (``up``). Folding statements in is an intersection, so a property's
+    fit is its own statements' joined with those it inherits."""
+
+    stated: bool
+    down: int
+    up: int
+
+    def join(self, other: _Fit) -> _Fit:
+        return _Fit(
+            self.stated or other.stated, self.down & other.down, self.up & other.up
+        )
+
+
+def _propagate(
+    sources: Mapping[tuple[str, int], set[tuple[str, int]]],
+    own: Mapping[tuple[str, int], _Fit],
+) -> dict[tuple[str, int], _Fit]:
+    """Each property end's own fit joined with that of every end it
+    inherits from, directly or not (``sources`` holds the direct ones):
+    one pass over the strongly connected components, sources first."""
+    component = _strongly_connected(sources)
+    members: dict[tuple[str, int], list[tuple[str, int]]] = {}
+    for node in sorted(sources):
+        members.setdefault(component[node], []).append(node)
+    before: dict[tuple[str, int], set[tuple[str, int]]] = {c: set() for c in members}
+    after: dict[tuple[str, int], set[tuple[str, int]]] = {c: set() for c in members}
+    for node, above in sources.items():
+        for source in above:
+            if component[source] != component[node]:
+                before[component[node]].add(component[source])
+                after[component[source]].add(component[node])
+    fits: dict[tuple[str, int], _Fit] = {}
+    for current in _topological(before, after):
+        fit = own[members[current][0]]
+        for node in members[current][1:]:
+            fit = fit.join(own[node])
+        for source in before[current]:
+            fit = fit.join(fits[source])
+        fits[current] = fit
+    return {node: fits[component[node]] for node in sources}
 
 
 class _Mapper:
@@ -642,6 +760,21 @@ class _Mapper:
             self._resolve(term, "description_properties")
             for term in options.description_properties
         ]
+        if "description_properties" in options.model_fields_set:
+            # The defaults may be absent; another property named here may not.
+            used = set(self.properties).union(
+                _DEFAULT_DESCRIPTIONS,
+                *(term.annotations for term in (*model.classes, *model.properties)),
+            )
+            for term, iri in zip(
+                options.description_properties, self.description_properties, strict=True
+            ):
+                if iri not in used:
+                    raise SchemaSourceError(
+                        f"schema_source.options.description_properties: {term!r} "
+                        "is neither a property of the ontology nor a literal "
+                        "annotation of any of its terms"
+                    )
         for term in options.labels:
             iri = self._resolve(term, "labels")
             if (
@@ -691,7 +824,9 @@ class _Mapper:
             raise SchemaSourceError(
                 f"schema_source.options.{option}: {term!r} is neither an IRI "
                 "nor a CURIE of a bound prefix; bind its prefix in "
-                "schema_source.options.prefixes or write the full IRI"
+                "schema_source.options.prefixes or write the full IRI (a "
+                "prefix the ontology's files bind to different namespaces is "
+                "not bound: a WARNING names those when the files are read)"
             )
         return namespace + name
 
@@ -742,11 +877,7 @@ class _Mapper:
         if options.classes:
             roots = self._known(options.classes, "classes", tree, "class")
         else:
-            roots = {
-                group
-                for group in candidates
-                if not (tree.ancestors[group] - {group}) & candidates
-            }
+            roots = tree.topmost(candidates)
         if options.classes or options.max_depth is not None:
             candidates &= tree.descendants(roots, options.max_depth)
         excluded = self._known(
@@ -813,29 +944,42 @@ class _Mapper:
             unions.add(groups)
         return unions
 
+    def _fit(self, union: frozenset[str], reach: _Reach) -> _Fit:
+        down = up = 0
+        for group in union:
+            down |= reach.down[group]
+            up |= reach.up[group]
+        return _Fit(True, down, up)
+
     def _closure(
-        self,
-    ) -> tuple[
-        dict[str, set[frozenset[str]]],
-        dict[str, set[frozenset[str]]],
-        dict[str, set[str]],
-        set[str],
-    ]:
-        """Per property group: the domain and range statements in effect,
-        the inverse groups and whether it is symmetric."""
+        self, reach: _Reach
+    ) -> tuple[dict[str, tuple[_Fit, _Fit]], dict[str, set[str]], set[str]]:
+        """Per property group: the fits of the domain and range statements
+        in effect, the inverse groups and whether it is symmetric.
+
+        An end inherits its super-properties' same end and its inverses'
+        other end. A symmetric property with statements on one end only
+        then takes them for the other too, and what inherits from it sees
+        both; the closure is taken again after that, so it does not depend
+        on the order the ends are visited in.
+        """
         tree = self.property_tree
-        domains: dict[str, set[frozenset[str]]] = {
-            group: set() for group in tree.members
-        }
-        ranges: dict[str, set[frozenset[str]]] = {
-            group: set() for group in tree.members
+        anything = _Fit(False, reach.all, reach.all)
+        own: dict[tuple[str, int], _Fit] = {
+            (group, side): anything
+            for group in tree.members
+            for side in (DOMAIN, RANGE)
         }
         inverses: dict[str, set[str]] = {group: set() for group in tree.members}
         symmetric: set[str] = set()
+        fits: dict[frozenset[str], _Fit] = {}
         for prop in self.model.properties:
             group = tree.group_of[prop.iri]
-            domains[group] |= self._class_unions(prop.domains)
-            ranges[group] |= self._class_unions(prop.ranges)
+            for side, ends in ((DOMAIN, prop.domains), (RANGE, prop.ranges)):
+                for union in self._class_unions(ends):
+                    if union not in fits:
+                        fits[union] = self._fit(union, reach)
+                    own[(group, side)] = own[(group, side)].join(fits[union])
             if prop.symmetric:
                 symmetric.add(group)
             for other in prop.inverses:
@@ -849,51 +993,42 @@ class _Mapper:
                 # Its own inverse: symmetric.
                 inverses[group].discard(group)
                 symmetric.add(group)
-        changed = True
-        while changed:
-            changed = False
-            for group in sorted(tree.members):
-                domain = set(domains[group])
-                range_ = set(ranges[group])
-                for above in tree.ancestors[group]:
-                    domain |= domains[above]
-                    range_ |= ranges[above]
-                for inverse in inverses[group]:
-                    domain |= ranges[inverse]
-                    range_ |= domains[inverse]
-                if domain != domains[group] or range_ != ranges[group]:
-                    domains[group], ranges[group] = domain, range_
-                    changed = True
-        return domains, ranges, inverses, symmetric
+        sources = {
+            (group, side): {(parent, side) for parent in tree.parents[group]}
+            | {(inverse, 1 - side) for inverse in inverses[group]}
+            for group in tree.members
+            for side in (DOMAIN, RANGE)
+        }
+        closed = _propagate(sources, own)
+        filled = False
+        for group in sorted(symmetric):
+            domain, range_ = closed[(group, DOMAIN)], closed[(group, RANGE)]
+            if domain.stated != range_.stated:
+                own[(group, DOMAIN)] = own[(group, RANGE)] = (
+                    domain if domain.stated else range_
+                )
+                filled = True
+        if filled:
+            closed = _propagate(sources, own)
+        return (
+            {
+                group: (closed[(group, DOMAIN)], closed[(group, RANGE)])
+                for group in tree.members
+            },
+            inverses,
+            symmetric,
+        )
 
-    def _match(
-        self, unions: set[frozenset[str]], selected: set[str]
-    ) -> tuple[set[str], bool]:
-        """The selected classes ``unions`` allows, and whether they were
-        lifted to ancestors."""
-        if not unions:
-            return set(selected), False
-        ancestors = self.class_tree.ancestors
-        down = {
-            group
-            for group in selected
-            if all(ancestors[group] & union for union in unions)
-        }
-        if down:
-            return down, False
-        up = {
-            group
-            for group in selected
-            if all(
-                any(group in ancestors[allowed] for allowed in union)
-                for union in unions
-            )
-        }
-        return {
-            group
-            for group in up
-            if not any(group in ancestors[other] for other in up - {group})
-        }, True
+    @staticmethod
+    def _match(fit: _Fit, reach: _Reach) -> tuple[set[str], bool]:
+        """The selected classes ``fit`` allows, and whether they were
+        lifted to ancestors: those below every statement, else the lowest
+        of those above one class of each."""
+        if not fit.stated:
+            return set(reach.groups), False
+        if fit.down:
+            return reach.of(fit.down), False
+        return reach.lowest(fit.up), True
 
     # Labels.
 
@@ -1007,13 +1142,18 @@ class _Mapper:
         return labels
 
     def _qualifier(self, iri: str) -> str:
+        # The options' prefixes first, then the well-known ones: only when
+        # neither names the namespace do the files' own bindings, which
+        # re-serialising may change, decide.
         namespace = namespace_of(iri)
-        bound = {**WELL_KNOWN_PREFIXES, **self.model.prefixes, **self.options.prefixes}
-        prefixes = sorted(
-            prefix for prefix, value in bound.items() if prefix and value == namespace
-        )
-        if prefixes:
-            return upper_snake(prefixes[0]) or prefixes[0].upper()
+        for bound in (self.options.prefixes, WELL_KNOWN_PREFIXES, self.model.prefixes):
+            prefixes = sorted(
+                prefix
+                for prefix, value in bound.items()
+                if prefix and value == namespace
+            )
+            if prefixes:
+                return upper_snake(prefixes[0]) or prefixes[0].upper()
         return hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:6].upper()
 
     def _description(
@@ -1043,20 +1183,19 @@ class _Mapper:
         classes = self._select_classes()
         selected = set(classes)
         properties = self._select_properties()
-        domains, ranges, inverses, symmetric = self._closure()
+        reach = self.class_tree.reach(selected)
+        fits, inverses, symmetric = self._closure(reach)
 
         ends: dict[str, tuple[set[str], set[str]] | None] = {}
         for group in sorted(properties):
             iri = properties[group][0]
-            domain, range_ = domains[group], ranges[group]
-            if group in symmetric:
-                domain, range_ = domain or range_, range_ or domain
-            if not domain and not range_:
+            domain, range_ = fits[group]
+            if not domain.stated and not range_.stated:
                 ends[group] = None
                 self.unrestricted.append(iri)
                 continue
-            sources, sources_lifted = self._match(domain, selected)
-            targets, targets_lifted = self._match(range_, selected)
+            sources, sources_lifted = self._match(domain, reach)
+            targets, targets_lifted = self._match(range_, reach)
             if group in symmetric:
                 sources = targets = sources | targets
             missing = [
@@ -1126,18 +1265,15 @@ class _Mapper:
             self._overrides(self.property_tree, "property"),
             "relationship type",
         )
-        class_order = _forest(self.class_tree, set(classes), class_labels, classes)
-        property_order = _forest(
-            self.property_tree, set(emitted), property_labels, emitted
-        )
+        property_reach = self.property_tree.reach(emitted)
+        class_order = _forest(reach, class_labels, classes)
+        property_order = _forest(property_reach, property_labels, emitted)
         class_index = {group: index for index, group in enumerate(class_order)}
         property_index = {group: index for index, group in enumerate(property_order)}
 
         entity_types = []
         for group in class_order:
-            above = sorted(
-                self.class_tree.nearest(group, selected), key=class_index.__getitem__
-            )
+            above = sorted(reach.nearest(group), key=class_index.__getitem__)
             hints = (
                 [f"Kind of {', '.join(class_labels[g] for g in above)}."]
                 if above
@@ -1153,8 +1289,7 @@ class _Mapper:
         relationship_types = []
         for group in property_order:
             above = sorted(
-                self.property_tree.nearest(group, set(emitted)),
-                key=property_index.__getitem__,
+                property_reach.nearest(group), key=property_index.__getitem__
             )
             inverse = sorted(
                 (g for g in inverses[group] if g in emitted and g != group),
@@ -1241,22 +1376,21 @@ def _clashes(labels: Mapping[str, str]) -> list[list[str]]:
 
 
 def _forest(
-    tree: _Hierarchy,
-    nodes: set[str],
+    reach: _Reach,
     labels: Mapping[str, str],
     members: Mapping[str, list[str]],
 ) -> list[str]:
-    """``nodes`` in depth-first preorder of their hierarchy: roots and
-    siblings by (label key, IRI), a node under several parents at its first
-    visit."""
+    """The groups of ``reach`` in depth-first preorder of their hierarchy:
+    roots and siblings by (label key, IRI), a node under several parents at
+    its first visit."""
 
     def key(group: str) -> tuple[str, str]:
         return (schema_key(labels[group]), members[group][0])
 
-    children: dict[str, list[str]] = {node: [] for node in nodes}
+    children: dict[str, list[str]] = {node: [] for node in reach.groups}
     roots = []
-    for node in nodes:
-        parents = tree.nearest(node, nodes)
+    for node in reach.groups:
+        parents = reach.nearest(node)
         if not parents:
             roots.append(node)
         for parent in parents:
