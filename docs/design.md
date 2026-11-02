@@ -665,8 +665,15 @@ of the documents plus the configured seeds. No model reads a seed.
   stored without a report and counts as neither generated nor failed
   (`communities_seed_only`); a parent with one evidenced child is
   evidenced, and a child without a report leaves the parent its raw
-  context. Global search answers from the corpus, so seed-only content
-  is not in its reports.
+  context. An incremental run's graph holds its delta only, so a
+  community seed units alone state there is checked against the stored
+  members (`_evidenced_by_stored_members`, one `read_entities` batch per
+  suffix): a member citing a document unit the run does not replace, or
+  stored without lineage and without seed-only `source_kinds`, evidences
+  it. A seed added beside unchanged documents thus reports their
+  communities as a full build does. Global search answers from the
+  reports, so content only seeds state is in none, while a mixed
+  community's report describes its seed members too.
 - **Scope (decided).** The shards belong to the source scope of the run
   that configures them. A separate `seed:<name>` scope per seed was
   rejected: every run-level registry path (the diff, attempts,
@@ -687,10 +694,25 @@ of the documents plus the configured seeds. No model reads a seed.
 - **Reset.** A reset (or a registry-off full build) processes the whole
   corpus, configured seeds included, so the sweep keeps them. Before any
   write, `incremental._confirm_reset_of_seed_scopes` lists the namespace
-  and, when another scope holds seed paths (`is_seed_path`), asks the
-  pipeline's `confirm` (the CLI's terminal prompt, `--yes`); with no
-  `confirm` the run fails. Refusing every such reset was rejected: it
-  would make the common case, a seed on the corpus, impossible to rebuild.
+  and, when another scope holds seed paths (`is_seed_path`), or the
+  corpus is seeds alone while another scope holds documents, asks the
+  pipeline's `confirm` (the CLI's terminal prompt, `--confirm-reset` /
+  `UKR_CONFIRM_RESET`, or `--yes`); a no, or no `confirm`, raises
+  `ConfirmationDeclinedError`, which the stage and the pipeline pass on
+  untouched (a cancellation, not a failed stage). Refusing every such
+  reset was rejected: it would make the common case, a seed on the
+  corpus, impossible to rebuild. The answer has its own input because
+  `--yes` also accepts a resume's integrity issues, which an ECS task
+  answering a reset must not accept blindly.
+- **Empty corpus.** A corpus of seeds alone is a seed-only run only for a
+  scope the registry holds no document of
+  (`incremental._refuse_seeds_over_documents`, before any write, also
+  under a reset): otherwise an unmounted volume or an empty S3 sync would
+  delete the scope's documents with exit 0. Keyed on the registry, not on
+  a flag: a seed-only scope needs no extra setting, and the mistake it
+  guards against carries none. A scope's first run warns when another
+  scope already holds a seed of the same name (its weights would count
+  twice). A registry-off build cannot tell, and holds the seeds alone.
 - **Not in v1.** IRI-based identity and aliases, `owl:sameAs`, a
   retrievable fact card (seed units as TEXT context), and federation
   (§15, *New seed source*).

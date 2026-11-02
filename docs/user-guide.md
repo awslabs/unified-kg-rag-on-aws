@@ -2447,12 +2447,19 @@ processing:
   `UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'`.
 - `run-ingestion` loads every seed once at start-up, after the extraction
   schema and before any model is built: a seed that cannot be imported
-  exits 2, naming the seed and, for a bad record, the file and line. The
-  other CLIs do not load seeds (`run-prompt-tuning` profiles the documents
-  only) but, like `run-ingestion`, exit 2 when a configured kind needs an
-  extra that is missing (`rdf`).
+  exits 2, naming the seed and, for a bad record, the file and line, as
+  does a configured kind whose extra is missing (`rdf`). The other CLIs
+  do not load seeds (`run-prompt-tuning` profiles the documents only) and
+  need no seed kind's extra: a query image answers over an index an `rdf`
+  seed was imported into without the `ontology` extra.
 - The corpus may be empty when seeds are configured: an empty
-  `--source-directory` is a seed-only run (*Lifecycle*).
+  `--source-directory` is a seed-only run (*Lifecycle*) for a source scope
+  the registry holds no documents of (a new one, or a seed-only scope).
+  For a scope with documents an empty corpus is far likelier a volume not
+  mounted yet or an S3 sync that copied nothing, so the run fails at
+  `document_loading` before it writes (`No source document reached this
+  run, only its seed graphs, but the doc-status registry holds 2 documents
+  of source scope ...`, exit 1) rather than delete them.
 - **On AWS** the seed files must be in the image next to the config, or in
   S3 where the ingestion task role reads
   ([Operator Runbook: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3)).
@@ -2643,7 +2650,7 @@ as extraction merges names) become one entity:
 | IRI | The smallest one stated; an entity stated with several is counted (`entities_with_conflicting_iris`, INFO) |
 | Edges | Added. A seed edge and a document edge with the same endpoints and type are one relationship, their weights added |
 | Ranks | Count document-backed edges only (an edge is seed-only when every text unit it cites is a seed's): a seed never makes an entity more important, and an entity only seed edges join has rank 0. Leiden still clusters every edge at its full weight. `indexing.neptune.entity_importance_source: degree` counts the edges at query time, seed edges included |
-| Communities | A community whose members only seeds state is stored without a report (`communities_seed_only` in the stage metrics); a report on a mixed community lists the document-ranked entities first |
+| Communities | A community whose members only seeds state is stored without a report (`communities_seed_only` in the stage metrics); a report on a mixed community lists the document-ranked entities first. On an incremental run a community counts as mixed when a stored member is document-backed, though the run's own graph states it only from a seed (a seed added beside unchanged documents) |
 
 - **Homonyms.** Identity is the name: an unrelated seed node "Mercury" (a
   planet) and the documents' "Mercury" (an element) are one entity, which
@@ -2671,8 +2678,11 @@ relationships, in every strategy that reads them (vector and keyword
 search, graph expansion over seed edges), never as text chunks: the seed's
 text units are stored for their lineage, every text search leaves them
 out, and `local` and `mix` spend no chunk slot on them. `global` and the
-`drift` primer read reports only, so what only seeds state is invisible to
-them. `naive` reads text units only.
+`drift` primer read community reports: a community whose members only
+seeds state has none, but the report of a mixed community describes its
+seed members too (their descriptions are in its prompt), so seed facts
+reach those strategies through the communities documents also state.
+`naive` reads text units only.
 
 - **Citations.** A source a seed states carries `provenance` in its
   metadata, with no chunk (`chunk_id` is `None`):
@@ -2724,19 +2734,25 @@ the seeds' content is part of every stage's cache key.
 
 **Lifecycle.** Seeds need the doc-status registry
 (`providers.doc_status.enabled`) for these; without it every run is a full
-build of the corpus and the configured seeds.
+build of the corpus and the configured seeds, and nothing tells an empty
+corpus from a missing one: the build holds the seeds alone.
 
 - **Removal.** Drop the seed from the config: the next incremental run
   deletes its shards, so what only it stated goes, and entities documents
   state lose its description lines, properties, IRIs and edges.
 - **Reset.** `indexing.reset: true` rebuilds the namespace from the run's
-  corpus, its configured seeds included. When another source scope of the
-  namespace holds seed documents (a seed-only scope, below), which the
-  reset would drop, the run asks first: `run-ingestion` asks on the
-  terminal, `--yes` answers yes, and without a terminal the run fails
-  (exit 1) before it writes. From Python, pass
-  `DataIngestionPipeline(..., confirm=callable)`; without it such a reset
-  fails.
+  corpus, its configured seeds included. The run asks first when the
+  reset would drop what is easy to lose unawares: another source scope's
+  seed documents (a seed-only scope, below), or, from a corpus of seeds
+  alone, another scope's documents (a reset of a seed-only scope rebuilds
+  the whole namespace from its seeds). `run-ingestion` asks on the
+  terminal; `--confirm-reset` (or `UKR_CONFIRM_RESET=1`) answers yes to
+  this question only, `--yes` to every question. A no, or no terminal,
+  stops the run before it writes (`Pipeline stopped before it wrote
+  anything: ...`, exit 1). A reset of a scope that holds documents from
+  an empty corpus fails, whatever the answer (above). From Python, pass
+  `DataIngestionPipeline(..., confirm=callable)`; without it, or on a no,
+  `run` raises `ConfirmationDeclinedError`.
 - **A seed-only scope.** A run with seeds, an empty `--source-directory`
   and a fixed `processing.document_parsing.source_scope` (say
   `seeds-procure`) keeps a seed in a scope of its own, with no model call.
@@ -2744,22 +2760,34 @@ build of the corpus and the configured seeds.
 - **One seed, two corpora.** A seed belongs to the scope of the run that
   configures it. Configured on two scopes of one namespace, it is imported
   twice: the same entities, but its edge weights count twice. Configure a
-  shared seed on one scope, or give it a seed-only scope.
+  shared seed on one scope, or give it a seed-only scope. A scope's first
+  run warns when another scope already holds a seed of the same name
+  (`Seed graph 'procure' is already imported by source scope(s) ...`): a
+  moved or mistyped source directory looks the same.
 
 **Cost and limits.**
 
-- No LLM call reads a seed, but its items are embedded: two vectors per
-  node (name and description), one per edge (with
+- No extraction call (extraction, gleaning, claims, translation) reads
+  a seed's text units, but seed descriptions do reach a model in three
+  places: the description summarizer, for an entity documents also state
+  whose merged description outgrows its threshold; the report of a
+  community documents also state, which describes its seed members; and
+  the answer prompt, whose context holds the retrieved entities and
+  relationships. Write seed descriptions as data a model may read. A
+  community only seeds state gets no report, and an item only a seed
+  states is cut to `max_description_chars`, so it never needs the
+  summarizer.
+- Its items are embedded: two vectors per node (name and description),
+  one per edge (with
   `indexing.opensearch.build_relationship_vector_index`, the default) and
   one per text unit, about 2 × nodes + edges + (nodes + edges) / 50 at the
   defaults. The 100,000-node, 500,000-edge caps are about 712,000
-  embeddings. An entity documents also state is summarized as before when
-  its merged description outgrows the summarizer's threshold, and the
-  report of a community it is in describes it. The whole seed is held in
-  memory and in the stage cache.
+  embeddings. The whole seed is held in memory and in the stage cache.
 - **Delta runs cluster the delta** (§5): a seed added by an incremental run
   is clustered on its own shards' entities until a reset re-clusters the
-  graph.
+  graph. Those communities are reported when a stored member is
+  document-backed, from the descriptions the run's graph holds (the
+  seed's).
 - **Translation.** Seed statements are never translated, while the
   documents' entities are extracted from the translated text: write seed
   names in `processing.translation.target_language` for them to link.

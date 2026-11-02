@@ -60,6 +60,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
+    ConfirmationDeclinedError,
     MetricsSink,
     NullMetricsSink,
     PipelineExecutionError,
@@ -86,6 +87,13 @@ def _source_scope_arg(value: str) -> str:
     if not value.strip():
         raise argparse.ArgumentTypeError("a source scope must not be blank")
     return value.strip()
+
+
+# The env var answering yes to a reset's question (--confirm-reset), for a
+# task whose command is fixed (Step Functions) or overridden by env only.
+CONFIRM_RESET_ENV = "UKR_CONFIRM_RESET"
+_TRUE = frozenset({"1", "true", "yes"})
+_FALSE = frozenset({"", "0", "false", "no"})
 
 
 def _stage_name_arg(value: str) -> str:
@@ -188,8 +196,20 @@ class CommandLineInterface:
             "-y",
             action="store_true",
             help="Answer yes to confirmation prompts (continuing after a failed "
-            "integrity check, or a reset that asks first). Without it, a prompt that cannot be asked "
-            "because stdin is not a terminal fails the run",
+            "integrity check, or a reset that asks first, as --confirm-reset "
+            "does). Without it, a prompt that cannot be asked because stdin is "
+            "not a terminal fails the run",
+        )
+        parser.add_argument(
+            "--confirm-reset",
+            action="store_true",
+            help="Answer yes to the question of an indexing.reset run that "
+            "drops another source scope's seed graph documents, or, from a "
+            "corpus of seed graphs alone, another scope's documents; nothing "
+            f"else (falls back to the {CONFIRM_RESET_ENV} env var: 1, true or "
+            "yes). "
+            "Without it (or --yes), the question is asked on the terminal, and "
+            "the run stops (exit 1) when stdin is not one",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -247,6 +267,14 @@ class CommandLineInterface:
                 "--output-format json cannot be combined with --metrics-sink "
                 "cloudwatch, which writes its records to stdout"
             )
+        if not args.confirm_reset:
+            value = os.getenv(CONFIRM_RESET_ENV, "").strip().lower()
+            if value not in _TRUE | _FALSE:
+                self.parser.error(
+                    f"{CONFIRM_RESET_ENV} must be 1, true or yes (or 0, false, "
+                    f"no or empty), not {os.environ[CONFIRM_RESET_ENV]!r}"
+                )
+            args.confirm_reset = value in _TRUE
         return args
 
 
@@ -416,16 +444,35 @@ class IngestionPipelineRunner:
     def _confirm(self, question: str) -> bool:
         """Ask ``question``; ``--yes`` answers it, and without a terminal to
         ask on the run fails rather than blocking or reading EOF."""
-        if getattr(self.args, "yes", False):
+        return self._ask(question, "--yes", getattr(self.args, "yes", False))
+
+    def _confirm_reset(self, question: str) -> bool:
+        """Ask a reset's ``question`` (the pipeline's ``confirm``):
+        ``--confirm-reset`` (or its env var) answers it, and so does
+        ``--yes``; without a terminal to ask on the run stops."""
+        if getattr(self.args, "confirm_reset", False):
+            console.print(f"{question} [dim](--confirm-reset)[/dim]")
+            return True
+        return self._ask(
+            question,
+            f"--confirm-reset (or {CONFIRM_RESET_ENV}=1)",
+            getattr(self.args, "yes", False),
+        )
+
+    @staticmethod
+    def _ask(question: str, flag: str, answered: bool) -> bool:
+        """Ask ``question`` on the terminal unless ``answered`` (by --yes);
+        without a terminal the run stops, naming ``flag``."""
+        if answered:
             console.print(f"{question} [dim](--yes)[/dim]")
             return True
         if not sys.stdin.isatty():
             console.print(
                 f"[red]Error: {question} needs confirmation, but stdin is not a "
-                "terminal. Re-run with --yes to proceed.[/red]"
+                f"terminal. Re-run with {flag} to proceed.[/red]"
             )
-            raise PipelineExecutionError(
-                f"Confirmation required ({question}); pass --yes"
+            raise ConfirmationDeclinedError(
+                f"Confirmation required ({question}); pass {flag}"
             )
         return Confirm.ask(question)
 
@@ -473,6 +520,8 @@ class IngestionPipelineRunner:
                 pipeline_id=self.args.pipeline_id,
                 resume_from_stage=self.args.resume_from_stage,
             )
+        except ConfirmationDeclinedError:
+            raise
         except PipelineExecutionError:
             # main() prints the error itself, after these suggestions.
             if self.args.pipeline_id:
@@ -536,8 +585,9 @@ class IngestionPipelineRunner:
 
         console.print("\n[bold]Initializing pipeline...[/bold]")
         pipeline_config = self._create_pipeline_config()
-        # The stages build their models when the pipeline is built.
-        if error := missing_extras_error(self.config):
+        # The stages build their models, and the pipeline loads the seeds,
+        # when the pipeline is built.
+        if error := missing_extras_error(self.config, seeds=True):
             usage_error(error)
         self._require_indexing_endpoints(pipeline_config)
         self.pipeline = DataIngestionPipeline(
@@ -546,7 +596,7 @@ class IngestionPipelineRunner:
             source_directory=self.args.source_directory,
             target_directory=self.args.output_directory,
             metrics_sink=self._build_metrics_sink(),
-            confirm=self._confirm,
+            confirm=self._confirm_reset,
         )
 
         previous_handlers = self._stop_on_signals(self.pipeline)
@@ -748,6 +798,15 @@ def main() -> None:
         logger.error("Ingestion configuration error: %s", e)
         _print_failed(runner, EXIT_USAGE, e)
         sys.exit(EXIT_USAGE)
+    except ConfirmationDeclinedError as e:
+        # A question answered no (or not answerable): the run stopped before
+        # it wrote anything.
+        console.print(
+            f"\n[yellow]Pipeline stopped before it wrote anything: "
+            f"{markup_safe(e)}[/yellow]"
+        )
+        _print_failed(runner, EXIT_FAILURE, e)
+        sys.exit(EXIT_FAILURE)
     except (PipelineExecutionError, StoreConnectionError) as e:
         # A failed stage, a failed metadata check, a refused prompt or an
         # unreachable store: say which before exiting non-zero.

@@ -251,7 +251,9 @@ class RAGChainRunner:
             return f"[dim]Index/Label Suffix:[/dim] [gray]{Constants.DEFAULT_SUFFIX.value}[/gray]"
 
     async def run(self) -> None:
-        error = missing_extras_error(self.config) or missing_endpoints_error(
+        # Only run-ingestion loads the seed graphs.
+        extras = missing_extras_error(self.config, seeds=False)
+        error = extras or missing_endpoints_error(
             self.config,
             strategy_roles(self.config, SearchStrategy(self.args.search_strategy)),
             f"search strategy '{self.args.search_strategy}'",

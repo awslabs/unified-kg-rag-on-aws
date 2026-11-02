@@ -132,6 +132,13 @@ class NamespaceLeaseError(PipelineExecutionError):
     and the stores, so the run stops before (or instead of) writing."""
 
 
+class ConfirmationDeclinedError(PipelineExecutionError):
+    """A question the run asks before it writes (a reset that drops another
+    source scope's content) was answered no, or no one could answer it: the
+    run stops there, before any write, as a cancellation rather than a
+    failed stage."""
+
+
 class PipelineResumeError(GraphRAGException):
     pass
 
