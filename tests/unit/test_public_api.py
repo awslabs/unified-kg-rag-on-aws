@@ -87,6 +87,7 @@ PUBLIC_API = sorted(
         "SeedGraph",
         "SeedNode",
         "SeedSourceContext",
+        "SeedSourceOptions",
         "TokenCounterPort",
         "VectorIndexer",
         "build_providers",

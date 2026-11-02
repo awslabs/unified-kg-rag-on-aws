@@ -36,7 +36,7 @@ from unified_kg_rag.domain.models.seed_graph import (
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
-from .registry import SeedSourceContext
+from .registry import SeedSourceContext, statement_problems
 
 # The most bytes one line (a JSONL record, a CSV row) may hold.
 MAX_LINE_BYTES = 1024 * 1024
@@ -206,15 +206,7 @@ class GraphBuilder:
         try:
             return model.model_validate(data)
         except ValidationError as e:
-            raise self.fail(
-                where,
-                "; ".join(
-                    ".".join(str(part) for part in detail["loc"])
-                    + (": " if detail["loc"] else "")
-                    + detail["msg"]
-                    for detail in e.errors(include_url=False, include_input=False)
-                ),
-            ) from e
+            raise self.fail(where, statement_problems(e)) from e
 
     def node(self, where: str, data: dict[str, Any]) -> None:
         """Add the node ``data`` states (read at ``where``, ``file line n``).

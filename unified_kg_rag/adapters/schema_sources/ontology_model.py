@@ -21,13 +21,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-RDFS = "http://www.w3.org/2000/01/rdf-schema#"
-OWL = "http://www.w3.org/2002/07/owl#"
-XSD = "http://www.w3.org/2001/XMLSchema#"
-SKOS = "http://www.w3.org/2004/02/skos/core#"
-SCHEMA = "https://schema.org/"
-DCTERMS = "http://purl.org/dc/terms/"
+from unified_kg_rag.adapters.source_files.rdf_terms import RDFS, SKOS, Text
 
 RDFS_LABEL = RDFS + "label"
 RDFS_COMMENT = RDFS + "comment"
@@ -42,15 +36,6 @@ Iri = Annotated[str, StringConstraints(min_length=1, pattern=r"^\S+$")]
 # rdf:Property with no literal range). Only object and untyped properties
 # can become relationship types.
 PropertyKind = Literal["object", "datatype", "annotation", "untyped"]
-
-
-class Text(BaseModel):
-    """A literal annotation value: ``language`` is its tag, ``""`` untagged."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    value: str
-    language: str = ""
 
 
 # Annotation property IRI -> its values on a term (rdfs:label, skos:prefLabel,

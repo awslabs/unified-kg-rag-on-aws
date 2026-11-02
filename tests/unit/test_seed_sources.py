@@ -33,9 +33,9 @@ from tests.fixtures.seed_graphs import (
     lines,
 )
 from unified_kg_rag.adapters.seed_sources import (
-    SEED_TERMS,
     SeedSourceContext,
     SeedSourceOptions,
+    SeedTerms,
     get_seed_source,
     register_seed_source,
     registered_seed_sources,
@@ -142,6 +142,22 @@ def test_a_seed_graph_takes_its_defaults() -> None:
         256 * 1024 * 1024,
     )
     assert Config().processing.seed_graphs == []
+
+
+def test_an_rdf_seed_defaults_to_a_smaller_byte_cap() -> None:
+    # rdflib holds the whole graph, 25-110 times the file's bytes, before
+    # max_nodes is checked: 256 MiB of Turtle needed some 28 GB.
+    rdf = SeedGraphConfig(name="procure", kind="rdf", path="seed.ttl")
+    assert rdf.max_bytes == 32 * 1024 * 1024
+    assert rdf.model_copy(update={"path": "/abs/seed.ttl"}).max_bytes == rdf.max_bytes
+    raised = SeedGraphConfig(
+        name="procure", kind="rdf", path="seed.ttl", max_bytes=256 * 1024 * 1024
+    )
+    assert raised.max_bytes == 256 * 1024 * 1024
+    loaded = Config.model_validate(
+        {"processing": {"seed_graphs": [{"name": "p", "kind": "rdf", "path": "s"}]}}
+    )
+    assert loaded.processing.seed_graphs[0].max_bytes == 32 * 1024 * 1024
 
 
 @pytest.mark.parametrize(
@@ -387,7 +403,7 @@ def test_the_context_reads_options_and_redacts_the_location() -> None:
     assert context.options(SeedSourceOptions).dangling == "skip"
     assert context.terms.error is SeedGraphError
     assert str(context.terms("boom")) == "seed graph 'procure': boom"
-    assert SEED_TERMS.error is SeedGraphError
+    assert SeedTerms().error is SeedGraphError
     bad = SeedSourceContext(_seed("s.jsonl", options={"danglng": "skip"}), Config())
     with pytest.raises(SeedGraphError, match="options.danglng: Extra inputs"):
         bad.options(SeedSourceOptions)
@@ -484,6 +500,32 @@ def test_conversion_does_not_depend_on_line_order(tmp_path: Path) -> None:
             r"line 2: duplicate node id 'v1' \(first at '.*s.jsonl' line 1\)",
         ),
         (b"\xff\xfe{}\n", "is not valid UTF-8 \\(byte offset 0\\)"),
+        # Under the line cap, deeper than the JSON decoder recurses.
+        ("[" * 100_000 + "]" * 100_000 + "\n", "line 1: not valid JSON .nested"),
+        # A JSON \ud800 escape decodes to a lone surrogate: no store encodes it.
+        ('{"kind": "node", "id": "v1", "name": "A\\ud800"}\n', "name: Input should"),
+        (
+            '{"kind": "node", "id": "v1", "description": "\\udc00"}\n',
+            "description: .*lone surrogate .U\\+DC00",
+        ),
+        (
+            '{"kind": "node", "id": "v1", "properties": {"k": "\\ud800"}}\n',
+            "property 'k' holds a lone surrogate",
+        ),
+        (
+            '{"kind": "node", "id": "v1", "name": "' + "n" * 1001 + '"}\n',
+            "name: String should have at most 1000 characters",
+        ),
+        (
+            '{"kind": "node", "id": "v1", "iri": "urn:' + "x" * 4000 + '"}\n',
+            "iri: String should have at most 4000 characters",
+        ),
+        (
+            '{"kind": "edge", "source": "a", "target": "b", "type": "'
+            + "T" * 257
+            + '"}\n',
+            "type: String should have at most 256 characters",
+        ),
     ],
 )
 def test_jsonl_refuses_a_bad_line_naming_it(

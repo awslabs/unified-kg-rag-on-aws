@@ -19,6 +19,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 )
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
+    SeedConversion,
     SeedConversionSettings,
     convert_seed,
     parse_seed_unit,
@@ -217,3 +218,14 @@ def seeded_corpus(
             shards, nodes, edges = seed
             corpus.update(seed_shards(name, nodes, edges, schema, shards=shards))
     return corpus
+
+
+def seed_statements(conversion: SeedConversion) -> list[str]:
+    """Every statement line of a conversion, in document order."""
+    return [
+        line
+        for document in conversion.documents()
+        for unit in seed_text_units(document)
+        for line in unit.text.split("\n")
+        if line
+    ]

@@ -47,6 +47,7 @@ pytestmark = pytest.mark.unit
 REGION = "us-east-1"
 BUCKET = "seed-bucket"
 OPTIONS = "processing.seed_graphs[0].options"
+MAX_BYTES = "processing.seed_graphs[0].max_bytes"
 
 
 class SeedError(ConfigurationError):
@@ -56,6 +57,7 @@ class SeedError(ConfigurationError):
 TERMS = SourceTerms(
     noun="Seed graph",
     options=OPTIONS,
+    max_bytes=MAX_BYTES,
     kind="rdf",
     purpose="the seed graph",
     error=SeedError,
@@ -253,7 +255,7 @@ def test_a_format_reads_every_file_of_a_directory(tmp_path: Path) -> None:
     [
         ("seed.owx", "auto", 1 << 20, "^Seed graph file '.*' is OWL/XML, which kind 'rdf'"),
         ("seed.data", "auto", 1 << 20, f"or set {re.escape(OPTIONS)}.format$"),
-        ("seed.ttl", "auto", 4, f"more than {re.escape(OPTIONS)}.max_bytes .4.; point the path at the files the seed graph needs"),
+        ("seed.ttl", "auto", 4, f"more than {re.escape(MAX_BYTES)} .4.; point the path at the files the seed graph needs"),
     ],
 )  # fmt: skip
 def test_a_file_is_refused_in_the_callers_terms(

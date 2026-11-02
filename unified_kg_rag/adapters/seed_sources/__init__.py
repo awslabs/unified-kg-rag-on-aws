@@ -17,7 +17,6 @@ passing :attr:`SeedSourceContext.terms` for its errors.
 from . import csv_source, jsonl, rdf_reader  # noqa: F401
 from .registry import (
     COMMON_OPTIONS,
-    SEED_TERMS,
     SeedLoader,
     SeedSourceContext,
     SeedSourceOptions,
@@ -31,7 +30,6 @@ from .registry import (
 
 __all__ = [
     "COMMON_OPTIONS",
-    "SEED_TERMS",
     "SeedLoader",
     "SeedSourceContext",
     "SeedSourceOptions",

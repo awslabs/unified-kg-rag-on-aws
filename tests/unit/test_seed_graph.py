@@ -6,11 +6,14 @@ parsed back from their text units (``domain.ingestion.seed_graph``)."""
 from __future__ import annotations
 
 import json
+import random
+import time
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from tests.fixtures.seed_graphs import seed_statements
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import (
     record_from_payload,
@@ -32,7 +35,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     parse_unit_statements,
     render_statement,
     render_unit,
-    seed_statements,
     seed_text_units,
     shard_of,
 )
@@ -42,7 +44,12 @@ from unified_kg_rag.domain.models import (
     ExtractionSchema,
     RelationshipTypeSpec,
 )
-from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
+from unified_kg_rag.domain.models.seed_graph import (
+    MAX_NAME_CHARS,
+    SeedEdge,
+    SeedGraph,
+    SeedNode,
+)
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     DataProcessingError,
@@ -412,6 +419,58 @@ def test_qualify_uses_the_qualifier_property_then_the_iri() -> None:
     assert m2(by_iri) == "MERCURY (mercury-planet)"
 
 
+def test_strict_checks_qualified_homonyms_against_their_own_types() -> None:
+    # Two Mercury nodes, a VENDOR and a BUYER, each in a pattern of its type:
+    # qualify makes them two entities, so neither edge may be checked against
+    # the other's type.
+    graph = _graph(
+        [
+            {"id": "m1", "name": "Mercury", "type": "VENDOR"},
+            {"id": "m2", "name": "Mercury", "type": "BUYER"},
+            {"id": "b", "name": "Globex", "type": "BUYER"},
+            {"id": "p", "name": "Valve", "type": "PRODUCT"},
+        ],
+        [
+            {"source": "m1", "target": "b", "type": "SUPPLIES"},
+            {"source": "m2", "target": "p", "type": "BUYS"},
+        ],
+    )
+
+    conversion = convert_seed(
+        graph, _settings(on_name_collision="qualify"), _schema("strict")
+    )
+
+    edges = {
+        (s["source"], s["type"], s["target"])
+        for s in _statements(conversion)
+        if s["kind"] == "edge"
+    }
+    assert edges == {
+        ("Mercury", "SUPPLIES", "Globex"),
+        ("Mercury (m2)", "BUYS", "Valve"),
+    }
+    assert conversion.stats.relationships_off_pattern == 0
+    # merge makes them one entity, typed once, as a full build would: one of
+    # the two edges is off its pattern.
+    merged = convert_seed(
+        graph, _settings(on_name_collision="merge"), _schema("strict")
+    )
+    assert merged.stats.relationships_dropped_off_pattern == 1
+
+
+def test_a_qualified_name_over_the_name_cap_fails() -> None:
+    # The name cap holds for a qualified name too (a store keeps it as an
+    # indexed keyword).
+    graph = _homonyms(properties={"city": "S" * MAX_NAME_CHARS})
+
+    with pytest.raises(SeedGraphError, match="nodes 'm2' are longer than 1000"):
+        convert_seed(
+            graph,
+            _settings(on_name_collision="qualify", qualifier_property="city"),
+            _schema(),
+        )
+
+
 def test_qualified_names_that_still_collide_fail() -> None:
     graph = _graph(
         [
@@ -669,6 +728,63 @@ def test_a_shard_over_the_unit_limit_fails_asking_for_more_shards() -> None:
         _schema(),
     )
     assert at_limit.stats.units == MAX_UNITS_PER_SHARD
+
+
+# A seed of 20k nodes and 100k edges converts well within this many seconds
+# (about 6 s on one core); the edge check went quadratic (about 60 s).
+_CONVERSION_BOUND_SECONDS = 40.0
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(180)
+def test_a_large_seed_converts_in_linear_time() -> None:
+    nodes, edges = 20_000, 100_000
+    generator = random.Random(7)
+    graph = SeedGraph(
+        nodes=tuple(
+            SeedNode(id=f"n{i}", name=f"Part {i}", type="PRODUCT") for i in range(nodes)
+        ),
+        edges=tuple(
+            SeedEdge(
+                source=f"n{generator.randrange(nodes)}",
+                target=f"n{generator.randrange(nodes)}",
+                type="BUYS",
+            )
+            for _ in range(edges)
+        ),
+    )
+    settings = _settings(shards=16, max_nodes=nodes, max_edges=edges)
+
+    start = time.perf_counter()
+    conversion = convert_seed(graph, settings, _schema("off"))
+    elapsed = time.perf_counter() - start
+
+    assert conversion.stats.nodes == nodes
+    assert elapsed < _CONVERSION_BOUND_SECONDS, f"{elapsed:.1f} s"
+
+
+def test_a_hub_over_the_unit_limit_fails_naming_it() -> None:
+    # A node's card (it and its outgoing edges) stays in one shard: more
+    # shards cannot split a hub, a larger max_items_per_unit can.
+    spokes = 3 * MAX_UNITS_PER_SHARD
+    graph = _graph(
+        [{"id": "hub", "name": "Hub"}, *_catalog(spokes)],
+        [{"source": "hub", "target": f"n{i}", "type": "BUYS"} for i in range(spokes)],
+    )
+    settings = _settings(max_items_per_unit=3, shards=1024, max_nodes=10**6)
+
+    with pytest.raises(SeedGraphError) as error:
+        convert_seed(graph, settings, _schema())
+
+    message = str(error.value)
+    assert "node 'Hub' (id 'hub')" in message
+    assert f"is {spokes + 1} statements" in message
+    assert "raise max_items_per_unit" in message
+    assert "raise shards" not in message
+    converted = convert_seed(
+        graph, _settings(max_items_per_unit=10, shards=1024), _schema()
+    )
+    assert converted.stats.edges == spokes
 
 
 def test_a_dangling_edge_fails_or_is_skipped() -> None:

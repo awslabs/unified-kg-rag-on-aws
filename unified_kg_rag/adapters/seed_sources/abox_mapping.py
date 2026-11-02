@@ -55,11 +55,18 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Annotated, Literal, NamedTuple
+from typing import Annotated, Any, Literal, NamedTuple, TypeVar
 
-from pydantic import AfterValidator, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
 
-from unified_kg_rag.adapters.schema_sources import (
+from unified_kg_rag.adapters.source_files.locations import SourceTerms
+from unified_kg_rag.adapters.source_files.rdf_terms import (
     OWL,
     RDF,
     RDFS,
@@ -72,7 +79,6 @@ from unified_kg_rag.adapters.schema_sources import (
     namespace_of,
     upper_snake,
 )
-from unified_kg_rag.adapters.source_files.locations import SourceTerms
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.models.seed_graph import (
     SeedEdge,
@@ -82,7 +88,9 @@ from unified_kg_rag.domain.models.seed_graph import (
     SeedPropertyValue,
 )
 
-from .registry import SeedSourceOptions
+from .registry import SeedSourceOptions, statement_problems
+
+_StatementT = TypeVar("_StatementT", SeedNode, SeedEdge)
 
 RDF_TYPE = RDF + "type"
 OWL_SAME_AS = OWL + "sameAs"
@@ -472,18 +480,35 @@ class _Mapper:
             texts, self.description_properties, self.options.languages
         )
         type_label, type_iri = self.node_type(typed)
-        return SeedNode(
-            id=subject,
-            iri=subject,
-            name=name or local_name(subject) or subject,
-            type=type_label,
-            type_iri=type_iri,
-            description=description,
-            properties={
-                self.curie(predicate): self.property_value(found)
-                for predicate, found in sorted(values.items())
+        return self.validated(
+            subject,
+            SeedNode,
+            {
+                "id": subject,
+                "iri": subject,
+                "name": name or local_name(subject) or subject,
+                "type": type_label,
+                "type_iri": type_iri,
+                "description": description,
+                "properties": {
+                    self.curie(predicate): self.property_value(found)
+                    for predicate, found in sorted(values.items())
+                },
             },
         )
+
+    def validated(
+        self, subject: str, model: type[_StatementT], data: dict[str, Any]
+    ) -> _StatementT:
+        """``data`` as ``model``; an invalid one (a lone surrogate, an IRI or
+        a label over its cap) fails naming ``subject``."""
+        try:
+            return model.model_validate(data)
+        except ValidationError as e:
+            kind = "node" if model is SeedNode else "an edge from"
+            raise self.terms(
+                f"{kind} <{subject[:200]}>: {statement_problems(e)}"
+            ) from e
 
     def property_value(self, found: list[RdfTerm]) -> SeedPropertyValue:
         self.skipped["property_values_not_kept"] += len(found) - 1
@@ -514,15 +539,19 @@ class _Mapper:
                 self.skipped["objects_not_instances"] += 1
             else:
                 mapped = predicate in self.relationship_iris
-                yield SeedEdge(
-                    source=subject,
-                    target=obj.value,
-                    type=(
-                        None
-                        if mapped
-                        else self.label(predicate) or upper_snake(predicate)
-                    ),
-                    predicate_iri=predicate,
+                yield self.validated(
+                    subject,
+                    SeedEdge,
+                    {
+                        "source": subject,
+                        "target": obj.value,
+                        "type": (
+                            None
+                            if mapped
+                            else self.label(predicate) or upper_snake(predicate)
+                        ),
+                        "predicate_iri": predicate,
+                    },
                 )
 
 

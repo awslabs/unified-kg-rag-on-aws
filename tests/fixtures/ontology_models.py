@@ -19,8 +19,8 @@ from unified_kg_rag.adapters.schema_sources.ontology_model import (
     OntologyClass,
     OntologyModel,
     OntologyProperty,
-    Text,
 )
+from unified_kg_rag.adapters.source_files.rdf_terms import Text
 from unified_kg_rag.domain.models.schema import (
     EntityTypeSpec,
     RelationshipPattern,

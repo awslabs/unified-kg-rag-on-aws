@@ -42,18 +42,14 @@ from pydantic import ValidationError
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.term import Node
 
+from unified_kg_rag.adapters.source_files.rdf_terms import OWL, RDF, RDFS, XSD, Text
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 from .ontology_model import (
-    OWL,
-    RDF,
-    RDFS,
-    XSD,
     OntologyClass,
     OntologyModel,
     OntologyProperty,
     PropertyKind,
-    Text,
 )
 
 logger = logging.getLogger(__name__)

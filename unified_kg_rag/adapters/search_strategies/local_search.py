@@ -12,8 +12,9 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
+from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
+    Constants,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -154,6 +155,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 len(candidate_hits),
             )
             expanded_entity_nodes = candidate_hits
+        expanded_entity_nodes = self._with_hit_filters(
+            expanded_entity_nodes, candidate_hits
+        )
         filtered_entity_nodes = self._filter_entities(
             expanded_entity_nodes,
             frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
@@ -208,6 +212,47 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "text_unit_count": len(text_units.get("text_units", [])),
         }
         return all_results, stats
+
+    @staticmethod
+    def _with_hit_filters(
+        nodes: list[RetrievalResult], hits: list[RetrievalResult]
+    ) -> list[RetrievalResult]:
+        """``nodes`` with a candidate's document filters on its graph copy.
+
+        A graph vertex projects no document filters, so the provenance of a
+        seed fact local search cites (``rag_chain.seed_provenance``) named
+        no seed graph. Each node a seed graph states (``source_kinds``)
+        that is a candidate takes the entity hit's ``attributes.filters``,
+        which name them; any other node is returned as it came.
+        """
+        key = Constants.FILTERS.value
+        filters_of: dict[str, Any] = {}
+        for hit in hits:
+            attributes = (hit.metadata or {}).get("attributes")
+            if isinstance(attributes, dict) and isinstance(attributes.get(key), dict):
+                filters_of.setdefault(str(hit.source), attributes[key])
+        if not filters_of:
+            return nodes
+        kept: list[RetrievalResult] = []
+        for node in nodes:
+            metadata = node.metadata or {}
+            attributes = metadata.get("attributes")
+            filters = filters_of.get(str(node.source))
+            if (
+                filters is None
+                or SEED_SOURCE_KIND not in (metadata.get("source_kinds") or ())
+                or (isinstance(attributes, dict) and key in attributes)
+            ):
+                kept.append(node)
+                continue
+            attributes = {**(attributes if isinstance(attributes, dict) else {})}
+            attributes[key] = filters
+            kept.append(
+                node.model_copy(
+                    update={"metadata": {**metadata, "attributes": attributes}}
+                )
+            )
+        return kept
 
     async def _find_candidate_entities(
         self, query: SearchQuery

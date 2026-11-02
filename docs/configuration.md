@@ -417,7 +417,7 @@ A knowledge graph imported as virtual documents of the corpus.
 | `max_items_per_unit` | integer (≥ 1, ≤ 500) | `50` | Node and edge statements per text unit (the unit of lineage: what a removed statement re-derives). |
 | `max_nodes` | integer (≥ 1) | `100000` | Fail the import above this many nodes (never truncated). |
 | `max_edges` | integer (≥ 1) | `500000` | Fail the import above this many edges (never truncated). |
-| `max_bytes` | integer (≥ 1) | `268435456` | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). |
+| `max_bytes` | integer (≥ 1) | `268435456` | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). Kind 'rdf' defaults to 32 MiB: its parser holds the whole graph, about 25 (N-Triples) to 110 (Turtle) times the file size in memory, before max_nodes and max_edges are checked, so size the task's memory before raising it ('jsonl' and 'csv' stop at those caps while reading). |
 | `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | Fail the import when the seed uses more distinct property keys (the keys of attributes.seed_properties, stored but not indexed). |
 | `max_description_chars` | integer (≥ 50) | `1000` | Cut seed descriptions to this many characters, at a word boundary, so a seed-only item never needs the description summarizer. |
 

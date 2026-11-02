@@ -561,6 +561,9 @@ def test_seed_facts_are_retrieved_and_cited_but_never_as_text(
             ]
             assert vendor["metadata"]["provenance"]["kind"] == "document+seed_graph"
             assert vendor["metadata"]["provenance"]["iri"] == "urn:x:v"
+            # A candidate entity names its seed graph under either strategy:
+            # local reports its graph copy, which takes the hit's filters.
+            assert vendor["metadata"]["provenance"]["seed_graphs"] == ["procure"]
             # A document's source is reported as before seed graphs.
             for source in out.sources:
                 if source["metadata"].get("name") in {"Buyer", "Depot"}:
