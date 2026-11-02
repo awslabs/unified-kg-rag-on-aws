@@ -156,6 +156,7 @@ jobs:
           tests/unit/test_visualization_cli.py
           tests/unit/test_layering.py
           tests/unit/test_owl_schema_source.py
+          tests/unit/test_seed_sources.py
           tests/integration/test_embedded_e2e.py
 
   local-stores:

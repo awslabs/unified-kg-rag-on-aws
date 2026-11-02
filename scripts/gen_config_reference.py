@@ -81,6 +81,15 @@ def _model_in(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
+def _item_model(annotation: Any) -> type[BaseModel] | None:
+    """The model class of a list's items (``list[Model]``), else None."""
+    if typing.get_origin(annotation) is list:
+        (item,) = typing.get_args(annotation) or (None,)
+        if inspect.isclass(item) and issubclass(item, BaseModel):
+            return item
+    return None
+
+
 def _type_name(annotation: Any) -> str:
     """A short, readable name for a field annotation."""
     origin = typing.get_origin(annotation)
@@ -156,16 +165,29 @@ def _intro(cls: type[BaseModel], field: FieldInfo | None) -> str:
 def _section(
     path: str,
     cls: type[BaseModel],
-    value: BaseModel,
+    value: BaseModel | None,
     field: FieldInfo | None,
     long_defaults: dict[str, Any],
 ) -> list[str]:
-    """The tables of one section and, recursively, of its sub-sections."""
-    rows, children = [], []
+    """The tables of one section and, recursively, of its sub-sections.
+
+    ``value`` None: the section of a list's items (``path`` ends in
+    ``[]``), whose defaults are the fields' own and whose required fields
+    say so."""
+    rows: list[str] = []
+    children: list[tuple[str, type[BaseModel], BaseModel | None, FieldInfo | None]]
+    children = []
     for name, info in cls.model_fields.items():
         sub = _model_in(info.annotation)
-        current = getattr(value, name)
         key = f"{path}.{name}" if path else name
+        if value is None:
+            current = (
+                None
+                if info.is_required()
+                else info.get_default(call_default_factory=True)
+            )
+        else:
+            current = getattr(value, name)
         if sub is not None and (current is not None or info.default is None):
             if current is None:
                 current = sub()
@@ -173,10 +195,17 @@ def _section(
             continue
         bounds = _constraints(info)
         type_cell = _type_name(info.annotation) + (f" ({bounds})" if bounds else "")
+        default = (
+            "required"
+            if value is None and info.is_required()
+            else _default(current, key, long_defaults)
+        )
         rows.append(
-            f"| `{name}` | {type_cell} | {_default(current, key, long_defaults)} | "
+            f"| `{name}` | {type_cell} | {default} | "
             f"{_cell(info.description or '')} |"
         )
+        if (item := _item_model(info.annotation)) is not None:
+            children.append((f"{key}[]", item, None, None))
     lines = [f"{'#' * min(2 + path.count('.'), 4)} `{path}`", ""]
     intro = _intro(cls, field)
     if intro:

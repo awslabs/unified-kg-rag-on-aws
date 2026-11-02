@@ -12,15 +12,16 @@ internal and may change in any release. Two groups:
   evaluate it (:class:`EvaluationManager`).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
   bundle that injects them, and the registries for providers, search
-  strategies, parsers, renderers and extraction-schema sources (see the
-  design doc's extension guide).
+  strategies, parsers, renderers, extraction-schema sources and seed graph
+  sources (see the design doc's extension guide).
 
 The errors these raise for a caller to tell apart are exported too. Each is
 a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
 ``KeyboardInterrupt`` (a stop asked for by a signal). A
 :class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
 is a setting to fix (a :class:`SchemaSourceError` a schema source that
-cannot be loaded) and an :class:`InvalidFilterError` a search filter to
+cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
+imported) and an :class:`InvalidFilterError` a search filter to
 fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
 store, an :class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo).
@@ -117,6 +118,13 @@ _EXPORTS: dict[str, str] = {
     "SchemaSourceContext": "unified_kg_rag.adapters.schema_sources.registry",
     "SchemaDocument": "unified_kg_rag.domain.models.schema",
     "SchemaSourceError": "unified_kg_rag.shared.exceptions",
+    "SeedGraphError": "unified_kg_rag.shared.exceptions",
+    # Extension: seed graph sources
+    "register_seed_source": "unified_kg_rag.adapters.seed_sources.registry",
+    "SeedSourceContext": "unified_kg_rag.adapters.seed_sources.registry",
+    "SeedGraph": "unified_kg_rag.domain.models.seed_graph",
+    "SeedNode": "unified_kg_rag.domain.models.seed_graph",
+    "SeedEdge": "unified_kg_rag.domain.models.seed_graph",
 }
 
 __all__ = ["__version__", *_EXPORTS]
@@ -145,6 +153,10 @@ if TYPE_CHECKING:
         SchemaSourceContext,
         register_schema_source,
     )
+    from unified_kg_rag.adapters.seed_sources.registry import (
+        SeedSourceContext,
+        register_seed_source,
+    )
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -170,6 +182,7 @@ if TYPE_CHECKING:
         SearchType,
     )
     from unified_kg_rag.domain.models.schema import SchemaDocument
+    from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
         ContentGuardPort,
@@ -194,6 +207,7 @@ if TYPE_CHECKING:
         PipelineExecutionError,
         PipelineInterrupted,
         SchemaSourceError,
+        SeedGraphError,
         StoreConnectionError,
         StoreRequestRejectedError,
     )

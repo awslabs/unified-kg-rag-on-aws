@@ -291,6 +291,7 @@ Text processing configuration
 | `resolution_method` | `"minhash"` \| `"sequence_matcher"` | `"minhash"` | Name-similarity measure of fuzzy entity resolution (fuzzy_entity_resolution): minhash or sequence_matcher. |
 | `fuzzy_entity_resolution` | boolean | `false` | Also merge entities whose names are only similar (resolution_method at similarity_threshold), in full builds and incremental merges alike. Off by default: names are merged when they are equal after normalization, legal-form removal ('Acme Inc' / 'Acme') and dense-script spacing, because name similarity also joins different organizations that share most of their name ('... University' / '... University Hospital'). |
 | `similarity_threshold` | number (≥ 0.0, ≤ 1.0) | `0.85` | Similarity threshold for fuzzy entity resolution (fuzzy_entity_resolution) and for matching claim subjects and objects to entity names. Raise it if distinct entities merge. |
+| `seed_graphs` | list[SeedGraphConfig] | `[]` | Knowledge graphs imported as virtual documents of this run's corpus and merged with the extracted graph (each item: processing.seed_graphs[] below). Documents are canonical: a seed fills types, names and confidence only where no document states them, and adds description lines, properties, IRIs and edges. Loaded once at start-up, after the extraction schema; what a seed converts to keys every stage, where it is read from does not. As an environment variable, a JSON list: UKR__PROCESSING__SEED_GRAPHS='[{"name": "procure", "kind": "jsonl", "path": "seed/procure.jsonl"}]'. |
 
 ### `processing.document_parsing`
 
@@ -396,6 +397,29 @@ Claim extraction configuration
 |---|---|---|---|
 | `enabled` | boolean | `false` | Extract claims (covariates): one more LLM call per text unit. When on, local search injects the matching claims into its context and simple search includes the claims index in its sweep. Claim subjects and objects are not linked into the entity graph. |
 | `max_entities_per_prompt` | integer (≥ 0) | `100` | Maximum entities per claim extraction prompt |
+
+### `processing.seed_graphs[]`
+
+A knowledge graph imported as virtual documents of the corpus.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `name` | string (min length 1) | required | Stable name of the seed graph: it names its virtual documents (seed_graphs/<name>/...) and the 'seed_graph' document filter of everything it states. Renaming it imports the seed again. Lowercase letters, digits, '-' and '_', starting with a letter or digit; unique among the seed graphs. |
+| `kind` | string | required | Registered seed source that reads the graph: 'jsonl' (nodes and edges, one JSON object per line), 'csv' (a nodes file and an edges file), or a kind a deployment registers (register_seed_source). |
+| `path` | string (min length 1) | required | Where the source reads: a local file or directory, an S3 object (s3://bucket/key) or an S3 prefix read as a directory (s3://bucket/prefix/, the trailing '/' required), read with the run's AWS session (s3:GetObject, and s3:ListBucket for a prefix). A relative path is resolved against the config file's directory. Logs and errors show it without userinfo, query or fragment. Not keyed: the converted content is, so moving the files re-indexes nothing. |
+| `options` | dict[string, Any] | `{}` | Settings of the source kind. Every kind takes 'dangling' (an edge naming an unknown node: 'error', the default, or 'skip') and 'qualifier_property' (the node property whose value on_name_collision: qualify appends). 'csv' also takes 'nodes' and 'edges' (the file names in the directory, default nodes.csv and edges.csv; edges: null reads no edges file) and 'property_columns' (the only extra columns kept as properties). An unknown option fails the import. Not keyed: the converted content is. |
+| `secret_arn` | string \| null | `null` | ARN of a Secrets Manager secret a registered service source reads at load time; 'jsonl' and 'csv' take none. Never logged. |
+| `filters` | dict[string, string \| integer \| number \| boolean] | `{}` | Document filters of the seed's virtual documents, as a document's metadata filters: what the seed states matches an attr_<key> filter as the documents carrying the same filters do. 'seed_graph': <name> is always added, so the key 'seed_graph' is reserved. |
+| `on_name_collision` | `"error"` \| `"merge"` \| `"qualify"` | `"error"` | Two seed nodes whose names are one entity (the same name after normalization) but that share neither an id nor an IRI: 'error' fails the import, listing them; 'merge' makes them one entity (the smallest IRI is kept); 'qualify' appends ' (<qualifier>)' to the later names so each is its own entity, which documents then do not link to by name. |
+| `description_properties` | list[string] | `[]` | Node and edge property keys written as 'key: value' lines after the description, so answers can use them. |
+| `confidence` | number (≥ 0.0, ≤ 1.0) | `1.0` | Confidence of the seed's statements (a node's own confidence wins). An item a document also states takes the document's confidence. |
+| `shards` | integer (≥ 1, ≤ 1024) | `16` | Number of virtual documents the seed is split into, by a stable hash of each node's id: an edit re-indexes only the shards it touches. Changing the value re-indexes the whole seed. |
+| `max_items_per_unit` | integer (≥ 1, ≤ 500) | `50` | Node and edge statements per text unit (the unit of lineage: what a removed statement re-derives). |
+| `max_nodes` | integer (≥ 1) | `100000` | Fail the import above this many nodes (never truncated). |
+| `max_edges` | integer (≥ 1) | `500000` | Fail the import above this many edges (never truncated). |
+| `max_bytes` | integer (≥ 1) | `268435456` | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). |
+| `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | Fail the import when the seed uses more distinct property keys: each becomes a stored field under attributes.seed_properties. |
+| `max_description_chars` | integer (≥ 50) | `1000` | Cut seed descriptions to this many characters, at a word boundary, so a seed-only item never needs the description summarizer. |
 
 ## `graph`
 

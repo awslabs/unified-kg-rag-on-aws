@@ -59,6 +59,7 @@ PUBLIC_API = sorted(
         "PipelineExecutionError",
         "PipelineInterrupted",
         "SchemaSourceError",
+        "SeedGraphError",
         "StoreConnectionError",
         "StoreRequestRejectedError",
         # Extending it
@@ -82,12 +83,17 @@ PUBLIC_API = sorted(
         "RetrieverRole",
         "SchemaDocument",
         "SchemaSourceContext",
+        "SeedEdge",
+        "SeedGraph",
+        "SeedNode",
+        "SeedSourceContext",
         "TokenCounterPort",
         "VectorIndexer",
         "build_providers",
         "register_provider",
         "register_renderer",
         "register_schema_source",
+        "register_seed_source",
         "register_strategy",
     ]
 )
