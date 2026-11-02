@@ -435,6 +435,26 @@ def annotate_sources(item: Entity | Relationship) -> list[str] | None:
     return sorted(kinds)
 
 
+def encoded_source_kinds(kinds: Iterable[str]) -> str:
+    """``source_kinds`` as a graph edge stores it: the sorted kinds as a JSON
+    list (the graph codec's encoding of a list property, ``json.dumps``)."""
+    return json.dumps(sorted(kinds))
+
+
+# The stored property naming an item's source kinds (Entity.source_kinds).
+SOURCE_KINDS_FIELD = "source_kinds"
+# The stored ``source_kinds`` of a seed-only edge: a graph read of the
+# document-backed edges leaves out exactly the edges holding this value
+# (an edge without the property is document-only).
+SEED_ONLY_SOURCE_KINDS = encoded_source_kinds([SEED_SOURCE_KIND])
+
+
+def is_document_backed(relationship: Relationship) -> bool:
+    """Whether ``relationship`` counts toward ranks: unless every one of its
+    text units is a seed unit (see :func:`seed_only`)."""
+    return not seed_only(relationship.text_unit_ids)
+
+
 def seed_unit_id(document_id: str, n: int) -> str:
     """Id of unit ``n`` of a shard document: the chunker's rule, prefixed."""
     return SEED_UNIT_PREFIX + generate_stable_id(f"text_unit:{document_id}:{n}")

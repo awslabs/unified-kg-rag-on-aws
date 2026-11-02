@@ -13,7 +13,10 @@ under exact resolution (names that resolve only to their own key):
   only the description);
 - an extracted attribute is never overwritten by a seed property;
 - removing the seed units from the built graph and deriving it from the
-  records left gives the document-only graph.
+  records left gives the document-only graph;
+- ranks count document-backed edges only: every entity and edge of the
+  document-only graph keeps its rank there, in a full build and a
+  derivation, and an entity only a seed states ranks 0.
 """
 
 from __future__ import annotations
@@ -254,3 +257,30 @@ def test_removing_the_seeds_gives_the_document_only_graph(
         for item in [*derived.entities, *derived.relationships]
         for u in item.text_unit_ids or []
     )
+
+
+@given(documents=_document_records(), seeds=_seed_records())
+def test_seeds_never_change_document_ranks(
+    documents: list[TextUnitExtraction], seeds: list[TextUnitExtraction]
+) -> None:
+    expected_entities, expected_edges = _build(documents)
+    entities, edges = _build([*seeds, *documents])
+    records = {r.text_unit_id: r for r in [*seeds, *documents]}
+    derived = derive(
+        Config(), list(entities.values()), list(edges.values()), [], records
+    )
+    derived_entities = {e.id: e for e in derived.entities}
+    derived_edges = {r.id: r for r in derived.relationships}
+
+    for ranked_entities, ranked_edges in (
+        (entities, edges),
+        (derived_entities, derived_edges),
+    ):
+        assert {i: ranked_entities[i].rank for i in expected_entities} == {
+            i: e.rank for i, e in expected_entities.items()
+        }
+        assert {i: ranked_edges[i].rank for i in expected_edges} == {
+            i: r.rank for i, r in expected_edges.items()
+        }
+        for entity_id in ranked_entities.keys() - expected_entities.keys():
+            assert ranked_entities[entity_id].rank == 0

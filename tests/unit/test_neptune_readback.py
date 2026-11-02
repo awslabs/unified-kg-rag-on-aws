@@ -325,6 +325,35 @@ def test_neighbor_ids_read_back_per_entity_in_the_suffix_label(indexer) -> None:
     assert ("hasLabel", ("Entity-tenant-a",)) in _flatten_steps(steps)
 
 
+def test_document_backed_neighbors_skip_the_seed_only_edges(indexer) -> None:
+    from unified_kg_rag.domain.ingestion.seed_graph import SEED_ONLY_SOURCE_KINDS
+
+    steps = _serve(indexer, [{"id": "e-vendor", "neighbors": ["e-buyer"]}])
+
+    indexer.read_neighbor_ids(["e-vendor"], suffix="tenant-a", document_backed=True)
+
+    flat = _flatten_steps(steps)
+    names = [name for name, _ in flat]
+    assert "bothE" in names and "otherV" in names and "both" not in names
+    (negated,) = [args for name, args in flat if name == "not"]
+    (predicate,) = negated
+    # A nested traversal's argument is its bytecode.
+    bytecode = getattr(predicate, "bytecode", predicate)
+    assert [(step[0], tuple(step[1:])) for step in bytecode.step_instructions] == [
+        ("has", ("source_kinds", SEED_ONLY_SOURCE_KINDS))
+    ]
+    assert SEED_ONLY_SOURCE_KINDS == '["seed_graph"]'
+
+
+def test_every_edge_is_followed_by_default(indexer) -> None:
+    steps = _serve(indexer, [{"id": "e-vendor", "neighbors": ["e-buyer"]}])
+
+    indexer.read_neighbor_ids(["e-vendor"], suffix="tenant-a")
+
+    names = [name for name, _ in _flatten_steps(steps)]
+    assert "both" in names and "bothE" not in names and "not" not in names
+
+
 def test_neighbor_counts_are_read_without_the_ids(indexer) -> None:
     steps = _serve(indexer, [{"id": "e-hub", "count": 5000}])
 

@@ -83,6 +83,7 @@ from unified_kg_rag.domain.ingestion.document_identity import store_namespace_ta
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit, seed_only
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -1538,7 +1539,9 @@ class CommunityDetectionStage(_RegistryStage):
         base-level communities, so recording its text units would re-extract
         most of the corpus on the next run for one report. More failures
         than ``indexing.max_failure_rate`` of the communities fail the stage
-        (the reports are the community-report index's items).
+        (the reports are the community-report index's items). Seed units are
+        left out: a failed report never imports a seed graph's shard again
+        (its statements need no model call).
         """
         if not failed_community_ids:
             return []
@@ -1567,6 +1570,7 @@ class CommunityDetectionStage(_RegistryStage):
                 for community in failed
                 if str(community.level) == "0"
                 for unit_id in community.text_unit_ids or []
+                if not is_seed_unit(unit_id)
             }
         )
 
@@ -1675,9 +1679,22 @@ class CommunityDetectionStage(_RegistryStage):
         self.unclustered_stored = 0
         self.detector(context.knowledge_graph, self._whole_graph(context))
         community_objects = self.detector.generate_community_objects()
+        # A community no document evidences (every member stated by a seed
+        # graph only) is stored without a report: the corpus says nothing
+        # about it, and global search answers from the corpus. A parent
+        # holds its children's members, so one evidenced child evidences it.
+        evidenced = [c for c in community_objects if not seed_only(c.text_unit_ids)]
+        seed_only_count = len(community_objects) - len(evidenced)
+        if seed_only_count:
+            logger.info(
+                "%s of %s communities have members stated only by seed graphs: "
+                "stored without a report",
+                seed_only_count,
+                len(community_objects),
+            )
         # Text units resolve each report's source documents (report lineage).
         community_reports, failed_community_ids = self.detector.generate_reports(
-            community_objects,
+            evidenced,
             text_units=context.text_units or context.translated_units,
         )
         metrics_obj = self.detector.get_community_metrics()
@@ -1685,7 +1702,7 @@ class CommunityDetectionStage(_RegistryStage):
         context.communities = community_objects
         context.community_reports = community_reports
         context.failed_text_unit_ids[self.name] = self._check_report_failures(
-            community_objects, failed_community_ids
+            evidenced, failed_community_ids
         )
 
         export = self.config.graph.visualization.export_data
@@ -1714,6 +1731,7 @@ class CommunityDetectionStage(_RegistryStage):
             "communities_detected": communities_count,
             "reports_generated": reports_count,
             "reports_failed": len(failed_community_ids),
+            "communities_seed_only": seed_only_count,
             "unclustered_stored_entities": self.unclustered_stored,
             "modularity_score": metrics_obj.modularity if metrics_obj else 0.0,
             "detection_stats": (

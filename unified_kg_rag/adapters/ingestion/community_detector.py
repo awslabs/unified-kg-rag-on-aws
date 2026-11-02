@@ -23,6 +23,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     merge_attributes,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
+from unified_kg_rag.domain.ingestion.seed_graph import seed_only
 from unified_kg_rag.domain.models import (
     Community,
     CommunityFinding,
@@ -164,6 +165,10 @@ def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
 
 
 class CommunityDetector:
+    # The graph the document-backed degrees were counted on, and them
+    # (``_document_degrees``).
+    _degrees: tuple[nx.Graph, dict[Any, int]] | None = None
+
     def __init__(
         self,
         config: Config,
@@ -1227,15 +1232,39 @@ class CommunityDetector:
 
         MS GraphRAG uses a report ``rank`` to reflect community importance (it
         prefilters/sorts global-search candidates by it). We derive it from
-        graph structure: the sum of in-graph degrees of the community's member
-        entities — a connectivity signal that is stable across runs and needs no
-        model call. Higher = more central/important. Falls back to the member
+        graph structure: the sum of the in-graph document-backed degrees of the
+        community's member entities (``_document_degrees``) — a connectivity
+        signal that is stable across runs and needs no model call. Higher = more central/important. Falls back to the member
         count when the graph is unavailable.
         """
         entity_ids = community.entity_ids or []
         if not self.graph or self.graph.number_of_nodes() == 0:
             return len(entity_ids)
-        return sum(self.graph.degree(eid) for eid in entity_ids if eid in self.graph)
+        degrees = self._document_degrees()
+        return sum(degrees[eid] for eid in entity_ids if eid in self.graph)
+
+    def _document_degrees(self) -> dict[Any, int]:
+        """Each node's degree over the document-backed edges: ``graph.degree``
+        without the edges all of whose relationships cite seed units only.
+
+        A node's document-backed rank, as the stored entity's (``with_graph_
+        ranks``): a seed graph's edges are clustered (Leiden sees every edge)
+        but never make an entity, or a community, more important, so
+        document entities fill a report first. With no seed unit, exactly
+        ``graph.degree``.
+        """
+        if self._degrees is not None and self._degrees[0] is self.graph:
+            return self._degrees[1]
+        degrees: dict[Any, int] = dict(self.graph.degree())
+        for u, v, data in self.graph.edges(data=True):
+            if all(
+                seed_only(rel.get("text_unit_ids")) for rel in edge_relationships(data)
+            ):
+                # A self-loop counts twice in graph.degree.
+                degrees[u] -= 1
+                degrees[v] -= 1
+        self._degrees = (self.graph, degrees)
+        return degrees
 
     def _select_report_entities(self, community: Community) -> list[str]:
         """Pick the community's entity ids most worth putting in its report.
@@ -1243,8 +1272,9 @@ class CommunityDetector:
         MS GraphRAG builds report context most-connected-first so a large
         community's report leads with its central, defining entities rather
         than whatever happened to appear first in list order. We mirror that:
-        rank the community's in-graph entities by graph degree (descending),
-        then cap at ``max_entities_per_report``. The token-budget pack in
+        rank the community's in-graph entities by document-backed degree
+        (descending, ``_document_degrees``), then cap at
+        ``max_entities_per_report``. The token-budget pack in
         ``_prepare_report_input`` may keep fewer; degree-sort guarantees that
         whatever is dropped is the least-connected (least-important) entity.
         Ties break on a stable id sort so selection is deterministic.
@@ -1253,7 +1283,8 @@ class CommunityDetector:
             self.community_detection_config.report_generation.max_entities_per_report
         )
         present = [eid for eid in (community.entity_ids or []) if eid in self.graph]
-        present.sort(key=lambda eid: (-self.graph.degree(eid), str(eid)))
+        degrees = self._document_degrees()
+        present.sort(key=lambda eid: (-degrees[eid], str(eid)))
         return present[:max_entities]
 
     def _prepare_report_input(
@@ -1297,10 +1328,12 @@ class CommunityDetector:
             used_tokens += cost
 
         # Relationships only among the selected entities, ordered by combined
-        # endpoint degree (most-connected pair first, edge weight as tiebreak)
-        # so the most salient connections survive the same token budget.
+        # endpoint document-backed degree (most-connected pair first, edge
+        # weight as tiebreak) so the most salient connections survive the
+        # same token budget.
         # An edge carries every relationship between its two entities; each
         # is its own line, in the relationship's own direction.
+        degrees = self._document_degrees()
         edges = sorted(
             (
                 (data.get("source_id", u), data.get("target_id", v), data)
@@ -1308,7 +1341,7 @@ class CommunityDetector:
                 for data in edge_relationships(edge)
             ),
             key=lambda e: (
-                -(self.graph.degree(e[0]) + self.graph.degree(e[1])),
+                -(degrees.get(e[0], 0) + degrees.get(e[1], 0)),
                 -float(e[2].get("weight") or 1.0),
                 str(e[2].get("id", "")),
             ),

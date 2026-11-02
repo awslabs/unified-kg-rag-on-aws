@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
@@ -417,10 +418,14 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # entities in the graph — the multi-hop bridge nodes that occur in a
         # single document — were silently dropped by the frequency filter, which
         # also starved the text-unit fan-out those entities feed.
+        #
+        # Only document units count: an entity a seed graph states is not
+        # more generic for it (one seed citation never pushes an entity over
+        # the threshold).
         ids = node.metadata.get("text_unit_ids") or []
         if isinstance(ids, str):
-            return 1
-        return len(ids)
+            ids = [ids]
+        return sum(1 for unit_id in ids if not is_seed_unit(str(unit_id)))
 
     @classmethod
     def _filter_entities(
