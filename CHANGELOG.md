@@ -818,22 +818,22 @@ From 0.2.3 (or a `main` checkout since):
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #PR).
+  #503, #509, #510).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an
   over-long line or one nested too deeply to decode, naming the file and
   line; the size hint names `processing.seed_graphs[].max_bytes` (#500,
-  #PR). `rdf` (the `ontology`
+  #510). `rdf` (the `ontology`
   extra) reads an A-Box with the `owl` schema source's readers and
   checks: instances become nodes typed by the most specific class the
   schema maps, object triples edges, literals the name, description and
   CURIE-keyed properties by `languages`; blank nodes, reification,
   RDF-star, `owl:sameAs` and non-instance objects are counted and
   skipped, nothing is inferred; an invalid node or edge fails naming its
-  subject (#504, #PR). Schema and seed sources share
+  subject (#504, #510). Schema and seed sources share
   `adapters/source_files`, the RDF vocabulary and naming helpers in
-  `rdf_terms` included (#497, #PR).
+  `rdf_terms` included (#497, #510).
 - `Entity.iri` (a stated IRI, the smallest when several merge) and
   `source_kinds` on entities and relationships (`["document",
   "seed_graph"]` or `["seed_graph"]`, written only on items a seed
@@ -854,10 +854,10 @@ From 0.2.3 (or a `main` checkout since):
   carries `provenance` (`kind`, `seed_graphs`, `iri`) with no chunk; a
   source without seed evidence is reported as before. `local`, `drift`
   and `auto` name the seed graphs of the entities the index matched, and
-  `source_kinds` is a list in every store (#505, #PR).
+  `source_kinds` is a list in every store (#505, #510).
 - Public API: `register_seed_source`, `SeedSourceContext`,
   `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge` and
-  `SeedGraphError` (#498, #500, #PR).
+  `SeedGraphError` (#498, #500, #510).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
   and §15 (#506).
 
