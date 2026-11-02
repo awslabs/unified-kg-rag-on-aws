@@ -150,6 +150,12 @@ otel = [
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp>=1.30.0",
 ]
+# Optional: ontology schema sources. rdflib reads RDF serialisations (Turtle,
+# RDF/XML, JSON-LD, N-Triples, N-Quads, TriG) so an OWL/RDFS ontology can fill
+# the extraction schema. The core package imports none of it.
+ontology = [
+    "rdflib>=7.6.0,<8",
+]
 # Optional: local mode (`backend: local` / `providers.*.kind`). OpenAI-compatible
 # servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
 # tiktoken for `providers.llm.tokenizer: tiktoken`, and a sentence-transformers
