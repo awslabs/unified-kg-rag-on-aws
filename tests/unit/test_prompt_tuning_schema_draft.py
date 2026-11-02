@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
 )
+from unified_kg_rag.adapters.schema_sources import registry as schema_registry
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.cli import run_prompt_tuning
 from unified_kg_rag.application.prompts import tuner as tuner_module
@@ -35,6 +36,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     Relationship,
+    SchemaDocument,
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.models.config import SchemaSourceConfig
@@ -494,6 +496,26 @@ def test_a_draft_over_another_source_counts_the_patterns_it_adds() -> None:
     )
 
 
+def test_the_header_counts_several_added_types_and_patterns() -> None:
+    records = [
+        _record(
+            unit,
+            ORGS,
+            [_rel("Vendor", "Buyer", "AUDITS"), _rel("Vendor", "Buyer", "PAYS")],
+        )
+        for unit in ("t1", "t2")
+    ]
+    draft = SchemaDraft.from_examples(
+        ["ORGANIZATION"],
+        records,
+        schema_source=("synthetic_service", "urn:schemas:trade"),
+    )
+    assert (
+        "# synthetic_service 'urn:schemas:trade' plus 2 relationship types the "
+        "source lacks (AUDITS, PAYS) and 2 patterns for them." in draft.to_yaml()
+    )
+
+
 def test_a_draft_over_a_file_or_no_source_keeps_its_header() -> None:
     draft = SchemaDraft.from_examples(
         ["ORGANIZATION"], [_record("t1", ORGS, [_rel("Vendor", "Buyer", "SUPPLIES")])]
@@ -512,6 +534,68 @@ def test_a_draft_over_a_file_or_no_source_keeps_its_header() -> None:
         ["ORGANIZATION"], [], schema_source=("synthetic_service", "urn:schemas:trade")
     )
     assert "plus 0 relationship types the source lacks." in none.to_yaml()
+
+
+def test_the_tuner_names_the_source_without_a_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A custom kind's path may be a URL carrying a token: the draft header
+    # shows it without the userinfo, the query and the fragment.
+    monkeypatch.setitem(
+        schema_registry._REGISTRY,
+        "synthetic_service",
+        lambda context: SchemaDocument(relationship_types=["SUPPLIES"]),
+    )
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {
+                        "kind": "synthetic_service",
+                        "path": "https://reader:SECRET@schemas.example/trade"
+                        "?token=SECRET#SECRET",
+                    }
+                }
+            }
+        }
+    )
+    tuner = PromptTuner(
+        config,
+        providers=Providers(config, boto_session=MagicMock(), llm_factory=MagicMock()),
+    )
+    assert tuner.schema_source == (
+        "synthetic_service",
+        "https://schemas.example/trade",
+    )
+    header = tuner.schema_draft(["ORGANIZATION"], []).to_yaml()
+    assert "SECRET" not in header
+    assert "# synthetic_service 'https://schemas.example/trade' plus 0" in header
+
+
+def test_the_tuner_gives_a_file_source_the_plain_header(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.yaml"
+    schema.write_text("relationship_types: [SUPPLIES]\n", encoding="utf-8")
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {"kind": "file", "path": str(schema)}
+                }
+            }
+        }
+    )
+    tuner = PromptTuner(
+        config,
+        providers=Providers(config, boto_session=MagicMock(), llm_factory=MagicMock()),
+    )
+    assert tuner.schema_source is None
+    assert (
+        tuner.schema_draft(["ORGANIZATION"], [])
+        .to_yaml()
+        .startswith(
+            "# Extraction schema draft written by run-prompt-tuning. Review it\n"
+        )
+    )
 
 
 def _main(tmp_path: Path, mocker, name: str, *extra: str) -> tuple[int, Path]:

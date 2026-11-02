@@ -353,6 +353,134 @@ class TestPatterns:
     def test_pattern_cap_does_not_apply_without_patterns(self) -> None:
         assert _map(max_patterns=1, patterns="none").report.patterns == 0
 
+    def test_an_untyped_property_is_a_relationship_type(self) -> None:
+        # An rdf:Property nothing types further (schema.org's properties).
+        model = self._model(
+            _prop(
+                "knows", kind="untyped", domains=ends("Person"), ranges=ends("Person")
+            ),
+            _prop("age", kind="datatype", domains=ends("Person")),
+            _prop("note", kind="annotation"),
+        )
+        mapping = _map(model, classes=["ex:Person"])
+        assert _labels(mapping) == (["PERSON"], ["KNOWS"])
+        assert _patterns(mapping) == ["PERSON -KNOWS-> PERSON"]
+        assert [(n.iri, n.detail) for n in mapping.report.skipped] == [
+            (EX + "age", "datatype property"),
+            (EX + "note", "annotation property"),
+        ]
+
+    def test_every_domain_statement_pushes_down(self) -> None:
+        # Both ⊑ Vendor ⊓ Buyer: below each statement; Vendor alone is not.
+        model = self._model(
+            _prop("brokers", domains=ends("Vendor") | ends("Buyer")),
+        )
+        mapping = _map(model, exclude_classes=["ex:Person"])
+        assert _patterns(mapping) == [
+            "BOTH -BROKERS-> ORG",
+            "BOTH -BROKERS-> BUYER",
+            "BOTH -BROKERS-> BOTH",
+            "BOTH -BROKERS-> VENDOR",
+        ]
+        assert mapping.report.lifted == ()
+
+    def test_a_lift_needs_an_ancestor_of_every_statement(self) -> None:
+        # Person and Both are both gone; Org is above Both but not Person.
+        model = self._model(
+            _prop(
+                "audits",
+                domains=ends("Both") | ends("Person"),
+                ranges=ends("Org"),
+            )
+        )
+        mapping = _map(model, exclude_classes=["ex:Both", "ex:Person"])
+        assert _patterns(mapping) == []
+        assert mapping.report.dropped[0].detail == ("no selected class fits its domain")
+
+    def test_a_lift_is_reported_for_each_lifted_end(self) -> None:
+        model = self._model(
+            _prop("audits", domains=ends("Person"), ranges=ends("Both"))
+        )
+        mapping = _map(model, exclude_classes=["ex:Both"])
+        assert [(n.iri, n.detail) for n in mapping.report.lifted] == [
+            (EX + "audits", f"range lifted to {EX}Buyer, {EX}Vendor")
+        ]
+
+    def test_an_inverse_gives_its_other_end(self) -> None:
+        # owner: Person -> Buyer; ownedBy is its inverse with nothing stated.
+        model = self._model(
+            _prop("owner", domains=ends("Person"), ranges=ends("Buyer")),
+            _prop("ownedBy", inverses=frozenset({EX + "owner"})),
+        )
+        mapping = _map(model, properties=["ex:ownedBy"])
+        assert _patterns(mapping) == [
+            "BUYER -OWNED_BY-> PERSON",
+            "BOTH -OWNED_BY-> PERSON",
+        ]
+
+    def test_an_inverse_stated_on_the_other_side_counts_both_ways(self) -> None:
+        # Only owner says it is ownedBy's inverse: ownedBy still gets its ends.
+        model = self._model(
+            _prop(
+                "owner",
+                domains=ends("Person"),
+                ranges=ends("Buyer"),
+                inverses=frozenset({EX + "ownedBy"}),
+            ),
+            _prop("ownedBy", domains=ends("Org")),
+        )
+        mapping = _map(model, properties=["ex:ownedBy"])
+        assert _patterns(mapping) == [
+            "BUYER -OWNED_BY-> PERSON",
+            "BOTH -OWNED_BY-> PERSON",
+        ]
+
+    def test_one_stated_end_leaves_the_other_open(self) -> None:
+        # A domain only: every selected class is a range.
+        model = self._model(_prop("owns", domains=ends("Person")))
+        mapping = _map(model, classes=["ex:Person", "ex:Org"], max_depth=0)
+        assert _patterns(mapping) == ["PERSON -OWNS-> ORG", "PERSON -OWNS-> PERSON"]
+
+    def test_a_symmetric_end_filled_from_the_closure_reaches_inheritors(
+        self,
+    ) -> None:
+        # meets inherits its only domain from relates; the filled range
+        # reaches greets, below meets, too.
+        model = self._model(
+            _prop("relates", domains=ends("Person")),
+            _prop("meets", symmetric=True, parents=frozenset({EX + "relates"})),
+            _prop("greets", parents=frozenset({EX + "meets"})),
+        )
+        mapping = _map(model, properties=["ex:greets"])
+        assert _patterns(mapping) == ["PERSON -GREETS-> PERSON"]
+
+    def test_a_filled_symmetric_end_reaches_an_inverse_of_the_other_end(
+        self,
+    ) -> None:
+        # meets has a range only; its filled domain is metBy's range.
+        model = self._model(
+            _prop("meets", symmetric=True, ranges=ends("Person")),
+            _prop("metBy", inverses=frozenset({EX + "meets"})),
+        )
+        mapping = _map(model, properties=["ex:metBy"])
+        assert _patterns(mapping) == ["PERSON -MET_BY-> PERSON"]
+
+    def test_an_end_equivalent_to_a_selected_class_is_one_type(self) -> None:
+        # Firm ≡ Org: a domain of Firm allows Org and what is below it.
+        model = self._model(
+            _prop("hires", domains=ends("Firm"), ranges=ends("Person")),
+            classes=(
+                _cls("Org", equivalents=frozenset({EX + "Firm"})),
+                _cls("Firm"),
+                _cls("Vendor", "Org"),
+                _cls("Person"),
+            ),
+        )
+        assert _patterns(_map(model)) == [
+            "FIRM -HIRES-> PERSON",
+            "VENDOR -HIRES-> PERSON",
+        ]
+
 
 class TestSelection:
     def test_equivalent_classes_are_one_type(self) -> None:
@@ -415,6 +543,8 @@ class TestSelection:
             ["ROOT", "OLD", "LEAF"],
             ["GONE"],
         )
+        # Leaf is below Root through Old: not a root of max_depth.
+        assert _labels(_map(model, max_depth=0)) == (["ROOT"], [])
 
     def test_max_depth_counts_from_the_top_without_roots(self) -> None:
         assert _labels(_map(max_depth=0))[0] == ["ORGANIZATION", "PERSON"]
@@ -511,6 +641,59 @@ class TestSelection:
             SchemaSourceError, match=r"5 properties .* max_relationship_types \(4\)"
         ):
             _map(max_relationship_types=4)
+
+    def test_each_cap_allows_exactly_its_value(self) -> None:
+        # The worked example: 4 entity types, 5 relationship types, 17 patterns.
+        report = _map(
+            max_entity_types=4, max_relationship_types=5, max_patterns=17
+        ).report
+        assert (report.entity_types, report.relationship_types, report.patterns) == (
+            4,
+            5,
+            17,
+        )
+
+    def _properties(self) -> OntologyModel:
+        return OntologyModel(
+            classes=(_cls("Org"),),
+            properties=(
+                _prop("rel", domains=ends("Org"), ranges=ends("Org")),
+                _prop("sub", parents=frozenset({EX + "rel"})),
+                _prop("subSub", parents=frozenset({EX + "sub"})),
+                _prop("other", domains=ends("Org")),
+            ),
+            prefixes={"ex": EX},
+        )
+
+    def test_properties_selects_the_subtree(self) -> None:
+        mapping = _map(self._properties(), properties=["ex:rel"])
+        assert _labels(mapping)[1] == ["REL", "SUB", "SUB_SUB"]
+
+    def test_exclude_properties_removes_the_subtree(self) -> None:
+        mapping = _map(self._properties(), exclude_properties=["ex:sub"])
+        assert _labels(mapping)[1] == ["OTHER", "REL"]
+
+    def test_max_depth_counts_from_the_given_roots(self) -> None:
+        model = OntologyModel(
+            classes=(_cls("A"), _cls("B", "A"), _cls("C", "B"), _cls("D", "C")),
+            prefixes={"ex": EX},
+        )
+        assert _labels(_map(model, classes=["ex:B"], max_depth=1))[0] == ["B", "C"]
+        assert _labels(_map(model, max_depth=2))[0] == ["A", "B", "C"]
+
+    def test_a_group_reports_under_its_smallest_iri(self) -> None:
+        # zeta ≡ alpha: listed where alpha sorts, not where zeta does.
+        model = OntologyModel(
+            classes=(_cls("A"),),
+            properties=(
+                _prop("zeta", equivalents=frozenset({EX + "alpha"})),
+                _prop("alpha"),
+                _prop("mid"),
+            ),
+        )
+        mapping = _map(model)
+        assert mapping.report.unrestricted == (EX + "alpha", EX + "mid")
+        assert mapping.report.merged == ((EX + "alpha", EX + "zeta"),)
 
 
 class TestLabels:
@@ -717,6 +900,71 @@ class TestCollisions:
         pinned = _map(model, on_collision="qualify", prefixes={"ex": EX})
         assert _labels(pinned)[0][:2] == ["BANK_EX", "BANK_GEO"]
 
+    def test_labels_differing_in_case_only_collide(self) -> None:
+        # label_case: preserve keeps "Vendor" and "vendor", one schema key.
+        model = OntologyModel(
+            classes=(
+                _cls("V", annotations=labels("Vendor")),
+                _cls("V", ns=GEO, annotations=labels("vendor")),
+            ),
+            prefixes={"ex": EX, "geo": GEO},
+        )
+        with pytest.raises(
+            SchemaSourceError,
+            match=f"entity type labels collide: 'vendor' names {GEO}V, {EX}V",
+        ):
+            _map(model, label_case="preserve")
+        mapping = _map(model, label_case="preserve", on_collision="qualify")
+        assert _labels(mapping)[0] == ["Vendor_EX", "vendor_GEO"]
+
+    def test_relationship_labels_differing_in_case_only_collide(self) -> None:
+        model = OntologyModel(
+            classes=(_cls("A"),),
+            properties=(
+                _prop("rel", annotations=labels("Supplies")),
+                _prop("rel", ns=GEO, annotations=labels("supplies")),
+            ),
+            prefixes={"ex": EX, "geo": GEO},
+        )
+        with pytest.raises(SchemaSourceError, match="relationship type labels collide"):
+            _map(model, label_case="preserve")
+        mapping = _map(model, label_case="preserve", on_collision="qualify")
+        assert _labels(mapping)[1] == ["Supplies_EX", "supplies_GEO"]
+
+    def test_the_smallest_of_several_prefixes_names_the_suffix(self) -> None:
+        model = self._model().model_copy(
+            update={"prefixes": {"zz": EX, "ex": EX, "geo": GEO}}
+        )
+        assert _labels(_map(model, on_collision="qualify"))[0][:2] == [
+            "BANK_EX",
+            "BANK_GEO",
+        ]
+
+    def test_a_well_known_prefix_names_the_suffix_before_the_files(self) -> None:
+        schema_org = "https://schema.org/"
+        model = OntologyModel(
+            classes=(
+                _cls("Bank"),
+                OntologyClass(iri=schema_org + "Bank"),
+            ),
+            # The files bind schema.org as "s"; options.prefixes come first.
+            prefixes={"ex": EX, "s": schema_org},
+        )
+        assert _labels(_map(model, on_collision="qualify"))[0] == [
+            "BANK_EX",
+            "BANK_SCHEMA",
+        ]
+        pinned = _map(model, on_collision="qualify", prefixes={"sdo": schema_org})
+        assert _labels(pinned)[0] == ["BANK_EX", "BANK_SDO"]
+
+    def test_the_empty_prefix_never_names_the_suffix(self) -> None:
+        # Turtle's "@prefix : <...>" binds "": the namespace is unnamed.
+        model = self._model().model_copy(update={"prefixes": {"": EX, "geo": GEO}})
+        entities = _labels(_map(model, on_collision="qualify"))[0]
+        assert "BANK_GEO" in entities
+        (hashed,) = set(entities) - {"BANK_GEO", "RIVER"}
+        assert re.fullmatch("BANK_[0-9A-F]{6}", hashed)
+
     def test_same_namespace_collision_survives_qualify(self) -> None:
         model = OntologyModel(classes=(_cls("Bank"), _cls("bank")), prefixes={"ex": EX})
         with pytest.raises(SchemaSourceError, match="still collide after qualifying"):
@@ -800,6 +1048,11 @@ class TestDescriptions:
         assert mapping.document.entity_types[0].description == "a note"
         with pytest.raises(SchemaSourceError, match="'ex:remark' is neither"):
             _map(model, description_properties=["ex:remark"])
+        # A property the ontology declares may go unused.
+        declared = model.model_copy(
+            update={"properties": (_prop("remark", kind="annotation"),)}
+        )
+        assert _map(declared, description_properties=["ex:remark"]).document
 
 
 class TestScale:

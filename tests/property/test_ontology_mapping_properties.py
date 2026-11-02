@@ -1,11 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Invariants of the ontology mapping over random class and property
-hierarchies.
+hierarchies (with subsumption cycles and equivalences).
 
 The mapping depends on the statements only (not their order); stating what
 its closure already implies changes nothing; what it returns is a valid
-extraction schema with one label per type, or it raises; narrowing the
+extraction schema with one label per type, or it raises one of its own
+refusals (never its final consistency check); narrowing the
 classes never adds a type; and every pattern end is a class the domain or
 range in effect allows (inherited, from an inverse, or from a symmetric
 property's other end), or the nearest selected ancestor of one.
@@ -14,6 +15,7 @@ property's other end), or the nearest selected ancestor of one.
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Iterable
 
 import pytest
@@ -42,6 +44,15 @@ GEO = "https://example.org/b#"
 _LABELS = ["Vendor", "vendor", "Buyer", "공급 업체", "Part of", "!!", ""]
 
 
+def _cycle(draw: st.DrawFn, iris: list[str], i: int) -> set[str]:
+    """Now and then a parent declared after term ``i``: a cycle when it is
+    (or is below) one of its descendants."""
+    later = iris[i + 1 :]
+    if later and draw(st.integers(0, 5)) == 0:
+        return {draw(st.sampled_from(later))}
+    return set()
+
+
 @st.composite
 def models(
     draw: st.DrawFn, *, equivalences: bool = True, symmetric: bool = True
@@ -55,7 +66,7 @@ def models(
     for i, iri in enumerate(class_iris):
         parents = (
             draw(st.sets(st.sampled_from(class_iris[:i]), max_size=2)) if i else set()
-        )
+        ) | _cycle(draw, class_iris, i)
         same = (
             draw(st.sets(st.sampled_from(class_iris), max_size=1)) - {iri}
             if equivalences and draw(st.integers(0, 4)) == 0
@@ -95,6 +106,12 @@ def models(
                     draw(st.sets(st.sampled_from(property_iris[:i]), max_size=2))
                     if i
                     else set()
+                )
+                | _cycle(draw, property_iris, i),
+                equivalents=frozenset(
+                    draw(st.sets(st.sampled_from(property_iris), max_size=1)) - {iri}
+                    if equivalences and draw(st.integers(0, 4)) == 0
+                    else set()
                 ),
                 domains=draw(st.frozensets(union, max_size=2)),
                 ranges=draw(st.frozensets(union, max_size=2)),
@@ -113,10 +130,19 @@ def models(
     )
 
 
+# The mapping's last consistency check (and the document's validation):
+# the steps before them rule out each problem, so neither ever refuses.
+_SAFETY_NET = re.compile(
+    r"schema_source: (?:(?:entity_types|relationship_types|relationship_patterns)"
+    r": |\d+ validation error)"
+)
+
+
 def _outcome(model: OntologyModel, options: MappingOptions) -> object:
     try:
         mapping = map_ontology(model, options)
     except SchemaSourceError as e:
+        assert not _SAFETY_NET.match(str(e)), str(e)
         return ("error", str(e))
     return ("ok", mapping.document, mapping.report)
 
@@ -371,12 +397,14 @@ def test_narrowing_never_adds_a_type(
 def test_pattern_ends_fit_the_domain_and_range_in_effect(
     symmetric: bool, data: st.DataObject, options: MappingOptions
 ) -> None:
-    model = data.draw(models(equivalences=False, symmetric=symmetric))
+    model = data.draw(models(symmetric=symmetric))
     outcome = _outcome(model, options)
     if outcome[0] == "error":
         return
     document, report = outcome[1], outcome[2]
-    up = _closed({c.iri: set(c.parents) for c in model.classes}, {})
+    up = _closed(
+        {c.iri: set(c.parents) for c in model.classes}, _both_ways(model.classes)
+    )
     ends, symmetric_iris = _property_closure(model)
 
     def at_or_below(child: str, ancestor: str) -> bool:
