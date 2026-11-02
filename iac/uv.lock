@@ -39,7 +39,7 @@ wheels = [
 
 [[package]]
 name = "aws-cdk-aws-neptune-alpha"
-version = "2.274.0a0"
+version = "2.275.0a0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aws-cdk-lib" },
@@ -47,9 +47,9 @@ dependencies = [
     { name = "jsii" },
     { name = "publication" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/57/144c870a91e95b6d5b4ea0f1c4edf000eb3bb12079c08ba9d22d9123a702/aws_cdk_aws_neptune_alpha-2.274.0a0.tar.gz", hash = "sha256:0bf1bd73b1c87e577cb83e1ee5198536f1167daa61111205c9b23a8afa804161", size = 134750, upload-time = "2026-10-20T13:38:11.149Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/80/e7/f4b5844c519a8456b829da02ff2ce744f273101a631b930851fa5790ac81/aws_cdk_aws_neptune_alpha-2.275.0a0.tar.gz", hash = "sha256:f9c75a7b3a0efb8a2d767935a32e348ddc8f49f3c994b25bc522ee8d340a6876", size = 134824, upload-time = "2026-10-26T19:15:06.551Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/21/514a74722b852d627e86ce8eaf40549c7471e1e517581a9a0bb1ddd77fde/aws_cdk_aws_neptune_alpha-2.274.0a0-py3-none-any.whl", hash = "sha256:afbe1b846381f4f2868c96eef2fd750248fe1a7644ad1827d67527693904762a", size = 133684, upload-time = "2026-10-20T13:37:18.276Z" },
+    { url = "https://files.pythonhosted.org/packages/42/04/0a7e1db25014b72bfdbfa862b5a1aba54f78d383299545ba739b2d9864a0/aws_cdk_aws_neptune_alpha-2.275.0a0-py3-none-any.whl", hash = "sha256:28db16a031637f51dbe51aa89341a1a7cd8d0c485d455df87c8da6030f060840", size = 133756, upload-time = "2026-10-26T19:14:18.582Z" },
 ]
 
 [[package]]
@@ -67,7 +67,7 @@ wheels = [
 
 [[package]]
 name = "aws-cdk-lib"
-version = "2.274.0"
+version = "2.275.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aws-cdk-asset-awscli-v1" },
@@ -77,9 +77,9 @@ dependencies = [
     { name = "jsii" },
     { name = "publication" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/7f/3f51025dd19f9d958fd26f160313d63b3fe70c40c8ec75bb2314e47b5f99/aws_cdk_lib-2.274.0.tar.gz", hash = "sha256:c67e00e42e29d663f00374eedda8106f0a17f176bd6620cb14968a5a3a6b5fdb", size = 58824137, upload-time = "2026-10-20T13:38:25.487Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/54/5504b9e43296e888a8bd0e08a2c8df0f8799ac96e6c304b2dc10a34ac4cf/aws_cdk_lib-2.275.0.tar.gz", hash = "sha256:0902d7368e4600588cad9eab9124ade10d7d9d463ccf86ae18272e4369b1936b", size = 59084605, upload-time = "2026-10-26T19:15:20.007Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/78/604da1c128ed31b4c44ab31e638c6cc3b36d21ddfef1fb9ea8d858d0ca77/aws_cdk_lib-2.274.0-py3-none-any.whl", hash = "sha256:5df836d8d96b8e4c197dbffafb0831eeff60d65e69025c33f5a224a70be73e39", size = 59564263, upload-time = "2026-10-20T13:37:39.918Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/d3/bc1ca37b6368590c11c2c72c257bc13846d88b077c5241afb8924e2ee716/aws_cdk_lib-2.275.0-py3-none-any.whl", hash = "sha256:223e5b8c67bee9802d714493b380251a2e8ce55c8c477e5d44ca2c85f3b322ee", size = 59831177, upload-time = "2026-10-26T19:14:38.396Z" },
 ]
 
 [[package]]
@@ -181,7 +181,7 @@ wheels = [
 
 [[package]]
 name = "jsii"
-version = "1.141.0"
+version = "1.142.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -191,9 +191,9 @@ dependencies = [
     { name = "typeguard" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/ea/1b572564cd47fc22f6a248dc2a4fbec91b421877e2901fdd85aaf291f017/jsii-1.141.0.tar.gz", hash = "sha256:e574efa7523b2218f6a4495e9f1ba75c9947b84965c5a8079931f37d7911a687", size = 532264, upload-time = "2026-10-01T16:58:15.284Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/c3/0a0165c7258dce26244e32469f13bdbada8bbda2eb2924c9318140ef9731/jsii-1.142.0.tar.gz", hash = "sha256:2fe1c5f2a5a405a5fbaaafb8b362cdf6a30171589e508c01682f33c5d529172f", size = 523956, upload-time = "2026-10-20T08:47:29.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/a5/aa73a8196be12872cb636a9bd5320730a2743d2a9111dc150ad72b12e71d/jsii-1.141.0-py3-none-any.whl", hash = "sha256:72ca269b483c5190e5002c9e1f0f43971c3aead1cd444ea0c64690c05e1b0da0", size = 502557, upload-time = "2026-10-01T16:58:13.825Z" },
+    { url = "https://files.pythonhosted.org/packages/16/98/36c81719866db47c7b049d2ea4a180bcbdabf84919bc1d94d1f927f9f00d/jsii-1.142.0-py3-none-any.whl", hash = "sha256:16d6b3e25bbaa081dd39eabe910b07f646fe4988302d8aae401690f247baf7df", size = 506963, upload-time = "2026-10-20T08:47:27.512Z" },
 ]
 
 [[package]]
