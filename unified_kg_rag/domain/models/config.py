@@ -1631,20 +1631,51 @@ class SchemaSourceConfig(BaseModel):
     path: str | None = Field(
         default=None,
         description=(
-            "Location the schema source reads (for 'file', the file). A "
-            "relative path is resolved against the config file's directory "
-            "(the working directory without one); a URL is left as written. "
-            "Must be unset for 'inline'."
+            "Location the schema source reads. For 'file', a local file "
+            "path: a relative one is resolved against the config file's "
+            "directory (the working directory without one); an S3 or HTTP "
+            "location needs a source registered for it, which receives a "
+            "URL as written. Logs and errors show it without userinfo, "
+            "query or fragment. Must be unset for 'inline'."
+        ),
+    )
+    options: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Settings of the registered source, read by its loader ('file' "
+            "takes none). Not keyed: the schema the source loads is. Must be "
+            "empty for 'inline'."
+        ),
+    )
+    secret_arn: str | None = Field(
+        default=None,
+        pattern=r"^arn:aws[a-z-]*:secretsmanager:",
+        description=(
+            "ARN of a Secrets Manager secret holding the credentials a "
+            "registered source reads at load time ('file' takes none). Never "
+            "logged. Must be unset for 'inline'."
         ),
     )
 
     @model_validator(mode="after")
     def _check_path(self) -> "SchemaSourceConfig":
-        if self.kind == INLINE_SCHEMA_SOURCE and self.path is not None:
-            raise ValueError(
-                "schema_source.path is set but schema_source.kind is "
-                "'inline'; set the kind of the source that reads it"
-            )
+        if self.kind == INLINE_SCHEMA_SOURCE:
+            given = [
+                name
+                for name, value in (
+                    ("path", self.path),
+                    ("options", self.options or None),
+                    ("secret_arn", self.secret_arn),
+                )
+                if value is not None
+            ]
+            if given:
+                raise ValueError(
+                    f"{', '.join(f'schema_source.{name}' for name in given)} "
+                    f"{'is' if len(given) == 1 else 'are'} set but "
+                    "schema_source.kind is 'inline'; set the kind of the "
+                    "source that reads it"
+                )
         return self
 
 
@@ -1793,7 +1824,24 @@ class GraphExtractionConfig(BaseModel):
         return self
 
     def extraction_schema(self) -> ExtractionSchema:
-        """The schema these settings hold inline."""
+        """The schema these settings hold inline.
+
+        Raises:
+            ConfigurationError: ``schema_source`` names a source that has not
+                been loaded into the inline keys yet; the inline keys alone
+                would be the wrong schema. Pass the config through
+                ``application.bootstrap.resolve_extraction_schema`` first.
+        """
+        if self.schema_source.kind != INLINE_SCHEMA_SOURCE:
+            # Imported here: shared.logging imports this module.
+            from unified_kg_rag.shared.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                f"processing.graph_extraction.schema_source.kind "
+                f"'{self.schema_source.kind}' is not loaded yet; resolve the "
+                "config with application.bootstrap.resolve_extraction_schema "
+                "before reading its extraction schema"
+            )
         return ExtractionSchema.from_config(self)
 
 

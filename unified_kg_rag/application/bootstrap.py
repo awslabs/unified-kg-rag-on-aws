@@ -30,6 +30,7 @@ made to the object since, so the flags are the last layer over all of them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -41,10 +42,17 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_kind,
 )
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.adapters.schema_sources import get_schema_source
+from unified_kg_rag.adapters.schema_sources import (
+    SchemaSourceContext,
+    get_schema_source,
+)
 from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.models import Config, PipelineConfig
-from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, merge_over
+from unified_kg_rag.domain.models.config import (
+    INLINE_SCHEMA_SOURCE,
+    SchemaSourceConfig,
+    merge_over,
+)
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
@@ -148,7 +156,12 @@ def build_checkpoint_sync(
     )
 
 
-def resolve_extraction_schema(config: Config) -> Config:
+def resolve_extraction_schema(
+    config: Config,
+    *,
+    providers: Providers | None = None,
+    boto_session: boto3.Session | None = None,
+) -> Config:
     """``config`` with its extraction schema in the inline keys.
 
     With ``schema_source.kind`` ``inline`` (the default) that is ``config``
@@ -156,7 +169,10 @@ def resolve_extraction_schema(config: Config) -> Config:
     (``relationship_types``, ``relationship_patterns`` and, when it has
     them, ``entity_types``) are written into a copy, whose source is then
     ``inline``: the loaded content keys the extraction caches, the location
-    does not, and loading again changes nothing.
+    does not, and loading again changes nothing. A loader that calls AWS
+    (``SchemaSourceContext.boto_session``) gets the session of ``providers``,
+    else ``boto_session``, else one built from ``config.aws``; none is built
+    unless it asks.
 
     Raises:
         SchemaSourceError: The kind is not registered, the source cannot be
@@ -167,15 +183,25 @@ def resolve_extraction_schema(config: Config) -> Config:
     source = extraction.schema_source
     if source.kind == INLINE_SCHEMA_SOURCE:
         return config
-    document = get_schema_source(source.kind)(source)
-    where = f"schema_source ({source.kind} '{source.path}')"
+    session_factory: Callable[[], boto3.Session] | None = None
+    if providers is not None:
+        session_factory = lambda: providers.boto_session  # noqa: E731
+    elif boto_session is not None:
+        session_factory = lambda: boto_session  # noqa: E731
+    context = SchemaSourceContext(source, config, session_factory=session_factory)
+    document = get_schema_source(source.kind)(context)
+    # The location without userinfo or query: a URL may carry a token.
+    where = f"schema_source ({source.kind} '{context.location}')"
     keys: dict[str, Any] = document.model_dump(mode="json", exclude_none=True)
     if "entity_types" in keys and "entity_types" in extraction.model_fields_set:
         raise SchemaSourceError(
             f"Both the config and {where} set entity_types; keep one"
         )
-    keys["schema_source"] = {"kind": INLINE_SCHEMA_SOURCE, "path": None}
     data = merge_over(config.as_input(), {"processing": {"graph_extraction": keys}})
+    # Replaced, not merged: the source's options would survive a merge.
+    data["processing"]["graph_extraction"]["schema_source"] = SchemaSourceConfig(
+        kind=INLINE_SCHEMA_SOURCE
+    ).model_dump(mode="json")
     try:
         resolved = Config.model_validate(data)
     except ValidationError as e:

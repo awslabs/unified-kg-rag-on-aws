@@ -9,14 +9,18 @@ Importing this package registers the built-in sources (``file``).
 from . import file  # noqa: F401
 from .registry import (
     SchemaLoader,
+    SchemaSourceContext,
     get_schema_source,
+    redact_location,
     register_schema_source,
     registered_schema_sources,
 )
 
 __all__ = [
     "SchemaLoader",
+    "SchemaSourceContext",
     "get_schema_source",
+    "redact_location",
     "register_schema_source",
     "registered_schema_sources",
 ]

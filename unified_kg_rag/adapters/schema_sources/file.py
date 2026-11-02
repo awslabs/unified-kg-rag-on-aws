@@ -24,28 +24,41 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from unified_kg_rag.domain.models.config import SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
-from .registry import register_schema_source
+from .registry import SchemaSourceContext, register_schema_source
 
 _SUFFIXES = (".yaml", ".yml", ".json")
 
 
 @register_schema_source("file")
-def load_schema_file(source: SchemaSourceConfig) -> SchemaDocument:
-    """The schema in the file at ``source.path``.
+def load_schema_file(context: SchemaSourceContext) -> SchemaDocument:
+    """The schema in the local file at ``source.path``.
 
     Raises:
-        SchemaSourceError: No path is set, or the file is missing,
-            unreadable, not a YAML/JSON mapping, or holds an unknown key or
-            an invalid item.
+        SchemaSourceError: No path is set, the path is a URL (an S3 or HTTP
+            location needs a source registered for it), ``options`` or
+            ``secret_arn`` is set, or the file is missing, unreadable (a
+            directory, say), not a YAML/JSON mapping, or holds an unknown key
+            or an invalid item.
     """
+    source = context.source
     if not source.path:
         raise SchemaSourceError(
             "processing.graph_extraction.schema_source.path is required for "
             "kind 'file'"
+        )
+    if "://" in source.path:
+        raise SchemaSourceError(
+            f"Schema file '{context.location}' is a URL; kind 'file' reads a "
+            "local path only. Copy the file next to the config (or into the "
+            "image), or register a schema source for the location's scheme"
+        )
+    if source.options or source.secret_arn:
+        raise SchemaSourceError(
+            "kind 'file' takes no schema_source.options or secret_arn; "
+            "leave them unset"
         )
     path = Path(source.path)
     if path.suffix.lower() not in _SUFFIXES:

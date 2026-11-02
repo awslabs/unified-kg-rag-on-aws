@@ -351,7 +351,9 @@ Where the extraction schema comes from
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `kind` | string | `"inline"` | 'inline' (default): the schema is the entity_types, relationship_types and relationship_patterns keys. Another kind names a registered schema source ('file': a YAML or JSON file of those keys) loaded once at start-up into those keys; the loaded content, not its location, keys the extraction caches. A file that sets entity_types replaces the config's, which must then be left unset. |
-| `path` | string \| null | `null` | Location the schema source reads (for 'file', the file). A relative path is resolved against the config file's directory (the working directory without one); a URL is left as written. Must be unset for 'inline'. |
+| `path` | string \| null | `null` | Location the schema source reads. For 'file', a local file path: a relative one is resolved against the config file's directory (the working directory without one); an S3 or HTTP location needs a source registered for it, which receives a URL as written. Logs and errors show it without userinfo, query or fragment. Must be unset for 'inline'. |
+| `options` | dict[string, Any] | `{}` | Settings of the registered source, read by its loader ('file' takes none). Not keyed: the schema the source loads is. Must be empty for 'inline'. |
+| `secret_arn` | string \| null | `null` | ARN of a Secrets Manager secret holding the credentials a registered source reads at load time ('file' takes none). Never logged. Must be unset for 'inline'. |
 
 #### `processing.graph_extraction.description_summarization`
 

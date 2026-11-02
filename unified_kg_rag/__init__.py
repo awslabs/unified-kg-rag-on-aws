@@ -12,13 +12,15 @@ internal and may change in any release. Two groups:
   evaluate it (:class:`EvaluationManager`).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
   bundle that injects them, and the registries for providers, search
-  strategies, parsers and renderers (see the design doc's extension guide).
+  strategies, parsers, renderers and extraction-schema sources (see the
+  design doc's extension guide).
 
 The errors these raise for a caller to tell apart are exported too. Each is
 a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
 ``KeyboardInterrupt`` (a stop asked for by a signal). A
 :class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
-is a setting to fix and an :class:`InvalidFilterError` a search filter to
+is a setting to fix (a :class:`SchemaSourceError` a schema source that
+cannot be loaded) and an :class:`InvalidFilterError` a search filter to
 fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
 store, an :class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo).
@@ -110,6 +112,11 @@ _EXPORTS: dict[str, str] = {
     "ParserFactory": "unified_kg_rag.adapters.ingestion.parser",
     "BaseRenderer": "unified_kg_rag.adapters.renderers.base",
     "register_renderer": "unified_kg_rag.adapters.renderers.base",
+    # Extension: extraction-schema sources
+    "register_schema_source": "unified_kg_rag.adapters.schema_sources.registry",
+    "SchemaSourceContext": "unified_kg_rag.adapters.schema_sources.registry",
+    "SchemaDocument": "unified_kg_rag.domain.models.schema",
+    "SchemaSourceError": "unified_kg_rag.shared.exceptions",
 }
 
 __all__ = ["__version__", *_EXPORTS]
@@ -133,6 +140,10 @@ if TYPE_CHECKING:
     from unified_kg_rag.adapters.retrieval.strategy_registry import (
         QueryInput,
         register_strategy,
+    )
+    from unified_kg_rag.adapters.schema_sources.registry import (
+        SchemaSourceContext,
+        register_schema_source,
     )
     from unified_kg_rag.application.bootstrap import build_providers
     from unified_kg_rag.application.config import get_config
@@ -158,6 +169,7 @@ if TYPE_CHECKING:
         SearchStrategy,
         SearchType,
     )
+    from unified_kg_rag.domain.models.schema import SchemaDocument
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
         ContentGuardPort,
@@ -181,6 +193,7 @@ if TYPE_CHECKING:
         NamespaceLeaseError,
         PipelineExecutionError,
         PipelineInterrupted,
+        SchemaSourceError,
         StoreConnectionError,
         StoreRequestRejectedError,
     )
