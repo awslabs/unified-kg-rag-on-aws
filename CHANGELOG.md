@@ -625,7 +625,7 @@ From 0.2.3 (or a `main` checkout since):
   and errors show a URL path without userinfo or query. Ingestion,
   evaluation and prompt tuning load the source, and reading the schema of
   a config whose source is not loaded raises `ConfigurationError` instead
-  of using the default schema (#475, #PR).
+  of using the default schema (#475, #480).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a
@@ -662,7 +662,7 @@ From 0.2.3 (or a `main` checkout since):
   seen at least twice. The examples are extracted with the profile's
   entity types, or with the configured schema when the config declares
   one (a schema source it cannot load exits 2). It names `schema_mode:
-  align`, and a fixed model gives the same file (#478, #PR).
+  align`, and a fixed model gives the same file (#478, #480).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
