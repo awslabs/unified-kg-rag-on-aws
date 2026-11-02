@@ -822,7 +822,12 @@ From 0.2.3 (or a `main` checkout since):
   keys: `source_kinds: document` keeps what documents state, items
   without the field included, `seed_graph` what a seed states; `iri` on
   entities and entity vertices. A store without seeds holds exactly what
-  it held (#499, #501).
+  it held (#499, #501). Seed properties are stored but not indexed (the
+  OpenSearch entities index leaves `attributes.seed_properties` unmapped):
+  no key or value of a seed fails an entity's write and none is a filter
+  key, a removed seed takes its properties out of both stores, and an
+  incremental run refuses an entities index an earlier build mapped them
+  in, until `indexing.reset: true` (#PR).
 - Seed facts in retrieval: a seed's text units are stored but left out of
   every text search and chunk quota, so seed statements reach answers as
   entities and relationships only, and a reported source a seed states

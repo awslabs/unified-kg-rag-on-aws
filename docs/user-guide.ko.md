@@ -2150,7 +2150,7 @@ processing:
 | `max_nodes` | `100000` | 노드가 이보다 많으면 실패 |
 | `max_edges` | `500000` | 에지가 이보다 많으면 실패 |
 | `max_bytes` | `268435456`(256 MiB) | 파일 크기 합이 이보다 크면 실패(읽기 전과 읽는 중에 확인) |
-| `max_property_keys` | `64`(0~512) | 서로 다른 속성 키가 이보다 많으면 실패(키마다 `attributes.seed_properties` 아래 저장 필드가 하나씩 생김) |
+| `max_property_keys` | `64`(0~512) | 서로 다른 속성 키가 이보다 많으면 실패(키마다 `attributes.seed_properties`의 키가 됨) |
 | `max_description_chars` | `1000`(50 이상) | 설명을 단어 경계에서 이 길이로 자르고 "…"를 붙입니다. 시드만 진술한 항목은 설명 요약기가 필요 없게 됩니다 |
 
 - 한도를 넘으면 가져오기가 실패하며 아무것도 잘라내지 않습니다. 잘라내면 그래프가
@@ -2335,7 +2335,7 @@ ex:berlin rdfs:label "Berlin"@en .
 |---|---|
 | 유형, 이름, 신뢰도 | 그 엔티티를 진술한 문서가 있으면 문서의 진술이 정합니다. 시드의 진술은 빈 곳만 채웁니다. 문서가 진술하지 않은 엔티티, 또는 문서가 관계의 끝점으로만 언급해 유형이 없는 엔티티입니다 |
 | 설명 | 합집합이며 문서의 줄이 먼저, 시드의 줄이 그 뒤에 옵니다 |
-| 속성 | `attributes.seed_properties` 아래에 두며, 추출한 속성을 덮어쓰지 않습니다 |
+| 속성 | `attributes.seed_properties` 아래에 두며, 추출한 속성을 덮어쓰지 않습니다. 저장만 하고 색인하지 않으므로 어떤 키와 문자열·숫자·불리언 값도 쓸 수 있고, 어떤 필터나 검색도 이 값과 일치하지 않습니다 |
 | IRI | 진술된 IRI 중 가장 작은 값. 여러 IRI로 진술된 엔티티는 셉니다(`entities_with_conflicting_iris`, INFO) |
 | 에지 | 더합니다. 양 끝과 유형이 같은 시드 에지와 문서 에지는 한 관계이며 가중치를 더합니다 |
 | 순위(rank) | 문서가 뒷받침하는 에지만 셉니다(인용한 텍스트 단위가 모두 시드의 것이면 시드 전용 에지). 시드는 엔티티를 더 중요하게 만들지 않으며, 시드 에지로만 이어진 엔티티의 순위는 0입니다. Leiden은 여전히 모든 에지를 원래 가중치로 군집화합니다. `indexing.neptune.entity_importance_source: degree`는 질의 시점에 에지를 세므로 시드 에지도 셉니다 |
@@ -2383,6 +2383,10 @@ ex:berlin rdfs:label "Berlin"@en .
   - `attr_seed_graph: procure`는 모든 인덱스가 가진 문서 필터로 그 시드가 진술한 것을
     남깁니다. `attr_department: legal` 같은 테넌트 필터는 시드의 `filters`에 그 키가 없으면
     시드만 진술한 것을 빼며, 문서와 같은 규칙입니다.
+  - 시드 속성 키로는 필터링할 수 없습니다. 벡터 저장소가 `attributes.seed_properties`를
+    매핑하지 않으므로 타입, 길이, 키 이름과 관계없이 어떤 속성도 쓰기를 실패시키지 않습니다.
+    값으로 필터링하려면 시드의 `filters`에 넣거나(시드 전체에 값 하나), 키를
+    `description_properties`에 넣어 텍스트·벡터 검색이 보게 하세요.
 
 ```python
 RAGInput(query="...", search_strategy="local", filters={"source_kinds": "document"})

@@ -66,7 +66,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.base_processor import (
+    SEED_PROPERTIES_ATTRIBUTE,
+    BaseProcessor,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     merge_contributions,
@@ -710,7 +713,8 @@ def _seeded_corpus(
 
 
 def _seed_entity_state(entity: Entity, kinds: list[str] | None) -> tuple[Any, ...]:
-    return (*entity_state(entity), entity.confidence, entity.iri, kinds)
+    properties = (entity.attributes or {}).get(SEED_PROPERTIES_ATTRIBUTE) or None
+    return (*entity_state(entity), entity.confidence, entity.iri, kinds, properties)
 
 
 def _seed_edge_state(rel: Relationship, kinds: list[str] | None) -> tuple[Any, ...]:
@@ -829,6 +833,24 @@ _VENDOR_DOCS = {
             },
         ),
         (_VENDOR_DOCS, {"alpha": None, "beta": None}),
+    ]
+)
+# A second seed states only Vendor's properties, then is removed: nothing
+# else of Vendor changes (the first seed still states it), and its seed
+# properties are gone from both stores.
+@example(
+    rounds=[
+        (
+            _VENDOR_DOCS,
+            {
+                "alpha": _seed_of(1, _VENDOR_CARD[:1]),
+                "beta": _seed_of(
+                    1,
+                    [SeedNode(id="vendor", name="Vendor", properties={"tier": "gold"})],
+                ),
+            },
+        ),
+        (_VENDOR_DOCS, {"alpha": _seed_of(1, _VENDOR_CARD[:1]), "beta": None}),
     ]
 )
 # The document goes, the seed stays: Vendor becomes seed-only (rank 0).

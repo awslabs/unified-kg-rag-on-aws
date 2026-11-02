@@ -629,7 +629,11 @@ of the documents plus the configured seeds. No model reads a seed.
   merge in unit-id order. `Entity.iri` is a stated field, kept in
   records, merged as the smallest non-null value (groups with several
   are counted). Seed properties live in `attributes.seed_properties`,
-  merged per key, never over an extracted attribute. The rules hold per
+  merged per key, never over an extracted attribute; the OpenSearch
+  entities index leaves them unmapped (`enabled: false`), so no key or
+  value fails a write and none is filterable, and an incremental strip
+  compares them (`_vector_content`), as a lineage update leaves stored
+  attributes as written. The rules hold per
   name key: names that only resolve together (a legal-form variant, or
   fuzzy matching) let seed units break a tie between document spellings,
   and a document entity named only as a relationship endpoint (no type)

@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
     stored_annotation,
 )
+from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_ONLY_SOURCE_KINDS,
@@ -537,17 +538,30 @@ class FakeVectorStore(_Recorder):
     def _update(
         self, collection: str, items: list[Any], fields: tuple[str, ...]
     ) -> IndexingStats:
-        """Partial update: only ``fields`` of stored documents in the item's
-        suffix (an item tagged with another suffix finds no document)."""
+        """Partial update, as the OpenSearch lineage updates write it: only
+        ``fields`` and the document ``filters`` of stored documents in the
+        item's suffix (an item tagged with another suffix finds no document).
+        Every other stored attribute (seed properties, extracted attributes)
+        stays as it was written."""
         stats = IndexingStats(total_items=len(items))
         bucket = self.data.setdefault(collection, {})
+        key = Constants.FILTERS.value
         for item in items:
             stored = bucket.get(item.id)
             if stored is not None and BaseIndexer.get_suffix(
                 stored
             ) == BaseIndexer.get_suffix(item):
+                attributes = dict(stored.attributes or {})
+                filters = (item.attributes or {}).get(key)
+                if isinstance(filters, dict) and filters:
+                    attributes[key] = copy.deepcopy(filters)
+                else:
+                    attributes.pop(key, None)
                 bucket[item.id] = stored.model_copy(
-                    update={name: getattr(item, name) for name in fields}
+                    update={
+                        **{name: getattr(item, name) for name in fields},
+                        "attributes": attributes or None,
+                    }
                 )
             stats.add_success()
         return stats
@@ -701,6 +715,10 @@ class FakeVectorStore(_Recorder):
                     "type_iri": item.type_iri,
                     "iri": item.iri,
                     "source_kinds": item.source_kinds,
+                    SEED_PROPERTIES_ATTRIBUTE: (item.attributes or {}).get(
+                        SEED_PROPERTIES_ATTRIBUTE
+                    )
+                    or None,
                 }
             else:
                 fields = {

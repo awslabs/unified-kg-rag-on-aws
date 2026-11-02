@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     IndexLimits,
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
@@ -89,6 +90,9 @@ _VECTOR_COPY_FIELDS = {
             "type_iri",
             "iri",
             "source_kinds",
+            # Its seed_properties (read_vector_copies): the embedded engine
+            # filters _source by top-level field only.
+            "attributes",
         ],
     ),
     "relationships": (
@@ -116,12 +120,59 @@ _IRI_FIELD: dict[AnnotatedKind, str] = {
 # refuses this release's values (see _add_missing_fields).
 _EXACT_TYPES = frozenset({"keyword", "boolean"})
 
+# A seed graph's properties: kept in _source, never mapped. Mapped
+# dynamically, a key's first value would type it (a later value of another
+# type, a string over 32 KB, an integer over 2^63 or a key such as "" or "."
+# fails the whole entity's write), and each key would count against the
+# index's field limit.
+_SEED_PROPERTIES_MAPPING: dict[str, Any] = {"type": "object", "enabled": False}
+
 
 def _present(**fields: Any) -> dict[str, Any]:
     """``fields`` but the ``None`` ones: a schema annotation (or a seed-graph
     field) is written only when set, so a document without one is what it
     was before the field."""
     return {name: value for name, value in fields.items() if value is not None}
+
+
+def _missing_properties(
+    expected: dict[str, Any], live: dict[str, Any]
+) -> dict[str, Any]:
+    """The fields of ``expected`` that ``live`` (mapping ``properties``)
+    lacks, as a mapping update: a field missing whole, and an object's
+    missing sub-fields under its name (the object's own parameters left out,
+    as a live object's cannot change)."""
+    missing: dict[str, Any] = {}
+    for name, field in expected.items():
+        stored = live.get(name)
+        if stored is None:
+            missing[name] = field
+        elif isinstance(stored, dict) and isinstance(field.get("properties"), dict):
+            nested = _missing_properties(
+                field["properties"], stored.get("properties") or {}
+            )
+            if nested:
+                missing[name] = {"properties": nested}
+    return missing
+
+
+def _mapped_disabled_objects(
+    expected: dict[str, Any], live: dict[str, Any], prefix: str = ""
+) -> list[str]:
+    """The paths of the ``enabled: false`` objects of ``expected`` that
+    ``live`` maps as enabled (a dynamic mapping made them)."""
+    paths: list[str] = []
+    for name, field in expected.items():
+        stored = live.get(name)
+        if not isinstance(stored, dict):
+            continue
+        if field.get("enabled") is False and stored.get("enabled") is not False:
+            paths.append(f"{prefix}{name}")
+        elif isinstance(field.get("properties"), dict):
+            paths += _mapped_disabled_objects(
+                field["properties"], stored.get("properties") or {}, f"{prefix}{name}."
+            )
+    return paths
 
 
 # Whether the doc-status registry tracks the index's documents: False when
@@ -348,7 +399,10 @@ class OpenSearchIndexer(VectorIndexer):
         - its keyword and boolean fields: one a dynamic mapping made a date
           (date detection, on an index built before it was turned off) or a
           keyword refuses every value of the mapped form, such as an unknown
-          claim date.
+          claim date;
+        - its entities' ``attributes.seed_properties``, which this release
+          leaves unmapped (``enabled: false``): an index whose earlier build
+          mapped them key by key would refuse values of another type.
 
         An index that records no embedding settings was built by an earlier
         release, whose indices this one does not read: it is rejected too.
@@ -356,8 +410,9 @@ class OpenSearchIndexer(VectorIndexer):
         this release maps that it lacks (the claim dates of an index built
         before #444, the schema annotations of one built before
         ``in_schema``, the seed-graph fields ``iri``, ``source_kinds`` and
-        ``source_kind`` of one built before them) and date detection turned
-        off, before any write.
+        ``source_kind`` of one built before them, the unmapped
+        ``attributes.seed_properties``) and date detection turned off, before
+        any write.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -457,16 +512,31 @@ class OpenSearchIndexer(VectorIndexer):
         mappings: dict[str, Any],
         expected: dict[str, Any],
     ) -> None:
-        """Map on ``index_name`` the ``expected`` fields it lacks and turn its
-        date detection off, or raise when a keyword or boolean field is
-        mapped otherwise.
+        """Map on ``index_name`` the ``expected`` fields it lacks (an object's
+        missing sub-fields too) and turn its date detection off, or raise
+        when a keyword or boolean field is mapped otherwise or an object this
+        release does not map (``enabled: false``) is mapped.
 
         Raises:
             ConfigurationError: A keyword or boolean field of ``expected`` is
                 mapped as another type (a date, by date detection; a keyword,
-                by the dynamic template).
+                by the dynamic template), or an unmapped object was mapped
+                dynamically (the seed properties of an index written before
+                they were left unmapped).
         """
         live = mappings.get("properties") or {}
+        mapped = _mapped_disabled_objects(expected, live)
+        if mapped:
+            raise ConfigurationError(
+                f"The OpenSearch index '{index_name}' maps "
+                f"{', '.join(repr(name) for name in mapped)} field by field: an "
+                "earlier build mapped each seed property key on its first "
+                "write, so a later value of another type, a string over 32 KB "
+                "or a key such as '.' fails the entity's write. This release "
+                "keeps seed properties unmapped, and a live index cannot "
+                "unmap them. Re-run once with indexing.reset: true to rebuild "
+                "the indices."
+            )
         retyped = [
             f"'{name}' is mapped as {live[name].get('type')} (needs "
             f"{field['type']})"
@@ -483,7 +553,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "write; a live index's field types cannot change. Re-run once "
                 "with indexing.reset: true to rebuild the indices."
             )
-        missing = {name: field for name, field in expected.items() if name not in live}
+        missing = _missing_properties(expected, live)
         if missing or mappings.get("date_detection") is not False:
             self.opensearch_client.put_index_mapping(
                 index_name, {"date_detection": False, "properties": missing}
@@ -960,12 +1030,15 @@ class OpenSearchIndexer(VectorIndexer):
         """The stored fields of ``ids`` incremental writes compare (see the
         port)."""
         prefix, fields = _VECTOR_COPY_FIELDS[kind]
-        return {
-            source["id"]: source
-            for source in self._read_sources(
-                getattr(self.opensearch_config, prefix), ids, suffix, fields=fields
-            )
-        }
+        copies: dict[str, dict[str, Any]] = {}
+        for source in self._read_sources(
+            getattr(self.opensearch_config, prefix), ids, suffix, fields=fields
+        ):
+            attributes = source.pop("attributes", None) or {}
+            if properties := attributes.get(SEED_PROPERTIES_ATTRIBUTE):
+                source[SEED_PROPERTIES_ATTRIBUTE] = properties
+            copies[source["id"]] = source
+        return copies
 
     def read_schema_annotations(
         self, kind: AnnotatedKind, suffix: str | None = None
@@ -2225,7 +2298,11 @@ class OpenSearchIndexer(VectorIndexer):
                 "type_iri": {"type": "keyword"},
                 "iri": {"type": "keyword"},
                 "source_kinds": {"type": "keyword"},
-                "attributes": {"type": "object", "dynamic": True},
+                "attributes": {
+                    "type": "object",
+                    "dynamic": True,
+                    "properties": {SEED_PROPERTIES_ATTRIBUTE: _SEED_PROPERTIES_MAPPING},
+                },
             }
         )
 

@@ -418,7 +418,7 @@ A knowledge graph imported as virtual documents of the corpus.
 | `max_nodes` | integer (≥ 1) | `100000` | Fail the import above this many nodes (never truncated). |
 | `max_edges` | integer (≥ 1) | `500000` | Fail the import above this many edges (never truncated). |
 | `max_bytes` | integer (≥ 1) | `268435456` | Fail the import when the source files hold more bytes together (checked before they are read, and while reading). |
-| `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | Fail the import when the seed uses more distinct property keys: each becomes a stored field under attributes.seed_properties. |
+| `max_property_keys` | integer (≥ 0, ≤ 512) | `64` | Fail the import when the seed uses more distinct property keys (the keys of attributes.seed_properties, stored but not indexed). |
 | `max_description_chars` | integer (≥ 50) | `1000` | Cut seed descriptions to this many characters, at a word boundary, so a seed-only item never needs the description summarizer. |
 
 ## `graph`

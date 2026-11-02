@@ -632,7 +632,8 @@ class VectorIndexer(BaseIndexer):
         rank, by id (scoped to ``suffix``; an id not stored is absent):
         ``name``, ``type``, ``confidence``, ``description``, the schema
         annotations ``in_schema`` and ``type_iri`` and the seed-graph fields
-        ``iri`` and ``source_kinds`` of an entity, ``source_id``,
+        ``iri``, ``source_kinds`` and ``seed_properties`` (its
+        ``attributes.seed_properties``) of an entity, ``source_id``,
         ``target_id``, ``source_name``, ``target_name``, ``description``,
         ``in_schema``, ``predicate_iri`` and ``source_kinds`` of a
         relationship (a field written ``None`` is absent). Incremental
