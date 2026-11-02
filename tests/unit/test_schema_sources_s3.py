@@ -318,7 +318,8 @@ def test_a_missing_object_is_not_found(s3: Any, kind: str) -> None:
         location = f"s3://{BUCKET}/onto"
     with pytest.raises(SchemaSourceError, match="not found .no such S3 object") as e:
         _load(kind, location)
-    assert "end the path with '/'" in str(e.value)
+    # Only owl reads a prefix as a directory: the hint would mislead file.
+    assert ("end the path with '/'" in str(e.value)) == (kind == "owl")
 
 
 def test_a_missing_bucket_is_named(s3: Any) -> None:

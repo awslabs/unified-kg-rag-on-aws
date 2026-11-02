@@ -92,8 +92,10 @@ class SourceReader:
             self._client = self._context.client("s3")
         return self._client
 
-    def head(self, location: str) -> SourceFile:
+    def head(self, location: str, *, prefix_hint: bool = False) -> SourceFile:
         """The S3 object ``location`` names, sized (HeadObject).
+        ``prefix_hint``: a missing object's error says how to read the
+        prefix as a directory (for a source that reads one).
 
         Raises:
             SchemaSourceError: The object is missing, access is denied, or
@@ -103,7 +105,7 @@ class SourceReader:
         try:
             response = self._s3().head_object(Bucket=bucket, Key=key)
         except _aws_errors() as e:
-            raise _s3_error(e, location, "HeadObject") from e
+            raise _s3_error(e, location, "HeadObject", prefix_hint) from e
         return SourceFile(location=location, size=int(response["ContentLength"]))
 
     def list_prefix(self, location: str) -> list[tuple[str, SourceFile]]:
@@ -203,7 +205,9 @@ def _aws_errors() -> tuple[type[Exception], ...]:
     return (BotoCoreError, ClientError)
 
 
-def _s3_error(error: Exception, location: str, action: str) -> SchemaSourceError:
+def _s3_error(
+    error: Exception, location: str, action: str, prefix_hint: bool = False
+) -> SchemaSourceError:
     """``error`` of ``action`` on ``location`` as a ``SchemaSourceError``
     saying what to fix; the URL is shown without credentials, the error by
     its code (no request ids or signatures)."""
@@ -220,7 +224,7 @@ def _s3_error(error: Exception, location: str, action: str) -> SchemaSourceError
         if code in _MISSING:
             hint = (
                 "; end the path with '/' to read the prefix as a directory"
-                if action == "HeadObject"
+                if prefix_hint
                 else ""
             )
             return SchemaSourceError(

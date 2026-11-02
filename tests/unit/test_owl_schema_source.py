@@ -959,3 +959,357 @@ def test_another_import_error_is_not_read_as_a_missing_extra(
     with pytest.raises(ImportError) as error:
         _load(PROCURE)
     assert not isinstance(error.value, SchemaSourceError)
+
+
+# --- hostile and real-world ontologies -----------------------------------------------
+
+RDF_XML_HEAD = (
+    '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" '
+    'xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" '
+    'xmlns:owl="http://www.w3.org/2002/07/owl#">'
+)
+LAUGHS = (
+    '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa">'
+    + "".join(
+        f'<!ENTITY {chr(98 + i)} "' + f"&{chr(97 + i)};" * 10 + '">' for i in range(9)
+    )
+    + "]>"
+)
+
+
+def _refused_fast(path: Path, message: str, **options: Any) -> None:
+    import time
+
+    started = time.monotonic()
+    with pytest.raises(SchemaSourceError, match=message):
+        _load(path, **options)
+    # Each shape took the parser minutes before it was refused up front.
+    assert time.monotonic() - started < 5
+
+
+@requires_ontology
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        # 567 bytes whose entities expand to 10^10 characters of a label.
+        (
+            '<owl:Class rdf:about="http://e/A"><rdfs:label>&j;</rdfs:label>'
+            "</owl:Class>",
+            "MAX_XML_TEXT_CHUNKS",
+        ),
+        # The same in an attribute: the XML parser's amplification limit.
+        ('<owl:Class rdf:about="http://e/&j;"/>', "amplification"),
+    ],
+)
+def test_xml_entities_expanding_past_the_limits_are_refused_fast(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    path = _write(tmp_path / "o.rdf", LAUGHS + RDF_XML_HEAD + body + "</rdf:RDF>")
+    _refused_fast(path, message)
+
+
+@requires_ontology
+def test_an_xml_element_of_many_text_pieces_is_refused_fast(tmp_path: Path) -> None:
+    # A 1.6 MB comment of line breaks: one piece of text per line.
+    comment = "\n" * 1_600_000
+    path = _write(
+        tmp_path / "o.rdf",
+        RDF_XML_HEAD + '<owl:Class rdf:about="http://e/A"><rdfs:comment>'
+        f"{comment}</rdfs:comment></owl:Class></rdf:RDF>",
+    )
+    _refused_fast(path, r"more than 10000 pieces of text .*MAX_XML_TEXT_CHUNKS")
+
+
+@requires_ontology
+def test_a_large_xml_literal_is_refused_fast(tmp_path: Path) -> None:
+    # 2,000 elements in an rdf:XMLLiteral: re-parsed at every element.
+    path = _write(
+        tmp_path / "o.rdf",
+        RDF_XML_HEAD + '<owl:Class rdf:about="http://e/A">'
+        '<rdfs:comment rdf:parseType="Literal">' + "<b/>" * 2000 + "</rdfs:comment>"
+        "</owl:Class></rdf:RDF>",
+    )
+    _refused_fast(path, "MAX_XML_LITERAL_ELEMENTS")
+
+
+@requires_ontology
+def test_xml_under_the_limits_parses(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "o.rdf",
+        RDF_XML_HEAD + '<owl:Class rdf:about="http://e/A"><rdfs:label>A</rdfs:label>'
+        "<rdfs:comment>" + "line\n" * 1000 + "</rdfs:comment>"
+        '<rdfs:seeAlso rdf:parseType="Literal">' + "<b>x</b>" * 100 + "</rdfs:seeAlso>"
+        "</owl:Class></rdf:RDF>",
+    )
+    assert [t.label for t in _load(path).entity_types or []] == ["A"]  # type: ignore[union-attr]
+
+
+@requires_ontology
+@pytest.mark.parametrize(("name", "graph"), [("o.nt", ""), ("o.nq", " <urn:g>")])
+def test_a_long_n_triples_line_is_refused_fast(
+    tmp_path: Path, name: str, graph: str
+) -> None:
+    # A 1.5 MB literal of escapes: the parser copies the line at each one.
+    literal = "a\\n" * 500_000
+    path = _write(
+        tmp_path / name,
+        "<http://e/A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> "
+        f"<http://www.w3.org/2002/07/owl#Class>{graph} .\n"
+        f'<http://e/A> <http://www.w3.org/2000/01/rdf-schema#comment> "{literal}"'
+        f"{graph} .\n",
+    )
+    _refused_fast(path, r"a line of 1500\d+ bytes, more than the 262144 .MAX_LINE")
+
+
+@requires_ontology
+def test_an_n_triples_line_at_the_limit_parses(tmp_path: Path) -> None:
+    head = '<http://e/A> <http://www.w3.org/2000/01/rdf-schema#comment> "'
+    line = head + "a" * (256 * 1024 - len(head) - 3) + '" .'
+    assert len(line) == 256 * 1024
+    path = _write(tmp_path / "o.nt", line + "\n")
+    from unified_kg_rag.adapters.schema_sources import owl
+
+    owl.read_ontology(owl.locate(path, OwlSourceOptions()), OwlSourceOptions())
+    with pytest.raises(SchemaSourceError, match="a line of 262145 bytes"):
+        _load(_write(tmp_path / "p.nt", line.replace('" .', 'a" .') + "\n"))
+
+
+@requires_ontology
+def test_a_cyclic_list_is_refused(tmp_path: Path) -> None:
+    # Regression: rdflib's list walk raised a bare ValueError.
+    path = _write(
+        tmp_path / "o.ttl",
+        PREFIXES + "ex:p a owl:ObjectProperty ; rdfs:domain [ owl:unionOf _:l ] .\n"
+        "_:l rdf:first ex:A ; rdf:rest _:l .\n",
+    )
+    with pytest.raises(SchemaSourceError, match="rdf:List is cyclic"):
+        _load(path)
+
+
+@requires_ontology
+def test_an_iri_with_whitespace_is_refused(tmp_path: Path) -> None:
+    # Regression: the model's IRI check raised a pydantic ValidationError.
+    path = _write(
+        tmp_path / "o.rdf",
+        RDF_XML_HEAD + '<owl:Class rdf:about="http://e/Supply Chain"/></rdf:RDF>',
+    )
+    with pytest.raises(
+        SchemaSourceError, match="IRIs with whitespace: 'http://e/Supply"
+    ):
+        _load(path)
+
+
+@requires_ontology
+def test_a_prefix_bound_to_whitespace_is_left_out(tmp_path: Path) -> None:
+    from unified_kg_rag.adapters.schema_sources import owl
+
+    path = _write(
+        tmp_path / "o.jsonld",
+        '{"@context": {"bad": "http://e x/", "ex": "https://example.org/procure#"},'
+        ' "@id": "ex:A", "@type": "http://www.w3.org/2002/07/owl#Class"}',
+    )
+    model = owl.read_ontology(owl.locate(path, OwlSourceOptions()), OwlSourceOptions())
+    assert model.prefixes == {"ex": EX}
+
+
+SCHEMA_ORG = """\
+@prefix ex: <https://example.org/v#> .
+@prefix schema: <https://schema.org/> .
+@prefix s: <http://schema.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:Supplier a rdfs:Class ; rdfs:subClassOf schema:Organization .
+ex:Part a rdfs:Class .
+ex:Sku a schema:DataType .
+ex:supplies a rdf:Property ; schema:domainIncludes ex:Supplier ;
+    schema:rangeIncludes ex:Part .
+ex:partNumber a rdf:Property ; schema:domainIncludes ex:Part ;
+    schema:rangeIncludes schema:Text .
+ex:catalogUrl a rdf:Property ; schema:domainIncludes ex:Supplier ;
+    schema:rangeIncludes schema:URL .
+ex:leadTimeDays a rdf:Property ; schema:domainIncludes ex:Part ;
+    s:rangeIncludes s:Number .
+ex:sku a rdf:Property ; schema:domainIncludes ex:Part ; schema:rangeIncludes ex:Sku .
+ex:maker a rdf:Property ; schema:domainIncludes ex:Part ;
+    schema:rangeIncludes schema:Text , ex:Supplier .
+"""
+
+
+@requires_ontology
+def test_schema_org_data_types_are_literals(tmp_path: Path) -> None:
+    # Regression: schema:Text, schema:URL, ... became entity types and the
+    # properties ranging over them relationship types.
+    path = _write(tmp_path / "o.ttl", SCHEMA_ORG)
+    document = _load(path)
+    assert [t.label for t in document.entity_types or []] == [  # type: ignore[union-attr]
+        "ORGANIZATION",
+        "SUPPLIER",
+        "PART",
+    ]
+    # A property is a datatype one only when all its ranges are literal.
+    assert [t.label for t in document.relationship_types] == ["MAKER", "SUPPLIES"]
+    assert [
+        (p.source_type, p.relation, p.target_type)
+        for p in document.relationship_patterns or []
+    ] == [("PART", "MAKER", "SUPPLIER"), ("SUPPLIER", "SUPPLIES", "PART")]
+
+
+DEFINED = PREFIXES + """
+ex:Organization a owl:Class .
+ex:Product a owl:Class .
+ex:Person a owl:Class .
+ex:sells a owl:ObjectProperty .
+ex:Vendor a owl:Class ; owl:equivalentClass [ a owl:Class ; owl:intersectionOf (
+    ex:Organization
+    [ a owl:Restriction ; owl:onProperty ex:sells ; owl:someValuesFrom ex:Product ]
+) ] .
+ex:Reseller a owl:Class ; rdfs:subClassOf [ owl:intersectionOf ( ex:Vendor ex:Buyer ) ] .
+ex:Party a owl:Class ;
+    owl:equivalentClass [ a owl:Class ; owl:unionOf ( ex:Person ex:Organization ) ] .
+ex:employs a owl:ObjectProperty ; rdfs:domain ex:Organization ; rdfs:range ex:Person .
+"""
+
+
+@requires_ontology
+def test_class_expressions_state_parents(tmp_path: Path) -> None:
+    # Regression: a defined class (an equivalent intersection) had no
+    # parent, and the members of a covering union none either.
+    model = _model(tmp_path, DEFINED.split(PREFIXES, 1)[1])
+    parents = {c.iri.removeprefix(EX): set(c.parents) for c in model.classes}
+    assert parents == {
+        "Buyer": set(),
+        "Organization": {EX + "Party"},
+        "Party": set(),
+        "Person": {EX + "Party"},
+        "Product": set(),
+        "Reseller": {EX + "Vendor", EX + "Buyer"},
+        "Vendor": {EX + "Organization"},
+    }
+
+
+@requires_ontology
+def test_a_defined_class_takes_part_in_the_hierarchy(tmp_path: Path) -> None:
+    path = _write(tmp_path / "o.ttl", DEFINED)
+    document = _load(path, classes=["ex:Party"])
+    # Selected below the union, with its hints, and pushed down to.
+    assert [(t.label, t.description) for t in document.entity_types or []] == [  # type: ignore[union-attr]
+        ("PARTY", ""),
+        ("ORGANIZATION", "Kind of PARTY."),
+        ("VENDOR", "Kind of ORGANIZATION."),
+        ("RESELLER", "Kind of VENDOR."),
+        ("PERSON", "Kind of PARTY."),
+    ]
+    assert [
+        (p.source_type, p.relation, p.target_type)
+        for p in document.relationship_patterns or []
+    ] == [
+        ("ORGANIZATION", "EMPLOYS", "PERSON"),
+        ("VENDOR", "EMPLOYS", "PERSON"),
+        ("RESELLER", "EMPLOYS", "PERSON"),
+    ]
+
+
+@requires_ontology
+def test_a_datatype_property_domain_alone_makes_no_class(tmp_path: Path) -> None:
+    model = _model(
+        tmp_path,
+        """
+        ex:Person a owl:Class .
+        ex:name a owl:DatatypeProperty ; rdfs:domain ex:Person , ex:Tag .
+        ex:code a rdf:Property ; rdfs:domain ex:Badge ; rdfs:range xsd:string .
+        """,
+    )
+    # A declared class counts; a datatype property's domain makes none.
+    assert [c.iri for c in model.classes] == [EX + "Person"]
+
+
+@requires_ontology
+def test_sub_properties_of_an_rdf_property_are_read(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: a sub-property of an untyped rdf:Property vanished, and a
+    # property with only a domain and range was skipped without a word.
+    with caplog.at_level(logging.INFO):
+        model = _model(
+            tmp_path,
+            """
+            ex:A a rdfs:Class . ex:B a rdfs:Class .
+            ex:typed a rdf:Property ; rdfs:domain ex:A ; rdfs:range ex:B .
+            ex:sub rdfs:subPropertyOf ex:typed .
+            ex:subLiteral rdfs:subPropertyOf ex:typed ; rdfs:range xsd:string .
+            ex:bare rdfs:domain ex:A ; rdfs:range ex:B .
+            ex:func a owl:FunctionalProperty ; rdfs:domain ex:A .
+            """,
+        )
+    kinds = {p.iri.removeprefix(EX): p.kind for p in model.properties}
+    assert kinds == {"typed": "untyped", "sub": "untyped", "subLiteral": "datatype"}
+    assert "2 properties not read (a domain, range or owl:FunctionalProperty" in (
+        caplog.text
+    )
+    assert f"{EX}bare, {EX}func;" in caplog.text
+
+
+@requires_ontology
+@pytest.mark.parametrize(
+    ("name", "text", "said", "secret"),
+    [
+        (
+            "o.ttl",
+            PREFIXES + "ex:A a owl:Class ex:SECRET .\n",
+            r"line 6: Bad syntax \(expected '.' or '}' or '\]' at end of statement\)$",
+            "SECRET",
+        ),
+        (
+            "o.nt",
+            "<urn:a> <urn:b> SECRET .\n",
+            r"does not parse as nt: Invalid line$",
+            "SECRET",
+        ),
+        (
+            "o.rdf",
+            RDF_XML_HEAD + "<owl:Class><SECRET></owl:Class></rdf:RDF>",
+            r"does not parse as xml: mismatched tag: line 1, column \d+$",
+            "SECRET",
+        ),
+    ],
+)
+def test_a_parse_error_says_what_is_wrong_without_the_text(
+    tmp_path: Path, name: str, text: str, said: str, secret: str
+) -> None:
+    path = _write(tmp_path / name, text)
+    with pytest.raises(SchemaSourceError, match=said) as error:
+        _load(path)
+    assert secret not in str(error.value).replace(str(path), "")
+
+
+@requires_ontology
+def test_a_format_option_reads_every_file_of_a_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "onto"
+    directory.mkdir()
+    shutil.copy(PROCURE, directory / "procure.txt")
+    _write(directory / ".notes", "not turtle")
+    with pytest.raises(SchemaSourceError, match="holds no ontology file"):
+        _load(directory)
+    assert _load(directory, format="turtle") == PROCURE_GOLDEN
+
+
+CATALOG = """\
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<catalog prefer="public" xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+    <uri name="https://example.org/procure" uri="procure.ttl"/>
+</catalog>
+"""
+
+
+@requires_ontology
+def test_a_protege_catalog_in_a_directory_is_skipped(tmp_path: Path) -> None:
+    directory = tmp_path / "onto"
+    directory.mkdir()
+    shutil.copy(PROCURE, directory / "procure.ttl")
+    _write(directory / "catalog-v001.xml", CATALOG)
+    assert _load(directory) == PROCURE_GOLDEN
+    # Whatever the format option says.
+    assert _load(directory, format="turtle") == PROCURE_GOLDEN
+    # Named alone, it is no ontology.
+    with pytest.raises(SchemaSourceError, match="is an OASIS XML catalog"):
+        _load(directory / "catalog-v001.xml")
