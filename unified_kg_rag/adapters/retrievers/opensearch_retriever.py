@@ -23,6 +23,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    SCHEMA_ANNOTATION_FIELDS,
     FilterFields,
     IndexLimits,
     check_filter_values,
@@ -515,7 +516,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         whose documents lack the attribute, community reports above all. When
         no document matches the attribute clauses the kNN search could find
         nothing anyway, so the index is skipped instead (fail-closed, as
-        ``filter_schema`` documents). None when the filters have no such key.
+        ``filter_schema`` documents). The schema annotations are probed too:
+        an index built before they were mapped lacks them until an ingestion
+        run maps them, and a filter on one then matches nothing as well.
+        None when the filters have no such key.
         """
         declared = self._index_filter_fields.get(prefix) if filters else None
         if declared is None:
@@ -523,7 +527,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         attributes = {
             key: value
             for key, value in (filters or {}).items()
-            if key not in declared.fields
+            if key not in declared.fields or key in SCHEMA_ANNOTATION_FIELDS
         }
         if not attributes:
             return None
