@@ -830,7 +830,8 @@ Queries and retrieval.
   the command line). A typed value must be of the field's type too: a
   boolean field takes no number (`in_schema: 1`), a numeric one no boolean
   (`rank: true`) and an integer one no fractional number (`level: 2.5`;
-  `2.0` is `2`) (#479, #483).
+  `2.0` is `2`). The errors name the value as JSON does (`true`, `null`)
+  (#479, #483, #PR).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

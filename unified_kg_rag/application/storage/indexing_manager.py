@@ -757,17 +757,17 @@ class IndexingManager:
             raise
         except Exception as e:  # noqa: BLE001 - retried by the next run
             result.error = f"{type(e).__name__}: {e}"
-        logger.info(
-            "Schema annotations changed: rewrote in_schema and the IRIs of %d of "
-            "%d stored entities and %d of %d stored relationships in %s, "
-            "without extracting again%s",
-            result.entities_rewritten,
-            result.entities,
-            result.relationships_rewritten,
-            result.relationships,
-            ", ".join(f"'{s}'" for s in sorted(suffixes)),
-            f" ({result.failed} writes failed)" if result.failed else "",
-        )
+        if result.complete:
+            logger.info(
+                "Schema annotations: checked %d stored entities and %d stored "
+                "relationships in %s and rewrote in_schema and the IRIs of %d "
+                "and %d of them, without extracting again",
+                result.entities,
+                result.relationships,
+                ", ".join(f"'{s}'" for s in sorted(suffixes)),
+                result.entities_rewritten,
+                result.relationships_rewritten,
+            )
         return result
 
     def _reannotate_kind(

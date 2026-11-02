@@ -517,7 +517,9 @@ def _written_without_a_schema() -> tuple[FakeVectorStore, FakeGraphStore]:
     return vector, graph
 
 
-def test_reannotate_rewrites_what_a_full_build_writes() -> None:
+def test_reannotate_rewrites_what_a_full_build_writes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     vector, graph = _written_without_a_schema()
     # A vector copy without its edge: no type to annotate it by.
     orphan = _rel("orphan", "SUPPLIES")
@@ -525,8 +527,13 @@ def test_reannotate_rewrites_what_a_full_build_writes() -> None:
     manager = IndexingManager(
         _config(**_SCHEMA_CONFIG), vector_indexer=vector, graph_indexer=graph
     )
-    result = manager.reannotate({"default"})
+    with caplog.at_level(logging.INFO):
+        result = manager.reannotate({"default"})
     assert result.complete
+    assert (
+        "checked 2 stored entities and 2 stored relationships in 'default' "
+        "and rewrote in_schema and the IRIs of 2 and 2 of them"
+    ) in caplog.text
     assert (result.entities, result.entities_rewritten) == (2, 2)
     assert (result.relationships, result.relationships_rewritten) == (2, 2)
     stored = _stored(vector, graph)
@@ -720,10 +727,12 @@ def test_a_failed_rewrite_keeps_the_namespace_marked(
             total_items=len(annotations), failed_items=len(annotations)
         )
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         assert _index(_incremental(config, vector, graph, store))
     assert "4 writes failed" in caplog.text
     assert "the next run tries again" in caplog.text
+    # No count of a pass that did not complete.
+    assert "Schema annotations: checked" not in caplog.text
     assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
     # And the next run, with the same schema, tries again.
     assert annotations_due(_incremental(config, vector, graph, store), _EXISTING)
