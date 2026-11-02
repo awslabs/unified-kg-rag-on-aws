@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.ingestion.parser import (
     ParserFactory,
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.extraction_store import (
     ExtractionStore,
@@ -83,7 +84,15 @@ from unified_kg_rag.domain.ingestion.document_identity import store_namespace_ta
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit, seed_only
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_RECORD_FINGERPRINT,
+    SeedConversion,
+    is_seed_document,
+    is_seed_unit,
+    parse_seed_unit,
+    seed_only,
+    seed_text_units,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -422,14 +431,26 @@ class DocumentLoadingStage(_RegistryStage):
     only ``.json`` files.
     """
 
+    # The run's seed graphs, and who answers a reset's question (__init__).
+    seed_conversions: tuple[SeedConversion, ...] = ()
+    confirm: Callable[[str], bool] | None = None
+
     def __init__(
         self,
         config: Config,
         source_directory: Path,
         doc_status: "DocStatusPort | None" = None,
         providers: Providers | None = None,
+        seed_conversions: Sequence[SeedConversion] = (),
+        confirm: Callable[[str], bool] | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
+        # The run's seed graphs (bootstrap.load_seed_graphs): their shards
+        # are virtual documents of the corpus.
+        self.seed_conversions = tuple(seed_conversions)
+        # Answers the reset's question when it drops another scope's seed
+        # graph documents (incremental.filter_to_delta); None cannot.
+        self.confirm = confirm
         # Without parsing, the directory holds pre-parsed Document JSON.
         # Deduplication runs in this stage, after document identity is
         # assigned, so an incremental run can prefer indexed documents.
@@ -490,6 +511,9 @@ class DocumentLoadingStage(_RegistryStage):
             documents = self.loader.deduplicate_documents(
                 documents, keep=keep, avoid=avoid
             )
+        # After deduplication: a seed shard is no copy of a file.
+        seeds = self._seed_documents()
+        documents.extend(seeds)
 
         # Incremental indexing: when a doc-status registry is injected or the
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
@@ -502,6 +526,7 @@ class DocumentLoadingStage(_RegistryStage):
 
         context.documents = documents
         output_count = len(context.documents)
+        seeds_kept = sum(1 for document in documents if is_seed_document(document))
 
         if failed_files:
             logger.warning("Failed to load %s files", len(failed_files))
@@ -510,6 +535,8 @@ class DocumentLoadingStage(_RegistryStage):
             "file_count": input_count,
             "success_count": output_count,
             "delta_skipped": delta_skipped,
+            "seed_documents": len(seeds),
+            "seed_documents_skipped": len(seeds) - seeds_kept,
             "documents_quarantined": (
                 len(context.incremental_delta.quarantined)
                 if context.incremental_delta is not None
@@ -528,7 +555,31 @@ class DocumentLoadingStage(_RegistryStage):
             "failed_files": failed_files,
         }
 
-        return input_count, output_count, metrics
+        return input_count + len(seeds), output_count, metrics
+
+    def _seed_documents(self) -> list[Document]:
+        """The seed graphs' shard documents, identified like the corpus's:
+        the run's index value, namespace and store tag."""
+        index_value = self.config.processing.document_parsing.index_value
+        documents = []
+        for conversion in self.seed_conversions:
+            for document in conversion.documents():
+                if index_value is not None:
+                    document.metadata[Constants.INDEX.value] = index_value
+                assign_document_identity(
+                    document,
+                    self.loader.source_directory,
+                    self.config.indexing.additional_suffix,
+                    store_namespace_tag(self.config.indexing),
+                )
+                documents.append(document)
+        if documents:
+            logger.info(
+                "Adding %s seed graph documents (%s seed graphs)",
+                len(documents),
+                len(self.seed_conversions),
+            )
+        return documents
 
     def _apply_incremental_filter(
         self, documents: list[Document], context: PipelineContext
@@ -540,6 +591,7 @@ class DocumentLoadingStage(_RegistryStage):
             self.config,
             self._build_doc_status_store,
             self.loader.source_directory,
+            self.confirm,
         )
 
     @staticmethod
@@ -586,6 +638,15 @@ class DocumentParsingStage(PipelineStage):
             )
         self.supported_extensions = ParserFactory.get_supported_extensions()
 
+    def _allows_empty_output(self, context: PipelineContext) -> bool:
+        """An empty corpus is a seed-only run when seed graphs are
+        configured: the loading stage adds their documents. A corpus whose
+        every file failed to parse still fails."""
+        seed_only_run = bool(self.config.processing.seed_graphs) and not (
+            context.failed_source_files
+        )
+        return seed_only_run or super()._allows_empty_output(context)
+
     def _empty_input_hint(self) -> str:
         return (
             f"No supported source files found in '{self.source_directory}' "
@@ -600,7 +661,19 @@ class DocumentParsingStage(PipelineStage):
         input_count = len(files_to_parse)
 
         if not files_to_parse:
-            logger.warning("No supported files found in '%s'", self.source_directory)
+            if self.config.processing.seed_graphs:
+                logger.info(
+                    "No supported files found in '%s': the corpus is its seed "
+                    "graphs",
+                    self.source_directory,
+                )
+            else:
+                logger.warning(
+                    "No supported files found in '%s'", self.source_directory
+                )
+            # Cleared: a context restored from an earlier run keeps its files.
+            context.documents = []
+            context.failed_source_files = []
             return 0, 0, {"parsed_files": [], "failed_files": []}
 
         logger.info("Found %s files to parse", input_count)
@@ -726,8 +799,17 @@ class TextChunkingStage(PipelineStage):
     ) -> tuple[int, int, dict[str, Any] | None]:
         # One call for the whole corpus: the intelligent chunker batches its
         # boundary-model calls across documents, and the logged stats cover
-        # the stage rather than its last document.
-        text_units = self.chunker.chunk_documents(context.documents)
+        # the stage rather than its last document. A seed graph's shard is
+        # cut into its units as written (no model): document units first.
+        documents = [d for d in context.documents if not is_seed_document(d)]
+        text_units = self.chunker.chunk_documents(documents)
+        seed_units = [
+            unit
+            for document in context.documents
+            if is_seed_document(document)
+            for unit in seed_text_units(document, count_tokens=estimate_token_count)
+        ]
+        text_units.extend(seed_units)
         context.text_units = text_units
         total_chunks = len(text_units)
         doc_count = len(context.documents)
@@ -737,6 +819,7 @@ class TextChunkingStage(PipelineStage):
             "documents_processed": doc_count,
             "total_chunks": total_chunks,
             "avg_chunks_per_doc": total_chunks / doc_count if doc_count else 0.0,
+            "seed_units": len(seed_units),
         }
 
         return doc_count, total_chunks, metrics
@@ -791,7 +874,14 @@ class TranslationStage(PipelineStage):
             }
             return len(context.text_units), len(context.text_units), metrics
 
-        translated_units = self.translator.translate_text_units(context.text_units)
+        # A seed unit's statements are taken as written: never translated.
+        translated = {
+            unit.id: unit
+            for unit in self.translator.translate_text_units(
+                [u for u in context.text_units if not is_seed_unit(u.id)]
+            )
+        }
+        translated_units = [translated.get(u.id, u) for u in context.text_units]
         context.translated_units = translated_units
         # Units left untranslated are extracted in the source language; their
         # documents are recorded FAILED and retried, like an extraction failure.
@@ -899,20 +989,33 @@ class GraphExtractionStage(PipelineStage):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         text_units = context.translated_units or context.text_units
+        seed_units = [unit for unit in text_units if is_seed_unit(unit.id)]
+        document_units = [unit for unit in text_units if not is_seed_unit(unit.id)]
         fingerprint = unit_record_fingerprint(
             self.config, gleaned=self.config.processing.gleaning.enabled
         )
-        by_unit = self.store.load(text_units, fingerprint, record_from_payload)
-        to_extract = [unit for unit in text_units if unit.id not in by_unit]
+        by_unit = self.store.load(document_units, fingerprint, record_from_payload)
+        # A seed unit's record is its parsed text (no model call), stored
+        # under the seed fingerprint like any record (graph resolution).
+        by_unit.update(
+            self.store.load(seed_units, SEED_RECORD_FINGERPRINT, record_from_payload)
+        )
+        by_unit.update(
+            (unit.id, parse_seed_unit(unit))
+            for unit in seed_units
+            if unit.id not in by_unit
+        )
+        to_extract = [unit for unit in document_units if unit.id not in by_unit]
         stats = ExtractionStats()
         if to_extract:
             records, stats = self.extractor.extract_units(to_extract)
             by_unit.update((record.text_unit_id, record) for record in records)
         logger.info(
             "Graph extraction: %s text units reused from the extraction store, "
-            "%s extracted",
-            len(text_units) - len(to_extract),
+            "%s extracted, %s seed graph units",
+            len(document_units) - len(to_extract),
             len(to_extract),
+            len(seed_units),
         )
         context.unit_extractions = [
             by_unit[unit.id] for unit in text_units if unit.id in by_unit
@@ -921,11 +1024,17 @@ class GraphExtractionStage(PipelineStage):
         context.item_failed_text_unit_ids[self.name] = stats.item_failed_text_unit_ids
 
         entities_count, relationships_count = _distinct_counts(context.unit_extractions)
+        seed_entities, seed_relationships = _distinct_counts(
+            [by_unit[unit.id] for unit in seed_units]
+        )
         metrics = {
             "text_units_processed": len(text_units),
-            "text_units_reused": len(text_units) - len(to_extract),
+            "text_units_reused": len(document_units) - len(to_extract),
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
+            "seed_units": len(seed_units),
+            "seed_entities": seed_entities,
+            "seed_relationships": seed_relationships,
             "failed_units": stats.num_failed_extractions,
             "extraction_stats": stats.model_dump(),
         }
@@ -950,8 +1059,11 @@ class GleaningStage(PipelineStage):
             context.unit_extractions
         )
 
+        # A seed unit's record is final: the gleaner gets the document
+        # units only and hands the seed records back as they are.
         records, gleaning_stats = self.gleaner.glean(
-            text_units, context.unit_extractions
+            [unit for unit in text_units if not is_seed_unit(unit.id)],
+            context.unit_extractions,
         )
 
         context.unit_extractions = records
@@ -1030,9 +1142,18 @@ class GraphResolutionStage(PipelineStage):
                     (units[record.text_unit_id], record_payload(record))
                     for record in fresh
                     if record.gleaned is gleaned
+                    and not is_seed_unit(record.text_unit_id)
                 ],
                 unit_record_fingerprint(self.config, gleaned=gleaned),
             )
+        unsaved |= self.store.save(
+            [
+                (units[record.text_unit_id], record_payload(record))
+                for record in fresh
+                if is_seed_unit(record.text_unit_id)
+            ],
+            SEED_RECORD_FINGERPRINT,
+        )
         for record in fresh:
             record.stored = record.text_unit_id not in unsaved
         if unsaved:
@@ -1119,6 +1240,8 @@ class ClaimExtractionStage(PipelineStage):
         text_units = context.translated_units or context.text_units
         records = {r.text_unit_id: r for r in context.unit_extractions}
         failed = _failed_record_units(context)
+        # A seed unit states no claim (its statements are no prose).
+        text_units = [unit for unit in text_units if not is_seed_unit(unit.id)]
         # Only a final record's claims are a function of the unit's text and
         # settings, so only those are reused and stored.
         storable = {

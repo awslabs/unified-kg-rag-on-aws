@@ -390,6 +390,19 @@ def is_seed_document(document: Document) -> bool:
     return document.metadata.get("source_kind") == SEED_SOURCE_KIND
 
 
+# A shard document's relative path (seed_relative_path), as a registry
+# record keeps it.
+_SEED_PATH = re.compile(
+    rf"^{SEED_DOCUMENT_ROOT}/[a-z0-9][a-z0-9_-]*/[0-9]+-of-[0-9]+\.jsonl$"
+)
+
+
+def is_seed_path(path: str | None) -> bool:
+    """Whether ``path`` (a registry record's ``file_path``) names a seed
+    graph's shard document."""
+    return bool(path) and _SEED_PATH.match(path or "") is not None
+
+
 def is_seed_unit(unit_id: str) -> bool:
     """Whether ``unit_id`` names a seed text unit (the one test anywhere)."""
     return unit_id.startswith(SEED_UNIT_PREFIX)

@@ -53,6 +53,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     document_doc_id,
     filter_documents_to_process,
     fingerprint_documents,
+    keep_seed_settings_unchanged,
     other_local_scopes,
     registry_scope,
     retired_scope_groups,
@@ -70,6 +71,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 )
 from unified_kg_rag.domain.ingestion.merge import merge_claims
 from unified_kg_rag.domain.ingestion.schema_annotation import REANNOTATING_DIGEST
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_path
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Claim,
@@ -97,6 +99,7 @@ from unified_kg_rag.shared import (
     DataProcessingError,
     DocStatusRegistryError,
     NamespaceLeaseError,
+    PipelineExecutionError,
     PipelineStageError,
     get_logger,
 )
@@ -1305,18 +1308,69 @@ def _quarantined_on_reset(
     return quarantined
 
 
+def _confirm_reset_of_seed_scopes(
+    doc_status: Callable[[], DocStatusPort],
+    namespace: str,
+    scope: str,
+    confirm: Callable[[str], bool] | None,
+) -> None:
+    """Ask before a reset drops another source scope's seed graph documents.
+
+    A reset rebuilds the namespace from this run's corpus, so every other
+    scope's records and artifacts go; that is what a reset does. A seed
+    graph's shards (``seed_graphs/...``) of another scope are a seed-only
+    corpus the user may not expect to lose, so ``confirm`` is asked first
+    (the CLI's ``--yes`` answers it). ``None`` cannot ask: the run fails.
+
+    Raises:
+        PipelineExecutionError: The reset is not confirmed.
+        DocStatusRegistryError: The namespace cannot be read.
+    """
+    try:
+        records = doc_status().list_namespace(namespace)
+    except (DocStatusRegistryError, ConfigurationError):
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not read namespace {namespace!r} for "
+            f"the reset ({type(e).__name__}: {e})"
+        ) from e
+    others = sorted(
+        {
+            (record.scope or "").partition("|")[2] or "(no scope)"
+            for record in records
+            if record.scope != scope and is_seed_path(record.file_path)
+        }
+    )
+    if not others:
+        return
+    question = (
+        f"The reset of index namespace {namespace!r} drops the seed graph "
+        f"documents of source scope(s) {', '.join(others)}; continue?"
+    )
+    if confirm is None:
+        raise PipelineExecutionError(
+            f"{question} No one can confirm it (run-ingestion --yes does)"
+        )
+    if not confirm(question):
+        raise PipelineExecutionError(f"Reset cancelled: {question}")
+
+
 def filter_to_delta(
     documents: list[Document],
     context: PipelineContext,
     config: Config,
     doc_status: Callable[[], DocStatusPort],
     source_directory: Path,
+    confirm: Callable[[str], bool] | None = None,
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
     Also stashes the computed delta + fingerprints on the context so the
     IndexingStage can prune stale artifacts, propagate deletions, and record
-    per-document lineage (the full incremental commit path).
+    per-document lineage (the full incremental commit path). A reset asks
+    ``confirm`` first when it drops another scope's seed graph documents
+    (see ``_confirm_reset_of_seed_scopes``).
 
     Raises :class:`DocStatusRegistryError` when the registry cannot be
     read. There is no safe fallback: without a delta the indexing stage
@@ -1341,6 +1395,8 @@ def filter_to_delta(
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
     if config.indexing.reset:
+        # Before any write: the reset may drop another scope's seed graph.
+        _confirm_reset_of_seed_scopes(doc_status, namespace, scope, confirm)
         # A reset rebuilds the namespace from the whole corpus and then
         # replaces the registry's records, so every document is new: diffing
         # against the registry here would rebuild from the delta alone and
@@ -1414,7 +1470,7 @@ def filter_to_delta(
         respelled = config.model_copy(deep=True)
         respelled.processing.document_parsing.source_scope = stored_spelling
         return filter_to_delta(
-            documents, context, respelled, doc_status, source_directory
+            documents, context, respelled, doc_status, source_directory, confirm
         )
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
@@ -1667,6 +1723,17 @@ def delta_still_applies(
             scope=scope,
             extraction_fingerprint=extraction_fingerprint,
         )
+        # The seed shards the diff kept for a settings change (detect_delta),
+        # told by their recorded paths: the run has no documents here.
+        if fresh.settings_changed:
+            keep_seed_settings_unchanged(
+                fresh,
+                [
+                    doc_id
+                    for doc_id, record in store.get_many(fresh.settings_changed).items()
+                    if is_seed_path(record.file_path)
+                ],
+            )
         known = {
             *delta.new,
             *delta.changed,

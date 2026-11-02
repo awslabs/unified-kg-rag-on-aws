@@ -41,7 +41,7 @@ local source directories of the run's namespace so the run can warn.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import NamedTuple, Protocol
 
@@ -62,6 +62,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     registry_namespace,
     relative_source_path,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_document
 from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
@@ -82,6 +83,7 @@ __all__ = [
     "document_doc_id",
     "filter_documents_to_process",
     "fingerprint_documents",
+    "keep_seed_settings_unchanged",
     "other_local_scopes",
     "registry_scope",
     "RetiredScope",
@@ -142,13 +144,18 @@ def assign_document_identity(
 
     A document whose ``file_path`` lies outside the root (a pre-parsed JSON
     document records its original path) keeps the relative path the loader
-    recorded for the file it was read from.
+    recorded for the file it was read from, and a seed graph's shard (a
+    virtual document, ``seed_graph.seed_document``) the path naming the seed
+    and the shard.
     """
-    relative = (
-        relative_source_path(document.file_path, source_root)
-        or document.metadata.get(RELATIVE_PATH_KEY)
-        or normalize_source_path(document.file_path)
-    )
+    if is_seed_document(document):
+        relative = document.metadata[RELATIVE_PATH_KEY]
+    else:
+        relative = (
+            relative_source_path(document.file_path, source_root)
+            or document.metadata.get(RELATIVE_PATH_KEY)
+            or normalize_source_path(document.file_path)
+        )
     document.metadata[RELATIVE_PATH_KEY] = relative
     document.metadata[REGISTRY_NAMESPACE_KEY] = registry_namespace(
         _document_suffix(document), additional_suffix, store_tag
@@ -290,6 +297,16 @@ def detect_delta(
     delta = doc_status.diff(
         fingerprints, scope=scope, extraction_fingerprint=extraction_fingerprint
     )
+    exempt = keep_seed_settings_unchanged(
+        delta,
+        {document_doc_id(d) for d in documents if is_seed_document(d)},
+    )
+    if exempt:
+        delta.quarantined_unchanged.extend(
+            doc_id
+            for doc_id, record in doc_status.get_many(exempt).items()
+            if record.status is DocStatus.QUARANTINED
+        )
     if retired:
         retire_source_scopes(doc_status, delta, retired, own_scope=scope)
     if max_attempts is not None and delta.quarantined_unchanged:
@@ -349,6 +366,37 @@ class RetiredScope(NamedTuple):
 
 def _as_given(value: str) -> tuple[list[str], bool]:
     return [value], False
+
+
+def keep_seed_settings_unchanged(
+    delta: DocumentDelta, seed_doc_ids: Collection[str]
+) -> list[str]:
+    """Classify the seed graph shards of ``seed_doc_ids`` that only the
+    extraction settings changed (``settings_changed``) unchanged, in place;
+    returns them.
+
+    A shard's units are parsed, never extracted: no model setting changes
+    what it states, so re-importing it would only delete and re-embed its
+    items. Its record keeps the earlier fingerprint, so later runs exempt it
+    again. A changed seed (or a schema change that changes its content)
+    still changes its content hash, and so the shard.
+    """
+    seeds = set(seed_doc_ids)
+    exempt = [doc_id for doc_id in delta.settings_changed if doc_id in seeds]
+    if not exempt:
+        return []
+    moved = set(exempt)
+    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in moved]
+    delta.settings_changed = [
+        doc_id for doc_id in delta.settings_changed if doc_id not in moved
+    ]
+    delta.unchanged.extend(exempt)
+    logger.info(
+        "%d seed graph documents are kept: the extraction settings that "
+        "changed do not apply to them",
+        len(exempt),
+    )
+    return exempt
 
 
 def retired_scope_groups(

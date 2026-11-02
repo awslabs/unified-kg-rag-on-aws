@@ -188,7 +188,7 @@ class CommandLineInterface:
             "-y",
             action="store_true",
             help="Answer yes to confirmation prompts (continuing after a failed "
-            "integrity check). Without it, a prompt that cannot be asked "
+            "integrity check, or a reset that asks first). Without it, a prompt that cannot be asked "
             "because stdin is not a terminal fails the run",
         )
         parser.add_argument(
@@ -546,6 +546,7 @@ class IngestionPipelineRunner:
             source_directory=self.args.source_directory,
             target_directory=self.args.output_directory,
             metrics_sink=self._build_metrics_sink(),
+            confirm=self._confirm,
         )
 
         previous_handlers = self._stop_on_signals(self.pipeline)

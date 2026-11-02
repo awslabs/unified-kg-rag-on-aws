@@ -29,7 +29,9 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_ONLY_SOURCE_KINDS,
+    SEED_SOURCE_KIND,
     SOURCE_KINDS_FIELD,
+    is_seed_unit,
 )
 from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
 from unified_kg_rag.ports.indexer import (
@@ -757,6 +759,9 @@ class FakeVectorStore(_Recorder):
         found: dict[str, list[str]] = {}
         for item_id, item in self.data.get(collection, {}).items():
             value: Any = item.model_dump()
+            if collection == "text_units" and is_seed_unit(item_id):
+                # The stores' top-level keyword on a seed graph's unit.
+                value["source_kind"] = SEED_SOURCE_KIND
             for part in field.split("."):
                 value = value.get(part) if isinstance(value, dict) else None
             held = value if isinstance(value, list) else [value]

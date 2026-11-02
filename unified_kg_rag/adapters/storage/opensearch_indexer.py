@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
+from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -698,6 +699,8 @@ class OpenSearchIndexer(VectorIndexer):
             "text": unit.text or "",
             "text_embedding": embeddings[0],
             "n_tokens": unit.n_tokens or 0,
+            # Only on a seed graph's unit: a document's is stored as before.
+            **_present(source_kind=SEED_SOURCE_KIND if is_seed_unit(unit.id) else None),
         }
         if unit.community_ids:
             doc["community_ids"] = (

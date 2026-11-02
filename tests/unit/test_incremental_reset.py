@@ -299,13 +299,19 @@ def test_reset_fails_when_the_registry_cannot_be_cleared(mocker) -> None:
 
     class _UnreachableStore(FakeDocStatusStore):
         # The registry adapters raise their errors as DocStatusRegistryError.
+        # Reachable for the loading stage's reset check.
+        broken = False
+
         def list_namespace(self, namespace):
-            raise DocStatusRegistryError("registry unreachable")
+            if self.broken:
+                raise DocStatusRegistryError("registry unreachable")
+            return super().list_namespace(namespace)
 
     store = _UnreachableStore()
     config = _reset_config()
     stage = _reset_stage(mocker, config, store)
     context = _reset_context(config, store)
+    store.broken = True
 
     with pytest.raises(DocStatusRegistryError, match="registry unreachable"):
         stage._execute_core(context)
@@ -322,12 +328,17 @@ def test_reset_surfaces_a_registry_configuration_error_as_itself(mocker) -> None
     )
 
     class _MisconfiguredStore(FakeDocStatusStore):
+        broken = False
+
         def list_namespace(self, namespace):
-            raise ConfigurationError("aws.dynamodb.table_name must be set")
+            if self.broken:
+                raise ConfigurationError("aws.dynamodb.table_name must be set")
+            return super().list_namespace(namespace)
 
     store = _MisconfiguredStore()
     stage = _reset_stage(mocker, _reset_config(), store)
     context = _reset_context(_reset_config(), store)
+    store.broken = True
 
     with pytest.raises(ConfigurationError, match="table_name must be set") as info:
         stage._execute_core(context)
