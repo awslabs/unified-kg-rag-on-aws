@@ -12,13 +12,20 @@ documents and mappings.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.schema_annotation import (
+    UNANNOTATED_DIGEST,
+    schema_annotation_digest,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import SchemaSourceContext
 from unified_kg_rag.adapters.schema_sources import registry as schema_registry
@@ -29,22 +36,22 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.ingestion import incremental as incremental_module
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     annotations_due,
     reannotate_on_schema_change,
     record_rebuilt_annotations,
 )
+from unified_kg_rag.application.ingestion.pipeline import _Borrowed
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
-    schema_annotation_digest,
     stage_input_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.contributions import record_payload
 from unified_kg_rag.domain.ingestion.schema_annotation import (
     REANNOTATING_DIGEST,
-    UNANNOTATED_DIGEST,
     SchemaAnnotator,
 )
 from unified_kg_rag.domain.models import (
@@ -72,6 +79,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     NamespaceLeaseError,
 )
+from unified_kg_rag.shared.write_fence import install_write_fence, remove_write_fence
 
 pytestmark = pytest.mark.unit
 
@@ -516,7 +524,9 @@ def _written_without_a_schema() -> tuple[FakeVectorStore, FakeGraphStore]:
     return vector, graph
 
 
-def test_reannotate_rewrites_what_a_full_build_writes() -> None:
+def test_reannotate_rewrites_what_a_full_build_writes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     vector, graph = _written_without_a_schema()
     # A vector copy without its edge: no type to annotate it by.
     orphan = _rel("orphan", "SUPPLIES")
@@ -524,8 +534,13 @@ def test_reannotate_rewrites_what_a_full_build_writes() -> None:
     manager = IndexingManager(
         _config(**_SCHEMA_CONFIG), vector_indexer=vector, graph_indexer=graph
     )
-    result = manager.reannotate({"default"})
+    with caplog.at_level(logging.INFO):
+        result = manager.reannotate({"default"})
     assert result.complete
+    assert (
+        "checked 2 stored entities and 2 stored relationships in 'default' "
+        "and rewrote in_schema and the IRIs of 2 and 2 of them"
+    ) in caplog.text
     assert (result.entities, result.entities_rewritten) == (2, 2)
     assert (result.relationships, result.relationships_rewritten) == (2, 2)
     stored = _stored(vector, graph)
@@ -719,10 +734,12 @@ def test_a_failed_rewrite_keeps_the_namespace_marked(
             total_items=len(annotations), failed_items=len(annotations)
         )
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         assert _index(_incremental(config, vector, graph, store))
     assert "4 writes failed" in caplog.text
     assert "the next run tries again" in caplog.text
+    # No count of a pass that did not complete.
+    assert "Schema annotations: checked" not in caplog.text
     assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
     # And the next run, with the same schema, tries again.
     assert annotations_due(_incremental(config, vector, graph, store), _EXISTING)
@@ -781,6 +798,26 @@ def test_a_store_that_cannot_list_its_items_lets_no_store_be_read() -> None:
     assert not rewrites_schema_annotations(graph)
 
 
+@pytest.mark.parametrize(
+    "inherited", ["read_schema_annotations", "write_schema_annotations"]
+)
+def test_a_store_overriding_one_annotation_method_cannot_rewrite(
+    inherited: str,
+) -> None:
+    half = type(
+        "Half", (FakeGraphStore,), {inherited: getattr(GraphIndexer, inherited)}
+    )
+    assert not rewrites_schema_annotations(half(Config()))
+    assert rewrites_schema_annotations(FakeVectorStore())
+
+
+def test_a_borrowed_store_answers_for_the_store_it_wraps() -> None:
+    # The pipeline wraps the indexers it does not own (_Borrowed): the
+    # wrapper's attributes are the store's, and so is the answer.
+    assert not rewrites_schema_annotations(_Borrowed(_UnlistedGraph(Config())))
+    assert rewrites_schema_annotations(_Borrowed(FakeGraphStore(Config())))
+
+
 def test_a_namespace_without_a_record_is_read_once() -> None:
     # Written before the record existed (or by #482, which recorded it per
     # scope): what the stores hold is unknown, so one pass, then recorded.
@@ -795,7 +832,7 @@ def test_a_namespace_without_a_record_is_read_once() -> None:
 
 def test_a_new_namespace_records_its_digest_without_reading() -> None:
     config = _config(**_SCHEMA_CONFIG)
-    vector, graph = _written_without_a_schema()
+    _, vector, graph = _manager(Config())
     store = FakeDocStatusStore()
     # Only the run's own new documents are recorded (open_attempts).
     store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
@@ -810,6 +847,207 @@ def test_a_new_namespace_records_its_digest_without_reading() -> None:
     store = FakeDocStatusStore()
     store.put(DocStatusRecord(doc_id="ns#other", content_hash="h", scope="ns|B"))
     assert _index(_incremental(config, vector, graph, store), new)
+
+
+@pytest.mark.parametrize("held_by", ["graph", "vector"])
+def test_a_lost_registry_is_no_proof_the_stores_are_empty(held_by: str) -> None:
+    # The registry was lost or replaced, the stores kept: its only records
+    # are the run's new documents, yet the stores hold items written
+    # without a schema. They are read once, as a namespace without a
+    # record is, and hold what a full build writes.
+    config = _config(**_SCHEMA_CONFIG)
+    vector, graph = _written_without_a_schema()
+    if held_by == "graph":
+        vector.data.clear()
+    else:
+        graph.data.clear()
+    store = FakeDocStatusStore()
+    store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
+    new = DocumentDelta(new=["ns#new"])
+    incremental = _incremental(config, vector, graph, store)
+    assert annotations_due(incremental, new)
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+    reannotate_on_schema_change(incremental, [])
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+    if held_by == "graph":
+        assert _stored(vector, graph)[:2] == _ANNOTATED[:2]
+    else:  # Vector relationships without an edge keep theirs.
+        assert _stored(vector, graph)[2] == _ANNOTATED[2]
+
+
+def test_a_failed_store_probe_reads_the_namespace(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    _, vector, graph = _manager(Config())
+    store = FakeDocStatusStore()
+
+    def unreachable(suffix: Any = None) -> Any:
+        raise AWSServiceError("Neptune holds_any_item failed: timeout")
+
+    graph.holds_any_item = unreachable  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING):
+        assert annotations_due(
+            _incremental(config, vector, graph, store), DocumentDelta(new=["ns#n"])
+        )
+    assert "Could not tell whether the stores hold items" in caplog.text
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+    def lost(suffix: Any = None) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    graph.holds_any_item = lost  # type: ignore[method-assign]
+    with pytest.raises(NamespaceLeaseError):
+        annotations_due(
+            _incremental(config, vector, graph, FakeDocStatusStore()),
+            DocumentDelta(new=["ns#n"]),
+        )
+
+
+def test_stores_that_cannot_rewrite_are_not_probed() -> None:
+    # A pass could not read them: the new namespace records its digest, as
+    # before the probe.
+    config = _config(**_SCHEMA_CONFIG)
+    graph = _UnlistedGraph(Config())
+    graph.holds_any_item = None  # type: ignore[assignment,method-assign]
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    store = FakeDocStatusStore()
+    assert not annotations_due(
+        _incremental(config, vector, graph, store), DocumentDelta(new=["ns#n"])
+    )
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+
+
+@pytest.mark.parametrize("kind", ["entities", "relationships"])
+def test_the_ports_default_probe_lists_the_items(kind: str) -> None:
+    graph = _UnlistedGraph(Config())
+    assert GraphIndexer.holds_any_item(graph) is None
+    listing = type(
+        "Listing",
+        (_UnlistedGraph,),
+        {
+            "read_schema_annotations": lambda self, k, suffix=None: (
+                {"x": object()} if k == kind else {}
+            )
+        },
+    )
+    assert GraphIndexer.holds_any_item(listing(Config())) is True
+    empty = type(
+        "Empty",
+        (_UnlistedGraph,),
+        {"read_schema_annotations": lambda self, k, suffix=None: {}},
+    )
+    assert GraphIndexer.holds_any_item(empty(Config())) is False
+
+
+class _LostLease:
+    def check(self) -> None:
+        raise NamespaceLeaseError("lease lost")
+
+
+@contextmanager
+def _lease_lost() -> Iterator[None]:
+    token = install_write_fence(_LostLease())
+    try:
+        yield
+    finally:
+        remove_write_fence(token)
+
+
+def test_a_lost_lease_records_no_digest_for_a_new_namespace() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    _, vector, graph = _manager(Config())
+    store = FakeDocStatusStore()
+    store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
+    with _lease_lost(), pytest.raises(NamespaceLeaseError):
+        annotations_due(
+            _incremental(config, vector, graph, store), DocumentDelta(new=["ns#new"])
+        )
+    assert store.get_annotation_digest(_NAMESPACE) is None
+
+
+def test_a_lost_lease_records_no_rebuilt_digest() -> None:
+    manager, _, _ = _manager(_config(**_SCHEMA_CONFIG))
+    store = FakeDocStatusStore()
+    store.put_annotation_digest("a", REANNOTATING_DIGEST)
+    with _lease_lost(), pytest.raises(NamespaceLeaseError):
+        record_rebuilt_annotations(store, manager, {"a"}, rebuilt=True)
+    assert store.get_annotation_digest("a") == REANNOTATING_DIGEST
+
+
+def test_a_lost_lease_after_the_pass_keeps_the_namespace_marked() -> None:
+    config = _config(**_SCHEMA_CONFIG)
+    vector, graph = _written_without_a_schema()
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, UNANNOTATED_DIGEST)
+    incremental = _incremental(config, vector, graph, store)
+    assert annotations_due(incremental, _EXISTING)
+    with _lease_lost(), pytest.raises(NamespaceLeaseError):
+        reannotate_on_schema_change(incremental, [])
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+
+def test_a_doc_id_another_scope_holds_is_no_new_namespace() -> None:
+    # The diff read that scope's record (stored_scopes): the namespace held
+    # documents, even though every record it lists is one of the run's new.
+    config = _config(**_SCHEMA_CONFIG)
+    _, vector, graph = _manager(Config())
+    store = FakeDocStatusStore()
+    store.put(DocStatusRecord(doc_id="ns#x", content_hash="h", scope="ns|B"))
+    delta = DocumentDelta(new=["ns#x"], stored_scopes=["ns|B"])
+    assert annotations_due(_incremental(config, vector, graph, store), delta)
+    assert store.get_annotation_digest(_NAMESPACE) == REANNOTATING_DIGEST
+
+
+def test_a_marked_namespace_with_only_new_documents_is_read() -> None:
+    # A killed reset left the mark: the pass is made, not skipped as for a
+    # namespace without a record.
+    config = _config(**_SCHEMA_CONFIG)
+    _, vector, graph = _manager(Config())
+    store = FakeDocStatusStore()
+    store.put_annotation_digest(_NAMESPACE, REANNOTATING_DIGEST)
+    store.put(DocStatusRecord(doc_id="ns#new", content_hash="pending", scope="ns|A"))
+    reads = _reads(vector, graph)
+    incremental = _incremental(config, vector, graph, store)
+    assert annotations_due(incremental, DocumentDelta(new=["ns#new"]))
+    reannotate_on_schema_change(incremental, [])
+    assert reads
+    assert store.get_annotation_digest(_NAMESPACE) == _digest(config)
+
+
+def test_index_delta_marks_the_namespace_before_the_write_ahead(mocker) -> None:
+    order: list[str] = []
+
+    class _Stop(Exception):
+        pass
+
+    def write_ahead(*_: Any, **__: Any) -> None:
+        order.append("write_ahead")
+        raise _Stop
+
+    incremental = SimpleNamespace(
+        suffix="default",
+        check_graph_holds_registry=lambda delta: None,
+        write_ahead=write_ahead,
+    )
+    mocker.patch.object(
+        incremental_module, "run_incremental_indexer", return_value=incremental
+    )
+    mocker.patch.object(incremental_module, "context_lineages", return_value=[])
+    mocker.patch.object(
+        incremental_module,
+        "annotations_due",
+        side_effect=lambda *_: order.append("due") or False,
+    )
+    manager = SimpleNamespace(
+        opensearch_indexer=SimpleNamespace(check_index_settings=lambda s: None)
+    )
+    context = SimpleNamespace(incremental_delta=DocumentDelta())
+    with pytest.raises(_Stop):
+        incremental_module.index_delta(
+            FakeDocStatusStore, manager, context, [], [], [], [], [], []  # type: ignore[arg-type]
+        )
+    assert order == ["due", "write_ahead"]
 
 
 def test_a_rebuild_marks_its_namespaces_until_it_wrote_everything() -> None:

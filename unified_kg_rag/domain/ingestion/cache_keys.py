@@ -62,7 +62,6 @@ from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
 from unified_kg_rag import __version__
-from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -590,7 +589,7 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
     and ``align`` extract alike and key as the default. What the schema
     changes only in what indexing stores (its IRIs, ``off`` against
     ``align`` with entity types alone) keys the indexing stage
-    (``_schema_iris``), and its digest (``schema_annotation_digest``) is
+    (``_schema_iris``), and its digest (``SchemaAnnotator.digest``) is
     recorded per index namespace once the stores hold its annotations.
     """
     if path in _SCHEMA_TYPE_FIELDS:
@@ -604,19 +603,6 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
     ):
         return _field_default(path)
     return value
-
-
-def schema_annotation_digest(config: Config) -> str:
-    """The digest of the schema annotations indexing writes with ``config``
-    (``SchemaAnnotator.digest``).
-
-    Raises:
-        ConfigurationError: A schema source was not loaded into the inline
-            keys (``GraphExtractionConfig.extraction_schema``).
-    """
-    return SchemaAnnotator(
-        config.processing.graph_extraction.extraction_schema()
-    ).digest
 
 
 _ROLES_PREFIX = "models.roles."

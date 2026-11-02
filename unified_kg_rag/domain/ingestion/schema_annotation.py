@@ -146,10 +146,6 @@ class SchemaAnnotator:
         return [self.relationship(r) for r in relationships]
 
 
-# The digest of an annotator that annotates nothing: what every item written
-# without schema annotations holds (no schema, or one that gives none).
-UNANNOTATED_DIGEST = SchemaAnnotator(ExtractionSchema()).digest
-
 # Recorded for a namespace (``DocStatusPort.put_annotation_digest``) before a
 # run's first write when its stores may come to hold the annotations of two
 # schemas (a re-annotation pass, a rebuild), and replaced by the digest once

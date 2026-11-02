@@ -33,6 +33,7 @@ passes when the property matches or when it has no such property
 (``NeptuneRetriever._filter_predicate``). Other keys are strict on both stores.
 """
 
+import json
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -140,7 +141,7 @@ def check_filter_values(
 
     def bad(value: Any) -> str | None:
         if value is None:
-            return "has no value (None)"
+            return "has no value (null)"
         if isinstance(value, float) and value != value:
             return "is NaN"
         if not isinstance(value, _SCALARS):
@@ -150,7 +151,7 @@ def check_filter_values(
     for key, value in (filters or {}).items():
         reason: str | None
         if value is None:
-            reason = "has no value (None); give the value to match"
+            reason = "has no value (null); give the value to match"
         elif isinstance(value, list):
             if not value and not allow_empty_lists:
                 reason = "is an empty list; give at least one value"
@@ -214,15 +215,16 @@ def _typed(key: str, kind: str, value: Any) -> Any:
             return value
         expected = "an integer" if kind == _INTEGER else "a number"
         raise InvalidFilterError(
-            f"Filter '{key}' is {expected} field; give {expected}, not {value}."
+            f"Filter '{key}' is {expected} field; give {expected}, not "
+            f"{_shown(value)}."
         )
     if isinstance(value, int | float):
         if kind == _BOOLEAN:
             raise InvalidFilterError(
                 f"Filter '{key}' is a boolean field; give true or false, "
-                f"not {value!r}."
+                f"not {_shown(value)}."
             )
-        return _number(key, kind, value, value)
+        return _number(key, kind, value, _shown(value))
     if not isinstance(value, str):
         return value
     text = value.strip()
@@ -246,7 +248,13 @@ def _typed(key: str, kind: str, value: Any) -> Any:
     return _number(key, kind, number, f"'{value}'")
 
 
-def _number(key: str, kind: str, number: float, given: Any) -> int | float:
+def _shown(value: bool | float) -> str:
+    """``value`` as a filter names it (JSON, as a query file or ``--filter``
+    gives it): ``true``, not Python's ``True``."""
+    return json.dumps(value)
+
+
+def _number(key: str, kind: str, number: float, given: str) -> int | float:
     """``number`` as a ``kind`` (number or integer) value; ``given`` is how
     the error names the value."""
     if isinstance(number, int):

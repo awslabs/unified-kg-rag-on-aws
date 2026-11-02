@@ -1540,3 +1540,25 @@ def test_graph_expansion_types_string_filter_values() -> None:
     assert GraphExpansionRetriever._scope_filters_to_label(
         "entity", {"in_schema": "false", "rank": "2", "category": "x"}
     ) == {"in_schema": False, "rank": 2}
+
+
+@pytest.mark.parametrize(
+    ("filters", "shown"),
+    [
+        ({"rank": True}, "not true."),
+        ({"in_schema": 1}, "not 1."),
+        ({"in_schema": 0.0}, "not 0.0."),
+        ({"level": 2.5}, "not 2.5."),
+        ({"depth": float("inf")}, "not Infinity."),
+        ({"in_schema": "maybe"}, "not 'maybe'."),
+    ],
+)
+def test_a_filter_error_names_the_value_as_json(
+    filters: dict[str, Any], shown: str
+) -> None:
+    # As a query file or --filter gives it, not as Python writes it.
+    with pytest.raises(InvalidFilterError) as error:
+        typed_filter_values(filters)
+    assert str(error.value).endswith(shown)
+    with pytest.raises(InvalidFilterError, match=r"has no value \(null\)"):
+        GraphRAGChain.check_filter_values({"rank": None})

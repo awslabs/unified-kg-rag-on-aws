@@ -1464,10 +1464,10 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
   패턴이 들어 있습니다. 설정이 선언한 유형과 패턴은 설명, IRI와 함께 모두 남고, 설정에
   패턴이 있는 관계 유형에는 다른 패턴을 더하지 않습니다. `schema_source: {kind: file}`
   파일이므로 검토한 뒤 `schema_mode: align`으로 읽으세요(주석의 경로는 `--config-path`
-  파일의 디렉터리 기준 상대 경로). 모델 답이 같으면 같은 파일이 나옵니다. 사용 중인 스키마는
-  덮어쓰지 않습니다. 설정이 읽는 스키마 파일을 `--schema-out`이나 `--output-path`로
-  지정하면 종료 코드 2로 끝나고, 이미 있는 `--schema-out` 파일도 `--force`가 없으면
-  종료 코드 2로 끝납니다.
+  파일의 디렉터리 기준 상대 경로). 모델 답이 같으면 같은 파일이 나옵니다. 사용 중인 설정과
+  스키마는 덮어쓰지 않습니다. `--config-path` 파일이나 설정이 읽는 스키마 파일을
+  `--schema-out`이나 `--output-path`로 지정하면 `--force`를 주어도 종료 코드 2로 끝나고,
+  두 옵션 중 하나가 이미 있는 파일을 가리켜도 `--force`가 없으면 종료 코드 2로 끝납니다.
 - 텍스트가 아닌 형식은 수집과 같은 로더(`ParserFactory.register_loader`로 추가한 형식
   포함)를 거치며, 파싱하지 못한 파일은 경고와 함께 건너뜁니다.
 - 모델이 JSON 프로필을 돌려주지 않으면 0이 아닌 코드로 끝나고 아무것도 쓰지 않습니다.

@@ -420,7 +420,10 @@ Library API (Python callers and custom backends).
   `put_annotation_digest`: one record per index namespace of which schema
   annotations its stores hold (a digest, or the rewrite sentinel), kept in
   the namespace's partition and never listed as a document. The DynamoDB
-  and SQLite registries implement them (#488).
+  and SQLite registries implement them (#488). A custom backend that
+  rewrites schema annotations may override `holds_any_item(suffix)` on
+  `GraphIndexer` / `VectorIndexer` with a bounded read; the default lists
+  the items through `read_schema_annotations` (#490).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -685,7 +688,11 @@ From 0.2.3 (or a `main` checkout since):
   reads nothing. A rewrite that stops (a kill, a failed write, a store
   that cannot be read, which now warns instead of failing the run) is made
   again by the next run under any schema; Neptune reads the annotations in
-  bounded batches; a reset records the annotations it wrote (#488).
+  bounded batches; a reset records the annotations it wrote (#488). A
+  namespace whose registry holds none of its documents (a lost or replaced
+  registry) records its digest without reading only when the stores hold
+  no item of the suffix either, and the pipeline's own indexers no longer
+  hide that a store cannot list its items (#490).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
@@ -697,9 +704,10 @@ From 0.2.3 (or a `main` checkout since):
   relationship type with configured patterns gets no other. It names
   `schema_mode: align` (the comment's path relative to the config file's
   directory), and a fixed model gives the same file. It never replaces a
-  file silently: `--schema-out` (or `--output-path`) naming the schema file
-  the config loads exits 2, and so does an existing `--schema-out` file
-  unless `--force` is given (#478, #480, #483).
+  file silently: `--schema-out` or `--output-path` naming the
+  `--config-path` file or the schema file the config loads exits 2, even
+  with `--force`, and so does either naming an existing file unless
+  `--force` is given (#478, #480, #483, #490).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -822,7 +830,8 @@ Queries and retrieval.
   the command line). A typed value must be of the field's type too: a
   boolean field takes no number (`in_schema: 1`), a numeric one no boolean
   (`rank: true`) and an integer one no fractional number (`level: 2.5`;
-  `2.0` is `2`) (#479, #483).
+  `2.0` is `2`). The errors name the value as JSON does (`true`, `null`)
+  (#479, #483, #490).
 - Local search's entity frequency filter no longer drops the query's own
   matched entities (#218), and local search keeps its seeds when graph
   expansion degrades (#261).

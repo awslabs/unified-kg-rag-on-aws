@@ -416,6 +416,19 @@ class GraphIndexer(BaseIndexer):
         """
         return None
 
+    def holds_any_item(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s graph holds any entity or relationship (an
+        item :meth:`read_schema_annotations` lists).
+
+        An incremental run whose registry holds none of its namespace's
+        documents asks it before it records, without reading them, that the
+        stores hold only what it writes: a lost or replaced registry is no
+        proof the stores are empty. Default: from
+        :meth:`read_schema_annotations` (``None`` when it cannot list);
+        adapters that override it read one item and raise when a read fails.
+        """
+        return _holds_any_item(self, suffix)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,
@@ -631,6 +644,12 @@ class VectorIndexer(BaseIndexer):
         the backend cannot enumerate its documents."""
         return None
 
+    def holds_any_item(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s live indices hold any entity or relationship
+        (see :meth:`GraphIndexer.holds_any_item`). Default: from
+        :meth:`read_schema_annotations`."""
+        return _holds_any_item(self, suffix)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,
@@ -795,14 +814,37 @@ class VectorIndexer(BaseIndexer):
 _ANNOTATION_METHODS = ("read_schema_annotations", "write_schema_annotations")
 
 
+def _holds_any_item(
+    store: GraphIndexer | VectorIndexer, suffix: str | None
+) -> bool | None:
+    """The ports' default ``holds_any_item``: a full listing of each kind."""
+    kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
+    for kind in kinds:
+        listed = store.read_schema_annotations(kind, suffix)
+        if listed is None:
+            return None
+        if listed:
+            return True
+    return False
+
+
 def rewrites_schema_annotations(store: object) -> bool:
     """Whether ``store`` can enumerate and rewrite its schema annotations:
     it implements both ``read_schema_annotations`` and
     ``write_schema_annotations`` instead of inheriting the defaults, which
     read nothing. Checked before a re-annotation pass reads anything, so a
-    store that cannot does not make the pass read the other in vain."""
-    return all(
-        getattr(type(store), name, None)
-        not in (getattr(GraphIndexer, name), getattr(VectorIndexer, name))
+    store that cannot does not make the pass read the other in vain.
+
+    Compares the functions the store's attributes are bound to, so a
+    wrapper that forwards its attributes (the pipeline's borrowed
+    indexers) answers for the store it wraps."""
+    defaults = {
+        getattr(port, name)
+        for port in (GraphIndexer, VectorIndexer)
         for name in _ANNOTATION_METHODS
-    )
+    }
+    for name in _ANNOTATION_METHODS:
+        method = getattr(store, name, None)
+        if method is None or getattr(method, "__func__", method) in defaults:
+            return False
+    return True

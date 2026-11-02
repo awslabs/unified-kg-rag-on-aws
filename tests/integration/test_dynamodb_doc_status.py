@@ -449,3 +449,15 @@ def test_a_retried_registry_write_checks_the_fence_per_attempt(
         remove_write_fence(token)
     # Two attempts went out (and were retried); the third was stopped.
     assert (fence.checks, len(sent)) == (3, 2)
+
+
+def test_the_annotation_record_is_read_strongly_consistent(
+    ddb_store: DynamoDBDocStatusStore, mocker
+) -> None:
+    # A run decides from it whether the stores need a pass: an eventually
+    # consistent read may miss the mark a stopped run left.
+    spy = mocker.spy(ddb_store.client, "get_item")
+    ddb_store.put_annotation_digest("ns", "d")
+    assert ddb_store.get_annotation_digest("ns") == "d"
+    assert spy.call_args_list
+    assert all(c.kwargs.get("ConsistentRead") is True for c in spy.call_args_list)

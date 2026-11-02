@@ -113,7 +113,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-path",
         type=Path,
         default=Path("tuned_prompts.yaml"),
-        help="Where to write the tuned custom_prompts YAML",
+        help=(
+            "Where to write the tuned custom_prompts YAML. An existing file "
+            "is refused unless --force, and so are the --config-path file "
+            "and the schema file the config loads, always"
+        ),
     )
     parser.add_argument(
         "--schema-out",
@@ -127,16 +131,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "use most, for schema_source: {kind: file, path: PATH} with "
             "schema_mode: align. Every type and pattern the config declares "
             "is kept, with its description and IRI. An existing file is "
-            "refused unless --force, and so is the schema file the config "
-            "loads, always: write the draft elsewhere and merge it"
+            "refused unless --force, and so are the --config-path file and "
+            "the schema file the config loads, always: write the draft "
+            "elsewhere and merge it"
         ),
     )
     parser.add_argument(
         "--force",
         action="store_true",
         help=(
-            "Let --schema-out replace an existing file (never the schema "
-            "file the config loads)"
+            "Let --output-path and --schema-out replace an existing file "
+            "(never the --config-path file or the schema file the config "
+            "loads)"
         ),
     )
     parser.add_argument(
@@ -158,32 +164,37 @@ def _same_file(a: Path, b: Path) -> bool:
 
 
 def _check_outputs(args: argparse.Namespace, config: Config) -> None:
-    """Exit 2 before any model call when an output would replace the schema
-    file the config loads, ``--schema-out`` names an existing file without
-    ``--force``, or both outputs name one file."""
+    """Exit 2 before any model call when an output would replace the
+    ``--config-path`` file or the schema file the config loads, names an
+    existing file without ``--force``, or both outputs name one file."""
     source = config.processing.graph_extraction.schema_source.path
     loaded = Path(source) if source and "://" not in source else None
+    config_file = Path(args.config_path) if args.config_path else None
     outputs = [("--output-path", args.output_path)]
     if args.schema_out is not None:
         outputs.append(("--schema-out", args.schema_out))
     for flag, path in outputs:
+        if config_file is not None and _same_file(path, config_file):
+            usage_error(
+                f"{flag} '{path}' is the --config-path file; write the output "
+                "to another file and merge what you keep"
+            )
         if loaded is not None and _same_file(path, loaded):
             usage_error(
                 f"{flag} '{path}' is the schema file the config loads "
                 "(processing.graph_extraction.schema_source); write the draft "
                 "to another file and merge what you keep"
             )
-    if args.schema_out is None:
-        return
-    if _same_file(args.schema_out, args.output_path):
+    if args.schema_out is not None and _same_file(args.schema_out, args.output_path):
         usage_error(
             f"--schema-out and --output-path name one file: '{args.schema_out}'"
         )
-    if args.schema_out.exists() and not args.force:
-        usage_error(
-            f"--schema-out '{args.schema_out}' exists; pass --force to replace "
-            "it, or name another file"
-        )
+    for flag, path in outputs:
+        if path.exists() and not args.force:
+            usage_error(
+                f"{flag} '{path}' exists; pass --force to replace it, or name "
+                "another file"
+            )
 
 
 def _schema_source_path(schema_out: Path, config_path: str | None) -> str:
@@ -192,9 +203,12 @@ def _schema_source_path(schema_out: Path, config_path: str | None) -> str:
     given without a config file: relative to the working directory)."""
     if config_path is None or schema_out.is_absolute():
         return str(schema_out)
+    # The loader joins the config path's own directory, not its target's
+    # when the file is a symlink: resolve that directory, not the file.
+    directory = Path(config_path).absolute().parent.resolve()
     # pathlib's relative_to cannot walk up ('..') before Python 3.12.
     try:
-        return os.path.relpath(schema_out.resolve(), Path(config_path).resolve().parent)
+        return os.path.relpath(schema_out.resolve(), directory)
     except ValueError:  # Another drive (Windows): no relative path.
         return str(schema_out.resolve())
 

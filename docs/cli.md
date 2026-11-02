@@ -129,9 +129,9 @@ Guide: [User Guide](./user-guide.md#8-prompt-tuning-run-prompt-tuning). Also tak
 | Flag | Default | Description |
 |---|---|---|
 | `--source-directory` | required | Directory of documents to sample (.txt/.md plus every format run-ingestion parses, e.g. .pdf). |
-| `--output-path` | `tuned_prompts.yaml` | Where to write the tuned custom_prompts YAML. |
-| `--schema-out` `PATH` | — | Also write an extraction schema draft (.yaml/.yml): the profile's entity types (the configured ones when the config declares them) and the relationship types the tuning examples use most, for schema_source: {kind: file, path: PATH} with schema_mode: align. Every type and pattern the config declares is kept, with its description and IRI. An existing file is refused unless --force, and so is the schema file the config loads, always: write the draft elsewhere and merge it. |
-| `--force` | off | Let --schema-out replace an existing file (never the schema file the config loads). |
+| `--output-path` | `tuned_prompts.yaml` | Where to write the tuned custom_prompts YAML. An existing file is refused unless --force, and so are the --config-path file and the schema file the config loads, always. |
+| `--schema-out` `PATH` | — | Also write an extraction schema draft (.yaml/.yml): the profile's entity types (the configured ones when the config declares them) and the relationship types the tuning examples use most, for schema_source: {kind: file, path: PATH} with schema_mode: align. Every type and pattern the config declares is kept, with its description and IRI. An existing file is refused unless --force, and so are the --config-path file and the schema file the config loads, always: write the draft elsewhere and merge it. |
+| `--force` | off | Let --output-path and --schema-out replace an existing file (never the --config-path file or the schema file the config loads). |
 | `--max-docs` | `20` | Max documents to sample (at least 1). |
 | `--config-path` | — | Config YAML path; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
