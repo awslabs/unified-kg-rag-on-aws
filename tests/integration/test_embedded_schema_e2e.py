@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.schema_annotation import schema_annotation_digest
 from tests.fixtures.store_backends import clear_extraction_records, local_store_config
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
@@ -32,7 +33,6 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.cache_keys import schema_annotation_digest
 from unified_kg_rag.domain.ingestion.document_identity import (
     config_registry_namespace,
 )

@@ -19,6 +19,10 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.schema_annotation import (
+    UNANNOTATED_DIGEST,
+    schema_annotation_digest,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import SchemaSourceContext
 from unified_kg_rag.adapters.schema_sources import registry as schema_registry
@@ -39,13 +43,11 @@ from unified_kg_rag.application.ingestion.pipeline import _Borrowed
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
-    schema_annotation_digest,
     stage_input_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.contributions import record_payload
 from unified_kg_rag.domain.ingestion.schema_annotation import (
     REANNOTATING_DIGEST,
-    UNANNOTATED_DIGEST,
     SchemaAnnotator,
 )
 from unified_kg_rag.domain.models import (
