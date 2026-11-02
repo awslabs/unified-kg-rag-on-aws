@@ -34,6 +34,7 @@ import asyncio
 import os
 import uuid
 from collections.abc import Callable, Iterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -316,12 +317,14 @@ class StoreHarness:
         errors: list[str] = []
         for harness in harnesses:
             if shared:
-                for name, indexer in (
-                    ("graph", harness.graph_indexer),
-                    ("vector", harness.vector_indexer),
+                vector = harness.vector_indexer
+                for name, clear in (
+                    ("graph", harness.graph_indexer.clear),
+                    ("vector", vector.clear),
+                    ("extraction records", partial(clear_extraction_records, vector)),
                 ):
                     try:
-                        indexer.clear(suffixes)
+                        clear(suffixes)
                     except Exception as e:  # noqa: BLE001 - reported below
                         errors.append(f"{name} clear failed ({e})")
             for store in (harness.graph_indexer, harness.vector_indexer):
@@ -330,6 +333,28 @@ class StoreHarness:
             raise AssertionError(
                 f"{self.kind} teardown left data behind: {', '.join(errors)}"
             )
+
+
+def clear_extraction_records(vector_indexer: Any, suffixes: list[str]) -> None:
+    """Delete the extraction-records indices of ``suffixes`` (an
+    ``OpenSearchIndexer`` on a shared server).
+
+    ``clear`` leaves them (a reset keeps the records), so every test that
+    ingested left one behind and a long-lived stack reached the cluster's
+    shard limit.
+    """
+    client = vector_indexer.opensearch_client
+    prefix = vector_indexer.opensearch_config.extraction_records_index_prefix
+    names = sorted(
+        {
+            name
+            for alias in (vector_indexer._get_name(prefix, s) for s in suffixes)
+            for name in client.get_aliases_by_index(f"{alias}-*")
+            if vector_indexer._index_timestamp(alias, name) is not None
+        }
+    )
+    if names:
+        client.delete_indices(names)
 
 
 def _harness_config(kind: str, tmp_path: Path) -> Config:
