@@ -8,7 +8,12 @@ from .base import Named, SchemaAnnotated
 
 
 class Entity(Named, SchemaAnnotated):
-    _annotation_fields: ClassVar[tuple[str, ...]] = ("in_schema", "type_iri")
+    _annotation_fields: ClassVar[tuple[str, ...]] = (
+        "in_schema",
+        "type_iri",
+        "iri",
+        "source_kinds",
+    )
 
     type: str | None = Field(None, description="Type of the entity")
     description: str | None = Field(None, description="Description of the entity")
@@ -44,4 +49,15 @@ class Entity(Named, SchemaAnnotated):
         description="IRI of the ontology class the entity's declared type maps "
         "to, set at indexing unless schema_mode is off; None when the type "
         "declares none",
+    )
+    iri: str | None = Field(
+        default=None,
+        description="IRI of the entity itself, as a seed graph states it (the "
+        "smallest when its statements give several); None when none does",
+    )
+    source_kinds: list[str] | None = Field(
+        default=None,
+        description="The kinds of the text units the entity cites, sorted "
+        "(document, seed_graph), set at indexing; None when it cites no seed "
+        "graph unit (document-only)",
     )

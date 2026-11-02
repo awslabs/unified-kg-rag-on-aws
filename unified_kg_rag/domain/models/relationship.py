@@ -8,7 +8,11 @@ from .base import Identified, SchemaAnnotated
 
 
 class Relationship(Identified, SchemaAnnotated):
-    _annotation_fields: ClassVar[tuple[str, ...]] = ("in_schema", "predicate_iri")
+    _annotation_fields: ClassVar[tuple[str, ...]] = (
+        "in_schema",
+        "predicate_iri",
+        "source_kinds",
+    )
 
     source_id: str = Field(..., description="The source entity ID")
     source_name: str | None = Field(None, description="The source entity name")
@@ -41,4 +45,10 @@ class Relationship(Identified, SchemaAnnotated):
         description="IRI of the ontology property the relationship's declared "
         "type maps to, set at indexing unless schema_mode is off; None when "
         "the type declares none",
+    )
+    source_kinds: list[str] | None = Field(
+        default=None,
+        description="The kinds of the text units the relationship cites, "
+        "sorted (document, seed_graph), set at indexing; None when it cites no "
+        "seed graph unit (document-only)",
     )

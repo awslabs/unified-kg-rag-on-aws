@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
+from unified_kg_rag.domain.ingestion.seed_graph import seed_only
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -207,14 +208,21 @@ class DescriptionSummarizer:
         available = (window - self.summarization_config.max_summary_tokens) // 2
         return min(MAX_INPUT_TOKENS, max(_MIN_INPUT_TOKENS, available))
 
-    def _exceeds_threshold(self, description: str | None) -> bool:
-        return needs_summary(self.config, description)
+    def _exceeds_threshold(self, item: Entity | Relationship) -> bool:
+        # A seed-only item's description is the seed's, already cut at
+        # import (max_description_chars): no model call for it.
+        return not seed_only(item.text_unit_ids) and needs_summary(
+            self.config, item.description
+        )
 
     def summarize_entities(self, entities: list[Entity]) -> list[Entity]:
-        """Re-summarize entity descriptions over the threshold (in place)."""
+        """Re-summarize entity descriptions over the threshold (in place).
+
+        An item all of whose text units are seed units is left as it is.
+        """
         if not self.summarization_config.enabled or not entities:
             return entities
-        over_threshold = [e for e in entities if self._exceeds_threshold(e.description)]
+        over_threshold = [e for e in entities if self._exceeds_threshold(e)]
         if not over_threshold:
             return entities
         summaries = self._summarize_many(
@@ -229,12 +237,13 @@ class DescriptionSummarizer:
     def summarize_relationships(
         self, relationships: list[Relationship]
     ) -> list[Relationship]:
-        """Re-summarize relationship descriptions over the threshold (in place)."""
+        """Re-summarize relationship descriptions over the threshold (in place).
+
+        An item all of whose text units are seed units is left as it is.
+        """
         if not self.summarization_config.enabled or not relationships:
             return relationships
-        over_threshold = [
-            r for r in relationships if self._exceeds_threshold(r.description)
-        ]
+        over_threshold = [r for r in relationships if self._exceeds_threshold(r)]
         if not over_threshold:
             return relationships
         summaries = self._summarize_many(

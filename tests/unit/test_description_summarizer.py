@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
+from unified_kg_rag.domain.ingestion.seed_graph import seed_unit_id
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
@@ -225,6 +226,52 @@ class TestSummarizeRelationships:
 
     def test_empty_input(self, summarizer) -> None:
         assert summarizer.summarize_relationships([]) == []
+
+
+# --------------------------------------------------------------------------- #
+# Seed graph items
+# --------------------------------------------------------------------------- #
+class TestSeedItems:
+    """An item whose text units are all seed units keeps its (seed)
+    description: it was cut at import, so no model call is made for it."""
+
+    def test_seed_only_items_are_skipped(self, summarizer, mocker) -> None:
+        invoke = mocker.Mock(return_value="summary")
+        summarizer.summarizer.invoke = invoke
+        seed = Entity(
+            id="e1",
+            name="Acme",
+            description=LONG_DESCRIPTION,
+            text_unit_ids=[seed_unit_id("s", 0), seed_unit_id("s", 1)],
+        )
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            description=LONG_DESCRIPTION,
+            text_unit_ids=[seed_unit_id("s", 0)],
+        )
+
+        assert summarizer.summarize_entities([seed])[0].description == (
+            LONG_DESCRIPTION
+        )
+        assert summarizer.summarize_relationships([rel])[0].description == (
+            LONG_DESCRIPTION
+        )
+        invoke.assert_not_called()
+
+    def test_an_item_a_document_also_states_is_summarized(
+        self, summarizer, mocker
+    ) -> None:
+        summarizer.summarizer.invoke = mocker.Mock(return_value="summary")
+        mixed = Entity(
+            id="e1",
+            name="Acme",
+            description=LONG_DESCRIPTION,
+            text_unit_ids=["t1", seed_unit_id("s", 0)],
+        )
+
+        assert summarizer.summarize_entities([mixed])[0].description == "summary"
 
 
 # --------------------------------------------------------------------------- #

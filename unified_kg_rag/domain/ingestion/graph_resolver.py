@@ -24,6 +24,11 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     sum_weights,
     text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    document_first,
+    is_seed_unit,
+    merged_iri,
+)
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils import entity_key, text_digest
@@ -189,6 +194,7 @@ class EntityResolver(BaseResolver):
 
         entity_groups = self._group_similar_entities(entities)
         stats.entity_groups_created = len(entity_groups)
+        conflicting_iris = 0
 
         resolved_entities = []
         entity_mapping = {}
@@ -197,11 +203,18 @@ class EntityResolver(BaseResolver):
                 continue
             merged_entity = self._merge_entities(group)
             resolved_entities.append(merged_entity)
+            conflicting_iris += merged_iri(e.iri for e in group)[1]
             for original_entity in group:
                 entity_mapping[original_entity.id] = merged_entity.id
 
         stats.resolved_entities = len(resolved_entities)
         stats.processing_time = time.time() - start_time
+        if conflicting_iris:
+            logger.info(
+                "Kept the smallest IRI of %d resolved entities whose names "
+                "were stated with several (entities_with_conflicting_iris)",
+                conflicting_iris,
+            )
 
         self._log_completion_summary(stats)
         return resolved_entities, entity_mapping, stats
@@ -347,16 +360,24 @@ class EntityResolver(BaseResolver):
 
     @staticmethod
     def _best_supported_name(entities: list[Entity]) -> str:
-        """The group name cited by the most text units (ties: smallest name).
+        """The group name cited by the most document text units, then by the
+        most seed units (ties: smallest name).
 
         Extraction already merges one name's mentions into one entity, so
         counting entities would leave every name at one and make the
         canonical name (and id) the first one seen, i.e. depend on input order.
+        Documents first: a seed graph's spelling wins only where no document
+        unit tells the names apart (without seed units, the most units win).
         """
         support: dict[str, set[str]] = defaultdict(set)
         for entity in entities:
             support[entity.name].update(entity.text_unit_ids or ())
-        return min(support, key=lambda name: (-len(support[name]), name))
+
+        def key(name: str) -> tuple[int, int, str]:
+            seeds = sum(map(is_seed_unit, support[name]))
+            return -(len(support[name]) - seeds), -seeds, name
+
+        return min(support, key=key)
 
     def _merge_entities(self, entities: list[Entity]) -> Entity:
         if len(entities) == 1:
@@ -366,9 +387,13 @@ class EntityResolver(BaseResolver):
         primary_entity = next(e for e in entities if e.name == canonical_name)
 
         # Max, not mean: confidence is monotonic in evidence (consistent with the
-        # extractor merge); averaging dilutes a well-supported entity.
-        confidences = [e.confidence for e in entities if e.confidence is not None]
+        # extractor merge); averaging dilutes a well-supported entity. Over
+        # the members documents state, when any (seed_graph.document_first).
+        confidences = [
+            e.confidence for e in document_first(entities) if e.confidence is not None
+        ]
         merged_confidence = max(confidences) if confidences else 1.0
+        iri, _ = merged_iri(e.iri for e in entities)
 
         merged_text_unit_ids = self._merge_lists(
             [e.text_unit_ids for e in entities if e.text_unit_ids]
@@ -389,6 +414,7 @@ class EntityResolver(BaseResolver):
                 [e.community_ids for e in entities if e.community_ids]
             ),
             confidence=merged_confidence,
+            iri=iri,
             attributes=merge_attributes([e.attributes for e in entities]),
             # Keep the earliest known creation time; leave it None (truthfully
             # unknown) rather than fabricating wall-clock time when no member

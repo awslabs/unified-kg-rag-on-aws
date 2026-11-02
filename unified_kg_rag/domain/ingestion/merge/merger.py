@@ -28,6 +28,11 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
     overlay_weights,
     text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    document_first,
+    merged_iri,
+    seed_only,
+)
 from unified_kg_rag.domain.models import Claim, Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import entity_key
@@ -62,7 +67,17 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     type), while a full build keeps the most frequent type of a name's
     mentions, so an incremental run can keep a type a full rebuild replaces,
     like a name.
+
+    Documents first (``seed_graph.document_first``): a seed-only side's
+    confidence counts only when the other side is seed-only too, and a side
+    documents state replaces a seed-only side's type. The IRI is the
+    smaller one given.
     """
+    # Read before the text units are unioned below.
+    deciding = [e.confidence for e in document_first([surviving, incoming])]
+    incoming_decides = seed_only(surviving.text_unit_ids) and not seed_only(
+        incoming.text_unit_ids
+    )
     surviving.description = merge_descriptions(
         (surviving.description, incoming.description)
     )
@@ -91,15 +106,15 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     # rebuild and an incremental build convergent on these fields too — they
     # feed report ranking and the confidence threshold filter.
     surviving.confidence = max(
-        surviving.confidence if surviving.confidence is not None else 0.0,
-        incoming.confidence if incoming.confidence is not None else 0.0,
+        confidence if confidence is not None else 0.0 for confidence in deciding
     )
     surviving.rank = max(
         surviving.rank if surviving.rank is not None else 1,
         incoming.rank if incoming.rank is not None else 1,
     )
-    if incoming.type and not surviving.type:
+    if incoming.type and (not surviving.type or incoming_decides):
         surviving.type = incoming.type
+    surviving.iri, _ = merged_iri((surviving.iri, incoming.iri))
 
 
 def merge_entities(

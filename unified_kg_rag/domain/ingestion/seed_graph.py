@@ -38,6 +38,13 @@ A shard document becomes text units (:func:`seed_text_units`, ids
 extraction record is parsed from its text (:func:`parse_seed_unit`): no
 model call, and equal texts give equal records, keyed by
 :data:`SEED_RECORD_FINGERPRINT`.
+
+Merged with extracted items, documents come first: where a merge picks one
+value (type, name, confidence) the statements of document units decide and
+a seed's only fill a gap (:func:`document_first`); descriptions are
+unioned, document lines first (records merge in unit-id order); an entity's
+IRI is the smallest one stated (:func:`merged_iri`). With no seed unit,
+every rule is the one it was before seed graphs.
 """
 
 from __future__ import annotations
@@ -50,11 +57,15 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, TypeAdapter
 
-from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor, edge_weight
+from unified_kg_rag.domain.ingestion.base_processor import (
+    SEED_PROPERTIES_ATTRIBUTE,
+    BaseProcessor,
+    edge_weight,
+)
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
     RELATIVE_PATH_KEY,
@@ -95,6 +106,8 @@ SEED_FORMAT_VERSION = 1
 
 # Document metadata "source_kind" and text-unit attribute of seed items.
 SEED_SOURCE_KIND = "seed_graph"
+# The source kind of every other text unit, in an item's ``source_kinds``.
+DOCUMENT_SOURCE_KIND = "document"
 # The document filter every item of a seed carries: its name.
 SEED_FILTER_KEY = "seed_graph"
 # Relative path of the shard documents: <root>/<name>/<k>-of-<n>.jsonl.
@@ -102,9 +115,6 @@ SEED_DOCUMENT_ROOT = "seed_graphs"
 # Prefix of a seed text unit's id. Document unit ids are lowercase hex
 # UUIDs, so "sg-..." sorts after every one of them.
 SEED_UNIT_PREFIX = "sg-"
-# Attribute namespacing a seed statement's properties, so a seed key never
-# overwrites an attribute extraction stated.
-SEED_PROPERTIES_ATTRIBUTE = "seed_properties"
 # A shard over this many units fails: a shard is one registry record, and
 # its text-unit list must stay well under the record size limit.
 MAX_UNITS_PER_SHARD = 2000
@@ -385,6 +395,46 @@ def is_seed_unit(unit_id: str) -> bool:
     return unit_id.startswith(SEED_UNIT_PREFIX)
 
 
+def seed_only(text_unit_ids: Iterable[str] | None) -> bool:
+    """Whether an item citing ``text_unit_ids`` cites seed units only: some,
+    and no document unit. An item citing no unit is not seed-only."""
+    units = list(text_unit_ids or ())
+    return bool(units) and all(is_seed_unit(unit_id) for unit_id in units)
+
+
+_Cited = TypeVar("_Cited", Entity, Relationship)
+
+
+def document_first(items: Sequence[_Cited]) -> list[_Cited]:
+    """The ``items`` some document states (that are not :func:`seed_only`),
+    or all of them when none is: where a merge picks one value (type, name,
+    confidence), documents decide and seed statements only fill a gap. With
+    no seed unit, every item."""
+    stated = [item for item in items if not seed_only(item.text_unit_ids)]
+    return stated or list(items)
+
+
+def merged_iri(iris: Iterable[str | None]) -> tuple[str | None, bool]:
+    """The IRI of an entity merged from statements giving ``iris``: the
+    smallest one given (whatever their order), and whether they gave more
+    than one."""
+    given = {iri for iri in iris if iri}
+    return (min(given) if given else None), len(given) > 1
+
+
+def annotate_sources(item: Entity | Relationship) -> list[str] | None:
+    """The ``source_kinds`` of ``item``: ``None`` when none of its text units
+    is a seed unit (a document-only item), else the sorted kinds of its
+    units (``["document", "seed_graph"]`` or ``["seed_graph"]``)."""
+    units = item.text_unit_ids or []
+    if not any(is_seed_unit(unit_id) for unit_id in units):
+        return None
+    kinds = {SEED_SOURCE_KIND}
+    if not seed_only(units):
+        kinds.add(DOCUMENT_SOURCE_KIND)
+    return sorted(kinds)
+
+
 def seed_unit_id(document_id: str, n: int) -> str:
     """Id of unit ``n`` of a shard document: the chunker's rule, prefixed."""
     return SEED_UNIT_PREFIX + generate_stable_id(f"text_unit:{document_id}:{n}")
@@ -480,6 +530,7 @@ def parse_seed_unit(unit: TextUnit) -> TextUnitExtraction:
                     description=statement.description or "",
                     text_unit_ids=[unit.id],
                     confidence=statement.confidence,
+                    iri=statement.iri,
                     attributes=_item_attributes(statement.properties, placement),
                 )
             )
