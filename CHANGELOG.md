@@ -420,7 +420,7 @@ Library API (Python callers and custom backends).
   `put_annotation_digest`: one record per index namespace of which schema
   annotations its stores hold (a digest, or the rewrite sentinel), kept in
   the namespace's partition and never listed as a document. The DynamoDB
-  and SQLite registries implement them (#PR).
+  and SQLite registries implement them (#488).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -538,7 +538,7 @@ From 0.2.3 (or a `main` checkout since):
 9. The first incremental run of each existing namespace reads its stores
    once to record which schema annotations they hold, rewriting only those
    that differ, with no model or embedding call; later runs read nothing
-   unless the schema's annotations change (#PR).
+   unless the schema's annotations change (#488).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -685,7 +685,7 @@ From 0.2.3 (or a `main` checkout since):
   reads nothing. A rewrite that stops (a kill, a failed write, a store
   that cannot be read, which now warns instead of failing the run) is made
   again by the next run under any schema; Neptune reads the annotations in
-  bounded batches; a reset records the annotations it wrote (#PR).
+  bounded batches; a reset records the annotations it wrote (#488).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
