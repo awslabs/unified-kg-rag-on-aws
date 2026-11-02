@@ -121,9 +121,10 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "Also write an extraction schema draft (.yaml/.yml): the "
-            "profile's entity types and the relationship types the tuning "
-            "examples use most, for schema_source: {kind: file, path: PATH} "
-            "with schema_mode: align"
+            "profile's entity types (the configured ones when the config "
+            "declares them) and the relationship types the tuning examples "
+            "use most, for schema_source: {kind: file, path: PATH} with "
+            "schema_mode: align"
         ),
     )
     parser.add_argument(
@@ -156,6 +157,8 @@ def main() -> int:
         if error := missing_extras_error(config):
             usage_error(error)
         setup_logging(config, stream=sys.stderr if as_json else None)
+        # Loads the schema source: a broken one fails before any model call.
+        tuner = PromptTuner(config)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:
@@ -163,7 +166,6 @@ def main() -> int:
             logger.error("%s", error)
             return failed(EXIT_FAILURE, error)
 
-        tuner = PromptTuner(config)
         result = event_loop.run(
             stoppable(tuner.tune(texts, schema_draft=args.schema_out is not None)),
             io_workers=config.processing.io_workers,
@@ -178,8 +180,9 @@ def main() -> int:
         logger.info("Detected domain: '%s'", result["profile"]["domain"])
         summary = {"output_path": str(args.output_path), "profile": result["profile"]}
         if draft is not None:
+            # The path as given: the comment shows the schema_source to set.
             args.schema_out.write_text(
-                draft.to_yaml(args.schema_out.name), encoding="utf-8"
+                draft.to_yaml(str(args.schema_out)), encoding="utf-8"
             )
             logger.info(
                 "Wrote an extraction schema draft to '%s' (%d entity types, "

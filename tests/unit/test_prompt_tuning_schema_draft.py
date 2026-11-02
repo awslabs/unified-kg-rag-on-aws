@@ -22,7 +22,10 @@ import yaml
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.adapters.schema_sources import get_schema_source
+from unified_kg_rag.adapters.schema_sources import (
+    SchemaSourceContext,
+    get_schema_source,
+)
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.cli import run_prompt_tuning
 from unified_kg_rag.application.prompts import tuner as tuner_module
@@ -35,6 +38,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import ExtractionSchema, RelationshipPattern
+from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 pytestmark = pytest.mark.unit
 
@@ -199,7 +203,7 @@ def test_the_file_round_trips_through_the_schema_source(tmp_path: Path) -> None:
     path.write_text(draft.to_yaml("schema.yaml"), encoding="utf-8")
 
     document = get_schema_source("file")(
-        SchemaSourceConfig(kind="file", path=str(path))
+        SchemaSourceContext(SchemaSourceConfig(kind="file", path=str(path)), Config())
     )
     assert document.entity_types == ["ORGANIZATION", "NULL"]
     schema = _load(path)
@@ -380,7 +384,11 @@ def test_schema_out_writes_the_same_loadable_draft_each_run(
     assert summary["schema_path"] == str(first)
     code, second = _main(tmp_path / "b", mocker, "schema.yaml")
     assert code == 0
-    assert first.read_bytes() == second.read_bytes()
+    # The same file but the path it names, which is --schema-out as given.
+    assert f"path: {json.dumps(str(first))}}}" in first.read_text(encoding="utf-8")
+    assert first.read_text(encoding="utf-8").replace(str(first), "<path>") == (
+        second.read_text(encoding="utf-8").replace(str(second), "<path>")
+    )
     # The tuned prompts file holds no draft.
     prompts = yaml.safe_load((tmp_path / "a" / "prompts.yaml").read_text())
     assert set(prompts) == {"profile", "custom_prompts"}
@@ -399,3 +407,165 @@ def test_schema_out_must_be_yaml(tmp_path: Path, mocker) -> None:
     with pytest.raises(SystemExit) as exc:
         _main(tmp_path, mocker, "schema.json")
     assert exc.value.code == 2
+
+
+# --------------------------------------------------------------------------- #
+# The entity types the examples are extracted with
+# --------------------------------------------------------------------------- #
+
+TRADE = [
+    "Vendor supplies Buyer.",
+    "Vendor supplies Buyer again.",
+    "Supplier supplies Customer.",
+]
+
+
+def _listing_respond(profile_types: list[str]) -> Any:
+    """A model that profiles the corpus as ``profile_types`` and, extracting,
+    types each name with the first listed type it contains (``Vendor`` is a
+    VENDOR when the prompt lists VENDOR), else ORGANIZATION; relationship
+    types are written as the prompt lists them when it declares them."""
+
+    def respond(system: str, human: str) -> str:
+        if "expert corpus analyst" in system:
+            return json.dumps({"domain": "trade", "entity_types": profile_types})
+        listed = re.findall(r"- \*\*([^*]+)\*\*", system + human)
+        text = re.search(r"<input_text>\n(.*?)\n</input_text>", human, re.DOTALL)
+        assert text is not None
+        head, tail = re.findall(r"\b([A-Z]\w+)\b", text.group(1))[:2]
+
+        def type_of(name: str) -> str:
+            return next((t for t in listed if t.casefold() in name.casefold()), "")
+
+        sentence = text.group(1).strip()
+        entities = "".join(
+            f"<entity><name>{name}</name><type>{type_of(name) or 'ORGANIZATION'}"
+            f"</type><description>{name}</description><confidence>9</confidence>"
+            f"<source_text>{sentence}</source_text></entity>"
+            for name in (head, tail)
+        )
+        relation = "SUPPLIES" if "SUPPLIES" in listed else "supplies"
+        return (
+            f"<entities>{entities}</entities><relationships><relationship>"
+            f"<source>{head}</source><target>{tail}</target><type>{relation}"
+            "</type><description>supplies</description><strength>7</strength>"
+            f"<source_text>{sentence}</source_text></relationship></relationships>"
+        )
+
+    return respond
+
+
+def _listing_tuner(config: Config, profile_types: list[str]) -> PromptTuner:
+    return PromptTuner(
+        config,
+        providers=Providers(
+            config,
+            boto_session=MagicMock(),
+            llm_factory=ScriptedLLMFactory(_listing_respond(profile_types)),
+        ),
+    )
+
+
+async def test_examples_use_the_profile_types_so_the_draft_has_patterns() -> None:
+    tuner = _listing_tuner(Config(), ["VENDOR", "BUYER", "Vendor"])
+    result = await tuner.tune(TRADE, schema_draft=True)
+    draft: SchemaDraft = result["schema_draft"]
+    assert draft.entity_types == ["VENDOR", "BUYER"]
+    # Extracted with the default types, the vendor and the buyer would both
+    # be organizations, which the profile does not list: no pattern.
+    assert [str(p) for p in draft.relationship_patterns] == ["VENDOR -SUPPLIES-> BUYER"]
+    assert "<type>VENDOR</type>" in result["custom_prompts"]["graph_extraction_system"]
+    # The caller's config is not changed.
+    assert tuner.config.processing.graph_extraction.entity_types == (
+        Config().processing.graph_extraction.entity_types
+    )
+
+
+async def test_a_configured_schema_is_honoured(tmp_path: Path) -> None:
+    path = tmp_path / "schema.yaml"
+    path.write_text(
+        "entity_types: [SUPPLIER, CUSTOMER]\n"
+        "relationship_types: ['SUPPLIES: Goods delivered']\n",
+        encoding="utf-8",
+    )
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {"kind": "file", "path": str(path)}
+                }
+            }
+        }
+    )
+    tuner = _listing_tuner(config, ["VENDOR", "BUYER"])
+    # Loaded at construction, as ingestion loads it.
+    assert tuner.config.processing.graph_extraction.schema_source.kind == "inline"
+    assert tuner.schema_configured
+    corpus = ["Supplier supplies Customer.", "Supplier supplies Customer again."]
+    result = await tuner.tune([*corpus, TRADE[0]], schema_draft=True)
+    draft: SchemaDraft = result["schema_draft"]
+    assert draft.entity_types == ["SUPPLIER", "CUSTOMER"]
+    assert [str(p) for p in draft.relationship_patterns] == [
+        "SUPPLIER -SUPPLIES-> CUSTOMER"
+    ]
+    system = result["custom_prompts"]["graph_extraction_system"]
+    assert "common in this corpus: SUPPLIER, CUSTOMER." in system
+    assert "VENDOR" not in system
+    # The profile still reports what the model saw.
+    assert result["profile"]["entity_types"] == ["VENDOR", "BUYER"]
+
+
+def test_a_broken_schema_source_fails_the_tuner(tmp_path: Path) -> None:
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {
+                        "kind": "file",
+                        "path": str(tmp_path / "missing.yaml"),
+                    }
+                }
+            }
+        }
+    )
+    factory = MagicMock()
+    with pytest.raises(SchemaSourceError, match="not found"):
+        PromptTuner(config, providers=Providers(config, llm_factory=factory))
+    factory.get_model.assert_not_called()
+
+
+def test_a_broken_schema_source_exits_2(tmp_path: Path, mocker) -> None:
+    config = Config.model_validate(
+        {
+            "processing": {
+                "graph_extraction": {
+                    "schema_source": {
+                        "kind": "file",
+                        "path": str(tmp_path / "missing.yaml"),
+                    }
+                }
+            }
+        }
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "a.txt").write_text(TRADE[0], encoding="utf-8")
+    mocker.patch.object(run_prompt_tuning, "load_cli_config", return_value=config)
+    # The real tuner on a fake model: nothing would reach AWS either way.
+    mocker.patch.object(
+        run_prompt_tuning,
+        "PromptTuner",
+        side_effect=lambda config: _listing_tuner(config, ["VENDOR"]),
+    )
+    mocker.patch(
+        "sys.argv",
+        [
+            "run-prompt-tuning",
+            "--source-directory",
+            str(source),
+            "--output-path",
+            str(tmp_path / "prompts.yaml"),
+        ],
+    )
+    assert run_prompt_tuning.main() == 2
+    assert not (tmp_path / "prompts.yaml").exists()
