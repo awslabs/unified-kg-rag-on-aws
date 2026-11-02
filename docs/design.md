@@ -158,6 +158,7 @@ unified_kg_rag/
 │  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
 │  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
+│  ├─ source_files/     #   shared readers of a source's files: local/S3 locations, RDF files, checks, parse
 │  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
@@ -1485,8 +1486,9 @@ This section is the single reference for extending the framework. Strategies, re
   for a new `schema_source.kind` with `@register_schema_source("kind")`
   (exported from `unified_kg_rag`; the built-in `file` and `owl` loaders
   live in `adapters/schema_sources/`, imported by the package `__init__`,
-  and read an `s3://` path through `locations.py`: HeadObject size check,
-  paged prefix listing, S3 errors as `SchemaSourceError`).
+  and read an `s3://` path through `adapters/source_files/locations.py`:
+  HeadObject size check, paged prefix listing, S3 errors as
+  `SchemaSourceError`, or the error type a `SourceTerms` names).
   A loader that imports an optional package declares it:
   `@register_schema_source("kind", requires=("module", "how to install
   it"))`, and the CLIs check that the module is importable before any model
@@ -1532,13 +1534,20 @@ This section is the single reference for extending the framework. Strategies, re
     skipped or qualified). It owns every rule: the RDFS-style closure, the
     flat hierarchy with push-down and lift, labels, order and the caps,
     and depends only on `domain`.
-  - `owl_reader.py` (the only module importing rdflib) builds the model
-    from parsed statements; `owl.py` is the loader: it locates and checks
-    the files (formats, size, and the shapes the parsers take quadratic
-    time over, refused before parsing), parses their bytes, reads the
-    model and maps it with
+  - `owl_reader.py` builds the model from parsed statements; `owl.py` is
+    the loader: it locates and checks the files (formats, size, and the
+    shapes the parsers take quadratic time over, refused before parsing),
+    parses their bytes, reads the model and maps it with
     `OwlSourceOptions`, which is `MappingOptions` plus the reader's
     `format` and `max_bytes`.
+  - The file handling is not owl's own: `adapters/source_files/` holds it
+    for any source that reads RDF. `rdf_files.locate`/`locate_s3` pick the
+    files and the format of each, `rdf_files.check_bytes` refuses what a
+    parser must not see, and `rdf_parse.parse` (the only module there
+    importing rdflib) parses the bytes. A `SourceTerms` record carries the
+    exception type and how messages name the source, its options and its
+    kind, and any `SourceClientProvider` (`location`, `client(service)`)
+    gives `locations.SourceReader` its S3 client.
 
   A loader for an ontology held elsewhere (an ontology service, or a
   non-RDF format such as LinkML) added to `adapters/schema_sources/` builds

@@ -27,10 +27,14 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.source_files.locations import (
+    is_s3,
+    read_source_bytes,
+    split_s3,
+)
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
-from .locations import is_s3, read_source_bytes, split_s3
 from .registry import SchemaSourceContext, register_schema_source
 
 _SUFFIXES = (".yaml", ".yml", ".json")
