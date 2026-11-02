@@ -641,7 +641,7 @@ From 0.2.3 (or a `main` checkout since):
   too; an undeclared relationship type counts whatever its endpoints, so
   `relationships_off_schema` is the same in both modes); drops are not
   failures. With the defaults, or entity types alone, every cache key,
-  extraction record and prompt is unchanged (#476, #PR).
+  extraction record and prompt is unchanged (#476, #481).
 - Schema annotations in the stores: indexing writes `in_schema` and
   `type_iri` on entities and `in_schema` and `predicate_iri` on
   relationships (Neptune and SQLite graph properties, OpenSearch and
@@ -662,7 +662,7 @@ From 0.2.3 (or a `main` checkout since):
   not rewrite). A filter on an annotation the configured schema writes on
   no item raises `InvalidFilterError` before any model call, and one on an
   OpenSearch index built before the fields were mapped matches nothing
-  instead of failing every vector and hybrid query (#477, #478, #PR).
+  instead of failing every vector and hybrid query (#477, #478, #481).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their
