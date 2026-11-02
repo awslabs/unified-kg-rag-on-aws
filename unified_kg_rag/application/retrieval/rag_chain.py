@@ -64,12 +64,18 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    SCHEMA_ANNOTATION_FIELDS,
     check_filter_values,
     typed_filter_values,
     union_filter_fields,
 )
-from unified_kg_rag.application.bootstrap import build_providers, build_query_guard
+from unified_kg_rag.application.bootstrap import (
+    build_providers,
+    build_query_guard,
+    resolve_extraction_schema,
+)
 from unified_kg_rag.application.observability import configure_observability
+from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -109,6 +115,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.exceptions import SchemaSourceError
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
@@ -409,6 +416,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             BaseSearchStrategy,
         ] = {}
         self._cache_lock = threading.RLock()
+        # The schema annotation fields the configured extraction schema
+        # writes (_schema_annotation_fields), loaded on the first filter on
+        # one of them; None until then.
+        self._schema_fields: frozenset[str] | None = None
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
@@ -1036,6 +1047,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _check_strategy_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
     ) -> None:
+        self._check_schema_filter_keys(filters)
         instance = self._get_strategy_instance(strategy)
         reserved = sorted(set(filters or {}) & instance.reserved_filter_keys(strategy))
         if reserved:
@@ -1077,6 +1089,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         routable = routable_strategies(self.config)
         if not filters:
             return routable
+        # Once, not per candidate: every strategy would refuse it alike.
+        self._check_schema_filter_keys(filters)
         candidates: list[SearchStrategy] = []
         refusals: list[str] = []
         for routed in routable:
@@ -1098,6 +1112,69 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 ", ".join(s.value for s in routable if s not in candidates),
             )
         return tuple(candidates)
+
+    def _check_schema_filter_keys(self, filters: dict[str, Any] | None) -> None:
+        """Refuse a filter on a schema annotation (``in_schema``,
+        ``type_iri``, ``predicate_iri``) the configured extraction schema
+        writes on no item.
+
+        Every index declares the field, so the filter would pass the key
+        check, match nothing on each index that declares it and empty those
+        streams of every strategy (all relationships under ``in_schema:
+        true`` with entity types alone): an empty answer, not an error.
+        ``in_schema`` is written where the schema applies (``strict``, or
+        ``align`` with relationship types), an IRI where a declared type of
+        its kind has one and the mode is not ``off``.
+        """
+        if not filters or not (wanted := SCHEMA_ANNOTATION_FIELDS & set(filters)):
+            return
+        written = self._schema_annotation_fields()
+        if written is None:
+            return
+        missing = sorted(wanted - written)
+        if not missing:
+            return
+        reasons = {
+            "in_schema": "in_schema is stored under schema_mode strict, or "
+            "align with relationship_types declared",
+            "type_iri": "type_iri is stored once an entity type declares an "
+            "iri and schema_mode is not off",
+            "predicate_iri": "predicate_iri is stored once a relationship type "
+            "declares an iri and schema_mode is not off",
+        }
+        mode = self.config.processing.graph_extraction.schema_mode
+        raise InvalidFilterError(
+            f"Filter key(s) {', '.join(missing)}: the configured extraction "
+            f"schema (schema_mode {mode}) stores no such field on any entity "
+            "or relationship, so the filter would match nothing ("
+            + "; ".join(reasons[key] for key in missing)
+            + "). Change processing.graph_extraction and re-run ingestion "
+            "first."
+        )
+
+    def _schema_annotation_fields(self) -> frozenset[str] | None:
+        """The annotation fields the configured extraction schema writes
+        (``SchemaAnnotator.fields``), or ``None`` when its schema source
+        cannot be loaded (the check is then skipped, logged once)."""
+        fields: frozenset[str] | None = getattr(self, "_schema_fields", None)
+        if fields is not None:
+            return fields
+        try:
+            schema = resolve_extraction_schema(
+                self.config
+            ).processing.graph_extraction.extraction_schema()
+        except SchemaSourceError as e:
+            if not getattr(self, "_schema_fields_warned", False):
+                self._schema_fields_warned = True
+                logger.warning(
+                    "Not checking schema filter keys against the extraction "
+                    "schema: %s",
+                    e,
+                )
+            return None
+        fields = SchemaAnnotator(schema).fields
+        self._schema_fields = fields
+        return fields
 
     @staticmethod
     def _validate_filter_keys(
@@ -1886,8 +1963,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _check_requested_filter_keys(self, rag_input: RAGInput) -> None:
         """Refuse filter keys an explicit strategy refuses, before any model
         call (a follow-up rewrite, query processing); ``auto`` checks them
-        before routing (``_resolve_strategy``)."""
-        if rag_input.filters and rag_input.search_strategy is not SearchStrategy.AUTO:
+        before routing (``_resolve_strategy``), but for the schema
+        annotation keys, which no strategy applies on a schema that writes
+        none (``_check_schema_filter_keys``)."""
+        if not rag_input.filters:
+            return
+        if rag_input.search_strategy is SearchStrategy.AUTO:
+            self._check_schema_filter_keys(rag_input.filters)
+        else:
             self._check_strategy_filter_keys(
                 rag_input.filters, rag_input.search_strategy
             )

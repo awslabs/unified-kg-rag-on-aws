@@ -80,7 +80,7 @@ def _rel(rel_id: str, type_: str | None, **fields: Any) -> Relationship:
 @pytest.mark.parametrize("mode", ["align", "strict"])
 def test_declared_types_are_in_schema_with_their_iri(mode: str) -> None:
     annotator = SchemaAnnotator(_schema(mode))
-    assert annotator.active
+    assert annotator.fields == {"in_schema", "type_iri", "predicate_iri"}
     # The stored type is the lowercased vote: matched by schema_key.
     assert annotator.entity_annotation("organization") == (True, ORG)
     assert annotator.entity_annotation(" Organization ") == (True, ORG)
@@ -113,7 +113,7 @@ def test_undeclared_and_untyped_items_are_off_schema() -> None:
 )
 def test_no_annotation_where_no_schema_applies(schema: ExtractionSchema) -> None:
     annotator = SchemaAnnotator(schema)
-    assert not annotator.active
+    assert annotator.fields == frozenset()
     assert annotator.entity_annotation("organization") == (None, None)
     assert annotator.relationship_annotation("supplies") == (None, None)
 
@@ -122,7 +122,7 @@ def test_a_declared_iri_is_written_where_in_schema_is_not() -> None:
     # align with entity types alone: no in_schema (extraction leaves the
     # records as written), but a declared class IRI still links the type.
     annotator = SchemaAnnotator(_schema(relationship_types=[]))
-    assert annotator.active
+    assert annotator.fields == {"type_iri"}
     assert annotator.entity_annotation("organization") == (None, ORG)
     assert annotator.entity_annotation(" Organization ") == (None, ORG)
     assert annotator.entity_annotation("product") == (None, None)
@@ -138,17 +138,27 @@ def test_a_declared_iri_is_written_where_in_schema_is_not() -> None:
 
 def test_off_writes_no_iri() -> None:
     annotator = SchemaAnnotator(_schema("off", relationship_types=[]))
-    assert not annotator.active
+    assert annotator.fields == frozenset()
     assert annotator.entity_annotation("organization") == (None, None)
 
 
-def test_a_kind_without_declared_types_is_not_annotated() -> None:
+def test_every_item_of_a_kind_without_declared_types_is_in_schema() -> None:
+    # Nothing of that kind is off schema (extraction checks none of it, and
+    # strict kept every one): in_schema true, so a filter on it keeps the
+    # kind instead of emptying it (all relationships under strict with
+    # entity types alone).
     strict = SchemaAnnotator(_schema("strict", relationship_types=[]))
+    assert strict.fields == {"in_schema", "type_iri"}
     assert strict.entity_annotation("organization") == (True, ORG)
-    assert strict.relationship_annotation("supplies") == (None, None)
+    assert strict.entity_annotation("vendor") == (False, None)
+    for label in ("supplies", "anything", "", None):
+        assert strict.relationship_annotation(label) == (True, None), label
     relationships_only = SchemaAnnotator(_schema(entity_types=[]))
-    assert relationships_only.entity_annotation("organization") == (None, None)
+    assert relationships_only.fields == {"in_schema", "predicate_iri"}
+    for label in ("organization", "", None):
+        assert relationships_only.entity_annotation(label) == (True, None), label
     assert relationships_only.relationship_annotation("supplies") == (True, SUPPLIES)
+    assert relationships_only.relationship_annotation("mentions") == (False, None)
 
 
 def test_an_item_is_copied_only_when_its_annotation_changes() -> None:

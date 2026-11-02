@@ -276,6 +276,14 @@ def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+# The schema annotations (``domain.ingestion.schema_annotation``). An index
+# built before they were mapped lacks them until an ingestion run maps them
+# (``OpenSearchIndexer.check_index_settings``), so the retriever treats them
+# as it treats ``attr_*`` keys: a probe first, and no document holding the
+# field matches no value of it.
+SCHEMA_ANNOTATION_FIELDS = frozenset({"in_schema", "type_iri", "predicate_iri"})
+
+
 def union_filter_fields(items: Iterable[FilterFields]) -> FilterFields:
     """The keys any of ``items`` declares."""
     fields: set[str] = set()

@@ -202,6 +202,7 @@ jobs:
           tests/integration/test_store_parity.py
           tests/integration/test_neptune_vertex_ids.py
           tests/integration/test_opensearch_vector_storage.py
+          tests/integration/test_embedded_schema_e2e.py
 
       - name: Store logs
         if: failure()
