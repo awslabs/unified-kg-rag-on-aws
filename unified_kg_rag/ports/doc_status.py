@@ -124,6 +124,20 @@ class DocStatusPort(Protocol):
         its namespace's partition but never listed as a document."""
         ...
 
+    def get_annotation_digest(self, namespace: str) -> str | None:
+        """The schema annotations the stores hold for index ``namespace``
+        (:meth:`put_annotation_digest`), or ``None`` when none was recorded."""
+        ...
+
+    def put_annotation_digest(self, namespace: str, digest: str) -> None:
+        """Record which schema annotations every stored entity and
+        relationship of index ``namespace`` holds: the digest of the schema
+        that wrote them (``SchemaAnnotator.digest``), or
+        ``REANNOTATING_DIGEST`` while a run rewrites them. One record per
+        namespace, of every scope, kept in its partition but never listed as
+        a document."""
+        ...
+
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
         """Return every record of index ``namespace`` (its registry partition)."""
         ...

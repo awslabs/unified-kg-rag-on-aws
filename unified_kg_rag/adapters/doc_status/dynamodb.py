@@ -62,6 +62,8 @@ _LEASE_KEY = "#lease"
 # under "#settings|<scope>". Items whose sort key starts with "#" are never
 # listed as documents.
 _SETTINGS_KEY_PREFIX = "#settings|"
+# Which schema annotations the namespace's stores hold, under this sort key.
+_ANNOTATIONS_KEY = "#annotations"
 LEASE_EXPIRY_ATTRIBUTE = "lease_expires_at"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
@@ -531,6 +533,34 @@ class DynamoDBDocStatusStore:
                     **self._settings_key(scope),
                     "extraction_fingerprint": {"S": fingerprint},
                     "extraction_settings": {"S": settings.model_dump_json()},
+                },
+            )
+
+    # --- the schema annotations the stores hold, per namespace ----------------
+
+    @staticmethod
+    def _annotations_key(namespace: str) -> dict[str, Any]:
+        return {
+            _PARTITION_KEY: {"S": namespace},
+            _SORT_KEY: {"S": _ANNOTATIONS_KEY},
+        }
+
+    def get_annotation_digest(self, namespace: str) -> str | None:
+        with self._registry_errors("read the annotation digest"):
+            item = self.client.get_item(
+                TableName=self.table_name,
+                Key=self._annotations_key(namespace),
+                ConsistentRead=True,
+            ).get("Item")
+        return item["annotation_digest"]["S"] if item else None
+
+    def put_annotation_digest(self, namespace: str, digest: str) -> None:
+        with self._registry_errors("record the annotation digest"):
+            self.client.put_item(
+                TableName=self.table_name,
+                Item={
+                    **self._annotations_key(namespace),
+                    "annotation_digest": {"S": digest},
                 },
             )
 

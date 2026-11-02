@@ -62,6 +62,7 @@ from unified_kg_rag.ports.indexer import (
     IndexingStats,
     SchemaAnnotation,
     VectorIndexer,
+    rewrites_schema_annotations,
 )
 from unified_kg_rag.shared import DataProcessingError, NamespaceLeaseError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -267,11 +268,16 @@ class SchemaReannotation(BaseModel):
         description="A store cannot enumerate its items: its annotations "
         "were not rewritten",
     )
+    error: str | None = Field(
+        default=None,
+        description="The store read or write that raised, where the pass "
+        "stopped; None when none did",
+    )
 
     @property
     def complete(self) -> bool:
         """Whether every store now holds the current annotations."""
-        return not self.failed and not self.unsupported
+        return not self.failed and not self.unsupported and self.error is None
 
 
 class IndexingTask(NamedTuple):
@@ -305,7 +311,7 @@ class IndexingManager:
     ) -> None:
         # The schema a schema source names, loaded once (the pipeline loads
         # it before it builds the manager; then this changes nothing).
-        config = resolve_extraction_schema(config)
+        config = resolve_extraction_schema(config, providers=providers)
         self.config = config
         # Session, embedding/LLM providers and store builders shared with the
         # pipeline, used for the default indexers and the merge summarizer.
@@ -704,58 +710,39 @@ class IndexingManager:
         schema gives their stored types, and nothing else: no model call,
         no embedding.
 
-        An incremental run calls it when the schema changed only in what
-        indexing stores (an IRI, ``off`` against ``align`` with entity types
-        alone): the extraction caches still hold, so no document is
-        extracted again, and afterwards the stores hold what a full build
-        would write. Each store is read whole, annotated from its own type
-        (a relationship's vector copy, which stores none, from its edge's;
-        one without an edge is left as it is), and only the annotations
-        that differ are written. A store that cannot enumerate its items
-        (``read_schema_annotations`` returns ``None``) is skipped and the
-        result says so; a reset rewrites everything.
+        An incremental run calls it when the stores of its namespace may
+        hold other annotations than the run's schema gives
+        (``incremental.reannotate_on_schema_change``): the extraction caches
+        still hold, so no document is extracted again, and afterwards the
+        stores hold what a full build would write. Each store is read in
+        bounded pages, annotated from its own type (a relationship's vector
+        copy, which stores none, from its edge's; one without an edge is
+        left as it is), and only the annotations that differ are written.
+
+        Nothing is read unless both stores can enumerate and rewrite their
+        items (``rewrites_schema_annotations``): the result is then
+        ``unsupported``, and a reset rewrites them. A store read or write
+        that raises stops the pass with ``error`` set instead of failing the
+        run (the next run tries again); a lost namespace lease still
+        propagates.
         """
         result = SchemaReannotation()
-        annotate = {
-            "entities": self._annotator.entity_annotation,
-            "relationships": self._annotator.relationship_annotation,
-        }
         stores: tuple[GraphIndexer | VectorIndexer, ...] = (
             self.neptune_indexer,
             self.opensearch_indexer,
         )
-        for suffix in sorted(suffixes):
-            kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
-            for kind in kinds:
-                graph, vector = (
-                    s.read_schema_annotations(kind, suffix) for s in stores
-                )
-                types = {i: held.type for i, held in (graph or {}).items()}
-                rewritten: set[str] = set()
-                for store, stored in zip(stores, (graph, vector), strict=True):
-                    if stored is None:
-                        result.unsupported = True
-                        continue
-                    changes: dict[str, SchemaAnnotation] = {}
-                    for item_id, held in stored.items():
-                        if held.type is None and item_id not in types:
-                            continue
-                        target = annotate[kind](
-                            held.type if held.type is not None else types[item_id]
-                        )
-                        if (held.in_schema, held.iri) != target:
-                            changes[item_id] = target
-                    if changes:
-                        stats = store.write_schema_annotations(kind, changes, suffix)
-                        result.failed += stats.failed_items
-                        rewritten |= changes.keys()
-                read = len(types) if graph is not None else len(vector or {})
-                if kind == "entities":
-                    result.entities += read
-                    result.entities_rewritten += len(rewritten)
-                else:
-                    result.relationships += read
-                    result.relationships_rewritten += len(rewritten)
+        if not all(rewrites_schema_annotations(store) for store in stores):
+            result.unsupported = True
+            return result
+        try:
+            for suffix in sorted(suffixes):
+                kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
+                for kind in kinds:
+                    self._reannotate_kind(kind, suffix, stores, result)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - retried by the next run
+            result.error = f"{type(e).__name__}: {e}"
         logger.info(
             "Schema annotations changed: rewrote in_schema and the IRIs of %d of "
             "%d stored entities and %d of %d stored relationships in %s, "
@@ -768,6 +755,47 @@ class IndexingManager:
             f" ({result.failed} writes failed)" if result.failed else "",
         )
         return result
+
+    def _reannotate_kind(
+        self,
+        kind: AnnotatedKind,
+        suffix: str,
+        stores: tuple[GraphIndexer | VectorIndexer, ...],
+        result: SchemaReannotation,
+    ) -> None:
+        """One kind of one suffix of :meth:`reannotate`, counted in ``result``."""
+        annotate = (
+            self._annotator.entity_annotation
+            if kind == "entities"
+            else self._annotator.relationship_annotation
+        )
+        graph, vector = (s.read_schema_annotations(kind, suffix) for s in stores)
+        types = {i: held.type for i, held in (graph or {}).items()}
+        rewritten: set[str] = set()
+        for store, stored in zip(stores, (graph, vector), strict=True):
+            if stored is None:
+                result.unsupported = True
+                continue
+            changes: dict[str, SchemaAnnotation] = {}
+            for item_id, held in stored.items():
+                if held.type is None and item_id not in types:
+                    continue
+                target = annotate(
+                    held.type if held.type is not None else types[item_id]
+                )
+                if (held.in_schema, held.iri) != target:
+                    changes[item_id] = target
+            if changes:
+                stats = store.write_schema_annotations(kind, changes, suffix)
+                result.failed += stats.failed_items
+                rewritten |= changes.keys()
+        read = len(types) if graph is not None else len(vector or {})
+        if kind == "entities":
+            result.entities += read
+            result.entities_rewritten += len(rewritten)
+        else:
+            result.relationships += read
+            result.relationships_rewritten += len(rewritten)
 
     def merge_with_existing_graph(
         self,

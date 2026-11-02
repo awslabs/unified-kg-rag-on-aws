@@ -95,6 +95,19 @@ def _keys(config: Config) -> dict[str, str]:
     }
 
 
+def _unloaded_keys(config: Config) -> dict[str, str]:
+    """:func:`_keys` of a config whose schema source is not loaded yet:
+    every stage's but the indexing stage's, which its IRIs key, so it
+    refuses the config until start-up loads the source."""
+    with pytest.raises(ConfigurationError, match="not loaded yet"):
+        stage_input_fingerprint(config, PipelineStageType.INDEXING, "corpus")
+    return {
+        stage.value: stage_input_fingerprint(config, stage, "corpus")
+        for stage in PipelineStageType
+        if stage is not PipelineStageType.INDEXING
+    }
+
+
 @pytest.fixture
 def custom_kind() -> Iterator[str]:
     kind = "synthetic_service"
@@ -403,7 +416,7 @@ def test_options_and_the_secret_key_nothing(custom_kind: str) -> None:
             "secret_arn": "arn:aws:secretsmanager:us-west-2:111122223333:secret:x",
         }
     )
-    assert _keys(plain) == _keys(tuned)
+    assert _unloaded_keys(plain) == _unloaded_keys(tuned)
     assert extraction_fingerprint(plain) == extraction_fingerprint(tuned)
 
 

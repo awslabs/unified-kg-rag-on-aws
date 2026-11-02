@@ -18,6 +18,7 @@ import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,9 +27,16 @@ from tests.fixtures.store_backends import clear_extraction_records, local_store_
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.cache_keys import schema_annotation_digest
+from unified_kg_rag.domain.ingestion.document_identity import (
+    config_registry_namespace,
+)
+from unified_kg_rag.domain.ingestion.schema_annotation import REANNOTATING_DIGEST
 from unified_kg_rag.domain.models import Config, PipelineStageStatus, SearchStrategy
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
@@ -587,3 +595,103 @@ def test_an_edit_extraction_does_not_see_rewrites_the_annotations_without_a_mode
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert calls == []
     assert server.chat_models == []
+
+
+def _ingest_into(
+    tmp_path: Path,
+    stores: str,
+    source: Path,
+    change: Callable[[Config], None],
+    run: str,
+    reset: bool = False,
+) -> tuple[Config, Providers]:
+    """One ingest of ``source`` into the store set ``stores``."""
+    config = _config(tmp_path / stores / "stores", tmp_path / stores / "viz", change)
+    config.indexing.reset = reset
+    providers = e2e._providers(
+        config, FakeOllama(_Model(), e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    context = e2e._ingest(config, providers, source, tmp_path / stores / run)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    return config, providers
+
+
+def _recorded_digest(config: Config) -> str | None:
+    registry = SQLiteDocStatusStore(config)
+    try:
+        return registry.get_annotation_digest(
+            config_registry_namespace(config.indexing, None)
+        )
+    finally:
+        registry.close()
+
+
+def test_a_schema_reverted_on_another_corpus_rewrites_the_namespace(
+    tmp_path: Path, no_aws  # noqa: F811
+) -> None:
+    # Two corpora (scopes) in one namespace. Corpus A's run annotates the
+    # whole namespace by the edited IRIs; corpus B's next run, with the
+    # IRIs B last wrote, finds the namespace holding A's and rewrites it.
+    corpora = {"a": FIRST, "b": FINAL}
+    sources = {}
+    for name, corpus in corpora.items():
+        sources[name] = tmp_path / f"corpus-{name}"
+        sources[name].mkdir()
+        for file_name, text in corpus.items():
+            (sources[name] / file_name).write_text(text)
+    _ingest_into(tmp_path, "inc", sources["a"], _annotated, "run-a1")
+    _ingest_into(tmp_path, "inc", sources["b"], _annotated, "run-b1")
+    edited, _ = _ingest_into(
+        tmp_path, "inc", sources["a"], _iris_and_forms_edited, "run-a2"
+    )
+    assert _recorded_digest(edited) == schema_annotation_digest(edited)
+    reverted, providers = _ingest_into(
+        tmp_path, "inc", sources["b"], _annotated, "run-b2"
+    )
+    assert _recorded_digest(reverted) == schema_annotation_digest(reverted)
+
+    _ingest_into(tmp_path, "full", sources["a"], _annotated, "run-a")
+    full, full_providers = _ingest_into(
+        tmp_path, "full", sources["b"], _annotated, "run-b"
+    )
+    assert _annotations(reverted, providers) == _annotations(full, full_providers)
+
+
+def test_a_reset_records_the_annotations_once_it_wrote_every_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws  # noqa: F811
+) -> None:
+    config, _, _, source = _run(tmp_path, "inc", FIRST, change=_annotated)
+    assert _recorded_digest(config) == schema_annotation_digest(config)
+    edited, _ = _ingest_into(
+        tmp_path, "inc", source, _iris_and_forms_edited, "run-2", reset=True
+    )
+    assert _recorded_digest(edited) == schema_annotation_digest(edited)
+    assert schema_annotation_digest(edited) != schema_annotation_digest(config)
+
+    # A rebuild that stops, or fails a write, may leave items of the earlier
+    # schema: the namespace stays marked for the next run.
+    manager = "unified_kg_rag.application.storage.indexing_manager.IndexingManager"
+    index_all_data = IndexingManager.index_all_data
+
+    def one_failed(self: IndexingManager, **kwargs: Any) -> Any:
+        results = index_all_data(self, **kwargs)
+        results["neptune_entities"].add_error("refused")
+        return results
+
+    monkeypatch.setattr(f"{manager}.index_all_data", one_failed)
+    _ingest_into(tmp_path, "inc", source, _annotated, "run-3", reset=True)
+    assert _recorded_digest(config) == REANNOTATING_DIGEST
+
+    def stopped(self: IndexingManager, **kwargs: Any) -> Any:
+        raise RuntimeError("stopped")
+
+    _ingest_into(tmp_path, "inc", source, _iris_and_forms_edited, "run-4", reset=True)
+    monkeypatch.setattr(f"{manager}.index_all_data", stopped)
+    config = _config(tmp_path / "inc" / "stores", tmp_path / "inc" / "viz", _annotated)
+    config.indexing.reset = True
+    providers = e2e._providers(
+        config, FakeOllama(_Model(), e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    context = e2e._ingest(config, providers, source, tmp_path / "inc" / "run-5")
+    assert context.status is PipelineStageStatus.FAILED
+    assert _recorded_digest(config) == REANNOTATING_DIGEST

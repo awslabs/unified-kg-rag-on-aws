@@ -416,6 +416,11 @@ Library API (Python callers and custom backends).
   `quarantined_unchanged`. `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` are `detect_delta` and `remove_changed_and_deleted`
   (#214, #224, #327, #331, #332, #346).
+- A custom doc-status registry also implements `get_annotation_digest` /
+  `put_annotation_digest`: one record per index namespace of which schema
+  annotations its stores hold (a digest, or the rewrite sentinel), kept in
+  the namespace's partition and never listed as a document. The DynamoDB
+  and SQLite registries implement them (#488).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -530,6 +535,10 @@ From 0.2.3 (or a `main` checkout since):
    stores gets the embedded SQLite stores; add
    `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch`
    (as `docker/config.local.yaml` does) to keep the containers (#273).
+9. The first incremental run of each existing namespace reads its stores
+   once to record which schema annotations they hold, rewriting only those
+   that differ, with no model or embedding call; later runs read nothing
+   unless the schema's annotations change (#488).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -669,8 +678,14 @@ From 0.2.3 (or a `main` checkout since):
   `align` with entity types alone) is applied by the next incremental run
   without a model call: it rewrites the annotations of every stored entity
   and relationship of the index suffix, every scope's, from their stored
-  types, records what it wrote with the scope's extraction settings and
-  logs the counts, so the stores hold what a full build writes (#482).
+  types and logs the counts, so the stores hold what a full build writes
+  (#482). The registry records what the stores hold once per index
+  namespace, so the rewrite runs once per namespace, a schema reverted on
+  one scope after another scope's run is rewritten too, and a new scope
+  reads nothing. A rewrite that stops (a kill, a failed write, a store
+  that cannot be read, which now warns instead of failing the run) is made
+  again by the next run under any schema; Neptune reads the annotations in
+  bounded batches; a reset records the annotations it wrote (#488).
 - `run-prompt-tuning --schema-out PATH` writes an extraction schema draft
   for `schema_source: {kind: file, path: PATH}`: the profile's entity types,
   the relationship types the tuning examples state most often (with their

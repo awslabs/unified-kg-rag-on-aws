@@ -41,7 +41,6 @@ from unified_kg_rag.domain.ingestion.attempts import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     changed_settings,
     extraction_settings,
-    schema_annotation_digest,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
@@ -70,7 +69,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     relative_source_path,
 )
 from unified_kg_rag.domain.ingestion.merge import merge_claims
-from unified_kg_rag.domain.ingestion.schema_annotation import UNANNOTATED_DIGEST
+from unified_kg_rag.domain.ingestion.schema_annotation import REANNOTATING_DIGEST
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Claim,
@@ -1337,11 +1336,7 @@ def filter_to_delta(
     )
     for document in documents:
         assign_registry_source(document, source_scope)
-    # With the annotations the run writes: recorded at the commit, so the
-    # next run knows what the stores hold (reannotate_on_schema_change).
-    settings = extraction_settings(config).model_copy(
-        update={"annotation_digest": schema_annotation_digest(config)}
-    )
+    settings = extraction_settings(config)
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
     if config.indexing.reset:
@@ -2129,46 +2124,113 @@ def run_incremental_indexer(
     )
 
 
+def annotations_due(incremental: IncrementalIndexer, delta: DocumentDelta) -> bool:
+    """Whether the run rewrites the stored schema annotations of its
+    namespace (:func:`reannotate_on_schema_change`). Called before the run's
+    first store write.
+
+    The registry records per index namespace, for every scope, which
+    annotations its stores hold (``DocStatusPort.get_annotation_digest``):
+    the digest of the schema that wrote them (``SchemaAnnotator.digest``).
+    The run writes its own (``IndexingManager.annotation_digest``); when
+    that is what the stores hold, nothing is due. Otherwise the record is
+    set to ``REANNOTATING_DIGEST`` before anything is written, so a run that
+    stops before its pass completes (killed, or a store failed) leaves the
+    next run, under any schema, a pass to make. A namespace without a
+    record (written before the record existed) is read as unknown: one pass,
+    unless the registry held none of its documents before this run, when
+    the stores hold only what this run writes and the run's digest is
+    recorded without reading them. A new scope of an annotated namespace
+    therefore reads nothing.
+    """
+    namespace = scope_namespace(incremental.scope)
+    if namespace is None:
+        return False
+    store = incremental.doc_status
+    current = incremental.indexing_manager.annotation_digest
+    recorded = store.get_annotation_digest(namespace)
+    if recorded == current:
+        return False
+    check_write_fence()
+    if recorded is None and _namespace_was_empty(store, namespace, delta):
+        store.put_annotation_digest(namespace, current)
+        return False
+    if recorded != REANNOTATING_DIGEST:
+        store.put_annotation_digest(namespace, REANNOTATING_DIGEST)
+    return True
+
+
+def _namespace_was_empty(
+    store: DocStatusPort, namespace: str, delta: DocumentDelta
+) -> bool:
+    """Whether the registry held none of ``namespace``'s documents before the
+    run: its diff read none, and every record it holds now is one of the
+    run's new documents (``open_attempts`` recorded them)."""
+    if delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes:
+        return False
+    new = set(delta.new)
+    return all(record.doc_id in new for record in store.list_namespace(namespace))
+
+
+def record_rebuilt_annotations(
+    store: DocStatusPort,
+    indexing_manager: IndexingManager,
+    namespaces: Collection[str],
+    *,
+    rebuilt: bool,
+) -> None:
+    """The annotation records of the namespaces a reset rebuilds
+    (:func:`annotations_due`): before the rebuild's first write
+    (``rebuilt=False``) each that holds another digest is marked
+    ``REANNOTATING_DIGEST``; once the rebuild wrote every item
+    (``rebuilt=True``) each records the digest it wrote."""
+    current = indexing_manager.annotation_digest
+    for namespace in sorted(namespaces):
+        if rebuilt or store.get_annotation_digest(namespace) != current:
+            check_write_fence()
+            store.put_annotation_digest(
+                namespace, current if rebuilt else REANNOTATING_DIGEST
+            )
+
+
 def reannotate_on_schema_change(
     incremental: IncrementalIndexer, text_units: Sequence[TextUnit]
 ) -> None:
-    """Rewrite the stored schema annotations when the schema changed only
-    in what indexing stores since the scope's last commit.
+    """Rewrite the stored schema annotations of the run's namespace, every
+    scope's, to what the run's schema gives (``IndexingManager.reannotate``),
+    with no model call, when :func:`annotations_due` found them due.
 
-    The annotation digest the scope's last commit recorded
-    (``ExtractionSettings.annotation_digest``; a record without one was
-    written with none) against the one the run writes: when they differ,
-    every stored entity and relationship of the run's suffixes, of every
-    scope, is annotated again (``IndexingManager.reannotate``), with no model
-    call. An IRI edit does not change what extraction sees, so it keys no
-    extraction cache and re-extracts no document; this pass is what a
-    full build would have written. Unless the pass rewrote every store, the
-    commit records the earlier digest, so the next run tries again.
+    An IRI edit does not change what extraction sees, so it keys no
+    extraction cache and re-extracts no document; this pass is what a full
+    build would have written. Once it rewrote every store the namespace
+    records the run's digest. Otherwise (a write failed, a store cannot
+    list its items, a store read or write raised) the run goes on with a
+    warning and the record stays ``REANNOTATING_DIGEST``, so the next run
+    tries again.
     """
-    settings = incremental.extraction_settings
-    if incremental.scope is None or settings is None:
+    namespace = scope_namespace(incremental.scope)
+    if namespace is None:
         return
-    current = settings.annotation_digest
-    stored = incremental.doc_status.get_extraction_settings(incremental.scope)
-    recorded = (stored[1].annotation_digest if stored else None) or UNANNOTATED_DIGEST
-    if current is None or current == recorded:
-        return
+    manager = incremental.indexing_manager
     suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
-    result = incremental.indexing_manager.reannotate(suffixes | {incremental.suffix})
+    result = manager.reannotate(suffixes | {incremental.suffix})
     if result.complete:
+        check_write_fence()
+        incremental.doc_status.put_annotation_digest(
+            namespace, manager.annotation_digest
+        )
         return
-    incremental.extraction_settings = settings.model_copy(
-        update={"annotation_digest": recorded}
-    )
+    if result.error is not None:
+        reason = f"a store failed: {result.error}"
+    elif result.failed:
+        reason = f"{result.failed} writes failed"
+    else:
+        reason = "a store cannot list its items"
     logger.warning(
         "The schema annotations of the stored items were not all rewritten "
         "(%s); the next run tries again, and indexing.reset: true rewrites "
         "them with the rest",
-        (
-            f"{result.failed} writes failed"
-            if result.failed
-            else "a store cannot list its items"
-        ),
+        reason,
     )
 
 
@@ -2214,6 +2276,7 @@ def index_delta(
     # still hold the registry's documents.
     indexing_manager.opensearch_indexer.check_index_settings(incremental.suffix)
     incremental.check_graph_holds_registry(delta)
+    reannotate = annotations_due(incremental, delta)
     # Write ahead before any store write: the new and changed docs are
     # recorded PENDING with their stored + planned lineage, so a run
     # interrupted from here on is repaired by the next one (the docs
@@ -2238,7 +2301,8 @@ def index_delta(
             "retries the removal"
         )
 
-    reannotate_on_schema_change(incremental, text_units)
+    if reannotate:
+        reannotate_on_schema_change(incremental, text_units)
 
     # Whatever stops the commit after its registry write (a failed or stopped
     # cleanup) leaves the documents it recorded FAILED in the result.

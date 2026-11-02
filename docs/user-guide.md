@@ -1930,8 +1930,15 @@ whether the model sees the change:
   rewrites `in_schema`, `type_iri` and `predicate_iri` of every stored
   entity and relationship of the index suffix, of every scope, from their
   stored types, and logs one INFO line with the counts; the stores then
-  hold what a full build writes. The registry records the annotations each
-  scope's last commit wrote, so the next run has nothing to rewrite. A
+  hold what a full build writes. The registry records which annotations
+  the stores of each index namespace hold, once for all its scopes: the
+  rewrite runs once per namespace, whichever scope's run finds the
+  schema changed (a schema reverted on one scope after another scope's run
+  is rewritten too), and a new scope of an annotated namespace reads
+  nothing. A namespace recorded before this record existed is read once.
+  The stores are read in bounded pages. A rewrite that does not finish (a
+  killed run, a failed write, a store that cannot be read) warns, leaves
+  the run going, and is made again by the next run, under any schema. A
   custom store adapter that cannot list its items is skipped with a
   warning; `indexing.reset: true` rewrites it.
 - **Changes nothing**: moving a schema file without editing it (the content

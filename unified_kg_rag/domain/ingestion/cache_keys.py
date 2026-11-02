@@ -73,7 +73,6 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
-    ExtractionSchema,
     RelationshipPattern,
     RelationshipPatternItem,
     RelationshipTypeItem,
@@ -591,8 +590,8 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
     and ``align`` extract alike and key as the default. What the schema
     changes only in what indexing stores (its IRIs, ``off`` against
     ``align`` with entity types alone) keys the indexing stage
-    (``_schema_iris``) and is recorded with an incremental commit as the
-    annotation digest (``schema_annotation_digest``).
+    (``_schema_iris``), and its digest (``schema_annotation_digest``) is
+    recorded per index namespace once the stores hold its annotations.
     """
     if path in _SCHEMA_TYPE_FIELDS:
         return [_type_as_extracted(item) for item in value]
@@ -609,9 +608,14 @@ def _as_extracted(config: Config, path: str, value: Any) -> Any:
 
 def schema_annotation_digest(config: Config) -> str:
     """The digest of the schema annotations indexing writes with ``config``
-    (``SchemaAnnotator.digest``), from the inline schema keys."""
+    (``SchemaAnnotator.digest``).
+
+    Raises:
+        ConfigurationError: A schema source was not loaded into the inline
+            keys (``GraphExtractionConfig.extraction_schema``).
+    """
     return SchemaAnnotator(
-        ExtractionSchema.from_config(config.processing.graph_extraction)
+        config.processing.graph_extraction.extraction_schema()
     ).digest
 
 
@@ -893,6 +897,10 @@ def stage_input_fingerprint(
         A short hex digest, identical for two equal configurations and
         different as soon as any output-determining input changes.
 
+    Raises:
+        ConfigurationError: The indexing stage's key, with a schema source
+            not loaded into the inline keys yet (its IRIs key the stage).
+
     Example:
         >>> fp = stage_input_fingerprint(Config(), PipelineStageType.TEXT_CHUNKING)
         >>> len(fp)
@@ -911,7 +919,7 @@ def stage_input_fingerprint(
 def _schema_iris(config: Config) -> list[list[str]]:
     """``[kind, type key, iri]`` of each IRI indexing writes: what indexing
     alone reads of the schema (its labels and mode are keyed already)."""
-    schema = ExtractionSchema.from_config(config.processing.graph_extraction)
+    schema = config.processing.graph_extraction.extraction_schema()
     if schema.mode == "off":
         return []
     return [

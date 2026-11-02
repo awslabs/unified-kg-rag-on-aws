@@ -480,6 +480,10 @@ gets its models and stores from the run's `Providers` bundle.
   rewritten in place (`write_schema_annotations`: Neptune and the SQLite
   graph drop and set the two properties, OpenSearch a partial update with
   null for an unset one), so the stores end as a full build leaves them.
+  Neptune lists the ids in one traversal and reads the annotations in
+  `batch_size` batches; OpenSearch pages by id. A store that inherits the
+  port's defaults (`rewrites_schema_annotations`) makes the pass read
+  nothing; a store error ends the pass with a warning, not the run.
 - **Merged descriptions** are concatenated, so `DescriptionSummarizer`
   re-summarizes those over a token budget with a cheap model (map-reduce when
   one exceeds a call's input); a failed call keeps the concatenation. The
@@ -1348,12 +1352,20 @@ checks that its values are the defaults and each key is in the reference).
   `SchemaConformance.applies` would differ, never an IRI. What only
   indexing reads of the schema (the IRIs, `off` against `align` with entity
   types alone) is the annotation digest (`SchemaAnnotator.digest`), keyed
-  into the indexing stage and recorded with the scope's settings
-  (`ExtractionSettings.annotation_digest`, outside the fingerprint); an
-  incremental run whose digest differs from the recorded one rewrites the
-  stored annotations of its suffixes without extracting
-  (`incremental.reannotate_on_schema_change` →
-  `IndexingManager.reannotate`). Adding a section: §15.
+  into the indexing stage. The registry records it once per index
+  namespace (`DocStatusPort.get/put_annotation_digest`), not per scope:
+  a pass rewrites every scope's items, so a per-scope record misses a
+  schema reverted on one scope after another scope's pass. Before its
+  first store write, an incremental run whose digest differs from the
+  record sets it to `REANNOTATING_DIGEST` (`incremental.annotations_due`),
+  rewrites the namespace's annotations without extracting
+  (`reannotate_on_schema_change` → `IndexingManager.reannotate`) and
+  records its digest only once the pass completed, so a pass that stopped
+  is made again by the next run under any schema. A namespace without a
+  record is unknown (one pass), unless the registry held none of its
+  documents before the run (recorded without reading). A reset marks its
+  namespaces before the rebuild and records its digest when every item
+  was written (`record_rebuilt_annotations`). Adding a section: §15.
 - **Extraction schema** (`domain/models/schema.py`). The entity and
   relationship types and the allowed patterns live inline in
   `processing.graph_extraction` (`entity_types`, `relationship_types`,
@@ -1568,7 +1580,7 @@ dispatch edit. The ports, their default adapters and the local ones (the
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; the extraction-record store (`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, by record key) defaults to keeping none (`{}`: every text unit is extracted, nothing is stored), and `stored_extraction_record_keys` to the keys `read_extraction_records` returns; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve`; a document retriever must honour `SearchQuery.exclude` (leave out what it matches before the page is cut: the filtered walk's edge pages rely on it); `aindex_limits(prefix, suffix)` (the hits one search returns, the values one `terms` clause takes) defaults to the configured `index_settings`, so a backend whose live limits can be smaller overrides it; the strategies size every list they send by it (fetches by id in batches of `IndexLimits.id_batch_size`, walk frontiers and exclusions by `max_terms_count`, at most `search.max_concurrency` batches at once), so `aretrieve` may cut a search to its limits and need not batch; `filter_fields()` declares the filter keys the retriever applies (`None`, the default, accepts every key) and `filter_fields_for(prefixes)` those of the indexes a strategy filters (`BaseSearchStrategy.filtered_index_prefixes`), by default `filter_fields()`; `GraphRAGChain` rejects a caller key none of a strategy's `filtered_retrievers` declares, checking a custom retriever against the union of its keys | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source, *, grounding=None)` returning a `GuardVerdict` (`none` / `masked` / `blocked`, the text to continue with, and `grounding`, a `GroundingCheck`, when a `GroundingContext` was given); raises when it cannot decide. `grounding` is passed only while `aws.bedrock.guardrail.contextual_grounding.enabled` is set | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) and a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `list_all` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`) and the schema annotations a namespace's stores hold (`get_annotation_digest` / `put_annotation_digest`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
 
 **Errors from a custom backend** are classified by type, never by message
 (§8.1): raise a `ConnectionError` or `ConfigurationError` subclass (the typed

@@ -368,6 +368,19 @@ def _keys(config: Config) -> dict[str, str]:
     }
 
 
+def _unloaded_keys(config: Config) -> dict[str, str]:
+    """:func:`_keys` of a config whose schema source is not loaded yet:
+    every stage's but the indexing stage's, which its IRIs key, so it
+    refuses the config until start-up loads the source."""
+    with pytest.raises(ConfigurationError, match="not loaded yet"):
+        stage_input_fingerprint(config, PipelineStageType.INDEXING, "corpus")
+    return {
+        stage.value: stage_input_fingerprint(config, stage, "corpus")
+        for stage in PipelineStageType
+        if stage is not PipelineStageType.INDEXING
+    }
+
+
 # Written out, not read from cache_keys._KEYED_ONCE_SET: a test iterating
 # the set cannot notice an entry taken out of it (which would re-key every
 # default configuration).
@@ -657,7 +670,9 @@ def test_the_source_location_keys_nothing() -> None:
     # source reads does not count (the loaded content does).
     here = _config(schema_source={"kind": "file", "path": "a/schema.yaml"})
     there = _config(schema_source={"kind": "file", "path": "b/schema.yaml"})
-    assert _keys(here) == _keys(there)
+    assert _unloaded_keys(here) == _unloaded_keys(there)
     assert extraction_fingerprint(here) == extraction_fingerprint(there)
     assert answer_settings(here) == answer_settings(there)
-    assert _keys(here) != _keys(Config())
+    defaults = _keys(Config())
+    defaults.pop(PipelineStageType.INDEXING.value)
+    assert _unloaded_keys(here) != defaults

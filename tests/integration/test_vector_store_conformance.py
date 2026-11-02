@@ -36,7 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.ports.indexer import StoredAnnotation
-from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared import ConfigurationError, NamespaceLeaseError
 
 pytestmark = pytest.mark.integration
 
@@ -517,6 +517,66 @@ def test_schema_annotations_are_listed_and_rewritten_in_place(
     assert indexer.read_schema_annotations("entities", suffix=tenant) == {
         "e-depot-2": StoredAnnotation(type="LOCATION", in_schema=True, iri=iri)
     }
+
+
+def test_an_in_schema_false_is_written_as_false(harness: StoreHarness) -> None:
+    # Not as null: in_schema false is a filter value of its own.
+    indexer = harness.vector_indexer
+    _write(harness, "entities", "upsert", _entities())
+    indexer.write_schema_annotations("entities", {"e-buyer": (False, None)})
+    assert indexer.read_schema_annotations("entities")["e-buyer"] == StoredAnnotation(
+        type="ORG", in_schema=False
+    )
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_schema_annotations_are_read_past_one_search_window(
+    harness: StoreHarness,
+) -> None:
+    harness = _windowed(harness, 2)
+    _write(harness, "entities", "upsert", _entities())
+    assert set(harness.vector_indexer.read_schema_annotations("entities") or {}) == {
+        "e-vendor",
+        "e-buyer",
+        "e-depot",
+    }
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_schema_annotation_write_failures_are_counted(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    indexer = harness.vector_indexer
+    _write(harness, "entities", "upsert", _entities())
+    client = indexer.opensearch_client
+    monkeypatch.setattr(
+        client,
+        "bulk_update",
+        lambda index, docs, refresh=False: {
+            "items": [{"update": {"_id": "e-buyer", "error": {"type": "x"}}}]
+        },
+    )
+    stats = indexer.write_schema_annotations(
+        "entities", {"e-buyer": (True, None), "e-vendor": (True, None)}
+    )
+    assert (stats.successful_items, stats.failed_items) == (1, 1)
+    assert stats.failed_ids == ["e-buyer"]
+
+    def refused(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("bulk refused")
+
+    monkeypatch.setattr(client, "bulk_update", refused)
+    stats = indexer.write_schema_annotations(
+        "entities", {"e-buyer": (True, None), "e-vendor": (True, None)}
+    )
+    assert (stats.successful_items, stats.failed_items) == (0, 2)
+
+    def lost(*args: Any, **kwargs: Any) -> Any:
+        raise NamespaceLeaseError("lease lost")
+
+    monkeypatch.setattr(client, "bulk_update", lost)
+    with pytest.raises(NamespaceLeaseError):
+        indexer.write_schema_annotations("entities", {"e-buyer": (True, None)})
 
 
 def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:

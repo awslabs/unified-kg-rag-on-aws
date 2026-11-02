@@ -410,8 +410,9 @@ class GraphIndexer(BaseIndexer):
         reading them back and rewriting the ones that differ
         (``IndexingManager.reannotate``), with no extraction. Default
         returns ``None``: the backend cannot enumerate its items, and only a
-        reset rewrites them. Adapters that override it raise when the read
-        fails.
+        reset rewrites them. Adapters that override it (and
+        :meth:`write_schema_annotations`, see ``rewrites_schema_annotations``)
+        read in bounded requests, and raise when a read fails.
         """
         return None
 
@@ -789,3 +790,19 @@ class VectorIndexer(BaseIndexer):
         ``extra_relationship_ids`` are additionally removed from the relationship
         index only (orphaned incident edges). Returns a per-index stats map.
         """
+
+
+_ANNOTATION_METHODS = ("read_schema_annotations", "write_schema_annotations")
+
+
+def rewrites_schema_annotations(store: object) -> bool:
+    """Whether ``store`` can enumerate and rewrite its schema annotations:
+    it implements both ``read_schema_annotations`` and
+    ``write_schema_annotations`` instead of inheriting the defaults, which
+    read nothing. Checked before a re-annotation pass reads anything, so a
+    store that cannot does not make the pass read the other in vain."""
+    return all(
+        getattr(type(store), name, None)
+        not in (getattr(GraphIndexer, name), getattr(VectorIndexer, name))
+        for name in _ANNOTATION_METHODS
+    )

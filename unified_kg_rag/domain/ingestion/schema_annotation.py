@@ -89,8 +89,8 @@ class SchemaAnnotator:
         """Identifies the annotations this annotator gives: two with one
         digest annotate every item alike (SHA-256, hex, of the type keys
         that get ``in_schema`` where the schema applies, and the IRI of each
-        type key). Recorded with what an incremental run indexed, so a
-        schema edit that changes only the annotations rewrites them without
+        type key). Recorded per index namespace once its stores hold them, so
+        a schema edit that changes only the annotations rewrites them without
         extracting again (``IndexingManager.reannotate``)."""
         state = [
             ANNOTATION_VERSION,
@@ -149,3 +149,10 @@ class SchemaAnnotator:
 # The digest of an annotator that annotates nothing: what every item written
 # without schema annotations holds (no schema, or one that gives none).
 UNANNOTATED_DIGEST = SchemaAnnotator(ExtractionSchema()).digest
+
+# Recorded for a namespace (``DocStatusPort.put_annotation_digest``) before a
+# run's first write when its stores may come to hold the annotations of two
+# schemas (a re-annotation pass, a rebuild), and replaced by the digest once
+# every stored item holds the run's: a run that stopped in between left it,
+# and the next run, under any schema, rewrites them. No digest equals it.
+REANNOTATING_DIGEST = "reannotating"
