@@ -15,7 +15,12 @@ from typing import Any, ClassVar
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore, VertexFilter
 from unified_kg_rag.adapters.retrieval.base import seed_share
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
-from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
+from unified_kg_rag.adapters.storage.filter_schema import (
+    ATTRIBUTE_KEY_PREFIX,
+    SOURCE_KINDS_FIELD,
+    source_kinds_values,
+)
+from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import get_logger
 
@@ -58,8 +63,10 @@ def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
     """The predicate ``NeptuneRetriever._apply_filters`` applies to a vertex.
 
     ``id`` is the seed list, not a filter. An ``attr_*`` key applies only to
-    vertices that have the property; every other key also drops vertices
-    without it. A dict without a range operator filters nothing.
+    vertices that have the property, and a ``source_kinds`` entry naming
+    ``document`` passes vertices without it too (an entity no seed graph
+    states); every other key also drops vertices without it. A dict without
+    a range operator filters nothing.
     """
     entries = [
         (key, value)
@@ -76,7 +83,11 @@ def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
         for key, value in entries:
             stored = value_map.get(key)
             if not stored:
-                if key.startswith(ATTRIBUTE_KEY_PREFIX):
+                if key.startswith(ATTRIBUTE_KEY_PREFIX) or (
+                    key == SOURCE_KINDS_FIELD
+                    and isinstance(value, str | list)
+                    and DOCUMENT_SOURCE_KIND in source_kinds_values(value)
+                ):
                     continue
                 return False
             if not _matches(stored, value):

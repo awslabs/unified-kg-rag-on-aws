@@ -14,7 +14,11 @@ exactly what the write produced. Both directions live here:
 - item attributes are ``attr_<key>`` properties;
 - a relationship's type is the edge label;
 - the schema annotations (``in_schema``, a boolean, and ``type_iri`` /
-  ``predicate_iri``) are properties of their own, absent while ``None``.
+  ``predicate_iri``) are properties of their own, absent while ``None``;
+- so are the seed-graph fields: an entity's ``iri`` (not truncated) and
+  ``source_kinds``, a vertex list, or on an edge the JSON string of the
+  sorted kinds (``["seed_graph"]`` exactly for an edge only a seed graph
+  states).
 
 Read-back limits: a set-cardinality vertex list keeps no order or duplicates,
 and a one-element list attribute reads back as its single value (Gremlin
@@ -79,6 +83,11 @@ BUILD_TAG_PROPERTY = "build_tag"
 NAME_KEY_PROPERTY = "name_key"
 
 
+def _kinds(source_kinds: list[str] | None) -> list[str] | None:
+    """``source_kinds`` as written: sorted, ``None`` when empty."""
+    return sorted(source_kinds) if source_kinds else None
+
+
 def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
     """Vertex properties of an entity (lists stay lists: multi-valued)."""
     return item_properties(
@@ -95,9 +104,11 @@ def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
             "in_schema": entity.in_schema,
             # Not truncated: a cut IRI names another resource.
             "type_iri": entity.type_iri,
+            "iri": entity.iri,
+            "source_kinds": _kinds(entity.source_kinds),
         },
         max_length,
-        whole=("type_iri",),
+        whole=("type_iri", "iri"),
     )
 
 
@@ -114,6 +125,7 @@ def relationship_properties(rel: Relationship, max_length: int) -> dict[str, Any
             "text_unit_ids": rel.text_unit_ids,
             "in_schema": rel.in_schema,
             "predicate_iri": rel.predicate_iri,
+            "source_kinds": _kinds(rel.source_kinds),
         },
         max_length,
         whole=("predicate_iri",),
@@ -241,6 +253,12 @@ def entity_from_vertex(value_map: Mapping[Any, Any]) -> Entity | None:
         if value is not None:
             fields[key] = value
     fields.update(_annotations(value_map, "type_iri"))
+    iri = _single(value_map.get("iri"))
+    if isinstance(iri, str):
+        fields["iri"] = iri
+    kinds = _vertex_list(value_map.get("source_kinds"))
+    if kinds:
+        fields["source_kinds"] = sorted(kinds)
     return Entity.model_validate(fields)
 
 
@@ -269,4 +287,7 @@ def relationship_from_edge(
         if value is not None:
             fields[key] = value
     fields.update(_annotations(value_map, "predicate_iri"))
+    kinds = _edge_list("source_kinds", _single(value_map.get("source_kinds")))
+    if kinds:
+        fields["source_kinds"] = sorted(kinds)
     return Relationship.model_validate(fields)

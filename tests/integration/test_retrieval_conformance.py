@@ -435,6 +435,107 @@ def test_a_schema_filter_on_an_index_without_the_fields_matches_nothing(
     assert len(results[4]) == 5
 
 
+_SEED_IRI = "https://example.org/procure#buyer"
+
+
+def _seeded() -> tuple[list[Entity], list[Relationship]]:
+    """The items with source kinds: Vendor documents only, Buyer both,
+    Depot a seed graph only; r-ships a seed graph only."""
+    entities = _entities()
+    entities[1] = entities[1].model_copy(
+        update={"iri": _SEED_IRI, "source_kinds": ["document", "seed_graph"]}
+    )
+    entities[2] = entities[2].model_copy(update={"source_kinds": ["seed_graph"]})
+    relationships = _relationships()
+    relationships[1] = relationships[1].model_copy(
+        update={"source_kinds": ["seed_graph"]}
+    )
+    return entities, relationships
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_source_kinds_and_iri_filters_on_entities_and_relationships(
+    harness: StoreHarness, search_type: SearchType
+) -> None:
+    harness.initialize()
+    indexer = harness.vector_indexer
+    entities, relationships = _seeded()
+    for stats in (
+        indexer.index_entities(entities),
+        indexer.index_relationships(relationships),
+    ):
+        assert stats.failed_items == 0, stats.errors
+    o = _prefixes(harness)
+    entity, rel = o.entities_index_prefix, o.relationships_index_prefix
+
+    def query(prefix: str, filters: dict[str, Any]) -> SearchQuery:
+        return _query("widgets", prefix, search_type=search_type, filters=filters)
+
+    results = _search(
+        harness,
+        query(entity, {"source_kinds": "seed_graph"}),
+        query(entity, {"source_kinds": "document"}),
+        query(entity, {"source_kinds": ["document", "seed_graph"]}),
+        query(entity, {"iri": _SEED_IRI}),
+        query(rel, {"source_kinds": "seed_graph"}),
+        query(rel, {"source_kinds": "document"}),
+    )
+    # document: document evidence, the items no seed graph states included.
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["e-buyer", "e-depot"],
+        ["e-buyer", "e-vendor"],
+        ["e-buyer", "e-depot", "e-vendor"],
+        ["e-buyer"],
+        ["r-ships"],
+        ["r-supplies"],
+    ]
+    # The read paths return the fields.
+    (buyer,) = results[3]
+    assert buyer.metadata["iri"] == _SEED_IRI
+    assert buyer.metadata["source_kinds"] == ["document", "seed_graph"]
+
+
+@pytest.mark.parametrize("search_type", list(SearchType), ids=lambda t: t.value)
+def test_a_seed_graph_filter_on_an_index_without_the_fields(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    search_type: SearchType,
+) -> None:
+    # An index built before the fields were mapped, queried before an
+    # ingestion maps them: OpenSearch 2.13 refuses a kNN filter on an
+    # unmapped field. No item there is a seed graph's, so seed_graph and an
+    # IRI match nothing, and document matches every item.
+    harness.initialize()
+    _earlier_index(
+        harness, monkeypatch, "entities", ("iri", "source_kinds"), _entities()
+    )
+    _earlier_index(
+        harness, monkeypatch, "relationships", ("source_kinds",), _relationships()
+    )
+    o = _prefixes(harness)
+    both = [o.entities_index_prefix, o.relationships_index_prefix]
+    results = _search(
+        harness,
+        *(
+            _query("widgets", both, search_type=search_type, filters=filters)
+            for filters in (
+                {"source_kinds": "seed_graph"},
+                {"source_kinds": "document"},
+                {"source_kinds": ["document", "seed_graph"]},
+                {"iri": _SEED_IRI},
+            )
+        ),
+    )
+    everything = ["e-buyer", "e-depot", "e-vendor", "r-ships", "r-supplies"]
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        [],
+        everything,
+        everything,
+        # An IRI applies to entities only: relationships are unfiltered.
+        ["r-ships", "r-supplies"],
+    ]
+
+
 def test_cli_filter_values_match_as_the_api_values(harness: StoreHarness) -> None:
     # run-rag --filters gives every value as a string; typed at the CLI they
     # select what the Python API's booleans and numbers select.
@@ -1074,6 +1175,54 @@ def test_graph_expansion_filters_on_the_schema_annotations(
         ["b"],
         ["a", "c"],
         ["a", "c"],
+    ]
+
+
+def test_graph_expansion_filters_on_the_source_kinds_and_iri(
+    graph_harness: StoreHarness,
+) -> None:
+    harness = graph_harness
+    iri = "https://example.org/procure#c"
+    entities = [
+        Entity(id="a", name="A", type="org", rank=2),
+        Entity(id="b", name="B", type="org", rank=1, source_kinds=["seed_graph"]),
+        Entity(
+            id="c",
+            name="C",
+            type="org",
+            rank=1,
+            iri=iri,
+            source_kinds=["document", "seed_graph"],
+        ),
+        # No seed graph states it: document evidence only.
+        Entity(id="d", name="D", type="org", rank=1),
+    ]
+    relationships = [
+        Relationship(id=f"a{t}", source_id="a", target_id=t, description=f"a-{t}")
+        for t in "bcd"
+    ]
+    assert harness.graph_indexer.index_entities(entities).failed_items == 0
+    assert harness.graph_indexer.index_relationships(relationships).failed_items == 0
+    results = _graph_retrieve(
+        harness,
+        *(
+            SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"], **filters})
+            for filters in (
+                {"source_kinds": "seed_graph"},
+                {"source_kinds": "document"},
+                {"source_kinds": "Document"},
+                {"source_kinds": ["document", "seed_graph"]},
+                {"iri": iri},
+            )
+        ),
+    )
+    # The seed is filtered as the others: a holds document evidence only.
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["b", "c"],
+        ["a", "c", "d"],
+        ["a", "c", "d"],
+        ["a", "b", "c", "d"],
+        ["c"],
     ]
 
 

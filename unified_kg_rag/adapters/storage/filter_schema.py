@@ -39,6 +39,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    SEED_SOURCE_KIND,
+)
 from unified_kg_rag.domain.models import Constants
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
@@ -267,6 +271,40 @@ def _number(key: str, kind: str, number: float, given: str) -> int | float:
     return int(number) if kind == _INTEGER else number
 
 
+# The source kinds of an entity or relationship (``Entity.source_kinds``):
+# written only on items a seed graph states, a list of these kinds, so an
+# item without the field holds document evidence only. A filter on it names
+# kinds the item must hold evidence of: ``seed_graph`` matches the items a
+# seed graph states, ``document`` the items a document states, those without
+# the field included (every store rewrites it so).
+SOURCE_KINDS_FIELD = "source_kinds"
+SOURCE_KINDS = frozenset({DOCUMENT_SOURCE_KIND, SEED_SOURCE_KIND})
+
+
+def _source_kind(value: Any) -> Any:
+    """``value`` as a source kind (any case, spaces stripped); ``None`` is
+    left for :func:`check_filter_values` to judge.
+
+    Raises:
+        InvalidFilterError: ``value`` names no source kind.
+    """
+    if value is None:
+        return value
+    kind = value.strip().lower() if isinstance(value, str) else None
+    if kind not in SOURCE_KINDS:
+        raise InvalidFilterError(
+            f"Filter '{SOURCE_KINDS_FIELD}' takes "
+            f"{' or '.join(sorted(SOURCE_KINDS))} (or a list of them), not "
+            f"{json.dumps(value, default=str)}."
+        )
+    return kind
+
+
+def source_kinds_values(value: Any) -> list[str]:
+    """The kinds a typed ``source_kinds`` filter value names, in order."""
+    return list(value) if isinstance(value, list) else [value]
+
+
 def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None:
     """``filters`` with each string value of a boolean or numeric field
     (``TYPED_FILTER_FIELDS``) converted to that type, in a list and in range
@@ -278,7 +316,8 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     is kept an integer when it reads as one. A value already typed must
     be of the field's type: a boolean field takes only ``True``/``False``,
     a numeric one no boolean, an integer one no fractional number (``2.0``
-    becomes ``2``). Values of other fields are unchanged.
+    becomes ``2``). A ``source_kinds`` value (or each value of a list) is
+    a source kind, in lower case. Values of other fields are unchanged.
 
     Raises:
         InvalidFilterError: A value is not a value of its field's type.
@@ -288,7 +327,13 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     typed: dict[str, Any] = {}
     for key, value in filters.items():
         kind = TYPED_FILTER_FIELDS.get(key)
-        if kind is None:
+        if key == SOURCE_KINDS_FIELD:
+            typed[key] = (
+                [_source_kind(v) for v in value]
+                if isinstance(value, list)
+                else _source_kind(value)
+            )
+        elif kind is None:
             typed[key] = value
         elif isinstance(value, list):
             typed[key] = [_typed(key, kind, v) for v in value]
@@ -317,6 +362,16 @@ def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
 # as it treats ``attr_*`` keys: a probe first, and no document holding the
 # field matches no value of it.
 SCHEMA_ANNOTATION_FIELDS = frozenset({"in_schema", "type_iri", "predicate_iri"})
+# The seed-graph fields (an entity's ``iri``, ``source_kinds``) are mapped
+# as late, and probed alike.
+SEED_GRAPH_FIELDS = frozenset({"iri", SOURCE_KINDS_FIELD})
+LATE_MAPPED_FIELDS = SCHEMA_ANNOTATION_FIELDS | SEED_GRAPH_FIELDS
+
+# Fields an index maps that are no filter key: the ``source_kind`` of a seed
+# graph's text units, which the retriever itself keeps out of text searches.
+UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
+    "text_units": frozenset({"source_kind"}),
+}
 
 
 def union_filter_fields(items: Iterable[FilterFields]) -> FilterFields:
@@ -368,6 +423,8 @@ def opensearch_filter_fields(
                     "text_unit_ids",
                     "in_schema",
                     "type_iri",
+                    "iri",
+                    SOURCE_KINDS_FIELD,
                 }
             ),
             _OPENSEARCH_ENTITY_PREFIXES,
@@ -389,6 +446,7 @@ def opensearch_filter_fields(
                     # mix and hybrid.
                     "in_schema",
                     "predicate_iri",
+                    SOURCE_KINDS_FIELD,
                 }
             ),
             _OPENSEARCH_DOCUMENT_PREFIXES,
@@ -452,6 +510,8 @@ NEPTUNE_ENTITY_FILTER_FIELDS = FilterFields(
             "community_ids",
             "in_schema",
             "type_iri",
+            "iri",
+            SOURCE_KINDS_FIELD,
         }
     ),
     frozenset({ATTRIBUTE_KEY_PREFIX}),

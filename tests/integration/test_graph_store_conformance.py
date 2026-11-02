@@ -464,6 +464,31 @@ def test_schema_annotations_round_trip_and_an_upsert_clears_them(
     assert (rel.in_schema, rel.predicate_iri) == (None, None)
 
 
+def test_seed_graph_fields_round_trip_and_an_upsert_clears_them(
+    harness: StoreHarness,
+) -> None:
+    graph = harness.graph_indexer
+    iri = "https://example.org/procure#a"
+    seeded = [
+        _entity("a", iri=iri, source_kinds=["document", "seed_graph"]),
+        _entity("b", source_kinds=["seed_graph"]),
+    ]
+    edge = _rel("ab", "a", "b", type="SUPPLIES", source_kinds=["seed_graph"])
+    assert graph.upsert_entities(seeded).failed_items == 0
+    assert graph.upsert_relationships([edge]).failed_items == 0
+    assert sorted(graph.read_entities(["a", "b"]), key=lambda e: e.id) == seeded
+    assert graph.read_relationships(["ab"]) == [edge]
+
+    # Written without them (no seed unit cited any more), they are gone.
+    plain = [e.model_copy(update={"iri": None, "source_kinds": None}) for e in seeded]
+    graph.upsert_entities(plain)
+    graph.upsert_relationships([edge.model_copy(update={"source_kinds": None})])
+    read = graph.read_entities(["a", "b"])
+    assert [(e.iri, e.source_kinds) for e in read] == [(None, None)] * 2
+    (rel,) = graph.read_relationships(["ab"])
+    assert rel.source_kinds is None
+
+
 def test_schema_annotations_are_listed_and_rewritten_alone(
     harness: StoreHarness,
 ) -> None:

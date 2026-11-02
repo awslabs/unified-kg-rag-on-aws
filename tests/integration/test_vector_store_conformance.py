@@ -464,6 +464,36 @@ def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) ->
     assert "predicate_iri" not in copies["r-ships"]
 
 
+def test_vector_copy_reads_hold_the_seed_graph_fields(harness: StoreHarness) -> None:
+    indexer = harness.vector_indexer
+    iri = "https://example.org/procure#depot"
+    entities = _entities()
+    entities[2] = entities[2].model_copy(
+        update={"iri": iri, "source_kinds": ["document", "seed_graph"]}
+    )
+    entities[1] = entities[1].model_copy(update={"source_kinds": ["seed_graph"]})
+    relationships = _relationships()
+    relationships[1] = relationships[1].model_copy(
+        update={"source_kinds": ["seed_graph"]}
+    )
+    _write(harness, "entities", "upsert", entities)
+    _write(harness, "relationships", "upsert", relationships)
+    copies = indexer.read_vector_copies("entities", ["e-depot", "e-buyer", "e-vendor"])
+    fields = {
+        i: {k: c[k] for k in ("iri", "source_kinds") if k in c}
+        for i, c in copies.items()
+    }
+    # Written only when set: an item no seed graph states is stored as before.
+    assert fields == {
+        "e-depot": {"iri": iri, "source_kinds": ["document", "seed_graph"]},
+        "e-buyer": {"source_kinds": ["seed_graph"]},
+        "e-vendor": {},
+    }
+    copies = indexer.read_vector_copies("relationships", ["r-ships", "r-supplies"])
+    assert copies["r-ships"]["source_kinds"] == ["seed_graph"]
+    assert "source_kinds" not in copies["r-supplies"]
+
+
 def test_schema_annotations_are_listed_and_rewritten_in_place(
     harness: StoreHarness,
 ) -> None:
@@ -788,7 +818,7 @@ def _earlier_entities_index(
 
     def earlier() -> dict[str, Any]:
         mapping = current()
-        for name in ("in_schema", "type_iri"):
+        for name in ("in_schema", "type_iri", "iri", "source_kinds"):
             del mapping["mappings"]["properties"][name]
         return mapping
 
@@ -815,6 +845,8 @@ def test_incremental_run_maps_the_schema_annotations_of_an_earlier_index(
     properties = client.get_index_mappings(index_name)["properties"]
     assert properties["in_schema"] == {"type": "boolean"}
     assert properties["type_iri"] == {"type": "keyword"}
+    # And the seed-graph fields, added to an index built before them.
+    assert properties["iri"] == properties["source_kinds"] == {"type": "keyword"}
     annotated = [
         e.model_copy(update={"in_schema": i == 1}) for i, e in enumerate(_entities())
     ]
@@ -828,6 +860,45 @@ def test_incremental_run_maps_the_schema_annotations_of_an_earlier_index(
         "e-depot": False,
     }
     harness.vector_indexer.check_index_settings("default")  # nothing left to add
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_maps_the_seed_graph_fields_of_earlier_indices(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The relationships and text-unit indices of an earlier release gain
+    # source_kinds / source_kind in the run's preflight, before any write.
+    indexer = harness.vector_indexer
+    client = indexer.opensearch_client
+    o = harness.config.indexing.opensearch
+    for kind, field, items, prefix in (
+        (
+            "relationships",
+            "source_kinds",
+            _relationships(),
+            o.relationships_index_prefix,
+        ),
+        ("text_units", "source_kind", _text_units(), o.text_units_index_prefix),
+    ):
+        current = getattr(indexer, f"_get_{kind}_mapping")
+
+        def earlier(current: Any = current, field: str = field) -> dict[str, Any]:
+            mapping = current()
+            del mapping["mappings"]["properties"][field]
+            return mapping
+
+        monkeypatch.setattr(indexer, f"_get_{kind}_mapping", earlier)
+        _write(harness, kind, "index", items)
+        monkeypatch.undo()
+        name = client.get_index_name_by_alias(indexer._get_name(prefix, None))
+        assert name and field not in client.get_index_mappings(name)["properties"]
+        indexer.check_index_settings("default")
+        properties = client.get_index_mappings(name)["properties"]
+        assert properties[field] == {"type": "keyword"}, kind
+    seeded = _relationships()[0].model_copy(update={"source_kinds": ["seed_graph"]})
+    _write(harness, "relationships", "upsert", [seeded])
+    copies = indexer.read_vector_copies("relationships", [seeded.id])
+    assert copies[seeded.id]["source_kinds"] == ["seed_graph"]
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
