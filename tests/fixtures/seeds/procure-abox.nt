@@ -1,0 +1,29 @@
+# The triples of procure-abox.ttl (synthetic), as N-Triples.
+<https://example.org/procure#Initech%20Corp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Distributor> .
+<https://example.org/procure#acme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Organization> .
+<https://example.org/procure#acme> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Vendor> .
+<https://example.org/procure#acme> <http://www.w3.org/2000/01/rdf-schema#label> "Acme Supplies"@en .
+<https://example.org/procure#acme> <http://www.w3.org/2002/07/owl#sameAs> <https://example.org/registry#acme> .
+<https://example.org/procure#acme> <http://www.w3.org/2004/02/skos/core#definition> "Industrial valve vendor."@en .
+<https://example.org/procure#acme> <https://example.org/procure#certified> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<https://example.org/procure#acme> <https://example.org/procure#contact> _:contact .
+<https://example.org/procure#acme> <https://example.org/procure#country> "DE" .
+<https://example.org/procure#acme> <https://example.org/procure#creditLimit> "1500.5"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+<https://example.org/procure#acme> <https://example.org/procure#headquarters> <https://example.org/procure#berlin> .
+<https://example.org/procure#acme> <https://example.org/procure#partnerOf> <https://example.org/procure#Initech%20Corp> .
+<https://example.org/procure#acme> <https://example.org/procure#rating> "4"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<https://example.org/procure#acme> <https://example.org/procure#supplies> <https://example.org/procure#globex> .
+<https://example.org/procure#berlin> <http://www.w3.org/2000/01/rdf-schema#label> "Berlin"@en .
+<https://example.org/procure#claim1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#object> <https://example.org/procure#globex> .
+<https://example.org/procure#claim1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate> <https://example.org/procure#supplies> .
+<https://example.org/procure#claim1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#subject> <https://example.org/procure#acme> .
+<https://example.org/procure#claim1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement> .
+<https://example.org/procure#globex> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Buyer> .
+<https://example.org/procure#globex> <http://www.w3.org/2000/01/rdf-schema#label> "Globex Buyer" .
+<https://example.org/procure#globex> <https://example.org/procure#employs> <https://example.org/procure#jane> .
+<https://example.org/procure#jane> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<https://example.org/procure#jane> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Person> .
+<https://example.org/procure#jane> <https://schema.org/name> "Jane Roe" .
+_:contact <https://example.org/procure#email> "sales@example.org" .
+_:anonymous <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://example.org/procure#Vendor> .
+_:anonymous <http://www.w3.org/2000/01/rdf-schema#label> "Anonymous Vendor"@en .

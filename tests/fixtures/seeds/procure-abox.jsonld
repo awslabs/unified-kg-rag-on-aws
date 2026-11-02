@@ -1,0 +1,102 @@
+{
+  "@context": {
+    "ex": "https://example.org/procure#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "schema": "https://schema.org/",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:claim1",
+      "@type": "rdf:Statement",
+      "rdf:object": {
+        "@id": "ex:globex"
+      },
+      "rdf:predicate": {
+        "@id": "ex:supplies"
+      },
+      "rdf:subject": {
+        "@id": "ex:acme"
+      }
+    },
+    {
+      "@id": "_:anonymous",
+      "@type": "ex:Vendor",
+      "rdfs:label": {
+        "@language": "en",
+        "@value": "Anonymous Vendor"
+      }
+    },
+    {
+      "@id": "ex:acme",
+      "@type": [
+        "ex:Organization",
+        "ex:Vendor"
+      ],
+      "ex:certified": true,
+      "ex:contact": {
+        "@id": "_:contact"
+      },
+      "ex:country": "DE",
+      "ex:creditLimit": {
+        "@type": "xsd:decimal",
+        "@value": "1500.5"
+      },
+      "ex:headquarters": {
+        "@id": "ex:berlin"
+      },
+      "ex:partnerOf": {
+        "@id": "ex:Initech%20Corp"
+      },
+      "ex:rating": 4,
+      "ex:supplies": {
+        "@id": "ex:globex"
+      },
+      "owl:sameAs": {
+        "@id": "https://example.org/registry#acme"
+      },
+      "rdfs:label": {
+        "@language": "en",
+        "@value": "Acme Supplies"
+      },
+      "skos:definition": {
+        "@language": "en",
+        "@value": "Industrial valve vendor."
+      }
+    },
+    {
+      "@id": "_:contact",
+      "ex:email": "sales@example.org"
+    },
+    {
+      "@id": "ex:jane",
+      "@type": [
+        "ex:Person",
+        "owl:NamedIndividual"
+      ],
+      "schema:name": "Jane Roe"
+    },
+    {
+      "@id": "ex:globex",
+      "@type": "ex:Buyer",
+      "ex:employs": {
+        "@id": "ex:jane"
+      },
+      "rdfs:label": "Globex Buyer"
+    },
+    {
+      "@id": "ex:Initech%20Corp",
+      "@type": "ex:Distributor"
+    },
+    {
+      "@id": "ex:berlin",
+      "rdfs:label": {
+        "@language": "en",
+        "@value": "Berlin"
+      }
+    }
+  ]
+}

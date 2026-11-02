@@ -122,8 +122,8 @@ jobs:
   core-install:
     # The default install has neither the eval, the viz nor the ontology
     # extra: check the public API, the CLIs and an embedded end-to-end run
-    # work without them, and that run-eval, run-visualization and an owl
-    # schema source fail naming the extra instead.
+    # work without them, and that run-eval, run-visualization, an owl
+    # schema source and an rdf seed source fail naming the extra instead.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,6 +157,7 @@ jobs:
           tests/unit/test_layering.py
           tests/unit/test_owl_schema_source.py
           tests/unit/test_seed_sources.py
+          tests/unit/test_rdf_seed_source.py
           tests/integration/test_embedded_e2e.py
 
   local-stores:
