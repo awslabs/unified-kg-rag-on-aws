@@ -28,8 +28,8 @@ import re
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
-from urllib.parse import urlsplit, urlunsplit
 
+from unified_kg_rag.adapters.source_files.locations import redact_location
 from unified_kg_rag.domain.models.config import (
     INLINE_SCHEMA_SOURCE,
     Config,
@@ -51,7 +51,9 @@ def _default_session(config: Config) -> boto3.Session:
 
 
 class SchemaSourceContext:
-    """What a schema loader is given.
+    """What a schema loader is given; a
+    :class:`.source_files.locations.SourceClientProvider`, so the shared
+    location readers read its S3 objects.
 
     Attributes:
         source: ``processing.graph_extraction.schema_source`` (``kind``,
@@ -104,22 +106,6 @@ class SchemaSourceContext:
         # Any: the service name is only known at run time.
         session: Any = self.boto_session()
         return session.client(service_name, **kwargs)
-
-
-def redact_location(path: str | None) -> str:
-    """``path`` without the parts of a URL that may carry a credential: the
-    userinfo (``user:token@``), the query and the fragment. A plain file path
-    is returned as is."""
-    if path is None:
-        return "<no path>"
-    if "://" not in path:
-        return path
-    try:
-        parts = urlsplit(path)
-        host = parts.netloc.rpartition("@")[2]
-    except ValueError:
-        return "<unparseable URL>"
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 SchemaLoader = Callable[[SchemaSourceContext], SchemaDocument]

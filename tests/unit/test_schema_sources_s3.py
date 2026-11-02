@@ -32,7 +32,7 @@ from unified_kg_rag.adapters.schema_sources import (
     SchemaSourceContext,
     get_schema_source,
 )
-from unified_kg_rag.adapters.schema_sources.locations import SourceReader
+from unified_kg_rag.adapters.source_files.locations import SourceReader
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.config import ConfigLoader

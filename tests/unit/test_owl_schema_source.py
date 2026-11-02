@@ -36,12 +36,9 @@ from unified_kg_rag.adapters.schema_sources import (
 )
 from unified_kg_rag.adapters.schema_sources import registry as schema_registry
 from unified_kg_rag.adapters.schema_sources.ontology_mapping import MappingOptions
-from unified_kg_rag.adapters.schema_sources.owl import (
-    INSTALL_HINT,
-    REFUSED_SUFFIXES,
-    OwlSourceOptions,
-)
+from unified_kg_rag.adapters.schema_sources.owl import INSTALL_HINT, OwlSourceOptions
 from unified_kg_rag.adapters.schema_sources.registry import schema_source_requirement
+from unified_kg_rag.adapters.source_files.rdf_files import REFUSED_SUFFIXES
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.domain.ingestion.cache_keys import (
