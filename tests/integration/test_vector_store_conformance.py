@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.ports.indexer import StoredAnnotation
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.integration
@@ -461,6 +462,61 @@ def test_vector_copy_reads_hold_the_schema_annotations(harness: StoreHarness) ->
     assert copies["r-ships"]["in_schema"] is False
     assert "in_schema" not in copies["r-supplies"]
     assert "predicate_iri" not in copies["r-ships"]
+
+
+def test_schema_annotations_are_listed_and_rewritten_in_place(
+    harness: StoreHarness,
+) -> None:
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("ann")
+    iri = "https://example.org/onto#Location"
+    entities = _entities()
+    entities[2] = entities[2].model_copy(update={"in_schema": True, "type_iri": iri})
+    relationships = _relationships()
+    relationships[1] = relationships[1].model_copy(update={"in_schema": False})
+    _write(harness, "entities", "upsert", entities)
+    _write(harness, "relationships", "upsert", relationships)
+    elsewhere = _entities(tenant)[2].model_copy(
+        update={"id": "e-depot-2", "in_schema": True, "type_iri": iri}
+    )
+    _write(harness, "entities", "upsert", [elsewhere])
+    assert indexer.read_schema_annotations("entities") == {
+        "e-vendor": StoredAnnotation(type="ORG"),
+        "e-buyer": StoredAnnotation(type="ORG"),
+        "e-depot": StoredAnnotation(type="LOCATION", in_schema=True, iri=iri),
+    }
+    # The relationships index does not store the type.
+    assert indexer.read_schema_annotations("relationships") == {
+        "r-supplies": StoredAnnotation(),
+        "r-ships": StoredAnnotation(in_schema=False),
+    }
+
+    place = "https://example.org/onto#Place"
+    stats = indexer.write_schema_annotations(
+        "entities",
+        {"e-depot": (None, place), "e-vendor": (True, None), "gone": (False, None)},
+    )
+    assert stats.failed_items == 0
+    stats = indexer.write_schema_annotations(
+        "relationships", {"r-ships": (None, None), "r-supplies": (True, "urn:x:s")}
+    )
+    assert stats.failed_items == 0
+    assert indexer.read_schema_annotations("entities") == {
+        "e-vendor": StoredAnnotation(type="ORG", in_schema=True),
+        "e-buyer": StoredAnnotation(type="ORG"),
+        "e-depot": StoredAnnotation(type="LOCATION", iri=place),
+    }
+    assert indexer.read_schema_annotations("relationships") == {
+        "r-supplies": StoredAnnotation(in_schema=True, iri="urn:x:s"),
+        "r-ships": StoredAnnotation(),
+    }
+    # In place: the rest of the copy, its vectors included, is kept.
+    copies = indexer.read_vector_copies("entities", ["e-depot"])
+    assert copies["e-depot"]["description"] == "Depot stores widgets"
+    assert harness.stored_ids("entities") >= {"e-vendor", "e-buyer", "e-depot"}
+    assert indexer.read_schema_annotations("entities", suffix=tenant) == {
+        "e-depot-2": StoredAnnotation(type="LOCATION", in_schema=True, iri=iri)
+    }
 
 
 def test_text_unit_id_reads_are_scoped_to_a_suffix(harness: StoreHarness) -> None:

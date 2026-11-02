@@ -41,6 +41,7 @@ from unified_kg_rag.domain.ingestion.attempts import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     changed_settings,
     extraction_settings,
+    schema_annotation_digest,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
 from unified_kg_rag.domain.ingestion.community_drift import (
@@ -69,6 +70,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     relative_source_path,
 )
 from unified_kg_rag.domain.ingestion.merge import merge_claims
+from unified_kg_rag.domain.ingestion.schema_annotation import UNANNOTATED_DIGEST
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Claim,
@@ -1335,7 +1337,11 @@ def filter_to_delta(
     )
     for document in documents:
         assign_registry_source(document, source_scope)
-    settings = extraction_settings(config)
+    # With the annotations the run writes: recorded at the commit, so the
+    # next run knows what the stores hold (reannotate_on_schema_change).
+    settings = extraction_settings(config).model_copy(
+        update={"annotation_digest": schema_annotation_digest(config)}
+    )
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
     if config.indexing.reset:
@@ -2123,6 +2129,49 @@ def run_incremental_indexer(
     )
 
 
+def reannotate_on_schema_change(
+    incremental: IncrementalIndexer, text_units: Sequence[TextUnit]
+) -> None:
+    """Rewrite the stored schema annotations when the schema changed only
+    in what indexing stores since the scope's last commit.
+
+    The annotation digest the scope's last commit recorded
+    (``ExtractionSettings.annotation_digest``; a record without one was
+    written with none) against the one the run writes: when they differ,
+    every stored entity and relationship of the run's suffixes, of every
+    scope, is annotated again (``IndexingManager.reannotate``), with no model
+    call. An IRI edit does not change what extraction sees, so it keys no
+    extraction cache and re-extracts no document; this pass is what a
+    full build would have written. Unless the pass rewrote every store, the
+    commit records the earlier digest, so the next run tries again.
+    """
+    settings = incremental.extraction_settings
+    if incremental.scope is None or settings is None:
+        return
+    current = settings.annotation_digest
+    stored = incremental.doc_status.get_extraction_settings(incremental.scope)
+    recorded = (stored[1].annotation_digest if stored else None) or UNANNOTATED_DIGEST
+    if current is None or current == recorded:
+        return
+    suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
+    result = incremental.indexing_manager.reannotate(suffixes | {incremental.suffix})
+    if result.complete:
+        return
+    incremental.extraction_settings = settings.model_copy(
+        update={"annotation_digest": recorded}
+    )
+    logger.warning(
+        "The schema annotations of the stored items were not all rewritten "
+        "(%s); the next run tries again, and indexing.reset: true rewrites "
+        "them with the rest",
+        (
+            f"{result.failed} writes failed"
+            if result.failed
+            else "a store cannot list its items"
+        ),
+    )
+
+
 def context_lineages(
     context: PipelineContext, suffix: str, text_units: list[TextUnit]
 ) -> list[DocumentLineage]:
@@ -2188,6 +2237,8 @@ def index_delta(
             "PENDING records (old + planned lineage) and the next run "
             "retries the removal"
         )
+
+    reannotate_on_schema_change(incremental, text_units)
 
     # Whatever stops the commit after its registry write (a failed or stopped
     # cleanup) leaves the documents it recorded FAILED in the result.

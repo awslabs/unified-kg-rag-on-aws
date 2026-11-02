@@ -11,7 +11,6 @@ import pytest
 from pydantic import ValidationError
 
 from unified_kg_rag.application.config import ConfigLoader
-from unified_kg_rag.domain.ingestion import cache_keys
 from unified_kg_rag.domain.ingestion.cache_keys import (
     answer_settings,
     changed_settings,
@@ -369,12 +368,26 @@ def _keys(config: Config) -> dict[str, str]:
     }
 
 
+# Written out, not read from cache_keys._KEYED_ONCE_SET: a test iterating
+# the set cannot notice an entry taken out of it (which would re-key every
+# default configuration).
+_NEW_SCHEMA_FIELDS = (
+    "processing.graph_extraction.relationship_types",
+    "processing.graph_extraction.relationship_patterns",
+    "processing.graph_extraction.schema_mode",
+    "processing.graph_extraction.schema_source.kind",
+)
+
+
+@pytest.mark.parametrize("path", _NEW_SCHEMA_FIELDS)
+def test_a_new_field_at_its_default_is_not_recorded(path: str) -> None:
+    config = Config()
+    assert path not in extraction_settings(config).values
+    assert path not in answer_settings(config)
+
+
 def test_new_fields_at_their_default_key_nothing() -> None:
     config = Config()
-    recorded = extraction_settings(config).values
-    for path in cache_keys._KEYED_ONCE_SET:
-        assert path not in recorded
-        assert path not in answer_settings(config)
     # Set to their defaults explicitly: still nothing.
     explicit = _config(
         relationship_types=[],
@@ -397,7 +410,13 @@ def test_new_fields_at_their_default_key_nothing() -> None:
             ["processing.graph_extraction.relationship_types"],
         ),
         ({"schema_mode": "strict"}, ["processing.graph_extraction.schema_mode"]),
-        ({"schema_mode": "off"}, ["processing.graph_extraction.schema_mode"]),
+        (
+            {"schema_mode": "off", "relationship_types": ["WORKS_FOR"]},
+            [
+                "processing.graph_extraction.relationship_types",
+                "processing.graph_extraction.schema_mode",
+            ],
+        ),
         (
             _SCHEMA,
             [
@@ -432,6 +451,205 @@ def test_a_schema_change_rekeys_extraction_onward(
     )
     # Back to the defaults: changed again, against the record that had it.
     assert changed_settings(extraction_settings(after), extraction_settings(before))
+
+
+def _extraction_keys(config: Config) -> tuple[Any, ...]:
+    """Every key extraction output is cached or recorded under."""
+    return (
+        {stage: key for stage, key in _keys(config).items() if stage != "indexing"},
+        extraction_fingerprint(config),
+        [
+            unit_record_fingerprint(config, gleaned=gleaned, claims=claims)
+            for gleaned in (False, True)
+            for claims in (False, True)
+        ],
+    )
+
+
+_IRI_FREE = {
+    "entity_types": ["PERSON: People", {"label": "ORG", "description": "Firms"}],
+    "relationship_types": [{"label": "WORKS_FOR"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        # IRIs only: indexing stores them, extraction does not see them.
+        (
+            _IRI_FREE,
+            {
+                "entity_types": [
+                    "PERSON: People",
+                    {"label": "ORG", "description": "Firms", "iri": "urn:x:Org"},
+                ],
+                "relationship_types": [{"label": "WORKS_FOR", "iri": "urn:x:wf"}],
+            },
+        ),
+        (
+            {"entity_types": [{"label": "ORG", "iri": "urn:x:a"}]},
+            {"entity_types": [{"label": "ORG", "iri": "urn:x:b"}]},
+        ),
+        # The form an item is written in.
+        (
+            {
+                "entity_types": ["GENE: A gene", "DRUG"],
+                "relationship_types": ["TREATS: Therapy"],
+                "relationship_patterns": ["DRUG -TREATS-> GENE"],
+            },
+            {
+                "entity_types": [
+                    {"label": "GENE", "description": "A gene"},
+                    {"label": "DRUG"},
+                ],
+                "relationship_types": [{"label": "TREATS", "description": "Therapy"}],
+                "relationship_patterns": [
+                    {"source_type": "DRUG", "relation": "TREATS", "target_type": "GENE"}
+                ],
+            },
+        ),
+        # off and align extract alike with entity types alone.
+        (
+            {"entity_types": ["PERSON"], "schema_mode": "off"},
+            {"entity_types": ["PERSON"], "schema_mode": "align"},
+        ),
+        (
+            {
+                "entity_types": [{"label": "PERSON", "iri": "urn:x:P"}],
+                "schema_mode": "off",
+            },
+            {"entity_types": [{"label": "PERSON", "iri": "urn:x:P"}]},
+        ),
+    ],
+)
+def test_what_extraction_does_not_see_rekeys_no_extraction(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    old, new = _config(**before), _config(**after)
+    assert GraphExtractionPrompt.config_variables(old) == (
+        GraphExtractionPrompt.config_variables(new)
+    )
+    assert _extraction_keys(old) == _extraction_keys(new)
+    assert changed_settings(extraction_settings(old), extraction_settings(new)) == []
+
+
+def test_an_iri_keys_the_indexing_stage_only() -> None:
+    old = _config(entity_types=[{"label": "ORG"}])
+    new = _config(entity_types=[{"label": "ORG", "iri": "urn:x:Org"}])
+    assert _keys(old)["indexing"] != _keys(new)["indexing"]
+    # Not under off, which writes no IRI.
+    off = {"entity_types": [{"label": "ORG", "iri": "urn:x:Org"}], "schema_mode": "off"}
+    assert _keys(_config(**off)) == _keys(_config(**{**off, "entity_types": ["ORG"]}))
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        # strict drops statements (and gleaning keeps fewer): its records differ.
+        (
+            {"entity_types": ["PERSON"]},
+            {"entity_types": ["PERSON"], "schema_mode": "strict"},
+        ),
+        (
+            {"entity_types": ["PERSON"], "relationship_types": ["R"]},
+            {
+                "entity_types": ["PERSON"],
+                "relationship_types": ["R"],
+                "schema_mode": "strict",
+            },
+        ),
+        # align writes declared labels once relationship types are declared.
+        (
+            {
+                "entity_types": ["PERSON"],
+                "relationship_types": ["R"],
+                "schema_mode": "off",
+            },
+            {"entity_types": ["PERSON"], "relationship_types": ["R"]},
+        ),
+        # A description reaches the prompt.
+        (
+            {"entity_types": [{"label": "ORG", "description": "Firms"}]},
+            {"entity_types": [{"label": "ORG", "description": "Companies"}]},
+        ),
+    ],
+)
+def test_what_extraction_sees_rekeys_extraction(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    old, new = _config(**before), _config(**after)
+    assert extraction_fingerprint(old) != extraction_fingerprint(new)
+    assert unit_record_fingerprint(old, gleaned=True) != (
+        unit_record_fingerprint(new, gleaned=True)
+    )
+    assert _keys(old)["graph_extraction"] != _keys(new)["graph_extraction"]
+
+
+def test_string_items_are_recorded_as_written() -> None:
+    # As every configuration recorded them before the mapping form: an
+    # upgrade re-extracts no string-form corpus.
+    types = ["GENE:A gene", " DRUG ", "PERSON: People"]
+    patterns = ["DRUG  -TREATS->GENE"]
+    config = _config(
+        entity_types=types,
+        relationship_types=["TREATS:x", "DRUG"],
+        relationship_patterns=patterns,
+        schema_mode="strict",
+    )
+    values = extraction_settings(config).values
+    assert values["processing.graph_extraction.entity_types"] == types
+    assert values["processing.graph_extraction.relationship_types"] == [
+        "TREATS:x",
+        "DRUG",
+    ]
+    assert values["processing.graph_extraction.relationship_patterns"] == patterns
+    assert values["processing.graph_extraction.schema_mode"] == "strict"
+
+
+def test_a_mapping_is_recorded_as_its_string_without_its_iri() -> None:
+    config = _config(
+        entity_types=[
+            {"label": "GENE", "description": "A gene", "iri": "urn:g"},
+            {"label": "DRUG"},
+            # No string reads back as this label: kept as a mapping.
+            {"label": "A:B", "description": "c"},
+        ],
+        relationship_types=[{"label": "TREATS", "iri": "urn:t"}],
+        relationship_patterns=[
+            {"source_type": "DRUG", "relation": "TREATS", "target_type": "GENE"}
+        ],
+    )
+    values = extraction_settings(config).values
+    assert values["processing.graph_extraction.entity_types"] == [
+        "GENE: A gene",
+        "DRUG",
+        {"label": "A:B", "description": "c"},
+    ]
+    assert values["processing.graph_extraction.relationship_types"] == ["TREATS"]
+    assert values["processing.graph_extraction.relationship_patterns"] == [
+        "DRUG -TREATS-> GENE"
+    ]
+    # "A -R->X-> B" reads back as relation R: kept as its fields.
+    arrow = _config(
+        entity_types=["A", "B"],
+        relationship_types=["R->X"],
+        relationship_patterns=[
+            {"source_type": "A", "relation": "R->X", "target_type": "B"}
+        ],
+    )
+    assert extraction_settings(arrow).values[
+        "processing.graph_extraction.relationship_patterns"
+    ] == [{"source_type": "A", "relation": "R->X", "target_type": "B"}]
+
+
+def test_a_label_with_a_colon_does_not_key_as_another_type() -> None:
+    # "A:B" as a string is type A described "B": another prompt.
+    mapping = _config(entity_types=[{"label": "A:B"}])
+    string = _config(entity_types=["A:B"])
+    assert GraphExtractionPrompt.config_variables(mapping) != (
+        GraphExtractionPrompt.config_variables(string)
+    )
+    assert extraction_fingerprint(mapping) != extraction_fingerprint(string)
 
 
 def test_the_source_location_keys_nothing() -> None:

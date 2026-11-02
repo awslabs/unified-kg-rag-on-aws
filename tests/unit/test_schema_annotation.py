@@ -11,10 +11,13 @@ documents and mappings.
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
@@ -23,9 +26,20 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.ingestion.incremental import (
+    IncrementalIndexer,
+    reannotate_on_schema_change,
+)
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    extraction_settings,
+    schema_annotation_digest,
+)
 from unified_kg_rag.domain.ingestion.contributions import record_payload
-from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
+from unified_kg_rag.domain.ingestion.schema_annotation import (
+    UNANNOTATED_DIGEST,
+    SchemaAnnotator,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -37,6 +51,7 @@ from unified_kg_rag.domain.models.schema import (
     ExtractionSchema,
     RelationshipTypeSpec,
 )
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -395,3 +410,204 @@ def test_a_rank_only_edge_with_another_annotation_is_written_in_full() -> None:
     upserted.clear()
     manager._upsert_vector_relationships(annotated)
     assert updated == ["ab"] and upserted == ["ba"]
+
+
+# --------------------------------------------------------------------------- #
+# Re-annotation: a schema edit only indexing sees
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "extraction",
+    [
+        {},
+        {"entity_types": ["PERSON"]},
+        {"entity_types": ["PERSON"], "relationship_types": ["R"], "schema_mode": "off"},
+        {"entity_types": [{"label": "PERSON", "iri": "urn:p"}], "schema_mode": "off"},
+    ],
+)
+def test_a_schema_that_annotates_nothing_has_the_unannotated_digest(
+    extraction: dict[str, Any],
+) -> None:
+    assert schema_annotation_digest(_config(**extraction)) == UNANNOTATED_DIGEST
+
+
+def test_the_digest_follows_the_annotations_only() -> None:
+    base = schema_annotation_digest(_config(**_SCHEMA_CONFIG))
+    # Descriptions, patterns, spellings of a label and the item form: the
+    # same annotations.
+    same = _config(
+        schema_mode="align",
+        entity_types=[
+            {"label": "organization", "iri": ORG},
+            {"label": "PRODUCT", "description": "Other words"},
+        ],
+        relationship_types=[{"label": "supplies", "iri": SUPPLIES}, "STOCKS: x"],
+        relationship_patterns=["ORGANIZATION -SUPPLIES-> ORGANIZATION"],
+    )
+    assert schema_annotation_digest(same) == base
+    other_iri = {**_SCHEMA_CONFIG, "entity_types": [{"label": "ORGANIZATION"}]}
+    assert schema_annotation_digest(_config(**other_iri)) != base
+    strict = {**_SCHEMA_CONFIG, "schema_mode": "strict"}
+    assert schema_annotation_digest(_config(**strict)) == base  # same annotations
+    off = {**_SCHEMA_CONFIG, "schema_mode": "off"}
+    assert schema_annotation_digest(_config(**off)) == UNANNOTATED_DIGEST
+
+
+def _written_without_a_schema() -> tuple[FakeVectorStore, FakeGraphStore]:
+    manager, vector, graph = _manager(Config())
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    return vector, graph
+
+
+def test_reannotate_rewrites_what_a_full_build_writes() -> None:
+    vector, graph = _written_without_a_schema()
+    # A vector copy without its edge: no type to annotate it by.
+    orphan = _rel("orphan", "SUPPLIES")
+    vector.upsert_relationships([orphan])
+    manager = IndexingManager(
+        _config(**_SCHEMA_CONFIG), vector_indexer=vector, graph_indexer=graph
+    )
+    result = manager.reannotate({"default"})
+    assert result.complete
+    assert (result.entities, result.entities_rewritten) == (2, 2)
+    assert (result.relationships, result.relationships_rewritten) == (2, 2)
+    stored = _stored(vector, graph)
+    assert stored[3].pop("orphan") == (None, None)
+    assert stored == _ANNOTATED
+
+    # Annotated already: nothing written.
+    writes: list[str] = []
+    for store in (vector, graph):
+        write = store.write_schema_annotations
+
+        def record(kind: Any, annotations: Any, suffix: Any = None, w=write) -> Any:
+            writes.append(kind)
+            return w(kind, annotations, suffix)
+
+        store.write_schema_annotations = record  # type: ignore[method-assign]
+    again = manager.reannotate({"default"})
+    assert writes == []
+    assert (again.entities_rewritten, again.relationships_rewritten) == (0, 0)
+
+
+def test_reannotate_skips_a_store_that_cannot_list_its_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vector, graph = _written_without_a_schema()
+    monkeypatch.setattr(graph, "read_schema_annotations", lambda kind, suffix: None)
+    manager = IndexingManager(
+        _config(**_SCHEMA_CONFIG), vector_indexer=vector, graph_indexer=graph
+    )
+    result = manager.reannotate({"default"})
+    assert result.unsupported and not result.complete
+    graph_entities, graph_edges, vector_entities, vector_edges = _stored(vector, graph)
+    assert set(graph_entities.values()) == {(None, None)}
+    # The vector entities hold their type; its relationships do not.
+    assert vector_entities == _ANNOTATED[2]
+    assert set(vector_edges.values()) == {(None, None)}
+
+
+def _incremental(
+    config: Config, vector: FakeVectorStore, graph: FakeGraphStore
+) -> IncrementalIndexer:
+    settings = extraction_settings(config).model_copy(
+        update={"annotation_digest": schema_annotation_digest(config)}
+    )
+    return IncrementalIndexer(
+        FakeDocStatusStore(),
+        IndexingManager(config, vector_indexer=vector, graph_indexer=graph),
+        scope="ns#scope",
+        extraction_fingerprint=settings.fingerprint,
+        extraction_settings=settings,
+    )
+
+
+def test_a_scope_recorded_without_a_digest_reads_as_unannotated() -> None:
+    vector, graph = _written_without_a_schema()
+    incremental = _incremental(Config(), vector, graph)
+    old = extraction_settings(Config())  # recorded before the digest
+    incremental.doc_status.put_extraction_settings("ns#scope", old.fingerprint, old)
+    calls: list[Any] = []
+    incremental.indexing_manager.reannotate = calls.append  # type: ignore[method-assign]
+    reannotate_on_schema_change(incremental, [])
+    assert calls == []
+
+
+def test_a_changed_digest_rewrites_and_a_failed_rewrite_keeps_the_old_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vector, graph = _written_without_a_schema()
+    config = _config(**_SCHEMA_CONFIG)
+    incremental = _incremental(config, vector, graph)
+    current = incremental.extraction_settings
+    assert current is not None and current.annotation_digest != UNANNOTATED_DIGEST
+    reannotate_on_schema_change(incremental, [])
+    assert _stored(vector, graph) == _ANNOTATED
+    assert incremental.extraction_settings == current
+
+    vector, graph = _written_without_a_schema()
+    incremental = _incremental(config, vector, graph)
+    graph.write_schema_annotations = (  # type: ignore[method-assign]
+        lambda kind, annotations, suffix=None: IndexingStats(
+            total_items=len(annotations), failed_items=len(annotations)
+        )
+    )
+    with caplog.at_level(logging.WARNING):
+        reannotate_on_schema_change(incremental, [])
+    assert incremental.extraction_settings is not None
+    assert incremental.extraction_settings.annotation_digest == UNANNOTATED_DIGEST
+    assert "the next run tries again" in caplog.text
+
+
+def test_a_manager_built_with_a_schema_file_loads_it(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.yaml"
+    schema.write_text(
+        "entity_types:\n"
+        "  - {label: ORGANIZATION, iri: 'https://example.org/onto#Organization'}\n"
+        "relationship_types: [SUPPLIES]\n",
+        encoding="utf-8",
+    )
+    config = _config(schema_source={"kind": "file", "path": str(schema)})
+    manager, vector, graph = _manager(config)
+    extraction = manager.config.processing.graph_extraction
+    assert extraction.schema_source.kind == "inline"
+    assert [str(t) for t in extraction.relationship_types] == ["SUPPLIES"]
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    graph_entities, graph_edges, _, _ = _stored(vector, graph)
+    assert graph_entities == {"a": (True, ORG), "b": (False, None)}
+    assert graph_edges == {"ab": (True, None), "ba": (False, None)}
+
+
+def test_stores_written_under_the_earlier_rule_are_reannotated_once() -> None:
+    # strict with entity types alone: before #481 the relationships got no
+    # in_schema (the store as an upgrade finds it, its scope recorded
+    # without a digest); now every one is in schema. The first run after the
+    # upgrade rewrites them, the next has nothing to rewrite.
+    config = _config(schema_mode="strict", entity_types=["ORGANIZATION", "VENDOR"])
+    manager, vector, graph = _manager(config)
+    entities, relationships = _items()
+    manager.index_all_data(entities=entities, relationships=relationships)
+    earlier = [r.model_copy(update={"in_schema": None}) for r in relationships]
+    graph.upsert_relationships(earlier)
+    vector.upsert_relationships(earlier)
+    incremental = _incremental(config, vector, graph)
+    old = extraction_settings(config)
+    incremental.doc_status.put_extraction_settings("ns#scope", old.fingerprint, old)
+
+    reannotate_on_schema_change(incremental, [])
+    stored = _stored(vector, graph)
+    edges = {"ab": (True, None), "ba": (True, None)}
+    assert (stored[1], stored[3]) == (edges, edges)
+
+    settings = incremental.extraction_settings
+    assert settings is not None and settings.annotation_digest is not None
+    incremental.doc_status.put_extraction_settings(
+        "ns#scope", settings.fingerprint, settings
+    )
+    calls: list[Any] = []
+    incremental.indexing_manager.reannotate = calls.append  # type: ignore[method-assign]
+    reannotate_on_schema_change(incremental, [])
+    assert calls == []

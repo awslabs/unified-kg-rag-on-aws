@@ -62,6 +62,7 @@ from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
 from unified_kg_rag import __version__
+from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -70,6 +71,15 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
 )
 from unified_kg_rag.domain.models.provider_config import BEDROCK
+from unified_kg_rag.domain.models.schema import (
+    EntityTypeItem,
+    ExtractionSchema,
+    RelationshipPattern,
+    RelationshipPatternItem,
+    RelationshipTypeItem,
+    entity_type_spec,
+    schema_key,
+)
 from unified_kg_rag.shared.utils.common import compute_hash
 
 FINGERPRINT_LENGTH = 12
@@ -521,11 +531,88 @@ def _settings(config: Config, selected: Callable[[Keyed], bool]) -> dict[str, An
     for path, value, disabled in _leaves(config):
         rule = classify(path) or _UNCLASSIFIED
         if isinstance(rule, Keyed) and selected(rule):
+            value = _as_extracted(config, path, value)
             if _in_effect(config, path, disabled) and not _at_earlier_default(
                 path, value
             ):
                 settings[path] = to_jsonable_python(_resolved(config, path, value))
     return settings
+
+
+_SCHEMA_PREFIX = "processing.graph_extraction."
+_SCHEMA_TYPE_FIELDS = frozenset(
+    {f"{_SCHEMA_PREFIX}entity_types", f"{_SCHEMA_PREFIX}relationship_types"}
+)
+_SCHEMA_PATTERNS_FIELD = f"{_SCHEMA_PREFIX}relationship_patterns"
+_SCHEMA_MODE_FIELD = f"{_SCHEMA_PREFIX}schema_mode"
+
+
+def _type_as_extracted(item: EntityTypeItem | RelationshipTypeItem) -> Any:
+    """A schema type as extraction sees it: its label and description.
+
+    A string item as written (as every configuration keyed it before the
+    mapping form); a mapping as the string that reads back as the same
+    label and description, so a type written either way keys alike, or,
+    when no string does (a label with a ':'), as its label and description.
+    Never its ``iri``: indexing stores it, extraction does not see it.
+    """
+    if isinstance(item, str):
+        return item
+    text = f"{item.label}: {item.description}" if item.description else item.label
+    spec = entity_type_spec(text)
+    if spec is not None and (spec.label, spec.description) == (
+        item.label,
+        item.description,
+    ):
+        return text
+    return {"label": item.label, "description": item.description}
+
+
+def _pattern_as_extracted(item: RelationshipPatternItem) -> Any:
+    """A pattern as written, a mapping as the string that reads back as the
+    same pattern (else as its fields)."""
+    if isinstance(item, str):
+        return item
+    text = str(item)
+    # Always of the form; a relation with a '->' reads back otherwise.
+    if RelationshipPattern.parse(text) == item:
+        return text
+    return item.model_dump()
+
+
+def _as_extracted(config: Config, path: str, value: Any) -> Any:
+    """A setting's value as it reaches extraction.
+
+    Only the schema keys differ from their value: a type or pattern by what
+    the prompt and the schema check read of it (``_type_as_extracted``,
+    ``_pattern_as_extracted``), and ``schema_mode`` only where extraction
+    applies it (``SchemaConformance.applies``): ``strict`` always, ``off``
+    once relationship types are declared; with entity types alone ``off``
+    and ``align`` extract alike and key as the default. What the schema
+    changes only in what indexing stores (its IRIs, ``off`` against
+    ``align`` with entity types alone) keys the indexing stage
+    (``_schema_iris``) and is recorded with an incremental commit as the
+    annotation digest (``schema_annotation_digest``).
+    """
+    if path in _SCHEMA_TYPE_FIELDS:
+        return [_type_as_extracted(item) for item in value]
+    if path == _SCHEMA_PATTERNS_FIELD:
+        return [_pattern_as_extracted(item) for item in value]
+    if (
+        path == _SCHEMA_MODE_FIELD
+        and value != "strict"
+        and not config.processing.graph_extraction.relationship_types
+    ):
+        return _field_default(path)
+    return value
+
+
+def schema_annotation_digest(config: Config) -> str:
+    """The digest of the schema annotations indexing writes with ``config``
+    (``SchemaAnnotator.digest``), from the inline schema keys."""
+    return SchemaAnnotator(
+        ExtractionSchema.from_config(config.processing.graph_extraction)
+    ).digest
 
 
 _ROLES_PREFIX = "models.roles."
@@ -678,6 +765,7 @@ def _default_value(path: str) -> Any:
     node = _field_default(path)
     if node is _MISSING:
         return _MISSING
+    node = _as_extracted(_default_config(), path, node)
     return _recorded(to_jsonable_python(_resolved(_default_config(), path, node)))
 
 
@@ -810,13 +898,31 @@ def stage_input_fingerprint(
         >>> len(fp)
         12
     """
-    return _digest(
-        {
-            "settings": _settings(config, _upstream_of(stage_type)),
-            "package_version": __version__,
-            "corpus_manifest": corpus_fingerprint,
-        }
-    )
+    payload: dict[str, Any] = {
+        "settings": _settings(config, _upstream_of(stage_type)),
+        "package_version": __version__,
+        "corpus_manifest": corpus_fingerprint,
+    }
+    if stage_type is _P.INDEXING and (iris := _schema_iris(config)):
+        payload["schema_iris"] = iris
+    return _digest(payload)
+
+
+def _schema_iris(config: Config) -> list[list[str]]:
+    """``[kind, type key, iri]`` of each IRI indexing writes: what indexing
+    alone reads of the schema (its labels and mode are keyed already)."""
+    schema = ExtractionSchema.from_config(config.processing.graph_extraction)
+    if schema.mode == "off":
+        return []
+    return [
+        [kind, schema_key(spec.label), spec.iri]
+        for kind, specs in (
+            ("entity", schema.entity_types),
+            ("relationship", schema.relationship_types),
+        )
+        for spec in specs
+        if spec.iri
+    ]
 
 
 def stage_cache_key(

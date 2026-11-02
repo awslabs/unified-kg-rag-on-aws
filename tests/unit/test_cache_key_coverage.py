@@ -61,6 +61,22 @@ def _field_paths(model: type[BaseModel], prefix: str = "") -> list[str]:
 
 _FIELDS = sorted(set(_field_paths(Config)))
 
+# The fields keyed only once set (cache_keys._KEYED_ONCE_SET), written out:
+# compared against the set, a dropped entry (which re-keys every default
+# configuration) fails here instead of passing silently.
+_KEYED_ONCE_SET = frozenset(
+    {
+        "processing.graph_extraction.relationship_types",
+        "processing.graph_extraction.relationship_patterns",
+        "processing.graph_extraction.schema_mode",
+        "processing.graph_extraction.schema_source.kind",
+    }
+)
+
+
+def test_the_fields_keyed_once_set_are_these() -> None:
+    assert cache_keys._KEYED_ONCE_SET == _KEYED_ONCE_SET
+
 
 def test_every_config_field_is_classified() -> None:
     unclassified = [path for path in _FIELDS if classify(path) is None]
@@ -185,10 +201,10 @@ def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
     # Plus one derived entry: whether a guardrail is on (its id is a location).
     # Fields added at a default that keeps the earlier behaviour count once
     # set (test_extraction_schema).
-    assert hashed == set(_FIELDS) - excluded - cache_keys._KEYED_ONCE_SET | {
+    assert hashed == set(_FIELDS) - excluded - _KEYED_ONCE_SET | {
         "aws.bedrock.guardrail.enabled"
     }
-    assert cache_keys._KEYED_ONCE_SET <= set(_FIELDS)
+    assert _KEYED_ONCE_SET <= set(_FIELDS)
     for path in excluded:
         rule = classify(path)
         assert (

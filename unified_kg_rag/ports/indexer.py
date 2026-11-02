@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from unified_kg_rag.domain.models import (
     Claim,
@@ -101,6 +101,29 @@ class IndexingStats(BaseModel):
             "error_count": len(self.errors),
             "sample_errors": self.errors[:5],
         }
+
+
+# The item kinds that carry schema annotations, as the stores name them.
+AnnotatedKind = Literal["entities", "relationships"]
+# (in_schema, iri) of one item; ``None`` leaves it unset (absent).
+SchemaAnnotation = tuple[bool | None, str | None]
+
+
+class StoredAnnotation(BaseModel):
+    """The schema annotations a store holds for one item, with the type
+    they follow (``domain.ingestion.schema_annotation``)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: str | None = Field(
+        default=None,
+        description="The item's stored type; None when the store does not "
+        "hold it (vector copies of relationships)",
+    )
+    in_schema: bool | None = Field(default=None, description="Stored in_schema")
+    iri: str | None = Field(
+        default=None, description="Stored type_iri (entity) or predicate_iri"
+    )
 
 
 class BaseIndexer(ABC):
@@ -376,6 +399,35 @@ class GraphIndexer(BaseIndexer):
             for i, n in self.read_neighbor_ids(entity_ids, suffix).items()
         }
 
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation] | None:
+        """``{id: annotations}`` of every stored item of ``kind`` in
+        ``suffix``'s graph (``None``: the default suffix), with its type
+        (an entity's ``type``, a relationship's edge label).
+
+        A schema edit that changes only the annotations is applied by
+        reading them back and rewriting the ones that differ
+        (``IndexingManager.reannotate``), with no extraction. Default
+        returns ``None``: the backend cannot enumerate its items, and only a
+        reset rewrites them. Adapters that override it raise when the read
+        fails.
+        """
+        return None
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set ``in_schema`` and the IRI (``type_iri`` of an entity,
+        ``predicate_iri`` of a relationship) of the stored items of ``kind``
+        in ``suffix`` by id, nothing else; a ``None`` value removes it. An
+        id not stored is skipped. Default writes nothing (a backend that
+        cannot :meth:`read_schema_annotations`)."""
+        return IndexingStats()
+
     @abstractmethod
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).
@@ -567,6 +619,29 @@ class VectorIndexer(BaseIndexer):
         written in full); adapters that override it raise when a read fails.
         """
         return {}
+
+    def read_schema_annotations(
+        self, kind: AnnotatedKind, suffix: str | None = None
+    ) -> dict[str, StoredAnnotation] | None:
+        """``{id: annotations}`` of every stored vector copy of ``kind`` in
+        ``suffix``'s live index (see :meth:`GraphIndexer.read_schema_annotations`):
+        an entity's with its ``type``, a relationship's without (the index
+        does not store it). ``{}`` without a live index. Default ``None``:
+        the backend cannot enumerate its documents."""
+        return None
+
+    def write_schema_annotations(
+        self,
+        kind: AnnotatedKind,
+        annotations: Mapping[str, SchemaAnnotation],
+        suffix: str | None = None,
+    ) -> IndexingStats:
+        """Set the schema annotations of stored vector copies by id, in
+        place (no re-embedding); see
+        :meth:`GraphIndexer.write_schema_annotations`. A ``None`` value is
+        written as null, which no filter matches, as an absent one. Default
+        writes nothing."""
+        return IndexingStats()
 
     def read_text_unit_attributes(
         self, ids: list[str], suffix: str | None = None
