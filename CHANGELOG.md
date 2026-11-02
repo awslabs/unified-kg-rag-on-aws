@@ -661,7 +661,8 @@ From 0.2.3 (or a `main` checkout since):
   document is refused, XML external entities are not resolved, and
   OWL/XML, functional and Manchester syntax, OBO and Notation3 are refused
   with how to convert them. Re-serialising or moving the ontology keys
-  nothing; an IRI-only edit re-annotates without re-extracting.
+  nothing when its IRIs are absolute or it declares `@base`; an IRI-only
+  edit re-annotates without re-extracting.
   `register_schema_source(kind, requires=(module, install))` declares a
   source's optional dependency, which the CLIs check before any model
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
@@ -679,6 +680,7 @@ From 0.2.3 (or a `main` checkout since):
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay
   refused (#493).
+- Docs: ontology schema sources in user guide §9 C and the runbook (#PR).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a

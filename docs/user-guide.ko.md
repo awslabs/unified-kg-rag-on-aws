@@ -127,6 +127,9 @@ Functions로 `.md` / `.html` 파일을 수집하면 "No supported files found"�
 파일을 변환하거나 `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요.
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK compute 스택이 주입합니다.
 
+**OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
+(`uv sync --extra ontology`, [OWL/RDFS 온톨로지에서 읽기](#owlrdfs-온톨로지에서-읽기)).
+
 ### 인증
 
 1. **AWS 자격 증명**은 표준 자격 증명 체인에서 가져옵니다. `aws.profile_name`은
@@ -1606,12 +1609,13 @@ processing:
   OWL 또는 RDFS 온톨로지를 읽습니다. 로컬 파일이나 디렉터리, S3 객체, 또는 디렉터리로
   읽는 S3 접두사(`s3://bucket/ontology/`, 끝의 `/` 필수)를 줄 수 있습니다. 상대 IRI를
   쓰는 온톨로지에는 `@base`(또는 `xml:base`)를 선언하세요. 선언하지 않으면 IRI가 파일
-  위치를 기준으로 정해져 파일을 옮기면 이름이 바뀝니다. 다른 형식(SHACL, 스키마
+  위치를 기준으로 정해져 파일을 옮기면 이름이 바뀝니다
+  ([OWL/RDFS 온톨로지에서 읽기](#owlrdfs-온톨로지에서-읽기)). 다른 형식(SHACL, 스키마
   서비스)은 스키마 소스로 등록해 붙입니다([설계 문서 §15](./design.md#15-extension-guide),
   영문).
 - **AWS에서는** 수집 작업이 이미지에 들어 있는 설정을 읽습니다(`docker/Dockerfile`은
-  `docker/config.yaml`만 `/app/config.yaml`로 복사). 따라서 로컬 `kind: file` 스키마도
-  이미지에 넣어야 합니다. 파일을 설정 옆에 복사하는 `COPY`를 추가해 이미지를 다시
+  `docker/config.yaml`만 `/app/config.yaml`로 복사). 따라서 로컬 `kind: file` 스키마(또는
+  `kind: owl` 온톨로지)도 이미지에 넣어야 합니다. 파일을 설정 옆에 복사하는 `COPY`를 추가해 이미지를 다시
   빌드하거나, 스키마를 S3에 두거나(작업 역할 권한은
   [운영 가이드](./operations.md#schema-sources-in-s3), 영문), 그 설정에 인라인으로
   선언하거나, 위의 `UKR__PROCESSING__GRAPH_EXTRACTION__*` 환경 변수로 지정하세요.
@@ -1748,6 +1752,299 @@ RAGInput(query="...", search_strategy="mix",
 **로컬 백엔드.** `backend: local`도 똑같이 동작합니다. SQLite 그래프 저장소와 내장
 벡터 저장소가 같은 필드를 저장하고, 같은 필터가 (그래프 확장 포함) 적용되며, 기존
 내장 인덱스도 같은 방식으로 새 필드를 얻습니다.
+
+#### OWL/RDFS 온톨로지에서 읽기
+
+`schema_source: {kind: owl}`은 OWL 또는 RDFS 온톨로지로 스키마를 채웁니다. 클래스는
+엔티티 유형, 객체 속성(object property)은 관계 유형, 정의역(domain)과 치역(range)은
+패턴이 됩니다. 유형마다 IRI가 붙으므로 `type_iri`와 `predicate_iri`가 온톨로지의 용어를
+가리킵니다. 매핑은 추론하지 않고 옮기기만 합니다. 정해진 RDFS 방식 규칙을 시작할 때 한
+번 적용하며, 모델도 OWL 추론기(reasoner)도 호출하지 않습니다.
+
+**설치.** 이 소스에는 `ontology` extra(rdflib)가 필요합니다.
+
+```bash
+uv sync --extra ontology    # 또는: pip install -e '.[ontology]'
+```
+
+extra가 없으면 이런 설정으로 실행한 CLI(`run-ingestion`, `run-rag`, `run-eval`,
+`run-prompt-tuning`)는 모델을 호출하기 전에 extra 이름을 알려 주고 종료 코드 2로
+끝납니다. 쿼리도 필터 키를 검사하려고 스키마를 읽으므로 `run-rag`에도 필요합니다.
+배포용 이미지에는 이 extra가 빠져 있습니다. `--build-arg UV_EXTRAS="--extra ontology"`로
+빌드하고 온톨로지를 이미지 안 설정 파일 옆에 복사하거나
+([운영 런북: Ontology schema in the image](./operations.md#ontology-schema-in-the-image), 영문),
+S3에 두세요([Schema sources in S3](./operations.md#schema-sources-in-s3), 영문).
+
+**설정.**
+
+```yaml
+processing:
+  graph_extraction:
+    schema_source:
+      kind: owl
+      path: ontology/procure.ttl   # 파일 또는 온톨로지 파일이 든 디렉터리
+    schema_mode: align
+```
+
+- 설정에서 `entity_types`는 빼세요. 온톨로지가 정합니다.
+- `path`는 로컬 파일이나 디렉터리이며 설정 파일 기준 상대 경로입니다(`file://` URL도
+  됨). `s3://` 객체나 디렉터리로 읽는 `s3://bucket/prefix/`도 됩니다
+  ([Schema sources in S3](./operations.md#schema-sources-in-s3), 영문). 디렉터리는 하위까지 읽어 온톨로지 하나로 다룹니다(파일은 정렬하고 `.`으로
+  시작하는 이름은 건너뜀). 그 밖의 URL이나 `secret_arn`을 주면 설정을 읽지 못합니다.
+- 형식은 확장자로 정합니다. `.ttl`은 Turtle, `.rdf` / `.owl` / `.xml`은 RDF/XML,
+  `.jsonld` / `.json-ld`는 JSON-LD, `.nt`는 N-Triples, `.nq`는 N-Quads, `.trig`는
+  TriG입니다. `options.format`을 주면 확장자와 상관없이 모든 파일을 그 형식으로
+  읽습니다.
+
+**옵션**은 `schema_source.options` 아래에 둡니다. 모르는 옵션이나 잘못된 값은
+`schema_source.options.<name>`을 알려 주며 설정을 읽지 못합니다. 용어는 전체 IRI나
+CURIE(`ex:Vendor`)로 씁니다. CURIE 접두사는 `prefixes`, 잘 알려진 `rdf`, `rdfs`,
+`owl`, `xsd`, `skos`, `schema`, `dcterms`, 온톨로지 자체의 접두사 선언 순으로 찾습니다
+(두 네임스페이스에 묶인 접두사는 `prefixes`에 정해야 함). 온톨로지에 없는 용어를 쓰면
+설정을 읽지 못하므로, 오타 때문에 아무것도 선택되지 않은 채 지나가는 일은 없습니다.
+
+| 옵션 | 기본값 | 의미 |
+|---|---|---|
+| `namespaces` | `[]`: RDF, RDFS, OWL, XSD, SKOS, Dublin Core를 뺀 모든 네임스페이스 | 매핑할 클래스와 속성의 IRI 접두사 |
+| `classes` | `[]`: 모든 클래스 | 루트 클래스. 각각 하위 클래스와 함께 매핑 |
+| `exclude_classes` | `[]` | 하위 클래스와 함께 뺄 클래스 |
+| `max_depth` | `null`: 모든 단계 | 루트 아래로 매핑할 하위 클래스 단계 수(`0`: 루트만. `classes`가 없으면 최상위 클래스가 루트) |
+| `properties` | `[]`: 모든 객체 속성 | 루트 속성. 각각 하위 속성과 함께 매핑 |
+| `exclude_properties` | `[]` | 하위 속성과 함께 뺄 속성 |
+| `include_deprecated` | `false` | `owl:deprecated true`인 용어도 매핑 |
+| `prefixes` | `{}` | 이 옵션들의 CURIE에 쓸 접두사 → 네임스페이스 IRI |
+| `label_source` | `auto` | `auto`: `skos:prefLabel`, 다음 `rdfs:label`. `label`: `rdfs:label`만. `local_name`: IRI의 로컬 이름만. 레이블이 없는 용어는 로컬 이름을 씀 |
+| `label_case` | `upper_snake` | `upper_snake`(`supplyChain` → `SUPPLY_CHAIN`, `공급 업체` → `공급_업체`) 또는 `preserve`(쓴 그대로, 문장 부호는 공백으로) |
+| `languages` | `[en, ""]` | 레이블과 설명에서 선호하는 언어 태그, 순서대로(`""`: 태그 없음. `en`은 정확히 `en`인 값 다음으로 `en-US`도 맞춤). 그 밖의 태그는 이 뒤 |
+| `labels` | `{}` | IRI 또는 CURIE → 쓸 레이블(쓴 그대로) |
+| `on_collision` | `error` | 같은 종류의 두 용어가 같은 레이블일 때 실패하거나, `qualify`면 각 레이블 뒤에 네임스페이스 접두사를 붙임(`BANK_EX`, `BANK_GEO`. 묶인 접두사가 없으면 네임스페이스의 짧은 해시) |
+| `description_properties` | `[skos:definition, rdfs:comment]` | 설명을 읽을 주석 속성. 선호 언어에서 처음 찾은 값 |
+| `max_description_chars` | `300` | 더 긴 설명은 단어 경계에서 잘라 "…"를 붙임(`0`: 온톨로지에서 설명을 가져오지 않음) |
+| `hierarchy_hints` | `true` | 설명 뒤에 "Kind of X.", "Narrower than P.", "Inverse of Q."를 덧붙임 |
+| `patterns` | `closure` | `closure`: 정의역과 치역에서 패턴을 만듦. `none`: 패턴 없음 |
+| `max_entity_types` | `64` | 선택된 클래스가 더 많으면 실패 |
+| `max_relationship_types` | `64` | 매핑된 속성이 더 많으면 실패 |
+| `max_patterns` | `256` | 패턴이 더 많이 나오면 실패 |
+| `format` | `auto` | `auto`(확장자로), `turtle`, `xml`, `json-ld`, `nt`, `nquads`, `trig` |
+| `max_bytes` | `67108864`(64 MiB) | 파일 전체 크기가 더 크면 실패 |
+
+**읽는 것.** 파일에 있는 문장 중 이름 있는 용어만 읽습니다.
+
+- 클래스: `owl:Class`나 `rdfs:Class`로 선언한 것, `rdfs:subClassOf`와
+  `owl:equivalentClass`의 양 끝, 속성의 정의역이나 치역에 나온 클래스.
+- 관계 유형: 객체 속성(`owl:ObjectProperty`나 `owl:SymmetricProperty` 같은 그 특성,
+  `owl:inverseOf`의 양 끝, 객체 속성의 하위·상위·동치 속성)과 리터럴 치역이 없는
+  `rdf:Property`.
+- 빼는 것: 데이터 타입 속성과 주석 속성(건너뛴 것으로 보고), `owl:FunctionalProperty`로만
+  선언한 속성, 개체(individual), RDF·RDFS·OWL·XSD 어휘, 정의역이나 치역에 쓴 이름 있는
+  클래스의 `owl:unionOf`를 뺀 익명 클래스. 레이블과 설명은 문자열 리터럴만 읽습니다.
+
+**매핑 규칙.**
+
+- **폐포(closure).** `rdfs:subClassOf`는 선택하지 않은 클래스를 포함해 온톨로지 전체에서
+  추이적입니다. `subClassOf` 순환이나 `owl:equivalentClass`는 유형 하나가 되고, 그
+  `iri`는 선택된 IRI 중 가장 작은 것입니다(속성도 `owl:equivalentProperty`로 같음).
+  속성의 정의역은 자신의 `rdfs:domain` 문장, 상위 속성의 정의역, 역속성의 치역이 모두
+  허용하는 것이고, 치역은 그 반대입니다. 문장 하나는 클래스, 클래스의 `owl:unionOf`,
+  또는 그 속성의 `schema:domainIncludes` 전체이며, 그 안의 클래스 중 어느 것이든
+  허용합니다. `owl:Thing`과 `rdfs:Resource`는 무엇이든 허용합니다. 대칭 속성(또는
+  자기 자신이 역속성인 속성)은 정의역과 치역을 양쪽 끝에서 모두 허용합니다. 추이성,
+  함수성, 카디널리티, 제약(restriction)은 무시합니다.
+- **선택.** 먼저 네임스페이스와 폐기 여부를 보고, `classes` 하위 트리를 `max_depth`까지
+  고른 뒤 `exclude_classes` 하위 트리를 뺍니다. 속성도 같은 방식입니다. 클래스를 골라도
+  그 상위 클래스는 선택되지 않지만, 폐포는 선택하지 않은 클래스를 거쳐 계산합니다.
+- **평평한 계층, 내려보내기와 올려보내기.** 선택된 클래스는 모두 독립된 유형이며, 추출할
+  때 다른 유형의 패턴을 물려받지 않습니다. 대신 패턴을 클래스마다 풀어 씁니다. 속성의
+  출발 유형은 모든 정의역 문장이 허용하는 클래스이거나 그 하위인 선택된 클래스입니다
+  (내려보내기, push-down). 그런 클래스가 없으면 허용된 클래스의 가장 가까운 선택된
+  상위 클래스입니다(올려보내기, lift). 둘 다 없으면 그 속성은 빠지고 로그에 이유가
+  남습니다. 도착 유형도 치역으로 같은 방식으로 정하고, 패턴은 모든 출발 유형과 도착
+  유형의 조합입니다. 정의역도 치역도 없는 속성은 패턴이 없으므로 `strict`에서도 제한되지
+  않습니다.
+- **역속성과 대칭.** 역속성 한 쌍은 관계 유형 두 개이고, 각자 자기 방향의 패턴을
+  가집니다. 방향을 뒤집지 않습니다. 그래프에 한 방향만 두려면 `exclude_properties`로
+  하나를 빼세요. 클래스 n개 사이의 대칭 속성은 n × n개의 패턴을 만듭니다.
+- **순서.** 유형은 선택된 계층을 깊이 우선으로 돌며 정하고, 형제는 레이블 다음 IRI
+  순입니다. 패턴은 관계 유형, 출발 유형, 도착 유형 순으로 정렬합니다. 파일이나 직렬화
+  형식이 아니라 문장만으로 정해집니다.
+
+**계층과 저장되는 표시.** 유형이 평평하므로 다음과 같습니다.
+
+- `in_schema`는 저장된 유형이 선택된 클래스인 엔티티에서 참입니다.
+  `classes: ["ex:Organization"]`과 `max_depth: 0`이면 모델이 `VENDOR`로 적은 엔티티는
+  스키마 밖입니다(`strict`에서는 버림).
+- `type_iri`는 저장된 유형이 가리키는 클래스, 즉 모델이 적은 클래스의 IRI이며 상위
+  클래스가 아닙니다. `VENDOR`로 저장된 엔티티의 `type_iri`는
+  `https://example.org/procure#Vendor`이고 `#Organization`이 아닙니다. 하위 트리 전체를
+  가져오려면 그 IRI 목록으로 거르세요.
+
+  ```python
+  EX = "https://example.org/procure#"
+  RAGInput(query="...", search_strategy="local",
+           filters={"type_iri": [EX + "Organization", EX + "Vendor", EX + "Buyer"]})
+  ```
+
+- 패턴 검사는 계층을 모릅니다. `strict`에서 `ORGANIZATION` 패턴은 `VENDOR` 끝점을
+  허용하지 않으므로, 매핑이 하위 클래스 패턴을 풀어 씁니다. 엔티티에 저장되는 유형은
+  여전히 가장 많이 나온 유형입니다. `VENDOR`로 두 번, `ORGANIZATION`으로 한 번
+  언급되면 vendor로 남습니다.
+
+**예제.** `tests/fixtures/ontologies/procure.ttl`(`ex:`는
+`https://example.org/procure#`)은 `ex:Organization`과 그 하위 클래스 `ex:Vendor`,
+`ex:Buyer`, 그리고 `ex:Person`을 선언합니다. 속성은 Organization → Organization인 대칭
+속성 `ex:tradesWith`, `tradesWith`의 하위 속성이며 Vendor → Buyer인 `ex:supplies`,
+`supplies`의 역속성 `ex:suppliedBy`, Organization → Person인 `ex:employs`, `employs`의
+역속성 `ex:worksFor`, 데이터 타입 속성 `ex:name`입니다. 기본 옵션으로는 다음과 같이
+매핑됩니다.
+
+| 종류 | 유형(설명) |
+|---|---|
+| 엔티티 유형 | `ORGANIZATION`; `BUYER`("Kind of ORGANIZATION."); `VENDOR`("An organization that sells goods. Kind of ORGANIZATION."); `PERSON` |
+| 관계 유형 | `EMPLOYS`("Inverse of WORKS_FOR."); `SUPPLIED_BY`("Inverse of SUPPLIES."); `TRADES_WITH`; `SUPPLIES`("Narrower than TRADES_WITH. Inverse of SUPPLIED_BY."); `WORKS_FOR`("Inverse of EMPLOYS.") |
+
+패턴은 17개입니다.
+
+- `EMPLOYS`: `ORGANIZATION`, `BUYER`, `VENDOR` → `PERSON`(3개, Organization에서
+  내려보냄).
+- `SUPPLIED_BY`: `BUYER` → `VENDOR`(1개, 역속성의 정의역과 치역에서).
+- `TRADES_WITH`: `ORGANIZATION`, `BUYER`, `VENDOR`의 모든 쌍(9개, 대칭).
+- `SUPPLIES`: `VENDOR` → `BUYER`(1개).
+- `WORKS_FOR`: `PERSON` → `ORGANIZATION`, `BUYER`, `VENDOR`(3개).
+
+`ex:name`은 건너뜁니다. `strict`에서 `VENDOR -SUPPLIES-> BUYER`는 통과하고
+`BUYER -SUPPLIES-> VENDOR`는 버립니다. 선택을 좁히면 다음과 같습니다.
+
+```yaml
+    schema_source:
+      kind: owl
+      path: ontology/procure.ttl
+      options:
+        classes: ["ex:Organization"]   # ORGANIZATION, BUYER, VENDOR
+        max_depth: 0                   # ORGANIZATION만
+```
+
+- `classes: ["ex:Organization"]`만 두면 `ORGANIZATION`, `BUYER`, `VENDOR`가 매핑되고,
+  `PERSON`이 선택되지 않으므로 `EMPLOYS`와 `WORKS_FOR`는 빠져 패턴이 11개 남습니다.
+- `max_depth: 0`까지 두면 `ORGANIZATION`만 남고 `SUPPLIES`와 `SUPPLIED_BY`는
+  `ORGANIZATION -> ORGANIZATION`으로 올려보내집니다(패턴 3개). 그래서 `strict`에서도
+  두 조직 사이라면 어느 방향이든 허용합니다.
+
+**프롬프트 예산과 상한.** 유형과 패턴은 모든 그래프 추출 호출의 프롬프트에 들어갑니다.
+유형 하나는 약 5토큰에 설명이 더해지고(300자 설명은 약 75토큰), 패턴 하나는 약
+13토큰입니다. 기본 상한이면 패턴만 최대 약 3,300토큰이고, 300자 설명이 달린 유형
+128개는 약 10,000토큰이 더 듭니다. 패턴은 곱으로 늘어납니다. 출발 클래스 m개와 도착
+클래스 n개 사이의 속성은 m × n개를 만들므로, 넓은 대칭 속성 하나가 대부분을 차지할 수
+있습니다. 상한을 넘는 선택은 잘라 내지 않고 설정을 읽지 못하게 하며(종료 코드 2),
+잘라 내면 프롬프트가 임의로 바뀌기 때문입니다. 메시지는 무엇을 좁힐지 알려 주며,
+패턴이 넘치면 패턴을 가장 많이 만드는 속성 다섯 개를 보여 줍니다.
+
+```text
+schema_source.options: the selection yields 17 patterns, more than max_patterns (10); the most come from https://example.org/procure#tradesWith (9), ... Narrow classes or properties, exclude some, set patterns: none, or raise max_patterns
+```
+
+`namespaces`, `classes`, `max_depth`, `exclude_*` 옵션으로 좁히거나, `patterns: none`으로
+두거나(유형만 남고 `strict`는 유형만 검사하며 패턴은 검사하지 않음), 프롬프트가 커지는
+것을 감안하고 상한을 올리세요.
+
+**한국어 레이블.** 한국어로 레이블을 단 온톨로지라면 다음처럼 씁니다.
+
+```yaml
+    schema_source:
+      kind: owl
+      path: ontology/procure.ttl
+      options:
+        label_source: label        # rdfs:label만
+        languages: [ko]            # 한국어 먼저, 다음 태그 없음, 다음 그 밖의 태그
+        label_case: preserve       # 레이블을 쓴 그대로
+        labels:
+          "ex:suppliedBy": 공급받는다  # 온톨로지에 한국어 레이블이 없음
+```
+
+예제는 `사람`, `조직`, `공급업체`, `구매자`와 `거래한다`, `공급한다`, `고용한다`,
+`공급받는다`, `근무한다`로 매핑되고, 패턴은 같은 17개입니다.
+
+- 한국어 레이블이 없는 용어는 태그 없는 레이블, 다른 언어 레이블, 로컬 이름 순으로
+  씁니다. 로컬 이름은 퍼센트 인코딩을 풀므로 한글 IRI는 한글 레이블이 됩니다.
+  `preserve`에서는 로컬 이름도 쓴 그대로 남으므로(`suppliedBy`. `upper_snake`라면
+  `SUPPLIED_BY`) 이런 용어는 `labels`에 적어 주세요.
+- 한글에는 대소문자가 없으므로 한국어 레이블에서 두 방식은 구분자만 다릅니다
+  (`공급 업체` → `공급_업체` 또는 `공급 업체`). 레이블 비교는 이 차이를 무시합니다.
+  라틴 문자 레이블과 로컬 이름에서는 결과가 달라집니다.
+- 설명도 `languages`를 따릅니다(이 예제는 영어 주석 하나뿐이라 그것을 씀). 계층
+  힌트는 항상 영어입니다. 예: "Kind of 조직."
+
+**바꾸면 다시 실행되는 것.** 파일이 아니라 매핑된 스키마로 키를 정하므로, 증분 실행은
+매핑 결과에 따라 움직입니다([스키마 바꾸기](#c-추출-스키마)).
+
+- **다시 추출**: 레이블, 설명, 패턴이나 유형 순서가 달라질 때입니다. 선택된 용어의
+  레이블이나 주석 수정, 선택에 클래스나 속성이 들어오거나 나가는 경우, 이런 결과를
+  바꾸는 옵션 변경(`hierarchy_hints` 포함)이 해당합니다. 첫 전체 수집 전에 옵션을
+  정해 두세요. 온톨로지 편집자가 레이블을 자주 바꾼다면 `label_source: local_name`을
+  쓰거나 `labels`로 고정하세요.
+- **표시만 다시 씀**: 레이블은 그대로인데 IRI만 바뀔 때입니다(`ex:Vendor`를 레이블은
+  두고 `ex:Supplier`로 바꾼 경우). IRI가 더 작은 동치 클래스가 생겨 유형의 IRI가 되는
+  경우도 같습니다(`ex:Supplier owl:equivalentClass ex:Vendor`를 더하면 `type_iri`가
+  `ex:Supplier`가 됨).
+- **아무것도 바뀌지 않음**: 다른 형식으로 다시 저장(Turtle에서 RDF/XML로), 파일 이동이나
+  이름 변경(절대 IRI일 때, 아래 참고), `owl:versionInfo`, `rdfs:seeAlso`, 데이터 타입
+  속성의 레이블이나 주석, 폐포가 쓰지 않는 선택 밖 용어의 수정, 폐포가 이미 추론하는
+  문장 추가입니다.
+
+**기준 IRI 선언.** 절대 IRI를 쓰거나 기준 IRI를 선언하세요. Turtle과 TriG는 `@base`,
+RDF/XML은 `xml:base`, JSON-LD는 컨텍스트의 `@base`입니다. 상대 IRI(`<#Vendor>`)는
+파일 자신의 위치(`file:///app/ontology/procure.ttl#Vendor`, 또는 `s3://` URL)를 기준으로
+풀리므로, 파일을 옮기거나(경로 사이든 경로와 S3 사이든) 다른 경로에서 읽으면 그런 용어의 이름이 모두 바뀝니다. `type_iri`와
+`predicate_iri`가 달라지고 다음 실행이 저장된 모든 항목의 표시를 다시 씁니다.
+디렉터리의 두 파일이 모두 `<#Vendor>`를 쓰면 서로 다른 클래스 두 개가 됩니다. 이럴 때
+읽기 단계에서 `N terms have IRIs relative to their file` 경고를 남깁니다.
+
+**따라가지 않는 것, 읽지 않는 것.**
+
+- `owl:imports`는 따라가지 않습니다. 가져올 온톨로지 파일을 같은 디렉터리에 두세요
+  (디렉터리는 온톨로지 하나). 어떤 파일도 선언하지 않는 가져오기는 경고로 한 번
+  남깁니다.
+- `path` 외에는 아무것도 내려받지 않습니다. 문서를 가리키는 JSON-LD `@context`나 `@import`는
+  거부합니다(컨텍스트를 파일 안에 넣거나 Turtle로 변환). XML 외부 엔티티는 풀지 않으며
+  내부 엔티티는 펼칩니다.
+- OWL/XML(`.owx`, 또는 루트 요소가 `owl:Ontology`인 RDF/XML 확장자 파일), OWL 함수형
+  문법(`.ofn`), 맨체스터 문법(`.omn`), OBO(`.obo`), Notation3(`.n3`)은 거부합니다. 먼저
+  변환하세요. ROBOT은 `robot convert --input onto.owx --output onto.ttl`, Protégé는
+  *File > Save as > Turtle*입니다.
+
+**미리 보기.** 모델을 호출하지 않고 추출이 쓸 스키마를 봅니다.
+
+```python
+import yaml
+
+from unified_kg_rag import get_config
+from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+
+extraction = resolve_extraction_schema(get_config("config.yaml")).processing.graph_extraction
+print(yaml.safe_dump(
+    extraction.model_dump(
+        mode="json",
+        include={"entity_types", "relationship_types", "relationship_patterns"},
+        exclude_none=True,
+    ),
+    allow_unicode=True,
+    sort_keys=False,
+))
+```
+
+읽을 때마다 INFO 로그도 한 줄 남깁니다. `Ontology '<path>' (N files): ... entity types,
+... relationship types and ... patterns from ... classes and ... properties; ...
+properties dropped, ... ends lifted, ...` 형식이며, DEBUG에는 빠지거나 올려보내지거나
+합쳐지거나 건너뛰거나 접미사가 붙은 용어가 하나씩 나옵니다.
+
+**매핑 고정하기.** 온톨로지 수정이 그래프에 닿지 않게 하는 방법은 두 가지입니다.
+
+- 미리 보기 출력을 `schema.yaml`로 저장하고 `schema_source: {kind: file, path: schema.yaml}`로
+  읽습니다. 같은 스키마이므로 다시 추출하지 않고, extra도 더는 필요 없습니다.
+- `kind: owl` 설정으로 `run-prompt-tuning --schema-out draft.yaml`을 실행하면
+  ([프롬프트 튜닝으로 스키마 초안 만들기](#c-추출-스키마)) 온톨로지의 유형, 패턴, IRI에
+  표본이 언급했지만 온톨로지에 없는 관계 유형을 더해 쓰고, 머리말에 그 유형을 적습니다.
+  그 유형을 온톨로지에 더하거나(`kind: owl` 유지), 초안을 검토해 `kind: file`로
+  읽으세요(더한 유형 때문에 스키마가 바뀌므로 다시 추출함).
 
 ---
 
