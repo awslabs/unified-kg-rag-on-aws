@@ -2059,8 +2059,8 @@ class SeedGraphConfig(BaseModel):
         ge=0,
         le=512,
         description=(
-            "Fail the import when the seed uses more distinct property keys: "
-            "each becomes a stored field under attributes.seed_properties."
+            "Fail the import when the seed uses more distinct property keys "
+            "(the keys of attributes.seed_properties, stored but not indexed)."
         ),
     )
     max_description_chars: int = Field(

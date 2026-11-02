@@ -936,6 +936,163 @@ def test_incremental_run_refuses_an_annotation_mapped_as_another_type(
         harness.vector_indexer.check_index_settings("default")
 
 
+# Seed properties a dynamic mapping would refuse: a key typed by its first
+# value, a string over the 32 KB keyword limit, an integer over 2^63, keys
+# OpenSearch cannot map as fields and more keys than its field limit.
+_ODD_SEED_PROPERTIES: list[dict[str, Any]] = [
+    {"code": 5},
+    {"code": "X1"},
+    {"flag": True},
+    {"flag": "yes"},
+    {"note": "a" * 40_000},
+    {"n": 2**64},
+    {"": "x"},
+    {".": "x"},
+    {"a.b": "x"},
+    {"a": "y"},
+    {f"a{k}": "v" for k in range(512)},
+    {f"b{k}": "v" for k in range(512)},
+]
+
+
+def _with_seed_properties(properties: list[dict[str, Any]]) -> list[Entity]:
+    return [
+        Entity(
+            id=f"e-seed{i}",
+            name=f"Seed {i}",
+            type="ORG",
+            description="A seed graph states it",
+            text_unit_ids=["sg-t1"],
+            attributes={"seed_properties": props, "filters": {"region": "eu"}},
+        )
+        for i, props in enumerate(properties)
+    ]
+
+
+@pytest.mark.parametrize("mode", ["index", "upsert"])
+def test_seed_properties_of_any_form_are_written_and_read_back(
+    harness: StoreHarness, mode: str
+) -> None:
+    entities = _with_seed_properties(_ODD_SEED_PROPERTIES)
+    _write(harness, "entities", mode, entities)
+    copies = harness.vector_indexer.read_vector_copies(
+        "entities", [e.id for e in entities]
+    )
+    assert {i: c.get("seed_properties") for i, c in copies.items()} == {
+        e.id: (e.attributes or {})["seed_properties"] for e in entities
+    }
+
+
+def test_a_lineage_update_sets_the_filters_and_keeps_other_attributes(
+    harness: StoreHarness,
+) -> None:
+    # As the incremental strip relies on: a lineage update rewrites the
+    # document filters (a key the item lost stops matching) and leaves every
+    # other attribute as written, so a copy whose seed properties changed
+    # has to be written in full (indexing_manager._vector_content).
+    indexer = harness.vector_indexer
+    prefix = harness.config.indexing.opensearch.entities_index_prefix
+    (vendor,) = _with_seed_properties([{"tier": "gold"}])
+    stored = vendor.model_copy(
+        update={
+            "attributes": {
+                **(vendor.attributes or {}),
+                "filters": {"region": "eu", "year": "2024"},
+            }
+        }
+    )
+    _write(harness, "entities", "upsert", [stored])
+    stats = indexer.update_entity_lineage(
+        [
+            vendor.model_copy(
+                update={
+                    "text_unit_ids": ["t9"],
+                    "attributes": {"filters": {"region": "eu"}},
+                }
+            )
+        ]
+    )
+    assert stats.failed_items == 0, stats.errors
+    copies = indexer.read_vector_copies("entities", [vendor.id])
+    assert copies[vendor.id]["seed_properties"] == {"tier": "gold"}
+    assert indexer.find_documents(
+        prefix, "attributes.filters.region", ["eu"], "default"
+    ) == {vendor.id: ["t9"]}
+    assert (
+        indexer.find_documents(prefix, "attributes.filters.year", ["2024"], "default")
+        == {}
+    )
+
+
+def _entities_index_without_seed_properties(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, str]:
+    """An entities index built before seed properties were left unmapped:
+    its search engine client and index name."""
+    indexer = harness.vector_indexer
+    current = indexer._get_entities_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        mapping["mappings"]["properties"]["attributes"].pop("properties")
+        return mapping
+
+    monkeypatch.setattr(indexer, "_get_entities_mapping", earlier)
+    _write(harness, "entities", "index", _entities()[:1])
+    monkeypatch.undo()
+    client = indexer.opensearch_client
+    index_name = client.get_index_name_by_alias(
+        indexer._get_name(
+            harness.config.indexing.opensearch.entities_index_prefix, None
+        )
+    )
+    assert index_name
+    attributes = client.get_index_mappings(index_name)["properties"]["attributes"]
+    assert "seed_properties" not in (attributes.get("properties") or {})
+    return client, index_name
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_leaves_the_seed_properties_of_an_earlier_index_unmapped(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, index_name = _entities_index_without_seed_properties(harness, monkeypatch)
+    harness.vector_indexer.check_index_settings("default")  # the run's preflight
+    attributes = client.get_index_mappings(index_name)["properties"]["attributes"]
+    assert attributes["properties"]["seed_properties"] == {
+        "type": "object",
+        "enabled": False,
+    }
+    _write(harness, "entities", "upsert", _with_seed_properties(_ODD_SEED_PROPERTIES))
+    harness.vector_indexer.check_index_settings("default")  # nothing left to add
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_refuses_seed_properties_mapped_key_by_key(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What OpenSearch's dynamic mapping made of an earlier build's seed
+    # properties; enabled cannot change on a live object.
+    client, index_name = _entities_index_without_seed_properties(harness, monkeypatch)
+    client.put_index_mapping(
+        index_name,
+        {
+            "properties": {
+                "attributes": {
+                    "properties": {
+                        "seed_properties": {"properties": {"code": {"type": "long"}}}
+                    }
+                }
+            }
+        },
+    )
+    with pytest.raises(
+        ConfigurationError,
+        match="'attributes.seed_properties' field by field.*indexing.reset: true",
+    ):
+        harness.vector_indexer.check_index_settings("default")
+
+
 def test_a_date_like_filter_value_does_not_type_its_field(
     harness: StoreHarness,
 ) -> None:

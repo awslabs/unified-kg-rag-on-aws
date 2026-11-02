@@ -204,6 +204,45 @@ def _merge(target: dict[str, Any], partial: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _merge_properties(
+    live: dict[str, Any], update: dict[str, Any], prefix: str = ""
+) -> dict[str, Any]:
+    """``live`` mapping properties with ``update``'s added, as OpenSearch
+    merges a mapping update: an object's sub-fields recursively, its own
+    parameters kept when the update leaves them out; anything else
+    changed is rejected."""
+    merged = dict(live)
+    for name, spec in update.items():
+        stored = merged.get(name)
+        if stored is None or stored == spec:
+            merged[name] = spec
+            continue
+        if (
+            isinstance(stored, dict)
+            and isinstance(spec, dict)
+            and "properties" in spec
+            and stored.get("type", "object") == spec.get("type", "object") == "object"
+            and all(
+                stored.get(k) == v
+                for k, v in spec.items()
+                if k not in ("properties", "type")
+            )
+        ):
+            merged[name] = {
+                **stored,
+                "properties": _merge_properties(
+                    stored.get("properties") or {},
+                    spec["properties"],
+                    f"{prefix}{name}.",
+                ),
+            }
+            continue
+        raise rejected(
+            f"mapper [{prefix}{name}] cannot be changed from {stored} to {spec}"
+        )
+    return merged
+
+
 def _id_values(clause: Any) -> list[str] | None:
     """The ids an ``ids`` query or an ``id`` term(s) query names, else None."""
     if not isinstance(clause, dict) or len(clause) != 1:
@@ -731,21 +770,17 @@ class SQLiteSearchEngine:
 
     def put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
         """Update the mapping of ``index_name`` as OpenSearch does: new fields
-        are added and root parameters (``date_detection``) replaced; changing
-        a mapped field is rejected. This engine maps no field dynamically (an
+        are added (an object's new sub-fields too) and root parameters
+        (``date_detection``) replaced; changing a mapped field, or an object's
+        own parameters (``enabled``), is rejected. This engine maps no field dynamically (an
         unmapped string is a keyword), so ``date_detection`` changes nothing."""
         properties = body.get("properties") or {}
         with self._transaction("update an index mapping") as connection:
             mappings = self._mappings_of(connection, index_name)
-            live = mappings.setdefault("properties", {})
-            for name, spec in properties.items():
-                if name in live and live[name] != spec:
-                    raise rejected(
-                        f"mapper [{name}] cannot be changed from "
-                        f"{live[name]} to {spec}"
-                    )
             _validate_mappings({"mappings": {"properties": properties}})
-            live.update(properties)
+            mappings["properties"] = _merge_properties(
+                mappings.get("properties") or {}, properties
+            )
             mappings.update({k: v for k, v in body.items() if k != "properties"})
             connection.execute(
                 "UPDATE indices SET mappings = ? WHERE name = ?",

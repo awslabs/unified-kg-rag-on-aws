@@ -2433,7 +2433,7 @@ processing:
 | `max_nodes` | `100000` | Fail above this many nodes |
 | `max_edges` | `500000` | Fail above this many edges |
 | `max_bytes` | `268435456` (256 MiB) | Fail when the files hold more bytes together (checked before they are read, and while reading) |
-| `max_property_keys` | `64` (0 to 512) | Fail when the seed uses more distinct property keys (each becomes a stored field under `attributes.seed_properties`) |
+| `max_property_keys` | `64` (0 to 512) | Fail when the seed uses more distinct property keys (each is a key of `attributes.seed_properties`) |
 | `max_description_chars` | `1000` (at least 50) | Cut descriptions here, at a word boundary with "…", so an item only the seed states never needs the description summarizer |
 
 - The caps fail the import; nothing is truncated, as a cut would change the
@@ -2639,7 +2639,7 @@ as extraction merges names) become one entity:
 |---|---|
 | Type, name, confidence | The documents' statements decide whenever any states the entity. A seed's fill only a gap: an entity no document states, or one documents name only as a relationship endpoint, with no type |
 | Description | Unioned, document lines first, the seed's lines after them |
-| Properties | Kept under `attributes.seed_properties`, never over an extracted attribute |
+| Properties | Kept under `attributes.seed_properties`, never over an extracted attribute. Stored, not indexed: any key and any string, number or boolean value can be written, and no filter or search matches them |
 | IRI | The smallest one stated; an entity stated with several is counted (`entities_with_conflicting_iris`, INFO) |
 | Edges | Added. A seed edge and a document edge with the same endpoints and type are one relationship, their weights added |
 | Ranks | Count document-backed edges only (an edge is seed-only when every text unit it cites is a seed's): a seed never makes an entity more important, and an entity only seed edges join has rank 0. Leiden still clusters every edge at its full weight. `indexing.neptune.entity_importance_source: degree` counts the edges at query time, seed edges included |
@@ -2696,6 +2696,11 @@ them. `naive` reads text units only.
     document filters every index carries. A tenant filter such as
     `attr_department: legal` excludes what only a seed states unless the
     seed's `filters` declare the key, as for documents.
+  - Seed property keys are not filterable: the vector store keeps
+    `attributes.seed_properties` unmapped, so a property of any type,
+    length or key name never fails a write. To filter on a value, put it in
+    the seed's `filters` (one value for the whole seed), or list the key in
+    `description_properties` so text and vector search see it.
 
 ```python
 RAGInput(query="...", search_strategy="local", filters={"source_kinds": "document"})

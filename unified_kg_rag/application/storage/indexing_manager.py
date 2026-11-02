@@ -17,6 +17,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     compact_name_key,
@@ -125,7 +126,11 @@ def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
     lineage and rank, by field (see ``read_vector_copies``); a schema
     annotation or seed-graph field is absent from a copy written without
     one (``None``), so an item without one compares equal to a copy written
-    before the field existed."""
+    before the field existed.
+
+    An entity's ``seed_properties`` are compared too: a lineage update
+    leaves the stored attributes as they are, so a copy whose seed
+    properties a removed seed (or document) stated is written in full."""
     if isinstance(item, Entity):
         return {
             "name": item.name or "",
@@ -135,6 +140,10 @@ def _vector_content(item: Entity | Relationship) -> dict[str, Any]:
             "type_iri": item.type_iri,
             "iri": item.iri,
             "source_kinds": item.source_kinds or None,
+            SEED_PROPERTIES_ATTRIBUTE: (item.attributes or {}).get(
+                SEED_PROPERTIES_ATTRIBUTE
+            )
+            or None,
         }
     return {
         "source_id": item.source_id,
