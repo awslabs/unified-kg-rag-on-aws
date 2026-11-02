@@ -766,7 +766,7 @@ From 0.2.3 (or a `main` checkout since):
   design doc, runbook and model catalog (#337-#342, #351, #469).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
-  5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.274 in the
+  5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
   CDK lock; `nest-asyncio` is no longer used (#241, #251, #265, #438, #465,
   #PR).
 - Tooling: development tools are in the `dev` group; CI pins uv 0.12.23,
