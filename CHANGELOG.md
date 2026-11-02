@@ -650,8 +650,16 @@ From 0.2.3 (or a `main` checkout since):
   symmetric properties) on a flattened hierarchy, labels from
   `skos:prefLabel`/`rdfs:label` by language preference or the local name
   (`UPPER_SNAKE`, Hangul kept), and the output depends only on the
-  statements. Colliding labels and more types or patterns than the caps
-  allow fail instead of being truncated (#491).
+  statements. A symmetric property with one end stated takes it for the
+  other, and its sub-properties and inverses inherit both. The closure is
+  one pass over the hierarchy, so a 20,000-deep `subClassOf` chain maps in
+  under a second and 150 MB instead of 9 GiB, and a 2,000-property
+  `subPropertyOf` chain in 0.1 s instead of about 40 s. Colliding labels
+  and more types or patterns than the caps allow fail instead of being
+  truncated; `on_collision: qualify` takes the suffix from
+  `options.prefixes`, then the well-known prefixes, before the files' own
+  bindings, and a `description_properties` entry other than the defaults
+  that the ontology never uses fails the load (#491, #PR).
 - `schema_source.kind: owl` fills the schema from an OWL or RDFS ontology:
   a local file or a directory of Turtle, RDF/XML, JSON-LD, N-Triples,
   N-Quads or TriG files, read with the `ontology` extra and mapped by the
@@ -681,6 +689,10 @@ From 0.2.3 (or a `main` checkout since):
   call (exit 2 naming the extra), and the `run-prompt-tuning --schema-out`
   draft over such a source says which relationship types it lacks
   (#492, #495).
+  draft over such a source freezes it: the types the source declares keep
+  only its patterns (none under `patterns: none`), so a draft that adds
+  nothing loads as the same schema, and the header names the relationship
+  types it adds and counts their patterns (#492, #PR).
 - Schema sources in S3: `schema_source.path` of kinds `file` and `owl` may
   be an `s3://bucket/key` object, and for `owl` an `s3://bucket/prefix/`
   read as a directory (every page of the listing, filtered, sorted and
@@ -696,7 +708,9 @@ From 0.2.3 (or a `main` checkout since):
   and S3 re-extracts nothing; relative IRIs of an ontology in S3 resolve
   against its `s3://` URL (declare `@base`). Other URL schemes stay
   refused (#493).
-- Docs: ontology schema sources in user guide §9 C and the runbook (#494).
+- Docs: ontology schema sources in user guide §9 C and the runbook, with
+  their load cost and what a re-serialisation or a new equivalent class
+  can change (#494, #PR).
 - Extraction applies the schema. Declared relationship types and patterns
   replace the example relationship types in the extraction prompt. Once
   relationship types are declared (or under `strict`), a type naming a

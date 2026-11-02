@@ -166,7 +166,10 @@ class SchemaDraft(BaseModel):
     Written as a ``schema_source`` file (:meth:`to_yaml`) and meant for
     ``schema_mode: align``. ``schema_source`` is the ``(kind, location)`` of
     the schema source the configured types came from when it is not a file,
-    and ``added_relationship_types`` the types the examples add to them.
+    and ``added_relationship_types`` the types the examples add to them;
+    the draft then freezes that source's schema: a type it declares gets
+    no pattern but the source's, so with nothing added the draft loads as
+    the same schema (same digest).
     """
 
     entity_types: list[EntityTypeSpec] = Field(default_factory=list)
@@ -223,6 +226,10 @@ class SchemaDraft(BaseModel):
         # A relation the config gives patterns keeps only those: its
         # examples in another direction are counted off pattern instead.
         patterned = {schema_key(pattern.relation) for pattern in relationship_patterns}
+        if schema_source is not None:
+            # Over another source the draft freezes its schema: a type the
+            # source declares keeps the source's patterns, none included.
+            patterned |= declared.keys()
 
         # Relation key -> (source key, target key) -> statements.
         triples: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
@@ -296,11 +303,23 @@ class SchemaDraft(BaseModel):
         else:
             kind, location = self.schema_source
             added = len(self.added_relationship_types)
+            keys = {schema_key(label) for label in self.added_relationship_types}
+            new_patterns = sum(
+                schema_key(pattern.relation) in keys
+                for pattern in self.relationship_patterns
+            )
             lines = [
                 "# Extraction schema draft written by run-prompt-tuning: copied from",
                 f"# {kind} '{location}' plus {added} relationship type"
                 f"{'' if added == 1 else 's'} the source lacks"
-                + (f" ({', '.join(self.added_relationship_types)})." if added else "."),
+                + (f" ({', '.join(self.added_relationship_types)})" if added else "")
+                + (
+                    f" and {new_patterns} pattern{'' if new_patterns == 1 else 's'}"
+                    f" for {'it' if added == 1 else 'them'}"
+                    if new_patterns
+                    else ""
+                )
+                + ".",
                 f"# Add them to the source (keep kind: {kind}), or review this file",
                 "# and load it with kind: file to freeze the mapping:",
             ]

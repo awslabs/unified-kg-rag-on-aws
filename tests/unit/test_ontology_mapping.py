@@ -281,6 +281,47 @@ class TestPatterns:
         )
         assert _patterns(_map(model)) == ["PERSON -MARRIES-> PERSON"]
 
+    @pytest.mark.parametrize("range_stated", [False, True])
+    def test_a_filled_symmetric_end_reaches_sub_properties_and_inverses(
+        self, range_stated: bool
+    ) -> None:
+        # meets ≡ Person × Person whether its range is stated or filled, and
+        # so is what inherits from it.
+        model = self._model(
+            _prop(
+                "meets",
+                symmetric=True,
+                domains=ends("Person"),
+                ranges=ends("Person") if range_stated else frozenset(),
+            ),
+            _prop("greets", parents=frozenset({EX + "meets"})),
+            _prop("metBy", inverses=frozenset({EX + "meets"})),
+        )
+        assert _patterns(_map(model)) == [
+            "PERSON -MEETS-> PERSON",
+            "PERSON -GREETS-> PERSON",
+            "PERSON -MET_BY-> PERSON",
+        ]
+
+    def test_a_symmetric_end_is_filled_only_when_the_closure_leaves_it_empty(
+        self,
+    ) -> None:
+        # agrees' range is its inverse's domain, which that one inherits
+        # from relates: Org. Filling it with Person before that arrives
+        # would leave no class both ends allow.
+        model = self._model(
+            _prop("agrees", symmetric=True, domains=ends("Person")),
+            _prop(
+                "zAgreedBy",
+                parents=frozenset({EX + "zRelates"}),
+                inverses=frozenset({EX + "agrees"}),
+            ),
+            _prop("zRelates", domains=ends("Org")),
+        )
+        mapping = _map(model, properties=["ex:agrees"])
+        assert mapping.report.dropped == ()
+        assert len(_patterns(mapping)) == 25  # (Person + 4 orgs) squared
+
     def test_sub_property_inherits_through_an_unselected_super(self) -> None:
         model = self._model(
             _prop("relates", domains=ends("Org"), ranges=ends("Person")),
@@ -429,6 +470,10 @@ class TestSelection:
             ),
             ({"classes": ["Vendor"]}, "neither an IRI nor a CURIE"),
             ({"description_properties": ["dc:description"]}, "description_properties"),
+            (
+                {"description_properties": ["rdfs:comment", "ex:remark"]},
+                r"description_properties: 'ex:remark' is neither a property",
+            ),
         ],
     )
     def test_terms_that_name_nothing_fail(self, options: dict, match: str) -> None:
@@ -659,6 +704,17 @@ class TestCollisions:
         (hashed,) = set(entities) - {"BANK_EX"}
         assert re.fullmatch("BANK_[0-9A-F]{6}", hashed)
 
+    def test_the_options_prefixes_name_the_suffix_first(self) -> None:
+        # The files bind "a" to EX; pinned as "ex" in the options, the
+        # suffix no longer follows how the files are serialised.
+        model = self._model().model_copy(update={"prefixes": {"a": EX, "geo": GEO}})
+        assert _labels(_map(model, on_collision="qualify"))[0][:2] == [
+            "BANK_A",
+            "BANK_GEO",
+        ]
+        pinned = _map(model, on_collision="qualify", prefixes={"ex": EX})
+        assert _labels(pinned)[0][:2] == ["BANK_EX", "BANK_GEO"]
+
     def test_same_namespace_collision_survives_qualify(self) -> None:
         model = OntologyModel(classes=(_cls("Bank"), _cls("bank")), prefixes={"ex": EX})
         with pytest.raises(SchemaSourceError, match="still collide after qualifying"):
@@ -728,6 +784,67 @@ class TestDescriptions:
         )
         assert describe(max_description_chars=0) == ""
         assert describe(max_description_chars=7) == "comment…"
+
+    def test_a_description_property_must_occur_unless_a_default(self) -> None:
+        note = EX + "note"
+        model = OntologyModel(
+            classes=(_cls("A", annotations={note: (Text(value="a note"),)}),),
+            prefixes={"ex": EX},
+        )
+        # rdfs:comment and skos:definition occur nowhere: still accepted.
+        mapping = _map(
+            model, description_properties=["rdfs:comment", "ex:note", "skos:definition"]
+        )
+        assert mapping.document.entity_types[0].description == "a note"
+        with pytest.raises(SchemaSourceError, match="'ex:remark' is neither"):
+            _map(model, description_properties=["ex:remark"])
+
+
+class TestScale:
+    """Deep hierarchies cost time and memory linear in their size (a set
+    of every ancestor per class would grow with the depth squared)."""
+
+    @pytest.mark.timeout(10)
+    def test_a_deep_subclass_chain(self) -> None:
+        depth = 20_000
+        classes = [_cls("C0")] + [_cls(f"C{i}", f"C{i - 1}") for i in range(1, depth)]
+        model = OntologyModel(
+            classes=tuple(classes),
+            properties=(_prop("p", domains=ends("C0"), ranges=ends(f"C{depth - 1}")),),
+            prefixes={"ex": EX},
+        )
+        mapping = _map(model, classes=[f"ex:C{depth - 3}"])
+        assert mapping.report.entity_types == 3
+        assert _patterns(mapping) == [
+            f"C{depth - 3} -P-> C{depth - 1}",
+            f"C{depth - 2} -P-> C{depth - 1}",
+            f"C{depth - 1} -P-> C{depth - 1}",
+        ]
+
+    @pytest.mark.timeout(10)
+    def test_a_long_sub_property_chain(self) -> None:
+        length = 2_000
+        properties = [_prop("p0", domains=ends("A"))] + [
+            _prop(
+                f"p{i}",
+                parents=frozenset({EX + f"p{i - 1}"}),
+                ranges=ends("A" if i % 2 else "B"),
+            )
+            for i in range(1, length)
+        ]
+        model = OntologyModel(
+            classes=(_cls("A"), _cls("B", "A")),
+            properties=tuple(properties),
+            prefixes={"ex": EX},
+        )
+        mapping = _map(model, max_relationship_types=length, max_patterns=10 * length)
+        # p0 and p1 join A and B to either; every later one, with B among
+        # its inherited ranges, to B.
+        assert mapping.report.patterns == 4 + 4 + 2 * (length - 2)
+        hints = {
+            spec.label: spec.description for spec in mapping.document.relationship_types
+        }
+        assert hints[f"P{length - 1}"] == f"Narrower than P{length - 2}."
 
 
 class TestModelAndOptions:

@@ -154,7 +154,7 @@ the roles already read:
 
 | Location | Ingestion task role | Query task role (`run-rag`, `run-eval`) |
 |---|---|---|
-| The `corpus_bucket_name` bucket (any key) | Read | Read |
+| The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`, whose files are ingested as documents) | Read | Read |
 | The cache bucket, outside `pipeline-runs/` (expired after 30 days) | Read | No |
 | The cache bucket under `eval/` | Read | Read |
 
@@ -462,7 +462,15 @@ rebuilding the image with an unchanged ontology, or moving it to another
 path with absolute IRIs, re-extracts nothing. Before the first full
 ingest, preview the mapped schema locally (User Guide, *Preview*) and
 settle the options: a label or description change re-extracts the
-corpus.
+corpus. With `on_collision: qualify`, bind the colliding namespaces in
+`options.prefixes`, so a re-serialised ontology keeps its suffixes.
+
+Every task that loads the schema parses the ontology into memory: about
+3 s and 85 MB per MB of Turtle (a 14 MB file took 45 s and 1.2 GB), so at
+the default `max_bytes` of 64 MiB a load can take about 5 GB of the task's
+memory before ingestion starts. Lower `options.max_bytes` to the size you
+ship, or raise `fargate_memory`, when the ontology is large (User Guide,
+*Load cost*).
 
 ## When a run fails
 
