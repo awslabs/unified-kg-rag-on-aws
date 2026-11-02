@@ -426,3 +426,55 @@ def test_eval_exits_before_the_chain_without_the_extra(
     assert exc.value.code == 2
     chain.assert_not_called()
     assert "langchain_ollama" in capsys.readouterr().err
+
+
+def _rdf_seeded_config() -> Config:
+    return Config.model_validate(
+        {
+            "processing": {
+                "seed_graphs": [{"name": "procure", "kind": "rdf", "path": "s.ttl"}]
+            }
+        }
+    )
+
+
+def test_only_a_run_that_loads_the_seeds_needs_their_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "rdflib", None)
+    config = _rdf_seeded_config()
+    assert "'rdflib' (for processing.seed_graphs 'procure' kind 'rdf')" in (
+        missing_extras_error(config) or ""
+    )
+    assert missing_extras_error(config, seeds=False) is None
+
+
+async def test_the_query_and_tuning_clis_skip_the_seed_extras(
+    mocker, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Only run-ingestion loads seeds: a query image without the ontology
+    # extra still answers over an index an rdf seed was imported into.
+    calls: list[bool] = []
+
+    def preflight(config: Config, *, seeds: bool = True) -> str:
+        calls.append(seeds)
+        return "stop here"
+
+    for module in (run_rag_chain, run_prompt_tuning, run_evaluation):
+        mocker.patch.object(module, "missing_extras_error", side_effect=preflight)
+        mocker.patch.object(
+            module, "load_cli_config", return_value=_rdf_seeded_config()
+        )
+    parser = run_rag_chain.CommandLineInterface._setup_arguments()
+    assert await run_rag_chain.async_main(parser.parse_args(["-q", "hi"])) == 2
+    monkeypatch.setattr(
+        sys, "argv", ["run-prompt-tuning", "--source-directory", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit):
+        run_prompt_tuning.main()
+    data = tmp_path / "eval.json"
+    data.write_text("[]")
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--data-path", str(data)])
+    with pytest.raises(SystemExit):
+        run_evaluation.main()
+    assert calls == [False, False, False]

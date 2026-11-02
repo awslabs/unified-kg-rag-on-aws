@@ -505,34 +505,48 @@ where it is read from. Size the task for it: the whole seed is held in
 memory, and each node costs about two embeddings and each edge one
 (User Guide, *Cost and limits*).
 
-A seed of kind `rdf` needs the `ontology` extra in every image whose
-config declares it, the query and evaluation tasks too: every CLI checks
-the extras a configured seed kind needs before any model call (`Not
-installed: 'rdflib' (for processing.seed_graphs 'procure' kind 'rdf')`,
-exit 2). Build with `--build-arg UV_EXTRAS="--extra ontology"` as in
+A seed of kind `rdf` needs the `ontology` extra in the ingestion image:
+`run-ingestion` checks the extras a configured seed kind needs before
+any model call (`Not installed: 'rdflib' (for processing.seed_graphs
+'procure' kind 'rdf')`, exit 2). Build it with `--build-arg
+UV_EXTRAS="--extra ontology"` as in
 [Ontology schema in the image](#ontology-schema-in-the-image), step 4.
+The query and evaluation images load no seed and need no seed kind's
+extra (an `owl` schema source still needs it wherever it is read).
 
 **A reset where another scope holds seeds.** `indexing.reset: true`
 rebuilds the namespace from the run's corpus and drops the other source
 scopes' documents, as always. When one of those scopes holds seed graph
-documents (a seed-only scope), `run-ingestion` asks first, and an ECS task
-has no terminal to ask on: the run fails at `document_loading`, before it
-writes (`... needs confirmation, but stdin is not a terminal. Re-run with
---yes to proceed.`, exit 1). The Step Functions pipeline runs a fixed
-command without `--yes`, so run that one reset as a one-off task of the
-ingestion task definition (`.States.Ingest.Parameters.TaskDefinition`, in
-the network of the query example in
-[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)) whose
-command override adds `--yes`:
+documents (a seed-only scope), or the run's corpus is its seed graphs
+alone while another scope holds documents, `run-ingestion` asks first,
+and an ECS task has no terminal to ask on: the run stops at
+`document_loading`, before it writes (`... needs confirmation, but stdin
+is not a terminal. Re-run with --confirm-reset (or UKR_CONFIRM_RESET=1)
+to proceed.`, exit 1). `UKR_CONFIRM_RESET=1` answers that question only
+(not a resume's integrity check, which `--yes` answers). The Step
+Functions pipeline passes only the source directory and pipeline id, so
+run that one reset as a one-off task of the ingestion task definition
+(`.States.Ingest.Parameters.TaskDefinition`, in the network of the query
+example in [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)):
+the state machine's command unchanged (the image's own command only
+prints the help), and the reset and its answer as environment overrides,
+so the config in the image stays as it is:
 
 ```json
 {"containerOverrides": [{"name": "app",
   "command": ["run-ingestion", "--config-path", "/app/config.yaml",
               "--metrics-sink", "cloudwatch", "--s3-sync",
-              "--s3-bucket-name", "<cache bucket>", "--yes"],
-  "environment": [{"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
+              "--s3-bucket-name", "<cache bucket>"],
+  "environment": [{"name": "UKR__INDEXING__RESET", "value": "true"},
+                  {"name": "UKR_CONFIRM_RESET", "value": "1"},
+                  {"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
                   {"name": "UKR_PIPELINE_ID", "value": "reset-001"}]}]}
 ```
+
+A reset from an empty corpus (seeds alone) of a scope that holds
+documents fails whatever the answer (`No source document reached this
+run, only its seed graphs, ...`): the corpus is likelier missing than
+empty, as an incremental run assumes too.
 
 Or avoid the question: configure the seed on the corpus's own scope
 instead of a seed-only scope, so the reset re-imports it and asks nothing.
@@ -1189,7 +1203,8 @@ model or credential error fails a query rather than answering from no context.
 | `Pipeline resume failed: ...` (`PipelineResumeError`, exit 1, before any model call) | The pipeline id cannot be resumed as asked: a stage this run must rerun is not enabled (the message names it), an explicit `--resume-from-stage` past a stage whose cached output is gone, or its saved state could not be read | Enable the named stage or resume from it (`--resume-from-stage <stage>`); for unreadable state, a new `--pipeline-id` or `--force-rebuild` |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
-| `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --yes does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, and no one answered | Re-run with `--yes` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` |
+| `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...` (or `rebuilds it from this run's seed graphs alone ...`) `; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-reset does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, or, from seeds alone, another scope's documents, and no one answered yes | Re-run with `--confirm-reset` or `UKR_CONFIRM_RESET=1` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` (a no raises `ConfirmationDeclinedError`) |
+| `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope (User Guide, *Lifecycle*) |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |

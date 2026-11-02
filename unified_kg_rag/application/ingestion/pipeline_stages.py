@@ -85,6 +85,7 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
     SEED_RECORD_FINGERPRINT,
     SeedConversion,
     is_seed_document,
@@ -101,6 +102,7 @@ from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
     Document,
+    DocumentDelta,
     Entity,
     IndexBuildRecord,
     PipelineContext,
@@ -114,6 +116,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
 from unified_kg_rag.shared import (
     ConfigurationError,
+    ConfirmationDeclinedError,
     PipelineStageError,
     get_logger,
     observability,
@@ -271,6 +274,11 @@ class PipelineStage(ABC):
                 metrics,
             )
 
+        except ConfirmationDeclinedError as e:
+            # Not a failure: the run stops before it writes (the pipeline
+            # records the stage and raises it on).
+            logger.warning("Stage '%s' stopped: %s", self.name, e)
+            raise
         except Exception as e:
             logger.exception("Stage '%s' failed: %s", self.name, e)
             span.record_exception(e)
@@ -1552,6 +1560,16 @@ def _components_reaching(
     return found, unclustered
 
 
+def _document_backed(entity: Entity, removed: set[str]) -> bool:
+    """Whether the stored ``entity`` is stated by a document a full build
+    keeps: it cites a document unit not ``removed``, or, stored without
+    lineage, its ``source_kinds`` is absent or names documents."""
+    units = entity.text_unit_ids or []
+    if units:
+        return any(not is_seed_unit(u) and u not in removed for u in units)
+    return not entity.source_kinds or DOCUMENT_SOURCE_KIND in entity.source_kinds
+
+
 def _stored_spellings(
     graph: GraphIndexer,
     components: list[set[Any]],
@@ -1729,12 +1747,7 @@ class CommunityDetectionStage(_RegistryStage):
 
         def large(components: list[set[Any]]) -> set[Any]:
             try:
-                records = self._build_doc_status_store().get_many(
-                    [*delta.to_process, *delta.deleted, *delta.quarantined]
-                )
-                removed = {
-                    u.id for u in context.text_units or context.translated_units
-                }.union(*(r.text_unit_ids for r in records.values()))
+                removed = self._replaced_unit_ids(context, delta)
                 graph = self.providers.build_graph_indexer()
                 try:
                     found, unclustered = _components_reaching(
@@ -1772,6 +1785,72 @@ class CommunityDetectionStage(_RegistryStage):
 
         return large
 
+    def _replaced_unit_ids(
+        self, context: PipelineContext, delta: DocumentDelta
+    ) -> set[str]:
+        """The stored text units a full build of the corpus no longer
+        holds: this run's units (of the documents it processes) and the
+        recorded units of the documents it processes, deletes or
+        quarantines."""
+        records = self._build_doc_status_store().get_many(
+            [*delta.to_process, *delta.deleted, *delta.quarantined]
+        )
+        return {u.id for u in context.text_units or context.translated_units}.union(
+            *(r.text_unit_ids for r in records.values())
+        )
+
+    def _evidenced_by_stored_members(
+        self, context: PipelineContext, communities: list[Community]
+    ) -> set[str]:
+        """The ids of ``communities`` (every member seed-only in this run's
+        graph) that a stored member makes document-evidenced, on an
+        incremental run.
+
+        An incremental run's graph holds its delta only: a seed added or
+        edited beside unchanged documents states their entities with seed
+        units alone, while the stored entities still cite the documents'. A
+        stored member is evidenced when it cites a document unit the run
+        does not replace (``_replaced_unit_ids``), or, stored without
+        lineage, when its ``source_kinds`` is absent (written before seed
+        graphs, or document-only) or names documents. One batched read of
+        the members per suffix; a failure keeps the communities without a
+        report, as before.
+        """
+        delta = context.incremental_delta
+        if not communities or delta is None or self.config.indexing.reset:
+            return set()
+        members = {str(e) for c in communities for e in c.entity_ids or []}
+        groups: dict[str, list[str]] = defaultdict(list)
+        for entity in context.resolved_entities:
+            if entity.id in members:
+                groups[BaseIndexer.get_suffix(entity)].append(entity.id)
+        try:
+            removed = self._replaced_unit_ids(context, delta)
+            graph = self.providers.build_graph_indexer()
+            try:
+                stored = [
+                    entity
+                    for suffix, ids in sorted(groups.items())
+                    for entity in graph.read_entities(sorted(ids), suffix=suffix)
+                ]
+            finally:
+                graph.close()
+        except Exception as e:
+            logger.warning(
+                "Could not read the stored members of %s communities only seed "
+                "graphs state in this run; storing them without a report "
+                "(indexing.reset: true reports them): %s",
+                len(communities),
+                e,
+            )
+            return set()
+        backed = {entity.id for entity in stored if _document_backed(entity, removed)}
+        return {
+            c.id
+            for c in communities
+            if backed.intersection(map(str, c.entity_ids or []))
+        }
+
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
         return {
@@ -1806,7 +1885,14 @@ class CommunityDetectionStage(_RegistryStage):
         # graph only) is stored without a report: the corpus says nothing
         # about it, and global search answers from the corpus. A parent
         # holds its children's members, so one evidenced child evidences it.
-        evidenced = [c for c in community_objects if not seed_only(c.text_unit_ids)]
+        # On an incremental run the stored members count too.
+        looks_seed_only = [c for c in community_objects if seed_only(c.text_unit_ids)]
+        stored_evidence = self._evidenced_by_stored_members(context, looks_seed_only)
+        evidenced = [
+            c
+            for c in community_objects
+            if not seed_only(c.text_unit_ids) or c.id in stored_evidence
+        ]
         seed_only_count = len(community_objects) - len(evidenced)
         if seed_only_count:
             logger.info(

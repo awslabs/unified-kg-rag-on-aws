@@ -90,6 +90,7 @@ from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
+    ConfirmationDeclinedError,
     NamespaceLeaseError,
     PipelineExecutionError,
     PipelineInterrupted,
@@ -349,8 +350,11 @@ class DataIngestionPipeline:
                 indexers given here: the pipeline never closes them.
             confirm: Asks a yes/no question a run needs answered, today only
                 a reset that drops another source scope's seed graph
-                documents (the CLI asks on the terminal, ``--yes`` answers).
-                ``None`` cannot ask, so such a run fails.
+                documents, or, from a corpus of seed graphs alone, its
+                documents (the CLI asks on the terminal; ``--confirm-reset``,
+                ``UKR_CONFIRM_RESET=1`` or ``--yes`` answers). ``None``
+                cannot ask: such a run raises ``ConfirmationDeclinedError``
+                before it writes, as a no does.
 
         Raises:
             ValueError: ``providers`` and one of the shorthand components are
@@ -587,6 +591,9 @@ class DataIngestionPipeline:
             StoreConnectionError: A store could not be reached outside a
                 stage (the preflight before any model call, say).
             NamespaceLeaseError: Another run writes the namespace.
+            ConfirmationDeclinedError: A question the run asked before it
+                writes (``confirm``: a reset that drops another source
+                scope's content) was answered no, or nothing could answer it.
         """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
@@ -701,6 +708,10 @@ class DataIngestionPipeline:
         except StoreConnectionError:
             # A store could not be reached: raised as the facade exports it,
             # for a caller to tell an outage from a failed run.
+            raise
+        except ConfirmationDeclinedError:
+            # A question answered no (a reset not confirmed): nothing was
+            # written and nothing failed, so no traceback.
             raise
         except PipelineExecutionError:
             # Already says what failed (a refused resume, say): wrapped again
@@ -2109,6 +2120,21 @@ class DataIngestionPipeline:
             # A failed stage logged its error (PipelineStage._execute_logged).
             return result
 
+        except ConfirmationDeclinedError as e:
+            # A question the stage asked before writing was answered no: the
+            # run stops here, recorded like a failed stage for a resume.
+            with self._checkpoint_write():
+                self.state_manager.update_stage_result(
+                    context,
+                    PipelineStageResult(
+                        stage_name=stage.name,
+                        status=PipelineStageStatus.FAILED,
+                        start_time=running_result.start_time,
+                        end_time=datetime.now(),
+                        error_message=str(e),
+                    ),
+                )
+            raise
         except Exception as e:
             logger.error(
                 "Unexpected error in stage '%s': %s", stage.name, e, exc_info=True

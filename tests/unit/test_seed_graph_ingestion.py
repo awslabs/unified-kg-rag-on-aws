@@ -65,6 +65,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     Document,
     DocumentDelta,
+    Entity,
     PipelineConfig,
     PipelineContext,
     PipelineStageResult,
@@ -74,7 +75,12 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.domain.models.config import LanguageCode, SeedGraphConfig
-from unified_kg_rag.shared.exceptions import PipelineExecutionError, SeedGraphError
+from unified_kg_rag.shared.exceptions import (
+    ConfirmationDeclinedError,
+    PipelineExecutionError,
+    PipelineStageError,
+    SeedGraphError,
+)
 
 SEED_PATH = "seed_graphs/procure/0000-of-0001.jsonl"
 
@@ -300,7 +306,7 @@ def test_a_reset_asks_only_for_another_scopes_seed_documents() -> None:
     ]
     with pytest.raises(PipelineExecutionError, match="Reset cancelled"):
         _guard(store, lambda q: False)
-    with pytest.raises(PipelineExecutionError, match="--yes"):
+    with pytest.raises(ConfirmationDeclinedError, match="--confirm-reset"):
         _guard(store, None)
 
 
@@ -330,6 +336,101 @@ def test_a_reset_is_refused_before_any_registry_write(mocker) -> None:
     assert len(documents) == 1
 
 
+def _seeds_alone(
+    store: FakeDocStatusStore, reset: bool = False, confirm: Any = None
+) -> list[Document]:
+    """filter_to_delta over a corpus of the seed's shards alone."""
+    config = Config()
+    config.indexing.reset = reset
+    documents, _ = incremental.filter_to_delta(
+        list(_conversion().documents()),
+        _context(),
+        config,
+        lambda: store,
+        Path("/corpus"),
+        confirm,
+    )
+    return documents
+
+
+def test_seeds_alone_never_delete_the_scopes_documents(mocker) -> None:
+    # An empty corpus (a volume not mounted yet) beside the scope's
+    # documents: indexing the seeds alone would delete them.
+    store = FakeDocStatusStore()
+    store.put(_record("a.txt", "default|/corpus"))
+    store.put(_record(SEED_PATH, "default|/corpus"))
+    writes = mocker.spy(store, "put_many")
+    with pytest.raises(PipelineStageError) as error:
+        _seeds_alone(store)
+    message = str(error.value)
+    assert "holds 1 documents of source scope '/corpus' (a.txt)" in message
+    assert "--retire-source-scope /corpus" in message
+    assert "processing.document_parsing.source_scope" in message
+    writes.assert_not_called()
+    # A reset of the scope from seeds alone fails too, whatever the answer.
+    with pytest.raises(PipelineStageError, match="a.txt"):
+        _seeds_alone(store, reset=True, confirm=lambda q: True)
+    writes.assert_not_called()
+
+
+def test_seeds_alone_run_a_scope_without_documents() -> None:
+    # A new scope, or a seed-only one; another scope's documents are not
+    # this incremental run's.
+    store = FakeDocStatusStore()
+    assert len(_seeds_alone(store)) == 1
+    store.put(_record("a.txt", "default|documents"))
+    assert len(_seeds_alone(store)) == 1
+
+
+def test_a_reset_from_seeds_alone_asks_before_it_drops_documents() -> None:
+    store = FakeDocStatusStore()
+    store.put(_record("a.txt", "default|documents"))
+    asked: list[str] = []
+    assert len(_seeds_alone(store, True, lambda q: asked.append(q) or True)) == 1
+    assert asked == [
+        "The reset of index namespace 'default' rebuilds it from this run's seed "
+        "graphs alone (no source document reached the run), dropping the "
+        "documents of source scope(s) documents; continue?"
+    ]
+    with pytest.raises(ConfirmationDeclinedError, match="Reset cancelled"):
+        _seeds_alone(store, True, lambda q: False)
+    with pytest.raises(ConfirmationDeclinedError, match="--confirm-reset"):
+        _seeds_alone(store, True)
+    # One question for both: another scope's seed and its documents.
+    store.put(_record(SEED_PATH, "default|seeds-procure"))
+    asked.clear()
+    _seeds_alone(store, True, lambda q: asked.append(q) or True)
+    assert asked == [
+        "The reset of index namespace 'default' drops the seed graph documents "
+        "of source scope(s) seeds-procure and rebuilds it from this run's seed "
+        "graphs alone (no source document reached the run), dropping the "
+        "documents of source scope(s) documents; continue?"
+    ]
+
+
+def test_a_new_scope_importing_a_seed_another_scope_holds_is_warned(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = FakeDocStatusStore()
+    store.put(_record(SEED_PATH, "default|/old-corpus"))
+    store.put(_record("seed_graphs/parts/0000-of-0001.jsonl", "default|other"))
+    _seeds_alone(store)
+    (warned,) = [
+        r.getMessage() for r in caplog.records if "already imported" in r.getMessage()
+    ]
+    assert (
+        "Seed graph 'procure' is already imported by source scope(s) /old-corpus"
+        in warned
+    )
+    # Its second run: the scope is no longer new.
+    for record in store.list_namespace("default"):
+        if record.scope == "default|/corpus":
+            store.put(record.model_copy(update={"status": DocStatus.PROCESSED}))
+    caplog.clear()
+    _seeds_alone(store)
+    assert "already imported" not in caplog.text
+
+
 def test_run_ingestion_answers_the_reset_with_its_confirm(mocker) -> None:
     built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
     runner: Any = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
@@ -353,6 +454,115 @@ def test_run_ingestion_answers_the_reset_with_its_confirm(mocker) -> None:
     runner.run()
     confirm = built.call_args.kwargs["confirm"]
     assert confirm("Drop it?") is True
+
+
+@pytest.mark.parametrize(
+    ("argv", "env", "expected"),
+    [
+        ([], None, False),
+        (["--confirm-reset"], None, True),
+        ([], "1", True),
+        ([], " TRUE ", True),
+        ([], "yes", True),
+        ([], "0", False),
+        ([], "", False),
+        (["--confirm-reset"], "0", True),
+    ],
+)
+def test_the_reset_confirmation_is_a_flag_or_an_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    env: str | None,
+    expected: bool,
+) -> None:
+    if env is None:
+        monkeypatch.delenv("UKR_CONFIRM_RESET", raising=False)
+    else:
+        monkeypatch.setenv("UKR_CONFIRM_RESET", env)
+    monkeypatch.setattr(sys, "argv", ["run-ingestion", *argv])
+    args = run_ingestion_pipeline.CommandLineInterface().parse_args()
+    assert args.confirm_reset is expected
+    assert args.yes is False
+
+
+def test_an_unreadable_reset_confirmation_env_var_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UKR_CONFIRM_RESET", "maybe")
+    monkeypatch.setattr(sys, "argv", ["run-ingestion"])
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.CommandLineInterface().parse_args()
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(("yes", "confirm_reset"), [(False, True), (True, False)])
+def test_the_reset_confirmation_answers_resets_only(
+    mocker, yes: bool, confirm_reset: bool
+) -> None:
+    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=False)
+    runner: Any = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
+        run_ingestion_pipeline.IngestionPipelineRunner
+    )
+    runner.args = SimpleNamespace(yes=yes, confirm_reset=confirm_reset)
+    # --yes answers every question; --confirm-reset a reset's only, never an
+    # integrity check's.
+    assert runner._confirm_reset("Drop it?") is True
+    if yes:
+        assert runner._confirm("Continue despite integrity issues?") is True
+    else:
+        with pytest.raises(ConfirmationDeclinedError, match="pass --yes"):
+            runner._confirm("Continue despite integrity issues?")
+    runner.args = SimpleNamespace(yes=False, confirm_reset=False)
+    with pytest.raises(
+        ConfirmationDeclinedError, match=r"--confirm-reset \(or UKR_CONFIRM_RESET=1\)"
+    ):
+        runner._confirm_reset("Drop it?")
+
+
+def test_a_reset_answered_no_stops_with_exit_1_and_no_traceback(
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    question = "The reset of index namespace 'default' drops ...; continue?"
+    mocker.patch.object(
+        run_ingestion_pipeline, "load_cli_config", return_value=Config()
+    )
+    mocker.patch.object(run_ingestion_pipeline, "display_ascii_art")
+    mocker.patch.object(
+        run_ingestion_pipeline.IngestionPipelineRunner, "_require_indexing_endpoints"
+    )
+    built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    built.return_value.state_manager.pipeline_exists.return_value = False
+    built.return_value.run.side_effect = ConfirmationDeclinedError(
+        f"Reset cancelled: {question}"
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-ingestion",
+            "--source-directory",
+            str(tmp_path),
+            "--pipeline-id",
+            "p1",
+            "--output-format",
+            "json",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.main()
+    assert exc.value.code == 1
+    out = capsys.readouterr()
+    assert "Pipeline stopped before it wrote anything: Reset cancelled" in " ".join(
+        out.err.split()
+    )
+    assert json.loads(out.out)["exit_code"] == 1
+    # No recovery suggestions, no error logged.
+    assert "Recovery suggestions" not in out.err
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
 
 # -- Pipeline start-up -------------------------------------------------------------
@@ -777,3 +987,28 @@ def test_the_seed_header_stays_out_of_every_unit() -> None:
     header = document.page_content.split("\n", 1)[0]
     assert json.loads(header)["seed_graph"] == "procure"
     assert all(header not in unit.text for unit in seed_text_units(document))
+
+
+# -- Community evidence on an incremental run -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("units", "kinds", "backed"),
+    [
+        (["sg-1", "u1"], ["document", "seed_graph"], True),
+        # The document unit is one the run replaces (its document changed or
+        # went): a full build no longer cites it.
+        (["sg-1", "u-old"], ["document", "seed_graph"], False),
+        (["sg-1"], ["seed_graph"], False),
+        # Stored without lineage: the source kinds decide (none: written
+        # before seed graphs, or document-only).
+        ([], None, True),
+        ([], ["document", "seed_graph"], True),
+        ([], ["seed_graph"], False),
+    ],
+)
+def test_a_stored_member_evidences_a_community_through_a_kept_document(
+    units: list[str], kinds: list[str] | None, backed: bool
+) -> None:
+    entity = Entity(id="e", name="Vendor", text_unit_ids=units, source_kinds=kinds)
+    assert ps._document_backed(entity, removed={"u-old"}) is backed

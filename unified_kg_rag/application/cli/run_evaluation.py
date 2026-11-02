@@ -714,7 +714,7 @@ def main() -> None:
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 
-        error = missing_extras_error(config) or missing_endpoints_error(
+        error = missing_extras_error(config, seeds=False) or missing_endpoints_error(
             config,
             {
                 role

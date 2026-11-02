@@ -789,20 +789,29 @@ From 0.2.3 (or a `main` checkout since):
   import instead of truncating (100,000 nodes, 500,000 edges, 256 MiB, 64
   property keys). `run-ingestion` loads each seed once at start-up against
   the resolved extraction schema, before any model is built (a seed that
-  cannot be imported exits 2, naming the file and line), checks it as a
+  cannot be imported, or whose kind's extra is missing, exits 2, naming
+  the file and line; the other CLIs load no seed and need no seed kind's
+  extra), checks it as a
   whole under `schema_mode`, shards it by a stable hash of the node ids
-  and imports the shards as documents of the run's source scope: no model
-  reads them, the registry diffs them, an edit re-imports only its
-  shards, a model-settings change none, and an empty corpus is a
-  seed-only run. What a seed converts to keys every stage, where it is
+  and imports the shards as documents of the run's source scope: no
+  extraction call reads them, the registry diffs them, an edit re-imports
+  only its shards, a model-settings change none, and an empty corpus is a
+  seed-only run for a scope the registry holds no document of (for one
+  that does, the run fails before it writes rather than delete them, and
+  a scope's first run warns when another scope already imports the same
+  seed). What a seed converts to keys every stage, where it is
   read from keys nothing, and no document re-extracts for it. Merges are
   document-first: a seed fills a type, name or confidence only where no
   document states one, its description lines follow the documents', its
   properties sit under `attributes.seed_properties`. A community only
-  seeds evidence gets no report (`communities_seed_only`); loading,
+  seeds evidence gets no report (`communities_seed_only`); on an
+  incremental run its stored members count too, so a seed added beside
+  unchanged documents reports their communities as a full build does.
+  Seed descriptions reach the description summarizer, the reports of
+  communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503).
+  #503, #PR).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property or an
@@ -939,10 +948,15 @@ From 0.2.3 (or a `main` checkout since):
   unit of which is a seed graph's adds to no degree, while Leiden still
   clusters every edge. Without seed graphs every rank and report is
   unchanged (#502).
-- `run-ingestion --yes` also answers a reset that would drop another
-  source scope's seed graph documents (asked before any write; without a
-  terminal the run fails), and `DataIngestionPipeline(confirm=)` takes the
-  callable that answers it from Python (#503).
+- A reset that would drop another source scope's seed graph documents,
+  or, from a corpus of seeds alone, another scope's documents, asks
+  before any write. `run-ingestion --confirm-reset` (or
+  `UKR_CONFIRM_RESET=1`, for an ECS task overridden by environment only)
+  answers it and nothing else, `--yes` answers it too; a no, or no
+  terminal, stops the run with exit 1 and no error traceback.
+  `DataIngestionPipeline(confirm=)` takes the callable that answers it
+  from Python, and `run` raises `ConfirmationDeclinedError` (a
+  `PipelineExecutionError`) on a no (#503, #PR).
 
 ### Fixed
 Bugs present in 0.2.3.

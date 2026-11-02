@@ -90,11 +90,14 @@ def _installed(module: str) -> bool:
         return False
 
 
-def missing_extras_error(config: Config) -> str | None:
+def missing_extras_error(config: Config, *, seeds: bool = True) -> str | None:
     """Message naming each optional module the selected providers, the
-    extraction schema source and the seed graph sources import that is not
-    installed, or None if all are.
+    extraction schema source and, with ``seeds``, the seed graph sources
+    import that is not installed, or None if all are.
 
+    Only ``run-ingestion`` loads the seed graphs: the other CLIs pass
+    ``seeds=False``, so a query or evaluation image need not install what
+    only a seed's import needs (the ``ontology`` extra of an ``rdf`` seed).
     Only kinds that declare one (``register_provider(..., requires=...)``,
     ``register_schema_source(..., requires=...)``,
     ``register_seed_source(..., requires=...)``) are checked.
@@ -117,7 +120,7 @@ def missing_extras_error(config: Config) -> str | None:
         if requirement is not None and not _installed(requirement[0]):
             setting = f"processing.graph_extraction.schema_source.kind '{source}'"
             missing.setdefault(requirement, {})[setting] = None
-    for seed in config.processing.seed_graphs:
+    for seed in config.processing.seed_graphs if seeds else []:
         requirement = seed_source_requirement(seed.kind)
         if requirement is not None and not _installed(requirement[0]):
             setting = f"processing.seed_graphs '{seed.name}' kind '{seed.kind}'"

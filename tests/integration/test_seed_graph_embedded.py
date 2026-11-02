@@ -15,6 +15,7 @@ no seed statement ever reaches it.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import SeedGraphConfig
+from unified_kg_rag.shared.exceptions import ConfirmationDeclinedError
 
 # Every test runs with each AWS entry point patched to fail.
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
@@ -353,7 +355,9 @@ def test_an_interrupted_seed_run_resumes_and_converges(
         assert "A saw mill." in harness.entities()["Ridge Mill"]["description"]
 
 
-def test_a_reset_asks_before_it_drops_another_scopes_seed(tmp_path: Path) -> None:
+def test_a_reset_asks_before_it_drops_another_scopes_seed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     seeded = _Harness(tmp_path, corpus={})
     seeded.config.processing.document_parsing.source_scope = "seeds-procure"
     seeded.ok()
@@ -364,12 +368,13 @@ def test_a_reset_asks_before_it_drops_another_scopes_seed(tmp_path: Path) -> Non
     (seeded.source / "contract.txt").write_text(CORPUS["contract.txt"])
     seeded.config = other
     question = "drops the seed graph documents of source scope(s) seeds-procure"
-    # No one to ask (confirm=None), or a no: the reset fails before it writes.
+    # No one to ask (confirm=None), or a no: the reset stops before it writes.
     for confirm in (None, lambda q: False):
-        context = seeded.run(confirm=confirm)
-        assert context.status is PipelineStageStatus.FAILED
-        assert question in e2e._errors(context)
+        with pytest.raises(ConfirmationDeclinedError, match=re.escape(question)):
+            seeded.run(confirm=confirm)
         assert set(seeded.registry()) == set(_seed_paths())
+    # A cancellation, not a failure: nothing logged an error.
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
     # A yes (run-ingestion --yes): the namespace is the documents' alone.
     asked: list[str] = []
     seeded.ok(confirm=lambda q: asked.append(q) or True)
@@ -418,21 +423,80 @@ def test_a_seed_only_scope_lives_beside_a_document_scope(tmp_path: Path) -> None
     use(documents_config, documents_source)
     documents_config.indexing.reset = True
     asked: list[str] = []
-    context = harness.run(confirm=lambda q: asked.append(q) or False)
-    assert context.status is PipelineStageStatus.FAILED
+    with pytest.raises(ConfirmationDeclinedError):
+        harness.run(confirm=lambda q: asked.append(q) or False)
     assert len(asked) == 1 and "seeds-procure" in asked[0]
     assert harness.state() == both
-    # A reset of the seed scope asks nothing (no other scope holds a seed)
-    # and rebuilds the namespace with the seed alone.
+    # A reset of the seed scope rebuilds the namespace from the seed alone,
+    # dropping the document scope: it asks too.
     use(seeds_config, seeds_source)
     seeds_config.indexing.reset = True
     asked.clear()
     harness.ok(confirm=lambda q: asked.append(q) or True)
-    assert asked == []
+    assert len(asked) == 1
+    assert "dropping the documents of source scope(s) documents" in asked[0]
     assert harness.registry() == _seed_paths()
     assert harness.graph_names() == SEED_NAMES
     assert {name: hit["source_kinds"] for name, hit in harness.entities().items()} == (
         dict.fromkeys(SEED_NAMES, ["seed_graph"])
+    )
+
+
+def test_an_empty_corpus_never_deletes_the_scopes_documents(tmp_path: Path) -> None:
+    harness = _Harness(tmp_path / "corpus-run")
+    harness.ok()
+    indexed = harness.state()
+    # The corpus is not in place (a volume not mounted yet, an S3 sync that
+    # copied nothing): the seeds alone would delete every document.
+    hold = tmp_path / "hold"
+    harness.source.rename(hold)
+    harness.source.mkdir()
+    context = harness.run()
+    assert context.status is PipelineStageStatus.FAILED
+    error = e2e._errors(context)
+    assert "holds 2 documents of source scope" in error
+    assert "--retire-source-scope" in error
+    assert harness.state() == indexed
+    # A reset of the scope from the empty corpus is refused alike.
+    harness.config.indexing.reset = True
+    context = harness.run(confirm=lambda q: True)
+    assert context.status is PipelineStageStatus.FAILED
+    assert harness.state() == indexed
+    harness.config.indexing.reset = False
+    # Back in place: nothing to do.
+    harness.source.rmdir()
+    hold.rename(harness.source)
+    context = harness.ok()
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.is_empty
+    assert harness.state() == indexed
+
+
+def test_a_seed_added_beside_documents_reports_their_community(
+    tmp_path: Path,
+) -> None:
+    def detection(context: PipelineContext) -> dict[str, Any]:
+        return next(
+            r for r in context.stage_results if r.stage_name == "community_detection"
+        ).metrics
+
+    harness = _Harness(tmp_path / "added")
+    harness.with_seed(False)
+    harness.ok()
+    # The incremental run's graph holds the seed's shards alone, whose
+    # units state Vendor; the stored Vendor cites the documents' units.
+    harness.with_seed(True)
+    context = harness.ok()
+    assert context.documents and all(is_seed_document(d) for d in context.documents)
+    metrics = detection(context)
+    assert metrics["communities_seed_only"] == 0
+    assert metrics["reports_generated"] == metrics["communities_detected"] > 0
+    # As a full build of documents and seed reports it.
+    built = _Harness(tmp_path / "built")
+    full = detection(built.ok())
+    assert (full["reports_generated"], full["communities_seed_only"]) == (
+        metrics["reports_generated"],
+        0,
     )
 
 

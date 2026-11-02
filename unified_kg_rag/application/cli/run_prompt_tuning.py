@@ -229,7 +229,7 @@ def main() -> int:
         ):
             usage_error(f"--schema-out must end in .yaml or .yml: '{args.schema_out}'")
         _check_outputs(args, config)
-        if error := missing_extras_error(config):
+        if error := missing_extras_error(config, seeds=False):
             usage_error(error)
         setup_logging(config, stream=sys.stderr if as_json else None)
         # Loads the schema source: a broken one fails before any model call.
