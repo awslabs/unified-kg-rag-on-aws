@@ -416,6 +416,11 @@ Library API (Python callers and custom backends).
   `quarantined_unchanged`. `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` are `detect_delta` and `remove_changed_and_deleted`
   (#214, #224, #327, #331, #332, #346).
+- A custom doc-status registry also implements `get_annotation_digest` /
+  `put_annotation_digest`: one record per index namespace of which schema
+  annotations its stores hold (a digest, or the rewrite sentinel), kept in
+  the namespace's partition and never listed as a document. The DynamoDB
+  and SQLite registries implement them (#PR).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -530,6 +535,10 @@ From 0.2.3 (or a `main` checkout since):
    stores gets the embedded SQLite stores; add
    `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch`
    (as `docker/config.local.yaml` does) to keep the containers (#273).
+9. The first incremental run of each existing namespace reads its stores
+   once to record which schema annotations they hold, rewriting only those
+   that differ, with no model or embedding call; later runs read nothing
+   unless the schema's annotations change (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
