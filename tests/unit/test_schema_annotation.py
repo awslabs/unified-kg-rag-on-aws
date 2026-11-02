@@ -35,6 +35,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     reannotate_on_schema_change,
     record_rebuilt_annotations,
 )
+from unified_kg_rag.application.ingestion.pipeline import _Borrowed
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
@@ -779,6 +780,26 @@ def test_a_store_that_cannot_list_its_items_lets_no_store_be_read() -> None:
     assert reads == []
     assert rewrites_schema_annotations(FakeGraphStore(config))
     assert not rewrites_schema_annotations(graph)
+
+
+@pytest.mark.parametrize(
+    "inherited", ["read_schema_annotations", "write_schema_annotations"]
+)
+def test_a_store_overriding_one_annotation_method_cannot_rewrite(
+    inherited: str,
+) -> None:
+    half = type(
+        "Half", (FakeGraphStore,), {inherited: getattr(GraphIndexer, inherited)}
+    )
+    assert not rewrites_schema_annotations(half(Config()))
+    assert rewrites_schema_annotations(FakeVectorStore())
+
+
+def test_a_borrowed_store_answers_for_the_store_it_wraps() -> None:
+    # The pipeline wraps the indexers it does not own (_Borrowed): the
+    # wrapper's attributes are the store's, and so is the answer.
+    assert not rewrites_schema_annotations(_Borrowed(_UnlistedGraph(Config())))
+    assert rewrites_schema_annotations(_Borrowed(FakeGraphStore(Config())))
 
 
 def test_a_namespace_without_a_record_is_read_once() -> None:

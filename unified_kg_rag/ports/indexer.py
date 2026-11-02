@@ -800,9 +800,18 @@ def rewrites_schema_annotations(store: object) -> bool:
     it implements both ``read_schema_annotations`` and
     ``write_schema_annotations`` instead of inheriting the defaults, which
     read nothing. Checked before a re-annotation pass reads anything, so a
-    store that cannot does not make the pass read the other in vain."""
-    return all(
-        getattr(type(store), name, None)
-        not in (getattr(GraphIndexer, name), getattr(VectorIndexer, name))
+    store that cannot does not make the pass read the other in vain.
+
+    Compares the functions the store's attributes are bound to, so a
+    wrapper that forwards its attributes (the pipeline's borrowed
+    indexers) answers for the store it wraps."""
+    defaults = {
+        getattr(port, name)
+        for port in (GraphIndexer, VectorIndexer)
         for name in _ANNOTATION_METHODS
-    )
+    }
+    for name in _ANNOTATION_METHODS:
+        method = getattr(store, name, None)
+        if method is None or getattr(method, "__func__", method) in defaults:
+            return False
+    return True
