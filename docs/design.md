@@ -1872,7 +1872,13 @@ This section is the single reference for extending the framework. Strategies, re
   order and caps as `kind: owl`, and the same IRIs end up in `type_iri` and
   `predicate_iri`. Its options model subclasses `MappingOptions` with the
   reader's own settings, validated from `context.source.options` (wrap a
-  `ValidationError` in `SchemaSourceError`, as `owl._options` does):
+  `ValidationError` in `SchemaSourceError`, as `owl._options` does).
+  These modules are unstable internals, not part of the public API (§2.5):
+  `unified_kg_rag` does not export `map_ontology`, `MappingOptions`,
+  `OntologyModel`, `OntologyClass`, `OntologyProperty` or the vocabulary
+  constants, and their names, fields and mapping rules may change in any
+  release without a "Breaking" entry. A loader that imports them pins the
+  package version and runs its own tests on each upgrade:
 
   ```python
   from pydantic import Field

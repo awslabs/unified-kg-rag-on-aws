@@ -147,6 +147,42 @@ def _restored_console(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_logging_setup() -> Iterator[None]:
+    """Undo a ``setup_logging`` call (a CLI run in-process) after each test.
+
+    While ``LoggingSetup._handlers`` is non-empty every structlog record is
+    handed to stdlib as the event dict for those handlers to render
+    (``shared.logging._to_stdlib``), so a later test's ``caplog`` would see
+    a dict as ``msg`` instead of the message. The call also replaces the
+    structlog configuration and sets the root, package and library logger
+    levels; all of it is restored here.
+    """
+    import logging
+
+    import structlog
+
+    from unified_kg_rag.shared.logging import LoggingSetup
+
+    root = logging.getLogger()
+    saved_handlers = list(LoggingSetup._handlers)
+    saved_structlog = structlog.get_config() if structlog.is_configured() else None
+    names = ("", "unified_kg_rag", *Config().logging.library_levels)
+    saved_levels = {name: logging.getLogger(name).level for name in names}
+    yield
+    for handler in LoggingSetup._handlers:
+        if handler not in saved_handlers:
+            root.removeHandler(handler)
+            handler.close()
+    LoggingSetup._handlers = saved_handlers
+    # Unconfigured before (nothing logged yet) stays as the test left it:
+    # structlog's defaults would send a not-yet-used module logger to print.
+    if saved_structlog is not None:
+        structlog.configure(**saved_structlog)
+    for name, level in saved_levels.items():
+        logging.getLogger(name).setLevel(level)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_aws_env(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

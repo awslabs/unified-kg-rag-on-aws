@@ -216,13 +216,10 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     assert {"total_items_index_failed", "total_entities_extracted"} <= names
     durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
     fields = _pipeline_metric_fields()
-    # The document-outcome metrics land in PipelineMetrics with their own
-    # change: until then they are allowed unemitted, and once any of them is
-    # a field, every one must be (a name drifted from DOCUMENT_METRICS).
-    document = set(DOCUMENT_METRICS)
-    if fields & document:
-        document = set()
-    assert names - fields - durations - document == set()
+    # Every document outcome is a PipelineMetrics field (a name drifted from
+    # DOCUMENT_METRICS would alarm on a series nobody emits).
+    assert set(DOCUMENT_METRICS) <= fields
+    assert names - fields - durations == set()
 
 
 def test_documents_not_indexed_alarm_sums_the_not_indexed_outcomes() -> None:
