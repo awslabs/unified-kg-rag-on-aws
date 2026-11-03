@@ -555,6 +555,34 @@ async def test_entity_traversal_without_deterministic_order_keeps_the_store_orde
     )
 
 
+async def test_weighted_seeds_are_walked_one_request_per_share(
+    retriever, config
+) -> None:
+    # seed_shares: local search weights its seeds by score. Seeds of one
+    # share go in one traversal, each share its own; every one of them
+    # leaves out all the seeds.
+    captured: list = []
+
+    async def _capture(build):
+        captured.append(build(Graph().traversal()))
+        return [{"row": len(captured)}]
+
+    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
+    object.__setattr__(retriever, "_execute_traversal", _capture)
+    query = SearchQuery(
+        query="x", top_k=10, seed_weights={"e1": 1.0, "e2": 0.5, "e3": 1.0}
+    )
+    rows = await retriever._traverse(["e1", "e2", "e3"], query)
+    texts = [Translator("g").translate(t.bytecode) for t in captured]
+    # 30 entities split 2:1:2 -> 12, 6 and 12 per seed.
+    assert len(texts) == 2 and rows == [{"row": 1}, {"row": 2}]
+    assert ".has('id',within(['e1','e3']))" in texts[0]
+    assert ".emit().dedup().limit(12)))" in texts[0]
+    assert ".has('id',within(['e2']))" in texts[1]
+    assert ".emit().dedup().limit(6)))" in texts[1]
+    assert all("without(['e1','e2','e3'])" in text for text in texts)
+
+
 async def test_entity_traversal_keeps_every_seed(retriever, config) -> None:
     # A fixed cap of 10 silently dropped the seeds a caller passed beyond it
     # (local search and DRIFT pass up to top_k candidate ids).

@@ -2361,11 +2361,15 @@ class ReportGenerationConfig(BaseModel):
     max_report_context_tokens: int = Field(
         default=4000,
         ge=1,
-        description="Token budget for the entity/relationship context packed "
-        "into a community report prompt. Entities are degree-sorted (most "
-        "connected first) and packed up to this budget, so truncation drops "
-        "the least-important entities first. max_entities_per_report remains an "
-        "additional upper bound on entity count.",
+        description="Token budget for the entity/relationship (and, with "
+        "claim extraction on, claim) context packed into a community report "
+        "prompt. As MS GraphRAG's sort_context, relationships are packed by "
+        "combined endpoint degree (most connected first), each with its two "
+        "entities and their claims, then the entities with no relationship "
+        "in the community, up to this budget. max_entities_per_report remains "
+        "an additional upper bound on entity count. MS GraphRAG's default is "
+        "8000 with max_cluster_size 10: raise this (more report input tokens "
+        "per call) when reports of large communities keep few relationships.",
     )
     content_length: str = Field(
         default="medium",
@@ -2645,8 +2649,9 @@ class NeptuneIndexingConfig(BaseModel):
             "Graph expansion (the graph walk, or under a document filter the "
             "walk over the relationships index) reaches up to top_k * "
             "retrieval_multiplier * this many entities besides the seeds, "
-            "split evenly across the seeds (each seed reaches at most its "
-            "share), ranks them by relevance, then keeps every seed plus the "
+            "split across the seeds (evenly; for local search's in proportion "
+            "to their scores: each seed reaches at most its share), ranks "
+            "them by relevance, then keeps every seed plus the "
             "top top_k * retrieval_multiplier of the others. 1 = no "
             "over-fetch: every reached entity is kept, with no cut after "
             "ranking."
@@ -3410,6 +3415,23 @@ class LocalSearchConfig(BaseModel):
             "alone often misses. Needs "
             "indexing.opensearch.build_relationship_vector_index. false = only"
             " the vector query on the relationship index."
+        ),
+    )
+    seed_score_ratio: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Each query entity is looked up in the entities index on its own "
+            "and seeds graph expansion with the entities of its name; with "
+            "none, with its top hit only when that scores at least this "
+            "fraction of the best hit of any query entity, so a generic word "
+            "the entity extraction returned seeds no unrelated entity. A "
+            "hybrid search scores a hit only the vector search found at "
+            "search.hybrid.vector_weight (0.5) of one both found, so 0.6 "
+            "drops such a hit when another query entity matched by name. 0 "
+            "keeps every query entity's top hit. The seeds share the "
+            "expansion budget in proportion to their scores."
         ),
     )
 

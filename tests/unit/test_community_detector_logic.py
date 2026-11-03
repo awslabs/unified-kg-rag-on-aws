@@ -28,8 +28,10 @@ from unified_kg_rag.adapters.ingestion.community_detector import (
     community_content_id,
     leiden,
 )
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
+    Claim,
     Community,
     Config,
     Entity,
@@ -1265,6 +1267,182 @@ class TestGenerateReportsCounting:
         assert len(reports) == 1
         # The community without a report is returned so its documents retry.
         assert failed == ["L0_C1"]
+
+
+def _chain_graph(n: int, description_words: int, edges=None) -> nx.Graph:
+    """``n`` entities of long descriptions, each linked to the next."""
+    g = nx.Graph()
+    for i in range(n):
+        g.add_node(
+            f"e{i}",
+            name=f"Entity{i}",
+            type="ORG",
+            description=" ".join(["supplier"] * description_words),
+        )
+    for a, b in edges or [(i, i + 1) for i in range(n - 1)]:
+        g.add_edge(
+            f"e{a}",
+            f"e{b}",
+            id=f"r{a}-{b}",
+            type="WORKS_WITH",
+            description=f"Entity{a} works with Entity{b}",
+        )
+    return g
+
+
+class TestEdgeDrivenReportPacking:
+    """MS GraphRAG sort_context: each edge is packed with its endpoints."""
+
+    def test_long_descriptions_do_not_starve_the_relationships(self) -> None:
+        # Two hubs that share no edge, three leaves each: entities first spent
+        # the budget on the two hubs and packed no relationship; edge by edge,
+        # a hub comes with a leaf and the relationship between them.
+        cd = _detector()
+        cd.graph = _chain_graph(
+            8, 200, [(0, 2), (0, 3), (0, 4), (1, 5), (1, 6), (1, 7)]
+        )
+        line = cd._format_entity_line({**cd.graph.nodes["e0"], "name": "Entity0"})
+        cd.community_detection_config.report_generation.max_report_context_tokens = (
+            2 * estimate_token_count(line) + 50
+        )
+        report_input = cd._prepare_report_input(_community(list(cd.graph.nodes)))
+        names = {e["name"] for e in report_input["entities"]}
+        linked = {
+            n for r in report_input["relationships"] for n in (r["source"], r["target"])
+        }
+        assert [(r["source"], r["target"]) for r in report_input["relationships"]] == [
+            ("Entity0", "Entity2")
+        ]
+        assert names == linked
+
+    def test_isolated_entities_come_last(self) -> None:
+        # "lone" has the highest degree, over edges to non-members only.
+        cd = _detector()
+        g = _chain_graph(3, 1)
+        g.add_node("lone", name="Lone", type="ORG", description="d")
+        for i in range(3):
+            g.add_node(f"x{i}", name=f"Other{i}", type="ORG", description="d")
+            g.add_edge("lone", f"x{i}")
+        cd.graph = g
+        report_input = cd._prepare_report_input(_community(["lone", "e0", "e1", "e2"]))
+        assert [e["id"] for e in report_input["entities"]] == ["e0", "e1", "e2", "lone"]
+        assert len(report_input["relationships"]) == 2
+
+    def test_edges_go_by_combined_degree_then_id(self) -> None:
+        # e1-e2 joins the two hubs; ties (all hub-leaf edges) by id.
+        edges = [(1, 2), (1, 3), (1, 4), (2, 5), (2, 6)]
+        cd = _detector()
+        cd.graph = _chain_graph(7, 1, edges)
+        ordered = [
+            (r["source"], r["target"])
+            for r in cd._prepare_report_input(_community(list(cd.graph.nodes)))[
+                "relationships"
+            ]
+        ]
+        assert ordered[0] == ("Entity1", "Entity2")
+        # Built in another order, the same pack.
+        cd.graph = _chain_graph(7, 1, list(reversed(edges)))
+        assert [
+            (r["source"], r["target"])
+            for r in cd._prepare_report_input(_community(list(cd.graph.nodes)))[
+                "relationships"
+            ]
+        ] == ordered
+
+    def test_an_overflowing_first_edge_still_admits_the_top_entity(self) -> None:
+        cd = _detector()
+        cd.graph = _chain_graph(3, 50)
+        cd.community_detection_config.report_generation.max_report_context_tokens = 5
+        report_input = cd._prepare_report_input(_community(["e0", "e1", "e2"]))
+        assert [e["id"] for e in report_input["entities"]] == ["e1"]
+        assert report_input["relationships"] == []
+
+    def test_incremental_descriptions_are_what_the_budget_counts(self) -> None:
+        # generate_reports(descriptions=): a stored member's description,
+        # not the delta graph's, is packed and paid for.
+        cd = _detector()
+        cd.graph = _chain_graph(4, 1)
+        cd._report_descriptions = {"e1": " ".join(["stored"] * 400)}
+        line = cd._format_entity_line({**cd.graph.nodes["e0"], "name": "Entity0"})
+        cd.community_detection_config.report_generation.max_report_context_tokens = (
+            4 * estimate_token_count(line) + 60
+        )
+        report_input = cd._prepare_report_input(_community(["e0", "e1", "e2", "e3"]))
+        assert "e1" not in {e["id"] for e in report_input["entities"]}
+        assert [(r["source"], r["target"]) for r in report_input["relationships"]] == [
+            ("Entity2", "Entity3")
+        ]
+
+
+class TestReportClaims:
+    """With claim extraction on, an entity's claims are packed with it."""
+
+    @staticmethod
+    def _graph() -> nx.Graph:
+        entities = [
+            Entity(id="v", name="Vendor", type="ORG", description="Sells parts"),
+            Entity(id="b", name="Buyer", type="ORG", description="Buys parts"),
+            Entity(id="c", name="Carrier", type="ORG", description="Ships parts"),
+        ]
+        relationships = [
+            Relationship(id="r1", source_id="v", target_id="b", type="SUPPLIES"),
+            Relationship(id="r2", source_id="b", target_id="c", type="HIRES"),
+        ]
+        claims = [
+            Claim(
+                id="k1",
+                subject_id="v",
+                subject_name="Vendor",
+                object_name="Buyer",
+                type="LATE_DELIVERY",
+                status="TRUE",
+                description="Vendor delivered late",
+            )
+        ]
+        return GraphBuilder(entities, relationships, claims).build()
+
+    def test_claims_are_packed_with_their_subject(self) -> None:
+        cd = _detector()
+        cd.config.processing.claim_extraction.enabled = True
+        cd(self._graph())
+        community = _community(["v", "b", "c"])
+        report_input = cd._prepare_report_input(community)
+        assert [c["id"] for c in report_input["claims"]] == ["k1"]
+        (chain_in,) = cd._create_report_chain_inputs([report_input])
+        assert (
+            "- Vendor -> Buyer (LATE_DELIVERY, TRUE): Vendor delivered late"
+            in chain_in["claims"]
+        )
+        assert "<claim_data>" in chain_in["claims"]
+
+    def test_claims_count_against_the_budget(self) -> None:
+        cd = _detector()
+        cd.config.processing.claim_extraction.enabled = True
+        cd(self._graph())
+        community = _community(["v", "b", "c"])
+        full = cd._prepare_report_input(community)
+        cost = sum(
+            estimate_token_count(cd._format_entity_line(e)) for e in full["entities"]
+        ) + sum(
+            estimate_token_count(cd._format_relationship_line(r))
+            for r in full["relationships"]
+        )
+        # Room for everything but the claim: the edge whose endpoint the
+        # claim is about no longer fits.
+        cd.community_detection_config.report_generation.max_report_context_tokens = cost
+        assert len(cd._prepare_report_input(community)["relationships"]) == 1
+
+    def test_no_claims_without_claim_extraction_and_the_prompt_is_unchanged(
+        self,
+    ) -> None:
+        cd = _detector()
+        cd(self._graph())
+        report_input = cd._prepare_report_input(_community(["v", "b", "c"]))
+        assert report_input["claims"] == []
+        (chain_in,) = cd._create_report_chain_inputs([report_input])
+        assert chain_in["claims"] == ""
+        human = CommunityReportPrompt.human_prompt_template.format(**chain_in)
+        assert "</relationship_data>\n\n## SUB-COMMUNITY REPORTS:" in human
 
 
 class TestSubCommunityRollup:

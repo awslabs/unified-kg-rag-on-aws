@@ -25,7 +25,7 @@ from unified_kg_rag.adapters.aws.neptune import (
     vertex_id_switch_query,
     vertex_ids,
 )
-from unified_kg_rag.adapters.retrieval.base import seed_share
+from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
@@ -37,6 +37,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
 
@@ -214,7 +215,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
 
         # Over-fetch, then let `_process_traversal_results` rank and cut the
         # non-seed entities to top_k * retrieval_multiplier. The fetch budget
-        # is split evenly across the seeds and spent inside a per-seed
+        # is split across the seeds (seed_shares) and spent inside a per-seed
         # local(), so the first seeds' neighbourhoods cannot use it up. The
         # limit() after emit() caps each seed's total, in breadth-first emit
         # order (hop 1 first): Neptune scopes a dedup().limit() inside
@@ -235,10 +236,15 @@ class NeptuneRetriever(GraphExpansionRetriever):
         # seeds so it spends its budget on new entities. Both shapes stay
         # Neptune-friendly: repeat().times().emit() and union(identity(),
         # ...). An emit() before repeat() is not optimized by Neptune and
-        # times out.
-        per_seed_limit = seed_share(
-            query, self._neptune_config.traversal_fetch_multiplier, len(seed_ids)
+        # times out. Seeds of unequal shares (``seed_shares``: local search
+        # weights its seeds by score) are walked in one request per share,
+        # concurrently, each the traversal above for its seeds.
+        shares = seed_shares(
+            query, self._neptune_config.traversal_fetch_multiplier, seed_ids
         )
+        by_share: dict[int, list[Any]] = {}
+        for seed in seed_ids:
+            by_share.setdefault(shares[str(seed)], []).append(seed)
         filters = self._scope_filters_to_label(entity_label, query.filters)
         with_degree = self._neptune_config.entity_importance_source == "degree"
         if not seed_ids:
@@ -246,10 +252,12 @@ class NeptuneRetriever(GraphExpansionRetriever):
         settled = self._settled(entity_label)
         custom_ids, switching = await self._vertex_lookup(entity_label)
 
-        def seeds(g: GraphTraversalSource, custom_ids: bool) -> GraphTraversal:
+        def seeds(
+            g: GraphTraversalSource, walked: list[Any], custom_ids: bool
+        ) -> GraphTraversal:
             if custom_ids:
-                return g.V(*vertex_ids(entity_label, [str(s) for s in seed_ids]))
-            return g.V().hasLabel(entity_label).has("id", P.within(seed_ids))
+                return g.V(*vertex_ids(entity_label, [str(s) for s in walked]))
+            return g.V().hasLabel(entity_label).has("id", P.within(walked))
 
         def neighbours() -> GraphTraversal:
             reached = __.both().hasLabel(entity_label)
@@ -258,9 +266,14 @@ class NeptuneRetriever(GraphExpansionRetriever):
             return reached.limit(self._max_results_per_hop)
 
         def build(
-            g: GraphTraversalSource, *, custom_ids: bool, switching: str | None
+            g: GraphTraversalSource,
+            *,
+            walked: list[Any],
+            per_seed_limit: int,
+            custom_ids: bool,
+            switching: str | None,
         ) -> Traversal:
-            traversal = seeds(g, custom_ids).union(
+            traversal = seeds(g, walked, custom_ids).union(
                 __.identity(),
                 __.local(
                     __.repeat(
@@ -282,9 +295,22 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 with_vertex_id=switching is not None,
             )
 
-        rows = await self._execute_traversal(
-            functools.partial(build, custom_ids=custom_ids, switching=switching)
-        )
+        async def walk(custom_ids: bool, switching: str | None) -> list[Any]:
+            parts = await gather_or_cancel(
+                self._execute_traversal(
+                    functools.partial(
+                        build,
+                        walked=walked,
+                        per_seed_limit=limit,
+                        custom_ids=custom_ids,
+                        switching=switching,
+                    )
+                )
+                for limit, walked in by_share.items()
+            )
+            return [row for part in parts for row in part]
+
+        rows = await walk(custom_ids, switching)
         if custom_ids and settled and not rows:
             # No seed under its custom vertex id: a full build may have
             # switched the label to property ids since it was found settled
@@ -294,9 +320,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             lookup = await self._vertex_lookup(entity_label)
             if lookup != (custom_ids, switching):
                 custom_ids, switching = lookup
-                rows = await self._execute_traversal(
-                    functools.partial(build, custom_ids=custom_ids, switching=switching)
-                )
+                rows = await walk(custom_ids, switching)
         if switching is not None:
             return self._mark_old_copies(rows, entity_label, switching)
         return rows

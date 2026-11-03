@@ -1191,6 +1191,60 @@ def test_graph_expansion_budget_caps_each_seed_breadth_first(
     assert set(wide[1:9]) == set(near) and set(wide[9:]) <= set(far), wide
 
 
+def test_graph_expansion_splits_the_budget_by_the_seed_weights(
+    graph_harness: StoreHarness,
+) -> None:
+    # Local search weights its seeds by score (seed_shares): 8 entities split
+    # 3:1 reach 6 and 2, where an even split reached 4 and 4. On Gremlin the
+    # seeds of each share go in a traversal of their own.
+    def change(config: Any) -> None:
+        config.indexing.neptune.traversal_fetch_multiplier = 1  # no cut
+        config.indexing.neptune.max_hops = 1
+
+    h = graph_harness.derive(change)
+    leaves = {seed: [f"{seed}-n{i}" for i in range(8)] for seed in ("a", "b")}
+    entities = [
+        Entity(id=i, name=i, type="ORG", description=f"{i} description", rank=1)
+        for i in ["a", "b", *leaves["a"], *leaves["b"]]
+    ]
+    relationships = [
+        Relationship(
+            id=f"r-{seed}-{leaf}",
+            source_id=seed,
+            target_id=leaf,
+            source_name=seed,
+            target_name=leaf,
+            description=f"{seed} works with {leaf}",
+        )
+        for seed, names in leaves.items()
+        for leaf in names
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+    weighted, even = _graph_retrieve(
+        h,
+        *(
+            SearchQuery(
+                query="",
+                suffix=_SUFFIX,
+                top_k=8,
+                retrieval_multiplier=1,
+                filters={"id": ["a", "b"]},
+                seed_weights=weights,
+            )
+            for weights in ({"a": 0.9, "b": 0.3}, None)
+        ),
+    )
+
+    def reached(results: list[RetrievalResult]) -> list[int]:
+        sources = {str(r.source) for r in results}
+        return [len(sources & set(leaves[seed])) for seed in ("a", "b")]
+
+    assert reached(weighted) == [6, 2]
+    assert reached(even) == [4, 4]
+
+
 def test_graph_expansion_filters_and_is_deterministic(
     graph_harness: StoreHarness,
 ) -> None:

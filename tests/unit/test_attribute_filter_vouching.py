@@ -223,7 +223,11 @@ async def test_local_search_seeds_the_walk_as_passing(config: Config) -> None:
         return [_hit("seed")]
 
     async def expand(
-        query: SearchQuery, seeds: list[str], *, seeds_pass: bool = False
+        query: SearchQuery,
+        seeds: list[str],
+        *,
+        seeds_pass: bool = False,
+        seed_weights: dict[str, float] | None = None,
     ) -> list[RetrievalResult]:
         seen.append(seeds_pass)
         return [_hit("seed")]
