@@ -431,7 +431,7 @@ Library API (Python callers and custom backends).
   the items through `read_schema_annotations` (#490). A custom vector
   backend may override `VectorIndexer.holds_any_text_unit(suffix)` too;
   the default (`None`, cannot tell) makes a registry-off run of seeds
-  alone ask before it builds (#PR).
+  alone ask before it builds (#514).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -826,7 +826,7 @@ From 0.2.3 (or a `main` checkout since):
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #510, #513, #PR).
+  #503, #509, #510, #513, #514).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an
