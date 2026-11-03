@@ -4455,6 +4455,19 @@ def _template_variables(template: str) -> set[str]:
     }
 
 
+class ModelPrice(BaseModel):
+    """A model's on-demand price, for run-eval's USD cost estimate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_per_million_tokens: float = Field(
+        ge=0, description="USD per million input tokens."
+    )
+    output_per_million_tokens: float = Field(
+        ge=0, description="USD per million output tokens."
+    )
+
+
 class EvaluationConfig(BaseModel):
     outputs_directory: str | Path = Field(
         default="outputs/evaluation",
@@ -4617,7 +4630,22 @@ class EvaluationConfig(BaseModel):
     )
     save_detailed_results: bool = Field(
         default=True,
-        description="Whether to save detailed evaluation results and reports.",
+        description=(
+            "Whether to save detailed evaluation results and reports "
+            "(run-eval --from-results and --baseline-results read them)."
+        ),
+    )
+    prices: dict[str, ModelPrice] = Field(
+        default_factory=dict,
+        description=(
+            "USD prices per model id, as the usage records name them "
+            "(usage.by_model: the id the model factory resolved, an inference "
+            "profile id included), for the comparison's cost estimate "
+            "(cost.strategies.<s>.usd_per_query). Empty (default): no USD "
+            "estimate, token counts only. No prices ship with the package: "
+            "fill in the current Amazon Bedrock on-demand prices of your "
+            "region. Cache-read and cache-write token rates are not modelled."
+        ),
     )
 
 

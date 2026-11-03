@@ -37,7 +37,7 @@ import asyncio
 import json
 import threading
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -268,8 +268,6 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         span.end()
 
     def _response_attributes(self, response: LLMResult) -> dict[str, Any]:
-        input_tokens = output_tokens = cache_read = cache_creation = reasoning = 0
-        has_usage = False
         finish_reasons: list[str] = []
         response_model: str | None = None
         outputs: list[dict[str, Any]] = []
@@ -279,18 +277,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
             for generation in generations:
                 if not isinstance(generation, ChatGeneration):
                     continue
-                message = generation.message
-                metadata = message.response_metadata or {}
-                usage = getattr(message, "usage_metadata", None)
-                if usage:
-                    has_usage = True
-                    input_tokens += int(usage.get("input_tokens") or 0)
-                    output_tokens += int(usage.get("output_tokens") or 0)
-                    input_details = usage.get("input_token_details") or {}
-                    cache_read += int(input_details.get("cache_read") or 0)
-                    cache_creation += int(input_details.get("cache_creation") or 0)
-                    output_details = usage.get("output_token_details") or {}
-                    reasoning += int(output_details.get("reasoning") or 0)
+                metadata = generation.message.response_metadata or {}
                 reason = _finish_reason(metadata)
                 if reason:
                     finish_reasons.append(reason)
@@ -311,31 +298,68 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
                         output["finish_reason"] = reason
                     outputs.append(output)
 
-        if not has_usage:
-            # ChatBedrock (InvokeModel) also reports the totals in llm_output.
-            usage = (response.llm_output or {}).get("usage") or {}
-            if usage:
-                has_usage = True
-                input_tokens = int(
-                    usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-                )
-                output_tokens = int(
-                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
-                )
-
         attributes: dict[str, Any] = {
             GEN_AI_RESPONSE_MODEL: response_model,
             GEN_AI_RESPONSE_FINISH_REASONS: finish_reasons or None,
         }
-        if has_usage:
-            attributes[GEN_AI_USAGE_INPUT_TOKENS] = input_tokens
-            attributes[GEN_AI_USAGE_OUTPUT_TOKENS] = output_tokens
-            if cache_read:
-                attributes[GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS] = cache_read
-            if cache_creation:
-                attributes[GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS] = cache_creation
-            if reasoning:
-                attributes[GEN_AI_USAGE_REASONING_OUTPUT_TOKENS] = reasoning
+        usage = response_token_usage(response)
+        if usage is not None:
+            attributes[GEN_AI_USAGE_INPUT_TOKENS] = usage.input_tokens
+            attributes[GEN_AI_USAGE_OUTPUT_TOKENS] = usage.output_tokens
+            if usage.cache_read:
+                attributes[GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS] = usage.cache_read
+            if usage.cache_creation:
+                attributes[GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS] = (
+                    usage.cache_creation
+                )
+            if usage.reasoning:
+                attributes[GEN_AI_USAGE_REASONING_OUTPUT_TOKENS] = usage.reasoning
         if outputs:
             attributes[GEN_AI_OUTPUT_MESSAGES] = json.dumps(outputs, ensure_ascii=False)
         return attributes
+
+
+class TokenUsage(NamedTuple):
+    """The token counts a model response reports."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read: int = 0
+    cache_creation: int = 0
+    reasoning: int = 0
+
+
+def response_token_usage(response: LLMResult) -> TokenUsage | None:
+    """The token usage ``response`` reports, summed over its generations;
+    ``None`` when it reports none.
+
+    Read from each message's ``usage_metadata`` (every chat model), else
+    from ``llm_output["usage"]`` (ChatBedrock's InvokeModel totals).
+    """
+    input_tokens = output_tokens = cache_read = cache_creation = reasoning = 0
+    has_usage = False
+    for generations in response.generations:
+        for generation in generations:
+            if not isinstance(generation, ChatGeneration):
+                continue
+            usage = getattr(generation.message, "usage_metadata", None)
+            if usage:
+                has_usage = True
+                input_tokens += int(usage.get("input_tokens") or 0)
+                output_tokens += int(usage.get("output_tokens") or 0)
+                input_details = usage.get("input_token_details") or {}
+                cache_read += int(input_details.get("cache_read") or 0)
+                cache_creation += int(input_details.get("cache_creation") or 0)
+                output_details = usage.get("output_token_details") or {}
+                reasoning += int(output_details.get("reasoning") or 0)
+    if has_usage:
+        return TokenUsage(
+            input_tokens, output_tokens, cache_read, cache_creation, reasoning
+        )
+    usage = (response.llm_output or {}).get("usage") or {}
+    if not usage:
+        return None
+    return TokenUsage(
+        int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+        int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+    )

@@ -48,6 +48,7 @@ from unified_kg_rag.adapters.llm.langchain import (
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.usage import CACHED_RESPONSE_KEY
 
 logger = get_logger(__name__)
 
@@ -84,12 +85,12 @@ def _dump_generation(generation: Generation) -> dict[str, Any]:
 
 
 def _load_generation(data: dict[str, Any]) -> Generation:
+    # Marked served, for the usage accounting (a hit spends no tokens).
+    info = {**(data.get("generation_info") or {}), CACHED_RESPONSE_KEY: True}
     if "message" in data:
         (message,) = messages_from_dict([data["message"]])
-        return ChatGeneration(
-            message=message, generation_info=data.get("generation_info")
-        )
-    return Generation(text=data["text"], generation_info=data.get("generation_info"))
+        return ChatGeneration(message=message, generation_info=info)
+    return Generation(text=data["text"], generation_info=info)
 
 
 class LLMResponseCache(BaseCache):

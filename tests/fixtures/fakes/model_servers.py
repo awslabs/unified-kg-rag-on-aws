@@ -14,6 +14,7 @@ No network and no model.
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 
 import httpx
@@ -33,7 +34,9 @@ class ModelRejects(Exception):
 
 
 class FakeOllama:
-    """Records the models each endpoint was asked for."""
+    """Records the models each endpoint was asked for, and the token counts
+    it reported (``input_tokens`` / ``output_tokens``: one per
+    whitespace-separated word of the prompt and of the reply)."""
 
     def __init__(self, respond: Responder, answer: str, dimensions: int) -> None:
         self.respond = respond
@@ -42,6 +45,9 @@ class FakeOllama:
         self.chat_models: list[str] = []
         self.embed_models: list[str] = []
         self.answers = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self._lock = threading.Lock()
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -69,13 +75,18 @@ class FakeOllama:
             reply = self.answer
         except ModelRejects as e:
             return httpx.Response(e.status, json={"error": str(e)})
+        prompt_tokens = len(f"{system} {human}".split())
+        reply_tokens = len(reply.split())
+        with self._lock:
+            self.input_tokens += prompt_tokens
+            self.output_tokens += reply_tokens
         chunk = {
             "model": body["model"],
             "created_at": "2026-01-01T00:00:00Z",
             "message": {"role": "assistant", "content": reply},
             "done": True,
             "done_reason": "stop",
-            "prompt_eval_count": 10,
-            "eval_count": 10,
+            "prompt_eval_count": prompt_tokens,
+            "eval_count": reply_tokens,
         }
         return httpx.Response(200, content=(json.dumps(chunk) + "\n").encode())

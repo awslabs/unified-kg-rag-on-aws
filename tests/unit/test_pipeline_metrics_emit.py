@@ -190,3 +190,117 @@ def test_community_drift_is_emitted() -> None:
     emitted = _emit(m)
     assert emitted["community_drift_overlap_share"] == 0.5
     assert emitted["community_rebuild_recommended"] == 1
+
+
+# --- LLM usage per stage -------------------------------------------------------
+
+
+def _usage_pipeline(mocker) -> DataIngestionPipeline:  # type: ignore[no-untyped-def]
+    from contextlib import nullcontext
+
+    pipe, _ = _stage_pipeline("document_parsing", "graph_extraction")
+    pipe.state_manager = mocker.MagicMock()
+    pipe._checkpoint_write = nullcontext  # type: ignore[method-assign]
+    pipe._save_stage_outputs_to_cache = mocker.MagicMock()  # type: ignore[method-assign]
+    pipe.corpus_fingerprint = None
+    return pipe
+
+
+def _stage(name: str, calls: int, *, fail: bool = False):  # type: ignore[no-untyped-def]
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from unified_kg_rag.domain.models import (
+        PipelineStageResult,
+        PipelineStageStatus,
+        PipelineStageType,
+    )
+    from unified_kg_rag.shared import usage
+
+    def execute(context):  # type: ignore[no-untyped-def]
+        for _ in range(calls):
+            usage.record_llm_call(
+                "ingestion", "model-a", input_tokens=100, output_tokens=7
+            )
+        usage.record_cache_hit("ingestion", "model-a")
+        if fail:
+            raise RuntimeError("model outage")
+        return PipelineStageResult(
+            stage_name=name,
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime.now(),
+        )
+
+    return SimpleNamespace(
+        name=name, stage_type=PipelineStageType(name), execute=execute
+    )
+
+
+def _context():  # type: ignore[no-untyped-def]
+    from datetime import datetime
+    from pathlib import Path
+
+    from unified_kg_rag.domain.models import (
+        PipelineConfig,
+        PipelineContext,
+        PipelineStageStatus,
+    )
+
+    return PipelineContext(
+        pipeline_id="p",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime.now(),
+        source_directory=Path("src"),
+    )
+
+
+def test_a_stage_result_carries_its_llm_usage_even_when_it_fails(mocker) -> None:
+    pipe = _usage_pipeline(mocker)
+    context = _context()
+    done = pipe._run_stage(_stage("graph_extraction", 3), context)
+    usage = done.metrics["llm_usage"]
+    assert (usage["llm_calls"], usage["input_tokens"]) == (3, 300)
+    assert (usage["output_tokens"], usage["cache_hits"]) == (21, 1)
+    assert usage["by_model"]["model-a"]["llm_calls"] == 3
+    failed = pipe._run_stage(_stage("graph_extraction", 2, fail=True), context)
+    assert failed.metrics["llm_usage"]["llm_calls"] == 2
+
+
+def test_stage_usage_is_emitted_flat_and_only_for_model_stages(mocker) -> None:
+    pipe = _usage_pipeline(mocker)
+    sink = pipe.metrics_sink
+    context = _context()
+    for stage in (_stage("document_parsing", 0), _stage("graph_extraction", 4)):
+        result = pipe._run_stage(stage, context)
+        context.stage_results.append(result)
+    # A model-free stage (no call, no hit) creates no usage series.
+    context.stage_results[0].metrics["llm_usage"]["cache_hits"] = 0
+    mocker.patch.object(pipe, "_create_pipeline_metrics", return_value=_metrics())
+    pipe._emit_stage_metrics(context, "document_parsing")
+    assert not [name for name in sink.metrics if name.startswith("llm_")]
+    pipe._emit_stage_metrics(context, "graph_extraction")
+    assert sink.metrics["llm_calls_graph_extraction"] == 4
+    assert sink.metrics["llm_input_tokens_graph_extraction"] == 400
+    assert sink.metrics["llm_output_tokens_graph_extraction"] == 28
+    assert sink.metrics["llm_cache_hits"] == 1
+
+
+def test_run_token_usage_sums_the_stages_this_run_executed(mocker) -> None:
+    from unified_kg_rag.application.ingestion.pipeline import run_token_usage
+
+    pipe = _usage_pipeline(mocker)
+    context = _context()
+    for stage in (_stage("document_parsing", 1), _stage("graph_extraction", 2)):
+        context.stage_results.append(pipe._run_stage(stage, context))
+    # Restored from an earlier run's checkpoint: spent nothing in this one.
+    usage = run_token_usage(context, frozenset({"graph_extraction"}))
+    assert (usage["llm_calls"], usage["input_tokens"], usage["cache_hits"]) == (
+        2,
+        200,
+        1,
+    )
+    assert list(usage["stages"]) == ["graph_extraction"]
+    assert usage["by_role"]["ingestion"]["llm_calls"] == 2
+    both = run_token_usage(context, frozenset({"document_parsing", "graph_extraction"}))
+    assert both["llm_calls"] == 3

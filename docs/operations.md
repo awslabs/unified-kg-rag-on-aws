@@ -1099,7 +1099,8 @@ with the task's `Environment` and the requested `Strategy`. A serving layer
 that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
 to use the alarm.
 
-The dashboard also plots stage durations, task memory, CPU and disk, Bedrock
+The dashboard also plots stage durations, task memory, CPU and disk, the
+run's LLM tokens and calls by stage and its response-cache hits, Bedrock
 calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),
 and the incremental degradations no alarm watches
@@ -1117,6 +1118,25 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_documents_failed` | run end | Documents recorded `FAILED` (JSON `failed_documents`) |
 | `total_documents_retrying` | run end | Documents failed again for an error not their own (JSON `documents_retrying`) |
 | `total_documents_without_claims` | run end | Documents indexed without some claims (JSON `documents_without_claims`) |
+
+Model usage metrics, emitted right after each stage that called a model or
+was served from the LLM response cache (Sum; a model-free stage emits none,
+so it creates no metric series). They come from the app's own usage
+accounting, tracing on or off, and count only this deployment's runs, unlike
+the account-wide Bedrock widgets; `run-ingestion --output-format json` has the
+same counts in `token_usage`:
+
+| Metric | Counts |
+|---|---|
+| `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
+| `llm_input_tokens_<stage>` | Input tokens the responses reported |
+| `llm_output_tokens_<stage>` | Output tokens the responses reported |
+| `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), summed over the stages |
+
+To check them against Bedrock's own counts, compare a run's sums with the
+`InputTokenCount` / `OutputTokenCount` metrics of the `AWS/Bedrock`
+namespace for its models over the run's window (other callers of the same
+models in the account and region count there too).
 
 ## Query deadlines and model timeouts
 

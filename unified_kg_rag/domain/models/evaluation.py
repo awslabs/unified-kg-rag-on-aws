@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from .retrieval import RerankStatus
+from .usage import LLMUsage
 
 
 class EvaluationMetricType(str, Enum):
@@ -210,6 +211,22 @@ class EvaluationResult(BaseModel):
             "on the blocked message."
         ),
     )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "The query's dataset category (EvaluationQuery.category), so a "
+            "comparison rebuilt from saved results (run-eval --from-results) "
+            "has its deltas_by_category."
+        ),
+    )
+    usage: LLMUsage | None = Field(
+        default=None,
+        description=(
+            "The model calls and tokens of answering this query (the chain's "
+            "metadata.usage). None when answer generation raised, or for "
+            "results saved before usage accounting."
+        ),
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -312,6 +329,14 @@ class EvaluationSummary(BaseModel):
             "those scores) and 'fallbacks' (extracted spans that failed and "
             "were scored on the first line instead). Empty without "
             "answer_match."
+        ),
+    )
+    usage: dict[str, LLMUsage] = Field(
+        default_factory=dict,
+        description=(
+            "The run's model calls and tokens: 'answer_generation' (the "
+            "answers, the sum of the results' usage) and 'scoring' (the LLM "
+            "evaluators and the answer-span model)."
         ),
     )
     rerank_status_counts: dict[str, int] = Field(

@@ -75,6 +75,15 @@ PIPELINE_STAGES: tuple[str, ...] = (
     "indexing",
 )
 
+# The stages that may call a model: each emits llm_calls_<stage>,
+# llm_input_tokens_<stage> and llm_output_tokens_<stage> when it did (the
+# app's usage accounting, tracing or not).
+LLM_STAGES: tuple[str, ...] = tuple(
+    stage
+    for stage in PIPELINE_STAGES
+    if stage not in ("document_parsing", "document_loading")
+)
+
 # Bedrock publishes its runtime metrics per ModelId only, and the model ids
 # the app resolves (inference profiles included) are app config, not known
 # here: these Metrics Insights queries sum over every model in the account and
@@ -360,6 +369,24 @@ class ObservabilityStack(Stack):
                     self._query_latency(statistic)
                     for statistic in ("p50", "p90", "p99")
                 ],
+            ),
+        )
+        # This deployment's own model usage, per stage (the Bedrock widgets
+        # below count every caller in the account and region).
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="LLM tokens by stage (EMF)",
+                left=[
+                    self._emf(f"llm_{kind}_tokens_{stage}")
+                    for kind in ("input", "output")
+                    for stage in LLM_STAGES
+                ],
+                stacked=True,
+            ),
+            cw.GraphWidget(
+                title="LLM calls by stage and response-cache hits (EMF)",
+                left=[self._emf(f"llm_calls_{stage}") for stage in LLM_STAGES],
+                right=[self._emf("llm_cache_hits")],
             ),
         )
         dashboard.add_widgets(

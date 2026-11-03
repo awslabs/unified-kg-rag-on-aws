@@ -48,7 +48,10 @@ from unified_kg_rag.application.cli.provider_args import (
     apply_provider_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.ingestion.pipeline import (
+    DataIngestionPipeline,
+    run_token_usage,
+)
 from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineContext,
@@ -705,6 +708,8 @@ class IngestionPipelineRunner:
                 if context.incremental_delta is not None
                 else 0
             ),
+            # The model calls and tokens of the stages this run executed.
+            "token_usage": run_token_usage(context, self.pipeline.executed_stages),
             "stages": [
                 {
                     **result.model_dump(

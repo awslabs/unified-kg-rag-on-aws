@@ -82,6 +82,7 @@ from .schema import (
     schema_key,
 )
 from .text_unit import TextUnit
+from .usage import LLMUsage, LLMUsageCounts
 
 __all__ = [
     "Backend",
@@ -115,6 +116,8 @@ __all__ = [
     "EvaluationQuery",
     "EvaluationReport",
     "EvaluationResult",
+    "LLMUsage",
+    "LLMUsageCounts",
     "EvaluationSummary",
     "EvaluatorType",
     "FusionMethod",

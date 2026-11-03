@@ -1558,6 +1558,20 @@ choices:
   own strategy scores somewhere (a metric the strategy never produces is no
   loss to invent), and a pair with one failed answer goes to the other side
   unjudged.
+- **Cost is measured, not estimated.** `shared/usage.py` keeps contextvar
+  scopes (one per ingestion stage, per query, per `run-eval` run) that a
+  callback on every factory-built chat model fills from the tokens each
+  response reports, tracing on or off (one context-variable read outside a
+  scope); cache-served responses count as hits, not calls. The comparison's
+  `cost` block pairs each query's calls, tokens and latency like a metric,
+  and `--fail-if` gates on either. Prices are user-supplied
+  (`evaluation.prices`): a shipped table would be stale.
+- **A comparison is a pure function of saved files.** `paired_comparison`
+  reads only the runs' results and reports, so `run-eval --from-results`
+  (`evaluation/saved_results.py`) rebuilds it without a model call, an
+  interrupted comparison finishes by running only the missing strategies,
+  and runs scored with different `answer_scoring` are refused rather than
+  compared.
 - **EM/F1 read a span, not the whole answer.** The reading-comprehension
   metrics were defined over a short predicted span; over a sentence plus its
   support they reward brevity. `evaluation.answer_span` picks the scored

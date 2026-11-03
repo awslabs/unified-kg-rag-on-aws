@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    LLMUsage,
     ModelRole,
     RetrieverRole,
     SearchStrategy,
@@ -59,6 +60,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared.usage import usage_scope
 
 from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
@@ -424,12 +426,18 @@ class EvaluationManager:
         logger.info("Starting evaluation for %s queries", len(queries))
 
         try:
-            results = await self._generate_answers(queries, show_progress)
-            reports = await self._evaluate_results(queries, results, ground_truths)
+            with usage_scope() as answering:
+                results = await self._generate_answers(queries, show_progress)
+            with usage_scope() as scoring:
+                reports = await self._evaluate_results(queries, results, ground_truths)
             end_time = datetime.now()
             summary = self._generate_summary(
                 queries, results, reports, start_time, end_time
             )
+            summary.usage = {
+                "answer_generation": LLMUsage.model_validate(answering.snapshot()),
+                "scoring": LLMUsage.model_validate(scoring.snapshot()),
+            }
             summary.run_manifest = self.build_run_manifest(
                 dataset_path,
                 cli_args,
@@ -494,6 +502,8 @@ class EvaluationManager:
                         and self._is_abstention(answer, rag_metadata),
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
                         guardrail_blocked=self._guardrail_block(rag_metadata),
+                        category=query.category,
+                        usage=rag_metadata.get("usage"),
                     )
                 )
             except Exception as e:

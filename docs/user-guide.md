@@ -636,6 +636,23 @@ with tracing off nothing OpenTelemetry-related is imported.
 - Spans carry no query text, passages or model output unless
   `capture_content: true`.
 
+Model usage is counted with tracing on or off: every chat model the factories
+build records each finished call (the tokens its response reports) for the
+query or ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
+`SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
+`input_tokens`, `output_tokens` and `cache_hits`, and the same counts
+`by_role` (the model's purpose: `query`, `ingestion`, `evaluation`) and
+`by_model` (the model id the factory resolved). `run-ingestion
+--output-format json` reports `token_usage` (the stages this run executed,
+with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage
+([runbook](./operations.md#alarms)), and `run-eval` records it per answer
+(`EvaluationResult.usage`) and per run (`summary.usage`). A response the
+ingestion response cache served, or a query entity or keyword extraction the
+chain's extraction cache served (`search.query_extraction_cache_size`),
+counts as a cache hit, not a call; a failed
+call is not counted; retries are. `stream` / `astream` yield text only and
+report no usage.
+
 The [runbook](./operations.md#observability) has the Jaeger, Langfuse and
 Phoenix recipes, the [trace shape](./operations.md#trace-shape) (every span
 and attribute, the vendor attribute names and the known limits) and the
@@ -1679,9 +1696,92 @@ adds `evaluation_comparison_<timestamp>.json`:
   (a failed call, or a verdict other than `1`, `2` or `tie`), and
   `--max-failure-rate` applies to them. A judge that is the answer model is
   warned about.
-- `run_manifest` of the first run.
+- `cost.strategies.<s>`: the answers' model use per query, as `mean` /
+  `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
+  `input_tokens_per_query`, `output_tokens_per_query`,
+  `total_tokens_per_query`, `latency_seconds` (answered queries only), the
+  `totals` and `cache_hits`, and with `evaluation.prices` set
+  `usd_per_query` and `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them
+  against the first strategy like the metrics (`usage/llm_calls`,
+  `usage/input_tokens`, `usage/output_tokens`, `usage/total_tokens`,
+  `usage/cost_usd`, `latency/response_time_seconds`, each query's mean over
+  its repeats, with the bootstrap interval). An answer whose generation
+  raised has no usage; results saved before usage accounting have latency
+  only (warned about). The arms and repeats of one run share the chain's
+  query extraction cache, so a later one that reuses an extraction pays no
+  call for it (counted in `cache_hits`): its cost depends on what ran before
+  it. To compare cold-cache cost, set `search.query_extraction_cache_size:
+  0`; the quality deltas do not depend on it.
+- `run_manifest` of the first run; with `--pairwise-judge`,
+  `pairwise_judge_model` and the judge's `pairwise_usage`.
+
+The comparison is also written as `evaluation_comparison_<timestamp>.csv`
+(one row per non-baseline strategy, measure and query: `baseline_value`,
+`value`, `delta`, `category`) and `.md` (the metric and cost tables, the
+gates and the warnings, for a pull request or a CI job summary).
+
+No model prices ship with the package. For a USD estimate, fill in the
+current [Amazon Bedrock prices](https://aws.amazon.com/bedrock/pricing/) of
+your region, per million tokens, keyed by the model id the usage records
+name (`usage.by_model`; an inference profile id such as `global.<model>` when
+the factory resolved one). Answers that used a model without a price get no
+estimate, and the comparison warns:
+
+```yaml
+evaluation:
+  prices:
+    "global.<answer-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+```
 
 The console prints the same summary; the failure budget applies to every run.
+
+### Rebuilding, re-judging and gating a comparison
+
+`run-eval --from-results <dir|files>` rebuilds the comparison from the files
+earlier runs saved (`evaluation_results_*` with the `evaluation_reports_*`
+and `evaluation_summary_*` next to them; `evaluation.save_detailed_results:
+true`, the default) without answering a query or opening a store. The runs
+are grouped by strategy and compared in the order the oldest run listed them
+(`--search-strategy` picks and orders them instead), so a comparison that was
+stopped part-way is finished by running only the missing strategies into the
+same directory and rebuilding: its deltas are those of an uninterrupted run.
+
+```bash
+# Stopped during naive: run it alone into the same directory, then rebuild.
+run-eval --data-path eval.json --search-strategy naive --output-directory out/
+run-eval --from-results out/ --output-directory out/
+
+# Re-judge the saved answers with another judge model (no answer call).
+run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
+
+# CI: compare this run with an earlier one and fail on a supported regression.
+run-eval --data-path eval.json --search-strategy local \
+  --baseline-results ci/previous/ \
+  --fail-if "answer_match/token_f1:ci_high<-0.02" \
+  --fail-if "usage/total_tokens:mean_delta>500"
+```
+
+- `--pairwise-judge` with `--from-results` judges the saved answers again
+  (`--judge-model` sets `models.roles.evaluation` for the run, here and in a
+  normal run); the self-preference warning compares that judge with the
+  saved runs' answer model.
+- `--baseline-results` makes an earlier run the baseline, labelled
+  `baseline:<strategy>` (the first strategy of those runs), and compares every
+  strategy of this run, or of `--from-results`, with it. Runs whose exact
+  match and token F1 read the answer differently (`answer_scoring` in the
+  run manifest: `evaluation.answer_span`, `answer_normalization`) are
+  refused (exit 2), checked before any answer is generated; runs of different
+  datasets are warned about (only their shared query ids pair).
+- `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
+  compared strategy's paired delta meets the condition: `<measure>` is a key
+  of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of
+  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low` or `ci_high`.
+  `ci_high<-0.02` fails only when the whole interval is below -0.02, a
+  regression the query sample supports. A strategy with no delta of the
+  measure fails the gate too. The result is in `comparison.gates` and the
+  JSON `gate_failures`. It needs a comparison: two strategies, or
+  `--baseline-results`.
 
 ### Benchmarks (MuSiQue)
 
@@ -3021,7 +3121,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, or an unreachable store), a breached `--max-failure-rate`, a failed upload, nothing rendered |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, or an unreachable store), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered |
 | `2` | Usage or configuration error: a bad flag, a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, or an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
@@ -3046,9 +3146,10 @@ some text units, whose claim extraction failed for an error of their own
 number of documents left out because they failed
 `indexing.max_document_failures` consecutive runs unchanged, at the same
 extraction settings (a settings change starts the count over)
-(`documents_excluded`, also in the summary) and
-per-stage results (`run-ingestion`), each run's summary, the comparison and the failure-budget
-breaches (`run-eval`), the written files (`run-visualization`), the output
+(`documents_excluded`, also in the summary), the model calls and tokens of
+the stages the run executed (`token_usage`) and
+per-stage results (`run-ingestion`), each run's summary, the comparison, the failure-budget
+breaches and the failed gates (`gate_failures`) (`run-eval`), the written files (`run-visualization`), the output
 path and profile (`run-prompt-tuning`), or the counts written
 (`prepare-benchmark`). A run stopped by a
 signal before it printed prints `{"status": "interrupted", "exit_code": 143}`

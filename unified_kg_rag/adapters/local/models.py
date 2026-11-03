@@ -208,10 +208,18 @@ def _tracing_callbacks(
     max_tokens: int,
     temperature: float,
 ) -> Any:
-    """``callbacks`` plus the GenAI tracing handler when tracing is enabled."""
+    """``callbacks`` plus the usage-accounting handler, and the GenAI tracing
+    handler when tracing is enabled."""
+    from unified_kg_rag.adapters.llm.langchain import with_callback
+    from unified_kg_rag.adapters.observability.usage_callback import (
+        UsageCallbackHandler,
+    )
+
+    callbacks = with_callback(
+        callbacks, UsageCallbackHandler(model_id, role=purpose.value)
+    )
     if not observability.is_enabled():
         return callbacks
-    from unified_kg_rag.adapters.llm.langchain import with_callback
     from unified_kg_rag.adapters.observability.langchain_callback import (
         GenAITracingCallbackHandler,
     )

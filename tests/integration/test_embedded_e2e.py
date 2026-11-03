@@ -367,8 +367,18 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     try:
         for strategy in SearchStrategy:
             answers_before = server.answers
+            calls_before = len(server.chat_models)
+            tokens_before = (server.input_tokens, server.output_tokens)
             out = _ask(chain, strategy)
             assert out.answer == ANSWER, strategy
+            # The query's usage is exactly what the model server served.
+            usage = out.metadata["usage"]
+            assert usage["llm_calls"] == len(server.chat_models) - calls_before
+            assert (usage["input_tokens"], usage["output_tokens"]) == (
+                server.input_tokens - tokens_before[0],
+                server.output_tokens - tokens_before[1],
+            ), strategy
+            assert set(usage["by_role"]) == {"query"}, strategy
             assert server.answers > answers_before, strategy
             assert out.search_results.results, strategy
             # Cited: the sources are stored artifacts.
@@ -406,11 +416,20 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
                 expected_entities=["Depot", "Vendor"],
             )
         ]
+        calls_before = len(server.chat_models)
         results, _, summary = asyncio.run(
             manager.evaluate_dataset(queries, truths, show_progress=False)
         )
     finally:
         chain.close()
+
+    # Per-query usage on the result; the run's answers and judge calls apart.
+    assert results[0].usage is not None and results[0].usage.llm_calls >= 1
+    answering, scoring = summary.usage["answer_generation"], summary.usage["scoring"]
+    assert answering == results[0].usage
+    assert answering.llm_calls + scoring.llm_calls == (
+        len(server.chat_models) - calls_before
+    )
 
     # The manifest names the index the run was scored against: the last
     # successful ingestion (the refused run 3 wrote nothing).

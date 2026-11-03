@@ -584,6 +584,19 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
   레코드에는 그 스팬의 `trace_id`와 `span_id`가 들어갑니다.
 - `capture_content: true`가 아니면 스팬에 질의 본문, 문단, 모델 출력이 들어가지 않습니다.
 
+모델 사용량은 추적을 켜든 끄든 셉니다. 팩터리가 만드는 모든 채팅 모델이 끝난 호출마다
+응답이 알려 준 토큰 수를 그 호출을 한 질의나 수집 단계에 기록합니다.
+`RAGOutput.metadata["usage"]`(`SearchOutput.metadata["usage"]`도 같음)에는 질의의
+`llm_calls`, `input_tokens`, `output_tokens`, `cache_hits`와 같은 값을 `by_role`(모델 용도:
+`query`, `ingestion`, `evaluation`)과 `by_model`(팩터리가 확정한 모델 ID)별로 나눈 값이
+있습니다. `run-ingestion --output-format json`은 `token_usage`(이번 실행이 수행한 단계의 합계와
+`stages.<stage>`)를 보고하고, `--metrics-sink cloudwatch`는 단계별로 내보내며
+([운영 런북](./operations.md#alarms)), `run-eval`은 답변별(`EvaluationResult.usage`)과
+실행별(`summary.usage`)로 기록합니다. 수집 응답 캐시가 돌려준 응답과 체인의 추출 캐시
+(`search.query_extraction_cache_size`)가 돌려준 질의 엔터티·키워드 추출은 호출이 아니라 캐시
+적중으로 세고, 실패한 호출은 세지 않으며 재시도는 셉니다. `stream` / `astream`은 텍스트만
+내보내므로 사용량을 보고하지 않습니다.
+
 Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.md#trace-shape)(모든
 스팬과 속성, 벤더 속성 이름, 알려진 제한), 전송 제한은 [운영 런북](./operations.md#observability)에
 있습니다. CDK 스택의 CloudWatch 추적은
@@ -1478,9 +1491,79 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   않습니다(`unanswerable_skipped`). `failed`는 판정 모델이 결정하지 못한 쌍(호출 실패, 또는
   `1`, `2`, `tie`가 아닌 판정)의 수이며 `--max-failure-rate`가 적용됩니다. 판정 모델이 답변
   모델과 같으면 경고합니다.
-- 첫 실행의 `run_manifest`.
+- `cost.strategies.<s>`: 답변의 질의당 모델 사용량을 모든 반복의 모든 답변에 대한
+  `mean` / `p50` / `p95`로 보여 줍니다. `llm_calls_per_query`, `input_tokens_per_query`,
+  `output_tokens_per_query`, `total_tokens_per_query`, `latency_seconds`(답한 질의만),
+  `totals`, `cache_hits`가 있고, `evaluation.prices`를 설정하면 `usd_per_query`와
+  `usd_total`도 있습니다. `cost.deltas_vs_baseline.<s>`는 지표처럼 첫 전략과 짝지어
+  비교합니다(`usage/llm_calls`, `usage/input_tokens`, `usage/output_tokens`,
+  `usage/total_tokens`, `usage/cost_usd`, `latency/response_time_seconds`. 질의별 반복
+  평균, 부트스트랩 구간 포함). 생성 중 예외가 난 답변에는 사용량이 없고, 사용량 집계 전에
+  저장된 결과에는 지연 시간만 있습니다(경고로 알림). 한 실행의 전략과 반복은 체인의 질의 추출
+  캐시를 공유하므로, 앞선 실행의 추출을 재사용한 뒤쪽 실행은 그 호출 비용을 내지 않으며
+  (`cache_hits`에 셈) 비용이 앞서 실행된 것에 따라 달라집니다. 캐시 없는 비용을 비교하려면
+  `search.query_extraction_cache_size: 0`으로 설정하세요. 품질 차이는 이 설정과 무관합니다.
+- 첫 실행의 `run_manifest`. `--pairwise-judge`를 쓰면 `pairwise_judge_model`과 판정 모델의
+  `pairwise_usage`도 있습니다.
+
+비교는 `evaluation_comparison_<timestamp>.csv`(기준이 아닌 전략, 측정값, 질의마다 한 행.
+`baseline_value`, `value`, `delta`, `category`)와 `.md`(지표 표와 비용 표, 게이트, 경고.
+풀 리퀘스트나 CI 작업 요약용)로도 저장합니다.
+
+패키지에는 모델 가격이 들어 있지 않습니다. USD 추정치가 필요하면 사용하는 리전의 현재
+[Amazon Bedrock 가격](https://aws.amazon.com/bedrock/pricing/)을 100만 토큰 단위로,
+사용량 기록이 쓰는 모델 ID(`usage.by_model`. 팩터리가 추론 프로필을 확정했으면
+`global.<model>` 같은 프로필 ID)를 키로 채우세요. 가격이 없는 모델을 쓴 답변은 추정치가
+없고 비교가 경고합니다.
+
+```yaml
+evaluation:
+  prices:
+    "global.<answer-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+```
 
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준은 모든 실행에 적용됩니다.
+
+### 저장한 결과로 비교 다시 만들기, 다시 판정하기, 게이트
+
+`run-eval --from-results <dir|files>`는 이전 실행이 저장한 파일(`evaluation_results_*`와 그 옆의
+`evaluation_reports_*`, `evaluation_summary_*`. 기본값인 `evaluation.save_detailed_results:
+true`일 때 저장됨)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
+묶어 가장 오래된 실행이 나열한 순서로 비교하므로(`--search-strategy`를 주면 그 전략을 그 순서로
+비교), 중간에 멈춘 비교는 빠진 전략만 같은 디렉터리에 실행한 뒤 다시 만들면 끝납니다. 이렇게 만든
+차이는 중단 없이 실행한 비교와 같습니다.
+
+```bash
+# naive 실행 중에 멈춤: naive만 같은 디렉터리에 실행하고 다시 만들기.
+run-eval --data-path eval.json --search-strategy naive --output-directory out/
+run-eval --from-results out/ --output-directory out/
+
+# 저장한 답변을 다른 판정 모델로 다시 판정(답변 호출 없음).
+run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
+
+# CI: 이전 실행과 비교해 뒷받침되는 성능 저하가 있으면 실패.
+run-eval --data-path eval.json --search-strategy local \
+  --baseline-results ci/previous/ \
+  --fail-if "answer_match/token_f1:ci_high<-0.02" \
+  --fail-if "usage/total_tokens:mean_delta>500"
+```
+
+- `--from-results`와 `--pairwise-judge`를 함께 쓰면 저장한 답변을 다시 판정합니다
+  (`--judge-model`은 여기서나 일반 실행에서나 그 실행의 `models.roles.evaluation`을 정함).
+  자기 선호 경고는 그 판정 모델을 저장된 실행의 답변 모델과 비교합니다.
+- `--baseline-results`는 이전 실행을 `baseline:<strategy>`(그 실행의 첫 전략)라는 이름의
+  기준으로 삼고, 이번 실행이나 `--from-results`의 모든 전략을 그것과 비교합니다. exact match와
+  token F1이 답변을 다르게 읽은 실행(실행 매니페스트의 `answer_scoring`:
+  `evaluation.answer_span`, `answer_normalization`)은 거부하며(종료 코드 2), 답변을 생성하기
+  전에 확인합니다. 데이터셋이 다른 실행은 경고합니다(공통 질의 ID만 짝지음).
+- `--fail-if <measure>:<stat><op><value>`(여러 번 지정 가능)는 비교한 전략의 짝지은 차이가
+  조건을 만족하면 종료 코드 1로 끝냅니다. `<measure>`는 `deltas_vs_baseline`의 키
+  (`<evaluator>/<metric>`)나 `cost.deltas_vs_baseline`의 키이고, `<stat>`은 `mean_delta`,
+  `ci_low`, `ci_high` 가운데 하나입니다. `ci_high<-0.02`는 구간 전체가 -0.02 아래일 때, 즉
+  질의 표본이 뒷받침하는 성능 저하일 때만 실패합니다. 그 측정값의 차이가 없는 전략도 게이트에서
+  실패합니다. 결과는 `comparison.gates`와 JSON의 `gate_failures`에 있습니다. 비교가 있어야
+  하므로 전략 두 개 이상이나 `--baseline-results`가 필요합니다.
 
 ### 벤치마크 (MuSiQue)
 
@@ -2657,7 +2740,7 @@ JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'e
 | 코드 | 의미 |
 |---|---|
 | `0` | 성공 |
-| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`와 연결할 수 없는 저장소도 포함), `--max-failure-rate` 초과, 업로드 실패, 렌더링한 파일 없음 |
+| `1` | 실행 실패: 단계나 질의 실패(`run-ingestion`은 단계에서 발생한 `ConfigurationError`와 연결할 수 없는 저장소도 포함), `--max-failure-rate` 초과, `run-eval --fail-if` 게이트 실패, 업로드 실패, 렌더링한 파일 없음 |
 | `2` | 사용법·설정 오류: 잘못된 플래그, 없거나 잘못된 입력(`run-eval` 데이터셋, `run-visualization` 데이터 파일, `prepare-benchmark` 데이터 파일), 잘못된 설정 파일이나 덮어쓰기, 설정하지 않은 저장소 엔드포인트, 선택한 제공자에 필요한데 설치하지 않은 extra(`local`)(모두 작업 시작 전), 또는 실행 중 단계 밖에서 발견한 `ConfigurationError`. 예: `run-ingestion`이 첫 모델 호출 전에 실행을 거부한 경우(실행에 필요한 인덱스를 검색 엔진이 만들지 않거나, 삭제만 있는 실행을 포함해 증분 실행의 현재 인덱스가 다른 임베딩·언어·레지스트리 설정으로 만들어짐) |
 | `130` | Ctrl-C(SIGINT)로 중단 |
 | `143` | SIGTERM으로 중지(ECS `StopTask`, Step Functions 시간 초과). `run-ingestion`은 끝난 단계를 먼저 체크포인트로 저장하고, `run-eval`은 끝난 실행의 결과를 `s3://` 출력에 업로드함(실패하면 로컬에 남기고 경로를 로그로 남김) |
@@ -2674,8 +2757,9 @@ JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'e
 다음 실행이 `indexing.max_document_failures`에 세지 않고 다시 처리함), 문서 자체의 것이 아닌 오류로 연속 실행에서
 또 실패한 문서 수(`documents_retrying`. 장애나 설정 때문이면 제외되지 않음. 파일과 실행 횟수를 경고로도 알림), 일부 텍스트 단위의 주장 추출이 단위 자체의 오류로 실패해 그 주장 없이 인덱싱된 문서 수(`documents_without_claims`. 실패로 세지 않음. 요약에도 표시), 내용과 추출 설정이 그대로인 채
 `indexing.max_document_failures`번 연속 실패해 이번 실행에서 빠진 문서 수(`documents_excluded`. 설정을 바꾸면 다시 셈. 요약에도 표시),
+이번 실행이 수행한 단계의 모델 호출과 토큰 수(`token_usage`),
 단계별 결과(`run-ingestion`), 실행별 요약과 비교,
-실패 예산 초과 내역(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
+실패 예산 초과 내역과 실패한 게이트(`gate_failures`)(`run-eval`), 쓴 파일(`run-visualization`), 출력 경로와 프로필
 (`run-prompt-tuning`), 쓴 항목 수(`prepare-benchmark`)입니다. 문서를 출력하기 전에 신호로 중지되면
 대신 `{"status": "interrupted", "exit_code": 143}`(Ctrl-C는 `130`)을, 출력하기 전에
 실패하면 `{"status": "failed", "exit_code": 1}`(또는 `2`)에 실패 원인 `error`(argparse 오류 포함)를
