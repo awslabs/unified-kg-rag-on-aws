@@ -96,7 +96,7 @@ def needs_summary(config: Config, description: str | None) -> bool:
 
 def reuse_summaries(
     items: Sequence[_Summarized], stored: Sequence[_Summarized]
-) -> None:
+) -> set[str]:
     """Give each item the summary made from its description (in place).
 
     An item whose description equals the one a ``stored`` copy of its id
@@ -104,18 +104,36 @@ def reuse_summaries(
     so it is not summarized again (an LLM call per touched item on every
     run). ``stored`` may hold several copies of an id (the stored one and
     the one this run's graph resolution summarized).
+
+    Returns the ids of the items that now hold a summary: the ones given
+    one, and the ones that already held the summary a ``stored`` copy made
+    from their mark (an earlier reuse, or this run's graph resolution on a
+    first build). A summary over the threshold is not summarized again.
     """
     summaries: dict[tuple[str, str], str | None] = {}
     for copy in stored:
         source = (copy.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
         if isinstance(source, str):
             summaries.setdefault((copy.id, source), copy.description)
+    reused: set[str] = set()
     for item in items:
         source = compute_hash(item.description or "")
-        if (item.id, source) not in summaries:
+        if (item.id, source) in summaries:
+            item.description = summaries[(item.id, source)]
+            item.attributes = {
+                **(item.attributes or {}),
+                SUMMARIZED_FROM_ATTRIBUTE: source,
+            }
+            reused.add(item.id)
             continue
-        item.description = summaries[(item.id, source)]
-        item.attributes = {**(item.attributes or {}), SUMMARIZED_FROM_ATTRIBUTE: source}
+        mark = (item.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
+        if (
+            isinstance(mark, str)
+            and item.description is not None
+            and summaries.get((item.id, mark)) == item.description
+        ):
+            reused.add(item.id)
+    return reused
 
 
 def extend_summaries(

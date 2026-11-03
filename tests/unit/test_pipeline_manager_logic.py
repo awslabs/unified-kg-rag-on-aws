@@ -133,6 +133,21 @@ def test_save_excludes_heavy_data_fields(tmp_path) -> None:
         assert excluded not in raw
 
 
+def test_member_summaries_are_not_kept_in_the_metadata(tmp_path) -> None:
+    # Community detection's summaries of stored members are for this run's
+    # indexing only: not in the metadata file, and not restored from it (a
+    # resumed indexing summarizes again).
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    ctx = _context("pid", [_stage_result("community_detection")])
+    ctx.member_summaries = [Entity(id="e1", name="A", description="A summary.")]
+    state.save_pipeline_metadata(ctx)
+
+    raw = state.load_pipeline_metadata("pid")
+    assert "member_summaries" not in raw
+    raw["member_summaries"] = [{"id": "e1", "name": "A"}]
+    assert state.create_context_from_metadata(raw).member_summaries == []
+
+
 def test_every_cached_stage_output_is_excluded_from_metadata() -> None:
     # A stage output is already persisted in the stage cache; writing it into
     # pipeline_metadata.json too re-serializes (and re-syncs) it on every save.

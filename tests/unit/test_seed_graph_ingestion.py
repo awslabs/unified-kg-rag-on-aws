@@ -1715,6 +1715,54 @@ def test_a_derived_member_description_is_summarized_as_the_indexing_does(
     ]
 
 
+def test_only_a_stripped_member_description_is_summarized_before_its_merge(
+    mocker,
+) -> None:
+    # Every description is over the threshold (1 token). Harbor cites no
+    # unit the run replaces: its stored description is what the indexing
+    # merges this run's lines into, so it is not summarized on its own
+    # first; Vendor's, derived again without the replaced unit, is.
+    stage, context = _stripped_vendor(
+        mocker,
+        {
+            "u1": _vendor_record("u1", "vendor-old", "Vendor sells."),
+            "u3": _vendor_record("u3", "vendor-old", "Vendor buys."),
+        },
+    )
+    summarization = stage.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 1
+    summarizer = _FakeSummarizer()
+    stage._description_summarizer = summarizer
+    stored = stage._evidenced_by_stored_members(
+        context, _communities_of("vendor-old", "harbor")
+    )
+    assert summarizer.asked == [["Vendor sells.\nVendor buys."]]
+    assert stored.backed["harbor"].description == "Harbor docks."
+
+
+def test_a_failed_member_summary_is_not_kept_for_the_indexing(mocker) -> None:
+    # The model gave no summary: the description stays as derived, and
+    # nothing is offered (a stored copy's mark would name another text).
+    stage, context = _stripped_vendor(
+        mocker,
+        {
+            "u1": _vendor_record("u1", "vendor-old", "Vendor sells."),
+            "u3": _vendor_record("u3", "vendor-old", "Vendor buys."),
+        },
+    )
+    summarization = stage.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 4
+    summarizer = mocker.MagicMock()
+    summarizer.summarize_entities.side_effect = lambda entities: entities
+    stage._description_summarizer = summarizer
+    stored = stage._evidenced_by_stored_members(context, _communities_of("vendor-old"))
+    assert stage._report_descriptions(context, stored) == {
+        "vendor-old": "Vendor sells.\nVendor buys.\nSeed v2 says vendor."
+    }
+    assert summarizer.summarize_entities.call_count == 2
+    assert context.member_summaries == []
+
+
 def test_without_summarization_a_derived_description_is_read_whole(mocker) -> None:
     # As a full build without summarization reads it: no summarizer is
     # built, nothing is kept for the indexing.

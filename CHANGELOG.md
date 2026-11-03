@@ -1047,6 +1047,11 @@ From 0.2.3 (or a `main` checkout since):
   those ids); passages, claims and reports keep theirs. Entity lines show
   the entity's type. The incident-edge page-cap warning is logged once a
   process, then at DEBUG (#521).
+- Community report prompts show a member with no type and no description
+  as `- Name (unknown): ` instead of `- Name (None): None`, on runs
+  without seed graphs too: the prompt of each community with such a
+  member changes once, so its report misses the LLM cache once (#515,
+  #PR).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1257,6 +1262,12 @@ Ingestion and incremental indexing.
   no longer reads as deleted: an incremental run keeps what it indexed, as
   for a file that fails to parse, and one WARNING names the count, the
   extensions and the extra to install (#518).
+- A description summary that is itself over the summarization threshold is
+  not summarized again when the indexing reuses it: a first build with the
+  doc-status registry on asked the model twice for such an item (graph
+  resolution, then the indexing), and an incremental run summarized the
+  summary it reused again, storing a description the community report did
+  not read (#PR).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero

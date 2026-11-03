@@ -413,6 +413,24 @@ class TestSummaryReuse:
 
         assert item.description == "new summary"
 
+    def test_the_ids_holding_a_summary_are_returned(self) -> None:
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            reuse_summaries,
+        )
+
+        stored = self._summary("e", "text", "summary", ["t1"])
+        given = Entity(id="e", name="e", description="text")
+        # Already holds the summary a stored copy made from its mark.
+        held = self._summary("e", "text", "summary", ["t1"])
+        # Its mark names that summary's source, but its text is not it.
+        stale = self._summary("e", "text", "other text", ["t1"])
+        unknown = Entity(id="f", name="f", description="text")
+
+        assert reuse_summaries([given], [stored]) == {"e"}
+        assert reuse_summaries([held], [stored]) == {"e"}
+        assert reuse_summaries([stale, unknown], [stored]) == set()
+        assert stale.description == "other text"
+
     def test_a_grown_summary_is_extended_and_a_shrunk_one_is_not(self) -> None:
         from unified_kg_rag.adapters.ingestion.description_summarizer import (
             extend_summaries,
