@@ -43,6 +43,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    ModelPurpose,
     RetrievalResult,
     SearchQuery,
     SearchType,
@@ -212,6 +213,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._embedding_model = self._embedding_factory.get_model(
             config.embedding_model_id,
             dimensions=self._embedding_dimension,
+            model_purpose=ModelPurpose.QUERY,
         )
         # Aliases whose indices were checked to hold this model's embeddings.
         self._embedding_checked_aliases: set[str] = set()

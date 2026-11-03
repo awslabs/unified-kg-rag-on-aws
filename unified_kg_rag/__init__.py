@@ -23,7 +23,8 @@ is a setting to fix (a :class:`SchemaSourceError` a schema source that
 cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
 imported) and an :class:`InvalidFilterError` a search filter to
 fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
-store, an :class:`IndexNotFoundError` a suffix with no index (not ingested,
+store, a :class:`QueryTimeoutError` a query past its deadline, an
+:class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo), and a :class:`ConfirmationDeclinedError` (a
 :class:`PipelineExecutionError`) an ingestion run that stopped before it
 wrote because a question it asked was answered no, or could not be asked.
@@ -87,6 +88,7 @@ _EXPORTS: dict[str, str] = {
     "InvalidFilterError": "unified_kg_rag.shared.exceptions",
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
+    "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
@@ -212,6 +214,7 @@ if TYPE_CHECKING:
         NamespaceLeaseError,
         PipelineExecutionError,
         PipelineInterrupted,
+        QueryTimeoutError,
         SchemaSourceError,
         SeedGraphError,
         StoreConnectionError,

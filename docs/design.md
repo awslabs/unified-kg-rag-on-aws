@@ -1456,6 +1456,7 @@ fatal error.
 | Local model server 4xx other than 408/429, or unreachable after retries | `openai` / `httpx` error | fatal |
 | A prompt longer than the model's context | `ContextOverflowError` (or a plain 400 from vLLM / llama.cpp) | not fatal: that global-search map batch is left unrated, unless every batch fails |
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
+| The whole query past `search.query_timeout_seconds`, or a stream's first chunk past `search.model_timeout_seconds` | `QueryTimeoutError`, raised by `GraphRAGChain` once its tasks (and, through `gather_or_cancel`, every section's) are cancelled | fatal (the error answer under `processing.ignore_errors`) |
 
 Neptune specifics: a lost connection is dropped so the next query or retry
 opens a new one; a query traversal runs on retriever-owned threads, bounded by

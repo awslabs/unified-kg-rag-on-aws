@@ -24,6 +24,7 @@ from .exceptions import (
     PipelineResumeError,
     PipelineStageError,
     PipelineStateError,
+    QueryTimeoutError,
     RerankModelError,
     StoreConnectionError,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "PipelineResumeError",
     "PipelineStageError",
     "PipelineStateError",
+    "QueryTimeoutError",
     "RerankModelError",
     "StoreConnectionError",
     "get_logger",

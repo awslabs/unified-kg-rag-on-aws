@@ -908,6 +908,42 @@ and `hybrid`) and `reason`.
   query, not `unavailable`. `search.reranking.required: true` fails such
   queries with `RerankModelError` instead of answering from the fused order.
 
+### Query deadline
+
+A query (`run-rag`, `invoke`/`ainvoke`, `search`/`asearch`, a stream) may take
+`search.query_timeout_seconds` (default 180) in all. Past it the query fails
+with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
+`TimeoutError`) and its model and store calls in flight are cancelled:
+
+- `run-rag` prints the message and exits `1`; `run-eval` counts the query as
+  failed (`error_message` set, not scored) and goes on with the others.
+- With `processing.ignore_errors` the query returns the error answer instead,
+  with the message in `search_results.metadata.error`.
+- A streamed answer must also send its first chunk within
+  `search.model_timeout_seconds` of its model call; once chunks flow, the
+  overall deadline applies.
+- `null` turns both deadlines off.
+
+The query's model calls (answer generation and the other query-time LLM
+calls, query embeddings, Bedrock rerank) use their own clients:
+`search.model_timeout_seconds` (default 90) for each request's answer and
+`search.model_max_attempts` (default 2) botocore attempts, so a stalled
+Bedrock call gives up after about 3 minutes. Ingestion and evaluation-judge
+calls keep the 330 s read timeout and 6 attempts. On an OpenAI-compatible or
+Ollama server the query calls' request timeout is
+`providers.llm.timeout_seconds` / `providers.embedding.timeout_seconds`,
+capped at `search.model_timeout_seconds`; `backend: local` presets 300 s
+model and 900 s query timeouts, since a local server queues requests (a
+`null` there is replaced by the preset: set a large number instead).
+
+A non-streamed answer arrives in one piece, so `search.model_timeout_seconds`
+also caps how long the model may generate it. Raise it (and the query
+timeout) for long answers or high reasoning effort. The defaults come from
+measured query times (p99 47 s, slowest 61 s in all, on real AWS): 90 s
+covers the slowest whole query in one request with room to spare, and 180 s
+lets a stalled first attempt be retried once. Tuning is in the
+[Operator Runbook](./operations.md#query-deadlines-and-model-timeouts).
+
 ### Filters
 
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;

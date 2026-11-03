@@ -189,10 +189,19 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             cls.BOTO_MIN_POOL_CONNECTIONS, min(wanted, cls.BOTO_MAX_POOL_CONNECTIONS)
         )
 
-    def _boto_config(self, read_timeout: int | None = None) -> BotoConfig:
+    def _boto_config(
+        self, read_timeout: float | None = None, total_max_attempts: int | None = None
+    ) -> BotoConfig:
         # botocore accepts a plain retries dict at runtime; its stub uses a
         # private _RetryDict that a local dict does not nominally satisfy.
-        retries = {"max_attempts": self.BOTO_MAX_ATTEMPTS, "mode": self.BOTO_RETRY_MODE}
+        # max_attempts counts the retries after the first request (6 requests
+        # in all); total_max_attempts counts the first one too.
+        retries: dict[str, Any] = (
+            {"max_attempts": self.BOTO_MAX_ATTEMPTS}
+            if total_max_attempts is None
+            else {"total_max_attempts": total_max_attempts}
+        )
+        retries["mode"] = self.BOTO_RETRY_MODE
         if read_timeout is not None:
             return BotoConfig(
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,
@@ -221,16 +230,44 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         )
         self.region_name = region_name or config.aws.bedrock_region
         boto_config = self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
+        self._client = self._new_client(boto_config)
+        # The client of query-time calls (_client_for), built on first use.
+        self._query_client: Any = None
+        self._query_client_lock = threading.Lock()
+        logger.debug(
+            "Initialized %s for region: '%s'", self.__class__.__name__, self.region_name
+        )
+
+    def _new_client(self, boto_config: BotoConfig) -> Any:
         # Service name is resolved dynamically per subclass, so it is a plain
         # str and does not match types-boto3's literal-overloaded client().
-        self._client = self.boto_session.client(
+        return self.boto_session.client(
             self._get_boto_service_name(),  # type: ignore[call-overload]
             region_name=self.region_name,
             config=boto_config,
         )
-        logger.debug(
-            "Initialized %s for region: '%s'", self.__class__.__name__, self.region_name
-        )
+
+    def _client_for(self, purpose: ModelPurpose) -> Any:
+        """The runtime client for a call made for ``purpose``.
+
+        Query calls get a client of their own, with the query's read timeout
+        and attempts (``search.model_timeout_seconds``,
+        ``search.model_max_attempts``): on the ingestion client's 330 s and 6
+        requests, one stalled call held a query for 33 minutes. Ingestion and
+        evaluation calls keep the ingestion client.
+        """
+        if purpose is not ModelPurpose.QUERY:
+            return self._client
+        with self._query_client_lock:
+            if self._query_client is None:
+                search = self.config.search
+                self._query_client = self._new_client(
+                    self._boto_config(
+                        read_timeout=search.model_timeout_seconds,
+                        total_max_attempts=search.model_max_attempts,
+                    )
+                )
+            return self._query_client
 
     @abstractmethod
     def _get_boto_service_name(self) -> str:
@@ -537,6 +574,7 @@ class BedrockEmbeddingModelFactory(
 
         model_kwargs = {}
         dimensions = kwargs.pop("dimensions", None)
+        purpose = ModelPurpose(kwargs.pop("model_purpose", ModelPurpose.QUERY))
 
         if dimensions:
             supported_dims = model_info.dimensions
@@ -560,7 +598,7 @@ class BedrockEmbeddingModelFactory(
         token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
         invocation_id = self._resolve_invocation_id(model_id, given)
         model = BedrockEmbeddingsWrapper(
-            client=self._client,
+            client=self._client_for(purpose),
             model_id=invocation_id,
             # The request body is the provider's (cohere/amazon); name it from
             # the catalog id, since a profile ARN does not carry it.
@@ -741,7 +779,9 @@ class BedrockLanguageModelFactory(
         config = {
             "model_id": resolved_model_id,
             "region_name": self.region_name,
-            "client": self._client,
+            "client": self._client_for(
+                ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
+            ),
             "callbacks": kwargs.get("callbacks"),
         }
         if (
@@ -1020,7 +1060,8 @@ class BedrockRerankModelFactory(
             max_document_tokens=model_info.max_document_tokens,
             region_name=self.region_name,
             credentials_profile_name=self.boto_session.profile_name,
-            client=self._client,
+            # Rerank runs at query time only.
+            client=self._client_for(ModelPurpose.QUERY),
             # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
             # __init__ signature hides it from mypy.
             token_counter=token_counter,  # type: ignore[call-arg]

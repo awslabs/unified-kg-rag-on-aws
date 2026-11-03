@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
     Constants,
     Entity,
     IndexBuildRecord,
+    ModelPurpose,
     Relationship,
     TextUnit,
     model_id_value,
@@ -294,6 +295,7 @@ class OpenSearchIndexer(VectorIndexer):
         self.embedding_model = self.embedding_factory.get_model(
             model_id=self.config.embedding_model_id,
             dimensions=self._embedding_dimension,
+            model_purpose=ModelPurpose.INGESTION,
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.analyzer = self._analyzer_for(self.target_language)

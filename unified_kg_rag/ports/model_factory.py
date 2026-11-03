@@ -286,6 +286,12 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``EmbeddingModelInfo`` / ``RerankModelInfo`` or ``None`` for an unknown
     embedding or rerank id.
 
+    ``get_model`` of a language-model or embedding factory may receive
+    ``model_purpose`` (a ``ModelPurpose``; unspecified means ``QUERY``): the
+    built-in factories give query models the shorter request timeout of
+    ``search.model_timeout_seconds``. A factory that does not use it ignores
+    it.
+
     Parameterized over the id enum, the model type and the record type, so a
     custom backend adapter can annotate
     ``ModelFactoryPort[str, ChatModel, LanguageModelInfo]`` and get static

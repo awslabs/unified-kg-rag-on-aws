@@ -836,6 +836,38 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   `search.reranking.required: true`이면 이런 질의를 융합 순서로 답하지 않고
   `RerankModelError`로 실패시킵니다.
 
+### 질의 제한 시간
+
+질의 하나(`run-rag`, `invoke`/`ainvoke`, `search`/`asearch`, 스트리밍)는 전체
+`search.query_timeout_seconds`(기본 180초) 안에 끝나야 합니다. 이 시간을 넘기면
+`QueryTimeoutError`(`unified_kg_rag`에서 내보냄, 내장 `TimeoutError`이기도 함)로 실패하고,
+진행 중인 모델 호출과 저장소 요청은 취소됩니다.
+
+- `run-rag`는 메시지를 출력하고 `1`로 종료합니다. `run-eval`은 그 질의를 실패로 세고
+  (`error_message` 기록, 채점 제외) 나머지 질의를 계속 처리합니다.
+- `processing.ignore_errors`를 켜면 오류 답변을 대신 돌려주고, 메시지는
+  `search_results.metadata.error`에 남습니다.
+- 스트리밍 답변은 모델 호출 후 `search.model_timeout_seconds` 안에 첫 청크를 보내야 합니다.
+  청크가 오기 시작하면 전체 제한 시간이 적용됩니다.
+- `null`로 두면 두 제한을 모두 끕니다.
+
+질의의 모델 호출(답변 생성과 그 밖의 질의 시점 LLM 호출, 질의 임베딩, Bedrock 재순위화)은
+전용 클라이언트를 씁니다. 요청마다 응답을 `search.model_timeout_seconds`(기본 90초)까지
+기다리고 botocore 시도는 `search.model_max_attempts`(기본 2회)라서, 멈춘 Bedrock 호출은
+약 3분 뒤 포기합니다. 수집과 평가 판정 호출은 읽기 제한 시간 330초와 6회 시도를
+유지합니다. OpenAI 호환 서버나 Ollama 서버에서는 질의 호출의 요청 제한 시간이
+`providers.llm.timeout_seconds` / `providers.embedding.timeout_seconds`이되
+`search.model_timeout_seconds`를 넘지 않습니다. 로컬 서버는 요청을 대기열에 쌓으므로
+`backend: local`은 모델 제한 300초, 질의 제한 900초를 미리 채웁니다(여기서 `null`은
+미리 채운 값으로 바뀌므로 큰 숫자를 지정).
+
+스트리밍하지 않는 답변은 한 번에 도착하므로 `search.model_timeout_seconds`가 모델이 답변을
+생성하는 시간의 상한이기도 합니다. 긴 답변이나 높은 추론 강도(effort)에는 이 값과 질의
+제한 시간을 함께 올리세요. 기본값은 실제 AWS에서 측정한 질의 시간(p99 47초, 가장 느린 질의
+61초, 질의 전체 기준)에서 정했습니다. 90초는 가장 느린 질의 전체를 요청 하나로 받아도 여유가
+있고, 180초는 멈춘 첫 시도를 한 번 다시 시도할 수 있는 시간입니다. 조정 방법은
+[운영 런북](./operations.md#query-deadlines-and-model-timeouts)에 있습니다.
+
 ### 필터
 
 `--filters key:value ...`(또는 `RAGInput.filters`)는 검색이 순위를 매길 대상을

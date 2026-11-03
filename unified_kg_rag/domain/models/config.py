@@ -3781,6 +3781,54 @@ class SearchConfig(BaseModel):
             "context. Ingestion keeps its own, longer limits."
         ),
     )
+    query_timeout_seconds: float | None = Field(
+        default=180.0,
+        gt=0,
+        description=(
+            "Seconds one query (invoke, search or a stream) may take in all, "
+            "from the input guardrail to the saved answer; past it the query "
+            "fails with QueryTimeoutError and its model and store calls in "
+            "flight are cancelled (a Bedrock call already sent from a worker "
+            "thread runs on through its own attempts, model_max_attempts x "
+            "model_timeout_seconds at most, but the framework's transient "
+            "retries start no new call past the deadline). A streamed answer "
+            "must also deliver its first chunk within model_timeout_seconds "
+            "of its model call. Under processing.ignore_errors the query "
+            "returns the error answer instead. null disables both deadlines."
+        ),
+    )
+    model_timeout_seconds: float = Field(
+        default=90.0,
+        gt=0,
+        description=(
+            "Read timeout of the model clients a query calls (answer and "
+            "query-time LLM calls, query embeddings, Bedrock rerank): how long"
+            " one request may wait for the server's next bytes, which for a "
+            "non-streamed call is its whole generation. Ingestion and "
+            "evaluation-judge calls keep the 330 s Bedrock read timeout. On "
+            "an OpenAI-compatible or Ollama server it caps "
+            "providers.llm.timeout_seconds and providers.embedding."
+            "timeout_seconds for query calls."
+        ),
+    )
+    model_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Attempts, including the first, that botocore makes for one "
+            "query-time Bedrock request (read timeouts, throttling, 5xx); "
+            "ingestion clients make 6. With model_timeout_seconds it bounds a"
+            " stalled call to about model_max_attempts x "
+            "model_timeout_seconds. Throttling and model errors past it are "
+            "retried with backoff within the retry section's budget "
+            "(retry.max_total_seconds)."
+        ),
+    )
+
+    def query_model_timeout(self, configured: float) -> float:
+        """A query-time model-server request timeout: ``configured`` (the
+        provider's own), capped at ``model_timeout_seconds``."""
+        return min(configured, self.model_timeout_seconds)
 
 
 class MemoryConfig(BaseModel):

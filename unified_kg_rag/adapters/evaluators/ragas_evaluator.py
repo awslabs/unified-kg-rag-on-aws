@@ -136,7 +136,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     def _initialize_models(self) -> None:
         embedding_factory = self._embedding_factory or self.providers.embedding_factory
         self.embeddings = embedding_factory.get_model(
-            model_id=self.config.embedding_model_id
+            model_id=self.config.embedding_model_id,
+            model_purpose=ModelPurpose.EVALUATION,
         )
 
         llm_factory = self.providers.llm_factory

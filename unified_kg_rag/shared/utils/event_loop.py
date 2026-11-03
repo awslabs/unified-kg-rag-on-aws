@@ -32,6 +32,20 @@ def configure_event_loop(
     return executor
 
 
+def abandon_default_executor(
+    loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor
+) -> None:
+    """Leave ``executor``'s running threads to the process's exit.
+
+    ``asyncio.run`` shuts down (and joins) the loop's default executor on the
+    way out, so a model call the caller gave up on (a stop, a timed-out
+    query) held the process until the call's own timeout. The loop gets an
+    unused executor instead; ``executor``'s queued calls are dropped.
+    """
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
 def run(main: Coroutine[Any, Any, _T], *, io_workers: int) -> _T:
     """``asyncio.run`` with the default executor sized by :func:`configure_event_loop`.
 
@@ -47,10 +61,7 @@ def run(main: Coroutine[Any, Any, _T], *, io_workers: int) -> _T:
         try:
             return await main
         except asyncio.CancelledError:
-            # asyncio.run shuts down (and joins) the default executor then:
-            # give it an unused one.
-            loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
-            executor.shutdown(wait=False, cancel_futures=True)
+            abandon_default_executor(loop, executor)
             raise
 
     return asyncio.run(_main())
