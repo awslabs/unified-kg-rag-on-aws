@@ -288,6 +288,17 @@ def test_build_content_entity_with_path(retriever) -> None:
     assert "Path: Alice -> Acme" in content
 
 
+@pytest.mark.parametrize("kind", ["PERSON", ["PERSON"]])
+def test_build_content_renders_the_entity_type(retriever, kind) -> None:
+    # As the entities index renders it ("Type: ..."), so an entity reads the
+    # same from either store; a value_map list is unwrapped.
+    content = retriever._build_content(
+        {"name": "Alice", "type": kind, "description": "researcher"}, []
+    )
+    assert content.splitlines()[:2] == ["Entity: Alice", "Type: PERSON"]
+    assert "Type:" not in retriever._build_content({"name": "Bob", "type": ""}, [])
+
+
 # --------------------------------------------------------------------------- #
 # _calculate_relevance
 # --------------------------------------------------------------------------- #

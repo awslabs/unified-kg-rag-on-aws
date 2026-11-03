@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import threading
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Collection, Iterable, Iterator, Sequence
@@ -69,11 +70,13 @@ _WALK_EDGE_FIELDS = (
 _ENDPOINTS = ("source_id", "target_id")
 _OTHER_END = {"source_id": "target_id", "target_id": "source_id"}
 
-# The query memo's entries (``query_scope``): the incident-edge pages, the
-# filter check's outcomes and whether the incident page cap was logged.
+# The query memo's entries (``query_scope``): the incident-edge pages and the
+# filter check's outcomes.
 _MEMO_INCIDENT = "incident"
 _MEMO_PASSING = "passing"
-_MEMO_PAGE_CAP = "incident page cap"
+
+# Set once the incident-edge page cap was logged at WARNING (once a process).
+_PAGE_CAP_WARNED = threading.Event()
 
 # What one query has learned about its stores (``query_scope``).
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -200,14 +203,17 @@ def graph_relevance(path_length: int, importance: float) -> float:
 
 
 def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
-    """A graph-expansion entity's content: its name, description and, when
-    reached from a seed, the ``Path:`` of entity names (seed first). The one
-    place the format is written (``GraphExpansionRetriever`` and the
+    """A graph-expansion entity's content: its name, type, description and,
+    when reached from a seed, the ``Path:`` of entity names (seed first). The
+    one place the format is written (``GraphExpansionRetriever`` and the
     filtered expansion's redrawn paths)."""
-    parts = [
-        f"Entity: {node.get('name', 'Unknown')}",
-        f"Description: {node.get('description', 'N/A')}",
-    ]
+    parts = [f"Entity: {node.get('name', 'Unknown')}"]
+    kind = node.get("type")
+    if isinstance(kind, list):  # a graph value_map not unwrapped
+        kind = kind[0] if kind else None
+    if kind and isinstance(kind, str):
+        parts.append(f"Type: {kind}")
+    parts.append(f"Description: {node.get('description', 'N/A')}")
     if names := [name for name in path_names if name]:
         parts.append(f"Path: {' -> '.join(names)}")
     return "\n".join(parts)
@@ -1388,23 +1394,24 @@ class BaseSearchStrategy(ABC):
         # A text-less search is ordered by (rank, weight) server-side (the
         # retriever's importance sort), so a full page holds the best edges.
         # Still, the count cap bound and edges were dropped — upstream drops
-        # none. Say so (once a query: DRIFT asks again and again) rather than
-        # let a silent truncation read as "all edges".
+        # none. Say so rather than let a silent truncation read as "all
+        # edges".
         full = tuple(
             end
             for end, side in zip(ends, sides, strict=True)
             if any(len(hits) >= page for hits in side)
         )
         if full and page >= cap:  # not a sized page
-            memo = current_query_scope()
-            warned = memo is not None and _MEMO_PAGE_CAP in memo
+            # A hub entity hits it on every query that matches it: a WARNING
+            # once a process, DEBUG after.
+            warned = _PAGE_CAP_WARNED.is_set()
+            _PAGE_CAP_WARNED.set()
             (logger.debug if warned else logger.warning)(
                 "Incident-edge fetch hit the %s-hit page cap; the lowest-ranked "
-                "edges are dropped (upstream truncates by tokens only)",
+                "edges are dropped (upstream truncates by tokens only)%s",
                 page,
+                "" if warned else "; further occurrences are logged at DEBUG",
             )
-            if memo is not None:
-                memo[_MEMO_PAGE_CAP] = True
 
         # Dedup by relationship id, so an edge reachable from both of its
         # endpoints is carried once. Upstream dedups by the undirected endpoint

@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.adapters.retrieval import base as retrieval_base
 from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share, seed_shares
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -33,6 +34,15 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared.exceptions import InvalidFilterError, StoreTimeoutError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _page_cap_not_warned() -> Any:
+    """The incident page cap warns once a process: each test starts unwarned."""
+    retrieval_base._PAGE_CAP_WARNED.clear()
+    yield
+    retrieval_base._PAGE_CAP_WARNED.clear()
+
 
 # S - A (excluded), S - B, A - D, B - D, A - C. Passing: S-B, B-D, A-C.
 _EDGES = [
@@ -1127,7 +1137,7 @@ async def test_equal_edges_and_entities_are_ordered_by_id(config: Config) -> Non
     assert sorted(_paths(kept)) == ["S", "v0", "v1", "v2"]
 
 
-async def test_a_full_page_is_logged_once_a_query(
+async def test_a_full_page_warns_once_a_process(
     config: Config, caplog: pytest.LogCaptureFixture
 ) -> None:
     # Three hubs, one walk each: every walk asks a full page of its own (one
@@ -1147,11 +1157,14 @@ async def test_a_full_page_is_logged_once_a_query(
             )
     assert caplog.text.count("page cap") == 1
     caplog.clear()
-    with caplog.at_level(logging.WARNING), query_scope():
+    # A hub hits the cap on every query that matches it: later queries log it
+    # at DEBUG only.
+    with caplog.at_level(logging.DEBUG), query_scope():
         await strategy._expand_via_graph(
             SearchQuery(query="q", top_k=5, filters={"attr_grp": "a"}), ["HUB1"]
         )
-    assert caplog.text.count("page cap") == 1  # once a query, not once ever
+    capped = [r for r in caplog.records if "page cap" in r.getMessage()]
+    assert capped and {r.levelno for r in capped} == {logging.DEBUG}
 
 
 # --------------------------------------------------------------------------- #

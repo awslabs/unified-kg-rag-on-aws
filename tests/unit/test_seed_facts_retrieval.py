@@ -382,10 +382,10 @@ def test_the_chunk_follow_drops_seed_units(config: Config) -> None:
     entities = [_hit("Vendor", [SEED, "u1"]), _hit("Harbor Port", SEED)]
     relationships = [_hit("Vendor->Port", [SEED, "u2"])]
     assert strategy._lineages(entities) == [["u1"]]
-    assert strategy._collect_linked_chunk_ids(entities, relationships, limit=10) == [
-        "u1",
-        "u2",
-    ]
+    assert strategy._collect_linked_chunk_ids(entities, relationships, limit=10) == (
+        ["u1"],
+        ["u2"],
+    )
 
 
 class _SeedLineageDocuments(FakeRetriever):

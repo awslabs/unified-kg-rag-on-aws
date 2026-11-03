@@ -1550,6 +1550,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         else:
             if name := source.get("name"):
                 content_parts.append(f"Title: {name}")
+                # An entity's type, as a relationship's and a claim's show
+                # theirs (graph expansion's `entity_content` too).
+                if (kind := source.get("type")) and isinstance(kind, str):
+                    content_parts.append(f"Type: {kind}")
             if summary := source.get("summary"):
                 content_parts.append(f"Summary: {summary}")
 

@@ -1352,12 +1352,27 @@ low-level keywords) on the shared hybrid infrastructure:
 - **hybrid** — low-level keywords → entity index, high-level keywords →
   relationship index (LightRAG's `relationships_vdb`), one-hop expansion
   (entity hits → incident relationships, relationship hits → endpoint
-  entities), and the chunks those items cite.
-- **mix** — hybrid plus the source chunks the matched entities and
-  relationships cite (LightRAG's `_find_related_text_unit_*` with its `WEIGHT`
-  method: weighted polling, every matched item at least one chunk, without
-  upstream's per-item sort by how many matched items cite a chunk; upstream's
-  default `VECTOR` method is not implemented) and a naive chunk retrieval.
+  entities), and the source chunks the matched entities and relationships
+  cite (LightRAG's `_find_related_text_unit_from_entities` /
+  `_from_relations`).
+- **mix** — hybrid plus a naive chunk retrieval.
+
+The cited chunks are picked per side, entities first, as upstream does: the
+relationship side drops only the chunks the entity side picked
+(`entity_chunks`), and each side is cut to `chunk_stream_top_k`. The two
+sides are separate fusion streams (`lightrag_linked_chunks`,
+`lightrag_relation_chunks`) beside mix's naive chunks, so RRF interleaves
+them as upstream's round robin does, and the text quota cuts the merged
+chunks after the rerank (upstream's `chunk_top_k` cut). `kg_chunk_pick_method`
+picks within a side: `weight` (the default) is upstream's `WEIGHT` method,
+weighted polling with every matched item at least one chunk, without
+upstream's per-item sort by how many matched items cite a chunk, and both
+sides fetched by id in one request; `vector` is its `VECTOR` method (upstream's
+default), one search per side of the cited chunks for the query, under the
+request's `search_type`, keeping `related_chunk_number * hits / 2`. A lineage
+is read in chunk-id order, the order a full build stores; an incremental
+merge appends the delta's chunks in arrival order, so reading the stored
+order made the weighted pick depend on how the graph was built.
 
 The independent queries run concurrently, then the expansions, then the cited
 chunks. Short queries without keywords use the raw query as low-level
@@ -1391,7 +1406,10 @@ traversal, hence graph expansion is opt-in.
   / 7050 / 4600 are packed. Synthesized global
   sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
-  truncated text included.
+  truncated text included. Passages, claims and reports render with an
+  `[id]` prefix; entity and relationship lines without one, since nothing
+  reads those ids and a UUID cost about a quarter of their tokens. An entity
+  line shows the entity's type, from either store.
 - **Token counting** (`adapters/aws/token_counter.py`,
   `adapters/local/token_counter.py`). The Bedrock `count_tokens` API is used
   for language models that accept it, with a script-aware estimate otherwise

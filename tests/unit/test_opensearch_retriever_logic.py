@@ -1170,6 +1170,25 @@ def test_parse_hit_basic(retriever) -> None:
     assert result.metadata["_search_index"] == "graphrag-entities-default-1"
     assert "Title: Alice" in result.content
     assert "Description: researcher" in result.content
+    assert "Type:" not in result.content  # none stored
+
+
+def test_parse_hit_renders_the_entity_type(retriever) -> None:
+    # A relationship shows its type in the arrow and a claim in its line; an
+    # entity's was left out, though the extraction types every entity.
+    source = {"id": "e1", "name": "Alice", "type": "PERSON", "description": "d"}
+    hit = {"_index": "graphrag-entities-default-1", "_id": "e1", "_source": source}
+    content = retriever._parse_hit(hit).content
+    assert "Title: Alice\n\nType: PERSON" in content
+    relationship = {
+        "id": "r1",
+        "source_name": "Alice",
+        "target_name": "Acme",
+        "type": "WORKS_AT",
+        "description": "d",
+    }
+    hit = {"_index": "graphrag-relationships-default-1", "_source": relationship}
+    assert "Type:" not in retriever._parse_hit(hit).content
 
 
 def test_searches_exclude_embedding_fields(retriever) -> None:
