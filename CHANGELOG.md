@@ -910,6 +910,17 @@ From 0.2.3 (or a `main` checkout since):
   `vector`): `vector` picks the chunks LightRAG `mix`/`hybrid` follow from
   the matched entities and relationships by one search of each side's cited
   chunks for the query, as upstream's default `VECTOR` method does (#521).
+- Query deadline: `search.query_timeout_seconds` (default 180 s, `null`
+  turns it off) bounds every query (`ainvoke`/`invoke`, `asearch`/`search`,
+  streams, which must also send a first chunk within
+  `search.model_timeout_seconds`) and raises the new public
+  `QueryTimeoutError`; `run-rag` exits `1` with its message and `run-eval`
+  counts the query as failed. Query-time model calls get clients of their
+  own: `search.model_timeout_seconds` (90 s) and `search.model_max_attempts`
+  (2) on Bedrock, the request timeout capped at it on Ollama and
+  OpenAI-compatible servers (`backend: local` presets 300 s and a 900 s
+  query deadline). An embedding factory's `get_model` now receives
+  `model_purpose`, as a language-model factory's does (#522).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1175,6 +1186,13 @@ Queries and retrieval.
 - The first model calls of a batch no longer fail with "dictionary changed
   size during iteration" (#369), and a call that failed once no longer
   fails its item for good while other items retry (#378).
+- A stalled Bedrock call no longer holds a query for about 33 minutes:
+  queries shared the ingestion client (330 s read timeout, 6 botocore
+  attempts, the retry budget checked only between attempts) and had no
+  deadline. The query now fails at `search.query_timeout_seconds` (a
+  stalled call gives up after about 3 minutes on its own), the transient
+  retries start no new call past the deadline, and `run-rag` exits without
+  waiting for the abandoned call (#522).
 
 Ingestion and incremental indexing.
 - Incremental runs strip shared items instead of deleting them, repair

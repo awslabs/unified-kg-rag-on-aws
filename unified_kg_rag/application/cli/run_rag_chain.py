@@ -61,6 +61,7 @@ from unified_kg_rag.shared import (
     InvalidFilterError,
     MetricsSink,
     NullMetricsSink,
+    QueryTimeoutError,
     get_logger,
     setup_logging,
 )
@@ -307,8 +308,9 @@ class RAGChainRunner:
         )
         if error:
             usage_error(error)
-        event_loop.configure_event_loop(
-            asyncio.get_running_loop(), self.config.processing.io_workers
+        loop = asyncio.get_running_loop()
+        executor = event_loop.configure_event_loop(
+            loop, self.config.processing.io_workers
         )
         display_ascii_art(version=__version__)
         self._display_run_info()
@@ -346,6 +348,10 @@ class RAGChainRunner:
             # a finished process does not leak the retrievers' connection pools.
             if self.rag_chain is not None:
                 await self.rag_chain.aclose()
+            # A query that timed out leaves its model call running on a worker
+            # thread until the call's read timeout; the process exits without
+            # waiting for it.
+            event_loop.abandon_default_executor(loop, executor)
 
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
@@ -495,7 +501,11 @@ class RAGChainRunner:
             if isinstance(e, InvalidFilterError) and not self.args.interactive:
                 # A --filters key no index declares: the command line is wrong.
                 usage_error(str(e))
-            logger.exception("Error during query execution: %s", e)
+            if isinstance(e, QueryTimeoutError):
+                # An expected outcome with its own message: no traceback.
+                logger.error("Query timed out: %s", e)
+            else:
+                logger.exception("Error during query execution: %s", e)
             console.print(
                 f"\n[bold red]Error executing query: {markup_safe(e)}[/bold red]"
             )

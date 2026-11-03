@@ -151,6 +151,17 @@ class PipelineStateError(GraphRAGException):
     pass
 
 
+class QueryTimeoutError(GraphRAGException, TimeoutError):
+    """A query ran past its deadline (``search.query_timeout_seconds``), or a
+    streamed answer sent no first chunk in time; the query's calls in flight
+    were cancelled. Also a builtin ``TimeoutError``. ``timeout_seconds`` is
+    the deadline that expired."""
+
+    def __init__(self, message: str, *, timeout_seconds: float) -> None:
+        super().__init__(message)
+        self.timeout_seconds = timeout_seconds
+
+
 class RerankModelError(ModelError):
     pass
 

@@ -59,6 +59,7 @@ PUBLIC_API = sorted(
         "NamespaceLeaseError",
         "PipelineExecutionError",
         "PipelineInterrupted",
+        "QueryTimeoutError",
         "SchemaSourceError",
         "SeedGraphError",
         "StoreConnectionError",

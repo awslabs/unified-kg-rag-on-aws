@@ -63,7 +63,13 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 )
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
-from unified_kg_rag.domain.models import Config, Constants, SearchQuery, SearchType
+from unified_kg_rag.domain.models import (
+    Config,
+    Constants,
+    ModelPurpose,
+    SearchQuery,
+    SearchType,
+)
 from unified_kg_rag.domain.models.config import EmbeddingModelId
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -1562,7 +1568,10 @@ def test_queries_embed_with_the_indexed_dimension(
         config, opensearch_client=object(), embedding_factory=factory
     )
 
-    assert factory.requests == [{"dimensions": expected}]
+    # Query embeddings get the query-time client (search.model_timeout_seconds).
+    assert factory.requests == [
+        {"dimensions": expected, "model_purpose": ModelPurpose.QUERY}
+    ]
     assert retriever._embedding_dimension == expected
 
 

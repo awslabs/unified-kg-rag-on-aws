@@ -25,6 +25,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Cut the vector memory of a large corpus | [On-disk vector storage](#on-disk-vector-storage) |
 | Ship an OWL/RDFS ontology schema in the image | [Ontology schema in the image](#ontology-schema-in-the-image) |
 | Ship a seed graph (a knowledge graph to merge), or reset a namespace that holds one | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
+| Tune how long a query may take, or act on `QueryTimeoutError` | [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
 | Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
 | Look up an error message | [Common errors](#common-errors) |
@@ -1078,7 +1079,9 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design |
 
 `run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
-(`--mode rag` queries, failed ones included), under `unified_kg_rag/query`
+(`--mode rag` queries, failed ones included: a query that ran past
+`search.query_timeout_seconds` records about the deadline, so timeouts raise
+the p90 rather than vanishing from it), under `unified_kg_rag/query`
 with the task's `Environment` and the requested `Strategy`. A serving layer
 that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
 to use the alarm.
@@ -1101,6 +1104,63 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_documents_failed` | run end | Documents recorded `FAILED` (JSON `failed_documents`) |
 | `total_documents_retrying` | run end | Documents failed again for an error not their own (JSON `documents_retrying`) |
 | `total_documents_without_claims` | run end | Documents indexed without some claims (JSON `documents_without_claims`) |
+
+## Query deadlines and model timeouts
+
+A query has two bounds ([User Guide](./user-guide.md#query-deadline)):
+
+- **The query deadline**, `search.query_timeout_seconds` (default 180 s):
+  everything from the input guardrail to the saved answer. Past it the query
+  raises `QueryTimeoutError` (or, under `processing.ignore_errors`, returns
+  the error answer) and its asyncio tasks are cancelled. A Bedrock call
+  already sent from a worker thread cannot be interrupted: it runs on
+  through its botocore attempts (at most `model_max_attempts x
+  model_timeout_seconds`), the framework's transient retries start no new
+  call past the deadline, and `run-rag` exits without waiting for it.
+- **The query's model clients**: `search.model_timeout_seconds` (default
+  90 s) per request and `search.model_max_attempts` (default 2) botocore
+  attempts, for query-time LLM calls, query embeddings and Bedrock rerank. A
+  stalled call fails after about `model_max_attempts x model_timeout_seconds`.
+  Before these, queries used the ingestion client (330 s, 6 attempts): one
+  stalled call held a query for about 33 minutes. A stream must also send its
+  first chunk within `model_timeout_seconds`.
+
+Ingestion is unchanged: its calls keep the 330 s read timeout and 6 botocore
+attempts, bounded by `BatchProcessor`'s 300 s call timeout.
+
+**Tuning.**
+
+| Symptom | Change |
+|---|---|
+| Answers that need long generation (high `aws.bedrock.default_effort`, long `default_max_output_tokens` answers) fail with a read timeout | Raise `search.model_timeout_seconds` above the longest answer call, and `search.query_timeout_seconds` to at least about twice it |
+| `drift`, or `global` over many reports, fails with `QueryTimeoutError` | Raise `search.query_timeout_seconds` (DRIFT makes up to 27 LLM calls); if those calls are throttled, lower `search.max_concurrency` instead |
+| A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
+| `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
+
+**Why these defaults.** In the package's real-AWS evaluation runs (5,846
+queries) the p99 query took 47 s and the slowest 61 s, in all. A
+non-streamed Converse answer at `default_effort: high` can spend most of
+that in one read, so `model_timeout_seconds` is 90 s: about 1.5x the
+slowest whole query and 1.9x the p99, for one request. The deadline,
+180 s, is `model_max_attempts x model_timeout_seconds`, so a call that
+stalls once can still be answered by its second attempt; it is about 3x
+the slowest query and 3.8x the p99. Two attempts, not more: a third
+would start only after the deadline.
+
+**With the Bedrock quota.** Bedrock reserves input plus `max_tokens` of each
+request against the model's tokens-per-minute (TPM) quota when the request
+starts, and throttles requests past it. A throttled query call is retried by
+botocore's adaptive mode within `search.model_max_attempts`, then with
+backoff by the query-chain retry (`retry.max_attempts`,
+`retry.max_total_seconds`), and every retry waits inside the query deadline.
+So a quota too small for the query load shows up as `QueryTimeoutError`
+rather than as slower answers: `run-eval` keeps `processing.max_concurrency`
+queries in flight, each with up to `search.max_concurrency` model calls (the
+global map step, DRIFT). Lower `processing.max_concurrency` for the
+evaluation, lower `aws.bedrock.default_max_output_tokens` (it is reserved
+whether used or not), or ask for a higher quota; raising the deadline only
+lets queries queue longer. The `BedrockThrottling` alarm and the dashboard's
+throttle widget show whether this is the cause.
 
 ## Query access and tenant isolation
 
@@ -1415,6 +1475,8 @@ model or credential error fails a query rather than answering from no context.
 | Message (abridged) | Meaning | Action |
 |---|---|---|
 | `No indices found for suffix '<suffix>' ...` | Nothing was ingested under that suffix | Ingest, or query the corpus's suffix |
+| `QueryTimeoutError: The query did not finish within N s (search.query_timeout_seconds)` / `The answer stream sent no first chunk within N s (search.model_timeout_seconds)` | The query, or a stream's first chunk, ran past its deadline: a stalled or throttled model call, a slow store, or a long strategy | [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts) |
+| `Read timeout on endpoint URL ...` (`ReadTimeoutError`) on a query | A query-time Bedrock request got no answer within `search.model_timeout_seconds`, on every attempt | Check Bedrock's health and the VPC endpoint; raise `search.model_timeout_seconds` if answers are legitimately long |
 | `InvalidFilterError: Unknown filter key(s) ...` / `... has no value (null)` / `... not a scalar` / `... lists N values ...` | No store the strategy reads declares the filter key; a filter value is null (`None` from Python; alone, in a list or as a range bound: OpenSearch rejects such a query); a list holds a list or mapping; or a list filter holds more values than one `terms` query takes (`index.max_terms_count`, default 65,536) | Use a key the message lists; drop the null or give the value to match; list strings, numbers or booleans; narrow the list (or raise `max_terms_count` in `indexing.opensearch.index_settings` and reindex) |
 | LightRAG `mix` / `hybrid` returns nothing | No relationship index, or no keywords extracted | Check the relationships index exists; short queries fall back to the raw query only under `raw_query_fallback_max_len` |
 

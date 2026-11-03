@@ -32,8 +32,9 @@ from unified_kg_rag.adapters.local.models import (
     ollama_async_client_kwargs,
     openai_http_async_client,
     per_loop_async_client,
+    request_timeout,
 )
-from unified_kg_rag.domain.models import Config, model_id_value
+from unified_kg_rag.domain.models import Config, ModelPurpose, model_id_value
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.provider_config import EmbeddingProviderConfig
 from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
@@ -172,7 +173,8 @@ class _LocalEmbeddingFactory:
                 f"Dimension {dimensions} requested for '{name}', but "
                 f"models.embedding.dimension is {configured}"
             )
-        inner = self._build(name)
+        purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
+        inner = self._build(name, purpose)
         logger.debug("Created %s embedding model '%s'", self.kind, name)
         return TracedEmbeddings(
             inner,
@@ -186,7 +188,7 @@ class _LocalEmbeddingFactory:
             ),
         )
 
-    def _build(self, model_id: str) -> Embeddings:
+    def _build(self, model_id: str, purpose: ModelPurpose) -> Embeddings:
         raise NotImplementedError
 
 
@@ -200,9 +202,9 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
     provider_name = "openai"
     kind = "openai_compatible"
 
-    def _build(self, model_id: str) -> Embeddings:
+    def _build(self, model_id: str, purpose: ModelPurpose) -> Embeddings:
         module = import_optional("langchain_openai", self.kind)
-        timeout = self.settings.timeout_seconds
+        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
         extra: dict[str, Any] = {
             # One async client per event loop (see openai_http_async_client).
             "http_async_client": openai_http_async_client(timeout, self.transport)
@@ -216,7 +218,7 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             model=model_id,
             base_url=self.settings.base_url,
             api_key=api_key_value(self.settings),
-            timeout=self.settings.timeout_seconds,
+            timeout=timeout,
             # The OpenAI client counts retries after the first attempt.
             max_retries=self.config.retry.model_server_max_attempts - 1,
             # Send text, not tiktoken ids: only OpenAI's own servers accept
@@ -238,9 +240,11 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
     kind = "ollama"
     retries_transient_errors = True
 
-    def _build(self, model_id: str) -> Embeddings:
+    def _build(self, model_id: str, purpose: ModelPurpose) -> Embeddings:
         module = import_optional("langchain_ollama", self.kind)
-        client_kwargs: dict[str, Any] = {"timeout": self.settings.timeout_seconds}
+        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
+        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        async_timeout = timeout if purpose is ModelPurpose.QUERY else None
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
 
@@ -249,7 +253,7 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
                 model=model_id,
                 base_url=self.settings.base_url,
                 client_kwargs=client_kwargs,
-                async_client_kwargs=ollama_async_client_kwargs(),
+                async_client_kwargs=ollama_async_client_kwargs(async_timeout),
             )
             return built
 

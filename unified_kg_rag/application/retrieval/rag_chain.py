@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     SCOPED_FILTER_KEYS,
@@ -119,6 +120,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     InvalidFilterError,
     LanguageModelError,
+    QueryTimeoutError,
     StoreConnectionError,
     get_logger,
     observability,
@@ -1860,41 +1862,44 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             capture if self._ground_outputs else None
         )
         try:
-            blocking = await self._screen_input(rag_input, input_dict, guard_records)
-            if blocking is not None:
-                # Not written to memory: a refused turn is no history.
-                return self._short_circuit_output(
-                    rag_input,
-                    input_dict,
-                    search=search,
-                    answer=blocking.text,
-                    strategy="blocked",
-                    metadata={"blocked": True, "guardrail": guard_records},
+            async with _QueryDeadline(self.config.search.query_timeout_seconds):
+                blocking = await self._screen_input(
+                    rag_input, input_dict, guard_records
                 )
-            runnable = self._search_chain if search else self.chain
-            output: RAGOutput | SearchOutput = await runnable.ainvoke(
-                input_dict, config
-            )
-            if isinstance(output, RAGOutput):
-                verdict = await self._screen_output(
-                    output.answer,
-                    guard_records,
-                    grounding=capture[-1] if capture else None,
-                )
-                output.answer = verdict.text
-                if verdict.grounding is not None:
-                    output.metadata["grounding"] = verdict.grounding.model_dump()
-                if verdict.action is GuardAction.BLOCKED:
-                    # A refused answer keeps none of the evidence behind it.
-                    output.sources = []
-                    output.search_results = output.search_results.model_copy(
-                        update={"results": [], "total_results": 0}
+                if blocking is not None:
+                    # Not written to memory: a refused turn is no history.
+                    return self._short_circuit_output(
+                        rag_input,
+                        input_dict,
+                        search=search,
+                        answer=blocking.text,
+                        strategy="blocked",
+                        metadata={"blocked": True, "guardrail": guard_records},
                     )
-            if guard_records:
-                output.metadata["guardrail"] = guard_records
-            if isinstance(output, RAGOutput):
-                await self._save_memory(output, rag_input)
-            return output
+                runnable = self._search_chain if search else self.chain
+                output: RAGOutput | SearchOutput = await runnable.ainvoke(
+                    input_dict, config
+                )
+                if isinstance(output, RAGOutput):
+                    verdict = await self._screen_output(
+                        output.answer,
+                        guard_records,
+                        grounding=capture[-1] if capture else None,
+                    )
+                    output.answer = verdict.text
+                    if verdict.grounding is not None:
+                        output.metadata["grounding"] = verdict.grounding.model_dump()
+                    if verdict.action is GuardAction.BLOCKED:
+                        # A refused answer keeps none of the evidence behind it.
+                        output.sources = []
+                        output.search_results = output.search_results.model_copy(
+                            update={"results": [], "total_results": 0}
+                        )
+                if guard_records:
+                    output.metadata["guardrail"] = guard_records
+                if isinstance(output, RAGOutput):
+                    await self._save_memory(output, rag_input)
+                return output
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -2119,6 +2124,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """
         rag_input, input_dict = self._prepare_invoke(input)
         self._check_requested_filter_keys(rag_input)
+        search_config = self.config.search
+        deadline = _QueryDeadline(
+            search_config.query_timeout_seconds,
+            first_chunk_seconds=search_config.model_timeout_seconds,
+        )
         chunks: list[str] = []
         delivered = False
         guard_records: list[dict[str, Any]] = []
@@ -2141,14 +2151,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         self._query_span_attributes(rag_input, search=False),
                     ) as span,
                 ):
-                    blocking = await self._screen_input(
-                        rag_input, input_dict, guard_records
-                    )
-                    if blocking is None:
-                        span.set_attributes(_captured_content(input=rag_input.query))
-                        state: dict[str, Any] = (
-                            await self._stream_context_chain.ainvoke(input_dict, config)
+                    async with deadline.scope():
+                        blocking = await self._screen_input(
+                            rag_input, input_dict, guard_records
                         )
+                        if blocking is None:
+                            span.set_attributes(
+                                _captured_content(input=rag_input.query)
+                            )
+                            state: dict[str, Any] = (
+                                await self._stream_context_chain.ainvoke(
+                                    input_dict, config
+                                )
+                            )
             finally:
                 reset_contextvars(**tokens)
             if blocking is not None:
@@ -2161,7 +2176,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             answer_config = merge_configs(
                 config, {"metadata": self._identity_metadata(rag_input)}
             )
-            async for chunk in answer_runnable.astream(state, answer_config):
+            # The first chunk (text or not: a thinking model streams its
+            # reasoning first) must come within the model timeout of the call,
+            # so a stalled stream fails early; every chunk within the query's
+            # deadline. One deadline scope per await: the generator may resume
+            # in another task after each yield.
+            started: float | None = time.monotonic()
+            stream = aiter(answer_runnable.astream(state, answer_config))
+            while True:
+                async with deadline.scope(started):
+                    try:
+                        chunk = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                started = None
                 text = str(chunk)
                 if not text:
                     continue
@@ -2171,13 +2199,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield text
             if self._screen_outputs:
                 # Nothing was delivered yet: the user sees only screened text.
-                verdict = await self._screen_output(
-                    "".join(chunks),
-                    guard_records,
-                    grounding=(
-                        self._grounding_context(state) if self._ground_outputs else None
-                    ),
-                )
+                async with deadline.scope():
+                    verdict = await self._screen_output(
+                        "".join(chunks),
+                        guard_records,
+                        grounding=(
+                            self._grounding_context(state)
+                            if self._ground_outputs
+                            else None
+                        ),
+                    )
                 chunks = [verdict.text]
                 if chunks[0]:
                     delivered = True
@@ -2202,7 +2233,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return
 
         state["answer"] = "".join(chunks)
-        await self._save_memory(self._format_output_step(state), rag_input)
+        async with deadline.scope():
+            await self._save_memory(self._format_output_step(state), rag_input)
 
 
 # The grounding context of the answer an ``_ainvoke`` call generates, handed
@@ -2389,6 +2421,113 @@ def _release_cached_resources(
         # stopped (stop() itself never raises).
         if runner is not None:
             runner.stop()
+
+
+class _QueryDeadline:
+    """The deadline of one query (``search.query_timeout_seconds``), fixed
+    when the query starts; ``None`` seconds is no deadline.
+
+    ``async with`` it bounds the awaits inside to the time left: past it the
+    task is cancelled (and, through ``gather_or_cancel``, the calls it fans
+    out) and :class:`QueryTimeoutError` is raised. No transient retry starts
+    past it either, on worker threads too (``retry_deadline``). A streamed
+    answer resumes in a new task per chunk, so it enters one scope per await
+    (:meth:`scope`), never across a ``yield``.
+    """
+
+    def __init__(
+        self, seconds: float | None, first_chunk_seconds: float | None = None
+    ) -> None:
+        self.seconds = seconds
+        self.first_chunk_seconds = first_chunk_seconds
+        self.at = None if seconds is None else time.monotonic() + seconds
+        self._scope: _DeadlineScope | None = None
+
+    def scope(self, first_chunk_from: float | None = None) -> "_DeadlineScope":
+        """A scope bounded by the deadline and, given ``first_chunk_from``
+        (the ``time.monotonic()`` a stream's model call started), by
+        ``first_chunk_seconds`` after it: the wait for its first chunk."""
+        first_chunk_at = None
+        if first_chunk_from is not None and self.first_chunk_seconds is not None:
+            first_chunk_at = first_chunk_from + self.first_chunk_seconds
+        return _DeadlineScope(self, first_chunk_at)
+
+    async def __aenter__(self) -> None:
+        self._scope = self.scope()
+        await self._scope.__aenter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        scope, self._scope = self._scope, None
+        if scope is not None:
+            await scope.__aexit__(exc_type, exc, tb)
+
+
+class _DeadlineScope:
+    """One ``async with`` window of a :class:`_QueryDeadline`."""
+
+    def __init__(self, deadline: _QueryDeadline, first_chunk_at: float | None) -> None:
+        self._deadline = deadline
+        self._first_chunk_at = first_chunk_at
+        self._timeout: asyncio.Timeout | None = None
+        self._retry_scope: AbstractContextManager[None] | None = None
+        self._first_chunk = False
+
+    async def __aenter__(self) -> None:
+        at = self._deadline.at
+        if at is None:
+            return
+        now = time.monotonic()
+        if self._first_chunk_at is not None and self._first_chunk_at < at:
+            at, self._first_chunk = self._first_chunk_at, True
+        self._retry_scope = retry_deadline(at)
+        self._retry_scope.__enter__()
+        self._timeout = asyncio.timeout(max(0.0, at - now))
+        await self._timeout.__aenter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        timeout, self._timeout = self._timeout, None
+        retry_scope, self._retry_scope = self._retry_scope, None
+        if retry_scope is not None:
+            retry_scope.__exit__(None, None, None)
+        if timeout is None:
+            return
+        try:
+            await timeout.__aexit__(exc_type, exc, tb)
+        except TimeoutError as e:
+            if not timeout.expired():
+                raise
+            raise self._expired() from e
+        if isinstance(exc, Exception) and timeout.expired():
+            # The cancellation came back as another error (a layer that
+            # turned it into its own): still the deadline's doing.
+            raise self._expired() from exc
+
+    def _expired(self) -> QueryTimeoutError:
+        if self._first_chunk:
+            limit = self._deadline.first_chunk_seconds
+            setting = "search.model_timeout_seconds"
+            what = "The answer stream sent no first chunk"
+        else:
+            limit = self._deadline.seconds
+            setting = "search.query_timeout_seconds"
+            what = "The query did not finish"
+        assert limit is not None
+        message = f"{what} within {limit:g} s"
+        logger.warning("%s (%s); cancelled its calls in flight", message, setting)
+        return QueryTimeoutError(
+            f"{message} ({setting}); its calls in flight were cancelled",
+            timeout_seconds=limit,
+        )
 
 
 class _LoopStoppedError(StoreConnectionError):

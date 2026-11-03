@@ -77,9 +77,22 @@ def _no_keepalive_limits() -> Any:
     return httpx.Limits(max_connections=_MAX_CONNECTIONS, max_keepalive_connections=0)
 
 
-def ollama_async_client_kwargs() -> dict[str, Any]:
-    """``async_client_kwargs`` for an Ollama model: no keep-alive connections."""
-    return {"limits": _no_keepalive_limits()}
+def ollama_async_client_kwargs(timeout: float | None = None) -> dict[str, Any]:
+    """``async_client_kwargs`` for an Ollama model: no keep-alive connections,
+    and the request ``timeout`` when one is given (a query call's)."""
+    kwargs: dict[str, Any] = {"limits": _no_keepalive_limits()}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    return kwargs
+
+
+def request_timeout(config: Config, configured: float, purpose: ModelPurpose) -> float:
+    """The request timeout of a model-server call made for ``purpose``: the
+    provider's ``configured`` one, capped for query calls at
+    ``search.model_timeout_seconds``."""
+    if purpose is ModelPurpose.QUERY:
+        return config.search.query_model_timeout(configured)
+    return configured
 
 
 class PerLoopAsyncClient:
@@ -293,7 +306,7 @@ class _LocalLanguageModelFactory:
             max_tokens,
             temperature,
         )
-        model = self._build(model_id, max_tokens, temperature, callbacks)
+        model = self._build(model_id, max_tokens, temperature, callbacks, purpose)
         logger.debug(
             "Created %s language model '%s' (max_tokens %s)",
             self.kind,
@@ -303,7 +316,12 @@ class _LocalLanguageModelFactory:
         return model
 
     def _build(
-        self, model_id: str, max_tokens: int, temperature: float, callbacks: Any
+        self,
+        model_id: str,
+        max_tokens: int,
+        temperature: float,
+        callbacks: Any,
+        purpose: ModelPurpose,
     ) -> BaseChatModel:
         raise NotImplementedError
 
@@ -323,10 +341,15 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
     kind = "openai_compatible"
 
     def _build(
-        self, model_id: str, max_tokens: int, temperature: float, callbacks: Any
+        self,
+        model_id: str,
+        max_tokens: int,
+        temperature: float,
+        callbacks: Any,
+        purpose: ModelPurpose,
     ) -> BaseChatModel:
         module = import_optional("langchain_openai", self.kind)
-        timeout = self.settings.timeout_seconds
+        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
         extra: dict[str, Any] = {
             "http_async_client": openai_http_async_client(timeout, self.transport)
         }
@@ -341,7 +364,7 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
             api_key=api_key_value(self.settings),
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=self.settings.timeout_seconds,
+            timeout=timeout,
             # The OpenAI client counts retries after the first attempt.
             max_retries=self.config.retry.model_server_max_attempts - 1,
             callbacks=callbacks,
@@ -371,10 +394,19 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         return local_transient_retry(self.config)
 
     def _build(
-        self, model_id: str, max_tokens: int, temperature: float, callbacks: Any
+        self,
+        model_id: str,
+        max_tokens: int,
+        temperature: float,
+        callbacks: Any,
+        purpose: ModelPurpose,
     ) -> BaseChatModel:
         module = import_optional("langchain_ollama", self.kind)
-        client_kwargs: dict[str, Any] = {"timeout": self.settings.timeout_seconds}
+        timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
+        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        # A query call's async client gets the timeout too (the async one
+        # otherwise has none); the other purposes keep theirs as they were.
+        async_timeout = timeout if purpose is ModelPurpose.QUERY else None
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
 
@@ -386,7 +418,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
                 num_predict=max_tokens,
                 num_ctx=self.settings.context_window_size,
                 client_kwargs=client_kwargs,
-                async_client_kwargs=ollama_async_client_kwargs(),
+                async_client_kwargs=ollama_async_client_kwargs(async_timeout),
                 callbacks=callbacks,
             )
             return chat

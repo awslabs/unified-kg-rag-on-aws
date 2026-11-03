@@ -285,7 +285,14 @@ LOCAL_PRESET: dict[str, Any] = {
     # 32,768-token window (providers.llm.context_window_size) minus the
     # 8,192-token output reservation, less the 10% headroom. The AWS default
     # (30,000) is over it and was clamped, with a WARNING, on every query.
-    "search": {"token_manager": {"max_context_tokens": LOCAL_MAX_CONTEXT_TOKENS}},
+    "search": {
+        "token_manager": {"max_context_tokens": LOCAL_MAX_CONTEXT_TOKENS},
+        # The query deadlines sized for a model server that queues: a query
+        # call waits as long as an ingestion call (providers.*.timeout_seconds),
+        # and a query of a few such calls gets their sum.
+        "model_timeout_seconds": 300.0,
+        "query_timeout_seconds": 900.0,
+    },
 }
 
 

@@ -11,10 +11,12 @@ from one policy, the ``retry`` section (``RetryConfig.transient_policy``).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import random
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.exceptions import OutputParserException
@@ -38,6 +40,27 @@ _sleep = time.sleep
 _jitter_rng = random.SystemRandom()
 
 T = TypeVar("T")
+
+# The time.monotonic() past which no retry starts: the deadline of the query
+# a call is made for (GraphRAGChain sets it). A context variable, so it
+# reaches the worker threads LangChain and asyncio.to_thread run the blocking
+# model calls on; None outside a query.
+_RETRY_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "kg_rag_retry_deadline", default=None
+)
+
+
+@contextlib.contextmanager
+def retry_deadline(deadline: float | None) -> Iterator[None]:
+    """No transient retry starts past ``deadline`` (``time.monotonic()``)
+    in this context: a call abandoned by a timed-out query does not keep
+    re-sending its request from a worker thread."""
+    token = _RETRY_DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _RETRY_DEADLINE.reset(token)
+
 
 TransientErrorPredicate = Callable[[BaseException], bool]
 ItemErrorPredicate = Callable[[BaseException], bool]
@@ -292,6 +315,15 @@ def next_transient_retry_delay(
     if not is_transient(exc) or attempt >= policy.max_attempts:
         return None
     delay = backoff_delay(attempt, policy.base_delay_seconds, policy.max_delay_seconds)
+    deadline = _RETRY_DEADLINE.get()
+    if deadline is not None and time.monotonic() + delay >= deadline:
+        logger.warning(
+            "Giving up on '%s' after %s attempts (the query deadline is reached): %s",
+            operation,
+            attempt,
+            _error_code(exc),
+        )
+        return None
     if time.monotonic() - started_at + delay > policy.max_total_seconds:
         logger.warning(
             "Giving up on '%s' after %s attempts (%.1fs retry budget exhausted): %s",
