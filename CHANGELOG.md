@@ -1129,20 +1129,20 @@ From 0.2.3 (or a `main` checkout since):
   items are embedded once more. A one-chunk edit of the cost harness's
   corpus embeds 44 texts instead of 94, a reset of the unchanged corpus 15
   (its regenerated community reports) instead of 376; `--force-rebuild`
-  embeds everything (#PR).
+  embeds everything (#527).
 - The intelligent chunker keeps each pre-chunk's boundary answer in the
   extraction store (keyed by the pre-chunk's text, the chunking settings
   and model), named by the text units cut from it: a reset of an unchanged
   corpus asks the boundary model nothing (24 calls before), and a model
   that answers otherwise each time no longer moves the chunks, and with
   them the extraction records, of unchanged text. A stored answer counts
-  as a cache hit in the stage's usage. `--force-rebuild` asks again (#PR).
+  as a cache hit in the stage's usage. `--force-rebuild` asks again (#527).
 - A run reads each alias and index mapping of the vector store once
   (they change only by its own writes while it holds the lease), and a run
   that indexes nothing writes no build record and no extraction settings:
   a no-op incremental run writes nothing but its lease, with 29 store
   calls instead of 56, and a one-chunk edit looks up 6 aliases instead of
-  61 (#PR).
+  61 (#527).
 
 ### Fixed
 Bugs present in 0.2.3.
