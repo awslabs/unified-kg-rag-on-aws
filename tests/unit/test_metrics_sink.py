@@ -64,6 +64,21 @@ def test_emf_declares_only_the_configured_dimension_keys() -> None:
     assert out["pipeline_id"] == "p1" and out["environment"] == "dev"
 
 
+def test_emf_keys_a_strategy_series_per_environment() -> None:
+    # run-rag's sink: the CDK alarm reads the Environment series, the
+    # dashboard's per-strategy SEARCH the Environment and Strategy one.
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(
+        emf_logger=lg, environment="prod", dimension_keys=("Strategy", "Environment")
+    ).emit("unified_kg_rag/query", {"query_latency_ms": 12.5}, {"Strategy": "local"})
+    out = json.loads(buf.getvalue())
+    assert out["_aws"]["CloudWatchMetrics"][0]["Dimensions"] == [
+        ["Environment"],
+        ["Strategy", "Environment"],
+    ]
+    assert (out["Strategy"], out["Environment"]) == ("local", "prod")
+
+
 def test_emf_default_logger_writes_to_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
 

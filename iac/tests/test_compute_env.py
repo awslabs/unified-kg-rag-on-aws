@@ -551,3 +551,52 @@ def test_unknown_cpu_architecture_fails() -> None:
         DeploymentConfig.from_context(
             cdk.App(context={"fargate_cpu_architecture": "aarch64"})
         )
+
+
+_SECRET_ARN = "arn:aws:secretsmanager:us-west-2:111111111111:secret:obs/langfuse-AbC123"
+
+
+def test_observability_secret_keys_become_task_secrets_of_both_tasks() -> None:
+    template = _compute_template(
+        {
+            "observability_secret_arn": _SECRET_ARN,
+            "observability_secret_keys": "LANGFUSE_PUBLIC_KEY,OTEL_EXPORTER_OTLP_HEADERS",
+        }
+    )
+    task_defs = template.find_resources("AWS::ECS::TaskDefinition")
+    assert len(task_defs) == 2
+    for task_def in task_defs.values():
+        (container,) = task_def["Properties"]["ContainerDefinitions"]
+        secrets = {s["Name"]: s["ValueFrom"] for s in container["Secrets"]}
+        assert secrets == {
+            "LANGFUSE_PUBLIC_KEY": f"{_SECRET_ARN}:LANGFUSE_PUBLIC_KEY::",
+            "OTEL_EXPORTER_OTLP_HEADERS": f"{_SECRET_ARN}:OTEL_EXPORTER_OTLP_HEADERS::",
+        }
+        names = {e["Name"] for e in container["Environment"]}
+        assert not names & set(secrets)  # never a plain-text copy
+    # The execution roles read this one secret, nothing wider.
+    reads = [
+        s
+        for policy in template.find_resources("AWS::IAM::Policy").values()
+        for s in policy["Properties"]["PolicyDocument"]["Statement"]
+        if "secretsmanager:GetSecretValue" in _actions([s])
+    ]
+    assert reads and all(s["Resource"] == _SECRET_ARN for s in reads)
+
+
+def test_no_observability_secret_by_default() -> None:
+    for task_def in (
+        _compute_template().find_resources("AWS::ECS::TaskDefinition").values()
+    ):
+        (container,) = task_def["Properties"]["ContainerDefinitions"]
+        assert "Secrets" not in container
+
+
+def test_an_observability_secret_cannot_shadow_the_stack_environment() -> None:
+    with pytest.raises(ValueError, match="UKR__AWS__NEPTUNE__ENDPOINT"):
+        _compute_template(
+            {
+                "observability_secret_arn": _SECRET_ARN,
+                "observability_secret_keys": "UKR__AWS__NEPTUNE__ENDPOINT",
+            }
+        )

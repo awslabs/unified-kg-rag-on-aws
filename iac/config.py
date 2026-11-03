@@ -58,6 +58,16 @@ cannot leave its setting at the default:
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
   backup_retention_days 7              Neptune automated backup retention
+  neptune_maintenance_window "sun:20:00-sun:21:00"  weekly Neptune maintenance
+                                       window (UTC, ddd:hh24:mi-ddd:hh24:mi, at
+                                       least 30 minutes)
+  neptune_backup_window "18:00-19:00"  daily Neptune backup window (UTC,
+                                       hh24:mi-hh24:mi, at least 30 minutes; must
+                                       not overlap the maintenance window)
+  opensearch_off_peak_start None       start of the daily 10-hour OpenSearch
+                                       off-peak window (UTC, "HH:MM"); unset =
+                                       the service default, 10:00 P.M. local
+                                       time of the region
 
   # --- Security ---
   create_guardrail    True             GuardrailStack owns (creates + keeps) a
@@ -93,6 +103,18 @@ cannot leave its setting at the default:
                                        grants stay unless a profile ARN is
                                        listed
   alarm_email         None             subscribe an email to the alarm topic
+  query_latency_alarm_seconds 60       p90 run-rag query latency the
+                                       QueryLatencyHigh alarm fires above
+                                       (run-rag --metrics-sink cloudwatch)
+  observability_secret_arn None        complete ARN of a Secrets Manager secret
+                                       whose JSON keys are injected into both
+                                       task definitions as environment
+                                       variables (ECS task secrets)
+  observability_secret_keys "LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY"
+                                       JSON keys of that secret to inject, each
+                                       as the variable of the same name (e.g.
+                                       OTEL_EXPORTER_OTLP_HEADERS,
+                                       PHOENIX_API_KEY)
   enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
   enable_cloudwatch_tracing False      ADOT collector sidecar that sends the app's
                                        OpenTelemetry traces to CloudWatch
@@ -255,6 +277,89 @@ def _as_threshold(key: str, value: Any, default: float) -> float:
     return threshold
 
 
+# Neptune windows (UTC): weekly "ddd:hh24:mi-ddd:hh24:mi", daily "hh24:mi-hh24:mi".
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_WEEKLY_WINDOW = re.compile(
+    r"(mon|tue|wed|thu|fri|sat|sun):([01]\d|2[0-3]):([0-5]\d)-"
+    r"(mon|tue|wed|thu|fri|sat|sun):([01]\d|2[0-3]):([0-5]\d)"
+)
+_DAILY_WINDOW = re.compile(r"([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)")
+_WEEK_MINUTES = 7 * 24 * 60
+_DAY_MINUTES = 24 * 60
+
+
+def _window_minutes(start: int, end: int, cycle: int) -> set[int]:
+    """The minutes a window covers, one cycle long, wrapping past its end."""
+    length = (end - start) % cycle
+    return {(start + minute) % cycle for minute in range(length)}
+
+
+def _check_neptune_windows(maintenance: str, backup: str) -> None:
+    """Neptune refuses a window under 30 minutes and overlapping windows at
+    deploy time; refuse them at synth instead."""
+    weekly = _WEEKLY_WINDOW.fullmatch(maintenance.lower())
+    if not weekly:
+        raise ValueError(
+            "neptune_maintenance_window must be ddd:hh24:mi-ddd:hh24:mi in UTC "
+            f"(e.g. sun:20:00-sun:21:00), got {maintenance!r}"
+        )
+    daily = _DAILY_WINDOW.fullmatch(backup)
+    if not daily:
+        raise ValueError(
+            "neptune_backup_window must be hh24:mi-hh24:mi in UTC "
+            f"(e.g. 18:00-19:00), got {backup!r}"
+        )
+    day1, h1, m1, day2, h2, m2 = weekly.groups()
+    start = _DAYS.index(day1) * _DAY_MINUTES + int(h1) * 60 + int(m1)
+    end = _DAYS.index(day2) * _DAY_MINUTES + int(h2) * 60 + int(m2)
+    maintenance_minutes = _window_minutes(start, end, _WEEK_MINUTES)
+    b1, n1, b2, n2 = (int(part) for part in daily.groups())
+    backup_minutes = _window_minutes(b1 * 60 + n1, b2 * 60 + n2, _DAY_MINUTES)
+    for key, minutes in (
+        ("neptune_maintenance_window", maintenance_minutes),
+        ("neptune_backup_window", backup_minutes),
+    ):
+        if len(minutes) < 30:
+            raise ValueError(f"{key} must be at least 30 minutes long")
+    daily_maintenance = {minute % _DAY_MINUTES for minute in maintenance_minutes}
+    if daily_maintenance & backup_minutes:
+        raise ValueError(
+            f"neptune_backup_window {backup} overlaps neptune_maintenance_window "
+            f"{maintenance}: Neptune needs them apart"
+        )
+
+
+def _as_window_start(key: str, value: Any) -> tuple[int, int] | None:
+    """An "HH:MM" UTC start time."""
+    if value is None:
+        return None
+    match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", str(value).strip())
+    if not match:
+        raise ValueError(f'{key} must be "HH:MM" in UTC (e.g. "02:00"), got {value!r}')
+    return int(match.group(1)), int(match.group(2))
+
+
+# A Secrets Manager secret's complete ARN ends in "-" and six random
+# characters; ECS needs the complete ARN to grant and resolve it exactly.
+_SECRET_ARN = re.compile(
+    r"arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:[\w/+=.@-]+-[A-Za-z0-9]{6}"
+)
+_ENV_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _as_secret_keys(key: str, value: Any) -> tuple[str, ...]:
+    """Environment variable names: a JSON list, or a comma-separated string."""
+    items = value.split(",") if isinstance(value, str) else list(value)
+    names = tuple(str(item).strip() for item in items if str(item).strip())
+    bad = [name for name in names if not _ENV_VAR_NAME.fullmatch(name)]
+    if bad or not names:
+        raise ValueError(
+            f"{key} must name environment variables (e.g. "
+            f"LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY), got {value!r}"
+        )
+    return names
+
+
 def _check_fargate_size(cpu: int, memory: int) -> None:
     if cpu not in _FARGATE_MEMORY:
         raise ValueError(
@@ -381,6 +486,22 @@ class DeploymentConfig:
     # exactly as without the feature.
     guardrail_contextual_grounding: bool = False
     guardrail_grounding_threshold: float = 0.7
+    # Neptune maintenance and backup windows (UTC) and the start of the
+    # OpenSearch off-peak window (UTC hour, minute; None = the region's
+    # 10:00 P.M. local default).
+    neptune_maintenance_window: str = "sun:20:00-sun:21:00"
+    neptune_backup_window: str = "18:00-19:00"
+    opensearch_off_peak_start: tuple[int, int] | None = None
+    # p90 latency of run-rag queries (seconds) the QueryLatencyHigh alarm
+    # fires above.
+    query_latency_alarm_seconds: int = 60
+    # Secrets Manager secret whose JSON keys become task environment
+    # variables (Langfuse/OTLP credentials). None: no secrets in the tasks.
+    observability_secret_arn: str | None = None
+    observability_secret_keys: tuple[str, ...] = (
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+    )
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -517,6 +638,26 @@ class DeploymentConfig:
         fargate_cpu = as_int("fargate_cpu", 2048)
         fargate_memory = as_int("fargate_memory", 8192)
         _check_fargate_size(fargate_cpu, fargate_memory)
+        neptune_maintenance_window = str(
+            ctx("neptune_maintenance_window", "sun:20:00-sun:21:00")
+        ).lower()
+        neptune_backup_window = str(ctx("neptune_backup_window", "18:00-19:00"))
+        _check_neptune_windows(neptune_maintenance_window, neptune_backup_window)
+        observability_secret_arn = ctx("observability_secret_arn")
+        if observability_secret_arn is not None and not _SECRET_ARN.fullmatch(
+            str(observability_secret_arn)
+        ):
+            raise ValueError(
+                "observability_secret_arn must be the complete ARN of a Secrets "
+                "Manager secret (ending in its 6-character suffix), got "
+                f"{observability_secret_arn!r}"
+            )
+        if ctx("observability_secret_keys") is not None and not (
+            observability_secret_arn
+        ):
+            raise ValueError(
+                "observability_secret_keys only applies with observability_secret_arn"
+            )
         config = cls(
             env_name=env_name,
             bedrock_region=ctx("bedrock_region"),
@@ -603,6 +744,22 @@ class DeploymentConfig:
                 "guardrail_grounding_threshold",
                 ctx("guardrail_grounding_threshold"),
                 0.7,
+            ),
+            neptune_maintenance_window=neptune_maintenance_window,
+            neptune_backup_window=neptune_backup_window,
+            opensearch_off_peak_start=_as_window_start(
+                "opensearch_off_peak_start", ctx("opensearch_off_peak_start")
+            ),
+            query_latency_alarm_seconds=as_int(
+                "query_latency_alarm_seconds", 60, maximum=3600
+            ),
+            observability_secret_arn=observability_secret_arn,
+            observability_secret_keys=_as_secret_keys(
+                "observability_secret_keys",
+                ctx(
+                    "observability_secret_keys",
+                    "LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY",
+                ),
             ),
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.

@@ -28,6 +28,36 @@ from iac.stacks.storage_stack import StorageStack
 
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
+# run-rag --metrics-sink cloudwatch: one query_latency_ms value per query,
+# per Environment and per Environment and Strategy (the search strategy).
+QUERY_NAMESPACE = "unified_kg_rag/query"
+QUERY_LATENCY_METRIC = "query_latency_ms"
+
+# Document- and file-level outcomes of an ingestion run, as run-ingestion
+# emits them (one value per run, read as Sum; the file counts after
+# document_parsing / document_loading, the deletions after indexing, the
+# document counts at run end). The one place these names live: the
+# DocumentsNotIndexed alarm and the "Document outcomes" widget read them.
+FILES_FAILED = "total_files_failed"  # a source file that failed to parse
+FILES_SKIPPED = "total_files_skipped"  # a source file no loader reads
+DOCUMENTS_EXCLUDED = "total_documents_excluded"  # filtered out by configuration
+DOCUMENTS_DELETED = "total_documents_deleted"  # removed from the stores
+DOCUMENTS_FAILED = "total_documents_failed"  # recorded FAILED in the registry
+DOCUMENTS_RETRYING = "total_documents_retrying"  # FAILED before, processed again
+DOCUMENTS_WITHOUT_CLAIMS = "total_documents_without_claims"
+DOCUMENT_METRICS: tuple[str, ...] = (
+    FILES_FAILED,
+    FILES_SKIPPED,
+    DOCUMENTS_EXCLUDED,
+    DOCUMENTS_DELETED,
+    DOCUMENTS_FAILED,
+    DOCUMENTS_RETRYING,
+    DOCUMENTS_WITHOUT_CLAIMS,
+)
+# The outcomes that leave a source document out of the stores although the
+# run SUCCEEDED: the DocumentsNotIndexed alarm sums them.
+NOT_INDEXED_METRICS: tuple[str, ...] = (FILES_FAILED, FILES_SKIPPED, DOCUMENTS_FAILED)
+
 # The pipeline stages, in order: each emits duration_<stage>_seconds when it
 # finishes (pinned against PipelineStageType by the tests).
 PIPELINE_STAGES: tuple[str, ...] = (
@@ -179,12 +209,41 @@ class ObservabilityStack(Stack):
             cw_actions.SnsAction(orchestration.alarm_topic)
         )
 
+        # Alarm: source documents the run left out of the stores -> SNS. A
+        # file that failed to parse or that no loader reads, and a document
+        # recorded FAILED, are missing from the graph of a SUCCEEDED run.
+        not_indexed = {
+            f"m{i}": self._emf(name, period=Duration.minutes(5))
+            for i, name in enumerate(NOT_INDEXED_METRICS)
+        }
+        not_indexed_alarm = cw.Alarm(
+            self,
+            "DocumentsNotIndexed",
+            metric=cw.MathExpression(
+                expression=" + ".join(f"FILL({key}, 0)" for key in not_indexed),
+                using_metrics=not_indexed,
+                label="Documents not indexed",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="unified-kg-rag-on-aws left source documents out of "
+            "the stores (parse failures, unsupported files, failed documents) "
+            "despite a SUCCEEDED run",
+        )
+        not_indexed_alarm.add_alarm_action(
+            cw_actions.SnsAction(orchestration.alarm_topic)
+        )
+
         # Store-health alarms: the run alarms above only fire when a pipeline
         # RUN goes wrong. These surface data-store degradation (red cluster,
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
         # invisible until the next run breaks. All route to the same SNS topic.
         self._add_store_health_alarms(orchestration)
         self._add_capacity_alarms(orchestration)
+        self._add_query_alarms(orchestration)
 
         # All alarms route to the orchestration SNS topic, but with no subscriber
         # they fire into the void. Warn at synth (rather than silently) when no
@@ -256,6 +315,10 @@ class ObservabilityStack(Stack):
                     )
                 ],
             ),
+            cw.GraphWidget(
+                title="Document outcomes (EMF)",
+                left=[self._emf(name) for name in DOCUMENT_METRICS],
+            ),
         )
         dashboard.add_widgets(
             cw.GraphWidget(
@@ -267,10 +330,35 @@ class ObservabilityStack(Stack):
                 stacked=True,
             ),
             cw.GraphWidget(
-                title="Ingestion task memory and CPU (% of reserved)",
+                title="Ingestion task memory, CPU and disk (% of reserved)",
                 left=[
                     self._task_utilization("Memory"),
                     self._task_utilization("Cpu"),
+                    self._task_utilization("EphemeralStorage"),
+                ],
+            ),
+        )
+        # Every Strategy series of this deployment's query latency.
+        query_series = (
+            f"{{{QUERY_NAMESPACE},Environment,Strategy}} "
+            f'MetricName="{QUERY_LATENCY_METRIC}" Environment="{config.env_name}"'
+        )
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Query latency by strategy (ms, p90)",
+                left=[
+                    cw.MathExpression(
+                        expression=f"SEARCH('{query_series}', 'p90', 300)",
+                        label="",
+                        period=Duration.minutes(5),
+                    )
+                ],
+            ),
+            cw.GraphWidget(
+                title="Query latency (ms)",
+                left=[
+                    self._query_latency(statistic)
+                    for statistic in ("p50", "p90", "p99")
                 ],
             ),
         )
@@ -313,6 +401,16 @@ class ObservabilityStack(Stack):
             statistic=statistic,
             dimensions_map={"Environment": self.config.env_name},
             period=period or Duration.minutes(5),
+        )
+
+    def _query_latency(self, statistic: str) -> cw.Metric:
+        """Latency of this deployment's run-rag queries, all strategies."""
+        return cw.Metric(
+            namespace=QUERY_NAMESPACE,
+            metric_name=QUERY_LATENCY_METRIC,
+            statistic=statistic,
+            dimensions_map={"Environment": self.config.env_name},
+            period=Duration.minutes(5),
         )
 
     @staticmethod
@@ -387,6 +485,44 @@ class ObservabilityStack(Stack):
             "memory for 3 minutes: raise fargate_memory before it is killed",
         )
         memory.add_alarm_action(action)
+        # Disk: the ingestion task's ephemeral storage holds the synced
+        # corpus, the parsed documents and the stage cache; a full disk fails
+        # the running stage. AWS's recommended Container Insights alarm: 90%
+        # of the size in 5 consecutive minutes. The reserved size includes the
+        # container image.
+        disk = cw.Alarm(
+            self,
+            "IngestionTaskEphemeralStorage",
+            metric=self._task_utilization("EphemeralStorage"),
+            threshold=90,
+            evaluation_periods=5,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="The ingestion task used at least 90% of its "
+            "ephemeral storage for 5 minutes: raise "
+            "ingestion_ephemeral_storage_gib before the disk fills",
+        )
+        disk.add_alarm_action(action)
+
+    def _add_query_alarms(self, orchestration: OrchestrationStack) -> None:
+        # Slow queries: the p90 latency of run-rag queries (--metrics-sink
+        # cloudwatch) above query_latency_alarm_seconds in 2 of 3 5-minute
+        # periods. Periods without a query are missing, not breaching.
+        threshold_ms = self.config.query_latency_alarm_seconds * 1000
+        latency = cw.Alarm(
+            self,
+            "QueryLatencyHigh",
+            metric=self._query_latency("p90"),
+            threshold=threshold_ms,
+            evaluation_periods=3,
+            datapoints_to_alarm=2,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="p90 run-rag query latency above "
+            f"{self.config.query_latency_alarm_seconds} s in 2 of 3 5-minute "
+            "periods (all search strategies)",
+        )
+        latency.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 
     def _add_store_health_alarms(self, orchestration: OrchestrationStack) -> None:
         topic = orchestration.alarm_topic
@@ -450,6 +586,89 @@ class ObservabilityStack(Stack):
             "minutes (out-of-memory risk)",
             evaluation_periods=3,
         )
+        # The rest of AWS's recommended OpenSearch alarms ("Recommended
+        # CloudWatch alarms for Amazon OpenSearch Service"). A failed
+        # automated snapshot leaves the hourly restore point missing
+        # (Backup and restore); blocked writes fail every ingestion bulk.
+        _alarm(
+            "OpenSearchAutomatedSnapshotFailure",
+            domain.metric_automated_snapshot_failure(
+                period=Duration.minutes(1), statistic="Maximum"
+            ),
+            1,
+            "OpenSearch automated snapshot failed (often a red cluster): the "
+            "hourly restore point is missing",
+        )
+        _alarm(
+            "OpenSearchIndexWritesBlocked",
+            domain.metric_cluster_index_writes_blocked(
+                period=Duration.minutes(5), statistic="Maximum"
+            ),
+            1,
+            "OpenSearch is blocking index writes (ClusterBlockException): "
+            "ingestion writes fail until storage or memory is freed",
+        )
+        if self.config.use_cmk:
+            # Only a customer-managed key can be disabled or deleted; the
+            # metrics appear only once the domain has a problem with it.
+            _alarm(
+                "OpenSearchKmsKeyError",
+                domain.metric_kms_key_error(
+                    period=Duration.minutes(1), statistic="Maximum"
+                ),
+                1,
+                "The OpenSearch data key (use_cmk) is disabled: re-enable it",
+            )
+            _alarm(
+                "OpenSearchKmsKeyInaccessible",
+                domain.metric_kms_key_inaccessible(
+                    period=Duration.minutes(1), statistic="Maximum"
+                ),
+                1,
+                "The OpenSearch data key (use_cmk) was deleted or its grants "
+                "revoked: the domain cannot be recovered, restore a manual "
+                "snapshot to a new domain",
+            )
+        if self.config.opensearch_count > 1:
+            # A single node has nowhere to place a replica (the task sets
+            # none there), so only a multi-node domain alarms on yellow.
+            _alarm(
+                "OpenSearchClusterYellow",
+                domain.metric_cluster_status_yellow(
+                    period=Duration.minutes(1), statistic="Maximum"
+                ),
+                1,
+                "OpenSearch cluster status is YELLOW (an unallocated replica "
+                "shard) for 5 minutes: losing another node loses data",
+                evaluation_periods=5,
+            )
+        # Thread-pool rejections are cumulative counters: alarm on their
+        # increase (AWS's DIFF recommendation). The bulk writer retries a
+        # rejected write, so only rejections in 3 consecutive minutes alarm;
+        # a rejected search fails a query at once.
+        for ident, pool, periods in (
+            ("OpenSearchWriteRejections", "Write", 3),
+            ("OpenSearchSearchRejections", "Search", 1),
+        ):
+            _alarm(
+                ident,
+                cw.MathExpression(
+                    expression="DIFF(rejected)",
+                    using_metrics={
+                        "rejected": domain.metric(
+                            f"Threadpool{pool}Rejected",
+                            statistic="Sum",
+                            period=Duration.minutes(1),
+                        )
+                    },
+                    label=f"New {pool.lower()} thread-pool rejections",
+                    period=Duration.minutes(1),
+                ),
+                1,
+                f"OpenSearch rejected {pool.lower()} requests (thread pool "
+                f"queue full) in {periods} consecutive minute(s)",
+                evaluation_periods=periods,
+            )
         # DynamoDB doc-status registry: throttled writes mean delta/lineage
         # updates are being rejected, which silently corrupts incremental-indexing
         # state. The registry writes mostly through BatchWriteItem, so alarm on

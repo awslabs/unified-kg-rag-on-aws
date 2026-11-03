@@ -186,3 +186,63 @@ def test_opensearch_version_change_upgrades_in_place(env_name: str) -> None:
     (domain,) = template.find_resources("AWS::OpenSearchService::Domain").values()
     assert domain["UpdatePolicy"] == {"EnableVersionUpgrade": True}
     assert domain["Properties"]["EngineVersion"] == "OpenSearch_2.13"
+
+
+def _cache_rules(template: Template) -> dict[str, dict[str, Any]]:
+    buckets = template.find_resources(
+        "AWS::S3::Bucket", {"Properties": {"BucketName": Match.any_value()}}
+    )
+    (cache,) = buckets.values()
+    assert cache["Properties"]["VersioningConfiguration"] == {"Status": "Enabled"}
+    rules = cache["Properties"]["LifecycleConfiguration"]["Rules"]
+    return {rule["Id"]: rule for rule in rules}
+
+
+def test_cache_bucket_keeps_noncurrent_versions_for_30_days(prod: Template) -> None:
+    # An overwritten or deleted corpus object can be restored for 30 days.
+    rules = _cache_rules(prod)
+    everywhere = rules["expire-noncurrent-versions"]
+    assert "Prefix" not in everywhere and "ExpirationInDays" not in everywhere
+    assert everywhere["NoncurrentVersionExpiration"] == {"NoncurrentDays": 30}
+    assert rules["remove-expired-delete-markers"]["ExpiredObjectDeleteMarker"] is True
+
+
+def test_checkpoint_versions_expire_after_a_day(prod: Template) -> None:
+    # Every stage overwrites the checkpoint files: with 30 days of their
+    # noncurrent versions a run's checkpoint storage would multiply.
+    rules = _cache_rules(prod)
+    for prefix in CACHE_EXPIRY_PREFIXES:
+        rule = rules[f"expire-{prefix.rstrip('/')}"]
+        assert rule["Prefix"] == prefix
+        assert rule["ExpirationInDays"] == 30
+        assert rule["NoncurrentVersionExpiration"] == {"NoncurrentDays": 1}
+
+
+def test_store_maintenance_windows_are_set(prod: Template) -> None:
+    (cluster,) = prod.find_resources("AWS::Neptune::DBCluster").values()
+    assert cluster["Properties"]["PreferredMaintenanceWindow"] == "sun:20:00-sun:21:00"
+    assert cluster["Properties"]["PreferredBackupWindow"] == "18:00-19:00"
+    instances = prod.find_resources("AWS::Neptune::DBInstance").values()
+    assert len(instances) == 2
+    for instance in instances:
+        window = instance["Properties"]["PreferredMaintenanceWindow"]
+        assert window == "sun:20:00-sun:21:00"
+    (domain,) = prod.find_resources("AWS::OpenSearchService::Domain").values()
+    # No start time: the service's default, 10:00 P.M. region-local (CDK
+    # would turn an enabled window without a start into 22:00 UTC).
+    assert "OffPeakWindowOptions" not in domain["Properties"]
+    custom = _storage_template(
+        {
+            "neptune_maintenance_window": "SAT:02:00-SAT:03:00",
+            "neptune_backup_window": "04:00-04:30",
+            "opensearch_off_peak_start": "14:15",
+        }
+    )
+    (cluster,) = custom.find_resources("AWS::Neptune::DBCluster").values()
+    assert cluster["Properties"]["PreferredMaintenanceWindow"] == "sat:02:00-sat:03:00"
+    assert cluster["Properties"]["PreferredBackupWindow"] == "04:00-04:30"
+    (domain,) = custom.find_resources("AWS::OpenSearchService::Domain").values()
+    assert domain["Properties"]["OffPeakWindowOptions"] == {
+        "Enabled": True,
+        "OffPeakWindow": {"WindowStartTime": {"Hours": 14, "Minutes": 15}},
+    }

@@ -16,6 +16,12 @@ data plane, each with a least-privilege task role.
 Both run the same image with the same environment. Store endpoints are injected as the env vars the app reads
 (UKR__AWS__NEPTUNE__ENDPOINT / UKR__AWS__OPENSEARCH__ENDPOINT / UKR__AWS__BEDROCK__REGION_NAME / UKR__AWS__S3__BUCKET_NAME).
 
+With ``observability_secret_arn`` both task definitions read the
+``observability_secret_keys`` of that Secrets Manager secret into the
+environment variables of the same names (ECS task secrets: resolved at task
+start by the execution role, never in the template), for the Langfuse,
+Phoenix or OTLP exporter credentials.
+
 With ``enable_cloudwatch_tracing`` the task also runs an AWS Distro for
 OpenTelemetry (ADOT) collector sidecar: the app exports OTLP/HTTP to it on
 localhost, and it signs (SigV4, task role) and forwards the spans to the
@@ -32,6 +38,7 @@ from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -149,6 +156,13 @@ class ComputeStack(Stack):
         )
 
         self._collector_repository: ecr.IRepository | None = None
+        self.observability_secret: secretsmanager.ISecret | None = (
+            secretsmanager.Secret.from_secret_complete_arn(
+                self, "ObservabilitySecret", config.observability_secret_arn
+            )
+            if config.observability_secret_arn
+            else None
+        )
         self.corpus_bucket: s3.IBucket | None = (
             s3.Bucket.from_bucket_name(self, "CorpusBucket", config.corpus_bucket_name)
             if config.corpus_bucket_name
@@ -524,6 +538,21 @@ class ComputeStack(Stack):
                     ),
                 }
             )
+        secrets: dict[str, ecs.Secret] | None = None
+        if self.observability_secret is not None:
+            keys = self.config.observability_secret_keys
+            if clash := sorted(set(keys) & set(environment)):
+                raise ValueError(
+                    "observability_secret_keys names variables the stack sets "
+                    f"itself: {', '.join(clash)}"
+                )
+            # Each key is a JSON key of the secret; ECS fails the task start
+            # when one is missing. The grant (GetSecretValue on this secret)
+            # goes to the execution role.
+            secrets = {
+                key: ecs.Secret.from_secrets_manager(self.observability_secret, key)
+                for key in keys
+            }
         app = task_def.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(
@@ -533,6 +562,7 @@ class ComputeStack(Stack):
                 stream_prefix="app", log_group=self.log_group
             ),
             environment=environment,
+            secrets=secrets,
             # On SIGTERM (StopTask, a Step Functions timeout) run-ingestion
             # uploads its checkpoint and unwinds the in-flight model calls;
             # give it the Fargate maximum before the task is killed. The

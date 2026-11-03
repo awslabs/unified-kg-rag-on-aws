@@ -81,7 +81,7 @@ several environments coexist in one account and region.
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket; with `opensearch_nori_package`, the custom resource that associates the Nori package (Lambda handlers in `iac/custom_resources/`, roles scoped to the domain and the stack) |
 | `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
 | `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
-| `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health and capacity, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
+| `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health, capacity and query latency, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
 | `GraphRagSecurity` | The shared customer-managed KMS key (`use_cmk`) |
 | `GraphRagGuardrail` | A baseline Bedrock Guardrail in `bedrock_region` ([Guardrail](#guardrail)) |
 
@@ -132,9 +132,12 @@ did-you-mean hint.
 | `neptune_serverless_ncu` | — | `MIN-MAX` capacity units (e.g. `1-16`; one NCU is about 2 GiB, a `db.r6g.large` about 8). Set, every instance runs as Neptune Serverless; switching a deployed cluster changes each instance in place, so do it between runs |
 | `neptune_instances` | `1` (dev) / `2` | Neptune instances; 2 or more is Multi-AZ |
 | `backup_retention_days` | `7` | Neptune automated backups, 1-35 days ([Backup and restore](../docs/operations.md#backup-and-restore)) |
+| `neptune_maintenance_window` | `sun:20:00-sun:21:00` | Weekly Neptune maintenance window of the cluster and its instances (UTC, `ddd:hh24:mi-ddd:hh24:mi`, at least 30 minutes) ([Maintenance windows](../docs/operations.md#maintenance-windows)) |
+| `neptune_backup_window` | `18:00-19:00` | Daily Neptune backup window (UTC, `hh24:mi-hh24:mi`, at least 30 minutes, apart from the maintenance window) |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
 | `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count. Moving a deployed domain to more AZs (e.g. to 3) is a blue/green deployment (every shard copied, slower for hours on a large domain): deploy it with no ingestion running |
 | `opensearch_volume_gib` | `50` | gp3 volume per data node; the free-storage alarm fires at 40% free |
+| `opensearch_off_peak_start` | — | Start of the daily 10-hour OpenSearch off-peak window (UTC, `HH:MM`), where service software updates and Auto-Tune run; unset keeps the service default, 10:00 P.M. local time of the region |
 | `opensearch_nori_package` | `false` | Associate the AWS-provided `analysis-nori` plugin package of the domain's engine version (a custom resource; associating and dissociating are blue/green deployments), so the domain has the `nori` analyzer. Re-run once with `indexing.reset: true` afterwards ([Korean with Nori](../docs/operations.md#korean-with-nori)) |
 | `opensearch_korean_analyzer` | `cjk` (`nori` with `opensearch_nori_package`) | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). `nori` needs the Nori package (`opensearch_nori_package`, or associated by hand); a change needs one `indexing.reset: true` run |
 | `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
@@ -174,6 +177,9 @@ did-you-mean hint.
 | Key | Default | Meaning |
 |---|---|---|
 | `alarm_email` | — | Subscribe an email to the alarm topic |
+| `query_latency_alarm_seconds` | `60` | `QueryLatencyHigh` fires when the p90 latency of `run-rag --metrics-sink cloudwatch` queries is above it in 2 of 3 5-minute periods |
+| `observability_secret_arn` | — | Complete ARN of a Secrets Manager secret (JSON) whose `observability_secret_keys` both task definitions read as environment variables of the same names (ECS task secrets; the execution role gets `GetSecretValue` on it). A secret encrypted with your own KMS key also needs `kms:Decrypt` for the execution role in the key policy |
+| `observability_secret_keys` | `LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY` | JSON keys of that secret (a list, or comma-separated), e.g. `OTEL_EXPORTER_OTLP_HEADERS` or `PHOENIX_API_KEY`; a missing key fails the task start, a key the stack sets itself fails synth |
 | `enable_cloudwatch_tracing` | `false` | Send traces to CloudWatch through an ADOT collector sidecar ([CloudWatch tracing](#cloudwatch-tracing-optional)); `env_name` may then be at most 10 characters |
 | `enable_cdk_nag` | `false` | Run the cdk-nag AwsSolutions checks at synth |
 | `owner`, `cost_center` | `aws-proserve`, `unified-kg-rag-on-aws` | Tags applied to every resource |
@@ -190,7 +196,9 @@ Neptune's default engine version at creation; pinning one now would change the
 engine of every deployed cluster not on it. The client is pinned instead
 (`gremlinpython` below 3.8 until Neptune supports TinkerPop 3.8). To fix a
 version for a new deployment, set `engine_version` in `storage_stack.py` before
-its first deploy.
+its first deploy. Minor versions upgrade in the maintenance window; a major
+version is an upgrade you start
+([Upgrading Neptune](../docs/operations.md#upgrading-neptune)).
 
 ### Fargate Spot
 
@@ -301,7 +309,7 @@ for your region and sizes. What scales each service's cost:
 | Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
 | Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
-| S3 | Checkpoints, corpus, access logs | 30-day expiry on `pipeline-runs/` |
+| S3 | Checkpoints, corpus, access logs, noncurrent versions (the bucket is versioned) | 30-day expiry on `pipeline-runs/` (noncurrent versions there after 1 day, elsewhere after 30) |
 | DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |
 | CloudWatch | Log ingestion and retention, alarms, dashboard; Container Insights metrics and performance logs (always on: per-task CPU and memory, which the `IngestionTaskMemory` alarm reads) | `vpc_flow_logs`, `flow_log_retention_days` |
 | KMS | Keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
@@ -463,7 +471,9 @@ aws logs tail /graphrag/tasks --region "$REGION" --since 30m
 The override must name the CLI (`run-rag ...`); the answer is in the task's
 log stream (`app/app/<task id>`). The query role cannot write or delete in
 either store and has no DynamoDB access; do not run queries with the
-ingestion task definition. `--suffix` selects a corpus by name only, so a
+ingestion task definition. Add `"--metrics-sink","cloudwatch"` to the command
+to publish the query's latency, which the `QueryLatencyHigh` alarm and the
+dashboard read. `--suffix` selects a corpus by name only, so a
 serving layer must set it from the authenticated caller
 ([Query access and tenant isolation](../docs/operations.md#query-access-and-tenant-isolation)).
 

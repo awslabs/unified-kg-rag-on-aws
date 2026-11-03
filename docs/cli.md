@@ -79,6 +79,7 @@ Guide: [User Guide](./user-guide.md#4-querying-run-rag). Also takes the [provide
 | `--disable-query-processing` | off | Skip query translation and entity extraction. |
 | `--filters` | — | Attribute filters as space-separated 'key:value' pairs (a repeated --filters adds its pairs); a boolean or numeric field takes its type's value (in_schema:false, rank:2). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms of each --mode rag query under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not with --output-format json). |
 | `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
 | `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |

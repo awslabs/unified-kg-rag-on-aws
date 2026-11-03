@@ -19,6 +19,7 @@ from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_neptune as neptune_cfn
 from aws_cdk import aws_neptune_alpha as neptune
 from aws_cdk import aws_opensearchservice as opensearch
 from aws_cdk import aws_s3 as s3
@@ -33,6 +34,14 @@ from iac.stacks.storage_custom_resources import NoriPackage
 # --s3-prefix, default "pipeline-runs"). Anything else in the bucket, such as
 # an uploaded corpus, is never expired.
 CACHE_EXPIRY_PREFIXES = ("pipeline-runs/",)
+
+# The bucket is versioned so an overwritten or deleted corpus object can be
+# restored (a deleted source file removes its documents' artifacts on the next
+# incremental run). Noncurrent versions are kept this long, except under the
+# checkpoint prefixes, which every stage of a run overwrites: theirs go after
+# CHECKPOINT_NONCURRENT_DAYS, so versioning does not multiply checkpoint storage.
+NONCURRENT_VERSION_DAYS = 30
+CHECKPOINT_NONCURRENT_DAYS = 1
 
 # The domain's engine version. A change upgrades the domain in place
 # (enable_version_upgrade); with opensearch_nori_package the Nori package of
@@ -142,23 +151,42 @@ class StorageStack(Stack):
             enforce_ssl=True,
             server_access_logs_bucket=access_logs,
             server_access_logs_prefix="cache-access/",
-            versioned=False,
+            # Versioned (NONCURRENT_VERSION_DAYS above). Versioning cannot be
+            # turned off once on, only suspended.
+            versioned=True,
             # Cost/sustainability: expire stale pipeline cache + clean up
             # incomplete multipart uploads. Expiry is scoped to the prefixes the
             # app writes (CACHE_EXPIRY_PREFIXES) and never applies bucket-wide:
             # the corpus may live in this bucket too, and with incremental
             # indexing an expired source file looks deleted, so its graph and
-            # vector artifacts would be removed on the next run.
+            # vector artifacts would be removed on the next run. Of two
+            # overlapping noncurrent-version expirations S3 applies the
+            # shorter, so the checkpoint rules win under their prefixes.
             lifecycle_rules=[
                 s3.LifecycleRule(
                     id="abort-incomplete-uploads",
                     abort_incomplete_multipart_upload_after=Duration.days(7),
+                ),
+                s3.LifecycleRule(
+                    id="expire-noncurrent-versions",
+                    noncurrent_version_expiration=Duration.days(
+                        NONCURRENT_VERSION_DAYS
+                    ),
+                ),
+                # A delete marker left once its object's noncurrent versions
+                # expired (an expired checkpoint, say) would stay forever.
+                s3.LifecycleRule(
+                    id="remove-expired-delete-markers",
+                    expired_object_delete_marker=True,
                 ),
                 *(
                     s3.LifecycleRule(
                         id=f"expire-{prefix.rstrip('/')}",
                         prefix=prefix,
                         expiration=Duration.days(30),
+                        noncurrent_version_expiration=Duration.days(
+                            CHECKPOINT_NONCURRENT_DAYS
+                        ),
                     )
                     for prefix in CACHE_EXPIRY_PREFIXES
                 ),
@@ -219,7 +247,7 @@ class StorageStack(Stack):
         # db.serverless and scales each between the NCU bounds; the endpoints,
         # IAM auth and Gremlin API are the same, so the app needs no change.
         serverless = self.config.neptune_serverless_ncu
-        return neptune.DatabaseCluster(
+        cluster = neptune.DatabaseCluster(
             self,
             "Neptune",
             vpc=self.vpc,
@@ -249,8 +277,20 @@ class StorageStack(Stack):
             # default of their creation time, so a pin would change the engine
             # of every cluster not already on it (iac/README.md).
             auto_minor_version_upgrade=True,
+            # UTC; minor engine upgrades and patches apply in the maintenance
+            # window, which must not overlap the backup window (config.py).
+            preferred_maintenance_window=self.config.neptune_maintenance_window,
+            preferred_backup_window=self.config.neptune_backup_window,
             removal_policy=self.removal_policy,
         )
+        # The instances' own window (OS patches, instance-level updates): the
+        # construct offers none, so set the cluster's on each one.
+        for child in cluster.node.children:
+            if isinstance(child, neptune_cfn.CfnDBInstance):
+                child.preferred_maintenance_window = (
+                    self.config.neptune_maintenance_window
+                )
+        return cluster
 
     # ---------------------------------------------------------- OpenSearch
     def _build_opensearch(self) -> opensearch.Domain:
@@ -287,6 +327,7 @@ class StorageStack(Stack):
         os_subnets = ec2.SubnetSelection(
             subnets=selected[: (zone_count if multi_node else 1)]
         )
+        off_peak = self.config.opensearch_off_peak_start
         domain = opensearch.Domain(
             self,
             "OpenSearch",
@@ -327,6 +368,17 @@ class StorageStack(Stack):
             ),
             enforce_https=True,
             tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
+            # Service software updates and Auto-Tune run in the daily 10-hour
+            # off-peak window, on for every domain created since 2023 and by
+            # default starting at 10:00 P.M. region-local time. CDK would emit
+            # 22:00 UTC for an enabled window without a start (07:00 in Seoul,
+            # say), so the options are set only with opensearch_off_peak_start.
+            off_peak_window_enabled=True if off_peak else None,
+            off_peak_window_start=(
+                opensearch.WindowStartTime(hours=off_peak[0], minutes=off_peak[1])
+                if off_peak
+                else None
+            ),
             removal_policy=self.removal_policy,
         )
         # The domain creates its log group itself with CDK's default RETAIN;
