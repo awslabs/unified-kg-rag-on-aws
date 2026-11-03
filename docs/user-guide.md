@@ -449,7 +449,13 @@ models:
   when a request starts; asking for the model maximum throttles concurrent
   ingestion. Long-output prompts derive a higher floor that wins (by default
   23192 for graph extraction and gleaning, 18992 for document translation,
-  29792 for claims), rising with their per-chunk limits.
+  29792 for claims), rising with their per-chunk limits. The short-answer
+  query calls ask for less (`search.output_ceilings`, 4096 each: the
+  router, the query entity and keyword extractions, the dynamic-selection
+  report ratings; `evaluation.answer_span_output_ceiling` for the answer-span
+  extractor), never less than the call's thinking budget plus 1024 (an
+  effort of low budgets 2048, high 8192), so an `auto` query reserves about
+  29k output tokens instead of 49k.
 - Curated models, request shapes, prompt caching and
   `aws.bedrock.model_overrides` are in the [Model Catalog](./models.md).
 
@@ -839,7 +845,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 | `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one. |
 | `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
 | `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
-| `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). |
+| `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read is cancelled or ignored (one fast-model call a query with the defaults, two when routed to global). |
 
 **LightRAG (dual-level keyword):**
 
@@ -863,6 +869,33 @@ chunks are taken: `weight` (the default) gives each matched item
 cited chunks that best match the query, one search a side, as upstream
 LightRAG does by default. The default stays `weight` until an evaluation
 compares the two.
+
+### Answer style
+
+Every strategy answers with the concise prompt by default: a one-sentence
+direct answer, then brief support (`custom_prompts.answer_generation_*`).
+`search.answer_prompt_style` gives a strategy the comprehensive prompt
+instead, a multi-paragraph markdown answer that explains every key point,
+modelled on MS GraphRAG's global reduce prompt
+(`custom_prompts.comprehensive_answer_*`):
+
+```yaml
+search:
+  answer_prompt_style: {global: comprehensive, drift: comprehensive}
+```
+
+`auto` uses the style of the strategy it routes to. The concise default
+stays until an evaluation compares the two; `answer_match` scores read the
+first line that is not a heading (`evaluation.answer_span`), so a
+comprehensive answer scores lower on exact match whatever its quality.
+
+Global search hands the answer model its ranked key points followed by the
+reports they cite. `search.global_search.evidence_tokens` caps that report
+text (whole reports, best point first): null (default) keeps as much as the
+context budget holds, which on a large cut is most of a global query's input
+tokens; `0` sends the key points only, as MS GraphRAG's reduce step reads
+them, and the answer then reports no sources (the key points are model
+output).
 
 ### Examples
 
@@ -1600,7 +1633,11 @@ adds `evaluation_comparison_<timestamp>.json`:
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: the mean over queries of the
   per-query mean over repeats, and `repeat_stdev` (run-to-run noise);
-  `routed_strategies` shows how `auto` routed.
+  `routed_strategies` shows how `auto` routed. The chain extracts each
+  question's entities and keywords once (`search.query_extraction_cache_size`,
+  1024 questions), so the repeats and the strategies that read them (`mix`
+  and `hybrid` the keywords, `local` the entities) search with the same
+  ones, and the run-to-run noise is the retrieval's and the answer's.
 - `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy over
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the

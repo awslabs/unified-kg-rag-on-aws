@@ -3411,6 +3411,20 @@ class GlobalSearchConfig(BaseModel):
             "and key points need. Local and mix search cover chunk evidence."
         ),
     )
+    evidence_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Tokens of the cited reports' text that follow the key points in "
+            "the answer context: whole reports, best-scored point first, "
+            "until the next would exceed it. null (default) = no cap: as many "
+            "as the answer's context budget holds, which on a large cut is "
+            "most of a global query's input tokens. 0 = the key points only, "
+            "as MS GraphRAG's reduce step reads them; the answer then reports "
+            "no sources, since the key points are model output. Applies to "
+            "the map-reduce path (enable_map_reduce)."
+        ),
+    )
 
 
 class LocalSearchConfig(BaseModel):
@@ -3702,6 +3716,61 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
     return strategies
 
 
+AnswerPromptStyle = Literal["concise", "comprehensive"]
+
+
+def _reject_auto_style(
+    value: dict[SearchStrategy, AnswerPromptStyle],
+) -> dict[SearchStrategy, AnswerPromptStyle]:
+    if SearchStrategy.AUTO in value:
+        raise ValueError(
+            "answer_prompt_style is keyed by the strategy a query runs; auto "
+            "resolves to one of them, so set the style on those instead"
+        )
+    return value
+
+
+class QueryOutputCeilingsConfig(BaseModel):
+    """max_tokens of the short-answer query calls.
+
+    Bedrock reserves input + max_tokens against the tokens-per-minute quota
+    when a request starts, so a router that answers one word but asks for
+    aws.bedrock.default_max_output_tokens reserves as much as the answer.
+    A ceiling never leaves less than the call's thinking budget plus 1,024
+    answer tokens (thinking counts toward max_tokens): the effort level's
+    budget (low 2,048, medium 4,096, high 8,192, xhigh 16,384, max 32,768)
+    on adaptive-thinking and OpenAI reasoning models, the thinking
+    budget_tokens on older Claude models, none on a model that does not
+    reason. null leaves the call at the default cap.
+    """
+
+    strategy_selection: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of the auto router call (models.roles."
+            "strategy_selection), which answers one strategy name"
+        ),
+    )
+    query_extraction: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of the query entity extraction (local, drift) and "
+            "the dual-keyword extraction (mix, hybrid)"
+        ),
+    )
+    community_relevance: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of each report rating of global search's dynamic "
+            "selection (search.global_search.use_dynamic_selection), which "
+            "answers one number"
+        ),
+    )
+
+
 class SearchConfig(BaseModel):
     auto_routable_strategies: Annotated[
         list[SearchStrategy], AfterValidator(_reject_auto_strategy)
@@ -3823,6 +3892,55 @@ class SearchConfig(BaseModel):
             "retried with backoff within the retry section's budget "
             "(retry.max_total_seconds)."
         ),
+    )
+    auto_speculative_extraction: bool = Field(
+        default=True,
+        description=(
+            "For an auto query, start the query entity and keyword "
+            "extractions that the routable strategies read, and the query "
+            "translation, at the same time as the router call instead of "
+            "after it: auto then costs the latency of the strategy it routes "
+            "to plus nothing. The router prompt and its decision are "
+            "unchanged. An extraction the chosen strategy does not read is "
+            "cancelled, or ignored when it has already answered (its result "
+            "still fills the query_extraction_cache_size cache): with the "
+            "default routable strategies, one fast-model extraction call per "
+            "auto query (two when it routes to global). false runs them "
+            "after the router, only for the strategy it picked."
+        ),
+    )
+    query_extraction_cache_size: int = Field(
+        default=1024,
+        ge=0,
+        description=(
+            "Query entity and keyword extractions a chain keeps in memory, "
+            "keyed by the question, the target language, the model and the "
+            "prompt text (a custom_prompts override is a new key), least "
+            "recently used dropped first. A repeated question (run-eval "
+            "--repeats, the arms of a strategy comparison, a retry) reuses "
+            "the extraction instead of calling the model again, so every "
+            "arm searches with the same entities and keywords. A failed "
+            "extraction is not kept. 0 disables it."
+        ),
+    )
+    answer_prompt_style: Annotated[
+        dict[SearchStrategy, AnswerPromptStyle], AfterValidator(_reject_auto_style)
+    ] = Field(
+        default_factory=dict,
+        description=(
+            "Answer prompt per strategy: concise (default for every strategy: "
+            "a one-sentence direct answer and brief support, "
+            "custom_prompts.answer_generation_*) or comprehensive (a "
+            "multi-paragraph markdown answer that explains every key point, "
+            "modelled on MS GraphRAG's global reduce prompt, "
+            "custom_prompts.comprehensive_answer_*), e.g. {global: "
+            "comprehensive, drift: comprehensive}. An auto query uses the "
+            "style of the strategy it routes to."
+        ),
+    )
+    output_ceilings: QueryOutputCeilingsConfig = Field(
+        default_factory=QueryOutputCeilingsConfig,
+        description="max_tokens of the short-answer query calls",
     )
 
     def query_model_timeout(self, configured: float) -> float:
@@ -4098,6 +4216,20 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for generating answers from knowledge graph",
     )
+    comprehensive_answer_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the comprehensive answer of the "
+            "strategies search.answer_prompt_style sets to comprehensive"
+        ),
+    )
+    comprehensive_answer_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the comprehensive answer of the "
+            "strategies search.answer_prompt_style sets to comprehensive"
+        ),
+    )
     entity_extraction_system: str | None = Field(
         default=None,
         description="Custom system prompt for extracting named entities from user queries",
@@ -4266,6 +4398,7 @@ class CustomPromptConfig(BaseModel):
 _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "answer_generation": frozenset({"query", "context"}),
     "answer_span_extraction": frozenset({"question", "answer"}),
+    "comprehensive_answer": frozenset({"query", "context"}),
     "claim_extraction": frozenset({"input_text"}),
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
@@ -4437,6 +4570,16 @@ class EvaluationConfig(BaseModel):
             "reads the whole answer. "
             "Recorded in the run manifest (answer_scoring) and each "
             "answer_match report."
+        ),
+    )
+    answer_span_output_ceiling: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of each answer_span 'extracted' call, which answers "
+            "a short span; it never leaves less than the call's thinking "
+            "budget (judge_effort's, see search.output_ceilings) plus 1,024 "
+            "tokens. null = aws.bedrock.default_max_output_tokens."
         ),
     )
     answer_normalization: Literal["default", "official_squad", "hotpotqa"] = Field(

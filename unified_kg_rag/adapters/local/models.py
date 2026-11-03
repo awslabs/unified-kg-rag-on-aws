@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models.provider_config import (
 )
 from unified_kg_rag.ports.model_factory import (
     LanguageModelInfo,
+    ceiled_output_tokens,
     effective_max_output_tokens,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
@@ -296,6 +297,10 @@ class _LocalLanguageModelFactory:
             ),
             info.max_output_tokens,
         )
+        # A short-answer query prompt caps it (search.output_ceilings); these
+        # servers report no reasoning controls, so no thinking budget is kept.
+        if not kwargs.get("max_tokens") and (ceiling := kwargs.get("output_ceiling")):
+            max_tokens = ceiled_output_tokens(max_tokens, int(ceiling), 0)
         temperature = kwargs.get("temperature", self.settings.temperature)
         purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
         callbacks = _tracing_callbacks(

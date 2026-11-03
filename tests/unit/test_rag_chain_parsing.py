@@ -234,16 +234,27 @@ def test_format_search_output_step_returns_a_search_output() -> None:
     assert out.processed_query.original_query == "q"
 
 
-# --- _query_processing_branch simple path --------------------------------
+# --- query processing off: the simple path --------------------------------
 
 
-def test_query_processing_branch_simple_query_passthrough(
+async def test_query_processing_off_passes_the_query_through(
     config: Config, monkeypatch
 ) -> None:
     chain = GraphRAGChain(config=config)
-    branch = chain._query_processing_branch()
+
+    def _no_llm(*a, **k):
+        raise AssertionError("query processing off makes no LLM call")
+
+    chain._get_chain_for_prompt = _no_llm  # type: ignore[assignment]
     # enable_query_processing=False -> the no-LLM simple path runs.
-    result = branch.invoke({"query": "raw query", "enable_query_processing": False})
+    state = await chain._route_and_process_step(
+        {
+            "query": "raw query",
+            "enable_query_processing": False,
+            "search_strategy": SearchStrategy.LOCAL,
+        }
+    )
+    result = state["processed_query"]
     assert isinstance(result, ProcessedQuery)
     assert result.original_query == "raw query"
     assert result.final_query == "raw query"

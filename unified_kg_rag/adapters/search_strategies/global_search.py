@@ -124,6 +124,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 prompt_class=CommunityRelevancePrompt,
                 parser=str_output_parser,
                 custom_prompts=config.custom_prompts,
+                output_ceiling=config.search.output_ceilings.community_relevance,
             )
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
@@ -666,7 +667,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         The result is the synthesized item followed by the reports the
         packed points cite (``_evidence``), best point first: the evidence the
         points came from, for the answer budget left over and the reported
-        sources. Below ``map_reduce_min_results`` reports the results pass
+        sources (whole reports up to ``evidence_tokens`` when it is set). Below ``map_reduce_min_results`` reports the results pass
         through unchanged. If the map phase yields no usable scored points
         (e.g. every map call failed to parse), it degrades to the legacy
         concat-and-reduce path so global search never hard-fails.
@@ -744,9 +745,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         packed_points = await asyncio.to_thread(
             self._pack_points_within_budget, ranked_points
         )
+        evidence = self._evidence(packed_points, batches)
+        if self.global_search_config.evidence_tokens is not None:
+            evidence = await asyncio.to_thread(self._cap_evidence, evidence)
+            stats["global_evidence_reports"] = len(evidence)
         return await self._reduce_from_points(
             packed_points,
-            self._evidence(packed_points, batches),
+            evidence,
             query,
             config=config,
             degraded=degraded,
@@ -804,6 +809,29 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             batches[b][i].model_copy(update={"score": best[(b, i)] / 100.0})
             for b, i in sorted(best, key=lambda key: (-best[key], key))
         ]
+
+    def _cap_evidence(self, evidence: list[RetrievalResult]) -> list[RetrievalResult]:
+        """The leading ``evidence`` reports whose text fits in
+        ``evidence_tokens``, whole reports in order (best point first)."""
+        budget = self.global_search_config.evidence_tokens or 0
+        if budget <= 0 or not evidence:
+            return []
+        costs = self.token_manager.count_tokens_many([r.content for r in evidence])
+        kept: list[RetrievalResult] = []
+        used = 0
+        for report, cost in zip(evidence, costs, strict=True):
+            if used + cost > budget:
+                break
+            kept.append(report)
+            used += cost
+        logger.debug(
+            "Kept %s/%s cited reports (%s tokens) within evidence_tokens %s",
+            len(kept),
+            len(evidence),
+            used,
+            budget,
+        )
+        return kept
 
     async def _run_map_phase(
         self,

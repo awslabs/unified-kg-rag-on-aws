@@ -1287,7 +1287,20 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   describes exactly these candidates, and unrecognized output falls back to
   `local` (else the first candidate). The default set is `local`, `mix`,
   `global` (`drift` costs up to 27 LLM calls); with one candidate no router
-  call is made. The
+  call is made. The query processing the candidates may read (entities for
+  `local`, keywords for `mix`/`hybrid`, the translation) starts alongside
+  the router (`search.auto_speculative_extraction`), so `auto`'s critical
+  path is the router or the extraction, whichever is slower, then the
+  strategy: two model round trips before retrieval became one. A routed
+  strategy never waits for an extraction it does not read, which is
+  cancelled when the query processing ends; we chose this over one router
+  prompt that also returns entities and keywords because the router prompt
+  and its decision stay byte-identical (no re-validation of the routing),
+  `custom_prompts.strategy_selection_*` keeps working, and the router's
+  output stays one word, at the price of one or two short fast-model
+  calls a query. The extractions are cached per question, target language,
+  model and prompt text (`search.query_extraction_cache_size`), so the
+  repeats and arms of a comparison read the same ones. The
   prompt sends questions that chain from a named entity to `local` (synthetic
   multi-hop harness: `local` 0.925, `mix` 0.40 exact match).
 
@@ -1332,6 +1345,12 @@ into `max_map_reduce_tokens` and by default handed to the answer model as one
 synthesized section (`reduce_with_llm: false`: a separate reduce call only
 added a rewrite that could drop facts), followed by the reports they cite; a
 point citing none of its batch's reports credits the whole batch.
+`evidence_tokens` caps the cited report text (whole reports, best point
+first); null keeps the reports the answer's context budget holds, the
+largest part of a global query's input, while MS GraphRAG's reduce reads the
+key points only (`0`). The answer prompt is the concise one unless
+`search.answer_prompt_style` gives the strategy the comprehensive one,
+modelled on MS GraphRAG's reduce prompt (multiple paragraphs, markdown).
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those

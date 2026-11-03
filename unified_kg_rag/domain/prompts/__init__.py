@@ -22,6 +22,7 @@ from .graph_extraction import (
 from .retrieval import (
     AnswerGenerationPrompt,
     CommunityRelevancePrompt,
+    ComprehensiveAnswerPrompt,
     DriftActionPrompt,
     DriftHydePrompt,
     DriftPrimerPrompt,
@@ -43,6 +44,7 @@ __all__ = [
     "ClaimExtractionPrompt",
     "CommunityRelevancePrompt",
     "CommunityReportPrompt",
+    "ComprehensiveAnswerPrompt",
     "CorpusProfilePrompt",
     "DescriptionSummarizationPrompt",
     "DriftActionPrompt",

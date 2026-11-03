@@ -921,6 +921,13 @@ From 0.2.3 (or a `main` checkout since):
   OpenAI-compatible servers (`backend: local` presets 300 s and a 900 s
   query deadline). An embedding factory's `get_model` now receives
   `model_purpose`, as a language-model factory's does (#522).
+- Query-path options: `search.answer_prompt_style` gives a strategy the
+  comprehensive answer prompt (`ComprehensiveAnswerPrompt`, modelled on MS
+  GraphRAG's global reduce prompt, `custom_prompts.comprehensive_answer_*`)
+  instead of the concise default, which every strategy keeps;
+  `search.global_search.evidence_tokens` caps the cited report text after
+  the key points (null, the default, keeps the current behaviour; `0` sends
+  the key points only) (#525).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1075,6 +1082,26 @@ From 0.2.3 (or a `main` checkout since):
   pulled in LangGraph. The `eval` extra, whose ragas needs it, declares it
   with the same `>=1.3.9` security floor, so a pip install of `[eval]`
   gets the floor too (#520).
+- `auto` starts the entity and keyword extractions its routable strategies
+  read, and the query translation, alongside the router call instead of
+  after it (`search.auto_speculative_extraction`, on by default): `auto`
+  routed to local or mix makes two model round trips before retrieval
+  instead of three and takes as long as the strategy asked for directly
+  (1.54 s to 1.03 s at 0.5 s a call). The router prompt and its decisions
+  are unchanged; the extraction the route does not read is cancelled or
+  ignored, one or two short fast-model calls a query (about 400-1,000
+  input tokens with the shipped prompts) (#525).
+- Query entities and keywords are cached per question, target language,
+  model and prompt text (`search.query_extraction_cache_size`, 1024; 0
+  turns it off), so `run-eval --repeats` and the arms of a strategy
+  comparison search with the same ones and pay the extraction once (#525).
+- The short-answer query calls ask for a smaller max_tokens
+  (`search.output_ceilings`, 4096 each: the router, the query entity and
+  keyword extractions, the dynamic-selection ratings; and
+  `evaluation.answer_span_output_ceiling`), never less than the call's
+  thinking budget plus 1024, so an `auto` query reserves 28,672 output
+  tokens against the Bedrock quota instead of 49,152. A language-model
+  factory's `get_model` may receive `output_ceiling` (#525).
 
 ### Fixed
 Bugs present in 0.2.3.
