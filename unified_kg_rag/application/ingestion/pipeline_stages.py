@@ -104,6 +104,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     seed_text_units,
 )
 from unified_kg_rag.domain.models import (
+    ChunkingStrategy,
     Claim,
     Community,
     CommunityReport,
@@ -919,16 +920,33 @@ class TextChunkingStage(PipelineStage):
         self,
         config: Config,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.TEXT_CHUNKING, config, providers)
 
         chunker_type = self.config.processing.chunking.chunker_type
+        # The intelligent chunker's boundary answers are kept in the
+        # extraction store (by pre-chunk text and chunking settings): a run
+        # reads them instead of asking the model again, unless it rebuilds
+        # everything (--force-rebuild), and refreshes them either way.
+        self.store = (
+            ExtractionStore(
+                self.config, self.providers.build_vector_indexer, reuse=reuse_stored
+            )
+            if chunker_type is ChunkingStrategy.INTELLIGENT
+            else None
+        )
         self.chunker = ChunkerFactory.create_chunker(
             config=self.config,
             chunker_type=chunker_type,
             providers=self.providers,
+            boundary_records=self.store,
         )
         self.chunker_type = chunker_type
+
+    def close(self) -> None:
+        if self.store is not None:
+            self.store.close()
 
     def _execute_core(
         self, context: PipelineContext
@@ -2255,11 +2273,16 @@ class IndexingStage(_RegistryStage):
         config: Config,
         doc_status: "DocStatusPort | None" = None,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.INDEXING, config, providers)
         self.indexing_manager = IndexingManager(
             config=self.config, providers=self.providers
         )
+        # A text embedded unchanged takes its stored vector (the indexer's
+        # default), unless the run rebuilds everything (--force-rebuild).
+        if not reuse_stored:
+            self.indexing_manager.opensearch_indexer.set_embedding_reuse(False)
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
 
@@ -2467,7 +2490,16 @@ class IndexingStage(_RegistryStage):
 
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
-        self._record_build(context, text_units)
+        delta = context.incremental_delta
+        if (
+            delta is None
+            or self.config.indexing.reset
+            or not delta.is_empty
+            or any(s.total_items or s.failed_items for s in indexing_results.values())
+        ):
+            # An incremental run that found nothing to index wrote no item:
+            # the indices keep the record of the run that did.
+            self._record_build(context, text_units)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},

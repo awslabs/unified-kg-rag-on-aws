@@ -742,8 +742,12 @@ class IncrementalIndexer:
                 counted_failed_doc_ids,
                 claims_missing_doc_ids,
             )
+            # A commit that recorded no document (nothing changed, or only
+            # deletions) extracted nothing: the stored settings still
+            # describe the indexed documents.
             if (
-                self.scope is not None
+                lineages
+                and self.scope is not None
                 and self.extraction_fingerprint is not None
                 and self.extraction_settings is not None
             ):
@@ -847,7 +851,8 @@ class IncrementalIndexer:
 
     def _put(self, records: Sequence[DocStatusRecord]) -> None:
         """Write ``records``, stamped with the run's pipeline id."""
-        self.doc_status.put_many(_written_by(records, self.written_by))
+        if records:
+            self.doc_status.put_many(_written_by(records, self.written_by))
 
     def _delete_records(self, doc_ids: list[str]) -> None:
         """Delete removed documents' records."""
@@ -1010,10 +1015,9 @@ class IncrementalIndexer:
             )
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
+        unread = [lin.doc_id for lin in lineages if lin.doc_id not in self._pending]
         prior = {
-            **self.doc_status.get_many(
-                [lin.doc_id for lin in lineages if lin.doc_id not in self._pending],
-            ),
+            **(self.doc_status.get_many(unread) if unread else {}),
             **self._prior,
         }
         records: list[DocStatusRecord] = []
@@ -1886,6 +1890,8 @@ def close_attempts(
     are new and have none. The records are stamped ``written_by``. Returns
     how many it closed.
     """
+    if not delta.to_process:
+        return 0
     check_write_fence()
     stored = store.get_many(delta.to_process)
     still_open = [

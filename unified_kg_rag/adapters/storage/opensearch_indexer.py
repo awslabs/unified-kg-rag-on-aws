@@ -3,7 +3,10 @@
 import re
 import time
 import uuid
-from collections.abc import Callable, Collection, Mapping
+from array import array
+from collections import OrderedDict
+from collections.abc import Callable, Collection, Hashable, Mapping
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
@@ -22,7 +25,10 @@ from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
-from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
+from unified_kg_rag.domain.ingestion.contributions import (
+    RECORD_KEYS_ATTRIBUTE,
+    RECORD_KINDS,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Claim,
@@ -37,6 +43,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
+from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
     IndexingStats,
@@ -52,6 +59,7 @@ from unified_kg_rag.shared import (
     get_logger,
 )
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
+from unified_kg_rag.shared.store_lookups import StoreLookupCache, lookup_cache
 from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
@@ -66,13 +74,15 @@ logger = get_logger(__name__)
 # embedded 1,600 texts in half the time 8 took, with no throttling.
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 16
-# Items embedded and bulk-written at a time: one round of the concurrent
-# embedding requests. Holding a whole item type's vectors as float lists
-# before one bulk call took gigabytes on a large corpus.
-_WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 # Ids per read-back search at most (fewer when the index's limits are lower:
 # _limits).
 _READ_BATCH_SIZE = 1000
+# Items embedded and bulk-written at a time. Holding a whole item type's
+# vectors as float lists before one bulk call took gigabytes on a large
+# corpus. One read-back search per slice fetches the stored vectors it may
+# reuse (_reusable_vectors); its texts to embed take about one round of the
+# concurrent embedding requests (_EMBED_BATCH_SIZE * _EMBED_WORKERS = 800).
+_WRITE_SLICE_SIZE = _READ_BATCH_SIZE
 # Values per terms search of find_documents at most.
 _FIND_BATCH_SIZE = 100
 # The settings _get_base_mapping adds for the vector indices (the config
@@ -127,6 +137,19 @@ _EXACT_TYPES = frozenset({"keyword", "boolean"})
 # fails the whole entity's write), and each key would count against the
 # index's field limit.
 _SEED_PROPERTIES_MAPPING: dict[str, Any] = {"type": "object", "enabled": False}
+
+# Each vector field's digest of the text it embeds, under the field's name
+# (_embedding_digest: the embedding settings are hashed in). A write reuses
+# a stored vector whose digest matches instead of embedding its text again.
+# Kept in _source only (keywords neither indexed nor in doc values: a
+# dynamic mapping, before an older index is given this one, would make the
+# same type).
+_DIGESTS_FIELD = "embedding_digests"
+_DIGEST_LENGTH = 16
+# The stored vectors writes replaced, kept (by digest, as float64 arrays) for
+# a later write of their text: a removal rewrites an item the commit after it
+# rewrites again. At 1,024 dimensions, 16 MB at most.
+_REPLACED_VECTORS = 2048
 
 
 def _present(**fields: Any) -> dict[str, Any]:
@@ -190,6 +213,8 @@ class _ItemSpec(NamedTuple):
     # One text per embedding field of the document, in prepare_doc's order.
     extractors: list[Callable[[Any], str]]
     prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]]
+    # The knn_vector field each extractor's text is embedded into.
+    vector_fields: tuple[str, ...]
 
 
 # How OpenSearch before 2.17 refuses the knn_vector storage keys.
@@ -267,10 +292,24 @@ def _bulk_item_error(error: Any) -> str:
     return " (caused by ".join(parts) + ")" * (len(parts) - 1)
 
 
+def _with_digests(
+    prepare_doc: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
+    digests: dict[int, dict[str, str]],
+) -> Callable[[Any, tuple[list[float], ...]], dict[str, Any]]:
+    """``prepare_doc`` adding each item's digests (by ``id(item)``)."""
+
+    def prepare(item: Any, vectors: tuple[list[float], ...]) -> dict[str, Any]:
+        return {**prepare_doc(item, vectors), _DIGESTS_FIELD: digests[id(item)]}
+
+    return prepare
+
+
 class OpenSearchIndexer(VectorIndexer):
     # Recorded in the _meta of the indices a full build creates (None records
     # nothing); see set_doc_status_tracking.
     _doc_status_tracked: bool | None = None
+    # Whether writes reuse stored vectors (set_embedding_reuse).
+    _reuse_embeddings: bool = True
 
     def __init__(
         self,
@@ -333,6 +372,153 @@ class OpenSearchIndexer(VectorIndexer):
     def in_process(self) -> bool:
         """Whether its search engine is embedded in this process (SQLite)."""
         return getattr(self.opensearch_client, "in_process", False) is True
+
+    # --- alias and mapping lookups (cached for a run: shared.store_lookups) --
+
+    def _lookup_cache(self) -> tuple[StoreLookupCache, Hashable] | None:
+        """The run's lookup cache and what names this indexer's store in it
+        (``store_identity``: two clients of one store share their lookups);
+        ``None`` outside a run, or for a client that names no store."""
+        cache = lookup_cache()
+        store: Hashable | None = getattr(self.opensearch_client, "store_identity", None)
+        return None if cache is None or store is None else (cache, store)
+
+    def _live_index(self, alias_name: str) -> str | None:
+        """The index ``alias_name`` points at (``None``: none), read once per
+        run."""
+        if (cached := self._lookup_cache()) is None:
+            return self.opensearch_client.get_index_name_by_alias(alias_name)
+        cache, store = cached
+        return cache.alias(
+            store,
+            alias_name,
+            lambda: self.opensearch_client.get_index_name_by_alias(alias_name),
+        )
+
+    def _index_mappings(self, index_name: str) -> dict[str, Any]:
+        """``index_name``'s mappings, read once per run."""
+        if (cached := self._lookup_cache()) is None:
+            return self.opensearch_client.get_index_mappings(index_name)
+        cache, store = cached
+        return cache.mappings(
+            store,
+            index_name,
+            lambda: self.opensearch_client.get_index_mappings(index_name),
+        )
+
+    def _forget_aliases(self) -> None:
+        if (cached := self._lookup_cache()) is not None:
+            cached[0].forget_aliases(cached[1])
+
+    def _forget_mappings(self, index_names: Collection[str]) -> None:
+        if (cached := self._lookup_cache()) is not None:
+            cached[0].forget_mappings(cached[1], index_names)
+
+    def _update_alias(
+        self, alias_name: str, index_name: str, remove_pattern: str | None = None
+    ) -> None:
+        self._forget_aliases()
+        if remove_pattern is None:
+            self.opensearch_client.update_alias(alias_name, index_name)
+        else:
+            self.opensearch_client.update_alias(
+                alias_name, index_name, remove_pattern=remove_pattern
+            )
+
+    def _delete_alias(self, index_names: list[str], alias_names: list[str]) -> None:
+        self._forget_aliases()
+        self.opensearch_client.delete_alias(
+            index_names=index_names, alias_names=alias_names
+        )
+
+    def _delete_indices(self, index_names: list[str]) -> None:
+        """Delete aliased (or once aliased) indices: an index's aliases go
+        with it."""
+        self._forget_aliases()
+        self._forget_mappings(index_names)
+        self.opensearch_client.delete_indices(index_names)
+
+    def _put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
+        self._forget_mappings([index_name])
+        self.opensearch_client.put_index_mapping(index_name, body)
+
+    def _put_index_meta(self, index_name: str, meta: dict[str, Any]) -> None:
+        self._forget_mappings([index_name])
+        self.opensearch_client.put_index_meta(index_name, meta)
+
+    # --- embedding reuse ------------------------------------------------------
+
+    def set_embedding_reuse(self, reuse: bool) -> None:
+        """Whether writes reuse the stored vectors of unchanged texts (see
+        ``_embed_and_write``); off, every text is embedded again."""
+        self._reuse_embeddings = reuse
+
+    @cached_property
+    def _digest_seed(self) -> str:
+        """The embedding settings a vector's digest hashes with its text: a
+        vector of another provider, model, dimension or input cap is never
+        taken for this run's."""
+        provider = self.config.providers.embedding
+        settings: list[Any] = [
+            provider.kind,
+            model_id_value(self.config.embedding_model_id),
+            self._embedding_dimension,
+        ]
+        if provider.kind != BEDROCK:
+            settings.append(provider.max_input_tokens)
+        return "\x1f".join(str(value) for value in settings)
+
+    @cached_property
+    def _replaced(self) -> "OrderedDict[str, array[float]]":  # array[...]: 3.12+
+        """The stored vectors writes replaced, by digest, oldest first (see
+        ``_generate_embeddings``)."""
+        return OrderedDict()
+
+    def _embedding_digest(self, text: str) -> str:
+        """The digest stored with the vector of ``text``."""
+        return compute_hash(f"{self._digest_seed}\x1e{text}", length=_DIGEST_LENGTH)
+
+    def _reusable_vectors(
+        self, alias_prefix: str, suffix: str, items: list[Any], spec: _ItemSpec
+    ) -> dict[str, dict[str, Any]]:
+        """The stored vectors and digests of ``items`` in ``suffix``'s live
+        index of ``alias_prefix``, by id: one read of at most
+        ``_READ_BATCH_SIZE`` ids. None to read when reuse is off, or the live
+        index holds no digests (an earlier release built it) or another
+        model's vectors. Best-effort: a failed read reads none (every text
+        is embedded)."""
+        if not self._reuse_embeddings or not items:
+            return {}
+        try:
+            index_name = self._live_index(self._get_name(alias_prefix, suffix))
+            if not index_name:
+                return {}
+            mappings = self._index_mappings(index_name)
+            model, dimensions = stored_embedding_settings(mappings)
+            if (
+                _DIGESTS_FIELD not in (mappings.get("properties") or {})
+                or model not in (None, model_id_value(self.config.embedding_model_id))
+                or not dimensions <= {self._embedding_dimension}
+            ):
+                return {}
+            return {
+                source["id"]: source
+                for source in self._read_sources(
+                    alias_prefix,
+                    sorted({item.id for item in items}),
+                    suffix,
+                    fields=[*spec.vector_fields, _DIGESTS_FIELD],
+                )
+            }
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - every text is embedded instead
+            logger.warning(
+                "Reading the stored vectors of %s failed; embedding every text: %s",
+                spec.name,
+                e,
+            )
+            return {}
 
     def _index_prefixes(self) -> list[str]:
         return [spec.alias_prefix for spec in self._specs()]
@@ -422,12 +608,10 @@ class OpenSearchIndexer(VectorIndexer):
         expected = self._embedding_meta()
         mapping_funcs = self._mapping_funcs()
         for prefix in self._index_prefixes():
-            index_name = self.opensearch_client.get_index_name_by_alias(
-                self._get_name(prefix, suffix)
-            )
+            index_name = self._live_index(self._get_name(prefix, suffix))
             if not index_name:
                 continue
-            mappings = self.opensearch_client.get_index_mappings(index_name)
+            mappings = self._index_mappings(index_name)
             meta = mappings.get("_meta") or {}
             properties = mappings.get("properties") or {}
             stored_model, dimensions = stored_embedding_settings(mappings)
@@ -557,7 +741,7 @@ class OpenSearchIndexer(VectorIndexer):
             )
         missing = _missing_properties(expected, live)
         if missing or mappings.get("date_detection") is not False:
-            self.opensearch_client.put_index_mapping(
+            self._put_index_mapping(
                 index_name, {"date_detection": False, "properties": missing}
             )
 
@@ -572,17 +756,12 @@ class OpenSearchIndexer(VectorIndexer):
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
             try:
-                index_name = self.opensearch_client.get_index_name_by_alias(alias)
+                index_name = self._live_index(alias)
                 if not index_name:
                     continue
-                meta = (
-                    self.opensearch_client.get_index_mappings(index_name).get("_meta")
-                    or {}
-                )
+                meta = self._index_mappings(index_name).get("_meta") or {}
                 payload = record.over(meta.get(META_BUILD)).model_dump(mode="json")
-                self.opensearch_client.put_index_meta(
-                    index_name, {**meta, META_BUILD: payload}
-                )
+                self._put_index_meta(index_name, {**meta, META_BUILD: payload})
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the record is optional
@@ -618,7 +797,7 @@ class OpenSearchIndexer(VectorIndexer):
         )
 
         if indices_to_delete:
-            self.opensearch_client.delete_indices(indices_to_delete)
+            self._delete_indices(indices_to_delete)
 
         # Deleting an index drops its aliases. Only an alias still on an
         # index is deleted: deleting aliases none of which exists (a
@@ -626,9 +805,7 @@ class OpenSearchIndexer(VectorIndexer):
         for alias in aliases_to_delete:
             remaining = self.opensearch_client.get_indices_by_alias(alias)
             if remaining:
-                self.opensearch_client.delete_alias(
-                    index_names=remaining, alias_names=[alias]
-                )
+                self._delete_alias(index_names=remaining, alias_names=[alias])
 
         logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
 
@@ -641,6 +818,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_text_units_mapping,
                 [self._text_unit_embedding_text],
                 self._prepare_text_unit_doc,
+                ("text_embedding",),
             ),
             _ItemSpec(
                 "entities",
@@ -648,6 +826,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_entities_mapping,
                 [lambda e: e.name, self._entity_description_text],
                 self._prepare_entity_doc,
+                ("name_embedding", "description_embedding"),
             ),
             _ItemSpec(
                 "community reports",
@@ -655,6 +834,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_community_reports_mapping,
                 [lambda r: r.name, lambda r: r.summary, lambda r: r.full_content],
                 self._prepare_community_report_doc,
+                ("name_embedding", "summary_embedding", "full_content_embedding"),
             ),
             _ItemSpec(
                 "relationships",
@@ -662,6 +842,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_relationships_mapping,
                 [self._relationship_description_text],
                 self._prepare_relationship_doc,
+                ("description_embedding",),
             ),
             _ItemSpec(
                 "claims",
@@ -669,6 +850,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_claims_mapping,
                 [self._claim_description_text],
                 self._prepare_claim_doc,
+                ("description_embedding",),
             ),
         )
 
@@ -925,9 +1107,7 @@ class OpenSearchIndexer(VectorIndexer):
         given) of ``ids`` in ``suffix``'s live index of ``alias_prefix``; none
         without a live index. Raises when the read fails."""
         alias_name = self._get_name(alias_prefix, suffix)
-        index_name = (
-            self.opensearch_client.get_index_name_by_alias(alias_name) if ids else None
-        )
+        index_name = self._live_index(alias_name) if ids else None
         if not index_name:
             return []
         step = min(_READ_BATCH_SIZE, self._limits(index_name).id_batch_size)
@@ -1049,7 +1229,7 @@ class OpenSearchIndexer(VectorIndexer):
         order a window at a time, as :meth:`find_documents` reads."""
         prefix, _ = _VECTOR_COPY_FIELDS[kind]
         alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
-        index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+        index_name = self._live_index(alias_name)
         if not index_name:
             return {}
         iri = _IRI_FIELD[kind]
@@ -1103,7 +1283,7 @@ class OpenSearchIndexer(VectorIndexer):
         """Whether the live index of the ``prefix`` config field holds a
         document (``False`` without one): one size-1 search."""
         alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
-        if not self.opensearch_client.get_index_name_by_alias(alias_name):
+        if not self._live_index(alias_name):
             return False
         response = self.opensearch_client.search(
             index=alias_name,
@@ -1131,7 +1311,7 @@ class OpenSearchIndexer(VectorIndexer):
         iri = _IRI_FIELD[kind]
         ids = sorted(annotations)
         try:
-            index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+            index_name = self._live_index(alias_name)
             if not index_name:
                 stats.add_success(len(ids))
                 return stats
@@ -1229,11 +1409,7 @@ class OpenSearchIndexer(VectorIndexer):
         tell a full window from the last one. The window and the values per
         search follow the index's limits (``_limits``)."""
         alias_name = self._get_name(alias_prefix, suffix)
-        index_name = (
-            self.opensearch_client.get_index_name_by_alias(alias_name)
-            if values
-            else None
-        )
+        index_name = self._live_index(alias_name) if values else None
         if not index_name:
             return {}
         limits = self._limits(index_name)
@@ -1275,7 +1451,7 @@ class OpenSearchIndexer(VectorIndexer):
         alias_name = self._get_name(
             self.opensearch_config.extraction_records_index_prefix, suffix
         )
-        if not keys or not self.opensearch_client.get_index_name_by_alias(alias_name):
+        if not keys or not self._live_index(alias_name):
             return IndexingStats()
         return self.delete_by_id(
             keys,
@@ -1296,7 +1472,7 @@ class OpenSearchIndexer(VectorIndexer):
         prefix = self.opensearch_config.extraction_records_index_prefix
         alias_name = self._get_name(prefix, suffix)
         stats = IndexingStats()
-        if not self.opensearch_client.get_index_name_by_alias(alias_name):
+        if not self._live_index(alias_name):
             return stats
         index_name = self._new_index_name(
             alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
@@ -1322,9 +1498,7 @@ class OpenSearchIndexer(VectorIndexer):
                     )
                 stats.add_success(len(documents))
             check_write_fence()
-            self.opensearch_client.update_alias(
-                alias_name, index_name, remove_pattern=f"{alias_name}-*"
-            )
+            self._update_alias(alias_name, index_name, remove_pattern=f"{alias_name}-*")
         except NamespaceLeaseError:
             raise
         except Exception:
@@ -1410,7 +1584,7 @@ class OpenSearchIndexer(VectorIndexer):
         aliased) when there is none."""
         prefix = self.opensearch_config.extraction_records_index_prefix
         alias_name = self._get_name(prefix, suffix)
-        index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+        index_name = self._live_index(alias_name)
         if not index_name:
             index_name = self._new_index_name(
                 alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
@@ -1418,7 +1592,7 @@ class OpenSearchIndexer(VectorIndexer):
             self.opensearch_client.create_index(
                 index_name, self._get_extraction_records_mapping()
             )
-            self.opensearch_client.update_alias(alias_name, index_name)
+            self._update_alias(alias_name, index_name)
         return index_name
 
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
@@ -1505,10 +1679,10 @@ class OpenSearchIndexer(VectorIndexer):
             for spec in self._specs()
             if builds.get(spec.alias_prefix, True)
             and (alias := self._get_name(spec.alias_prefix, suffix))
-            and (rebuild or not self.opensearch_client.get_index_name_by_alias(alias))
+            and (rebuild or not self._live_index(alias))
         ]
         records_alias = self._get_name(config.extraction_records_index_prefix, suffix)
-        if not self.opensearch_client.get_index_name_by_alias(records_alias):
+        if not self._live_index(records_alias):
             mappings.append((records_alias, self._get_extraction_records_mapping()))
         return mappings
 
@@ -1607,7 +1781,7 @@ class OpenSearchIndexer(VectorIndexer):
         for suffix, chunk in self._group_items_by_suffix(items).items():
             alias_name = self._get_name(alias_prefix, suffix)
             try:
-                index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+                index_name = self._live_index(alias_name)
                 if not index_name:
                     stats.add_success(len(chunk))
                     continue
@@ -1667,7 +1841,7 @@ class OpenSearchIndexer(VectorIndexer):
             return stats
 
         alias_name = self._get_name(alias_prefix, suffix)
-        index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+        index_name = self._live_index(alias_name)
         if not index_name:
             logger.info("No live index for alias '%s'; nothing to delete", alias_name)
             return stats
@@ -1742,7 +1916,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         for suffix, chunk_items in self._group_items_by_suffix(items).items():
             alias_name = self._get_name(spec.alias_prefix, suffix)
-            index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+            index_name = self._live_index(alias_name)
 
             try:
                 if not index_name:
@@ -1754,9 +1928,11 @@ class OpenSearchIndexer(VectorIndexer):
                     # Only an incremental run upserts: the registry tracks it.
                     mapping["mappings"].setdefault("_meta", {})[_META_DOC_STATUS] = True
                     self.opensearch_client.create_index(index_name, mapping)
-                    self.opensearch_client.update_alias(alias_name, index_name)
+                    self._update_alias(alias_name, index_name)
 
-                total_stats.merge(self._embed_and_write(index_name, chunk_items, spec))
+                total_stats.merge(
+                    self._embed_and_write(index_name, chunk_items, spec, suffix)
+                )
             except NamespaceLeaseError:
                 raise
             except Exception as e:
@@ -1849,7 +2025,7 @@ class OpenSearchIndexer(VectorIndexer):
                     index_name, spec.mapping(), exist_ok=False
                 )
 
-                written = self._embed_and_write(index_name, chunk_items, spec)
+                written = self._embed_and_write(index_name, chunk_items, spec, suffix)
                 total_stats.merge(written)
 
                 # Swap onto the new index when it holds something, or when the
@@ -1860,7 +2036,7 @@ class OpenSearchIndexer(VectorIndexer):
                     # check the fence themselves (_FencedConnection); the
                     # embedded engine's do not.
                     check_write_fence()
-                    self.opensearch_client.update_alias(
+                    self._update_alias(
                         alias_name, index_name, remove_pattern=f"{alias_name}-*"
                     )
                     check_write_fence()
@@ -1900,17 +2076,28 @@ class OpenSearchIndexer(VectorIndexer):
         return total_stats
 
     def _embed_and_write(
-        self, index_name: str, items: list[Any], spec: _ItemSpec
+        self, index_name: str, items: list[Any], spec: _ItemSpec, suffix: str
     ) -> IndexingStats:
         """Embed ``items`` and bulk-write them into ``index_name``, a slice at a
         time, so only one slice's vectors are held at once. The index is
-        refreshed once, after the last slice."""
+        refreshed once, after the last slice.
+
+        A text whose digest (``_embedding_digest``) is the one stored with
+        the vector of its field in ``suffix``'s live index (the index an
+        upsert writes, or the one a rebuild replaces) takes that vector
+        instead of being embedded again: one read per slice."""
         stats = IndexingStats()
         for start in range(0, len(items), _WRITE_SLICE_SIZE):
             chunk = items[start : start + _WRITE_SLICE_SIZE]
-            embeddings = self._generate_embeddings(chunk, spec.extractors)
+            stored = self._reusable_vectors(spec.alias_prefix, suffix, chunk, spec)
+            embeddings, digests = self._generate_embeddings(chunk, spec, stored)
             docs, failed_ids = self._prepare_documents(
-                chunk, embeddings, spec.prepare_doc
+                chunk,
+                embeddings,
+                _with_digests(
+                    spec.prepare_doc,
+                    {id(item): row for item, row in zip(chunk, digests, strict=True)},
+                ),
             )
             if failed_ids:
                 stats.add_error(
@@ -1987,7 +2174,7 @@ class OpenSearchIndexer(VectorIndexer):
                 and ts < live_ts
             )
             if stale:
-                self.opensearch_client.delete_indices(stale)
+                self._delete_indices(stale)
                 logger.info(
                     "Deleted %s stale index(es) of '%s'", len(stale), alias_name
                 )
@@ -2012,20 +2199,87 @@ class OpenSearchIndexer(VectorIndexer):
         try:
             if index_name in self.opensearch_client.get_indices_by_alias(alias_name):
                 return
-            self.opensearch_client.delete_indices([index_name])
+            self._delete_indices([index_name])
         except NamespaceLeaseError:
             raise
         except Exception as e:
             logger.warning("Failed to delete unused index '%s': %s", index_name, e)
 
     def _generate_embeddings(
-        self, items: list[Any], extractors: list[Callable]
-    ) -> list[tuple]:
-        all_embeddings = [
-            self._batch_embed([extractor(item) for item in items])
-            for extractor in extractors
+        self,
+        items: list[Any],
+        spec: _ItemSpec,
+        stored: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[list[tuple], list[dict[str, str]]]:
+        """Each item's vectors (in ``spec.vector_fields`` order; ``None``
+        where embedding failed or the text is empty) and digests by field.
+
+        A text whose digest is that of a ``stored`` vector of this run's
+        dimension (``_reusable_vectors``, read for these items) or of one an
+        earlier write of this indexer replaced (``_replaced``: a run that
+        rewrites an item twice, as a removal and the commit after it do)
+        takes that vector; the other texts are embedded, all in one
+        ``_batch_embed`` call."""
+        texts = [[extractor(item) for extractor in spec.extractors] for item in items]
+        digests = [
+            [self._embedding_digest(t) if t and t.strip() else None for t in row]
+            for row in texts
         ]
-        return list(zip(*all_embeddings, strict=True))
+        # Digest -> stored vector, of the copies read.
+        available: dict[str, list[float]] = {}
+        for copy in (stored or {}).values():
+            kept = copy.get(_DIGESTS_FIELD)
+            for field, digest in (kept if isinstance(kept, dict) else {}).items():
+                vector = copy.get(field)
+                if (
+                    isinstance(digest, str)
+                    and isinstance(vector, list)
+                    and len(vector) == self._embedding_dimension
+                ):
+                    available[digest] = vector
+        vectors: list[list[list[float] | None]] = []
+        pending: list[tuple[int, int]] = []
+        for i, row in enumerate(digests):
+            found: list[list[float] | None] = []
+            for j, digest in enumerate(row):
+                vector = None
+                if digest is not None:
+                    vector = available.get(digest)
+                    if vector is None and (memo := self._replaced.get(digest)):
+                        vector = memo.tolist()
+                if vector is None:
+                    pending.append((i, j))
+                found.append(vector)
+            vectors.append(found)
+        # The stored vectors this write replaces, for a later write of the
+        # text they embed.
+        written = {digest for row in digests for digest in row if digest}
+        for digest, vector in available.items():
+            if digest not in written:
+                self._replaced[digest] = array("d", vector)
+                self._replaced.move_to_end(digest)
+        while len(self._replaced) > _REPLACED_VECTORS:
+            self._replaced.popitem(last=False)
+        embedded = self._batch_embed([texts[i][j] for i, j in pending])
+        for (i, j), vector in zip(pending, embedded, strict=True):
+            vectors[i][j] = vector
+        total = len(items) * len(spec.vector_fields)
+        if total > len(pending) and len(pending) < sum(
+            1 for row in digests for digest in row if digest
+        ):
+            logger.info(
+                "Reused %d of %d stored vectors of %s (text unchanged)",
+                total - len(pending),
+                total,
+                spec.name,
+            )
+        return (
+            [tuple(row) for row in vectors],
+            [
+                {f: d for f, d in zip(spec.vector_fields, row, strict=True) if d}
+                for row in digests
+            ],
+        )
 
     def _batch_embed(
         self, texts: list[str], batch_size: int = _EMBED_BATCH_SIZE
@@ -2190,6 +2444,22 @@ class OpenSearchIndexer(VectorIndexer):
         }
         for name, default in DEFAULT_INDEX_SETTINGS.items():
             settings.setdefault(name, default)
+        vector_fields = [
+            name
+            for name, field in properties.items()
+            if field.get("type") == "knn_vector"
+        ]
+        if vector_fields:
+            properties = {
+                **properties,
+                _DIGESTS_FIELD: {
+                    "type": "object",
+                    "properties": {
+                        name: {"type": "keyword", "index": False, "doc_values": False}
+                        for name in vector_fields
+                    },
+                },
+            }
         return {
             "settings": {
                 **settings,
@@ -2280,8 +2550,7 @@ class OpenSearchIndexer(VectorIndexer):
                         # the records no text unit names any more by them.
                         RECORD_KEYS_ATTRIBUTE: {
                             "properties": {
-                                "graph": {"type": "keyword"},
-                                "claims": {"type": "keyword"},
+                                kind: {"type": "keyword"} for kind in RECORD_KINDS
                             }
                         }
                     },

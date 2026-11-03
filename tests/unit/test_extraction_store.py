@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
-from tests.fixtures.fakes.stores import FakeVectorStore
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.ingestion import extraction_store
@@ -26,8 +26,11 @@ from unified_kg_rag.application.ingestion.extraction_store import (
     ExtractionStore,
     with_record_keys,
 )
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import (
+    CHUNKS_RECORD_KIND,
+    RECORD_KEYS_ATTRIBUTE,
     claims_from_payload,
     claims_payload,
     record_from_payload,
@@ -970,3 +973,61 @@ class TestRunIndexCreationCheck:
             "graph_extraction",
             "indexing",
         ]
+
+
+class TestChunkBoundaryRecords:
+    """The intelligent chunker's pre-chunk answers in the extraction store."""
+
+    def test_a_unit_keeps_naming_its_boundary_record(self) -> None:
+        unit = _unit("t0").model_copy(
+            update={"attributes": {RECORD_KEYS_ATTRIBUTE: {CHUNKS_RECORD_KIND: "b:1"}}}
+        )
+        (keyed,) = with_record_keys(
+            Config(),
+            [unit],
+            [TextUnitExtraction(text_unit_id="t0")],
+            graph_failed=(),
+            claims=False,
+        )
+        assert record_keys(keyed)[CHUNKS_RECORD_KIND] == "b:1"
+        assert set(record_keys(keyed)) == {"graph", CHUNKS_RECORD_KIND}
+
+    def test_a_record_a_stored_unit_still_names_is_not_collected(self) -> None:
+        # The unit naming the boundary record names no graph record (its
+        # extraction failed): the record is found by its own kind.
+        config = Config()
+        vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+        vector.upsert_text_units(
+            [
+                _unit("t2").model_copy(
+                    update={
+                        "attributes": {
+                            RECORD_KEYS_ATTRIBUTE: {CHUNKS_RECORD_KIND: "b:kept"}
+                        }
+                    }
+                )
+            ]
+        )
+        vector.write_extraction_records({"b:kept": {}, "g:gone": {}})
+        manager = IndexingManager(
+            config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
+        )
+        manager._removed_record_keys["default"] = {"b:kept", "g:gone"}
+
+        manager.collect_extraction_records()
+
+        assert set(vector.read_extraction_records(["b:kept", "g:gone"])) == {"b:kept"}
+
+    def test_reads_nothing_without_reuse_and_writes_either_way(self) -> None:
+        vector = FakeVectorStore()
+        store = ExtractionStore(Config(), lambda: vector, reuse=False)
+        store.write_records({"default": {"b:1": {"response": {}}}})
+        assert store.read_records({"default": ["b:1"]}) == {}
+        reused = ExtractionStore(Config(), lambda: vector)
+        assert reused.read_records({"default": ["b:1"]}) == {
+            "default": {"b:1": {"response": {}}}
+        }
+
+    def test_a_failed_read_reads_nothing(self) -> None:
+        store = ExtractionStore(Config(), lambda: _Broken())
+        assert store.read_records({"default": ["b:1"]}) == {}

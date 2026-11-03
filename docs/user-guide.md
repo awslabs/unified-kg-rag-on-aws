@@ -647,9 +647,10 @@ query or ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage
 ([runbook](./operations.md#alarms)), and `run-eval` records it per answer
 (`EvaluationResult.usage`) and per run (`summary.usage`). A response the
-ingestion response cache served, or a query entity or keyword extraction the
-chain's extraction cache served (`search.query_extraction_cache_size`),
-counts as a cache hit, not a call; a failed
+ingestion response cache served, a chunk-boundary answer the extraction
+store served, or a query entity or keyword extraction the chain's
+extraction cache served (`search.query_extraction_cache_size`), counts as
+a cache hit, not a call; a failed
 call is not counted; retries are. `stream` / `astream` yield text only and
 report no usage.
 
@@ -725,7 +726,9 @@ cached and skipped on a re-run:
 - With incremental indexing, a resume whose extraction settings changed since
   its delta was computed restarts at `document_loading`, so the delta follows
   the new settings.
-- `--force-rebuild` recomputes every stage and rewrites the cache.
+- `--force-rebuild` recomputes every stage and rewrites the cache; it also
+  asks the boundary model for every pre-chunk again and embeds every text
+  again (see below).
 
 **S3 sync** (`--s3-sync`) keeps the stage cache in
 `s3://<bucket>/<prefix>/...`, uploaded after every stage, so a fresh task
@@ -736,7 +739,15 @@ fails the run with `CacheSyncError`. Expiry and the other caches:
 [Caches and prefixes](./operations.md#caches-and-prefixes). Across runs,
 the doc-status registry (`providers.doc_status.enabled`) keeps unchanged
 documents from being embedded again: an incremental run embeds only what its
-delta changes.
+delta changes. Within what a run writes, a text embedded before with the same
+embedding provider, model and dimension keeps its stored vector (each vector
+stores a digest of its text), so a changed document re-embeds only the
+chunks, descriptions and reports whose text changed, and a reset of an
+unchanged corpus embeds again only what it regenerates. The intelligent
+chunker's boundary answers are kept per pre-chunk in the extraction store,
+so a reset or an edit asks the model only for pre-chunks whose text or
+chunking settings changed, and an unchanged pre-chunk keeps its boundaries
+even with a model that answers otherwise each time.
 
 **LLM response cache** (`cache.llm_responses`, on by default). Every
 ingestion model response is kept under `llm-cache/` in the run's cache
@@ -1248,7 +1259,12 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   without taking the suffix offline, except quarantined documents, which are
   skipped and keep their records; a failed reset drops nothing, so it
   is safe to re-run (how it works:
-  [Operator Runbook: Re-ingest](./operations.md#re-ingest)).
+  [Operator Runbook: Re-ingest](./operations.md#re-ingest)). The stored
+  chunk boundaries, extraction records and vectors of unchanged text are
+  reused, so a rebuild with the same models costs the model calls of what it
+  regenerates (description summaries, community reports); after an embedding
+  model or dimension change every text is embedded again. Add
+  `--force-rebuild` to ask and embed everything again.
 
 ### Deletion scope
 

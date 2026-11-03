@@ -101,6 +101,10 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
+from unified_kg_rag.shared.store_lookups import (
+    install_lookup_cache,
+    remove_lookup_cache,
+)
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.write_fence import (
@@ -544,7 +548,12 @@ class DataIngestionPipeline:
                 "confirm_deletions": self._confirm_deletions,
             },
             # --force-rebuild re-extracts every unit (and refreshes the
-            # extraction store) instead of reusing the stored records.
+            # extraction store) instead of reusing the stored records, asks
+            # the model for every pre-chunk's boundaries again and embeds
+            # every text again.
+            PipelineStageType.TEXT_CHUNKING: {
+                "reuse_stored": not self.pipeline_config.force_rebuild
+            },
             PipelineStageType.GRAPH_EXTRACTION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
@@ -555,7 +564,10 @@ class DataIngestionPipeline:
                 "cache_directory": cache_directory,
                 "doc_status": doc_status,
             },
-            PipelineStageType.INDEXING: {"doc_status": doc_status},
+            PipelineStageType.INDEXING: {
+                "doc_status": doc_status,
+                "reuse_stored": not self.pipeline_config.force_rebuild,
+            },
         }
 
         stages: list[PipelineStage] = []
@@ -671,6 +683,9 @@ class DataIngestionPipeline:
         log_context: Mapping[str, Any] = {}
         self._stop_signal = None
         stop_fence = install_write_fence(_StopFence(self))
+        # The run's alias and mapping lookups, read once (only its own
+        # writes change them while it holds the namespace's lease).
+        lookups = install_lookup_cache()
         try:
             source_path = Path(source_directory).resolve()
             logger.info(
@@ -766,6 +781,7 @@ class DataIngestionPipeline:
                 self.llm_response_cache.close()
             self._checkpoint_id = None
             reset_contextvars(**log_context)
+            remove_lookup_cache(lookups)
             remove_write_fence(stop_fence)
 
     def _run_leased(

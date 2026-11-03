@@ -13,8 +13,9 @@ read.
 
 Counts are kept per model role (the purpose the model was built for:
 ``query``, ``ingestion``, ``evaluation``) and per model id. A response the
-ingestion response cache served, or a query extraction the RAG chain's
-extraction cache served, is a cache hit, not a call: it spends no tokens. A call that failed is not counted (it returned no usage); retries
+ingestion response cache served, a chunk-boundary answer the extraction
+store served, or a query extraction the RAG chain's extraction cache
+served, is a cache hit, not a call: it spends no tokens. A call that failed is not counted (it returned no usage); retries
 and calls abandoned on a timeout whose response still arrived are.
 
 The scope is a ``contextvars`` value, so it follows the code into the tasks

@@ -327,6 +327,12 @@ class SQLiteSearchEngine:
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
+    @property
+    def store_identity(self) -> str:
+        """Names the database: two engines of one file are one store (the
+        indexers' run cache of lookups, ``shared.store_lookups``)."""
+        return self._cache_path
+
     # --- connection and errors --------------------------------------------
 
     def _errors(self, operation: str) -> AbstractContextManager[None]:

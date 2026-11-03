@@ -27,6 +27,11 @@ from unified_kg_rag.adapters.ingestion.chunker import (
     SimpleTextChunker,
 )
 from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
+from unified_kg_rag.domain.ingestion.cache_keys import chunk_boundary_fingerprint
+from unified_kg_rag.domain.ingestion.contributions import (
+    CHUNKS_RECORD_KIND,
+    RECORD_KEYS_ATTRIBUTE,
+)
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -820,3 +825,154 @@ class TestSplitterSeparators:
         default = RecursiveCharacterTextSplitter(chunk_size=80, chunk_overlap=10)
         ours = SimpleTextChunker._create_splitter(80, 10)
         assert ours.split_text(text) == default.split_text(text)
+
+
+# --------------------------------------------------------------------------- #
+# IntelligentTextChunker — boundary answers kept across runs
+# --------------------------------------------------------------------------- #
+class _Records:
+    """In-memory ``BoundaryRecords``: (suffix, key) -> record."""
+
+    def __init__(self) -> None:
+        self.stored: dict[tuple[str, str], dict] = {}
+        self.reads = 0
+
+    def read_records(self, keys):
+        self.reads += 1
+        return {
+            suffix: {
+                k: self.stored[(suffix, k)] for k in found if (suffix, k) in self.stored
+            }
+            for suffix, found in keys.items()
+        }
+
+    def write_records(self, records) -> None:
+        for suffix, by_key in records.items():
+            for key, record in by_key.items():
+                self.stored[(suffix, key)] = record
+
+
+_LONG = "alpha beta gamma delta\nepsilon zeta eta theta\niota kappa lambda mu nu xi"
+
+
+def _jittering(mocker):
+    """A boundary model that answers otherwise on every call (no
+    temperature control): line 2, then line 3, then line 2, ..."""
+    calls = iter(range(1000))
+    return mocker.Mock(
+        side_effect=lambda _inputs: {"chunk_boundaries": [2 + next(calls) % 2]}
+    )
+
+
+class TestBoundaryRecords:
+    @pytest.fixture
+    def records(self, intelligent_chunker) -> _Records:
+        records = _Records()
+        intelligent_chunker.boundary_records = records
+        return records
+
+    def test_a_stored_answer_is_reused_and_named_by_the_units(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        intelligent_chunker.chunker.invoke = _jittering(mocker)
+        first = intelligent_chunker.chunk_documents([_doc(_LONG)])
+        assert intelligent_chunker.chunker.invoke.call_count == 1
+
+        again = intelligent_chunker.chunk_documents([_doc(_LONG)])
+
+        assert intelligent_chunker.chunker.invoke.call_count == 1
+        assert [u.text for u in again] == [u.text for u in first]
+        key = intelligent_chunker.boundary_key(_LONG)
+        assert set(records.stored) == {("default", key)}
+        assert all(
+            u.attributes[RECORD_KEYS_ATTRIBUTE] == {CHUNKS_RECORD_KIND: key}
+            for u in again
+        )
+
+    def test_a_stored_answer_counts_as_a_cache_hit(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        from unified_kg_rag.shared.usage import usage_scope
+
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        with usage_scope() as meter:
+            intelligent_chunker.chunk_documents([_doc(_LONG)])
+        snapshot = meter.snapshot()
+        assert (snapshot["cache_hits"], snapshot["llm_calls"]) == (1, 0)
+        assert snapshot["by_role"]["ingestion"]["cache_hits"] == 1
+
+    def test_only_changed_pre_chunks_ask_the_model(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        edited = _doc(_LONG.replace("kappa", "KAPPA"))
+        other = _doc(_LONG)
+        other.document_id = "doc2"
+
+        intelligent_chunker.chunk_documents([edited, other])
+
+        sent = [c.args[0] for c in intelligent_chunker.chunker.invoke.call_args_list]
+        assert len(sent) == 2 and "KAPPA" in sent[1]["numbered_text"]
+
+    def test_other_chunking_settings_ask_the_model_again(
+        self, config, _patch_bedrock, mocker
+    ) -> None:
+        records = _Records()
+        config.processing.chunking.min_chunk_size = 10
+        config.processing.chunking.pre_chunk_size = 1000
+        sizes = (400, 300)
+        chunkers = []
+        for size in sizes:
+            config.processing.chunking.max_chunk_size = size
+            chunker = IntelligentTextChunker(
+                config, show_progress=False, boundary_records=records
+            )
+            chunker.chunker.invoke = mocker.Mock(return_value={"chunk_boundaries": [2]})
+            chunker.chunk_documents([_doc(_LONG)])
+            chunkers.append(chunker)
+        assert [c.chunker.invoke.call_count for c in chunkers] == [1, 1]
+        assert len(records.stored) == 2
+
+    def test_a_failed_answer_is_not_stored(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        intelligent_chunker.chunker.invoke = mocker.Mock(return_value=None)
+        units = intelligent_chunker.chunk_documents([_doc(_LONG)])
+        assert records.stored == {}
+        assert all(RECORD_KEYS_ATTRIBUTE not in u.attributes for u in units)
+
+    def test_without_records_nothing_is_read(self, intelligent_chunker, mocker) -> None:
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        assert intelligent_chunker.chunker.invoke.call_count == 2
+
+
+class TestBoundaryFingerprint:
+    def test_follows_the_chunking_settings_model_and_prompt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = chunk_boundary_fingerprint(Config())
+        sized = Config()
+        sized.processing.chunking.max_chunk_size += 1
+        model = Config(models={"roles": {"chunking": "another-model"}})
+        fingerprints = {base, *map(chunk_boundary_fingerprint, (sized, model))}
+        monkeypatch.setattr(
+            TextChunkingPrompt, "system_prompt_template", "Split the text."
+        )
+        fingerprints.add(chunk_boundary_fingerprint(Config()))
+        assert len(fingerprints) == 4
+
+    def test_ignores_what_only_extraction_reads(self) -> None:
+        other = Config()
+        other.processing.graph_extraction.entity_types = ["VENDOR"]
+        other.processing.gleaning.enabled = not other.processing.gleaning.enabled
+        assert chunk_boundary_fingerprint(other) == chunk_boundary_fingerprint(Config())

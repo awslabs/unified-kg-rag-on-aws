@@ -198,7 +198,7 @@ Coming from 0.2.3 or an earlier `main` checkout: see
 | Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
-| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results reused by later runs while a stored text unit names them, and the notes a removal (`pending-strip`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded, or run `indexing.reset: true` next |
+| Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, and the notes a removal (`pending-strip`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded, or run `indexing.reset: true` next |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
@@ -1131,7 +1131,7 @@ same counts in `token_usage`:
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
 | `llm_input_tokens_<stage>` | Input tokens the responses reported |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
-| `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), summed over the stages |
+| `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), and chunk-boundary answers the extraction store served, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
 `InputTokenCount` / `OutputTokenCount` metrics of the `AWS/Bedrock`
