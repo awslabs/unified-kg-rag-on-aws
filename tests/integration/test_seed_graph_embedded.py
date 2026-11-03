@@ -820,6 +820,47 @@ def test_a_seed_edit_on_a_summarized_entity_reports_its_summary(
     assert _vendor_entries(built) == [f"- Vendor (organization): {SUMMARY}"]
 
 
+def test_a_summary_over_the_threshold_is_not_summarized_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The summary itself is over the threshold. A seed edit: community
+    # detection summarizes Vendor's documents' lines, then those with the
+    # seed's new line; the indexing stores that summary, the report's, and
+    # does not summarize it again. A full build summarizes once too (graph
+    # resolution), not again at indexing.
+    asked = _summarizing(monkeypatch)
+    corpus = _buyers(8)
+    doc_lines = {f"Vendor per Buyer{i}" for i in range(8)}
+
+    def make(path: Path) -> _Harness:
+        harness = _Harness(path, corpus=corpus)
+        summarization = (
+            harness.config.processing.graph_extraction.description_summarization
+        )
+        summarization.force_summary_threshold_tokens = 3
+        return harness
+
+    harness = make(tmp_path / "edited")
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v1 says vendor."}))
+    harness.ok()
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v2 says vendor."}))
+    asked.clear()
+    before = len(harness.server.prompts)
+    harness.ok()
+    assert harness.entities()["Vendor"]["description"] == SUMMARY
+    assert _vendor_entries(harness, before) == [f"- Vendor (organization): {SUMMARY}"]
+    assert asked == [doc_lines, {SUMMARY, "Seed v2 says vendor."}]
+
+    built = make(tmp_path / "built")
+    built.seed.write_text(harness.seed.read_text())
+    asked.clear()
+    built.ok()
+    assert built.entities()["Vendor"]["description"] == SUMMARY
+    # (Its edges' descriptions are over the threshold too: one call each.)
+    summarized = [lines for lines in asked if lines & {*doc_lines, SUMMARY}]
+    assert summarized == [doc_lines | {"Seed v2 says vendor."}]
+
+
 @pytest.mark.timeout(300)
 def test_a_hub_entitys_report_entry_stays_a_summary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

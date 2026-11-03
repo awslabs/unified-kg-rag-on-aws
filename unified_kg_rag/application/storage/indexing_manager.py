@@ -1688,16 +1688,18 @@ class IndexingManager:
         ``rewired``) are compared with their vector copies too.
         """
         rekey = rekey or {}
-        reuse_summaries(
+        # A summary (reused, or already held) is not summarized again, even
+        # when it is over the threshold itself (summarized in place).
+        reused = reuse_summaries(
             entities, [*stored_entities, *self._offered_summaries.get(suffix, ())]
         )
-        reuse_summaries(relationships, stored_relationships)
-        if any(needs_summary(self.config, i.description) for i in entities):
-            entities = self.description_summarizer.summarize_entities(entities)
-        if any(needs_summary(self.config, i.description) for i in relationships):
-            relationships = self.description_summarizer.summarize_relationships(
-                relationships
-            )
+        unsummarized = [e for e in entities if e.id not in reused]
+        if any(needs_summary(self.config, i.description) for i in unsummarized):
+            self.description_summarizer.summarize_entities(unsummarized)
+        reused = reuse_summaries(relationships, stored_relationships)
+        unsummarized_rels = [r for r in relationships if r.id not in reused]
+        if any(needs_summary(self.config, i.description) for i in unsummarized_rels):
+            self.description_summarizer.summarize_relationships(unsummarized_rels)
         # A dropped edge is still stored until the retired ids are deleted
         # (a resumed strip reads it back): its link does not count either.
         dropped_ids = set(dropped)

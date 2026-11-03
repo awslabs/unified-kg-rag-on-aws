@@ -699,7 +699,9 @@ of the documents plus the configured seeds. No model reads a seed.
   indexing through `PipelineContext.member_summaries`, marked
   `summarized_from`, so `reuse_summaries` takes them and the model is
   asked once (a resumed indexing summarizes again; the context does not
-  persist them). Without that, a hub's report entry was every line its
+  persist them). A summary the indexing reuses, or an item already holds,
+  is not summarized again even when it is over the threshold itself, so
+  the run stores the description its report read. Without that, a hub's report entry was every line its
   documents state and could crowd it out of its own report. A full build
   summarizes the member's lines in one pass, so the two summaries are
   equivalent, not equal; with summarization off both read the lines

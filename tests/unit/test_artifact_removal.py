@@ -907,6 +907,48 @@ def test_a_summary_offered_before_indexing_is_reused(mocker) -> None:
     assert summarizer.summarize_entities.call_count == 2
 
 
+def test_a_reused_summary_over_the_threshold_is_not_summarized_again(
+    mocker,
+) -> None:
+    # The summary offered (or stored, or already held) is itself over the
+    # threshold: the indexing keeps it, and summarizes only the others.
+    manager, graph, _ = _manager()
+    summarization = manager.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 3
+    mocker.patch.object(graph, "find_incident_relationship_ids", return_value=[])
+    summarizer = mocker.MagicMock()
+    summarizer.summarize_entities.side_effect = lambda entities: entities
+    summarizer.summarize_relationships.side_effect = lambda relationships: (
+        relationships
+    )
+    manager._description_summarizer = summarizer
+    derived = "A buys.\nA sells.\nA ships."
+    summary = "A buys, sells and ships goods."
+    mark = {SUMMARIZED_FROM_ATTRIBUTE: compute_hash(derived)}
+    manager.offer_summaries(
+        [Entity(id="a", name="A", description=summary, attributes=mark)]
+    )
+    stored_edge = Relationship(
+        id="r", source_id="a", target_id="b", description=summary, attributes=mark
+    )
+
+    entities, relationships = manager._finish(
+        "default",
+        [
+            Entity(id="a", name="A", description=derived),
+            Entity(id="b", name="B", description="B buys.\nB sells.\nB ships."),
+        ],
+        [Relationship(id="r", source_id="a", target_id="b", description=derived)],
+        stored_relationships=[stored_edge],
+    )
+
+    assert {e.id: e.description for e in entities}["a"] == summary
+    (summarized,) = summarizer.summarize_entities.call_args.args
+    assert [e.id for e in summarized] == ["b"]
+    assert [r.description for r in relationships if r.id == "r"] == [summary]
+    summarizer.summarize_relationships.assert_not_called()
+
+
 def test_a_dropped_edge_still_stored_does_not_rank_its_endpoints(mocker) -> None:
     # A strip killed before the retired ids were deleted leaves the edge its
     # derivation dropped in the graph store: the resumed strip reads it back
