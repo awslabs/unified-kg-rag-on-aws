@@ -2432,7 +2432,7 @@ processing:
 | `max_items_per_unit` | `50` (1 to 500) | Node and edge statements per text unit, the unit of lineage |
 | `max_nodes` | `100000` | Fail above this many nodes |
 | `max_edges` | `500000` | Fail above this many edges |
-| `max_bytes` | `268435456` (256 MiB); `33554432` (32 MiB) for `rdf` | Fail when the files hold more bytes together (checked before they are read, and while reading). An RDF parser holds the whole graph before `max_nodes` is checked, about 25 (N-Triples) to 110 (Turtle) times the file size in memory: size the task before raising it for `rdf` |
+| `max_bytes` | `268435456` (256 MiB); `33554432` (32 MiB) for `rdf` | Fail when the files hold more bytes together (checked before they are read, and while reading). An RDF parser holds the whole graph before `max_nodes` is checked, from about 25 (N-Triples) up to about 150 (dense Turtle) times the file size in memory (32 MiB: up to about 5 GB): size the task before raising it for `rdf` |
 | `max_property_keys` | `64` (0 to 512) | Fail when the seed uses more distinct property keys (each is a key of `attributes.seed_properties`) |
 | `max_description_chars` | `1000` (at least 50) | Cut descriptions here, at a word boundary with "…", so an item only the seed states never needs the description summarizer |
 
@@ -2462,11 +2462,13 @@ processing:
 - The corpus may be empty when seeds are configured: an empty
   `--source-directory` is a seed-only run (*Lifecycle*) for a source scope
   the registry holds no documents of (a new one, or a seed-only scope).
-  For a scope with documents an empty corpus is far likelier a volume not
-  mounted yet or an S3 sync that copied nothing, so the run fails at
-  `document_loading` before it writes (`No source document reached this
-  run, only its seed graphs, but the doc-status registry holds 2 documents
-  of source scope ...`, exit 1) rather than delete them.
+  For a scope with documents (under any spelling of it: `s3://bkt/corpus`
+  and `s3://bkt/corpus/` are one scope) an empty corpus is far likelier a
+  volume not mounted yet or an S3 sync that copied nothing, so the run
+  fails at `document_loading` before it writes (`No source document
+  reached this run, only its seed graphs, but the doc-status registry
+  holds 2 documents of source scope ...`, exit 1) rather than delete them.
+  With the registry off, see *Lifecycle*.
 - **On AWS** the seed files must be in the image next to the config, or in
   S3 where the ingestion task role reads
   ([Operator Runbook: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3)).
@@ -2539,7 +2541,7 @@ files exactly as the `owl` schema source does (a file, a directory, an
 `s3://` object or prefix; `options.format`; nothing fetched, `owl:imports`
 not followed, the same refusals: [Not followed, not read](#from-an-owlrdfs-ontology)),
 within the seed's `max_bytes` (32 MiB unless set: the parsed graph is held
-in memory, 25 to 110 times the file size). With the procure ontology as the
+in memory, up to about 150 times the file size, about 5 GB). With the procure ontology as the
 schema:
 
 ```yaml
@@ -2750,7 +2752,15 @@ the seeds' content is part of every stage's cache key.
 **Lifecycle.** Seeds need the doc-status registry
 (`providers.doc_status.enabled`) for these; without it every run is a full
 build of the corpus and the configured seeds, and nothing tells an empty
-corpus from a missing one: the build holds the seeds alone.
+corpus from a missing one. So with the registry off, an empty corpus
+builds from the seeds alone without asking only while the index holds no
+entity or relationship yet (a first seed-only build: nothing to lose).
+Once it holds some, the run asks first (`... rebuild the index 'default'
+from the seed graphs alone, replacing what it holds; continue?`), as a
+reset does below: `--confirm-reset`, `UKR_CONFIRM_RESET=1` or `--yes`
+answers yes, and a no, or no terminal, stops the run before it writes
+(exit 1). A store that cannot tell, or cannot be read, counts as holding
+items.
 
 - **Removal.** Drop the seed from the config: the next incremental run
   deletes its shards, so what only it stated goes, and entities documents
@@ -2764,10 +2774,15 @@ corpus from a missing one: the build holds the seeds alone.
   terminal; `--confirm-reset` (or `UKR_CONFIRM_RESET=1`) answers yes to
   this question only, `--yes` to every question. A no, or no terminal,
   stops the run before it writes (`Pipeline stopped before it wrote
-  anything: ...`, exit 1). A reset of a scope that holds documents from
-  an empty corpus fails, whatever the answer (above). From Python, pass
+  anything: ...`, exit 1). Two resets from an empty corpus fail, whatever
+  the answer: of a scope that holds documents (above), and of a scope that
+  holds no record at all while other scopes hold documents (`... holds no
+  record of source scope ...`): a new, moved or mistyped prefix, not a
+  seed-only scope, whose earlier runs recorded its seeds. To rebuild a
+  namespace from seeds alone, run the seed-only scope once without
+  `indexing.reset`, then reset it. From Python, pass
   `DataIngestionPipeline(..., confirm=callable)`; without it, or on a no,
-  `run` raises `ConfirmationDeclinedError`.
+  `run` raises `ConfirmationDeclinedError` (exported by `unified_kg_rag`).
 - **A seed-only scope.** A run with seeds, an empty `--source-directory`
   and a fixed `processing.document_parsing.source_scope` (say
   `seeds-procure`) keeps a seed in a scope of its own, with no model call.

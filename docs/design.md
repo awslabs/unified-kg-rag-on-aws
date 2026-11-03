@@ -701,8 +701,12 @@ of the documents plus the configured seeds. No model reads a seed.
 - **Reset.** A reset (or a registry-off full build) processes the whole
   corpus, configured seeds included, so the sweep keeps them. Before any
   write, `incremental._confirm_reset_of_seed_scopes` lists the namespace
-  and, when another scope holds seed paths (`is_seed_path`), or the
-  corpus is seeds alone while another scope holds documents, asks the
+  once (the quarantine check reads the same listing), counts as the run's
+  own every record of a spelling of its source scope
+  (`normalize_source_scope`, as the incremental diff's `_stored_spelling`
+  does) and, when another scope holds seed paths (`is_seed_path`), or the
+  corpus is seeds alone, the scope holds seed records of its own and
+  another scope holds documents, asks the
   pipeline's `confirm` (the CLI's terminal prompt, `--confirm-reset` /
   `UKR_CONFIRM_RESET`, or `--yes`); a no, or no `confirm`, raises
   `ConfirmationDeclinedError`, which the stage and the pipeline pass on
@@ -715,11 +719,23 @@ of the documents plus the configured seeds. No model reads a seed.
   scope the registry holds no document of
   (`incremental._refuse_seeds_over_documents`, before any write, also
   under a reset): otherwise an unmounted volume or an empty S3 sync would
-  delete the scope's documents with exit 0. Keyed on the registry, not on
-  a flag: a seed-only scope needs no extra setting, and the mistake it
-  guards against carries none. A scope's first run warns when another
-  scope already holds a seed of the same name (its weights would count
-  twice). A registry-off build cannot tell, and holds the seeds alone.
+  delete the scope's documents with exit 0. An incremental run reads the
+  scope's records from its delta (every record of the scope a seeds-only
+  corpus does not match is `deleted` or `failed`), not the namespace. A
+  reset from seeds alone of a scope with no record at all, beside other
+  scopes' documents, fails too (`_refuse_seeds_over_other_scopes`): a
+  seed-only scope's earlier runs recorded its seeds, so this is a new,
+  moved or mistyped prefix, and the reset would rebuild the namespace
+  from the seeds. Keyed on the registry, not on a flag: a seed-only scope
+  needs no extra setting, and the mistake it guards against carries none.
+  A scope's first run warns when another scope already holds a seed of
+  the same name (its weights would count twice). A registry-off build
+  cannot tell a seed-only corpus from a missing one, so
+  `DocumentLoadingStage._confirm_seeds_alone` asks `confirm` before seeds
+  alone replace an index that holds items (`holds_any_item`, one bounded
+  read per store; unknown or unreadable counts as holding). An index that
+  holds none builds unasked: a first seed-only build loses nothing, and
+  asking there would demand a flag for nothing.
 - **Not in v1.** IRI-based identity and aliases, `owl:sameAs`, a
   retrievable fact card (seed units as TEXT context), and federation
   (§15, *New seed source*).

@@ -351,7 +351,9 @@ class DataIngestionPipeline:
             confirm: Asks a yes/no question a run needs answered, today only
                 a reset that drops another source scope's seed graph
                 documents, or, from a corpus of seed graphs alone, its
-                documents (the CLI asks on the terminal; ``--confirm-reset``,
+                documents, and a run with the registry off that rebuilds an
+                index holding items from seed graphs alone (the CLI asks on
+                the terminal; ``--confirm-reset``,
                 ``UKR_CONFIRM_RESET=1`` or ``--yes`` answers). ``None``
                 cannot ask: such a run raises ``ConfirmationDeclinedError``
                 before it writes, as a no does.

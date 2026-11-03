@@ -800,6 +800,9 @@ def test_more_than_max_bytes_is_refused_before_reading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shutil.copy(ABOX, tmp_path / "abox.ttl")
+    # Resolved first: resolving the schema reads its ontology file, which
+    # the patch below would fail when no earlier test cached it.
+    resolved = _resolved()
     monkeypatch.setattr(
         Path, "read_bytes", lambda self: pytest.fail(f"read {self} past the cap")
     )
@@ -809,7 +812,7 @@ def test_more_than_max_bytes_is_refused_before_reading(
         SeedGraphError,
         match=r"more than processing\.seed_graphs\[\]\.max_bytes \(100\)",
     ):
-        get_seed_source("rdf")(SeedSourceContext(seed, _resolved()))
+        get_seed_source("rdf")(SeedSourceContext(seed, resolved))
 
 
 @pytest.mark.parametrize(

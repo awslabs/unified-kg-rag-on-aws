@@ -2149,7 +2149,7 @@ processing:
 | `max_items_per_unit` | `50`(1~500) | 텍스트 단위 하나에 담는 노드·에지 진술 수. 계보(lineage)의 단위입니다 |
 | `max_nodes` | `100000` | 노드가 이보다 많으면 실패 |
 | `max_edges` | `500000` | 에지가 이보다 많으면 실패 |
-| `max_bytes` | `268435456`(256 MiB), `rdf`는 `33554432`(32 MiB) | 파일 크기 합이 이보다 크면 실패(읽기 전과 읽는 중에 확인). RDF 파서는 `max_nodes`를 확인하기 전에 그래프 전체를 메모리에 두며, 파일 크기의 약 25배(N-Triples)~110배(Turtle)를 씁니다. `rdf`에서 늘리려면 먼저 태스크 메모리를 맞추세요 |
+| `max_bytes` | `268435456`(256 MiB), `rdf`는 `33554432`(32 MiB) | 파일 크기 합이 이보다 크면 실패(읽기 전과 읽는 중에 확인). RDF 파서는 `max_nodes`를 확인하기 전에 그래프 전체를 메모리에 두며, 파일 크기의 약 25배(N-Triples)에서 최대 약 150배(조밀한 Turtle)를 씁니다(32 MiB면 최대 약 5 GB). `rdf`에서 늘리려면 먼저 태스크 메모리를 맞추세요 |
 | `max_property_keys` | `64`(0~512) | 서로 다른 속성 키가 이보다 많으면 실패(키마다 `attributes.seed_properties`의 키가 됨) |
 | `max_description_chars` | `1000`(50 이상) | 설명을 단어 경계에서 이 길이로 자르고 "…"를 붙입니다. 시드만 진술한 항목은 설명 요약기가 필요 없게 됩니다 |
 
@@ -2176,10 +2176,12 @@ processing:
   답합니다.
 - 시드를 설정하면 코퍼스가 비어 있어도 됩니다. 레지스트리에 문서가 없는 소스 범위(새 범위나
   시드 전용 범위)라면 빈 `--source-directory`는 시드만 가져오는 실행입니다(*수명 주기*).
-  문서가 있는 범위에서 빈 코퍼스는 볼륨이 아직 마운트되지 않았거나 S3 동기화가 아무것도
-  복사하지 않은 경우일 가능성이 훨씬 높으므로, 실행은 문서를 지우는 대신 쓰기 전에
+  문서가 있는 범위(표기만 다른 범위 포함: `s3://bkt/corpus`와 `s3://bkt/corpus/`는 한
+  범위)에서 빈 코퍼스는 볼륨이 아직 마운트되지 않았거나 S3 동기화가 아무것도 복사하지
+  않은 경우일 가능성이 훨씬 높으므로, 실행은 문서를 지우는 대신 쓰기 전에
   `document_loading`에서 실패합니다(`No source document reached this run, only its seed
   graphs, but the doc-status registry holds 2 documents of source scope ...`, 종료 코드 1).
+  레지스트리를 끈 경우는 *수명 주기*를 보세요.
 - **AWS에서는** 시드 파일을 이미지 안 설정 파일 옆에 두거나 수집 태스크 역할이 읽을 수
   있는 S3 위치에 두어야 합니다
   ([운영 런북: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3), 영문).
@@ -2245,7 +2247,7 @@ v1,b1,SUPPLIES,,Acme supplies Globex with valves.,2
 `owl:imports`를 따라가지 않으며 같은 형식을 거부:
 [가져오지 않는 것, 읽지 않는 것](#owlrdfs-온톨로지에서-읽기)). 크기는 시드의
 `max_bytes`를 따르며, 설정하지 않으면 32 MiB입니다(파싱한 그래프를 메모리에 두며 파일
-크기의 25~110배를 씀). procure 온톨로지를 스키마로 쓰면 다음과 같습니다.
+크기의 최대 약 150배, 약 5 GB를 씀). procure 온톨로지를 스키마로 쓰면 다음과 같습니다.
 
 ```yaml
 processing:
@@ -2431,7 +2433,12 @@ RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procur
 
 **수명 주기.** 아래 동작에는 문서 상태 레지스트리(`providers.doc_status.enabled`)가
 필요합니다. 레지스트리가 없으면 매 실행이 코퍼스와 설정한 시드의 전체 빌드이며, 빈
-코퍼스와 없는 코퍼스를 구분할 수 없어 빌드에는 시드만 남습니다.
+코퍼스와 없는 코퍼스를 구분할 수 없습니다. 그래서 레지스트리를 끄면 빈 코퍼스는 인덱스에
+엔티티나 관계가 아직 없을 때만(첫 시드 전용 빌드, 잃을 것이 없음) 묻지 않고 시드만으로
+빌드합니다. 무언가 있으면 아래 재설정처럼 먼저 묻습니다(`... rebuild the index 'default'
+from the seed graphs alone, replacing what it holds; continue?`). `--confirm-reset`,
+`UKR_CONFIRM_RESET=1`, `--yes`가 '예'로 답하고, '아니요'로 답하거나 터미널이 없으면 쓰기
+전에 멈춥니다(종료 코드 1). 판단할 수 없거나 읽지 못한 저장소는 항목이 있는 것으로 봅니다.
 
 - **삭제.** 설정에서 시드를 빼면 다음 증분 실행이 그 샤드를 삭제합니다. 그 시드만 진술한
   것은 사라지고, 문서도 진술한 엔티티는 그 시드의 설명 줄, 속성, IRI, 에지를 잃습니다.
@@ -2442,9 +2449,14 @@ RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procur
   만듭니다). `run-ingestion`은 터미널에서 묻고, `--confirm-reset`(또는
   `UKR_CONFIRM_RESET=1`)은 이 질문에만, `--yes`는 모든 질문에 '예'로 답합니다. '아니요'로
   답하거나 터미널이 없으면 쓰기 전에 멈춥니다(`Pipeline stopped before it wrote anything:
-  ...`, 종료 코드 1). 문서가 있는 범위를 빈 코퍼스로 재설정하면 답과 관계없이 실패합니다
-  (위). Python에서는 `DataIngestionPipeline(..., confirm=callable)`을 넘기세요. 없거나
-  '아니요'면 `run`이 `ConfirmationDeclinedError`를 던집니다.
+  ...`, 종료 코드 1). 빈 코퍼스로 하는 재설정 중 두 가지는 답과 관계없이 실패합니다.
+  문서가 있는 범위의 재설정(위)과, 범위에 기록이 하나도 없는데 다른 범위에 문서가 있는
+  재설정(`... holds no record of source scope ...`)입니다. 후자는 시드 전용 범위가 아니라
+  새로 만들었거나 옮겼거나 잘못 적은 접두사입니다. 시드 전용 범위라면 이전 실행이 시드를
+  기록해 두었습니다. 네임스페이스를 시드만으로 다시 만들려면 시드 전용 범위를
+  `indexing.reset` 없이 한 번 실행한 뒤 재설정하세요. Python에서는
+  `DataIngestionPipeline(..., confirm=callable)`을 넘기세요. 없거나 '아니요'면 `run`이
+  `ConfirmationDeclinedError`(`unified_kg_rag`에서 가져올 수 있음)를 던집니다.
 - **시드 전용 범위.** 시드를 설정하고 빈 `--source-directory`와 고정한
   `processing.document_parsing.source_scope`(예: `seeds-procure`)로 실행하면 시드가 자기
   범위에 따로 있고 모델 호출도 없습니다. 같은 네임스페이스의 다른 범위 실행은 이를

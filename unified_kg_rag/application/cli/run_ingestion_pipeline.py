@@ -205,9 +205,10 @@ class CommandLineInterface:
             action="store_true",
             help="Answer yes to the question of an indexing.reset run that "
             "drops another source scope's seed graph documents, or, from a "
-            "corpus of seed graphs alone, another scope's documents; nothing "
-            f"else (falls back to the {CONFIRM_RESET_ENV} env var: 1, true or "
-            "yes). "
+            "corpus of seed graphs alone, another scope's documents, and of a "
+            "run with incremental indexing off that rebuilds a non-empty "
+            "index from the seed graphs alone; nothing else (falls back to "
+            f"the {CONFIRM_RESET_ENV} env var: 1, true or yes). "
             "Without it (or --yes), the question is asked on the terminal, and "
             "the run stops (exit 1) when stdin is not one",
         )

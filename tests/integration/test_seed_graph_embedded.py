@@ -519,6 +519,77 @@ def test_an_empty_corpus_never_deletes_the_scopes_documents(tmp_path: Path) -> N
     assert harness.state() == indexed
 
 
+def test_registry_off_seeds_alone_replace_an_index_only_when_confirmed(
+    tmp_path: Path,
+) -> None:
+    # Without the registry every run is a full build: an empty corpus looks
+    # like a missing one, and the seeds alone would replace the documents.
+    harness = _Harness(tmp_path / "off", corpus={})
+    harness.config.providers.doc_status.enabled = False
+    # A first seed-only build: nothing stored yet, nothing to ask.
+    harness.ok()
+    assert harness.graph_names() == SEED_NAMES
+    for name, text in CORPUS.items():
+        (harness.source / name).write_text(text)
+    harness.ok()
+    indexed = harness.state()
+    for path in harness.source.iterdir():
+        path.unlink()
+    question = "rebuild the index 'default' from the seed graphs alone"
+    for reset in (False, True):
+        harness.config.indexing.reset = reset
+        for confirm in (None, lambda q: False):
+            with pytest.raises(ConfirmationDeclinedError, match=question):
+                harness.run(confirm=confirm)
+            assert harness.state() == indexed
+    # A yes (--confirm-reset): the index is the seeds' alone.
+    harness.config.indexing.reset = False
+    asked: list[str] = []
+    harness.ok(confirm=lambda q: asked.append(q) or True)
+    assert len(asked) == 1 and question in asked[0]
+    assert harness.graph_names() == SEED_NAMES
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_seeds_alone_never_delete_a_respelled_scopes_documents(
+    tmp_path: Path, reset: bool
+) -> None:
+    # Indexed as s3://bkt/corpus/, run again as s3://bkt/corpus (the same
+    # S3 folder) from an empty corpus: refused, even answered yes.
+    harness = _Harness(tmp_path / "spelled")
+    harness.config.processing.document_parsing.source_scope = "s3://bkt/corpus/"
+    harness.ok()
+    indexed = harness.state()
+    for path in harness.source.iterdir():
+        path.unlink()
+    harness.config.processing.document_parsing.source_scope = "s3://bkt/corpus"
+    harness.config.indexing.reset = reset
+    asked: list[str] = []
+    context = harness.run(confirm=lambda q: asked.append(q) or True)
+    assert context.status is PipelineStageStatus.FAILED
+    assert "holds 2 documents of source scope" in e2e._errors(context)
+    assert asked == []
+    assert harness.state() == indexed
+
+
+def test_a_reset_from_seeds_alone_of_an_unknown_scope_is_refused(
+    tmp_path: Path,
+) -> None:
+    # A mistyped prefix: the scope holds no record, another holds documents.
+    harness = _Harness(tmp_path / "mistyped")
+    harness.config.processing.document_parsing.source_scope = "s3://bkt/corpus/"
+    harness.ok()
+    indexed = harness.state()
+    for path in harness.source.iterdir():
+        path.unlink()
+    harness.config.processing.document_parsing.source_scope = "s3://bkt/corpsu/"
+    harness.config.indexing.reset = True
+    context = harness.run(confirm=lambda q: True)
+    assert context.status is PipelineStageStatus.FAILED
+    assert "holds no record of source scope 's3://bkt/corpsu/'" in e2e._errors(context)
+    assert harness.state() == indexed
+
+
 def test_a_seed_added_beside_documents_reports_their_community(
     tmp_path: Path,
 ) -> None:
@@ -527,12 +598,22 @@ def test_a_seed_added_beside_documents_reports_their_community(
             r for r in context.stage_results if r.stage_name == "community_detection"
         ).metrics
 
+    def report_lines(harness: _Harness, start: int = 0) -> list[str]:
+        """The report prompts' entity lines of Vendor."""
+        return [
+            line
+            for prompt in harness.server.prompts[start:]
+            for line in prompt.split("\n")
+            if line.startswith("- Vendor (")
+        ]
+
     harness = _Harness(tmp_path / "added")
     harness.with_seed(False)
     harness.ok()
     # The incremental run's graph holds the seed's shards alone, whose
     # units state Vendor; the stored Vendor cites the documents' units.
     harness.with_seed(True)
+    before = len(harness.server.prompts)
     context = harness.ok()
     assert context.documents and all(is_seed_document(d) for d in context.documents)
     metrics = detection(context)
@@ -545,6 +626,11 @@ def test_a_seed_added_beside_documents_reports_their_community(
         metrics["reports_generated"],
         0,
     )
+    # Its report reads Vendor as the full build's does: the stored
+    # description (the documents') merged with the seed's.
+    assert report_lines(harness, before) == report_lines(built)
+    assert report_lines(built)
+    assert all(line.split(": ", 1)[1] for line in report_lines(built))
 
 
 SEED_ONLY = SEED_NAMES - {"Vendor"}

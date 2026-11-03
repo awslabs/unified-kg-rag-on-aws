@@ -1274,7 +1274,7 @@ def run_extraction_fingerprint(
 
 
 def _quarantined_on_reset(
-    doc_status: Callable[[], DocStatusPort],
+    records: Iterable[DocStatusRecord],
     fingerprints: Mapping[str, str],
     max_attempts: int,
 ) -> dict[str, str]:
@@ -1283,21 +1283,18 @@ def _quarantined_on_reset(
     ``indexing.max_document_attempts`` still quarantines. Quarantine is per
     content, as on an incremental run (``plan_attempts`` counts deaths per
     content hash): new extraction settings do not make the document stop
-    killing the task."""
-    try:
-        stored = doc_status().get_many(list(fingerprints))
-    except DocStatusRegistryError:
-        raise
-    except Exception as e:
-        raise DocStatusRegistryError(
-            f"Doc-status registry: could not read the corpus' records for the "
-            f"reset ({type(e).__name__}: {e})"
-        ) from e
+    killing the task.
+
+    ``records`` is the reset's listing of the run's namespace
+    (``_confirm_reset_of_seed_scopes``), which holds every corpus
+    document's record: a doc id is keyed by the namespace it is listed
+    under (``doc_id_namespace``)."""
     quarantined = {
-        doc_id: record.file_path or doc_id
-        for doc_id, record in stored.items()
-        if record.status is DocStatus.QUARANTINED
-        and record.content_hash == fingerprints.get(doc_id)
+        record.doc_id: record.file_path or record.doc_id
+        for record in records
+        if record.doc_id in fingerprints
+        and record.status is DocStatus.QUARANTINED
+        and record.content_hash == fingerprints[record.doc_id]
         and record.attempt_count >= max_attempts
     }
     if quarantined:
@@ -1336,91 +1333,135 @@ def _source_scope_of(scope: str | None) -> str:
     return (scope or "").partition("|")[2] or "(no scope)"
 
 
-def _seeds_only(documents: Sequence[Document]) -> bool:
+def corpus_is_seeds_only(documents: Sequence[Document]) -> bool:
     """Whether the run's corpus is its seed graphs alone: no source document
     reached it (an empty source directory), only seed shards."""
     return bool(documents) and all(is_seed_document(d) for d in documents)
 
 
-def _refuse_seeds_over_documents(
-    records: Iterable[DocStatusRecord], scope: str
-) -> None:
-    """Fail a run of seed graphs alone while ``scope`` holds documents.
+def _same_source(record_scope: str | None, namespace: str, source_scope: str) -> bool:
+    """Whether a record of ``record_scope`` is a record of the run's corpus:
+    of ``namespace`` and a spelling of ``source_scope``
+    (:func:`normalize_source_scope`: an ``s3://`` URI with or without a
+    trailing slash), as an incremental run keys it (``_stored_spelling``)."""
+    namespace_of, separator, source = (record_scope or "").partition("|")
+    return (
+        bool(separator)
+        and namespace_of == namespace
+        and normalize_source_scope(source) == normalize_source_scope(source_scope)
+    )
 
-    An empty corpus is a seed-only run only for a scope without documents
-    (a new one, or a seed-only scope): for any other it is far likelier a
-    volume not mounted yet or an S3 sync that copied nothing, and indexing
-    the seeds alone would delete every document of the scope.
+
+def _refuse_seeds_over_documents(
+    records: Iterable[DocStatusRecord], source_scope: str
+) -> None:
+    """Fail a run of seed graphs alone while its scope holds documents.
+
+    ``records`` are the scope's own records (of ``source_scope``, under any
+    spelling of it). An empty corpus is a seed-only run only for a scope
+    without documents (a new one, or a seed-only scope): for any other it
+    is far likelier a volume not mounted yet or an S3 sync that copied
+    nothing, and indexing the seeds alone would delete every document of
+    the scope.
 
     Raises:
-        PipelineStageError: The registry holds documents of ``scope``.
+        PipelineStageError: ``records`` hold documents.
     """
     held = sorted(
         record.file_path or record.doc_id
         for record in records
-        if record.scope == scope and not is_seed_path(record.file_path)
+        if not is_seed_path(record.file_path)
     )
     if not held:
         return
-    source = _source_scope_of(scope)
     raise PipelineStageError(
         f"No source document reached this run, only its seed graphs, but the "
         f"doc-status registry holds {len(held)} documents of source scope "
-        f"{source!r} ({', '.join(held[:5])}{', ...' if len(held) > 5 else ''}): "
+        f"{source_scope!r} ({', '.join(held[:5])}"
+        f"{', ...' if len(held) > 5 else ''}): "
         "indexing the seeds alone would delete them. Check that the corpus is "
         "in place (a volume not mounted, an S3 sync that copied nothing). To "
         "delete those documents, retire the scope from a run of another "
-        f"scope (--retire-source-scope {source}); to keep seeds in a scope of "
-        "their own, give their runs a processing.document_parsing.source_scope "
-        "of their own (a seed-only scope)."
+        f"scope (--retire-source-scope {source_scope}); to keep seeds in a "
+        "scope of their own, give their runs a "
+        "processing.document_parsing.source_scope of their own (a seed-only "
+        "scope)."
+    )
+
+
+def _refuse_seeds_over_other_scopes(
+    namespace: str, source_scope: str, documents: Sequence[str]
+) -> None:
+    """Fail a reset from seed graphs alone of a scope the registry holds no
+    record of while ``documents`` (other source scopes) hold documents.
+
+    A seed-only scope's reset has the seed records its earlier runs wrote;
+    a scope without any is a corpus that never reached a run here, a moved
+    or mistyped prefix (``s3://bucket/corpus`` for ``.../corpus2``) or a
+    volume not mounted, and the reset would rebuild the namespace from the
+    seeds alone, deleting every scope's documents.
+
+    Raises:
+        PipelineStageError: Always.
+    """
+    raise PipelineStageError(
+        f"No source document reached this reset, only its seed graphs, and the "
+        f"doc-status registry holds no record of source scope {source_scope!r} "
+        f"but documents of source scope(s) {', '.join(documents)}: the reset "
+        f"would rebuild index namespace {namespace!r} from the seeds alone and "
+        "delete them. Check that the corpus is in place and its source scope "
+        "is spelled as its earlier runs spelled it (a volume not mounted, an "
+        "S3 sync that copied nothing, a moved or mistyped prefix). To rebuild "
+        "the namespace from seeds alone, run the seed-only scope without "
+        "indexing.reset first (it records its seeds), then reset it."
     )
 
 
 def _confirm_reset_of_seed_scopes(
     doc_status: Callable[[], DocStatusPort],
     namespace: str,
-    scope: str,
+    source_scope: str,
     confirm: Callable[[str], bool] | None,
     seeds_only: bool = False,
-) -> None:
-    """Ask before a reset drops content the user may not expect to lose.
+) -> list[DocStatusRecord]:
+    """Ask before a reset drops content the user may not expect to lose;
+    returns the namespace's records, read once for the reset.
 
     A reset rebuilds the namespace from this run's corpus, so every other
-    scope's records and artifacts go; that is what a reset does. Two cases
-    ask ``confirm`` first (the CLI's ``--confirm-reset`` or ``--yes``
-    answers it): another scope holds a seed graph's shards
-    (``seed_graphs/...``), a seed-only corpus; and ``seeds_only``, a run
-    whose corpus is its seed graphs alone, while another scope holds
-    documents (they would all go, leaving the seeds). ``None`` cannot ask:
-    the run stops. A seed-only reset of a scope that holds documents itself
-    fails without asking (``_refuse_seeds_over_documents``).
+    scope's records and artifacts go; that is what a reset does. The run's
+    own records are those of any spelling of ``source_scope``
+    (``_same_source``). Two cases ask ``confirm`` first (the CLI's
+    ``--confirm-reset`` or ``--yes`` answers it): another scope holds a seed
+    graph's shards (``seed_graphs/...``), a seed-only corpus; and
+    ``seeds_only``, a run whose corpus is its seed graphs alone, of a scope
+    that holds seed records of its own, while another scope holds documents
+    (they would all go, leaving the seeds). ``None`` cannot ask: the run
+    stops. A seed-only reset fails without asking when its scope holds
+    documents itself (``_refuse_seeds_over_documents``) or holds no record
+    while other scopes hold documents (``_refuse_seeds_over_other_scopes``):
+    no answer makes either a seed-only scope's reset.
 
     Raises:
         ConfirmationDeclinedError: The reset is not confirmed.
-        PipelineStageError: A seed-only reset of a scope with documents.
+        PipelineStageError: A seed-only reset of a scope with documents, or
+            of a scope without records beside other scopes' documents.
         DocStatusRegistryError: The namespace cannot be read.
     """
     records = _namespace_records(doc_status, namespace, "the reset")
-    if seeds_only:
-        _refuse_seeds_over_documents(records, scope)
+    own = [r for r in records if _same_source(r.scope, namespace, source_scope)]
+    theirs = [r for r in records if not _same_source(r.scope, namespace, source_scope)]
     others = sorted(
-        {
-            _source_scope_of(record.scope)
-            for record in records
-            if record.scope != scope and is_seed_path(record.file_path)
-        }
+        {_source_scope_of(r.scope) for r in theirs if is_seed_path(r.file_path)}
     )
-    documents = (
-        sorted(
-            {
-                _source_scope_of(record.scope)
-                for record in records
-                if record.scope != scope and not is_seed_path(record.file_path)
-            }
-        )
-        if seeds_only
-        else []
+    documents = sorted(
+        {_source_scope_of(r.scope) for r in theirs if not is_seed_path(r.file_path)}
     )
+    if seeds_only:
+        _refuse_seeds_over_documents(own, source_scope)
+        if documents and not own:
+            _refuse_seeds_over_other_scopes(namespace, source_scope, documents)
+    else:
+        documents = []
     clauses = []
     if others:
         clauses.append(
@@ -1433,7 +1474,7 @@ def _confirm_reset_of_seed_scopes(
             f"{', '.join(documents)}"
         )
     if not clauses:
-        return
+        return records
     question = (
         f"The reset of index namespace {namespace!r} {' and '.join(clauses)}; "
         "continue?"
@@ -1444,6 +1485,35 @@ def _confirm_reset_of_seed_scopes(
         )
     if not confirm(question):
         raise ConfirmationDeclinedError(f"Reset cancelled: {question}")
+    return records
+
+
+def _seed_scope_records(
+    store: DocStatusPort, delta: DocumentDelta, scope: str
+) -> list[DocStatusRecord]:
+    """The records of ``scope`` a run of seed graphs alone does not hold.
+
+    A seeds-only corpus matches only its own scope's seed records (a doc id
+    holds its source scope), so every other record of the scope is in the
+    delta's ``deleted``, or ``failed`` for a file that failed to load: one
+    read of those ids, not of the namespace.
+
+    Raises:
+        DocStatusRegistryError: The records cannot be read.
+    """
+    ids = [*delta.deleted, *delta.failed]
+    if not ids:
+        return []
+    try:
+        stored = store.get_many(ids)
+    except DocStatusRegistryError:
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not read the records of scope "
+            f"{scope!r} for the seed-only run ({type(e).__name__}: {e})"
+        ) from e
+    return [record for record in stored.values() if record.scope == scope]
 
 
 def _warn_about_a_shared_seed(
@@ -1527,11 +1597,13 @@ def filter_to_delta(
     settings = extraction_settings(config)
     context.incremental_extraction_settings = settings
     context.incremental_extraction_fingerprint = settings.fingerprint
-    seeds_only = _seeds_only(documents)
+    seeds_only = corpus_is_seeds_only(documents)
     if config.indexing.reset:
         # Before any write: the reset may drop another scope's seed graph,
         # or, from seeds alone, every document.
-        _confirm_reset_of_seed_scopes(doc_status, namespace, scope, confirm, seeds_only)
+        records = _confirm_reset_of_seed_scopes(
+            doc_status, namespace, source_scope, confirm, seeds_only
+        )
         # A reset rebuilds the namespace from the whole corpus and then
         # replaces the registry's records, so every document is new: diffing
         # against the registry here would rebuild from the delta alone and
@@ -1539,7 +1611,7 @@ def filter_to_delta(
         # would kill the reset as they killed the runs that quarantined them.
         fingerprints = fingerprint_documents(documents)
         quarantined = _quarantined_on_reset(
-            doc_status, fingerprints, config.indexing.max_document_attempts
+            records, fingerprints, config.indexing.max_document_attempts
         )
         if quarantined:
             documents = [
@@ -1610,7 +1682,7 @@ def filter_to_delta(
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
         _refuse_seeds_over_documents(
-            _namespace_records(doc_status, namespace, "the seed-only run"), scope
+            _seed_scope_records(store, delta, scope), source_scope
         )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     context.incremental_delta = delta

@@ -24,7 +24,9 @@ cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
 imported) and an :class:`InvalidFilterError` a search filter to
 fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
 store, an :class:`IndexNotFoundError` a suffix with no index (not ingested,
-or a typo).
+or a typo), and a :class:`ConfirmationDeclinedError` (a
+:class:`PipelineExecutionError`) an ingestion run that stopped before it
+wrote because a question it asked was answered no, or could not be asked.
 Errors outside the framework's own code pass through as raised: a missing
 config file (``FileNotFoundError``), or the model client's transport error
 (an ``httpx.ConnectError`` from a local model server, say).
@@ -80,6 +82,7 @@ _EXPORTS: dict[str, str] = {
     "ConfigurationError": "unified_kg_rag.shared.exceptions",
     "StoreRequestRejectedError": "unified_kg_rag.shared.exceptions",
     "PipelineExecutionError": "unified_kg_rag.shared.exceptions",
+    "ConfirmationDeclinedError": "unified_kg_rag.shared.exceptions",
     "NamespaceLeaseError": "unified_kg_rag.shared.exceptions",
     "InvalidFilterError": "unified_kg_rag.shared.exceptions",
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
@@ -202,6 +205,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
+        ConfirmationDeclinedError,
         GraphRAGException,
         IndexNotFoundError,
         InvalidFilterError,

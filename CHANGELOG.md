@@ -787,8 +787,8 @@ From 0.2.3 (or a `main` checkout since):
   `filters`, `on_name_collision` (`error`/`merge`/`qualify`),
   `description_properties`, `confidence`, `shards` and caps that fail the
   import instead of truncating (100,000 nodes, 500,000 edges, 256 MiB, or
-  32 MiB for `rdf`, whose parser holds 25 to 110 times the file size
-  before the node cap is checked, 64 property keys; a name of at most
+  32 MiB for `rdf`, whose parser holds up to about 150 times the file
+  size, about 5 GB, before the node cap is checked, 64 property keys; a name of at most
   1,000 characters, an IRI 4,000 and a type 256, so a store indexes each
   as a keyword; no lone surrogate). Conversion is linear in the seed (the
   100,000-node, 500,000-edge caps convert in about 40 s); a shard over
@@ -804,21 +804,25 @@ From 0.2.3 (or a `main` checkout since):
   extraction call reads them, the registry diffs them, an edit re-imports
   only its shards, a model-settings change none, and an empty corpus is a
   seed-only run for a scope the registry holds no document of (for one
-  that does, the run fails before it writes rather than delete them, and
-  a scope's first run warns when another scope already imports the same
-  seed). What a seed converts to keys every stage, where it is
+  that does, under any spelling of its source, the run fails before it
+  writes rather than delete them, and a scope's first run warns when
+  another scope already imports the same seed); with the registry off,
+  seeds alone replace an index that holds items only when the run is
+  confirmed (`--confirm-reset`, `UKR_CONFIRM_RESET=1` or `--yes`), and
+  build an empty one unasked. What a seed converts to keys every stage, where it is
   read from keys nothing, and no document re-extracts for it. Merges are
   document-first: a seed fills a type, name or confidence only where no
   document states one, its description lines follow the documents', its
   properties sit under `attributes.seed_properties`. A community only
   seeds evidence gets no report (`communities_seed_only`); on an
   incremental run its stored members count too, so a seed added beside
-  unchanged documents reports their communities as a full build does.
+  unchanged documents reports their communities as a full build does,
+  from the members' stored descriptions merged with the seed's.
   Seed descriptions reach the description summarizer, the reports of
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #510).
+  #503, #509, #510, #PR).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an
@@ -856,8 +860,9 @@ From 0.2.3 (or a `main` checkout since):
   and `auto` name the seed graphs of the entities the index matched, and
   `source_kinds` is a list in every store (#505, #510).
 - Public API: `register_seed_source`, `SeedSourceContext`,
-  `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge` and
-  `SeedGraphError` (#498, #500, #510).
+  `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge`,
+  `SeedGraphError` and `ConfirmationDeclinedError` (#498, #500, #510,
+  #PR).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
   and §15 (#506).
 
@@ -970,7 +975,12 @@ From 0.2.3 (or a `main` checkout since):
   terminal, stops the run with exit 1 and no error traceback.
   `DataIngestionPipeline(confirm=)` takes the callable that answers it
   from Python, and `run` raises `ConfirmationDeclinedError` (a
-  `PipelineExecutionError`) on a no (#503, #509).
+  `PipelineExecutionError`) on a no. A reset from seeds alone fails,
+  whatever the answer, for a scope that holds documents under any
+  spelling of its source (`s3://bkt/corpus` for `s3://bkt/corpus/`) and
+  for a scope with no record beside other scopes' documents (a new or
+  mistyped prefix); a seed-only scope's reset, which has seed records of
+  its own, still asks (#503, #509, #PR).
 
 ### Fixed
 Bugs present in 0.2.3.

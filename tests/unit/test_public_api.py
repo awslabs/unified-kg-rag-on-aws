@@ -52,6 +52,7 @@ PUBLIC_API = sorted(
         "setup_logging",
         # Errors
         "ConfigurationError",
+        "ConfirmationDeclinedError",
         "GraphRAGException",
         "IndexNotFoundError",
         "InvalidFilterError",

@@ -44,6 +44,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     artifact_owners,
     clear_registry_namespaces,
     context_lineages,
+    corpus_is_seeds_only,
     dedup_preferences,
     filter_to_delta,
     index_delta,
@@ -80,7 +81,11 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
 )
-from unified_kg_rag.domain.ingestion.document_identity import store_namespace_tag
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
+from unified_kg_rag.domain.ingestion.document_identity import (
+    config_registry_namespace,
+    store_namespace_tag,
+)
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -457,7 +462,8 @@ class DocumentLoadingStage(_RegistryStage):
         # are virtual documents of the corpus.
         self.seed_conversions = tuple(seed_conversions)
         # Answers the reset's question when it drops another scope's seed
-        # graph documents (incremental.filter_to_delta); None cannot.
+        # graph documents (incremental.filter_to_delta), and a registry-off
+        # run's from seeds alone (_confirm_seeds_alone); None cannot.
         self.confirm = confirm
         # Without parsing, the directory holds pre-parsed Document JSON.
         # Deduplication runs in this stage, after document identity is
@@ -531,6 +537,8 @@ class DocumentLoadingStage(_RegistryStage):
             documents, delta_skipped = self._apply_incremental_filter(
                 documents, context
             )
+        elif corpus_is_seeds_only(documents):
+            self._confirm_seeds_alone()
 
         context.documents = documents
         output_count = len(context.documents)
@@ -588,6 +596,74 @@ class DocumentLoadingStage(_RegistryStage):
                 len(self.seed_conversions),
             )
         return documents
+
+    def _confirm_seeds_alone(self) -> None:
+        """Ask before a registry-off run of seed graphs alone rebuilds an
+        index that holds items.
+
+        Without the registry every run is a full build of its corpus, and
+        nothing tells an empty corpus from a missing one (a volume not
+        mounted, an S3 sync that copied nothing): the seeds alone would
+        replace every document the index holds. An index that holds no
+        item yet (a first seed-only build) loses nothing and is built
+        without asking (``holds_any_item``, a bounded read of each store);
+        a store that cannot tell, or whose read fails, counts as holding
+        items. ``confirm`` answers as for a reset (``--confirm-reset``,
+        ``UKR_CONFIRM_RESET=1`` or ``--yes``); ``None`` cannot, and the run
+        stops before it writes.
+
+        Raises:
+            ConfirmationDeclinedError: The build is not confirmed.
+        """
+        index_value = self.config.processing.document_parsing.index_value
+        suffix = index_value or Constants.DEFAULT_SUFFIX.value
+        if self._stores_hold_items(suffix) is False:
+            logger.info(
+                "No source document reached this run and the index holds no "
+                "item yet: building it from the seed graphs alone"
+            )
+            return
+        namespace = config_registry_namespace(self.config.indexing, index_value)
+        question = (
+            f"No source document reached this run, only its seed graphs, and "
+            f"incremental indexing is off (providers.doc_status.enabled), so "
+            f"an empty corpus looks like a missing one: rebuild the index "
+            f"{namespace!r} from the seed graphs alone, replacing what it "
+            f"holds; continue?"
+        )
+        if self.confirm is None:
+            raise ConfirmationDeclinedError(
+                f"{question} No one can confirm it (run-ingestion "
+                "--confirm-reset does)"
+            )
+        if not self.confirm(question):
+            raise ConfirmationDeclinedError(f"Build cancelled: {question}")
+
+    def _stores_hold_items(self, suffix: str) -> bool | None:
+        """Whether either store holds an entity or relationship of
+        ``suffix``; ``None`` when one cannot tell or a read fails."""
+        answers: list[bool | None] = []
+        try:
+            for build in (
+                self.providers.build_graph_indexer,
+                self.providers.build_vector_indexer,
+            ):
+                store = build()
+                try:
+                    held = store.holds_any_item(suffix)
+                finally:
+                    store.close()
+                if held:
+                    return True
+                answers.append(held)
+        except Exception as e:  # noqa: BLE001 - read as holding: the run asks
+            logger.warning(
+                "Could not tell whether the stores hold items of '%s' (%s)",
+                suffix,
+                e,
+            )
+            return None
+        return None if None in answers else False
 
     def _apply_incremental_filter(
         self, documents: list[Document], context: PipelineContext
@@ -1801,10 +1877,12 @@ class CommunityDetectionStage(_RegistryStage):
 
     def _evidenced_by_stored_members(
         self, context: PipelineContext, communities: list[Community]
-    ) -> set[str]:
+    ) -> tuple[set[str], dict[str, str]]:
         """The ids of ``communities`` (every member seed-only in this run's
         graph) that a stored member makes document-evidenced, on an
-        incremental run.
+        incremental run, and the stored descriptions of those members by
+        id: a full build's report reads them merged with the seed's lines
+        (``generate_reports(descriptions=)``).
 
         An incremental run's graph holds its delta only: a seed added or
         edited beside unchanged documents states their entities with seed
@@ -1818,7 +1896,7 @@ class CommunityDetectionStage(_RegistryStage):
         """
         delta = context.incremental_delta
         if not communities or delta is None or self.config.indexing.reset:
-            return set()
+            return set(), {}
         members = {str(e) for c in communities for e in c.entity_ids or []}
         groups: dict[str, list[str]] = defaultdict(list)
         for entity in context.resolved_entities:
@@ -1843,12 +1921,21 @@ class CommunityDetectionStage(_RegistryStage):
                 len(communities),
                 e,
             )
-            return set()
-        backed = {entity.id for entity in stored if _document_backed(entity, removed)}
-        return {
+            return set(), {}
+        backed = {
+            entity.id: entity.description or ""
+            for entity in stored
+            if _document_backed(entity, removed)
+        }
+        evidenced = {
             c.id
             for c in communities
-            if backed.intersection(map(str, c.entity_ids or []))
+            if backed.keys() & set(map(str, c.entity_ids or []))
+        }
+        return evidenced, {
+            entity_id: description
+            for entity_id, description in backed.items()
+            if description
         }
 
     @staticmethod
@@ -1887,7 +1974,9 @@ class CommunityDetectionStage(_RegistryStage):
         # holds its children's members, so one evidenced child evidences it.
         # On an incremental run the stored members count too.
         looks_seed_only = [c for c in community_objects if seed_only(c.text_unit_ids)]
-        stored_evidence = self._evidenced_by_stored_members(context, looks_seed_only)
+        stored_evidence, stored_descriptions = self._evidenced_by_stored_members(
+            context, looks_seed_only
+        )
         evidenced = [
             c
             for c in community_objects
@@ -1902,9 +1991,19 @@ class CommunityDetectionStage(_RegistryStage):
                 len(community_objects),
             )
         # Text units resolve each report's source documents (report lineage).
+        # A stored member's description precedes the seed's lines, as in the
+        # full build's merge (documents first).
         community_reports, failed_community_ids = self.detector.generate_reports(
             evidenced,
             text_units=context.text_units or context.translated_units,
+            descriptions={
+                entity.id: merge_descriptions(
+                    (stored_descriptions[entity.id], entity.description)
+                )
+                or ""
+                for entity in entities
+                if entity.id in stored_descriptions
+            },
         )
         metrics_obj = self.detector.get_community_metrics()
 
