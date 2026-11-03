@@ -1051,7 +1051,7 @@ From 0.2.3 (or a `main` checkout since):
   as `- Name (unknown): ` instead of `- Name (None): None`, on runs
   without seed graphs too: the prompt of each community with such a
   member changes once, so its report misses the LLM cache once (#515,
-  #PR).
+  #523).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1267,7 +1267,7 @@ Ingestion and incremental indexing.
   doc-status registry on asked the model twice for such an item (graph
   resolution, then the indexing), and an incremental run summarized the
   summary it reused again, storing a description the community report did
-  not read (#PR).
+  not read (#523).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero
