@@ -920,7 +920,7 @@ From 0.2.3 (or a `main` checkout since):
   (2) on Bedrock, the request timeout capped at it on Ollama and
   OpenAI-compatible servers (`backend: local` presets 300 s and a 900 s
   query deadline). An embedding factory's `get_model` now receives
-  `model_purpose`, as a language-model factory's does (#PR).
+  `model_purpose`, as a language-model factory's does (#522).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1192,7 +1192,7 @@ Queries and retrieval.
   deadline. The query now fails at `search.query_timeout_seconds` (a
   stalled call gives up after about 3 minutes on its own), the transient
   retries start no new call past the deadline, and `run-rag` exits without
-  waiting for the abandoned call (#PR).
+  waiting for the abandoned call (#522).
 
 Ingestion and incremental indexing.
 - Incremental runs strip shared items instead of deleting them, repair
