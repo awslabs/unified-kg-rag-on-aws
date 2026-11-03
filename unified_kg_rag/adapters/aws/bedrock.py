@@ -39,6 +39,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.llm.langchain import with_callback
 from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
+from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
@@ -688,10 +689,12 @@ class BedrockLanguageModelFactory(
         model_config = self._build_model_config(
             model_info, resolved_model_id, use_converse, **kwargs
         )
-        self._apply_tracing(
-            model_config,
-            resolved_model_id,
-            ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY)),
+        purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
+        self._apply_tracing(model_config, resolved_model_id, purpose)
+        # Always on: the usage accounting (shared.usage) needs no tracing.
+        model_config["callbacks"] = with_callback(
+            model_config.get("callbacks"),
+            UsageCallbackHandler(resolved_model_id, role=purpose.value),
         )
         model_class = ChatBedrockConverse if use_converse else ChatBedrock
         model = model_class(**model_config)

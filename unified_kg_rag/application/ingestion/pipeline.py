@@ -101,6 +101,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
+from unified_kg_rag.shared.usage import merge_usage, usage_scope
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
@@ -112,6 +113,26 @@ if TYPE_CHECKING:
     import boto3
 
 logger = get_logger(__name__)
+
+# The PipelineStageResult.metrics key of the stage's LLM usage
+# (shared.usage snapshot).
+LLM_USAGE_METRIC = "llm_usage"
+
+
+def run_token_usage(
+    context: PipelineContext, executed_stages: frozenset[str]
+) -> dict[str, Any]:
+    """The LLM usage of the stages a run executed (a resumed run's restored
+    stages spent nothing in it): the totals, ``by_role``, ``by_model`` and
+    ``stages`` (each executed stage's usage)."""
+    stages = {
+        r.stage_name: r.metrics[LLM_USAGE_METRIC]
+        for r in context.stage_results
+        if r.stage_name in executed_stages
+        and isinstance(r.metrics.get(LLM_USAGE_METRIC), dict)
+    }
+    return {**merge_usage(list(stages.values())), "stages": stages}
+
 
 _STALE_DELTA = (
     "the doc-status registry changed since this pipeline computed its "
@@ -2120,8 +2141,16 @@ class DataIngestionPipeline:
         with self._checkpoint_write():
             self.state_manager.update_stage_result(context, running_result)
 
+        stage_usage: dict[str, Any] | None = None
         try:
-            result = stage.execute(context)
+            # The stage's model calls and tokens (shared.usage), kept with its
+            # result: emitted as llm_*_<stage> and run-ingestion's token_usage.
+            with usage_scope() as meter:
+                try:
+                    result = stage.execute(context)
+                finally:
+                    stage_usage = meter.snapshot()
+            result.metrics[LLM_USAGE_METRIC] = stage_usage
             if stage.stage_type is PipelineStageType.DOCUMENT_LOADING:
                 # The delta is saved with the metadata, the documents it
                 # filtered under this key: a resume restores them together
@@ -2164,6 +2193,9 @@ class DataIngestionPipeline:
                 start_time=running_result.start_time,
                 end_time=datetime.now(),
                 error_message=f"Unexpected error: {str(e)}",
+                metrics=(
+                    {LLM_USAGE_METRIC: stage_usage} if stage_usage is not None else {}
+                ),
             )
             with self._checkpoint_write():
                 self.state_manager.update_stage_result(context, failed_result)
@@ -2438,6 +2470,7 @@ class DataIngestionPipeline:
         metrics: PipelineMetrics,
         pipeline_id: str,
         stage_name: str | None = None,
+        extra: dict[str, float] | None = None,
     ) -> None:
         """Forward scalar pipeline metrics to the configured sink (best-effort).
 
@@ -2474,6 +2507,7 @@ class DataIngestionPipeline:
             duration = (metrics.stage_durations or {}).get(stage_name or "")
             if isinstance(duration, (int, float)):
                 scalars[f"duration_{stage_name}_seconds"] = duration
+            scalars.update(extra or {})
             self.metrics_sink.emit(
                 namespace="unified_kg_rag/ingestion",
                 metrics=scalars,
@@ -2489,7 +2523,38 @@ class DataIngestionPipeline:
         except Exception as e:  # never let metrics emission break a run
             logger.warning("Metrics emission failed: %s", e)
             return
-        self._emit_metrics(metrics, context.pipeline_id, stage_name)
+        self._emit_metrics(
+            metrics,
+            context.pipeline_id,
+            stage_name,
+            self._stage_usage_metrics(context, stage_name),
+        )
+
+    @staticmethod
+    def _stage_usage_metrics(
+        context: PipelineContext, stage_name: str
+    ) -> dict[str, float]:
+        """The flat LLM usage metrics of a stage that called a model or was
+        served from the response cache (none for a model-free stage, so no
+        custom-metric series is created for it): ``llm_calls_<stage>``,
+        ``llm_input_tokens_<stage>``, ``llm_output_tokens_<stage>`` and
+        ``llm_cache_hits`` (summed over the stages by a Sum statistic)."""
+        usage = next(
+            (
+                r.metrics.get(LLM_USAGE_METRIC)
+                for r in reversed(context.stage_results)
+                if r.stage_name == stage_name
+            ),
+            None,
+        )
+        if not usage or not (usage.get("llm_calls") or usage.get("cache_hits")):
+            return {}
+        return {
+            f"llm_calls_{stage_name}": usage.get("llm_calls", 0),
+            f"llm_input_tokens_{stage_name}": usage.get("input_tokens", 0),
+            f"llm_output_tokens_{stage_name}": usage.get("output_tokens", 0),
+            "llm_cache_hits": usage.get("cache_hits", 0),
+        }
 
     @staticmethod
     def _calculate_stage_performance(

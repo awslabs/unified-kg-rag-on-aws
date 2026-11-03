@@ -817,6 +817,57 @@ def test_ingestion_json_result_lists_each_stage(
     ]
 
 
+def test_ingestion_json_result_reports_the_runs_token_usage(
+    config: Config, mocker, tmp_path: Path
+) -> None:
+    mocker.patch.object(run_ingestion_pipeline, "load_cli_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    args = run_ingestion_pipeline.CommandLineInterface._setup_arguments().parse_args(
+        ["--source-directory", str(src), "--output-format", "json"]
+    )
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    # graph_extraction ran in this run; text_chunking was restored.
+    runner.pipeline = mocker.MagicMock(executed_stages=frozenset({"graph_extraction"}))
+
+    def _stage(name: str, calls: int) -> PipelineStageResult:
+        counts = {"llm_calls": calls, "input_tokens": 50 * calls}
+        return PipelineStageResult(
+            stage_name=name,
+            status=PipelineStageStatus.COMPLETED,
+            start_time=datetime.now(),
+            metrics={
+                "llm_usage": {
+                    **counts,
+                    "output_tokens": 0,
+                    "cache_hits": 0,
+                    "by_role": {"ingestion": counts},
+                    "by_model": {"model-a": counts},
+                }
+            },
+        )
+
+    context = PipelineContext(
+        pipeline_id="run-1",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.COMPLETED,
+        start_time=datetime.now(),
+        source_directory=src,
+        stage_results=[_stage("text_chunking", 9), _stage("graph_extraction", 2)],
+    )
+    usage = json.loads(json.dumps(runner._json_result(context)))["token_usage"]
+    assert (usage["llm_calls"], usage["input_tokens"]) == (2, 100)
+    assert usage["by_model"] == {
+        "model-a": {
+            "llm_calls": 2,
+            "input_tokens": 100,
+            "output_tokens": 0,
+            "cache_hits": 0,
+        }
+    }
+    assert list(usage["stages"]) == ["graph_extraction"]
+
+
 async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     # The result named no failed document: a run that recorded some FAILED
     # read as a clean success. It counts the records written FAILED, not the

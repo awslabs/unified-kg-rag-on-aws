@@ -33,6 +33,13 @@ categories and metrics compared: read them as exploratory.
 
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
+
+``cost`` (``cost_comparison``) puts the answers' model use next to the
+scores: per strategy the calls, tokens and latency per query (mean, p50,
+p95 over every answer) and, against the baseline, their paired per-query
+deltas with the same bootstrap interval; with ``evaluation.prices`` a USD
+estimate. The comparison is a function of the saved results and reports
+alone, so ``run-eval --from-results`` rebuilds it without a model call.
 """
 
 from __future__ import annotations
@@ -48,7 +55,9 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    LLMUsage,
 )
+from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
 
 from .answer_match_evaluator import ANSWER_SPAN_KEY
@@ -172,11 +181,13 @@ def paired_comparison(
     confidence: float = 0.95,
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
+    prices: Mapping[str, ModelPrice] | None = None,
 ) -> dict[str, Any]:
     """Compare strategies run over the same queries (the first is the baseline).
 
     ``runs`` maps each strategy, in the order given, to its repeats;
-    ``categories`` (query id to category) adds ``deltas_by_category``.
+    ``categories`` (query id to category) adds ``deltas_by_category``;
+    ``prices`` (model id to price) adds a USD estimate to ``cost``.
     """
     strategies = list(runs)
     baseline = strategies[0]
@@ -250,13 +261,19 @@ def paired_comparison(
             if delta is not None:
                 by_metric[key] = delta
         deltas[strategy] = by_metric
-    warnings = [*_failure_warnings(summary), *_span_warnings(runs)]
+    cost = cost_comparison(runs, prices=prices, **stats)
+    warnings = [
+        *_failure_warnings(summary),
+        *_span_warnings(runs),
+        *cost.pop("warnings"),
+    ]
     for warning in warnings:
         logger.warning("%s", warning)
     comparison: dict[str, Any] = {
         "baseline": baseline,
         "strategies": summary,
         "deltas_vs_baseline": deltas,
+        "cost": cost,
         "warnings": warnings,
         "bootstrap": dict(stats),
     }
@@ -341,3 +358,231 @@ def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
             "blocks."
         )
     return warnings
+
+
+# The per-answer cost measures, keyed as in cost.deltas_vs_baseline (and
+# run-eval --fail-if): the usage counters and the answer latency.
+_USAGE_MEASURES: dict[str, str] = {
+    "usage/llm_calls": "llm_calls",
+    "usage/input_tokens": "input_tokens",
+    "usage/output_tokens": "output_tokens",
+    "usage/total_tokens": "total_tokens",
+}
+LATENCY_MEASURE = "latency/response_time_seconds"
+USD_MEASURE = "usage/cost_usd"
+
+
+def answer_cost_usd(
+    usage: LLMUsage, prices: Mapping[str, ModelPrice]
+) -> tuple[float | None, set[str]]:
+    """The USD cost of one answer's model calls, and the models without a
+    price (the cost is then ``None``)."""
+    unpriced = {
+        model
+        for model, counts in usage.by_model.items()
+        if counts.llm_calls and model not in prices
+    }
+    if unpriced:
+        return None, unpriced
+    usd = sum(
+        counts.input_tokens * prices[model].input_per_million_tokens / 1e6
+        + counts.output_tokens * prices[model].output_per_million_tokens / 1e6
+        for model, counts in usage.by_model.items()
+        if model in prices
+    )
+    return float(usd), set()
+
+
+def _distribution(values: Sequence[float]) -> dict[str, float] | None:
+    if not values:
+        return None
+    data = np.asarray(values, dtype=float)
+    return {
+        "mean": float(data.mean()),
+        "p50": float(np.percentile(data, 50)),
+        "p95": float(np.percentile(data, 95)),
+    }
+
+
+def _answer_measures(
+    result: EvaluationResult, prices: Mapping[str, ModelPrice] | None
+) -> tuple[dict[str, float], set[str]]:
+    """One answer's cost measures (those it has) and its unpriced models."""
+    measures: dict[str, float] = {}
+    unpriced: set[str] = set()
+    if result.usage is not None:
+        for key, name in _USAGE_MEASURES.items():
+            measures[key] = float(getattr(result.usage, name))
+        if prices:
+            usd, unpriced = answer_cost_usd(result.usage, prices)
+            if usd is not None:
+                measures[USD_MEASURE] = usd
+    if result.response_time is not None and not result.error:
+        measures[LATENCY_MEASURE] = float(result.response_time)
+    return measures, unpriced
+
+
+def cost_comparison(
+    runs: Mapping[str, Sequence[Run]],
+    *,
+    prices: Mapping[str, ModelPrice] | None = None,
+    resamples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """The comparison's ``cost`` block: per strategy, the answers' model calls,
+    tokens, latency (and USD, with ``prices``) per query as mean / p50 / p95
+    over every answer of every repeat, and against the first strategy the
+    paired per-query deltas (each query's mean over its repeats) with a
+    bootstrap interval, as for the metrics. Also ``warnings`` (popped by
+    ``paired_comparison``): strategies without usage records next to some
+    with them, unpriced models.
+
+    An answer without usage (generation raised, or results saved before
+    usage accounting) has no usage measures; a failed answer has no latency.
+    """
+    stats: dict[str, Any] = {
+        "resamples": resamples,
+        "confidence": confidence,
+        "seed": seed,
+    }
+    strategies: dict[str, Any] = {}
+    per_query: dict[str, dict[str, dict[str, float]]] = {}
+    unpriced: set[str] = set()
+    without_usage: list[str] = []
+    for strategy, strategy_runs in runs.items():
+        observed: dict[str, list[float]] = defaultdict(list)
+        by_query: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        cache_hits = answers = 0
+        strategy_unpriced: set[str] = set()
+        for _, results in strategy_runs:
+            for result in results:
+                answers += 1
+                measures, missing = _answer_measures(result, prices)
+                strategy_unpriced |= missing
+                if result.usage is not None:
+                    cache_hits += result.usage.cache_hits
+                for key, value in measures.items():
+                    observed[key].append(value)
+                    by_query[key][result.query_id].append(value)
+        unpriced |= strategy_unpriced
+        with_usage = len(observed.get("usage/llm_calls", []))
+        if not with_usage:
+            without_usage.append(strategy)
+        per_query[strategy] = {
+            key: {q: float(np.mean(v)) for q, v in values.items()}
+            for key, values in by_query.items()
+        }
+        totals = {
+            name: int(np.sum(observed.get(key, [])))
+            for key, name in _USAGE_MEASURES.items()
+        }
+        strategies[strategy] = {
+            "answers": answers,
+            "answers_with_usage": with_usage,
+            "cache_hits": cache_hits,
+            "llm_calls_per_query": _distribution(observed.get("usage/llm_calls", [])),
+            "input_tokens_per_query": _distribution(
+                observed.get("usage/input_tokens", [])
+            ),
+            "output_tokens_per_query": _distribution(
+                observed.get("usage/output_tokens", [])
+            ),
+            "total_tokens_per_query": _distribution(
+                observed.get("usage/total_tokens", [])
+            ),
+            "latency_seconds": _distribution(observed.get(LATENCY_MEASURE, [])),
+            # Over the answers every model of which has a price; the total
+            # only when every answer's models have one.
+            "usd_per_query": _distribution(observed.get(USD_MEASURE, [])),
+            "usd_total": (
+                float(np.sum(observed.get(USD_MEASURE, [])))
+                if prices and not strategy_unpriced
+                else None
+            ),
+            "totals": totals,
+        }
+    names = list(runs)
+    deltas: dict[str, Any] = {}
+    for strategy in names[1:]:
+        by_measure: dict[str, Any] = {}
+        for key, base in per_query[names[0]].items():
+            delta = _delta_stats(base, per_query[strategy].get(key, {}), **stats)
+            if delta is not None:
+                by_measure[key] = delta
+        deltas[strategy] = by_measure
+    warnings = []
+    # Some strategies with usage and some without: their usage is not
+    # paired (none with it at all is no warning, only no usage measures).
+    if without_usage and len(without_usage) < len(names):
+        warnings.append(
+            f"No usage records in the results of {', '.join(without_usage)} "
+            "(saved before usage accounting, or every answer failed): their "
+            "usage is not compared."
+        )
+    if unpriced:
+        warnings.append(
+            "evaluation.prices has no price for "
+            f"{', '.join(sorted(unpriced))}: the answers that used them have "
+            "no USD estimate."
+        )
+    return {
+        "strategies": strategies,
+        "deltas_vs_baseline": deltas,
+        "prices": (
+            {model: price.model_dump() for model, price in sorted(prices.items())}
+            if prices
+            else None
+        ),
+        "warnings": warnings,
+    }
+
+
+def per_query_rows(
+    runs: Mapping[str, Sequence[Run]],
+    categories: Mapping[str, str] | None = None,
+    prices: Mapping[str, ModelPrice] | None = None,
+) -> list[dict[str, Any]]:
+    """The per-query values behind the comparison, one row per non-baseline
+    strategy, measure and query: the baseline's and the strategy's value
+    (each the mean over its repeats, a failed answer filled as in
+    ``paired_comparison``) and their delta (``None`` when one side has no
+    value). Measures are the metrics and the cost measures."""
+    strategies = list(runs)
+    failed_scores = _strategy_failed_scores(runs, _scored_metrics(runs))
+    values: dict[str, dict[str, dict[str, float]]] = {}
+    for strategy in strategies:
+        values[strategy] = per_query_means(runs[strategy], failed_scores[strategy])
+        by_query: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for _, results in runs[strategy]:
+            for result in results:
+                measures, _ = _answer_measures(result, prices)
+                for key, value in measures.items():
+                    by_query[key][result.query_id].append(value)
+        for key, per_query in by_query.items():
+            values[strategy][key] = {q: float(np.mean(v)) for q, v in per_query.items()}
+    baseline = strategies[0]
+    rows: list[dict[str, Any]] = []
+    for strategy in strategies[1:]:
+        for key in sorted(set(values[baseline]) | set(values[strategy])):
+            base = values[baseline].get(key, {})
+            other = values[strategy].get(key, {})
+            for query_id in sorted(set(base) | set(other)):
+                b, o = base.get(query_id), other.get(query_id)
+                rows.append(
+                    {
+                        "strategy": strategy,
+                        "baseline": baseline,
+                        "measure": key,
+                        "query_id": query_id,
+                        "category": (categories or {}).get(query_id),
+                        "baseline_value": b,
+                        "value": o,
+                        "delta": o - b if o is not None and b is not None else None,
+                    }
+                )
+    return rows

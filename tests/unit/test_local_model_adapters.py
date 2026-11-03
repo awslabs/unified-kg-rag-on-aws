@@ -434,8 +434,15 @@ def test_tracing_callback_is_attached_when_observability_is_on(mocker) -> None:
 
 
 def test_no_tracing_callback_when_observability_is_off() -> None:
+    from unified_kg_rag.adapters.observability.usage_callback import (
+        UsageCallbackHandler,
+    )
+
     model = OllamaLanguageModelFactory(_config("ollama")).get_model("m")
-    assert not model.callbacks
+    # Only the always-on usage accounting.
+    (handler,) = model.callbacks or []
+    assert isinstance(handler, UsageCallbackHandler)
+    assert (handler.model_id, handler.role) == ("m", "query")
 
 
 def test_missing_extra_names_the_remedy(mocker) -> None:

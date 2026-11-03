@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -212,9 +213,21 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     )
     assert f'namespace="{EMF_NAMESPACE}"' in pipeline
     assert 'f"duration_{stage_name}_seconds"' in pipeline
+    for usage_name in (
+        'f"llm_calls_{stage_name}"',
+        'f"llm_input_tokens_{stage_name}"',
+        'f"llm_output_tokens_{stage_name}"',
+        '"llm_cache_hits"',
+    ):
+        assert usage_name in pipeline
     names = _emf_metric_names(_template())
     assert {"total_items_index_failed", "total_entities_extracted"} <= names
     durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
+    durations |= {
+        f"llm_{kind}_{stage}"
+        for kind in ("calls", "input_tokens", "output_tokens")
+        for stage in _pipeline_stages()
+    } | {"llm_cache_hits"}
     fields = _pipeline_metric_fields()
     # Every document outcome is a PipelineMetrics field (a name drifted from
     # DOCUMENT_METRICS would alarm on a series nobody emits).
@@ -258,6 +271,32 @@ def test_the_duration_widget_lists_every_stage() -> None:
     from iac.stacks.observability_stack import PIPELINE_STAGES
 
     assert list(PIPELINE_STAGES) == _pipeline_stages()
+
+
+def test_the_token_widgets_plot_every_model_stage_and_cache_hits() -> None:
+    from iac.stacks.observability_stack import LLM_STAGES
+
+    names = _emf_metric_names(_template())
+    model_stages = [
+        stage
+        for stage in _pipeline_stages()
+        if stage not in ("document_parsing", "document_loading")
+    ]
+    assert list(LLM_STAGES) == model_stages
+    for stage in model_stages:
+        assert {
+            f"llm_calls_{stage}",
+            f"llm_input_tokens_{stage}",
+            f"llm_output_tokens_{stage}",
+        } <= names
+    assert "llm_cache_hits" in names
+    body = json.dumps(
+        next(iter(_template().find_resources("AWS::CloudWatch::Dashboard").values()))[
+            "Properties"
+        ]["DashboardBody"]
+    )
+    assert "LLM tokens by stage (EMF)" in body
+    assert "LLM calls by stage and response-cache hits (EMF)" in body
 
 
 def test_emf_alarms_watch_only_this_environment() -> None:

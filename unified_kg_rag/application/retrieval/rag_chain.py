@@ -89,6 +89,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    ModelPurpose,
     ModelRole,
     RetrievalResult,
     RetrieverRole,
@@ -129,6 +130,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
+from unified_kg_rag.shared.usage import record_cache_hit, usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -315,7 +317,10 @@ class RAGOutput(BaseModel):
     ``sources`` lists the documents and graph elements the answer's context
     was built from; ``search_results`` holds the raw retrieval results.
     ``metadata["error"]`` is ``True`` on the degraded answer returned for a
-    failed query when ``processing.ignore_errors`` is set. With a guardrail
+    failed query when ``processing.ignore_errors`` is set.
+    ``metadata["usage"]`` counts the query's model calls (``llm_calls``,
+    ``input_tokens``, ``output_tokens``, ``cache_hits``, and the same
+    ``by_role`` and ``by_model``; ``domain.models.LLMUsage``). With a guardrail
     configured, ``metadata["guardrail"]`` lists its interventions (source,
     action, policies), and ``metadata["blocked"]`` is ``True`` when it
     blocked the query (the answer is then its blocked message and nothing
@@ -1018,6 +1023,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.debug(
                 "Reused the cached %s for query %s", key[0], text_digest(key[3])
             )
+            # A model call the query did not make (shared.usage).
+            record_cache_hit(ModelPurpose.QUERY.value, key[1])
         return hit
 
     def _cache_extraction(self, key: tuple[str, ...], value: Any) -> None:
@@ -1968,8 +1975,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             observability.span(
                 "kg_rag.query", self._query_span_attributes(rag_input, search)
             ) as span,
+            usage_scope() as meter,
         ):
             result = await self._ainvoke(rag_input, input_dict, config, span, search)
+            # The query's model calls and tokens (shared.usage).
+            result.metadata["usage"] = meter.snapshot()
             span.set_attributes(
                 {
                     **self._query_outcome_attributes(result),

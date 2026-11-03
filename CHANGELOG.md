@@ -928,6 +928,25 @@ From 0.2.3 (or a `main` checkout since):
   `search.global_search.evidence_tokens` caps the cited report text after
   the key points (null, the default, keeps the current behaviour; `0` sends
   the key points only) (#525).
+- Always-on LLM usage accounting, tracing or not: model calls, input and
+  output tokens and cache hits (the LLM response cache and the query
+  extraction cache) per model role and model id, in
+  `RAGOutput.metadata["usage"]` / `SearchOutput.metadata["usage"]`,
+  `EvaluationResult.usage` and `EvaluationSummary.usage`, `run-ingestion`'s
+  JSON `token_usage`, and per-stage EMF metrics `llm_calls_<stage>`,
+  `llm_input_tokens_<stage>`, `llm_output_tokens_<stage>` and
+  `llm_cache_hits`, plotted on the CDK dashboard (#PR).
+- The `run-eval` comparison has a `cost` block: per strategy the answers'
+  calls, tokens and latency per query (mean, p50, p95) and their paired
+  deltas against the baseline with a bootstrap interval; an optional
+  `evaluation.prices` table (no prices ship) adds a USD estimate. It is also
+  written as per-query CSV and Markdown (#PR).
+- `run-eval --from-results` rebuilds a comparison from saved runs without an
+  answer call (finishing an interrupted comparison by running only the
+  missing strategies), and re-judges them with `--pairwise-judge` and the new
+  `--judge-model`; `--baseline-results` compares with an earlier run and is
+  refused when the runs' `answer_scoring` differs; `--fail-if
+  <measure>:<stat><op><value>` gates exit `1` on a regression (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
