@@ -1087,23 +1087,32 @@ class OpenSearchIndexer(VectorIndexer):
         """Whether the entities or relationships index holds a document
         (see the port): one size-1 search of each live index."""
         kinds: tuple[AnnotatedKind, ...] = ("entities", "relationships")
-        for kind in kinds:
-            prefix, _ = _VECTOR_COPY_FIELDS[kind]
-            alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
-            if not self.opensearch_client.get_index_name_by_alias(alias_name):
-                continue
-            response = self.opensearch_client.search(
-                index=alias_name,
-                body={
-                    "size": 1,
-                    "query": {"match_all": {}},
-                    "_source": False,
-                    "track_total_hits": False,
-                },
-            )
-            if response.get("hits", {}).get("hits"):
-                return True
-        return False
+        return any(
+            self._holds_a_document(_VECTOR_COPY_FIELDS[kind][0], suffix)
+            for kind in kinds
+        )
+
+    def holds_any_text_unit(self, suffix: str | None = None) -> bool:
+        """Whether the text-unit index holds a document (see the port): one
+        size-1 search of the live index."""
+        return self._holds_a_document("text_units_index_prefix", suffix)
+
+    def _holds_a_document(self, prefix: str, suffix: str | None) -> bool:
+        """Whether the live index of the ``prefix`` config field holds a
+        document (``False`` without one): one size-1 search."""
+        alias_name = self._get_name(getattr(self.opensearch_config, prefix), suffix)
+        if not self.opensearch_client.get_index_name_by_alias(alias_name):
+            return False
+        response = self.opensearch_client.search(
+            index=alias_name,
+            body={
+                "size": 1,
+                "query": {"match_all": {}},
+                "_source": False,
+                "track_total_hits": False,
+            },
+        )
+        return bool(response.get("hits", {}).get("hits"))
 
     def write_schema_annotations(
         self,

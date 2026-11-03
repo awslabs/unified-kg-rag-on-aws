@@ -55,7 +55,10 @@ from unified_kg_rag.application.ingestion.incremental import (
     unit_source_files,
     warn_about_unapplied_retired_scopes,
 )
-from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.application.storage.indexing_manager import (
+    IndexingManager,
+    stripped_descriptions,
+)
 from unified_kg_rag.domain.ingestion.base_resolver import (
     compact_name_key,
     normalize_entity_type,
@@ -606,7 +609,8 @@ class DocumentLoadingStage(_RegistryStage):
         mounted, an S3 sync that copied nothing): the seeds alone would
         replace every document the index holds. An index that holds no
         item yet (a first seed-only build) loses nothing and is built
-        without asking (``holds_any_item``, a bounded read of each store);
+        without asking (``holds_any_item`` and the vector store's
+        ``holds_any_text_unit``, a bounded read each);
         a store that cannot tell, or whose read fails, counts as holding
         items. ``confirm`` answers as for a reset (``--confirm-reset``,
         ``UKR_CONFIRM_RESET=1`` or ``--yes``); ``None`` cannot, and the run
@@ -641,21 +645,27 @@ class DocumentLoadingStage(_RegistryStage):
 
     def _stores_hold_items(self, suffix: str) -> bool | None:
         """Whether either store holds an entity or relationship of
-        ``suffix``; ``None`` when one cannot tell or a read fails."""
+        ``suffix``, or the vector store a text unit (of a corpus that
+        stated no item); ``None`` when one cannot tell or a read fails."""
         answers: list[bool | None] = []
         try:
-            for build in (
-                self.providers.build_graph_indexer,
-                self.providers.build_vector_indexer,
-            ):
-                store = build()
-                try:
-                    held = store.holds_any_item(suffix)
-                finally:
-                    store.close()
-                if held:
-                    return True
-                answers.append(held)
+            graph = self.providers.build_graph_indexer()
+            try:
+                held = graph.holds_any_item(suffix)
+            finally:
+                graph.close()
+            if held:
+                return True
+            answers.append(held)
+            vector = self.providers.build_vector_indexer()
+            try:
+                for probe in (vector.holds_any_item, vector.holds_any_text_unit):
+                    held = probe(suffix)
+                    if held:
+                        return True
+                    answers.append(held)
+            finally:
+                vector.close()
         except Exception as e:  # noqa: BLE001 - read as holding: the run asks
             logger.warning(
                 "Could not tell whether the stores hold items of '%s' (%s)",
@@ -1882,7 +1892,11 @@ class CommunityDetectionStage(_RegistryStage):
         graph) that a stored member makes document-evidenced, on an
         incremental run, and the stored descriptions of those members by
         id: a full build's report reads them merged with the seed's lines
-        (``generate_reports(descriptions=)``).
+        (``generate_reports(descriptions=)``). A member citing a unit the
+        run replaces (a seed's earlier version) has its description derived
+        again from the records of its other units first
+        (``stripped_descriptions``, as the indexing's strip does): the
+        replaced unit's lines are not the corpus's.
 
         An incremental run's graph holds its delta only: a seed added or
         edited beside unchanged documents states their entities with seed
@@ -1891,8 +1905,9 @@ class CommunityDetectionStage(_RegistryStage):
         does not replace (``_replaced_unit_ids``), or, stored without
         lineage, when its ``source_kinds`` is absent (written before seed
         graphs, or document-only) or names documents. One batched read of
-        the members per suffix; a failure keeps the communities without a
-        report, as before.
+        the members per suffix (and of the records of the stripped ones'
+        units); a failure keeps the communities without a report, as
+        before.
         """
         delta = context.incremental_delta
         if not communities or delta is None or self.config.indexing.reset:
@@ -1902,17 +1917,43 @@ class CommunityDetectionStage(_RegistryStage):
         for entity in context.resolved_entities:
             if entity.id in members:
                 groups[BaseIndexer.get_suffix(entity)].append(entity.id)
+        backed: dict[str, str] = {}
         try:
             removed = self._replaced_unit_ids(context, delta)
             graph = self.providers.build_graph_indexer()
             try:
-                stored = [
-                    entity
+                stored = {
+                    suffix: [
+                        entity
+                        for entity in graph.read_entities(sorted(ids), suffix=suffix)
+                        if _document_backed(entity, removed)
+                    ]
                     for suffix, ids in sorted(groups.items())
-                    for entity in graph.read_entities(sorted(ids), suffix=suffix)
-                ]
+                }
             finally:
                 graph.close()
+            # The lines of the units this run replaces (a seed's earlier
+            # version) are not the corpus's: their descriptions are derived
+            # again without them, as the indexing's strip does before it
+            # merges this run's lines in.
+            stale = any(
+                removed.intersection(entity.text_unit_ids or [])
+                for entities in stored.values()
+                for entity in entities
+            )
+            vector = self.providers.build_vector_indexer() if stale else None
+            try:
+                for suffix, entities in stored.items():
+                    backed.update(
+                        stripped_descriptions(
+                            self.config, vector, suffix, entities, removed
+                        )
+                        if vector is not None
+                        else {e.id: e.description or "" for e in entities}
+                    )
+            finally:
+                if vector is not None:
+                    vector.close()
         except Exception as e:
             logger.warning(
                 "Could not read the stored members of %s communities only seed "
@@ -1922,11 +1963,6 @@ class CommunityDetectionStage(_RegistryStage):
                 e,
             )
             return set(), {}
-        backed = {
-            entity.id: entity.description or ""
-            for entity in stored
-            if _document_backed(entity, removed)
-        }
         evidenced = {
             c.id
             for c in communities

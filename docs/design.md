@@ -678,7 +678,15 @@ of the documents plus the configured seeds. No model reads a seed.
   suffix): a member citing a document unit the run does not replace, or
   stored without lineage and without seed-only `source_kinds`, evidences
   it. A seed added beside unchanged documents thus reports their
-  communities as a full build does. Global search answers from the
+  communities as a full build does: the report reads each such member's
+  stored description followed by the run's lines, and a member citing a
+  unit the run replaces (an edited seed's earlier shard) has its stored
+  description derived again from the records of its other units first,
+  as the indexing's strip does (`stripped_descriptions`, one read of
+  those units' records). The relationship lines are the run's graph's
+  only (the delta's seed edges; a stored document edge between members
+  is not read): clustering the delta only, the community itself can
+  differ from a full build's. Global search answers from the
   reports, so content only seeds state is in none, while a mixed
   community's report describes its seed members too.
 - **Scope (decided).** The shards belong to the source scope of the run
@@ -733,7 +741,9 @@ of the documents plus the configured seeds. No model reads a seed.
   cannot tell a seed-only corpus from a missing one, so
   `DocumentLoadingStage._confirm_seeds_alone` asks `confirm` before seeds
   alone replace an index that holds items (`holds_any_item`, one bounded
-  read per store; unknown or unreadable counts as holding). An index that
+  read per store, and the vector store's `holds_any_text_unit`, so a
+  corpus that stated no item counts; unknown or unreadable counts as
+  holding). An index that
   holds none builds unasked: a first seed-only build loses nothing, and
   asking there would demand a flag for nothing.
 - **Not in v1.** IRI-based identity and aliases, `owl:sameAs`, a

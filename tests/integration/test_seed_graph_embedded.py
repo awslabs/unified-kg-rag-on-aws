@@ -489,6 +489,34 @@ def test_a_seed_only_scope_lives_beside_a_document_scope(tmp_path: Path) -> None
     )
 
 
+def test_a_seed_only_scope_retires_a_document_scope(tmp_path: Path) -> None:
+    # The recovery the refusal names (--retire-source-scope): a seed-only
+    # scope's run retires the document scope, whose records the delta
+    # deletes. They are not the seed scope's documents: the run is not
+    # refused, and the namespace keeps the seeds alone.
+    harness = _Harness(tmp_path, corpus={})
+    seeds_source = harness.source
+    seeds_config = harness.config
+    seeds_config.processing.document_parsing.source_scope = "seeds-procure"
+    documents_source = tmp_path / "documents"
+    documents_source.mkdir()
+    for name, text in CORPUS.items():
+        (documents_source / name).write_text(text)
+    documents_config: Config = seeds_config.model_copy(deep=True)
+    documents_config.processing.document_parsing.source_scope = "documents"
+    documents_config.processing.seed_graphs = []
+    harness.config, harness.source = documents_config, documents_source
+    harness.ok()
+    assert harness.registry() == _corpus_paths()
+    harness.config, harness.source = seeds_config, seeds_source
+    seeds_config.indexing.retire_source_scopes = ["documents"]
+    context = harness.ok()
+    assert context.incremental_delta is not None
+    assert len(context.incremental_delta.deleted) == len(CORPUS)
+    assert harness.registry() == _seed_paths()
+    assert harness.graph_names() == SEED_NAMES
+
+
 def test_an_empty_corpus_never_deletes_the_scopes_documents(tmp_path: Path) -> None:
     harness = _Harness(tmp_path / "corpus-run")
     harness.ok()
@@ -631,6 +659,48 @@ def test_a_seed_added_beside_documents_reports_their_community(
     assert report_lines(harness, before) == report_lines(built)
     assert report_lines(built)
     assert all(line.split(": ", 1)[1] for line in report_lines(built))
+
+
+def _vendor_entries(harness: _Harness, start: int = 0) -> list[str]:
+    """Vendor's entries in the report prompts since ``start``: its entity
+    line and the description lines that follow it."""
+    entries = []
+    for prompt in harness.server.prompts[start:]:
+        lines = prompt.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith("- Vendor ("):
+                entry = [line]
+                for more in lines[i + 1 :]:
+                    if not more.strip() or more.startswith(("- ", "<")):
+                        break
+                    entry.append(more)
+                entries.append("\n".join(entry))
+    return entries
+
+
+def test_a_seed_edit_reports_the_current_descriptions_only(tmp_path: Path) -> None:
+    # Documents and seed v1, then v2, then v2 without Vendor's description:
+    # each incremental report reads Vendor as a full build of the same
+    # corpus does, the stored documents' lines first, without the lines of
+    # the seed unit the run replaces.
+    harness = _Harness(tmp_path / "edited")
+    versions = {"v1": "Seed v1 says vendor.", "v2": "Seed v2 says vendor."}
+    harness.seed.write_text(_seed_text({"n-vendor": versions["v1"]}))
+    harness.ok()
+    for step, line in (("v2", versions["v2"]), ("removed", None)):
+        harness.seed.write_text(_seed_text({"n-vendor": line} if line else None))
+        before = len(harness.server.prompts)
+        harness.ok()
+        built = _Harness(tmp_path / f"built-{step}")
+        built.seed.write_text(harness.seed.read_text())
+        built.ok()
+        expected = _vendor_entries(built)
+        assert expected and _vendor_entries(harness, before) == expected
+        (entry,) = set(expected)
+        # The documents' line, then the seed's current one (if any).
+        lines = entry.split("\n")
+        assert lines[0].split(": ", 1)[1] and versions["v1"] not in entry
+        assert lines[1:] == ([line] if line else [])
 
 
 SEED_ONLY = SEED_NAMES - {"Vendor"}

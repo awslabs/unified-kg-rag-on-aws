@@ -577,6 +577,13 @@ class FakeVectorStore(_Recorder):
             for item in self.data.get(kind, {}).values()
         )
 
+    def holds_any_text_unit(self, suffix: str | None = None) -> bool:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return any(
+            BaseIndexer.get_suffix(item) == wanted
+            for item in self.data.get("text_units", {}).values()
+        )
+
     def read_schema_annotations(
         self, kind: AnnotatedKind, suffix: str | None = None
     ) -> dict[str, StoredAnnotation]:

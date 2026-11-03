@@ -660,6 +660,14 @@ class VectorIndexer(BaseIndexer):
         :meth:`read_schema_annotations`."""
         return _holds_any_item(self, suffix)
 
+    def holds_any_text_unit(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s live text-unit index holds a text unit: a
+        corpus none of whose units stated an item holds text units alone,
+        which :meth:`holds_any_item` does not see. Default ``None``: the
+        backend cannot tell. Adapters that override it read one document
+        and raise when the read fails."""
+        return None
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,

@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from tests.fixtures.fakes.stores import FakeGraphStore
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.seed_graphs import EDGES, NODES, PROCURE, lines
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractionStats
 from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
@@ -80,6 +80,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import LanguageCode, SeedGraphConfig
 from unified_kg_rag.shared.exceptions import (
     ConfirmationDeclinedError,
+    DocStatusRegistryError,
     PipelineExecutionError,
     PipelineStageError,
     SeedGraphError,
@@ -536,6 +537,20 @@ def test_a_seed_only_scope_run_reads_its_own_records_not_the_namespace(
     listed.assert_not_called()
 
 
+def test_an_unreadable_registry_fails_the_seed_guard() -> None:
+    # A listing that fails is no empty namespace: the guard stops the run
+    # rather than read it as holding nothing.
+    class Unreadable:
+        def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
+            raise RuntimeError("throttled")
+
+    with pytest.raises(DocStatusRegistryError, match="throttled") as error:
+        incremental._namespace_records(
+            lambda: Unreadable(), "default", "the seed check"  # type: ignore[arg-type,return-value]
+        )
+    assert "could not read namespace 'default' for the seed check" in str(error.value)
+
+
 def test_a_seed_only_run_counts_a_file_that_failed_to_load() -> None:
     # Parsing off: the loader failed to read the scope's only document; it
     # is not deleted, and it is no seed-only scope's either.
@@ -580,23 +595,28 @@ def test_a_reset_reads_its_quarantined_documents_from_its_listing(mocker) -> Non
 
 
 def _registry_off_stage(
-    mocker, graph: Any = False, vector: Any = False, confirm: Any = None
+    mocker,
+    graph: Any = False,
+    vector: Any = False,
+    confirm: Any = None,
+    units: Any = False,
 ) -> tuple[Any, Any]:
     """A loading stage with the registry off whose stores answer
-    ``holds_any_item`` with ``graph`` and ``vector`` (an exception: raised)."""
+    ``holds_any_item`` with ``graph`` and ``vector``, and the vector store
+    ``holds_any_text_unit`` with ``units`` (an exception: raised)."""
     stage: Any = ps.DocumentLoadingStage.__new__(ps.DocumentLoadingStage)
     stage.config = Config()
     stage.confirm = confirm
     providers = mocker.MagicMock()
-    for build, held in (
-        (providers.build_graph_indexer, graph),
-        (providers.build_vector_indexer, vector),
+    for probe, held in (
+        (providers.build_graph_indexer.return_value.holds_any_item, graph),
+        (providers.build_vector_indexer.return_value.holds_any_item, vector),
+        (providers.build_vector_indexer.return_value.holds_any_text_unit, units),
     ):
-        store = build.return_value
         if isinstance(held, Exception):
-            store.holds_any_item.side_effect = held
+            probe.side_effect = held
         else:
-            store.holds_any_item.return_value = held
+            probe.return_value = held
     stage.providers = providers
     return stage, providers
 
@@ -608,18 +628,34 @@ def test_registry_off_seeds_alone_build_an_empty_index_unasked(mocker) -> None:
     for build in (providers.build_graph_indexer, providers.build_vector_indexer):
         build.return_value.holds_any_item.assert_called_once_with("default")
         build.return_value.close.assert_called_once()
+    vector = providers.build_vector_indexer.return_value
+    vector.holds_any_text_unit.assert_called_once_with("default")
 
 
 @pytest.mark.parametrize(
-    ("graph", "vector"),
-    [(True, False), (False, True), (None, False), (False, RuntimeError("down"))],
-    ids=["graph-holds", "vector-holds", "cannot-tell", "read-fails"],
+    ("graph", "vector", "units"),
+    [
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (None, False, False),
+        (False, False, None),
+        (False, RuntimeError("down"), False),
+    ],
+    ids=[
+        "graph-holds",
+        "vector-holds",
+        "text-units-only",
+        "cannot-tell",
+        "units-cannot-tell",
+        "read-fails",
+    ],
 )
 def test_registry_off_seeds_alone_over_an_index_ask_first(
-    mocker, graph: Any, vector: Any
+    mocker, graph: Any, vector: Any, units: Any
 ) -> None:
     question = "rebuild the index 'default' from the seed graphs alone"
-    stage, providers = _registry_off_stage(mocker, graph, vector)
+    stage, providers = _registry_off_stage(mocker, graph, vector, units=units)
     with pytest.raises(ConfirmationDeclinedError, match="--confirm-reset") as error:
         stage._confirm_seeds_alone()
     assert question in str(error.value)
@@ -746,6 +782,8 @@ def test_an_unanswerable_reset_question_names_its_flag(
         ([], " TRUE ", True),
         ([], "yes", True),
         ([], "0", False),
+        ([], "false", False),
+        ([], " No ", False),
         ([], "", False),
         (["--confirm-reset"], "0", True),
     ],
@@ -1369,6 +1407,100 @@ def test_stored_members_are_read_in_their_own_suffix(mocker) -> None:
         {"c-vendor", "c-harbor"},
         {"vendor": "Vendor sells.", "harbor": "Harbor docks."},
     )
+
+
+def test_only_the_backed_members_community_is_evidenced(mocker) -> None:
+    # Harbor is stored from the seed alone: its community stays seed-only.
+    graph = FakeGraphStore()
+    graph.upsert_entities(
+        [
+            Entity(id="vendor", name="Vendor", text_unit_ids=["u1"]),
+            Entity(
+                id="harbor",
+                name="Harbor",
+                text_unit_ids=[SEED_UNIT],
+                attributes={"index": "other"},
+            ),
+        ]
+    )
+    stage, context, _ = _evidence(mocker, graph)
+    evidenced, _ = stage._evidenced_by_stored_members(context, _communities())
+    assert evidenced == {"c-vendor"}
+
+
+def test_a_deleted_documents_units_evidence_nothing(mocker) -> None:
+    # u1 is the unit of a document the run deletes: a full build no longer
+    # holds it, so Vendor's stored copy evidences nothing.
+    stage, context, _ = _evidence(mocker, _stored_graph())
+    stage._doc_status.put(
+        DocStatusRecord(
+            doc_id="gone",
+            content_hash="h",
+            status=DocStatus.PROCESSED,
+            text_unit_ids=["u1"],
+        )
+    )
+    context.incremental_delta = DocumentDelta(new=["seed-doc"], deleted=["gone"])
+    assert stage._evidenced_by_stored_members(context, _communities()) == (
+        {"c-harbor"},
+        {"harbor": "Harbor docks."},
+    )
+
+
+def test_the_stored_members_graph_store_is_closed(mocker) -> None:
+    graph = _stored_graph()
+    close = mocker.spy(graph, "close")
+    stage, context, providers = _evidence(mocker, graph)
+    stage._evidenced_by_stored_members(context, _communities())
+    assert close.call_count == 1
+    # No stored member cites a unit the run replaces: no record is read.
+    providers.build_vector_indexer.assert_not_called()
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_a_replaced_units_lines_leave_the_stored_description(
+    mocker, recorded: bool
+) -> None:
+    # Vendor's stored copy cites the document's u1 and the seed unit this
+    # run replaces (an edited seed): its description is derived again from
+    # u1's record, as the indexing's strip does. Without u1's record it is
+    # kept as stored, as the strip keeps it.
+    graph = _stored_graph()
+    graph.upsert_entities(
+        [
+            Entity(
+                id="vendor",
+                name="Vendor",
+                description="Vendor sells.\nSeed v1 says vendor.",
+                text_unit_ids=["u1", SEED_UNIT],
+            )
+        ]
+    )
+    vector = FakeVectorStore()
+    close = mocker.spy(vector, "close")
+    vector.upsert_text_units(
+        [TextUnit(id="u1", text="", attributes={"extraction_records": {"graph": "k1"}})]
+    )
+    if recorded:
+        record = TextUnitExtraction(
+            text_unit_id="u1",
+            entities=[Entity(id="vendor", name="Vendor", description="Vendor sells.")],
+        )
+        vector.write_extraction_records({"k1": record_payload(record)})
+    stage, context, providers = _evidence(mocker, graph)
+    providers.build_vector_indexer.return_value = vector
+    context.text_units = [TextUnit(id=SEED_UNIT, text="seed v2")]
+    evidenced, descriptions = stage._evidenced_by_stored_members(
+        context, _communities()
+    )
+    assert evidenced == {"c-vendor", "c-harbor"}
+    assert descriptions == {
+        "vendor": (
+            "Vendor sells." if recorded else "Vendor sells.\nSeed v1 says vendor."
+        ),
+        "harbor": "Harbor docks.",
+    }
+    assert close.call_count == 1
 
 
 def test_a_reset_reads_no_stored_member(mocker) -> None:

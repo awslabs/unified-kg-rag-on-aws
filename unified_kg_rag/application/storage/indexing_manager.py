@@ -269,6 +269,80 @@ def _edges_of_written_entities(
     return [r for r in relationships if id(r) not in held_ids], stats
 
 
+def unit_records(
+    vector: VectorIndexer,
+    suffix: str,
+    unit_ids: Sequence[str],
+    text_units: Sequence[TextUnit] = (),
+) -> tuple[dict[str, TextUnitExtraction], dict[str, list[Claim]]]:
+    """The graph and claim records of ``unit_ids`` (those found): of the
+    ``text_units`` given, the others' record keys read from ``vector``."""
+    wanted = set(unit_ids)
+    units = {u.id: u for u in text_units if u.id in wanted}
+    missing = [i for i in unit_ids if i not in units]
+    if missing:
+        for unit_id, attributes in vector.read_text_unit_attributes(
+            missing, suffix=suffix
+        ).items():
+            units[unit_id] = TextUnit.model_validate(
+                {"id": unit_id, "text": "", "attributes": attributes}
+            )
+    keys = {u.id: record_keys(u) for u in units.values()}
+    payloads = vector.read_extraction_records(
+        sorted({key for k in keys.values() for key in k.values()}), suffix=suffix
+    )
+    records: dict[str, TextUnitExtraction] = {}
+    claim_records: dict[str, list[Claim]] = {}
+    for unit_id, unit_keys in keys.items():
+        unit = units[unit_id]
+        try:
+            if (payload := payloads.get(unit_keys.get("graph", ""))) is not None:
+                records[unit_id] = record_from_payload(payload, unit)
+            if (payload := payloads.get(unit_keys.get("claims", ""))) is not None:
+                claim_records[unit_id] = claims_from_payload(payload, unit)
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "Ignoring an unreadable extraction record of text unit '%s': %s",
+                unit.short_id or unit_id,
+                type(e).__name__,
+            )
+    return records, claim_records
+
+
+def stripped_descriptions(
+    config: Config,
+    vector: VectorIndexer,
+    suffix: str,
+    entities: Sequence[Entity],
+    removed: Collection[str],
+) -> dict[str, str]:
+    """The descriptions of the stored ``entities`` once the text units
+    ``removed`` are stripped from them, by id, as a removal's strip derives
+    them before the cross-run merge appends a delta's lines
+    (``remove_text_units``, then ``derive`` over the records of the units
+    left). An entity that cites no removed unit keeps its description, as
+    does one a record of whose units is missing (the strip keeps it as
+    stored). Raises when a read fails."""
+    descriptions = {e.id: e.description or "" for e in entities}
+    stripped, _ = remove_text_units(list(entities), [], removed)
+    if not stripped:
+        return descriptions
+    records, _ = unit_records(
+        vector,
+        suffix,
+        sorted({u for e in stripped for u in e.text_unit_ids or []}),
+    )
+    derived = derive(config, stripped, [], [], records)
+    by_id = {e.id: e for e in derived.entities}
+    for entity in stripped:
+        if entity.id in derived.underived:
+            continue
+        match = by_id.get(derived.id_remap.get(entity.id, entity.id))
+        if match is not None:
+            descriptions[entity.id] = match.description or ""
+    return descriptions
+
+
 class CrossRunMergeResult(BaseModel):
     """A delta merged with the stored graph state it touches."""
 
@@ -1579,39 +1653,7 @@ class IndexingManager:
         text_units: Sequence[TextUnit],
     ) -> tuple[dict[str, TextUnitExtraction], dict[str, list[Claim]]]:
         """The graph and claim records of ``unit_ids`` (those found)."""
-        wanted = set(unit_ids)
-        units = {u.id: u for u in text_units if u.id in wanted}
-        missing = [i for i in unit_ids if i not in units]
-        if missing:
-            for (
-                unit_id,
-                attributes,
-            ) in self.opensearch_indexer.read_text_unit_attributes(
-                missing, suffix=suffix
-            ).items():
-                units[unit_id] = TextUnit.model_validate(
-                    {"id": unit_id, "text": "", "attributes": attributes}
-                )
-        keys = {u.id: record_keys(u) for u in units.values()}
-        payloads = self.opensearch_indexer.read_extraction_records(
-            sorted({key for k in keys.values() for key in k.values()}), suffix=suffix
-        )
-        records: dict[str, TextUnitExtraction] = {}
-        claim_records: dict[str, list[Claim]] = {}
-        for unit_id, unit_keys in keys.items():
-            unit = units[unit_id]
-            try:
-                if (payload := payloads.get(unit_keys.get("graph", ""))) is not None:
-                    records[unit_id] = record_from_payload(payload, unit)
-                if (payload := payloads.get(unit_keys.get("claims", ""))) is not None:
-                    claim_records[unit_id] = claims_from_payload(payload, unit)
-            except (ValueError, TypeError) as e:
-                logger.warning(
-                    "Ignoring an unreadable extraction record of text unit '%s': %s",
-                    unit.short_id or unit_id,
-                    type(e).__name__,
-                )
-        return records, claim_records
+        return unit_records(self.opensearch_indexer, suffix, unit_ids, text_units)
 
     def _finish(
         self,

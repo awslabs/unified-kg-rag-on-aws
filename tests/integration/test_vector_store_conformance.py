@@ -1806,3 +1806,18 @@ def test_holds_any_item_tells_a_suffix_with_items(
     _write(harness, kind, "upsert", items)
     assert indexer.holds_any_item(suffix=tenant) is True
     assert indexer.holds_any_item(suffix=other) is False
+    assert indexer.holds_any_text_unit(suffix=tenant) is False
+
+
+def test_holds_any_text_unit_tells_a_suffix_with_text_units(
+    harness: StoreHarness,
+) -> None:
+    # Text units alone (a corpus that stated no item): holds_any_item does
+    # not see them, holds_any_text_unit does.
+    indexer = harness.vector_indexer
+    tenant, other = harness.suffix("units"), harness.suffix("none")
+    assert indexer.holds_any_text_unit(suffix=tenant) is False
+    _write(harness, "text_units", "upsert", _text_units(tenant))
+    assert indexer.holds_any_text_unit(suffix=tenant) is True
+    assert indexer.holds_any_item(suffix=tenant) is False
+    assert indexer.holds_any_text_unit(suffix=other) is False
