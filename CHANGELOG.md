@@ -1019,7 +1019,7 @@ Queries and retrieval.
   a generic query entity seeded unrelated ones), and all-gold context went
   from 8/12 to 12/12. The seeds share the expansion budget in proportion
   to their scores; Neptune walks each share's seeds in a request of its own
-  (#PR).
+  (#517).
 - Graph expansion returns every seed and its neighbourhood and ranks by
   distance first, so hub neighbours no longer push seeds out (#161, #218).
 - Graph expansion no longer depends on the order the graph store keeps a
@@ -1200,7 +1200,7 @@ Ingestion and incremental indexing.
   the entities first left the relationships whatever budget remained (with
   200-token descriptions, 2 of 40 edges); on a synthetic grid, 241 instead
   of 126 relationships reach the same 4000-token budget and every packed
-  entity has one (51.6% before) (#PR).
+  entity has one (51.6% before) (#517).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero
