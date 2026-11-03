@@ -1641,9 +1641,9 @@ class SchemaSourceConfig(BaseModel):
         description=(
             "Location the schema source reads. For 'file', a local file "
             "path or an S3 object (s3://bucket/key.yaml); for 'owl', a local "
-            "file or directory (or a file:// URL), an S3 object, or an S3 "
-            "prefix read as a directory (s3://bucket/prefix/, the trailing "
-            "'/' required). S3 is read with the run's AWS session "
+            "file or directory, an S3 object, or an S3 prefix read as a "
+            "directory (s3://bucket/prefix/, the trailing '/' required). A "
+            "local path may be written as a file:// URL. S3 is read with the run's AWS session "
             "(s3:GetObject, and s3:ListBucket for a prefix). A relative path "
             "is resolved against the config file's directory (the working "
             "directory without one); an HTTP location needs a source "
@@ -1958,11 +1958,11 @@ class SeedGraphConfig(BaseModel):
     path: str = Field(
         min_length=1,
         description=(
-            "Where the source reads: a local file or directory, an S3 object "
-            "(s3://bucket/key) or an S3 prefix read as a directory "
-            "(s3://bucket/prefix/, the trailing '/' required), read with the "
-            "run's AWS session (s3:GetObject, and s3:ListBucket for a "
-            "prefix). A relative path is resolved against the config file's "
+            "Where the source reads: a local file or directory (or a "
+            "file:// URL), an S3 object (s3://bucket/key) or an S3 prefix "
+            "read as a directory (s3://bucket/prefix/, the trailing '/' "
+            "required), read with the run's AWS session (s3:GetObject, and "
+            "s3:ListBucket for a prefix). A relative path is resolved against the config file's "
             "directory. Logs and errors show it without userinfo, query or "
             "fragment. Not keyed: the converted content is, so moving the "
             "files re-indexes nothing."
@@ -3859,15 +3859,13 @@ class LoggingConfig(BaseModel):
         ),
     )
     log_to_file: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Also write the CLIs' logs to "
-            "log_file_path (dated per day;"
-            " a relative path resolves "
-            "against the working "
-            "directory). The package "
-            "configures no handler when "
-            "imported as a library."
+            "Also write the CLIs' logs to log_file_path (dated per day; a "
+            "relative path resolves against the working directory, which "
+            "must then be writable). Off by default: the console (or the "
+            "container's log driver) carries every record. The package "
+            "configures no handler when imported as a library."
         ),
     )
     log_file_path: str = Field(

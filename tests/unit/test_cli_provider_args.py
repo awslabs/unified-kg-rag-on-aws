@@ -94,13 +94,15 @@ def test_backend_choices_are_validated() -> None:
 
 def test_rag_runner_applies_the_flags(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text("logging:\n  log_to_file: false\n", encoding="utf-8")
+    path.write_text(
+        "logging:\n  log_to_file: false\n  log_format: plain\n", encoding="utf-8"
+    )
     args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
         ["-q", "x", "--config-path", str(path), "--backend", "local"]
     )
     runner = run_rag_chain.RAGChainRunner(args)
     assert runner.config.backend is Backend.LOCAL
-    assert runner.config.logging.log_to_file is False
+    assert runner.config.logging.log_format == "plain"
 
 
 def test_backend_local_flag_resolves_the_registry_against_the_config_file(

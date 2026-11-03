@@ -170,7 +170,7 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
         runner._handle_set_filter(state, [pair])
     assert state["filters"] == {"k": "[/red]v"}
 
-    async def fail(**kwargs: object) -> None:
+    def fail(**kwargs: object) -> None:
         raise RuntimeError(f"boom on {_NAME}")
 
     monkeypatch.setattr(run_rag_chain, "create_rag_chain", fail)

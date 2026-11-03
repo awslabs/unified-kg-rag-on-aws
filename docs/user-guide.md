@@ -549,8 +549,9 @@ rewritten queries, entity names and raw model output are logged only at
 libraries set to `DEBUG` in `logging.library_levels` (`botocore` logs request
 bodies), as containing user and corpus data.
 
-The CLIs also write `logging.log_file_path` (`logs/log.txt`, dated
-`log_YYYYMMDD.txt`) unless `logging.log_to_file` is `false`. As a library the
+With `logging.log_to_file: true` the CLIs also write `logging.log_file_path`
+(`logs/log.txt`, dated `log_YYYYMMDD.txt`, relative to the working directory,
+which must be writable); it is off by default. As a library the
 package configures no handler: the host's logging applies, with the
 structured fields (`pipeline_id`, `trace_id`, ...) as record attributes.
 
@@ -1901,7 +1902,7 @@ processing:
   optionally, `entity_types` from a YAML or JSON file of the same shape (a
   relative path is resolved against the config file). Leave those keys out
   of the config then: a file and a config that both set `entity_types` fail
-  the load. The path is a local file or an S3 object
+  the load. The path is a local file (or a `file://` URL) or an S3 object
   (`s3://bucket/schemas/schema.yaml`, at most 16 MiB), read with the run's
   AWS session; an `https://` location fails the load (it needs a source
   registered for it). `kind: owl` reads an OWL or RDFS ontology the same
@@ -2508,7 +2509,7 @@ processing:
 |---|---|---|
 | `name` | required | Names the shard documents and the `seed_graph` document filter of everything the seed states. Up to 64 lowercase letters, digits, `-` and `_`, starting with a letter or digit; unique. Renaming it imports the seed again |
 | `kind` | required | `jsonl`, `csv`, `rdf` (with the `ontology` extra), or a kind a deployment registers ([Design Doc §15](./design.md#15-extension-guide)) |
-| `path` | required | A local file or directory, relative to the config file (also when set from the environment), an S3 object (`s3://bucket/key`) or an S3 prefix read as a directory (`s3://bucket/seed/`, the trailing `/` required), read with the run's AWS session. Other URLs fail |
+| `path` | required | A local file or directory, relative to the config file (also when set from the environment; a `file://` URL works too), an S3 object (`s3://bucket/key`) or an S3 prefix read as a directory (`s3://bucket/seed/`, the trailing `/` required), read with the run's AWS session. Other URLs fail |
 | `options` | `{}` | Settings of the kind (below). An unknown option fails the import |
 | `secret_arn` | `null` | A Secrets Manager secret a registered service source reads; `jsonl`, `csv` and `rdf` refuse one |
 | `filters` | `{}` | Document filters of the seed's items, as a document's metadata filters (string, number or boolean values). `seed_graph: <name>` is always added, so the key `seed_graph` is reserved |

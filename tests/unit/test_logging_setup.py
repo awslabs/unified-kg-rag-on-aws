@@ -125,6 +125,24 @@ def test_verbose_lowers_package_logger_past_handler(stream: io.StringIO) -> None
     assert [r["event"] for r in _records(stream)] == ["debug detail"]
 
 
+def test_the_defaults_write_no_file_so_a_read_only_directory_works(
+    stream: io.StringIO, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A CLI started in a directory it cannot write (a container's read-only
+    # root, a shared checkout) failed creating logs/ before any work.
+    read_only = tmp_path / "read-only"
+    read_only.mkdir()
+    read_only.chmod(0o555)
+    monkeypatch.chdir(read_only)
+    try:
+        setup_logging(Config(), stream=stream)
+    finally:
+        read_only.chmod(0o755)
+    assert Config().logging.log_to_file is False
+    assert not any(isinstance(h, logging.FileHandler) for h in LoggingSetup._handlers)
+    assert list(read_only.iterdir()) == []
+
+
 def test_log_to_file_is_honoured(stream: io.StringIO, tmp_path: Path) -> None:
     setup_logging(_config(), stream=stream)
     assert not any(isinstance(h, logging.FileHandler) for h in LoggingSetup._handlers)
@@ -296,3 +314,40 @@ def test_tracebacks_show_no_frame_locals_or_ansi_codes(
         assert "parse failed: 21 chars" in output
         assert "Quokka-secret-payload" not in output
         assert "\x1b[" not in output
+
+
+# Modules that keep a stdlib module logger, each with the reason in a comment
+# at the call: config.py is imported by the logging setup itself.
+_STDLIB_LOGGER_MODULES = {"application/config.py"}
+
+
+def test_package_modules_log_through_get_logger() -> None:
+    # A module logger from logging.getLogger bypasses the structlog chain
+    # (redaction, JSON rendering, bound context). shared/ builds that chain
+    # and domain/ stays free of it, so only they may.
+    import ast
+
+    import unified_kg_rag
+
+    root = Path(unified_kg_rag.__file__).parent
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        if relative.split("/")[0] in ("shared", "domain"):
+            continue
+        if relative in _STDLIB_LOGGER_MODULES:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "getLogger"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "logging"
+                and any(
+                    isinstance(arg, ast.Name) and arg.id == "__name__"
+                    for arg in node.args
+                )
+            ):
+                found.append(f"{relative}:{node.lineno}")
+    assert found == [], f"use shared.get_logger(__name__): {found}"

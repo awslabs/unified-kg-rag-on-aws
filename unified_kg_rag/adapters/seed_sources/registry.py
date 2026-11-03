@@ -31,15 +31,19 @@ conversion treats dangling edges and colliding names): a loader validates
 
 from __future__ import annotations
 
-import re
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from unified_kg_rag.adapters.source_files.locations import SourceTerms, redact_location
+from unified_kg_rag.adapters.source_files.context import (
+    KIND_PATTERN,
+    KindRegistry,
+    SourceContextBase,
+    format_validation_errors,
+)
+from unified_kg_rag.adapters.source_files.locations import SourceTerms
 from unified_kg_rag.domain.ingestion.seed_graph import SeedDangling
 from unified_kg_rag.domain.models.config import Config, SeedGraphConfig
 from unified_kg_rag.domain.models.seed_graph import SeedGraph
@@ -97,15 +101,7 @@ COMMON_OPTIONS = frozenset(SeedSourceOptions.model_fields)
 OptionsT = TypeVar("OptionsT", bound=SeedSourceOptions)
 
 
-def _default_session(config: Config) -> boto3.Session:
-    import boto3
-
-    return boto3.Session(
-        profile_name=config.aws.profile_name, region_name=config.aws.region_name
-    )
-
-
-class SeedSourceContext:
+class SeedSourceContext(SourceContextBase[SeedGraphConfig]):
     """What a seed loader is given; a
     :class:`.source_files.locations.SourceClientProvider`, so the shared
     location readers read its S3 objects.
@@ -132,39 +128,8 @@ class SeedSourceContext:
         :meth:`boto_session` (by default from ``aws.profile_name`` and
         ``aws.region_name``), so a loader that makes no AWS call builds
         none."""
-        self.source = source
-        self.config = config
+        super().__init__(source, config, session_factory=session_factory)
         self.terms = SeedTerms(kind=source.kind, seed=source.name)
-        self._session_factory = session_factory or (lambda: _default_session(config))
-        self._session: boto3.Session | None = None
-        self._lock = threading.Lock()
-
-    @property
-    def location(self) -> str:
-        """``source.path`` as logs and errors may show it
-        (:func:`redact_location`)."""
-        return redact_location(self.source.path)
-
-    def boto_session(self) -> boto3.Session:
-        """The run's AWS session, built on the first call."""
-        with self._lock:
-            if self._session is None:
-                self._session = self._session_factory()
-            return self._session
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        """A client of the run's session in the region the config sends
-        ``service_name`` to: ``aws.bedrock_region`` for the Bedrock
-        services, ``aws.region_name`` for every other one."""
-        region = (
-            self.config.aws.bedrock_region
-            if service_name.startswith("bedrock")
-            else self.config.aws.region_name
-        )
-        kwargs.setdefault("region_name", region)
-        # Any: the service name is only known at run time.
-        session: Any = self.boto_session()
-        return session.client(service_name, **kwargs)
 
     def options(self, model: type[OptionsT]) -> OptionsT:
         """``source.options`` validated as ``model``.
@@ -185,36 +150,24 @@ def seed_options(source: SeedGraphConfig, model: type[OptionsT]) -> OptionsT:
         return model.model_validate(source.options)
     except ValidationError as e:
         raise SeedGraphError(
-            f"seed graph '{source.name}': "
-            + "; ".join(
-                "options"
-                + "".join(f".{part}" for part in detail["loc"])
-                + f": {detail['msg']}"
-                for detail in e.errors(include_url=False, include_input=False)
-            )
+            f"seed graph '{source.name}': {format_validation_errors('options', e)}"
         ) from e
 
 
 def statement_problems(error: ValidationError) -> str:
     """What makes a node or edge a source read invalid, each field named
     (``name: String should have at most 1000 characters``)."""
-    return "; ".join(
-        ".".join(str(part) for part in detail["loc"])
-        + (": " if detail["loc"] else "")
-        + detail["msg"]
-        for detail in error.errors(include_url=False, include_input=False)
-    )
+    return format_validation_errors("", error, root=None)
 
 
 SeedLoader = Callable[[SeedSourceContext], SeedGraph]
 LoaderT = TypeVar("LoaderT", bound=SeedLoader)
 
-_REGISTRY: dict[str, SeedLoader] = {}
+_KINDS: KindRegistry[SeedLoader] = KindRegistry()
+_REGISTRY = _KINDS.loaders
 # Kind -> (module, how to install it) of the optional dependency its loader
 # imports.
-_REQUIRES: dict[str, tuple[str, str]] = {}
-# The form processing.seed_graphs[].kind takes (SeedGraphConfig.kind).
-_KIND = re.compile(r"^[a-z][a-z0-9_]*$")
+_REQUIRES = _KINDS.requires
 
 
 def register_seed_source(
@@ -234,18 +187,14 @@ def register_seed_source(
     Raises:
         ValueError: ``kind`` is not of the form ``seed_graphs[].kind`` takes.
     """
-    if not _KIND.match(kind):
+    if not KIND_PATTERN.match(kind):
         raise ValueError(
             f"Cannot register a seed source as {kind!r}: a kind is "
             "lower-case letters, digits and '_', starting with a letter"
         )
 
     def decorator(loader: LoaderT) -> LoaderT:
-        _REGISTRY[kind] = loader
-        if requires is None:
-            _REQUIRES.pop(kind, None)
-        else:
-            _REQUIRES[kind] = requires
+        _KINDS.register(kind, loader, requires)
         return loader
 
     return decorator
@@ -257,7 +206,7 @@ def get_seed_source(kind: str) -> SeedLoader:
     Raises:
         SeedGraphError: Nothing is registered under ``kind``.
     """
-    loader = _REGISTRY.get(kind)
+    loader = _KINDS.get(kind)
     if loader is None:
         raise SeedGraphError(
             f"Unknown processing.seed_graphs[].kind '{kind}'; registered: "
@@ -268,9 +217,9 @@ def get_seed_source(kind: str) -> SeedLoader:
 
 def seed_source_requirement(kind: str) -> tuple[str, str] | None:
     """The ``(module, how to install it)`` ``kind`` declared, or None."""
-    return _REQUIRES.get(kind)
+    return _KINDS.requirement(kind)
 
 
 def registered_seed_sources() -> list[str]:
     """The registered kinds, sorted."""
-    return sorted(_REGISTRY)
+    return _KINDS.kinds()

@@ -506,8 +506,9 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
 `--verbose`)와 `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(`botocore`는 요청
 본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고 보세요.
 
-`logging.log_to_file`이 `false`가 아니면 CLI는 `logging.log_file_path`(`logs/log.txt`,
-날짜별 `log_YYYYMMDD.txt`)에도 씁니다. 라이브러리로 쓰면 패키지는 핸들러를 설정하지
+`logging.log_to_file: true`로 두면 CLI는 `logging.log_file_path`(`logs/log.txt`,
+날짜별 `log_YYYYMMDD.txt`, 작업 디렉터리 기준이라 그 디렉터리에 쓸 수 있어야 함)에도
+씁니다. 기본값은 꺼짐입니다. 라이브러리로 쓰면 패키지는 핸들러를 설정하지
 않으며, 호스트의 로깅 설정이 적용되고 구조화된 필드(`pipeline_id`, `trace_id` 등)는
 로그 레코드의 속성으로 들어갑니다.
 
@@ -1677,7 +1678,7 @@ processing:
   두면 같은 모양의 YAML 또는 JSON 파일에서 `relationship_types`,
   `relationship_patterns`와 선택적으로 `entity_types`를 읽습니다(상대 경로는 설정 파일
   기준). 이때 설정에서는 그 키를 빼세요. 파일과 설정이 모두 `entity_types`를 정하면
-  설정을 읽지 못합니다. 경로는 로컬 파일이나 S3 객체(`s3://bucket/schemas/schema.yaml`,
+  설정을 읽지 못합니다. 경로는 로컬 파일(`file://` URL도 됨)이나 S3 객체(`s3://bucket/schemas/schema.yaml`,
   최대 16 MiB)이며, S3는 실행의 AWS 세션으로 읽습니다. `https://` 위치는 그 위치용
   스키마 소스를 등록해야 하므로 설정을 읽지 못합니다. `kind: owl`도 같은 방식으로
   OWL 또는 RDFS 온톨로지를 읽습니다. 로컬 파일이나 디렉터리, S3 객체, 또는 디렉터리로
@@ -2209,7 +2210,7 @@ processing:
 |---|---|---|
 | `name` | 필수 | 샤드 문서의 이름과, 시드가 진술한 모든 항목의 `seed_graph` 문서 필터 값이 됩니다. 소문자, 숫자, `-`, `_`로 64자까지이며 문자나 숫자로 시작하고 시드끼리 겹치면 안 됩니다. 이름을 바꾸면 시드를 다시 가져옵니다 |
 | `kind` | 필수 | `jsonl`, `csv`, `rdf`(`ontology` extra 필요), 또는 배포에서 등록한 종류([설계 문서 §15](./design.md#15-extension-guide), 영문) |
-| `path` | 필수 | 로컬 파일이나 디렉터리(설정 파일 기준 상대 경로이며 환경 변수로 지정해도 같음), S3 객체(`s3://bucket/key`), 또는 디렉터리로 읽는 S3 접두사(`s3://bucket/seed/`, 끝의 `/` 필수)입니다. 실행의 AWS 세션으로 읽습니다. 그 밖의 URL은 실패합니다 |
+| `path` | 필수 | 로컬 파일이나 디렉터리(설정 파일 기준 상대 경로이며 환경 변수로 지정해도 같음. `file://` URL도 됨), S3 객체(`s3://bucket/key`), 또는 디렉터리로 읽는 S3 접두사(`s3://bucket/seed/`, 끝의 `/` 필수)입니다. 실행의 AWS 세션으로 읽습니다. 그 밖의 URL은 실패합니다 |
 | `options` | `{}` | 종류별 설정(아래). 모르는 옵션이 있으면 가져오기가 실패합니다 |
 | `secret_arn` | `null` | 등록한 서비스 소스가 읽는 Secrets Manager 비밀. `jsonl`, `csv`, `rdf`는 받지 않습니다 |
 | `filters` | `{}` | 시드 항목의 문서 필터로, 문서의 메타데이터 필터와 같습니다(문자열, 숫자, 불리언 값). `seed_graph: <name>`이 항상 더해지므로 `seed_graph` 키는 쓸 수 없습니다 |

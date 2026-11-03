@@ -26,7 +26,7 @@ from unified_kg_rag.adapters.source_files.locations import (
     SourceFile,
     SourceReader,
     is_s3,
-    split_s3,
+    resolve_source_path,
 )
 from unified_kg_rag.domain.models.seed_graph import (
     SeedEdge,
@@ -48,22 +48,22 @@ def check_path(context: SeedSourceContext) -> str | Path:
 
     Raises:
         SeedGraphError: ``secret_arn`` is set, or the path is a URL other
-            than ``s3://`` (or names no valid bucket).
+            than ``file://`` or ``s3://`` (or names no valid bucket).
     """
     source, terms = context.source, context.terms
     if source.secret_arn:
         raise terms(f"kind '{source.kind}' takes no secret_arn; leave it unset")
-    if is_s3(source.path):
-        split_s3(source.path, terms=terms)
-        return source.path
-    if "://" in source.path:
-        raise terms(
+    return resolve_source_path(
+        source.path,
+        terms=terms,
+        refusal=(
             f"'{context.location}' is a URL; kind '{source.kind}' reads a "
-            "local file or directory or an s3:// object or prefix. Copy the "
-            "files next to the config (or into the image, or S3), or "
-            "register a seed source for the location's scheme"
-        )
-    return Path(source.path)
+            "local file or directory (or a file:// URL) or an s3:// object "
+            "or prefix. Copy the files next to the config (or into the "
+            "image, or S3), or register a seed source for the location's "
+            "scheme"
+        ),
+    )
 
 
 def is_hidden(relative: str) -> bool:

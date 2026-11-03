@@ -350,7 +350,7 @@ class RAGChainRunner:
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
-            self.rag_chain = await create_rag_chain(config=self.config)
+            self.rag_chain = create_rag_chain(config=self.config)
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)

@@ -586,7 +586,7 @@ def test_errors_never_show_a_url_credential(custom_kind: str) -> None:
     with pytest.raises(SchemaSourceError) as caught:
         resolve_extraction_schema(_config(schema_source={"kind": "file", "path": path}))
     message = str(caught.value)
-    assert "local path or an s3:// object only" in message
+    assert "local path (or a file:// URL) or an s3:// object only" in message
     assert "token" not in message and "secret-sig" not in message
 
 

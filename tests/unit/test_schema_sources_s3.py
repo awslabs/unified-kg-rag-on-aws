@@ -224,20 +224,26 @@ def test_owl_reads_a_prefix_as_a_directory(s3: Any) -> None:
 
 @requires_ontology
 def test_every_page_of_the_listing_is_read(s3: Any) -> None:
-    # 1,000 keys a page: the ontology files sort after the first page.
-    for number in range(1000):
+    # Two keys a page (S3 returns up to 1,000; MaxKeys is set on each
+    # request here, so no thousand objects are written): the notes fill the
+    # first page and the ontology files sort after it.
+    for number in range(2):
         _put(s3, f"onto/a-notes/{number:04}.txt", b"")
     _put_split(s3, "onto/z/")
+    keys = s3.list_objects_v2(Bucket=BUCKET, Prefix="onto/")["KeyCount"]
     context = _context("owl", f"s3://{BUCKET}/onto/")
     client = boto3.client("s3", region_name=REGION)
     calls: list[str | None] = []
-    client.meta.events.register(
-        "provide-client-params.s3.ListObjectsV2",
-        lambda params, **kwargs: calls.append(params.get("ContinuationToken")),
-    )
+
+    def two_a_page(params: dict[str, Any], **kwargs: Any) -> None:
+        calls.append(params.get("ContinuationToken"))
+        params["MaxKeys"] = 2
+
+    client.meta.events.register("provide-client-params.s3.ListObjectsV2", two_a_page)
     context.client = lambda service_name, **kwargs: client  # type: ignore[method-assign]
     assert get_schema_source("owl")(context) == PROCURE_GOLDEN
-    assert len(calls) == 2 and calls[0] is None and calls[1]
+    assert len(calls) == -(-keys // 2) >= 2
+    assert calls[0] is None and all(calls[1:])
 
 
 @requires_ontology

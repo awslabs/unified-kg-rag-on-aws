@@ -28,6 +28,7 @@ import boto3
 import pytest
 
 from tests.fixtures.extras import requires_ontology
+from tests.fixtures.logs import log_message
 from unified_kg_rag.adapters.schema_sources import INSTALL_HINT
 from unified_kg_rag.adapters.seed_sources import (
     SeedSourceContext,
@@ -690,7 +691,7 @@ def test_unfollowed_imports_are_warned_once(
     with caplog.at_level(logging.WARNING):
         graph = _load(path)
     assert [n.id for n in graph.nodes] == [EX + "acme"]
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    warnings = [log_message(r) for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings == [
         "Seed graph 'procure': owl:imports not followed: https://example.org/money, "
         "https://example.org/procure; a seed states the triples of its own files only"
@@ -718,9 +719,9 @@ def test_the_counts_are_logged_without_the_seed_s_text(
     with caplog.at_level(logging.INFO):
         _load(ABOX)
     (line,) = [
-        r.getMessage()
+        log_message(r)
         for r in caplog.records
-        if r.getMessage().startswith("Seed graph")
+        if log_message(r).startswith("Seed graph")
     ]
     assert line.startswith(
         "Seed graph 'procure' (rdf, 28 triples): 4 instances, 3 edges"

@@ -35,7 +35,6 @@ from every statement of the files together, only named nodes:
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterable
 
 from pydantic import ValidationError
@@ -51,8 +50,6 @@ from .ontology_model import (
     OntologyProperty,
     PropertyKind,
 )
-
-logger = logging.getLogger(__name__)
 
 SCHEMA_HTTP = "http://schema.org/"
 SCHEMA_HTTPS = "https://schema.org/"

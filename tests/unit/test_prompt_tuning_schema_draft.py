@@ -1037,6 +1037,22 @@ def test_schema_out_never_replaces_the_loaded_schema(
     assert (tmp_path / "conf" / "curated.yaml").read_text(encoding="utf-8") == CURATED
 
 
+def test_schema_out_never_replaces_a_schema_loaded_through_a_file_url(
+    tmp_path: Path, mocker, monkeypatch, capsys: Any
+) -> None:
+    curated = (tmp_path / "conf" / "curated.yaml").resolve()
+    config = (
+        "processing:\n  graph_extraction:\n"
+        f"    schema_source: {{kind: file, path: '{curated.as_uri()}'}}\n"
+    )
+    code = _curated_main(
+        tmp_path, mocker, monkeypatch, "conf/curated.yaml", "--force", config=config
+    )
+    assert code == 2
+    assert "is the schema file the config loads" in capsys.readouterr().err
+    assert curated.read_text(encoding="utf-8") == CURATED
+
+
 def test_schema_out_replaces_an_existing_file_only_with_force(
     tmp_path: Path, mocker, monkeypatch, capsys: Any
 ) -> None:
