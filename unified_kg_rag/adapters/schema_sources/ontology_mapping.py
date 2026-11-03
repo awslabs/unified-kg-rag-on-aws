@@ -827,8 +827,6 @@ class _Mapper:
         group_of = self.class_tree.group_of
         unions = set()
         for union in ends:
-            if union & _UNRESTRICTED:
-                continue
             groups = frozenset(group_of[iri] for iri in union)
             if groups & {group_of[iri] for iri in _UNRESTRICTED if iri in group_of}:
                 continue

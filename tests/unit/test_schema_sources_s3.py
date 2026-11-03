@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.schema_sources import (
 )
 from unified_kg_rag.adapters.source_files.locations import SourceReader
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+from unified_kg_rag.application.cli import preflight
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.config import ConfigLoader
 from unified_kg_rag.domain.ingestion.cache_keys import (
@@ -446,8 +447,11 @@ def test_preflight_makes_no_s3_call(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert missing_extras_error(file_config) is None
     owl_config = _run_config(schema_source={"kind": "owl", "path": f"s3://{BUCKET}/"})
-    # Only the extra is checked (None with it installed).
-    assert "rdflib" in (missing_extras_error(owl_config) or "rdflib")
+    # Only the extra is checked: named when it is missing, else nothing.
+    monkeypatch.setattr(preflight, "_installed", lambda module: module != "rdflib")
+    assert "rdflib" in (missing_extras_error(owl_config) or "")
+    monkeypatch.setattr(preflight, "_installed", lambda module: True)
+    assert missing_extras_error(owl_config) is None
 
 
 def test_an_s3_path_is_left_as_written(tmp_path: Path) -> None:
@@ -521,3 +525,138 @@ def test_relative_iris_resolve_against_the_s3_url(
     )
     document = _load("owl", based)
     assert document.entity_types[0].iri == "https://example.org/procure#Vendor"  # type: ignore[index,union-attr]
+
+
+# --- the listing and the reads in detail -------------------------------------------
+
+
+@requires_ontology
+def test_a_prefix_starting_with_a_dot_is_not_hidden(s3: Any) -> None:
+    # Only the names below the prefix are checked for a leading ".".
+    _put_split(s3, ".onto/")
+    _put(s3, ".onto/nested/.cache/x.ttl", "not turtle at all")
+    assert _load("owl", f"s3://{BUCKET}/.onto/") == PROCURE_GOLDEN
+
+
+@requires_ontology
+def test_folder_markers_are_no_files_even_with_a_format(s3: Any) -> None:
+    _put(s3, "onto/procure.rdf", (FIXTURES / "procure.rdf").read_bytes())
+    _put(s3, "onto/empty/", b"")
+    assert _load("owl", f"s3://{BUCKET}/onto/", format="xml") == PROCURE_GOLDEN
+
+
+def test_the_listing_is_read_in_key_order() -> None:
+    context = _context("owl", f"s3://{BUCKET}/onto/")
+    stubber = _stubbed(context)
+    stubber.add_response(
+        "list_objects_v2",
+        {
+            "Contents": [
+                {"Key": "onto/b.ttl", "Size": 3},
+                {"Key": "onto/a.ttl", "Size": 3},
+            ]
+        },
+        {"Bucket": BUCKET, "Prefix": "onto/"},
+    )
+    stubber.add_response(
+        "get_object", {"Body": _body(b"a a")}, {"Bucket": BUCKET, "Key": "onto/a.ttl"}
+    )
+    with (
+        stubber,
+        pytest.raises(SchemaSourceError, match=f"'s3://{BUCKET}/onto/a.ttl' does not"),
+    ):
+        get_schema_source("owl")(context)
+
+
+@requires_ontology
+def test_one_client_serves_every_call(s3: Any) -> None:
+    _put_split(s3, "onto/")
+    context = _context("owl", f"s3://{BUCKET}/onto/")
+    client = boto3.client("s3", region_name=REGION)
+    built: list[str] = []
+
+    def build(service_name: str, **kwargs: Any) -> Any:
+        built.append(service_name)
+        return client
+
+    context.client = build  # type: ignore[method-assign]
+    assert get_schema_source("owl")(context) == PROCURE_GOLDEN
+    assert built == ["s3"]
+
+
+class _CountingBody(StreamingBody):
+    """A GetObject body that records how many bytes each read asks for."""
+
+    def __init__(self, data: bytes) -> None:
+        super().__init__(io.BytesIO(data), len(data))
+        self.asked: list[int | None] = []
+
+    def read(self, amt: int | None = None) -> bytes:
+        self.asked.append(amt)
+        return super().read(amt)
+
+
+@pytest.mark.parametrize("kind", ["file", "owl"])
+def test_get_object_reads_one_byte_past_the_cap_at_most(kind: str) -> None:
+    key = "schema.yaml" if kind == "file" else "onto.ttl"
+    data = SCHEMA_YAML.encode() if kind == "file" else PROCURE.read_bytes()
+    cap = file_source.MAX_S3_BYTES if kind == "file" else 2 * len(data)
+    options = {"max_bytes": cap} if kind == "owl" else {}
+    context = _context(kind, f"s3://{BUCKET}/{key}", **options)
+    stubber = _stubbed(context)
+    params = {"Bucket": BUCKET, "Key": key}
+    stubber.add_response("head_object", {"ContentLength": len(data)}, params)
+    body = _CountingBody(data)
+    stubber.add_response("get_object", {"Body": body}, params)
+    with stubber:
+        get_schema_source(kind)(context)
+    assert body.asked == [cap + 1]
+
+
+def test_an_owl_object_that_grew_since_it_was_sized_is_refused() -> None:
+    context = _context("owl", f"s3://{BUCKET}/onto.ttl", max_bytes=100)
+    stubber = _stubbed(context)
+    params = {"Bucket": BUCKET, "Key": "onto.ttl"}
+    stubber.add_response("head_object", {"ContentLength": 10}, params)
+    stubber.add_response("get_object", {"Body": _body(b"#" * 101)}, params)
+    with stubber, pytest.raises(SchemaSourceError, match="grew since it was sized"):
+        get_schema_source("owl")(context)
+
+
+def test_an_object_of_exactly_the_cap_is_read(
+    s3: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    location = _put(s3, "schema.yaml", SCHEMA_YAML)
+    monkeypatch.setattr(file_source, "MAX_S3_BYTES", len(SCHEMA_YAML))
+    assert [str(t) for t in _load("file", location).relationship_types or []] == [
+        "WORKS_FOR: Employment"
+    ]
+
+
+@pytest.mark.parametrize("scheme", ["S3://", "s3://"])
+def test_the_s3_scheme_is_read_in_any_case(s3: Any, scheme: str) -> None:
+    _put(s3, "schemas/schema.yaml", SCHEMA_YAML)
+    document = _load("file", f"{scheme}{BUCKET}/schemas/schema.yaml")
+    assert [str(t) for t in document.relationship_types or []] == [
+        "WORKS_FOR: Employment"
+    ]
+
+
+def test_any_403_is_access_denied() -> None:
+    # Whatever the code: S3 answers a HEAD without one, and others vary.
+    context = _context("file", f"s3://{BUCKET}/schema.yaml")
+    stubber = _stubbed(context)
+    stubber.add_client_error(
+        "head_object", service_error_code="InvalidAccessKeyId", http_status_code=403
+    )
+    with stubber, pytest.raises(SchemaSourceError, match=r"denied \(HeadObject\)"):
+        get_schema_source("file")(context)
+
+
+def test_an_s3_error_never_shows_the_query(s3: Any) -> None:
+    # The key is taken as written, "?" and all; the message drops the query.
+    location = f"s3://{BUCKET}/onto/absent.ttl?X-Amz-Security-Token=SECRET#frag"
+    with pytest.raises(SchemaSourceError, match="not found") as error:
+        _load("owl", location)
+    assert "SECRET" not in str(error.value)
+    assert f"'s3://{BUCKET}/onto/absent.ttl' not found" in str(error.value)

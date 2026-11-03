@@ -1041,6 +1041,59 @@ def test_xml_under_the_limits_parses(tmp_path: Path) -> None:
     assert [t.label for t in _load(path).entity_types or []] == ["A"]  # type: ignore[union-attr]
 
 
+def check_bytes(path: str, data: bytes, format_: str) -> None:
+    from unified_kg_rag.adapters.schema_sources.owl import ONTOLOGY_TERMS
+    from unified_kg_rag.adapters.source_files import rdf_files
+
+    rdf_files.check_bytes(path, data, format_, terms=ONTOLOGY_TERMS)
+
+
+def _xml(body: str) -> bytes:
+    return (
+        RDF_XML_HEAD + '<owl:Class rdf:about="http://e/A">' + body + "</owl:Class>"
+        "</rdf:RDF>"
+    ).encode()
+
+
+def test_the_xml_limits_allow_exactly_their_value() -> None:
+    from unified_kg_rag.adapters.source_files.rdf_files import (
+        MAX_XML_LITERAL_ELEMENTS,
+        MAX_XML_TEXT_CHUNKS,
+    )
+
+    # One piece of text per line break, counted per element (its children's
+    # apart); the literal elements per file.
+    breaks = "\n" * MAX_XML_TEXT_CHUNKS
+    pieces = "<rdfs:comment>" + breaks + "</rdfs:comment>"
+    check_bytes("o.rdf", _xml(breaks + pieces * 2), "xml")
+    with pytest.raises(SchemaSourceError, match="MAX_XML_TEXT_CHUNKS"):
+        check_bytes("o.rdf", _xml(pieces.replace("\n", "\n\n", 1)), "xml")
+    literal = '<rdfs:comment rdf:parseType="Literal">' + "<b/>" * (
+        MAX_XML_LITERAL_ELEMENTS // 2
+    )
+    check_bytes("o.rdf", _xml((literal + "</rdfs:comment>") * 2), "xml")
+    with pytest.raises(SchemaSourceError, match="MAX_XML_LITERAL_ELEMENTS"):
+        check_bytes("o.rdf", _xml((literal + "<b/></rdfs:comment>") * 2), "xml")
+
+
+def test_elements_after_an_xml_literal_are_not_counted_in_it() -> None:
+    from unified_kg_rag.adapters.source_files.rdf_files import (
+        MAX_XML_LITERAL_ELEMENTS,
+    )
+
+    body = '<rdfs:comment rdf:parseType="Literal"><b/></rdfs:comment>' + (
+        "<rdfs:label>x</rdfs:label>" * (MAX_XML_LITERAL_ELEMENTS + 1)
+    )
+    check_bytes("o.rdf", _xml(body), "xml")
+
+
+@requires_ontology
+def test_deeply_nested_json_ld_is_refused(tmp_path: Path) -> None:
+    path = _write(tmp_path / "o.jsonld", "[" * 100_000 + "]" * 100_000)
+    with pytest.raises(SchemaSourceError, match="does not parse as json-ld"):
+        _load(path)
+
+
 @requires_ontology
 @pytest.mark.parametrize(("name", "graph"), [("o.nt", ""), ("o.nq", " <urn:g>")])
 def test_a_long_n_triples_line_is_refused_fast(
@@ -1310,3 +1363,220 @@ def test_a_protege_catalog_in_a_directory_is_skipped(tmp_path: Path) -> None:
     # Named alone, it is no ontology.
     with pytest.raises(SchemaSourceError, match="is an OASIS XML catalog"):
         _load(directory / "catalog-v001.xml")
+
+
+# --- the reader's smaller rules -------------------------------------------------------
+
+
+@requires_ontology
+def test_a_json_ld_named_graph_is_read(tmp_path: Path) -> None:
+    # A top-level @id with @graph: the statements sit in a named graph.
+    path = _write(
+        tmp_path / "o.jsonld",
+        '{"@context": {"owl": "http://www.w3.org/2002/07/owl#", '
+        '"ex": "https://example.org/procure#"}, '
+        '"@id": "https://example.org/procure", '
+        '"@graph": [{"@id": "ex:Vendor", "@type": "owl:Class"}]}',
+    )
+    assert [t.label for t in _load(path, classes=["ex:Vendor"]).entity_types or []] == [  # type: ignore[union-attr]
+        "VENDOR"
+    ]
+
+
+@requires_ontology
+def test_a_json_ld_term_is_a_prefix_only_when_its_iri_ends_like_one(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.adapters.schema_sources import owl
+
+    path = _write(
+        tmp_path / "o.jsonld",
+        '{"@context": {"ex": "https://example.org/procure#", '
+        '"name": "http://schema.org/name", "slash": "https://example.org/v/"}, '
+        '"@id": "ex:A", "@type": "http://www.w3.org/2002/07/owl#Class"}',
+    )
+    model = owl.read_ontology(owl.locate(path, OwlSourceOptions()), OwlSourceOptions())
+    assert model.prefixes == {"ex": EX, "slash": "https://example.org/v/"}
+
+
+@requires_ontology
+def test_a_statement_with_two_union_lists_restricts_nothing(tmp_path: Path) -> None:
+    model = _model(
+        tmp_path,
+        """
+        ex:p a owl:ObjectProperty ;
+            rdfs:domain [ owl:unionOf ( ex:A ex:B ) , ( ex:C ) ] ; rdfs:range ex:C .
+        """,
+    )
+    (prop,) = model.properties
+    assert prop.domains == frozenset()
+    assert prop.ranges == {frozenset({EX + "C"})}
+
+
+@requires_ontology
+def test_a_malformed_union_list_restricts_nothing(tmp_path: Path) -> None:
+    # A list cell with two rdf:first is no list.
+    model = _model(
+        tmp_path,
+        """
+        ex:p a owl:ObjectProperty ; rdfs:domain [ owl:unionOf _:l ] .
+        _:l rdf:first ex:A , ex:B ; rdf:rest rdf:nil .
+        """,
+    )
+    (prop,) = model.properties
+    assert prop.domains == frozenset()
+
+
+@requires_ontology
+@pytest.mark.parametrize(
+    ("value", "deprecated"),
+    [("true", True), ('"1"', True), ("1", True), ("false", False), ('"0"', False)],
+)
+def test_owl_deprecated_reads_true_and_1(
+    tmp_path: Path, value: str, deprecated: bool
+) -> None:
+    model = _model(tmp_path, f"ex:A a owl:Class ; owl:deprecated {value} .\n")
+    assert [c.deprecated for c in model.classes] == [deprecated]
+
+
+@requires_ontology
+def test_the_ontology_languages_own_terms_are_never_read(tmp_path: Path) -> None:
+    model = _model(
+        tmp_path,
+        """
+        owl:topObjectProperty a owl:ObjectProperty .
+        rdfs:member a rdf:Property .
+        rdfs:Resource a rdfs:Class .
+        ex:p a owl:ObjectProperty ; rdfs:domain rdfs:Resource ; rdfs:range ex:A .
+        """,
+    )
+    assert [p.iri for p in model.properties] == [EX + "p"]
+    assert [c.iri for c in model.classes] == [EX + "A"]
+
+
+@requires_ontology
+@pytest.mark.parametrize(
+    "characteristic",
+    [
+        "TransitiveProperty",
+        "InverseFunctionalProperty",
+        "AsymmetricProperty",
+        "ReflexiveProperty",
+        "IrreflexiveProperty",
+    ],
+)
+def test_an_object_property_characteristic_makes_an_object_property(
+    tmp_path: Path, characteristic: str
+) -> None:
+    model = _model(tmp_path, f"ex:p a owl:{characteristic} .\n")
+    assert [(p.iri, p.kind) for p in model.properties] == [(EX + "p", "object")]
+
+
+@requires_ontology
+def test_literal_ranges_make_a_datatype_property(tmp_path: Path) -> None:
+    model = _model(
+        tmp_path,
+        """
+        ex:Money a rdfs:Datatype .
+        ex:html a rdf:Property ; rdfs:range rdf:HTML .
+        ex:lang a rdf:Property ; rdfs:range rdf:langString .
+        ex:price a rdf:Property ; rdfs:range ex:Money .
+        ex:count a rdf:Property ; rdfs:range xsd:integer .
+        ex:mixed a rdf:Property ; rdfs:range xsd:integer , ex:Thing .
+        """,
+    )
+    kinds = {p.iri.removeprefix(EX): p.kind for p in model.properties}
+    assert kinds == {
+        "html": "datatype",
+        "lang": "datatype",
+        "price": "datatype",
+        "count": "datatype",
+        "mixed": "untyped",
+    }
+
+
+@requires_ontology
+def test_a_sub_property_of_an_rdf_property_is_read_by_its_ranges(
+    tmp_path: Path,
+) -> None:
+    # Below an untyped property: a datatype one when its ranges are literal.
+    model = _model(
+        tmp_path,
+        """
+        ex:rel a rdf:Property .
+        ex:sub rdfs:subPropertyOf ex:rel ; rdfs:range xsd:date .
+        ex:same owl:equivalentProperty ex:rel ; rdfs:range ex:A .
+        """,
+    )
+    kinds = {p.iri.removeprefix(EX): p.kind for p in model.properties}
+    assert kinds == {"rel": "untyped", "sub": "datatype", "same": "untyped"}
+
+
+@requires_ontology
+def test_only_string_literals_are_annotations(tmp_path: Path) -> None:
+    model = _model(
+        tmp_path,
+        """
+        ex:A a owl:Class ; rdfs:label "A"^^xsd:string , "에이"@ko ;
+            rdfs:comment "3"^^xsd:integer , "<b>x</b>"^^rdf:XMLLiteral .
+        """,
+    )
+    (cls,) = model.classes
+    assert set(cls.annotations) == {"http://www.w3.org/2000/01/rdf-schema#label"}
+    texts = cls.annotations["http://www.w3.org/2000/01/rdf-schema#label"]
+    assert [t.value for t in texts] == ["A", "에이"]
+
+
+@requires_ontology
+def test_a_covering_union_needs_an_equivalence(tmp_path: Path) -> None:
+    # A subclass of a union is not its cover: the members get no parent.
+    model = _model(
+        tmp_path,
+        """
+        ex:Party a owl:Class ;
+            rdfs:subClassOf [ a owl:Class ; owl:unionOf ( ex:Person ex:Org ) ] .
+        ex:Agent a owl:Class .
+        [ a owl:Class ; owl:unionOf ( ex:Bot ex:Human ) ] owl:equivalentClass ex:Agent .
+        """,
+    )
+    parents = {c.iri.removeprefix(EX): set(c.parents) for c in model.classes}
+    # The union stated on either side of owl:equivalentClass covers.
+    assert parents == {
+        "Agent": set(),
+        "Bot": {EX + "Agent"},
+        "Human": {EX + "Agent"},
+        "Party": set(),
+    }
+
+
+@requires_ontology
+def test_only_an_anonymous_class_expression_states_parents(tmp_path: Path) -> None:
+    # OWL 2 writes a class expression as a blank node; an owl:intersectionOf
+    # on a named class is not read, for it or for what is equivalent to it.
+    model = _model(
+        tmp_path,
+        """
+        ex:A owl:equivalentClass ex:B .
+        ex:B owl:intersectionOf ( ex:C ex:D ) .
+        ex:C a owl:Class . ex:D a owl:Class .
+        """,
+    )
+    parents = {c.iri.removeprefix(EX): set(c.parents) for c in model.classes}
+    assert parents == {"A": set(), "B": set(), "C": set(), "D": set()}
+
+
+@requires_ontology
+def test_the_files_may_hold_exactly_max_bytes(tmp_path: Path) -> None:
+    size = PROCURE.stat().st_size
+    assert _load(PROCURE, max_bytes=size) == PROCURE_GOLDEN
+    directory = _split(tmp_path / "onto")
+    total = sum(p.stat().st_size for p in directory.rglob("*.ttl"))
+    assert _load(directory, max_bytes=total) == PROCURE_GOLDEN
+
+
+@requires_ontology
+def test_a_hidden_directory_below_the_top_is_skipped(tmp_path: Path) -> None:
+    directory = _split(tmp_path / "onto")
+    _write(directory / "nested" / ".cache" / "x.ttl", "not turtle at all")
+    _write(directory / "nested" / ".x.ttl", "not turtle either")
+    assert _load(directory) == PROCURE_GOLDEN
