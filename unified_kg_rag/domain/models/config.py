@@ -3249,7 +3249,9 @@ class FusionConfig(BaseModel):
             "bridge_relationships, community_reports, claims), LightRAG "
             "(lightrag_entities, lightrag_relationships, "
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
-            "lightrag_chunks, lightrag_linked_chunks), simple (opensearch_all), "
+            "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
+            "cite), lightrag_relation_chunks (those the relationships cite)), "
+            "simple (opensearch_all), "
             "global (opensearch_community_reports, text_units) and drift "
             "(results). A bucket without a key weighs 1.0 (the default: none)."
         ),
@@ -3663,6 +3665,21 @@ class LightRAGSearchConfig(BaseModel):
             "Chunks allocated per matched entity/relationship when following "
             "`text_unit_ids` lineage (LightRAG's `related_chunk_number`). Slots are "
             "distributed on a decreasing gradient so the last match still gets one."
+        ),
+    )
+    kg_chunk_pick_method: Literal["vector", "weight"] = Field(
+        default="weight",
+        description=(
+            "How hybrid/mix pick the chunks the matched entities and "
+            "relationships cite (LightRAG's `kg_chunk_pick_method`). weight: "
+            "related_chunk_number chunks per hit on a decreasing gradient, in "
+            "chunk id order, fetched by id. vector: per side (entities, then "
+            "relationships), the cited chunks the query matches best, by one "
+            "search of the text units restricted to them (the request's "
+            "search_type: BM25 + vector by default), "
+            "related_chunk_number * hits / 2 of them up to chunk_stream_top_k. "
+            "Upstream defaults to vector; weight stays the default here until "
+            "an evaluation decides."
         ),
     )
     enable_graph_expansion: bool = Field(

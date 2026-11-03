@@ -289,10 +289,15 @@ class TokenManager:
         self, results: list[RetrievalResult]
     ) -> list[ContextSection]:
         # A section is counted as build_context_string renders it, with its
-        # "[source_id] " prefix, so the context stays within the budget.
+        # "[source_id] " prefix where it has one, so the context stays within
+        # the budget.
         counts = self.count_tokens_many(
             [
-                self._section_line(result.source or f"result_{index}", result.content)
+                self._section_line(
+                    self._section_type(result),
+                    result.source or f"result_{index}",
+                    result.content,
+                )
                 for index, result in enumerate(results)
             ]
         )
@@ -301,23 +306,30 @@ class TokenManager:
             for index, (result, count) in enumerate(zip(results, counts, strict=True))
         ]
 
-    def _create_context_section(
-        self, result: RetrievalResult, index: int, token_count: int | None = None
-    ) -> ContextSection:
-        source_id = result.source or f"result_{index}"
-        section_type_str = result.retriever_type or SectionType.GENERAL.value
+    @staticmethod
+    def _section_type(result: RetrievalResult) -> SectionType:
         try:
-            section_type = SectionType(section_type_str.lower())
+            return SectionType(
+                (result.retriever_type or SectionType.GENERAL.value).lower()
+            )
         except ValueError:
             # `retriever_type` is a free-form str; an out-of-enum value (a future
             # retriever, or a malformed result) must degrade to GENERAL rather
             # than abort context-building for the whole query.
-            section_type = SectionType.GENERAL
+            return SectionType.GENERAL
+
+    def _create_context_section(
+        self, result: RetrievalResult, index: int, token_count: int | None = None
+    ) -> ContextSection:
+        source_id = result.source or f"result_{index}"
+        section_type = self._section_type(result)
 
         return ContextSection(
             content=result.content,
             token_count=(
-                self.count_tokens(self._section_line(source_id, result.content))
+                self.count_tokens(
+                    self._section_line(section_type, source_id, result.content)
+                )
                 if token_count is None
                 else token_count
             ),
@@ -535,8 +547,11 @@ class TokenManager:
             or section.token_count <= 0
         ):
             return None
-        # token_count covers the rendered line, "[source_id] " prefix included.
-        prefix_chars = len(self._section_line(section.source_id, "-")) - 1
+        # token_count covers the rendered line, any "[source_id] " prefix
+        # included.
+        prefix_chars = (
+            len(self._section_line(section.section_type, section.source_id, "-")) - 1
+        )
         chars_per_token = (prefix_chars + len(section.content)) / section.token_count
         keep_chars = int(max_tokens * chars_per_token) - prefix_chars
         if keep_chars <= 0:
@@ -571,10 +586,24 @@ class TokenManager:
     def _section_header(cls, section_type: SectionType) -> str:
         return f"##### {cls._SECTION_LABELS[section_type]}"
 
-    @staticmethod
-    def _section_line(source_id: str, content: str) -> str:
+    # Entity and relationship lines carry no "[id] " prefix: nothing reads
+    # their ids (the answer prompt cites passages, sources map back by
+    # section), and a UUID prefix is ~9 tokens (estimated; more for a BPE
+    # tokenizer) on lines of a few dozen.
+    _UNPREFIXED: ClassVar[frozenset[SectionType]] = frozenset(
+        {SectionType.ENTITY, SectionType.RELATIONSHIP}
+    )
+
+    @classmethod
+    def _section_line(
+        cls, section_type: SectionType, source_id: str, content: str
+    ) -> str:
         """How build_context_string renders one section ("" for no content)."""
-        return f"[{source_id}] {content}" if content else ""
+        if not content:
+            return ""
+        if section_type in cls._UNPREFIXED:
+            return content
+        return f"[{source_id}] {content}"
 
     @classmethod
     def ranked_section_lines(cls, optimized_context: OptimizedContext) -> list[str]:
@@ -583,7 +612,9 @@ class TokenManager:
         ranked = sorted(
             optimized_context.sections, key=lambda s: s.priority, reverse=True
         )
-        lines = (cls._section_line(s.source_id, s.content) for s in ranked)
+        lines = (
+            cls._section_line(s.section_type, s.source_id, s.content) for s in ranked
+        )
         return [line for line in lines if line]
 
     @classmethod
@@ -592,7 +623,8 @@ class TokenManager:
         # headers (mirrors LightRAG's Entities/Relationships/Chunks blocks and MS's
         # sectioned tables) instead of a flat per-item "Source Type/Priority" dump.
         # The Priority float was meaningless prompt noise; dropped. Text chunks carry
-        # a citable [id]; the answer prompt can reference them.
+        # a citable [id]; the answer prompt can reference them. Entity and
+        # relationship lines carry none (_section_line).
         if not optimized_context.sections:
             return EMPTY_CONTEXT_PLACEHOLDER
 
@@ -607,6 +639,6 @@ class TokenManager:
                 continue
             lines = [cls._section_header(stype)]
             for s in items:
-                lines.append(cls._section_line(s.source_id, s.content))
+                lines.append(cls._section_line(s.section_type, s.source_id, s.content))
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks).strip()

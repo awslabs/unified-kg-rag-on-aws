@@ -29,8 +29,15 @@ from unified_kg_rag.domain.models import (
 
 pytestmark = pytest.mark.unit
 
+
+def _u(i: int) -> str:
+    """Unit ``i``'s id, zero-padded: a lineage is read in id order, so the ids
+    sort as the numbers do."""
+    return f"u{i:04d}"
+
+
 # Ranked by how many entities cite them: u0 first. The filter passes odd ids.
-_UNITS = [f"u{i}" for i in range(12)]
+_UNITS = [_u(i) for i in range(12)]
 
 
 def _entity(eid: str, units: list[str]) -> RetrievalResult:
@@ -107,7 +114,7 @@ async def test_local_fills_the_text_quota_with_chunks_that_pass(
     )
 
     chunks = [r.source for r in sections["text_units"]]
-    assert chunks == (["u1", "u3", "u5", "u7"] if filtered else _UNITS[:4])
+    assert chunks == ([_u(1), _u(3), _u(5), _u(7)] if filtered else _UNITS[:4])
     assert stats["text_unit_count"] == 4
     # Content is fetched for the quota only; a filter adds one ids-only check.
     assert store.fetches == [chunks if filtered else _UNITS[:4]]
@@ -136,14 +143,14 @@ async def test_mix_fills_the_linked_chunk_stream_with_chunks_that_pass(
     )
 
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
-    assert chunks == (["u1", "u3", "u5"] if filtered else _UNITS[:3])
+    assert chunks == ([_u(1), _u(3), _u(5)] if filtered else _UNITS[:3])
     assert store.fetches == [chunks]
     # The hit's first three chunks, then (short of three passing) the rest of
     # its lineage: two requests, not one per round of a few ids.
     assert store.checks == ([_UNITS[:3], _UNITS[3:]] if filtered else [])
 
 
-_ALLOWED = ["u2", "u5", "u7", "u9", "u11"]
+_ALLOWED = [_u(2), _u(5), _u(7), _u(9), _u(11)]
 
 
 async def test_local_spends_no_slot_on_a_chunk_a_caller_id_filter_removes(
@@ -194,8 +201,8 @@ async def test_mix_checks_every_hits_lineage_not_only_the_first(
     strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    hub = _entity("hub", [f"u{i}" for i in range(1, 40, 2)])  # 20 passing
-    others = [_entity("x", ["u41", "u43"]), _entity("y", ["u45", "u47"])]
+    hub = _entity("hub", [_u(i) for i in range(1, 40, 2)])  # 20 passing
+    others = [_entity("x", [_u(41), _u(43)]), _entity("y", [_u(45), _u(47)])]
 
     linked = await strategy._retrieve_linked_chunks(
         SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}),
@@ -204,7 +211,7 @@ async def test_mix_checks_every_hits_lineage_not_only_the_first(
     )
 
     chunks = [r.source for r in linked["lightrag_linked_chunks"]]
-    assert {"u41", "u45"} & set(chunks), chunks
+    assert {_u(41), _u(45)} & set(chunks), chunks
     assert len(chunks) == 4
 
 
@@ -222,13 +229,13 @@ async def test_a_selective_filter_on_a_hub_lineage_costs_two_checks(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
     # Only u499 is odd-numbered and so passes; the rest are even.
-    hub = _entity("hub", [f"u{i}" for i in range(0, 498, 2)] + ["u499"])
+    hub = _entity("hub", [_u(i) for i in range(0, 498, 2)] + [_u(499)])
     linked = await strategy._retrieve_linked_chunks(
         SearchQuery(query="q", top_k=4, filters={"attr_grp": "a"}),
-        [hub, _entity("x", ["u2000", "u2001"])],
+        [hub, _entity("x", [_u(2000), _u(2001)])],
         [],
     )
-    assert {r.source for r in linked["lightrag_linked_chunks"]} == {"u499", "u2001"}
+    assert {r.source for r in linked["lightrag_linked_chunks"]} == {_u(499), _u(2001)}
     assert len(store.checks) == 2
 
 
@@ -252,7 +259,7 @@ async def test_a_memoized_lineage_keeps_its_passing_chunks(config: Config) -> No
         second = await strategy._retrieve_linked_chunks(
             query, [_entity("e0", _UNITS)], []
         )
-    expected = ["u1", "u3", "u5"]
+    expected = [_u(1), _u(3), _u(5)]
     assert [r.source for r in first["lightrag_linked_chunks"]] == expected
     assert [r.source for r in second.get("lightrag_linked_chunks", [])] == expected
 
@@ -285,10 +292,10 @@ async def test_a_failed_lineage_check_excludes_what_it_asked(
     # Round 1 asks u0-u2 (u1 passes, the hit is short); round 2 the rest.
     assert store.checks == [_UNITS[:3], _UNITS[3:]][:failing_round]
     if failing_round == 1:
-        assert store.fetches == [["u3", "u4", "u5"]]
+        assert store.fetches == [[_u(3), _u(4), _u(5)]]
     else:
-        assert store.fetches == [["u1"]]
-        assert [r.source for r in sections["lightrag_linked_chunks"]] == ["u1"]
+        assert store.fetches == [[_u(1)]]
+        assert [r.source for r in sections["lightrag_linked_chunks"]] == [_u(1)]
 
 
 @pytest.mark.parametrize("case", ["dedup", "redistribute"])
@@ -299,14 +306,14 @@ async def test_mix_fills_the_slots_a_subset_index_fills(case: str) -> None:
     # filtered fetch then dropped. Selected and checked again until every
     # selected chunk is known, the filter fills what an index of the passing
     # (odd) chunks alone fills.
-    odd = [f"u{i}" for i in (1, 3, 5, 7, 9)]
-    even = [f"u{i}" for i in (0, 2, 4, 6, 8)]
-    late = [f"u{i}" for i in (11, 13, 15)]
+    odd = [_u(i) for i in (1, 3, 5, 7, 9)]
+    even = [_u(i) for i in (0, 2, 4, 6, 8)]
+    late = [_u(i) for i in (11, 13, 15)]
     if case == "dedup":  # e1's first five chunks are e0's
         hits = [_entity("e0", odd), _entity("e1", odd + even + late)]
     else:  # e1 and e2 cite one chunk each: their slots go to e0
-        hits = [_entity("e0", odd + even + late), _entity("e1", ["u17"])]
-        hits.append(_entity("e2", ["u19"]))
+        hits = [_entity("e0", odd + even + late), _entity("e1", [_u(17)])]
+        hits.append(_entity("e2", [_u(19)]))
 
     async def linked(hits: list[RetrievalResult], filters: Any) -> list[str]:
         config = Config()
@@ -342,14 +349,14 @@ async def test_slots_on_unchecked_chunks_cost_a_request_a_round(config: Config) 
     strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
-    failing = [f"u{i}" for i in range(10, 810, 2)]  # 400 even ids
-    hits = [_entity("e0", shared), _entity("e1", [*shared, *failing, "u811"])]
+    shared = [_u(i) for i in (1, 3, 5, 7, 9)]
+    failing = [_u(i) for i in range(10, 810, 2)]  # 400 even ids
+    hits = [_entity("e0", shared), _entity("e1", [*shared, *failing, _u(811)])]
     out = await strategy._retrieve_linked_chunks(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
     )
     assert sorted(r.source for r in out["lightrag_linked_chunks"]) == sorted(
-        [*shared, "u811"]
+        [*shared, _u(811)]
     )
     assert len(store.checks) <= 10
     assert sum(len(ids) for ids in store.checks) <= 2 * (len(shared) + 401)
@@ -366,14 +373,14 @@ async def test_a_slot_on_an_unchecked_chunk_checks_a_hub_lineage_only_near_it(
     strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
-    hub = [*shared, "u10", *(f"u{i}" for i in range(11, 2011, 2))]
+    shared = [_u(i) for i in (1, 3, 5, 7, 9)]
+    hub = [*shared, _u(10), *(_u(i) for i in range(11, 2011, 2))]
     hits = [_entity("e0", shared), _entity("e1", hub)]
     out = await strategy._retrieve_linked_chunks(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
     )
     assert sorted(r.source for r in out["lightrag_linked_chunks"]) == sorted(
-        [*shared, "u11"]  # e1's slot: u10 fails
+        [*shared, _u(11)]  # e1's slot: u10 fails
     )
     assert sum(len(ids) for ids in store.checks) < 30, store.checks
 
@@ -390,10 +397,10 @@ async def test_a_filter_passing_the_unfiltered_selection_costs_one_check(
     strategy: Any = get_strategy_spec(SearchStrategy.MIX).strategy_class(
         config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
     )
-    shared = [f"u{i}" for i in (1, 3, 5, 7, 9)]
+    shared = [_u(i) for i in (1, 3, 5, 7, 9)]
     hits = [
         _entity("e0", shared),
-        _entity("e1", [*shared, *(f"u{i}" for i in range(11, 211, 2))]),
+        _entity("e1", [*shared, *(_u(i) for i in range(11, 211, 2))]),
     ]
     await strategy._retrieve_linked_chunks(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []

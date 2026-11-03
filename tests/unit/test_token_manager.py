@@ -420,7 +420,7 @@ class TestPerTypeBudgetIsAHardCap:
         mgr = _make_manager(mocker)
         out = mgr.optimize_context(self._three_types(), query="q", max_tokens=1001)
         by_type = _tokens_by_type(out)
-        assert by_type[SectionType.ENTITY] == 51
+        assert by_type[SectionType.ENTITY] == 50  # no "[e0] " prefix
         # First-pass caps over 991 tokens: TEXT 619, COMMUNITY 123.
         assert 619 < by_type[SectionType.TEXT]
         assert 123 < by_type[SectionType.COMMUNITY] < by_type[SectionType.TEXT] / 3
@@ -438,7 +438,7 @@ class TestPerTypeBudgetIsAHardCap:
             spare_budget_first=(SectionType.TEXT,),
         )
         by_type = _tokens_by_type(out)
-        assert by_type[SectionType.ENTITY] == 51
+        assert by_type[SectionType.ENTITY] == 50  # no "[e0] " prefix
         assert by_type[SectionType.COMMUNITY] <= 123  # its first-pass cap
         assert by_type[SectionType.TEXT] > 750
         assert 991 - out.total_tokens < mgr.config.min_truncated_section_tokens
@@ -733,6 +733,35 @@ class TestBuildContextString:
         assert "##### Knowledge Graph — Entities" in rendered
         assert "[src-a]" in rendered
         assert "first chunk text" in rendered
+
+    def test_only_kg_lines_go_without_their_id(self, mocker) -> None:
+        # Nothing reads an entity's or relationship's id in the context (the
+        # answer cites passages; sources map back by section), and a UUID
+        # prefix was about a quarter of the KG sections' tokens. Passages keep
+        # theirs.
+        mgr = _make_manager(mocker)
+        results = [
+            _r("a passage", 0.9, "text", "unit-1"),
+            _r("Title: Vendor", 0.9, "entity", "entity-1"),
+            _r("Relationship: Vendor -> Buyer", 0.9, "relationship", "rel-1"),
+            _r("Claim: Vendor -> Buyer", 0.9, "claim", "claim-1"),
+            _r("A report", 0.9, "community", "report-1"),
+        ]
+        out = mgr.optimize_context(results, query="q", max_tokens=10000)
+        lines = TokenManager.build_context_string(out).splitlines()
+        assert "Title: Vendor" in lines
+        assert "Relationship: Vendor -> Buyer" in lines
+        assert "entity-1" not in "\n".join(lines)
+        assert "rel-1" not in "\n".join(lines)
+        assert {"[unit-1] a passage", "[claim-1] Claim: Vendor -> Buyer"} <= set(lines)
+        assert "[report-1] A report" in lines
+        # Counted as rendered: the entity line costs what its content does.
+        entity = next(s for s in out.sections if s.source_id == "entity-1")
+        assert entity.token_count == mgr.count_tokens("Title: Vendor")
+        assert TokenManager.ranked_section_lines(out)[1:3] == [
+            "Title: Vendor",
+            "Relationship: Vendor -> Buyer",
+        ]
 
     def test_ranked_section_lines_put_the_highest_priority_first(self) -> None:
         # A grounding check over its size limit keeps the head of this list.

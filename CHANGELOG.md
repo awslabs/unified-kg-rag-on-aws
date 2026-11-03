@@ -906,6 +906,10 @@ From 0.2.3 (or a `main` checkout since):
   `total_files_skipped`, `total_documents_excluded`,
   `total_documents_deleted`, `total_documents_failed`,
   `total_documents_retrying` and `total_documents_without_claims` (#518).
+- `search.lightrag_search.kg_chunk_pick_method` (`weight`, the default, or
+  `vector`): `vector` picks the chunks LightRAG `mix`/`hybrid` follow from
+  the matched entities and relationships by one search of each side's cited
+  chunks for the query, as upstream's default `VECTOR` method does (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1038,6 +1042,11 @@ From 0.2.3 (or a `main` checkout since):
   restores the old scores; the span is recorded in the run manifest
   (`answer_scoring`) and each report, and a comparison warns when its runs
   differ. The docs no longer claim EM/F1 are "scored like the papers" (#516).
+- Entity and relationship lines in the answer context no longer carry an
+  `[id]` prefix (a UUID was about a quarter of their tokens; nothing reads
+  those ids); passages, claims and reports keep theirs. Entity lines show
+  the entity's type. The incident-edge page-cap warning is logged once a
+  process, then at DEBUG (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1113,6 +1122,16 @@ Queries and retrieval.
 - LightRAG `mix`/`hybrid` and local bridge relationships keep every typed
   edge between two entities (#317); `hybrid` without keywords logs a warning
   (#295).
+- LightRAG `mix`/`hybrid` context includes the chunks the matched
+  relationships cite. The relationship side dropped every chunk any matched
+  entity cited, selected or not, and shared one chunk-width cut with the
+  entity side, so its chunks almost never reached the context (offline
+  hybrid one-hop gold-chunk recall 0.30, now 0.86 without rerank and 0.96
+  with). Each side is now its own fusion stream (`lightrag_relation_chunks`)
+  of up to `chunk_stream_top_k` chunks, dropping only the chunks the entity
+  side picked, and the text quota cuts after the rerank, as upstream
+  does. A lineage is read in chunk-id order, so an incremental build and a
+  full build of one corpus pick the same chunks (#PR).
 - Hybrid search on OpenSearch 2.13 no longer drops the `size`-th lexical hit
   or normalizes over a lower one (#295, #306); kNN on lucene uses
   `vector_search.ef_search` (#306).

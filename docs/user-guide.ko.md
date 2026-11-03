@@ -784,6 +784,15 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
 이하).
 
+두 전략은 찾은 엔티티가 인용하는 원문 청크와, 별도 스트림으로 찾은 관계가 인용하는
+청크를 더합니다(각각 최대 `search.lightrag_search.chunk_stream_top_k`개. 결과 융합(fusion)이
+두 스트림을 번갈아 섞고, 합친 청크는 재순위화(rerank) 뒤에 이 개수로 자릅니다).
+`search.lightrag_search.kg_chunk_pick_method`는 항목마다 어떤 청크를 고를지 정합니다.
+`weight`(기본값)는 찾은 항목마다 감소하는 비율로 `related_chunk_number`개씩 배정하고,
+`vector`는 upstream LightRAG의 기본값처럼 인용된 청크 중 질의와 가장 잘 맞는 청크를
+엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 평가로 두 방식을 비교하기 전까지
+기본값은 `weight`입니다.
+
 ### 예시
 
 ```bash

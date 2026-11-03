@@ -10,10 +10,11 @@ unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduc
 - the entity hits are expanded one hop to their incident relationships and
   the relationship hits to their endpoint entities (both from OpenSearch),
 - ``hybrid`` and ``mix`` pull the source chunks referenced by the matched
-  entities/relationships (following ``text_unit_ids`` lineage, allocating slots
-  per hit by weighted polling so every match keeps at least one chunk —
-  LightRAG's ``_find_related_text_unit_from_entities``/``_from_relations`` +
-  ``pick_by_weighted_polling``); ``mix`` additionally blends the naive chunk
+  entities and, as a stream of its own, by the matched relationships
+  (following ``text_unit_ids`` lineage: by weighted polling, every match
+  keeping at least one chunk, or by similarity to the query —
+  LightRAG's ``_find_related_text_unit_from_entities``/``_from_relations``,
+  ``kg_chunk_pick_method``); ``mix`` additionally blends the naive chunk
   retrieval, deduplicating the cited chunks against it (``_merge_chunks``),
 - everything is fused and reranked via the shared :class:`HybridScorer`
   (BM25 lexical + vector semantic + graph + RRF + Bedrock rerank).
@@ -54,6 +55,12 @@ from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
 
+# The two KG-linked chunk streams: the chunks the entity hits cite and those
+# the relationship hits cite. Fused as separate streams, so RRF interleaves
+# them (upstream round-robins its vector, entity and relation chunk lists).
+_ENTITY_CHUNKS = "lightrag_linked_chunks"
+_RELATION_CHUNKS = "lightrag_relation_chunks"
+
 # Upstream LightRAG uses TWO separate retrieval widths, not one.
 # `QueryParam.top_k` (DEFAULT_TOP_K = 40) is the width of the ENTITY and RELATIONSHIP
 # vector queries; `QueryParam.chunk_top_k` (DEFAULT_CHUNK_TOP_K = 20) is the separate
@@ -77,12 +84,12 @@ def _pick_by_weighted_polling(
 
     Port of upstream LightRAG's ``utils.pick_by_weighted_polling`` (the
     ``kg_chunk_pick_method = WEIGHT`` path of
-    ``_find_related_text_unit_from_entities``/``_from_relations``; upstream's
-    default, ``VECTOR``, which picks a hit's chunks by embedding similarity, is
-    not implemented). ``lineages`` is one chunk-id list per matched
-    entity/relationship, already in retrieval (importance) order; each list
-    keeps its stored order, without upstream's sort of a hit's chunks by how
-    many matched hits cite them.
+    ``_find_related_text_unit_from_entities``/``_from_relations``; the
+    ``VECTOR`` one is ``LightRAGSearchStrategy._vector_picked_chunks``).
+    ``lineages`` is one chunk-id list per matched entity/relationship, already
+    in retrieval (importance) order; each list keeps its order (chunk id,
+    ``LightRAGSearchStrategy._lineages``), without upstream's sort of a hit's
+    chunks by how many matched hits cite them.
 
     The point of the gradient is the ``min_related_chunks=1`` floor: the LAST
     matched KG item still gets one chunk. A global "rank all lineage chunks by
@@ -362,7 +369,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
            on round 1: entity hits -> incident relationships (upstream
            ``_find_most_related_edges_from_entities``) and relationship hits ->
            endpoint entities (``_find_most_related_entities_from_relationships``).
-        3. The source chunks cited by the matched entities/relationships
+        3. The source chunks cited by the matched entities and, as a stream
+           of their own, by the matched relationships
            (``_find_related_text_unit_from_entities`` / ``_from_relations``),
            excluding chunks the mix vector query already returned, because
            upstream merges the chunk streams under one ``seen_chunk_ids`` set
@@ -523,9 +531,15 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _lineages(results: list[RetrievalResult]) -> list[list[str]]:
-        """Per-hit ``text_unit_ids`` lineage, in retrieval (importance) order,
-        without the seed graphs' units: they are no chunks to follow (a hit
-        only a seed graph states has none)."""
+        """Per-hit ``text_unit_ids`` lineage, hits in retrieval (importance)
+        order, each lineage deduplicated and sorted by chunk id, without the
+        seed graphs' units: they are no chunks to follow (a hit only a seed
+        graph states has none).
+
+        Sorted here, not as stored: a full build stores a lineage sorted
+        while an incremental merge appends the delta's units in arrival
+        order, so the stored order made the weighted pick depend on how the
+        graph was built."""
         lineages: list[list[str]] = []
         for result in results:
             metadata = result.metadata or {}
@@ -540,11 +554,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 unit_ids = [unit_ids]
             if not isinstance(unit_ids, list):
                 continue
-            lineage = [
-                uid
-                for uid in unit_ids
-                if isinstance(uid, str) and uid and not is_seed_unit(uid)
-            ]
+            lineage = sorted(
+                {
+                    uid
+                    for uid in unit_ids
+                    if isinstance(uid, str) and uid and not is_seed_unit(uid)
+                }
+            )
             if lineage:
                 lineages.append(lineage)
         return lineages
@@ -555,33 +571,37 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         relationship_results: list[RetrievalResult],
         limit: int,
         exclude: set[str] | None = None,
-    ) -> list[str]:
-        """Select the source chunks cited by the matched entities/relationships.
+    ) -> tuple[list[str], list[str]]:
+        """The source chunks cited by the matched entities, and those cited by
+        the matched relationships: one list per side.
 
         Follows upstream LightRAG's two-stage selection
         (``_find_related_text_unit_from_entities`` then ``_from_relations``,
-        its ``WEIGHT`` method; the default ``VECTOR`` one is not implemented),
-        without its per-hit occurrence sort: a hit's chunks keep their stored
-        order (measured on dense graphs, the sort lowered hybrid recall):
+        its ``WEIGHT`` method), without its per-hit occurrence sort: a hit's
+        chunks keep their id order (measured on dense graphs, the sort lowered
+        hybrid recall):
 
         1. per-hit lineages are deduplicated keeping the EARLIEST (most
-           important) citing hit, so a chunk occupies one item's quota, not many;
+           important) citing hit of the side, so a chunk occupies one item's
+           quota, not many;
         2. slots are allocated by :func:`_pick_by_weighted_polling`, which
-           guarantees every matched hit at least one chunk;
-        3. relationship lineages additionally drop chunks already selected from
-           the entity side, and — via ``exclude`` — chunks the naive vector
-           stream already returned (upstream ``operate.py`` passes
-           ``entity_chunks`` into the relation pass for exactly this, then
-           round-robin merges the three streams under one ``seen_chunk_ids``).
+           guarantees every matched hit at least one chunk, and each side is
+           cut to ``limit`` (the chunk width);
+        3. the relationship side drops the chunks the entity side SELECTED,
+           and both drop ``exclude``: the chunks the naive vector stream
+           already returned (upstream ``operate.py`` passes ``entity_chunks``
+           into the relation pass for exactly this, then round-robin merges
+           the three streams under one ``seen_chunk_ids``).
 
-        The previous implementation ranked the pooled lineage by global citation
-        count and cut at ``limit``, with no dedup against the vector chunk stream, so
-        a large share of the linked stream spent slots on chunks the vector stream had
-        already retrieved.
+        The relationship side used to drop every chunk any entity hit cited,
+        selected or not, and the two sides were cut to ``limit`` together, so
+        the entity side's slots came first and a relationship's chunks almost
+        never reached the context.
         """
-        excluded = set(exclude or ())
+        cap = self._lightrag_config.related_chunk_number
+        base = set(exclude or ())
 
-        def _select(results: list[RetrievalResult]) -> list[str]:
+        def _select(results: list[RetrievalResult], excluded: set[str]) -> list[str]:
             deduped: list[list[str]] = []
             for lineage in self._lineages(results):
                 keep = [uid for uid in lineage if uid not in excluded]
@@ -589,12 +609,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 excluded.update(keep)
                 if keep:
                     deduped.append(keep)
-            return _pick_by_weighted_polling(
-                deduped, self._lightrag_config.related_chunk_number
-            )
+            return _pick_by_weighted_polling(deduped, cap)[:limit]
 
-        selected = _select(entity_results) + _select(relationship_results)
-        return selected[:limit]
+        entity_ids = _select(entity_results, set(base))
+        relation_ids = _select(relationship_results, base | set(entity_ids))
+        return entity_ids, relation_ids
 
     async def _retrieve_linked_chunks(
         self,
@@ -603,22 +622,28 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         relationship_results: list[RetrievalResult],
         exclude: set[str] | None = None,
     ) -> dict[str, list[RetrievalResult]]:
-        """Fetch the source chunks cited by the matched entities/relationships.
+        """The source chunks cited by the matched entities
+        (``lightrag_linked_chunks``) and by the matched relationships
+        (``lightrag_relation_chunks``).
 
-        Collects ``text_unit_ids`` lineage from the entity/relationship hits,
-        allocates chunk slots per hit by weighted polling, and fetches the
-        selected chunks by id from the text-units index. ``exclude`` carries the
-        chunk ids the naive vector stream already returned.
-        Degrades to no section if lineage is absent (e.g. an index built before
-        lineage was added) or retrieval fails.
+        ``search.lightrag_search.kg_chunk_pick_method`` picks them: ``weight``
+        allocates chunk slots per hit by weighted polling and fetches both
+        sides' chunks by id in one request; ``vector`` searches each side's
+        cited chunks for the query (``_vector_picked_chunks``). ``exclude``
+        carries the chunk ids the naive vector stream already returned.
+        Each side is a stream of its own, so fusion interleaves them and the
+        chunk quota (``chunk_stream_top_k``) cuts the merged chunks after the
+        rerank, as upstream's round robin then ``chunk_top_k`` cut does.
+        Degrades to no section if lineage is absent (e.g. an index built
+        before lineage was added) or retrieval fails.
         """
         if not self.document_retriever:
             return {}
-        # The lineage pool is a CHUNK stream, so it is bounded by
-        # upstream's chunk width, not by the caller's top_k. Upstream bounds it in two
-        # steps — `related_chunk_number` (5) chunks per matched entity/relationship, then
-        # a truncation of the combined pool to `chunk_top_k` — so with 40 KG hits its
-        # pool is far larger than a flat top_k=10 before the final cut.
+        # Each side is a CHUNK stream, so it is bounded by upstream's chunk
+        # width, not by the caller's top_k. Upstream bounds it in two steps —
+        # `related_chunk_number` (5) chunks per matched entity/relationship,
+        # then a truncation of the merged pool to `chunk_top_k` — so with 40
+        # KG hits its pool is far larger than a flat top_k=10 before the cut.
         limit = self._chunk_stream_top_k(query.top_k)
         exclude = set(exclude or ())
         # The caller's id filter: no slot for a chunk the fetch removes.
@@ -628,14 +653,20 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             for unit in lineage
         ]
         exclude.update(set(linked) - set(self._ids_allowed(query.filters, linked)))
+        if self._lightrag_config.kg_chunk_pick_method == "vector":
+            return await self._vector_picked_chunks(
+                query, entity_results, relationship_results, limit, exclude
+            )
         if filters := self._text_unit_filters(query.filters):
-            chunk_ids = await self._passing_linked_chunk_ids(
+            entity_ids, relation_ids = await self._passing_linked_chunk_ids(
                 query, entity_results, relationship_results, filters, limit, exclude
             )
         else:
-            chunk_ids = self._collect_linked_chunk_ids(
+            entity_ids, relation_ids = self._collect_linked_chunk_ids(
                 entity_results, relationship_results, limit=limit, exclude=exclude
             )
+        # Disjoint: the relationship side drops the entity side's chunks.
+        chunk_ids = [*entity_ids, *relation_ids]
         if not chunk_ids:
             return {}
         search_query = SearchQuery(
@@ -649,9 +680,99 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         results = await self._fetch_by_ids(
             self.document_retriever, search_query, "Linked chunk retrieval"
         )
-        if not results:
-            return {}
-        return {"lightrag_linked_chunks": self._restore_rank(results, chunk_ids)}
+        relation_side = set(relation_ids)
+        streams: dict[str, list[RetrievalResult]] = {}
+        for name, ids, found in (
+            (
+                _ENTITY_CHUNKS,
+                entity_ids,
+                [r for r in results if str(r.source) not in relation_side],
+            ),
+            (
+                _RELATION_CHUNKS,
+                relation_ids,
+                [r for r in results if str(r.source) in relation_side],
+            ),
+        ):
+            if found:
+                streams[name] = self._restore_rank(found, ids)
+        return streams
+
+    async def _vector_picked_chunks(
+        self,
+        query: SearchQuery,
+        entity_results: list[RetrievalResult],
+        relationship_results: list[RetrievalResult],
+        limit: int,
+        exclude: set[str],
+    ) -> dict[str, list[RetrievalResult]]:
+        """``kg_chunk_pick_method: vector``: per side, the cited chunks the
+        query matches best.
+
+        Upstream's ``VECTOR`` method (``pick_by_vector_similarity``) ranks a
+        side's cited chunks by embedding similarity to the query and keeps
+        ``related_chunk_number * hits / 2``. Here each side is one search of
+        the text-units index restricted to its cited chunks (an ``id``
+        filter, beside the caller's filters, which the search applies
+        itself) with the request's ``search_type``, BM25 + vector by
+        default, cut to the chunk width too. The relationship side drops the
+        chunks the entity side picked, as upstream's relation pass does; it
+        asks for that many more instead of waiting for them, so both run at
+        once. A side citing more chunks than one request can name
+        (``IndexLimits.id_batch_size``) searches the chunks of its most
+        important hits only.
+        """
+        retriever = self.document_retriever
+        assert retriever is not None  # the caller returns early without one
+        prefix = self._os_config.text_units_index_prefix
+        room = (await retriever.aindex_limits(prefix, query.suffix)).id_batch_size
+        cap = self._lightrag_config.related_chunk_number
+
+        def side(results: list[RetrievalResult]) -> tuple[list[str], int]:
+            lineages = self._lineages(results)
+            cited = list(dict.fromkeys(u for lineage in lineages for u in lineage))
+            cited = [u for u in cited if u not in exclude][:room]
+            return cited, min(limit, max(1, cap * len(lineages) // 2), len(cited))
+
+        async def pick(
+            cited: list[str], wanted: int, label: str
+        ) -> list[RetrievalResult]:
+            if not cited or wanted <= 0:
+                return []
+            return await self._safe_aretrieve(
+                retriever,
+                SearchQuery(
+                    query=query.query,
+                    search_type=query.search_type,
+                    top_k=wanted,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    suffix=query.suffix,
+                    filters=self._scoped_filters(query, id=cited),
+                ),
+                label,
+            )
+
+        entity_cited, entity_wanted = side(entity_results)
+        relation_cited, relation_wanted = side(relationship_results)
+        entity_hits, relation_hits = await gather_or_cancel(
+            [
+                pick(entity_cited, entity_wanted, "Entity chunk pick (vector)"),
+                pick(
+                    relation_cited,
+                    min(relation_wanted + entity_wanted, len(relation_cited)),
+                    "Relationship chunk pick (vector)",
+                ),
+            ]
+        )
+        taken = {str(r.source) for r in entity_hits}
+        relation_hits = [r for r in relation_hits if str(r.source) not in taken]
+        streams: dict[str, list[RetrievalResult]] = {}
+        if entity_hits:
+            streams[_ENTITY_CHUNKS] = entity_hits
+        if relation_hits := relation_hits[:relation_wanted]:
+            streams[_RELATION_CHUNKS] = relation_hits
+        return streams
 
     async def _passing_linked_chunk_ids(
         self,
@@ -661,7 +782,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         filters: dict[str, Any],
         limit: int,
         exclude: set[str],
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         """``_collect_linked_chunk_ids`` under a filter on text units: the
         slots go to chunks that pass.
 
@@ -696,10 +817,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         checked: set[str] = set()
         failing = set(exclude)
 
-        def select() -> list[str]:
+        def select() -> tuple[list[str], list[str]]:
             return self._collect_linked_chunk_ids(
                 entity_results, relationship_results, limit=limit, exclude=failing
             )
+
+        def flat(selection: tuple[list[str], list[str]]) -> list[str]:
+            return [*selection[0], *selection[1]]
 
         async def check(ids: list[str]) -> bool:
             known = len(checked)
@@ -722,8 +846,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             else:
                 # The unfiltered selection too: the slots land there unless
                 # the filter fails some of it, which the order of a lineage
-                # (stored sorted by id) decides otherwise.
-                parts = [select(), *(lineage[:cap] for lineage in lineages)]
+                # (sorted by id) decides otherwise.
+                parts = [flat(select()), *(lineage[:cap] for lineage in lineages)]
             ask = [
                 u
                 for u in dict.fromkeys(u for part in parts for u in part)
@@ -731,7 +855,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             ]
             if ask and not await check(ask):
                 return select()
-            if not second and all(u in checked for u in select()):
+            if not second and all(u in checked for u in flat(select())):
                 return select()
         selected = select()
         # How far past the deepest unknown chunk a round asks; doubled each
@@ -743,7 +867,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             deepest = max(i for i, u in enumerate(lineage) if u in unknown)
             return lineage[: deepest + reach]
 
-        while unknown := {u for u in selected if u not in checked}:
+        while unknown := {u for u in flat(selected) if u not in checked}:
             ok = await check(
                 list(
                     dict.fromkeys(

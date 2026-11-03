@@ -852,6 +852,17 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 query that yields no keywords is used as a low-level keyword itself (up to
 `search.lightrag_search.raw_query_fallback_max_len`).
 
+Both add the source chunks the matched entities cite and, as a stream of its
+own, those the matched relationships cite (each up to
+`search.lightrag_search.chunk_stream_top_k`; fusion interleaves them and the
+merged chunks are cut to that width after the rerank).
+`search.lightrag_search.kg_chunk_pick_method` decides which of an item's
+chunks are taken: `weight` (the default) gives each matched item
+`related_chunk_number` chunks on a decreasing gradient; `vector` takes the
+cited chunks that best match the query, one search a side, as upstream
+LightRAG does by default. The default stays `weight` until an evaluation
+compares the two.
+
 ### Examples
 
 ```bash

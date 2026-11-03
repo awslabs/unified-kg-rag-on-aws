@@ -26,6 +26,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+    SearchType,
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
@@ -122,7 +123,7 @@ async def test_mix_mode_blends_chunks(config: Config) -> None:
     } <= prefixes
 
 
-def test_collect_linked_chunk_ids_keeps_each_hits_stored_order() -> None:
+def test_collect_linked_chunk_ids_reads_each_lineage_in_id_order() -> None:
     cls = _chunk_selector()
 
     def _hit(unit_ids: list[str]) -> RetrievalResult:
@@ -134,15 +135,21 @@ def test_collect_linked_chunk_ids_keeps_each_hits_stored_order() -> None:
             metadata={"id": "i", "text_unit_ids": unit_ids},
         )
 
-    entity_hits = [_hit(["t1", "t2"]), _hit(["t1"])]
-    rel_hits = [_hit(["t2", "t3"])]
-    ranked = cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=10)
-    # Each hit's chunks in stored order, a chunk kept on its earliest hit only
-    # (no sort by how many hits cite it); relationship chunks follow.
-    assert ranked[:2] == ["t1", "t2"]
-    assert ranked[-1] == "t3"
-    # limit caps the list.
-    assert cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=1) == ["t1"]
+    entity_hits = [_hit(["t2", "t1"]), _hit(["t1"])]
+    rel_hits = [_hit(["t3", "t2"])]
+    entity_side, relation_side = cls._collect_linked_chunk_ids(
+        entity_hits, rel_hits, limit=10
+    )
+    # Each hit's chunks in id order, whatever order they are stored in, a
+    # chunk kept on its earliest hit only (no sort by how many hits cite it);
+    # the relationship side, a list of its own, drops the entity side's.
+    assert entity_side == ["t1", "t2"]
+    assert relation_side == ["t3"]
+    # limit caps each side, not the two together.
+    assert cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=1) == (
+        ["t1"],
+        ["t2"],
+    )
 
 
 def test_collect_linked_chunk_ids_ignores_missing_lineage() -> None:
@@ -150,7 +157,7 @@ def test_collect_linked_chunk_ids_ignores_missing_lineage() -> None:
     no_lineage = RetrievalResult(
         content="x", score=1.0, source="s", retriever_type="document", metadata={}
     )
-    assert cls._collect_linked_chunk_ids([no_lineage], [], limit=10) == []
+    assert cls._collect_linked_chunk_ids([no_lineage], [], limit=10) == ([], [])
 
 
 class LineageRetriever:
@@ -367,8 +374,7 @@ def test_collect_linked_chunk_ids_accepts_unwrapped_single_id() -> None:
         metadata={"text_unit_ids": ["other-chunk"]},
     )
     ranked = _chunk_selector()._collect_linked_chunk_ids([entity], [rel], limit=10)
-    assert uuid in ranked
-    assert "other-chunk" in ranked
+    assert ranked == ([uuid], ["other-chunk"])
 
 
 class TestUpstreamTwoRetrievalWidths:
@@ -548,7 +554,7 @@ class TestUpstreamTwoRetrievalWidths:
             )
             for i in range(30)
         ]
-        ranked = _chunk_selector()._collect_linked_chunk_ids(entities, [], limit=20)
+        ranked, _ = _chunk_selector()._collect_linked_chunk_ids(entities, [], limit=20)
         assert len(ranked) == 20
 
 
@@ -558,10 +564,11 @@ class TestUpstreamChunkSelection:
     Upstream LightRAG picks the chunks behind its KG hits in two stages
     (``operate.py`` ``_find_related_text_unit_from_entities`` /
     ``_from_relations`` + ``utils.pick_by_weighted_polling``): a linear-decreasing
-    per-hit quota with a ``min_related_chunks=1`` floor, with the relationship
-    pass excluding chunks already taken by the entity pass, and a final
-    round-robin merge against the naive vector stream under one
-    ``seen_chunk_ids`` set (``_merge_chunks``).
+    per-hit quota with a ``min_related_chunks=1`` floor, each pass a list of
+    its own, the relationship pass excluding only the chunks the entity pass
+    SELECTED (``entity_chunks``), and a final round-robin merge of the vector,
+    entity and relation lists under one ``seen_chunk_ids`` set
+    (``_merge_chunks``), cut to ``chunk_top_k``.
 
     The previous implementation ranked the pooled lineage by global citation
     count and cut at ``chunk_top_k``, blind to the vector stream, so part of
@@ -586,39 +593,66 @@ class TestUpstreamChunkSelection:
         shared = [f"popular-{i}" for i in range(20)]
         entities = [self._entity(i, list(shared)) for i in range(5)]
         entities.append(self._entity(99, ["the-bridge-chunk"]))
-        selected = _chunk_selector()._collect_linked_chunk_ids(entities, [], limit=20)
+        selected, _ = _chunk_selector()._collect_linked_chunk_ids(
+            entities, [], limit=20
+        )
         assert "the-bridge-chunk" in selected
 
     def test_vector_stream_chunks_are_excluded(self) -> None:
         entities = [self._entity(0, ["dup-1", "dup-2", "fresh-1"])]
+        relationships = [self._relationship(0, ["dup-1", "rel-fresh"])]
         selected = _chunk_selector()._collect_linked_chunk_ids(
-            entities, [], limit=20, exclude={"dup-1", "dup-2"}
+            entities, relationships, limit=20, exclude={"dup-1", "dup-2"}
         )
-        assert selected == ["fresh-1"]
+        assert selected == (["fresh-1"], ["rel-fresh"])
+
+    @staticmethod
+    def _relationship(idx: int, lineage: list[str]) -> RetrievalResult:
+        return RetrievalResult(
+            content="r",
+            score=1.0,
+            source=f"r{idx}",
+            retriever_type="relationship",
+            metadata={"text_unit_ids": lineage},
+        )
 
     def test_relationship_pass_excludes_entity_chunks(self) -> None:
         entities = [self._entity(0, ["shared-1"])]
-        relationships = [
-            RetrievalResult(
-                content="r",
-                score=1.0,
-                source="r0",
-                retriever_type="relationship",
-                metadata={"text_unit_ids": ["shared-1", "rel-only"]},
-            )
-        ]
+        relationships = [self._relationship(0, ["shared-1", "rel-only"])]
         selected = _chunk_selector()._collect_linked_chunk_ids(
             entities, relationships, limit=20
         )
-        assert selected.count("shared-1") == 1
-        assert "rel-only" in selected
+        assert selected == (["shared-1"], ["rel-only"])
 
-    def test_pool_is_still_bounded_by_the_chunk_width(self) -> None:
+    def test_relationship_pass_keeps_entity_chunks_the_entity_pass_did_not_select(
+        self,
+    ) -> None:
+        # Regression: the relationship pass dropped every chunk ANY entity hit
+        # cited, selected or not. A hub entity cites most of the corpus, so a
+        # relationship's chunks were nearly always excluded and its side came
+        # back empty (hybrid one-hop gold-chunk recall 0.30).
+        hub = self._entity(0, [f"c{j:02d}" for j in range(30)])
+        relationships = [self._relationship(0, ["c00", "c07", "c21"])]
+        entity_side, relation_side = _chunk_selector()._collect_linked_chunk_ids(
+            [hub], relationships, limit=20
+        )
+        assert entity_side == ["c00", "c01", "c02", "c03", "c04"]
+        assert relation_side == ["c07", "c21"]
+
+    def test_each_pass_is_bounded_by_the_chunk_width(self) -> None:
+        # Cut together, the entity pass took the whole width first and the
+        # relationship pass got what was left: nothing, with 20 entity hits.
         entities = [
             self._entity(i, [f"c-{i}-{j}" for j in range(5)]) for i in range(30)
         ]
-        selected = _chunk_selector()._collect_linked_chunk_ids(entities, [], limit=20)
-        assert len(selected) == 20
+        relationships = [
+            self._relationship(i, [f"r-{i}-{j}" for j in range(5)]) for i in range(30)
+        ]
+        entity_side, relation_side = _chunk_selector()._collect_linked_chunk_ids(
+            entities, relationships, limit=20
+        )
+        assert len(entity_side) == 20
+        assert len(relation_side) == 20
 
     def test_weighted_polling_matches_the_upstream_gradient(self) -> None:
         # Upstream: expected[i] interpolates max_related_chunks -> min_related_chunks
@@ -1153,8 +1187,8 @@ class TestHybridHasAChunkStream:
             _query(SearchStrategy.HYBRID, ll_keywords=["a"], hl_keywords=["b"])
         )
         sources = captured["sources"]
-        assert any(
-            "linked" in key for key in sources
+        assert (
+            "lightrag_linked_chunks" in sources
         ), f"hybrid produced no KG-linked chunk stream: {sorted(sources)}"
 
     async def test_hybrid_does_not_run_the_naive_vector_blend(
@@ -1353,21 +1387,212 @@ async def test_linked_chunks_keep_their_selection_order(config: Config) -> None:
             RetrieverRole.GRAPH.value: FakeRetriever("graph"),
         },
     )
-    entity = RetrievalResult(
-        content="e",
-        score=1.0,
-        source="e1",
-        retriever_type="entity",
-        metadata={"id": "e1", "text_unit_ids": ["t-c", "t-a", "t-b"]},
-    )
+    entities = [
+        RetrievalResult(
+            content="e",
+            score=1.0,
+            source=eid,
+            retriever_type="entity",
+            metadata={"id": eid, "text_unit_ids": units},
+        )
+        for eid, units in (("e1", ["t-c"]), ("e2", ["t-b", "t-a"]))
+    ]
 
     linked = await strategy._retrieve_linked_chunks(
-        SearchQuery(query="q"), [entity], []
+        SearchQuery(query="q"), entities, []
     )
 
     chunks = linked["lightrag_linked_chunks"]
     assert [r.source for r in chunks] == ["t-c", "t-a", "t-b"]
     assert [r.score for r in chunks] == sorted((r.score for r in chunks), reverse=True)
+
+
+def _cites(kind: str, hid: str, units: list[str]) -> RetrievalResult:
+    return RetrievalResult(
+        content=hid,
+        score=1.0,
+        source=hid,
+        retriever_type=kind,
+        metadata={"id": hid, "text_unit_ids": units},
+    )
+
+
+class _ChunksById(FakeRetriever):
+    """Chunks by id (in index order, as a store returns them); a text search
+    restricted to ids ranks them by the ``ranking`` given."""
+
+    def __init__(self, ranking: list[str] | None = None) -> None:
+        super().__init__("document")
+        self.ranking = ranking or []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        ids = list((query.filters or {}).get("id") or [])
+        if query.query:
+            ids = [u for u in self.ranking if u in ids][: query.top_k]
+        else:
+            ids = sorted(ids)
+        return [
+            RetrievalResult(content=u, score=0.0, source=u, retriever_type="text")
+            for u in ids
+        ]
+
+
+def _linked_strategy(config: Config, document: FakeRetriever):
+    return get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: document,
+            RetrieverRole.GRAPH.value: FakeRetriever("graph"),
+        },
+    )
+
+
+async def test_relationship_chunks_are_a_stream_of_their_own(config: Config) -> None:
+    # Both sides' chunks come back in one fetch by id and leave as two
+    # streams, so fusion interleaves them instead of the entity side's taking
+    # the chunk width first.
+    document = _ChunksById()
+    strategy = _linked_strategy(config, document)
+    hub = _cites("entity", "e1", [f"u{j:02d}" for j in range(30)])
+    edge = _cites("relationship", "r1", ["u00", "u12", "u29"])
+
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q"), [hub], [edge]
+    )
+
+    assert [r.source for r in linked["lightrag_linked_chunks"]] == [
+        f"u{j:02d}" for j in range(5)
+    ]
+    assert [r.source for r in linked["lightrag_relation_chunks"]] == ["u12", "u29"]
+    assert len(document.calls) == 1
+
+
+async def test_fusion_interleaves_the_two_chunk_streams_and_cuts_after(
+    config: Config,
+) -> None:
+    # Through the real scorer, no rerank: 20 entity-side chunks and 2
+    # relationship-side ones; the 3-chunk quota keeps a relationship chunk
+    # (rank 1 of its stream) beside the entity side's first two.
+    config.search.reranking.enabled = False
+    config.search.fusion.diversity_lambda = 1.0
+    config.search.lightrag_search.chunk_stream_top_k = 3
+    config.search.lightrag_search.related_chunk_number = 20
+    strategy = _linked_strategy(config, _ChunksById())
+    hub = _cites("entity", "e1", [f"u{j:02d}" for j in range(20)])
+    edge = _cites("relationship", "r1", ["u50", "u51"])
+    streams = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q", top_k=3), [hub], [edge]
+    )
+    fused = strategy.hybrid_scorer.fuse_and_rerank_results(
+        streams, top_k=3, per_type_quota={"text": 3}
+    )
+    assert {r.source for r in fused} == {"u00", "u01", "u50"}
+
+
+async def test_an_incremental_build_picks_the_chunks_a_full_build_picks(
+    config: Config,
+) -> None:
+    # A full build stores a lineage sorted (the resolver's sorted union); an
+    # incremental merge appends the delta's units in arrival order. Picked in
+    # stored order, the two builds of one corpus cited different chunks.
+    from unified_kg_rag.domain.ingestion.merge.merger import merge_entities
+    from unified_kg_rag.domain.models import Entity
+
+    config.search.lightrag_search.related_chunk_number = 2
+    stored = Entity(id="ent-vendor", name="Vendor", text_unit_ids=["u7", "u9"])
+    delta = Entity(id="ent-vendor", name="Vendor", text_unit_ids=["u1", "u3"])
+    (incremental,), _ = merge_entities([stored], [delta])
+    full = sorted({*stored.text_unit_ids, *delta.text_unit_ids})
+    assert incremental.text_unit_ids != full  # the builds store different orders
+
+    picked = []
+    for lineage in (incremental.text_unit_ids, full):
+        document = _ChunksById()
+        strategy = _linked_strategy(config, document)
+        streams = await strategy._retrieve_linked_chunks(
+            SearchQuery(query="q"), [_cites("entity", "ent-vendor", lineage)], []
+        )
+        picked.append([r.source for r in streams["lightrag_linked_chunks"]])
+    assert picked[0] == picked[1] == ["u1", "u3"]
+
+
+class TestVectorChunkPick:
+    """``kg_chunk_pick_method: vector``: per side, a search of the cited
+    chunks for the query (upstream ``pick_by_vector_similarity``)."""
+
+    @staticmethod
+    def _strategy(config: Config, ranking: list[str]):
+        config.search.lightrag_search.kg_chunk_pick_method = "vector"
+        document = _ChunksById(ranking)
+        return _linked_strategy(config, document), document
+
+    async def test_each_side_searches_its_cited_chunks(self, config: Config) -> None:
+        strategy, document = self._strategy(config, ["u05", "r2", "u01", "r1", "u09"])
+        hits = [_cites("entity", f"e{i}", [f"u{i:02d}"]) for i in range(10)]
+        edges = [_cites("relationship", "r", ["r1", "r2", "u05"])]
+
+        streams = await strategy._retrieve_linked_chunks(
+            SearchQuery(query="what links them", top_k=5), hits, edges
+        )
+
+        # related_chunk_number * 10 hits / 2 = 25, cut to the 10 cited.
+        assert [r.source for r in streams["lightrag_linked_chunks"]] == [
+            "u05",
+            "u01",
+            "u09",
+        ]
+        # The relationship side drops the entity side's pick (u05).
+        assert [r.source for r in streams["lightrag_relation_chunks"]] == [
+            "r2",
+            "r1",
+        ]
+        assert len(document.calls) == 2
+        for call in document.calls:
+            assert call.query == "what links them"
+            assert call.search_type == SearchType.HYBRID
+            assert call.index_prefixes == [
+                config.indexing.opensearch.text_units_index_prefix
+            ]
+        entity_call, relation_call = sorted(
+            document.calls, key=lambda q: len(q.filters["id"]), reverse=True
+        )
+        assert sorted(entity_call.filters["id"]) == [f"u{i:02d}" for i in range(10)]
+        assert entity_call.top_k == 10
+        # As many more as the entity side may take, for the ones it drops.
+        assert sorted(relation_call.filters["id"]) == ["r1", "r2", "u05"]
+
+    async def test_the_vector_stream_and_the_caller_filters_apply(
+        self, config: Config
+    ) -> None:
+        strategy, document = self._strategy(config, ["u1", "u2", "u3"])
+        streams = await strategy._retrieve_linked_chunks(
+            SearchQuery(query="q", filters={"attr_grp": "a", "id": ["u2", "u3"]}),
+            [_cites("entity", "e", ["u1", "u2", "u3"])],
+            [],
+            exclude={"u3"},
+        )
+        (call,) = document.calls
+        assert call.filters["id"] == ["u2"]
+        assert call.filters["attr_grp"] == "a"
+        assert [r.source for r in streams["lightrag_linked_chunks"]] == ["u2"]
+
+    async def test_a_side_citing_more_than_one_request_holds_keeps_its_first(
+        self, config: Config
+    ) -> None:
+        strategy, document = self._strategy(config, [])
+
+        async def limits(prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits(max_terms_count=3)
+
+        document.aindex_limits = limits  # type: ignore[method-assign]
+        hits = [
+            _cites("entity", "e0", ["u5", "u6"]),
+            _cites("entity", "e1", ["u1", "u2"]),
+        ]
+        await strategy._retrieve_linked_chunks(SearchQuery(query="q"), hits, [])
+        (call,) = document.calls
+        assert call.filters["id"] == ["u5", "u6", "u1"]
 
 
 async def test_a_failed_stream_cancels_the_streams_beside_it(config: Config) -> None:
