@@ -927,7 +927,7 @@ From 0.2.3 (or a `main` checkout since):
   instead of the concise default, which every strategy keeps;
   `search.global_search.evidence_tokens` caps the cited report text after
   the key points (null, the default, keeps the current behaviour; `0` sends
-  the key points only) (#PR).
+  the key points only) (#525).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1090,18 +1090,18 @@ From 0.2.3 (or a `main` checkout since):
   (1.54 s to 1.03 s at 0.5 s a call). The router prompt and its decisions
   are unchanged; the extraction the route does not read is cancelled or
   ignored, one or two short fast-model calls a query (about 400-1,000
-  input tokens with the shipped prompts) (#PR).
+  input tokens with the shipped prompts) (#525).
 - Query entities and keywords are cached per question, target language,
   model and prompt text (`search.query_extraction_cache_size`, 1024; 0
   turns it off), so `run-eval --repeats` and the arms of a strategy
-  comparison search with the same ones and pay the extraction once (#PR).
+  comparison search with the same ones and pay the extraction once (#525).
 - The short-answer query calls ask for a smaller max_tokens
   (`search.output_ceilings`, 4096 each: the router, the query entity and
   keyword extractions, the dynamic-selection ratings; and
   `evaluation.answer_span_output_ceiling`), never less than the call's
   thinking budget plus 1024, so an `auto` query reserves 28,672 output
   tokens against the Bedrock quota instead of 49,152. A language-model
-  factory's `get_model` may receive `output_ceiling` (#PR).
+  factory's `get_model` may receive `output_ceiling` (#525).
 
 ### Fixed
 Bugs present in 0.2.3.
