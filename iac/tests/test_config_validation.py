@@ -164,3 +164,66 @@ def test_cdk_keys_and_notes_are_not_settings() -> None:
             "env_name": "dev",
         }
     )
+
+
+def test_maintenance_windows_default_to_a_weekly_and_a_daily_utc_slot() -> None:
+    config = _config({})
+    assert config.neptune_maintenance_window == "sun:20:00-sun:21:00"
+    assert config.neptune_backup_window == "18:00-19:00"
+    assert config.opensearch_off_peak_start is None
+    assert _config({"opensearch_off_peak_start": "2:30"}).opensearch_off_peak_start == (
+        2,
+        30,
+    )
+
+
+@pytest.mark.parametrize(
+    ("context", "message"),
+    [
+        ({"neptune_maintenance_window": "sunday 20:00"}, "ddd:hh24:mi-ddd:hh24:mi"),
+        ({"neptune_backup_window": "18-19"}, "hh24:mi-hh24:mi"),
+        (
+            {"neptune_maintenance_window": "sun:20:00-sun:20:10"},
+            "neptune_maintenance_window must be at least 30 minutes",
+        ),
+        (
+            {"neptune_backup_window": "18:00-18:29"},
+            "neptune_backup_window must be at least 30 minutes",
+        ),
+        # Overlap on the maintenance day, and across midnight.
+        ({"neptune_backup_window": "20:30-21:30"}, "overlaps"),
+        (
+            {
+                "neptune_maintenance_window": "sat:23:30-sun:00:30",
+                "neptune_backup_window": "00:00-01:00",
+            },
+            "overlaps",
+        ),
+        ({"opensearch_off_peak_start": "25:00"}, "opensearch_off_peak_start"),
+    ],
+)
+def test_bad_maintenance_windows_fail_at_synth(
+    context: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config(context)
+
+
+def test_observability_secret_needs_a_complete_arn_and_variable_names() -> None:
+    arn = "arn:aws:secretsmanager:us-west-2:111111111111:secret:obs/langfuse-AbC123"
+    config = _config({"observability_secret_arn": arn})
+    assert config.observability_secret_keys == (
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+    )
+    keys = _config(
+        {"observability_secret_arn": arn, "observability_secret_keys": "A_1, B"}
+    ).observability_secret_keys
+    assert keys == ("A_1", "B")
+    # A partial ARN (no 6-character suffix) cannot be granted exactly.
+    with pytest.raises(ValueError, match="complete ARN"):
+        _config({"observability_secret_arn": arn[:-7]})
+    with pytest.raises(ValueError, match="must name environment variables"):
+        _config({"observability_secret_arn": arn, "observability_secret_keys": "A-B"})
+    with pytest.raises(ValueError, match="only applies with observability_secret_arn"):
+        _config({"observability_secret_keys": "A"})

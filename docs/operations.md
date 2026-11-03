@@ -9,6 +9,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | I want to | Go to |
 |---|---|
 | Check a deployment before the first run | [Before a run](#before-a-run) |
+| Size the ingestion task and estimate a run's time | [Capacity sizing](#capacity-sizing) |
 | Resume, recompute or rebuild an ingestion | [Re-ingest](#re-ingest) |
 | Keep a corpus up to date | [Incremental runs](#incremental-runs) |
 | Recover a run that stopped | [Interrupted runs](#interrupted-runs) |
@@ -17,6 +18,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Act on a CloudWatch alarm | [Alarms](#alarms) |
 | Restore the stores | [Backup and restore](#backup-and-restore) |
 | Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
+| Upgrade Neptune to a new major version, or move the maintenance windows | [Upgrading Neptune](#upgrading-neptune), [Maintenance windows](#maintenance-windows) |
 | Analyze Korean with Nori instead of `cjk` | [Korean with Nori](#korean-with-nori) |
 | Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
 | Look Neptune vertices up by custom vertex ids | [Custom Neptune vertex ids](#custom-neptune-vertex-ids) |
@@ -40,6 +42,49 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 4. **No other ingestion runs** against the same stores
    ([Concurrent runs](#concurrent-runs)). On the CDK stack:
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`.
+
+### Capacity sizing
+
+Peak memory of the ingestion task grows linearly with the text units of a
+run. A full local build of 5,000 to 60,000 short units (about 200
+characters, two or three entities each) with fake models and the embedded
+stores measured about 42 KiB of resident memory per text unit on top of
+about 0.2 GiB, and about 11 KiB of stage cache per unit. Real units are
+longer (`fallback_chunk_size` 4,800 characters) and name more entities and
+relationships, so plan for 2-3 times that per unit (an estimate, not
+measured):
+
+| `fargate_memory` | Text units per run (estimate) |
+|---|---|
+| 8192 (default) | about 50,000-80,000 |
+| 16384 | about 100,000-160,000 |
+| 30720 | about 200,000-300,000 |
+
+Keep a margin: the `IngestionTaskMemory` alarm fires at 90%, and a task over
+its memory is killed with the running stage lost. A larger corpus can also
+be ingested in several incremental runs, each within the budget. The task's
+disk (`ingestion_ephemeral_storage_gib`) holds the synced corpus, the parsed
+documents and the stage cache: about twice the corpus plus the cache
+(`IngestionTaskEphemeralStorage` fires at 90%).
+
+Run time is dominated by model calls, which run `processing.max_concurrency`
+(default 40) at a time:
+
+```text
+time ~ calls x average call latency / max_concurrency + about 8 ms per unit
+calls ~ units x (1 extraction + gleaning rounds that add something + 1 claim
+        extraction, when claims are on) + 1 report per community
+```
+
+The 8 ms per unit is the rest of the pipeline (parsing, resolution,
+community detection, indexing) measured with fake models and the embedded
+stores; Neptune and OpenSearch writes over the network add to it. With a
+call latency of 10 s and 40 calls in flight, 50,000 units with one
+gleaning round and no claims take about 50,000 x 2 x 10 / 40 s, roughly 7
+hours: above the default `sfn_timeout_hours` (6), so raise it or split the
+run. `BedrockThrottling` means the account's quota, not `max_concurrency`,
+is the limit; the stage durations on the dashboard show where a run spends
+its time.
 
 ## Routine operations
 
@@ -156,7 +201,11 @@ Coming from 0.2.3 or an earlier `main` checkout: see
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
 
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
-looks deleted. Check a reused bucket's own lifecycle rules.
+looks deleted. The bucket is versioned: an overwritten or deleted object
+keeps its earlier version for 30 days (under `pipeline-runs/`, which every
+stage overwrites, for 1 day). A `--s3-prefix` other than `pipeline-runs`
+gets neither the expiry nor the 1-day rule. Check a reused bucket's own
+lifecycle rules and versioning.
 
 ### Schema sources in S3
 
@@ -212,7 +261,23 @@ common point or not at all. The corpus in S3 is the source of truth.
 | Neptune | Automated backups, point-in-time restore | `backup_retention_days` (default 7 days) |
 | OpenSearch | Automated hourly snapshots (`cs-automated-enc`) | 14 days |
 | DynamoDB doc-status table | Point-in-time recovery | 35 days |
-| S3 cache bucket | None (checkpoints are re-creatable) | — |
+| S3 cache bucket | Versioning: earlier versions of overwritten or deleted objects (the corpus under `corpus/`, `eval/`); checkpoints are re-creatable | 30 days (1 day under `pipeline-runs/`); none on a reused bucket unless it has its own |
+
+A deleted or overwritten corpus file looks deleted or changed to the next
+incremental run, which then removes or replaces its documents' artifacts.
+Restore it before that run: list its versions and copy the one you want
+back, which makes it the current version again.
+
+```bash
+aws s3api list-object-versions --bucket <cache bucket> --prefix corpus/<file>
+aws s3api copy-object --bucket <cache bucket> --key corpus/<file> \
+  --copy-source "<cache bucket>/corpus/<file>?versionId=<version id>"
+```
+
+A file deleted without a version id leaves a delete marker; deleting the
+marker (`aws s3api delete-object --bucket <cache bucket> --key corpus/<file>
+--version-id <marker id>`) restores it as well, but the task roles have no `s3:DeleteObject`, so
+run it with an operator role.
 
 **Within Neptune's window:**
 
@@ -268,6 +333,53 @@ ends, from minutes to hours). An upgrade cannot be paused or rolled back.
    ([Korean with Nori](#korean-with-nori)).
 5. When the stack update completes, run a query and one incremental
    ingestion before the next large run.
+
+### Maintenance windows
+
+All times are UTC; set them to the deployment's quiet hours.
+
+| Store | When | Key (default) |
+|---|---|---|
+| Neptune cluster and instances | Weekly maintenance: minor engine upgrades (`auto_minor_version_upgrade`), patches | `neptune_maintenance_window` (`sun:20:00-sun:21:00`) |
+| Neptune | Daily automated backup | `neptune_backup_window` (`18:00-19:00`; apart from the maintenance window) |
+| OpenSearch | Daily 10-hour off-peak window: service software updates, Auto-Tune | `opensearch_off_peak_start` (unset: the service default, 10:00 P.M. local time of the region) |
+
+Changing a window takes effect on the next deploy without downtime.
+Maintenance restarts Neptune instances (writes fail until the writer is
+back, and the run's retries may not outlast it), so keep ingestion runs out
+of the Neptune window. A pending OpenSearch service software update is
+listed by `aws opensearch list-scheduled-actions --domain-name <domain>`.
+
+### Upgrading Neptune
+
+Minor versions upgrade in the maintenance window. A major version (1.3 to
+1.4, say) is never applied by itself, and the stack does not pin
+`engine_version` (a pin would change every deployed cluster), so you start
+it with the CLI and CloudFormation sees no change:
+
+1. Check the path and the client: `aws neptune describe-db-engine-versions
+   --engine neptune --engine-version <current> --query
+   'DBEngineVersions[].ValidUpgradeTarget[].EngineVersion'`, and that the
+   target supports the TinkerPop version of the pinned `gremlinpython`
+   ([Neptune engine releases](https://docs.aws.amazon.com/neptune/latest/userguide/engine-releases.html)).
+2. Try it on a copy first: restore the latest cluster snapshot to a new
+   cluster (`aws neptune restore-db-cluster-from-snapshot`, then add an
+   instance), upgrade the copy, and run a query and an incremental ingestion
+   against it with `UKR__AWS__NEPTUNE__ENDPOINT` pointed there. Delete the
+   copy afterwards.
+3. Stop ingestion (no `RUNNING` execution) and take a manual snapshot:
+   `aws neptune create-db-cluster-snapshot --db-cluster-identifier
+   <cluster> --db-cluster-snapshot-identifier <cluster>-pre-<version>`.
+   It is the way back: a major upgrade cannot be rolled back in place.
+4. Upgrade: `aws neptune modify-db-cluster --db-cluster-identifier <cluster>
+   --engine-version <target> --allow-major-version-upgrade
+   --apply-immediately`. Every instance restarts; the cluster is
+   unavailable until the upgrade ends (typically minutes, longer for a large
+   graph), so queries fail meanwhile. The cluster uses the default parameter
+   groups, which follow the new engine family.
+5. When `aws neptune describe-db-clusters` shows the new `EngineVersion` and
+   `available`, run a query and one incremental ingestion before the next
+   large run.
 
 ### Korean with Nori
 
@@ -905,24 +1017,26 @@ an error, not empty results.
 ## Alarms
 
 On the CDK stack, a failed ingestion task publishes the execution id and the
-error to the SNS topic, and the alarms below report to the same topic: five
-on pipeline runs, seven on store health (eight on Neptune Serverless) and two
-on capacity. They have a subscriber only with `-c alarm_email=<address>`.
+error to the SNS topic, and the alarms below report to the same topic: six
+on pipeline runs, eleven on store health (more on a multi-node domain, with
+`use_cmk` and on Neptune Serverless), three on capacity and one on queries.
+They have a subscriber only with `-c alarm_email=<address>`.
 A failed task also fires `PipelineFailures`, a second notice without context
 that also covers what the message cannot report (an error the task's handler
 cannot catch, such as an input without `pipeline_id`, or a failed publish).
 
 **Pipeline runs**
 
-| Alarm | Fires when |
-|---|---|
-| `PipelineFailures` | A Step Functions execution failed |
-| `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
-| `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
-| `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
-| `DocumentsQuarantined` | A run quarantined documents ([Quarantined documents](#quarantined-documents)) |
+| Alarm | Fires when | What to do |
+|---|---|---|
+| `PipelineFailures` | A Step Functions execution failed | Read the failure notification (execution id, error) and the task log; fix the cause and start a run with the same `pipeline_id`, which resumes from its checkpoint ([Interrupted runs](#interrupted-runs)) |
+| `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped | A timeout: raise `sfn_timeout_hours` ([Capacity sizing](#capacity-sizing)) and re-run with the same `pipeline_id`. A stop nobody intended: check CloudTrail for `StopExecution`/`StopTask` |
+| `IndexingFailures` | Indexing reported failed items, even in a succeeded execution | Find the failed writes in the task log (store errors, rejections), fix the store, and re-run with the same `pipeline_id` ([Stores](#stores-connection-permissions-requests)) |
+| `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units | The graph is partial. Look for throttling or model errors in the log; the next incremental run retries the affected documents ([Failed documents](#failed-documents)) |
+| `DocumentsQuarantined` | A run quarantined documents ([Quarantined documents](#quarantined-documents)) | Inspect the document; fix or remove it, then release it as that section describes |
+| `DocumentsNotIndexed` | Source files failed to parse, were skipped (no loader reads them, e.g. a missing extra) or documents were recorded `FAILED` | Check the run summary's file and document counts and the warnings naming each file; install the missing extra in the image or fix the files, then run again ([Failed documents](#failed-documents)) |
 
-The last three read the EMF metrics of `run-ingestion --metrics-sink cloudwatch`,
+The last four read the EMF metrics of `run-ingestion --metrics-sink cloudwatch`,
 emitted as each stage finishes (a stopped run still reports its completed
 stages). The task tags them with an `Environment` dimension (`env_name`), and
 the alarms and dashboard read only that series, so dev runs do not trip prod's
@@ -937,6 +1051,12 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | `OpenSearchClusterRed` | A primary shard is unallocated (5 minutes) | Check cluster health and the failed node; queries on the index miss data, so hold ingestion until green or yellow |
 | `OpenSearchFreeStorageLow` | The fullest data node has 40% or less of `opensearch_volume_gib` free | Raise `opensearch_volume_gib` (or `opensearch_count`) and redeploy before the write-block watermark |
 | `OpenSearchJvmPressure` | JVM memory pressure at least 95% for 3 minutes | Use a larger `opensearch_instance` or more data nodes |
+| `OpenSearchClusterYellow` | Multi-node only: a replica shard is unallocated for 5 minutes | Usually a node being replaced or a blue/green deployment; if it lasts, check `_cluster/allocation/explain`, since losing another node loses data |
+| `OpenSearchIndexWritesBlocked` | The domain blocks index writes (5 minutes) | Free storage or memory (larger volume or instance), then re-run the failed ingestion; writes fail until the block lifts |
+| `OpenSearchAutomatedSnapshotFailure` | An automated snapshot failed | Often a red cluster: fix that first. Until a snapshot succeeds the hourly restore point is missing ([Backup and restore](#backup-and-restore)) |
+| `OpenSearchWriteRejections` | Write thread-pool rejections in 3 consecutive minutes | Rejected bulk items are retried, so indexing slows: more data nodes or a larger `opensearch_instance` |
+| `OpenSearchSearchRejections` | Search thread-pool rejections in a minute | Searches were refused under load (the client retries a 429, then the query fails): fewer concurrent queries (`search.max_concurrency`, `run-eval`'s `processing.max_concurrency`) or more data nodes |
+| `OpenSearchKmsKeyError`, `OpenSearchKmsKeyInaccessible` | `use_cmk` only: the data key is disabled, or deleted or its grants revoked | Re-enable the key. A deleted key cannot be recovered: restore a manual snapshot to a new domain |
 | `DocStatusWriteThrottled` | The doc-status table throttled a write (5 minutes) | Registry calls retry with backoff; one still throttled fails the run with `DocStatusRegistryError`. Look for overlapping runs, rerun once it clears |
 | `NeptuneHighCpu` | Average writer CPU at least 90% for 15 minutes | Sustained saturation: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum), or, if you raised it, a lower `indexing.neptune.index_concurrency` (default `1`) |
 | `NeptuneLowFreeableMemory` | Writer freeable memory at or below 512 MiB at any point in 5 minutes; on Serverless only while the writer is at maximum capacity | Out-of-memory failures ahead: a larger `neptune_instance` (or `neptune_serverless_ncu` maximum) |
@@ -948,11 +1068,26 @@ These fire between runs too, so degradation shows before a run breaks on it:
 | Alarm | Fires when | What to do |
 |---|---|---|
 | `BedrockThrottling` | At least 100 throttled calls in each of 3 consecutive 5-minute periods, summed over every model in the account and region (other Bedrock users count too) | Throttled calls are retried, so the run slows rather than fails: lower `processing.max_concurrency` or ask for a higher quota |
-| `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` |
+| `IngestionTaskMemory` | The ingestion task used at least 90% of its memory for 3 minutes (Container Insights) | Fargate kills a task over its memory, losing the running stage: raise `fargate_memory` ([Capacity sizing](#capacity-sizing)) |
+| `IngestionTaskEphemeralStorage` | The ingestion task used at least 90% of its ephemeral storage (image included) for 5 minutes (Container Insights) | A full disk fails the running stage: raise `ingestion_ephemeral_storage_gib` (up to 200) |
 
-The dashboard also plots stage durations, task memory and CPU, and Bedrock
-calls, throttles and latency by model, and the incremental degradations no
-alarm watches (`total_documents_deferred`, `community_rebuild_recommended`,
+**Queries**
+
+| Alarm | Fires when | What to do |
+|---|---|---|
+| `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design |
+
+`run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
+(`--mode rag` queries, failed ones included), under `unified_kg_rag/query`
+with the task's `Environment` and the requested `Strategy`. A serving layer
+that embeds `GraphRAGChain` publishes nothing; emit the same metric from it
+to use the alarm.
+
+The dashboard also plots stage durations, task memory, CPU and disk, Bedrock
+calls, throttles and latency by model, query latency, the document outcomes
+of each run (failed, skipped, excluded, deleted, retrying, without claims),
+and the incremental degradations no alarm watches
+(`total_documents_deferred`, `community_rebuild_recommended`,
 `total_records_not_stored`, `underived_items`).
 
 Corpus coverage metrics, one value per run (Sum):
@@ -1180,7 +1315,13 @@ Known limits:
   with `--build-arg UV_EXTRAS="--extra otel"`.
 - **Credentials** (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`,
   `PHOENIX_API_KEY`, `OTEL_EXPORTER_OTLP_HEADERS`) come from the environment
-  only: inject them as ECS task secrets. The start-up line
+  only: inject them as ECS task secrets. On the CDK stacks, store them as
+  JSON keys of one Secrets Manager secret and deploy with
+  `-c observability_secret_arn=<complete secret ARN>` and, for keys other
+  than the two Langfuse ones,
+  `-c observability_secret_keys=OTEL_EXPORTER_OTLP_HEADERS,...`; the
+  non-secret settings (`LANGFUSE_HOST`, `UKR__OBSERVABILITY__*`) go in the
+  image config or the run's container overrides. The start-up line
   `Observability exporter for backend '...'` shows the endpoint and header
   names, never values.
 

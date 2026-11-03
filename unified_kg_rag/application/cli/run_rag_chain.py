@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import asyncio
+import os
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -54,14 +56,22 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import (
+    CloudWatchEMFSink,
     ConfigurationError,
     InvalidFilterError,
+    MetricsSink,
+    NullMetricsSink,
     get_logger,
     setup_logging,
 )
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
+
+# --metrics-sink cloudwatch: query_latency_ms of each answered query, per
+# Environment and per Environment and Strategy (the CDK stack's
+# QueryLatencyHigh alarm and dashboard read them).
+QUERY_METRICS_NAMESPACE = "unified_kg_rag/query"
 
 
 def _rerank_line(rerank: dict[str, Any]) -> str:
@@ -172,6 +182,16 @@ class CommandLineInterface:
         )
         add_output_format_argument(parser)
         parser.add_argument(
+            "--metrics-sink",
+            choices=["none", "cloudwatch"],
+            default="none",
+            help="Where to send query metrics: 'none' (default) or 'cloudwatch' "
+            "(CloudWatch EMF to stdout: query_latency_ms of each --mode rag "
+            "query under unified_kg_rag/query, with an Environment dimension "
+            "when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not "
+            "with --output-format json)",
+        )
+        parser.add_argument(
             "--verbose",
             "-v",
             action="store_true",
@@ -207,6 +227,12 @@ class CommandLineInterface:
                 "--output-format json is not supported with --interactive, a "
                 "chat on the terminal; use --query for JSON output"
             )
+        if args.output_format == "json" and args.metrics_sink == "cloudwatch":
+            # EMF records go to stdout, where the JSON result goes.
+            self.parser.error(
+                "--output-format json cannot be combined with --metrics-sink "
+                "cloudwatch: both write to stdout"
+            )
         return args
 
 
@@ -226,6 +252,7 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable] = {
             "help": self._handle_help,
@@ -234,6 +261,26 @@ class RAGChainRunner:
             "clear-filters": self._handle_clear_filters,
             "show-config": self._handle_show_config,
         }
+
+    def _build_metrics_sink(self) -> MetricsSink:
+        if self.args.metrics_sink == "cloudwatch":
+            # Set by the CDK stack to its env_name, which its alarms filter on.
+            return CloudWatchEMFSink(
+                environment=os.getenv("UKR_METRICS_ENVIRONMENT") or None,
+                dimension_keys=("Strategy", "Environment"),
+            )
+        return NullMetricsSink()
+
+    def _record_latency(self, started: float) -> None:
+        """Publish an answered query's latency (``--mode rag`` only, so a
+        retrieval-only run does not lower the answer latency)."""
+        if self.args.mode != "rag":
+            return
+        self.metrics_sink.emit(
+            QUERY_METRICS_NAMESPACE,
+            {"query_latency_ms": (time.perf_counter() - started) * 1000},
+            {"Strategy": str(self.args.search_strategy)},
+        )
 
     def _get_suffix_display(self) -> str:
         if self.args.suffix:
@@ -417,11 +464,19 @@ class RAGChainRunner:
                 f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
-            result = (
-                await self.rag_chain.asearch(rag_input)
-                if self.args.mode == "search"
-                else await self.rag_chain.ainvoke(rag_input)
-            )
+            started = time.perf_counter()
+            try:
+                result = (
+                    await self.rag_chain.asearch(rag_input)
+                    if self.args.mode == "search"
+                    else await self.rag_chain.ainvoke(rag_input)
+                )
+            except Exception:
+                # A query that failed took its time too (a stopped one is
+                # not recorded).
+                self._record_latency(started)
+                raise
+            self._record_latency(started)
             output = result.model_dump()
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.

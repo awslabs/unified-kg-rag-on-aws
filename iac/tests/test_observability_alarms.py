@@ -15,7 +15,14 @@ from aws_cdk.assertions import Template
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
-from iac.stacks.observability_stack import EMF_NAMESPACE, ObservabilityStack
+from iac.stacks.observability_stack import (
+    DOCUMENT_METRICS,
+    EMF_NAMESPACE,
+    NOT_INDEXED_METRICS,
+    QUERY_LATENCY_METRIC,
+    QUERY_NAMESPACE,
+    ObservabilityStack,
+)
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
 
@@ -208,7 +215,29 @@ def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     names = _emf_metric_names(_template())
     assert {"total_items_index_failed", "total_entities_extracted"} <= names
     durations = {f"duration_{stage}_seconds" for stage in _pipeline_stages()}
-    assert names - _pipeline_metric_fields() - durations == set()
+    fields = _pipeline_metric_fields()
+    # The document-outcome metrics land in PipelineMetrics with their own
+    # change: until then they are allowed unemitted, and once any of them is
+    # a field, every one must be (a name drifted from DOCUMENT_METRICS).
+    document = set(DOCUMENT_METRICS)
+    if fields & document:
+        document = set()
+    assert names - fields - durations - document == set()
+
+
+def test_documents_not_indexed_alarm_sums_the_not_indexed_outcomes() -> None:
+    alarm = _alarms()["DocumentsNotIndexed"]
+    used = [m for m in alarm["Metrics"] if "MetricStat" in m]
+    assert {m["MetricStat"]["Metric"]["MetricName"] for m in used} == set(
+        NOT_INDEXED_METRICS
+    )
+    (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+    assert expression["Expression"] == " + ".join(f"FILL({m['Id']}, 0)" for m in used)
+    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (1, 1)
+    assert alarm["TreatMissingData"] == "notBreaching"
+    assert set(NOT_INDEXED_METRICS) <= set(DOCUMENT_METRICS)
+    # Every document outcome is on the dashboard.
+    assert set(DOCUMENT_METRICS) <= _emf_metric_names(_template())
 
 
 def _pipeline_stages() -> list[str]:
@@ -280,3 +309,94 @@ def test_ingestion_task_memory_alarms() -> None:
         # The ingestion task's family, not the query task's.
         assert dims == {"ClusterName", "TaskDefinitionFamily"}
     assert alarm["Threshold"] == 90
+
+
+def _metric_names(alarm: dict[str, Any]) -> set[str]:
+    stats = [alarm] + [
+        m["MetricStat"]["Metric"] for m in alarm.get("Metrics", []) if "MetricStat" in m
+    ]
+    return {stat["MetricName"] for stat in stats if "MetricName" in stat}
+
+
+def test_recommended_opensearch_alarms() -> None:
+    alarms = _alarms()
+    for name, metric, period, periods in (
+        ("OpenSearchAutomatedSnapshotFailure", "AutomatedSnapshotFailure", 60, 1),
+        ("OpenSearchIndexWritesBlocked", "ClusterIndexWritesBlocked", 300, 1),
+    ):
+        alarm = alarms[name]
+        assert alarm["MetricName"] == metric
+        assert alarm["Namespace"] == "AWS/ES"
+        assert alarm["Statistic"] == "Maximum"
+        assert (alarm["Period"], alarm["EvaluationPeriods"]) == (period, periods)
+        assert alarm["Threshold"] == 1
+        assert len(alarm["AlarmActions"]) == 1
+    # Rejection counters are cumulative: the alarm reads their increase.
+    for name, pool, periods in (
+        ("OpenSearchWriteRejections", "Write", 3),
+        ("OpenSearchSearchRejections", "Search", 1),
+    ):
+        alarm = alarms[name]
+        (expression,) = [m for m in alarm["Metrics"] if "Expression" in m]
+        assert expression["Expression"] == "DIFF(rejected)"
+        assert _metric_names(alarm) == {f"Threadpool{pool}Rejected"}
+        assert alarm["EvaluationPeriods"] == periods
+    # One data node holds no replicas, and without a CMK no key can fail.
+    assert (
+        not {
+            "OpenSearchClusterYellow",
+            "OpenSearchKmsKeyError",
+            "OpenSearchKmsKeyInaccessible",
+        }
+        & alarms.keys()
+    )
+
+
+def test_yellow_alarm_on_multi_node_domains_only() -> None:
+    alarm = _alarms({"opensearch_count": 2})["OpenSearchClusterYellow"]
+    assert alarm["MetricName"] == "ClusterStatus.yellow"
+    assert (alarm["Period"], alarm["EvaluationPeriods"]) == (60, 5)
+
+
+def test_kms_key_alarms_with_a_customer_managed_key() -> None:
+    alarms = _alarms({"use_cmk": True})
+    assert alarms["OpenSearchKmsKeyError"]["MetricName"] == "KMSKeyError"
+    inaccessible = alarms["OpenSearchKmsKeyInaccessible"]
+    assert inaccessible["MetricName"] == "KMSKeyInaccessible"
+    assert (inaccessible["Period"], inaccessible["Threshold"]) == (60, 1)
+
+
+def test_ingestion_task_ephemeral_storage_alarm() -> None:
+    alarm = _alarms()["IngestionTaskEphemeralStorage"]
+    stats = {
+        m["MetricStat"]["Metric"]["MetricName"]: m["MetricStat"]["Metric"]
+        for m in alarm["Metrics"]
+        if "MetricStat" in m
+    }
+    assert set(stats) == {"EphemeralStorageUtilized", "EphemeralStorageReserved"}
+    for metric in stats.values():
+        assert metric["Namespace"] == "ECS/ContainerInsights"
+        dims = {d["Name"] for d in metric["Dimensions"]}
+        assert dims == {"ClusterName", "TaskDefinitionFamily"}
+    assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (90, 5)
+
+
+def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
+    # The names the alarm reads are the ones run-rag emits.
+    source = (_PACKAGE / "application" / "cli" / "run_rag_chain.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'QUERY_METRICS_NAMESPACE = "{QUERY_NAMESPACE}"' in source
+    assert f'{{"{QUERY_LATENCY_METRIC}": ' in source
+    for env, seconds in (("dev", 60), ("prod", 30)):
+        context: dict[str, Any] = {"env_name": env}
+        if seconds != 60:
+            context["query_latency_alarm_seconds"] = seconds
+        alarm = _alarms(context)["QueryLatencyHigh"]
+        assert alarm["Namespace"] == QUERY_NAMESPACE
+        assert alarm["MetricName"] == QUERY_LATENCY_METRIC
+        assert alarm["ExtendedStatistic"] == "p90"
+        assert alarm["Dimensions"] == [{"Name": "Environment", "Value": env}]
+        assert alarm["Threshold"] == seconds * 1000
+        assert (alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == (3, 2)
+        assert alarm["TreatMissingData"] == "notBreaching"

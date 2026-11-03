@@ -627,6 +627,20 @@ From 0.2.3 (or a `main` checkout since):
   for ingestion and ARM64 tasks (#457), the Nori analyzer package
   (`opensearch_nori_package`) (#459), and an `EnableVersionUpgrade` policy
   for in-place OpenSearch upgrades (#457).
+- IaC: alarms on OpenSearch automated-snapshot failures, blocked index
+  writes, write and search thread-pool rejections, a yellow multi-node
+  cluster and (with `use_cmk`) an unusable KMS key; on the ingestion task's
+  ephemeral storage; `DocumentsNotIndexed` on the run's document outcomes,
+  with a dashboard widget; and `QueryLatencyHigh` on the p90 latency of
+  `run-rag` queries, which `run-rag --metrics-sink cloudwatch` now emits
+  (`query_latency_ms`, per environment and strategy;
+  `query_latency_alarm_seconds`). `neptune_maintenance_window`,
+  `neptune_backup_window` and `opensearch_off_peak_start` set the stores'
+  maintenance windows, and `observability_secret_arn` /
+  `observability_secret_keys` inject Langfuse or OTLP credentials from
+  Secrets Manager as task secrets. The runbook has what to do for each
+  pipeline-run alarm, capacity sizing and the Neptune major-version
+  upgrade (#519).
 - Extraction schema settings under `processing.graph_extraction`:
   `entity_types` items may be `{label, description, iri}` mappings, and the
   new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
@@ -952,6 +966,14 @@ From 0.2.3 (or a `main` checkout since):
   deployments set; `docs/configuration.md` has every key (#468).
 - CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended alarm and
   `NeptuneHighCpu` needs 3 consecutive 5-minute periods (#298).
+- CDK: the cache bucket is versioned, so an overwritten or deleted corpus
+  object can be restored; noncurrent versions expire after 30 days (1 day
+  under `pipeline-runs/`, which every stage overwrites). Versioning cannot
+  be turned off again, only suspended. The Neptune cluster and its
+  instances keep maintenance in a set weekly window (Sunday 20:00-21:00
+  UTC) and backups in a daily one (18:00-19:00 UTC) instead of windows
+  Neptune picked; a deployed cluster moves to them on the next deploy,
+  without downtime (#519).
 - Documentation: the user guide, runbook and design doc were reorganized and
   describe the current release only; only `README.ko.md` and
   `docs/user-guide.ko.md` remain in Korean, and they link the English
