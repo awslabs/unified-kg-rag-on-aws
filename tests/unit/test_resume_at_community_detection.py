@@ -70,7 +70,9 @@ class _Detector:
             )
         ]
 
-    def generate_reports(self, communities, text_units=None):  # noqa: ANN001
+    def generate_reports(
+        self, communities, text_units=None, descriptions=None
+    ):  # noqa: ANN001
         return [], []
 
     def get_community_metrics(self) -> None:

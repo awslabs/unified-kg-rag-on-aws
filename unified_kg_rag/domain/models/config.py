@@ -1913,10 +1913,10 @@ class ClaimExtractionConfig(BaseModel):
 SEED_GRAPH_FILTER_KEY = "seed_graph"
 SeedNameCollision = Literal["error", "merge", "qualify"]
 # The default max_bytes of a seed graph, and of one of kind rdf: an RDF
-# parser holds the whole graph, about 25 (N-Triples) to 110 (Turtle) times
-# the file size in memory, before max_nodes can be checked, so 256 MiB of
-# Turtle needed some 28 GB; 32 MiB of it about 3.5 GB, within the default
-# 8 GiB ingestion task. jsonl and csv stop at the caps while reading.
+# parser holds the whole graph, from about 25 (N-Triples) up to about 150
+# (dense Turtle) times the file size in memory, before max_nodes can be
+# checked, so 256 MiB of Turtle needed some 28 GB; 32 MiB of it up to about
+# 5 GB, within the default 8 GiB ingestion task. jsonl and csv stop at the caps while reading.
 SEED_MAX_BYTES = 256 * 1024 * 1024
 RDF_SEED_MAX_BYTES = 32 * 1024 * 1024
 
@@ -2059,10 +2059,11 @@ class SeedGraphConfig(BaseModel):
         description=(
             "Fail the import when the source files hold more bytes together "
             "(checked before they are read, and while reading). Kind 'rdf' "
-            "defaults to 32 MiB: its parser holds the whole graph, about 25 "
-            "(N-Triples) to 110 (Turtle) times the file size in memory, "
-            "before max_nodes and max_edges are checked, so size the task's "
-            "memory before raising it ('jsonl' and 'csv' stop at those caps "
+            "defaults to 32 MiB: its parser holds the whole graph, from about "
+            "25 (N-Triples) up to about 150 (dense Turtle) times the file "
+            "size in memory (32 MiB: up to about 5 GB), before max_nodes and "
+            "max_edges are checked, so size the task's memory before raising "
+            "it ('jsonl' and 'csv' stop at those caps "
             "while reading)."
         ),
     )

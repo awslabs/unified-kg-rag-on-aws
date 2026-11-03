@@ -287,7 +287,7 @@ def test_a_resumed_delta_still_applies_over_an_exempt_seed_shard() -> None:
 
 def _guard(store: FakeDocStatusStore, confirm: Any) -> None:
     incremental._confirm_reset_of_seed_scopes(
-        lambda: store, "default", "default|/corpus", confirm
+        lambda: store, "default", "/corpus", confirm
     )
 
 
@@ -386,7 +386,9 @@ def test_seeds_alone_run_a_scope_without_documents() -> None:
 
 
 def test_a_reset_from_seeds_alone_asks_before_it_drops_documents() -> None:
+    # A seed-only scope (its seed records) beside another scope's documents.
     store = FakeDocStatusStore()
+    store.put(_record(SEED_PATH, "default|/corpus"))
     store.put(_record("a.txt", "default|documents"))
     asked: list[str] = []
     assert len(_seeds_alone(store, True, lambda q: asked.append(q) or True)) == 1
@@ -409,6 +411,241 @@ def test_a_reset_from_seeds_alone_asks_before_it_drops_documents() -> None:
         "graphs alone (no source document reached the run), dropping the "
         "documents of source scope(s) documents; continue?"
     ]
+
+
+def _respelled(config: Config) -> Config:
+    config.processing.document_parsing.source_scope = "s3://bkt/corpus"
+    return config
+
+
+def _seeds_alone_in(
+    store: FakeDocStatusStore, source_scope: str, reset: bool, confirm: Any = None
+) -> list[Document]:
+    """``_seeds_alone`` of a run whose source scope is ``source_scope``."""
+    config = Config()
+    config.indexing.reset = reset
+    config.processing.document_parsing.source_scope = source_scope
+    documents, _ = incremental.filter_to_delta(
+        list(_conversion().documents()),
+        _context(),
+        config,
+        lambda: store,
+        Path("/corpus"),
+        confirm,
+    )
+    return documents
+
+
+@pytest.mark.parametrize("reset", [False, True])
+@pytest.mark.parametrize("confirm", [None, lambda q: True])
+def test_seeds_alone_never_delete_a_respelled_scopes_documents(
+    mocker, reset: bool, confirm: Any
+) -> None:
+    # The scope was indexed as s3://bkt/corpus/; this run spells it without
+    # the slash (the same S3 folder): its documents are the run's own.
+    store = FakeDocStatusStore()
+    store.put(_record("a.txt", "default|s3://bkt/corpus/"))
+    store.put(_record(SEED_PATH, "default|s3://bkt/corpus/"))
+    writes = mocker.spy(store, "put_many")
+    with pytest.raises(PipelineStageError) as error:
+        _seeds_alone_in(store, "s3://bkt/corpus", reset, confirm)
+    assert "holds 1 documents of source scope" in str(error.value)
+    assert "(a.txt)" in str(error.value)
+    writes.assert_not_called()
+
+
+@pytest.mark.parametrize("confirm", [None, lambda q: True])
+def test_a_reset_from_seeds_alone_of_a_scope_without_records_is_refused(
+    mocker, confirm: Any
+) -> None:
+    # A new or mistyped scope: no answer makes the namespace's documents
+    # go for the seeds alone.
+    store = FakeDocStatusStore()
+    store.put(_record("a.txt", "default|s3://bkt/corpus/"))
+    store.put(_record("b.txt", "default|documents"))
+    writes = mocker.spy(store, "put_many")
+    asked: list[str] = []
+    with pytest.raises(PipelineStageError) as error:
+        _seeds_alone_in(
+            store,
+            "s3://bkt/corpus2",
+            True,
+            confirm and (lambda q: asked.append(q) or True),
+        )
+    message = str(error.value)
+    assert "holds no record of source scope 's3://bkt/corpus2'" in message
+    assert "documents of source scope(s) documents, s3://bkt/corpus/" in message
+    assert "without indexing.reset first" in message
+    assert asked == []
+    writes.assert_not_called()
+    # Its incremental run is a new seed-only scope beside them.
+    assert len(_seeds_alone_in(store, "s3://bkt/corpus2", False)) == 1
+
+
+def test_a_respelled_seed_only_scope_reset_asks_as_its_own() -> None:
+    # Its seed records under another spelling are its own: asked about the
+    # documents only, not about "another scope's" seed.
+    store = FakeDocStatusStore()
+    store.put(_record(SEED_PATH, "default|s3://bkt/seeds/"))
+    store.put(_record("a.txt", "default|documents"))
+    asked: list[str] = []
+    _seeds_alone_in(store, "s3://bkt/seeds", True, lambda q: asked.append(q) or True)
+    assert asked == [
+        "The reset of index namespace 'default' rebuilds it from this run's seed "
+        "graphs alone (no source document reached the run), dropping the "
+        "documents of source scope(s) documents; continue?"
+    ]
+
+
+def test_a_reset_of_a_respelled_scope_does_not_ask_about_its_own_seed() -> None:
+    store = FakeDocStatusStore()
+    store.put(_record(SEED_PATH, "default|s3://bkt/corpus/"))
+    store.put(_record("a.txt", "default|s3://bkt/corpus/"))
+    config = _respelled(Config())
+    config.indexing.reset = True
+    asked: list[str] = []
+    documents, _ = incremental.filter_to_delta(
+        [_document("a.txt", "Acme."), *_conversion().documents()],
+        _context(),
+        config,
+        lambda: store,
+        Path("/corpus"),
+        lambda q: asked.append(q) or True,
+    )
+    assert len(documents) == 2
+    assert asked == []
+
+
+def test_a_seed_only_scope_run_reads_its_own_records_not_the_namespace(
+    mocker,
+) -> None:
+    store = FakeDocStatusStore()
+    for record in (
+        _record(SEED_PATH, "default|/corpus"),
+        _record("a.txt", "default|documents"),
+    ):
+        store.put(record)
+    listed = mocker.spy(store, "list_namespace")
+    _seeds_alone(store)
+    _seeds_alone(store)
+    listed.assert_not_called()
+    # A document of the scope is still found, from the delta's ids.
+    store.put(_record("b.txt", "default|/corpus"))
+    with pytest.raises(PipelineStageError, match=r"\(b\.txt\)"):
+        _seeds_alone(store)
+    listed.assert_not_called()
+
+
+def test_a_seed_only_run_counts_a_file_that_failed_to_load() -> None:
+    # Parsing off: the loader failed to read the scope's only document; it
+    # is not deleted, and it is no seed-only scope's either.
+    store = FakeDocStatusStore()
+    store.put(_record("a.txt", "default|/corpus"))
+    context = _context(failed_source_files=["/corpus/a.txt"])
+    with pytest.raises(PipelineStageError, match=r"\(a\.txt\)"):
+        incremental.filter_to_delta(
+            list(_conversion().documents()),
+            context,
+            Config(),
+            lambda: store,
+            Path("/corpus"),
+        )
+
+
+def test_a_reset_reads_its_quarantined_documents_from_its_listing(mocker) -> None:
+    store = FakeDocStatusStore()
+    (document,) = _identified([_document("a.txt", "Acme.")])
+    (doc_id, content_hash), *_ = fingerprint_documents([document]).items()
+    store.put(
+        _record(
+            "a.txt",
+            "default|/corpus",
+            doc_id=doc_id,
+            content_hash=content_hash,
+            status=DocStatus.QUARANTINED,
+            attempt_count=3,
+        )
+    )
+    config = Config()
+    config.indexing.reset = True
+    read = mocker.spy(store, "get_many")
+    documents, _ = incremental.filter_to_delta(
+        [document], _context(), config, lambda: store, Path("/corpus")
+    )
+    assert documents == []
+    read.assert_not_called()
+
+
+# -- Seeds alone with the registry off ---------------------------------------------
+
+
+def _registry_off_stage(
+    mocker, graph: Any = False, vector: Any = False, confirm: Any = None
+) -> tuple[Any, Any]:
+    """A loading stage with the registry off whose stores answer
+    ``holds_any_item`` with ``graph`` and ``vector`` (an exception: raised)."""
+    stage: Any = ps.DocumentLoadingStage.__new__(ps.DocumentLoadingStage)
+    stage.config = Config()
+    stage.confirm = confirm
+    providers = mocker.MagicMock()
+    for build, held in (
+        (providers.build_graph_indexer, graph),
+        (providers.build_vector_indexer, vector),
+    ):
+        store = build.return_value
+        if isinstance(held, Exception):
+            store.holds_any_item.side_effect = held
+        else:
+            store.holds_any_item.return_value = held
+    stage.providers = providers
+    return stage, providers
+
+
+def test_registry_off_seeds_alone_build_an_empty_index_unasked(mocker) -> None:
+    # A first seed-only build: the index holds nothing to lose.
+    stage, providers = _registry_off_stage(mocker)
+    stage._confirm_seeds_alone()
+    for build in (providers.build_graph_indexer, providers.build_vector_indexer):
+        build.return_value.holds_any_item.assert_called_once_with("default")
+        build.return_value.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("graph", "vector"),
+    [(True, False), (False, True), (None, False), (False, RuntimeError("down"))],
+    ids=["graph-holds", "vector-holds", "cannot-tell", "read-fails"],
+)
+def test_registry_off_seeds_alone_over_an_index_ask_first(
+    mocker, graph: Any, vector: Any
+) -> None:
+    question = "rebuild the index 'default' from the seed graphs alone"
+    stage, providers = _registry_off_stage(mocker, graph, vector)
+    with pytest.raises(ConfirmationDeclinedError, match="--confirm-reset") as error:
+        stage._confirm_seeds_alone()
+    assert question in str(error.value)
+    assert "incremental indexing is off" in str(error.value)
+    stage.confirm = lambda q: False
+    with pytest.raises(ConfirmationDeclinedError, match="Build cancelled"):
+        stage._confirm_seeds_alone()
+    asked: list[str] = []
+    stage.confirm = lambda q: asked.append(q) or True
+    stage._confirm_seeds_alone()
+    assert len(asked) == 1 and question in asked[0]
+    for build in (providers.build_graph_indexer, providers.build_vector_indexer):
+        assert build.return_value.close.called or build.call_count == 0
+
+
+def test_registry_off_confirmation_names_the_namespace(mocker) -> None:
+    stage, _ = _registry_off_stage(mocker, graph=True)
+    stage.config.processing.document_parsing.index_value = "tenant"
+    stage.config.indexing.additional_suffix = "v2"
+    asked: list[str] = []
+    stage.confirm = lambda q: asked.append(q) or True
+    stage._confirm_seeds_alone()
+    stage.providers.build_graph_indexer.return_value.holds_any_item.assert_called_with(
+        "tenant"
+    )
+    assert "rebuild the index 'tenant-v2' from the seed graphs alone" in asked[0]
 
 
 def test_a_new_scope_importing_a_seed_another_scope_holds_is_warned(
@@ -1108,10 +1345,16 @@ def _stored_graph() -> FakeGraphStore:
     graph = FakeGraphStore()
     graph.upsert_entities(
         [
-            Entity(id="vendor", name="Vendor", text_unit_ids=["u1"]),
+            Entity(
+                id="vendor",
+                name="Vendor",
+                description="Vendor sells.",
+                text_unit_ids=["u1"],
+            ),
             Entity(
                 id="harbor",
                 name="Harbor",
+                description="Harbor docks.",
                 text_unit_ids=["u2"],
                 attributes={"index": "other"},
             ),
@@ -1122,17 +1365,17 @@ def _stored_graph() -> FakeGraphStore:
 
 def test_stored_members_are_read_in_their_own_suffix(mocker) -> None:
     stage, context, _ = _evidence(mocker, _stored_graph())
-    assert stage._evidenced_by_stored_members(context, _communities()) == {
-        "c-vendor",
-        "c-harbor",
-    }
+    assert stage._evidenced_by_stored_members(context, _communities()) == (
+        {"c-vendor", "c-harbor"},
+        {"vendor": "Vendor sells.", "harbor": "Harbor docks."},
+    )
 
 
 def test_a_reset_reads_no_stored_member(mocker) -> None:
     # A reset rebuilds from this corpus alone: what the stores held before
     # evidences nothing.
     stage, context, providers = _evidence(mocker, _stored_graph(), reset=True)
-    assert stage._evidenced_by_stored_members(context, _communities()) == set()
+    assert stage._evidenced_by_stored_members(context, _communities()) == (set(), {})
     providers.build_graph_indexer.assert_not_called()
 
 
@@ -1143,5 +1386,8 @@ def test_an_unreadable_member_leaves_its_community_without_a_report(
     mocker.patch.object(graph, "read_entities", side_effect=RuntimeError("down"))
     stage, context, _ = _evidence(mocker, graph)
     with caplog.at_level(logging.WARNING):
-        assert stage._evidenced_by_stored_members(context, _communities()) == set()
+        assert stage._evidenced_by_stored_members(context, _communities()) == (
+            set(),
+            {},
+        )
     assert "Could not read the stored members of 2 communities" in caplog.text
