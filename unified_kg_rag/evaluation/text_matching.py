@@ -124,6 +124,18 @@ def normalize_answer_squad(text: str) -> str:
     return " ".join(_SQUAD_ARTICLES.sub(" ", text).split())
 
 
+# An English possessive ending a word ("Depot's", "Depot’s"). Deleting
+# punctuation would leave "depots", a different token from "depot".
+_POSSESSIVE = re.compile(r"(?<=\w)['\u2019]s\b", re.IGNORECASE)
+
+
+def strip_possessives(text: str) -> str:
+    """``text`` with the possessive "'s" / "’s" ending each word removed
+    (after NFKC, which folds the fullwidth apostrophe), so "Depot's" reads
+    "Depot"; a plural ("Depots") is kept."""
+    return _POSSESSIVE.sub("", unicodedata.normalize("NFKC", text))
+
+
 def tokenize(text: str) -> list[str]:
     """Whitespace tokens of the normalized text (``normalize_answer``)."""
     return normalize_answer(text).split()
@@ -270,7 +282,11 @@ def phrase_in_text(phrase: str, text: str) -> bool:
     boundary, so a short expected word can match inside a longer one ("가나"
     within "가나상사", "서울" within "서울대학교"). This over-counts rather
     than under-counts; both uses (coverage, containment) are recall-style.
+
+    Possessives are dropped from both texts first (``strip_possessives``),
+    so "Depot" matches "Depot's" (exact match and token F1 do not drop them).
     """
+    phrase, text = strip_possessives(phrase), strip_possessives(text)
     if is_spaceless_script(phrase):
         cleaned = normalize_answer(phrase)
         return bool(cleaned) and _substring_at_boundary(

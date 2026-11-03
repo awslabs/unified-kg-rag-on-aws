@@ -15,6 +15,7 @@ import json
 import shutil
 import sys
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -960,6 +961,64 @@ class TestComparability:
         assert models["judge_is_answer_model"] is True
         manager.config.models.roles.evaluation = "judge.other-model-v1"
         assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is False
+
+    def test_run_manifest_counts_the_pairwise_judge(self, config: Config) -> None:
+        # Before, a deterministic-only comparison with --pairwise-judge
+        # recorded no judge, hiding that it judged its own answers.
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=object())
+        one = {"pairwise_judge": True, "search_strategy": ["local"]}
+        two = {"pairwise_judge": True, "search_strategy": ["local", "mix"]}
+        assert (
+            manager.build_run_manifest(cli_args=one)["models"]["judge_is_answer_model"]
+            is None
+        )
+        manifest = manager.build_run_manifest(cli_args=two)
+        assert manifest["models"]["judge_is_answer_model"] is True
+        assert manifest["models"]["evaluation_judge"] == config.model_id(
+            ModelRole.EVALUATION
+        )
+        assert manifest["pairwise_judge"] == {"overall": False}
+
+    def test_run_manifest_records_the_answer_span(self, config: Config) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=object())
+        manifest = manager.build_run_manifest()
+        assert manifest["answer_scoring"] == {
+            "answer_span": "first_line",
+            "answer_normalization": "default",
+        }
+        assert manifest["models"]["answer_span"] is None
+        manager.config.evaluation.answer_span = "extracted"
+        assert manager.build_run_manifest()["models"]["answer_span"] == (
+            config.model_id(ModelRole.ANSWER_SPAN)
+        )
+        manager.evaluators = {}
+        manager.config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
+        assert manager.build_run_manifest()["answer_scoring"] is None
+
+    def test_summary_counts_answer_span_fallbacks(self, config: Config) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=object())
+
+        def report(qid: str, **meta: Any) -> EvaluationReport:
+            return EvaluationReport(
+                query_id=qid,
+                evaluator_type=EvaluatorType.ANSWER_MATCH,
+                metrics=[
+                    EvaluationMetric(
+                        metric_type=EvaluationMetricType.TOKEN_F1, value=1.0
+                    )
+                ],
+                metadata=meta,
+            )
+
+        stats = manager._calculate_answer_span_statistics(
+            [report("a"), report("b", answer_span_fallback="throttled")]
+        )
+        assert stats == {"answer_span": "first_line", "scored": 2, "fallbacks": 1}
+        manager.evaluators = {}
+        assert manager._calculate_answer_span_statistics([report("a")]) == {}
 
     @requires_eval
     def test_run_manifest(self, config: Config, tmp_path) -> None:

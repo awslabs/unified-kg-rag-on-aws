@@ -11,14 +11,21 @@ from unified_kg_rag.domain.models import (
     EvaluationQuery,
     EvaluationResult,
     EvaluatorType,
+    ModelRole,
 )
-from unified_kg_rag.evaluation import AnswerMatchEvaluator, EvaluationManager
+from unified_kg_rag.evaluation import (
+    AnswerMatchEvaluator,
+    EvaluationManager,
+    answer_match_evaluator,
+)
 from unified_kg_rag.evaluation.answer_match_evaluator import (
     answer_contains,
     exact_match,
+    first_answer_line,
     normalize_answer,
     token_f1,
 )
+from unified_kg_rag.shared import EvaluationException
 
 pytestmark = pytest.mark.unit
 
@@ -317,3 +324,160 @@ class TestEvaluator:
             EvaluationManager._resolve_evaluator_class(EvaluatorType.ANSWER_MATCH)
             is AnswerMatchEvaluator
         )
+
+
+# The answer prompt's shape: a one-sentence answer, then its support.
+_DEPOT_ANSWER = (
+    "## Answer\n\nDepot stores widgets for Vendor.\n"
+    "Support: the context links Depot and Vendor through widget flows."
+)
+
+
+def _values(report) -> dict[str, float]:
+    return {m.metric_type.value: m.value for m in report.metrics}
+
+
+class TestAnswerSpan:
+    def test_first_line_skips_headings_and_blank_lines(self) -> None:
+        assert first_answer_line(_DEPOT_ANSWER) == "Depot stores widgets for Vendor."
+        assert first_answer_line("# Only a heading") == "# Only a heading"
+
+    @pytest.mark.parametrize(("span", "f1"), [("full", 1 / 8), ("first_line", 1 / 3)])
+    def test_em_and_f1_read_the_configured_span(
+        self, config: Config, span: str, f1: float
+    ) -> None:
+        # Before, EM/F1 always read the whole answer: the supporting
+        # sentence diluted F1 to 1/8 for a correct answer.
+        config.evaluation.answer_span = span
+        report = _report(config, _DEPOT_ANSWER, "Depot", {})
+        values = _values(report)
+        assert values["token_f1"] == pytest.approx(f1)
+        assert values["exact_match"] == 0.0
+        # answer_contains always reads the whole answer.
+        assert values["answer_contains"] == 1.0
+        assert report.metadata["answer_span"] == span
+
+    def test_the_default_is_first_line(self) -> None:
+        assert Config().evaluation.answer_span == "first_line"
+
+
+class _SpanChain:
+    def __init__(self, reply: str | Exception) -> None:
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    async def ainvoke(self, inputs: dict) -> str:
+        self.calls.append(inputs)
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+def _extracting(mocker, config: Config, reply: str | Exception):
+    config.evaluation.answer_span = "extracted"
+    chain = _SpanChain(reply)
+    setup = mocker.patch.object(
+        answer_match_evaluator, "setup_chain", return_value=chain
+    )
+    mocker.patch.object(answer_match_evaluator.Providers, "resolve")
+    evaluator = AnswerMatchEvaluator(config)
+    assert setup.call_args.args[1] == config.model_id(ModelRole.ANSWER_SPAN)
+    return evaluator, chain
+
+
+async def _ascore(evaluator, answer: str, gold: str, question: str = "Who?"):
+    result = EvaluationResult(
+        query_id="q", question=question, generated_answer=answer, ground_truth=gold
+    )
+    return await evaluator.aevaluate_single(
+        EvaluationQuery(query_id="q", question=question), result, gold
+    )
+
+
+class TestExtractedSpan:
+    async def test_a_short_span_scores_like_the_papers(self, mocker, config) -> None:
+        evaluator, chain = _extracting(mocker, config, '"Depot"\n')
+        report = await _ascore(evaluator, _DEPOT_ANSWER, "Depot")
+        assert _values(report)["exact_match"] == 1.0
+        assert _values(report)["token_f1"] == 1.0
+        assert report.metadata["scored_span"] == "Depot"
+        assert chain.calls == [{"question": "Who?", "answer": _DEPOT_ANSWER}]
+
+    async def test_spans_are_cached_per_question_and_answer(
+        self, mocker, config
+    ) -> None:
+        evaluator, chain = _extracting(mocker, config, "Depot")
+        await _ascore(evaluator, _DEPOT_ANSWER, "Depot")
+        await _ascore(evaluator, _DEPOT_ANSWER, "Depot")
+        assert len(chain.calls) == 1
+        await _ascore(evaluator, _DEPOT_ANSWER, "Depot", question="Where?")
+        assert len(chain.calls) == 2
+
+    @pytest.mark.parametrize(
+        "reply", [RuntimeError("throttled"), "", "Harbor"]  # Harbor: not in it
+    )
+    async def test_a_failed_extraction_falls_back_to_the_first_line(
+        self, mocker, config, reply
+    ) -> None:
+        evaluator, _ = _extracting(mocker, config, reply)
+        report = await _ascore(evaluator, _DEPOT_ANSWER, "Depot")
+        assert _values(report)["token_f1"] == pytest.approx(1 / 3)
+        assert report.metadata["scored_span"] == "Depot stores widgets for Vendor."
+        assert report.metadata["answer_span_fallback"]
+
+    async def test_no_answer_scores_an_empty_span(self, mocker, config) -> None:
+        evaluator, _ = _extracting(mocker, config, "NO_ANSWER")
+        report = await _ascore(evaluator, "The context does not say.", "Depot")
+        assert _values(report)["token_f1"] == 0.0
+        assert report.metadata["scored_span"] == ""
+        assert "answer_span_fallback" not in report.metadata
+
+    async def test_a_yes_no_span_need_not_be_verbatim(self, mocker, config) -> None:
+        evaluator, _ = _extracting(mocker, config, "no")
+        report = await _ascore(evaluator, "The clause does not apply.", "No")
+        assert _values(report)["exact_match"] == 1.0
+
+    async def test_no_reference_makes_no_model_call(self, mocker, config) -> None:
+        evaluator, chain = _extracting(mocker, config, "Depot")
+        report = await _ascore(evaluator, _DEPOT_ANSWER, "")
+        assert report.metrics == [] and chain.calls == []
+
+    def test_the_sync_path_refuses_a_model_call(self, mocker, config) -> None:
+        evaluator, _ = _extracting(mocker, config, "Depot")
+        with pytest.raises(EvaluationException, match="aevaluate_single"):
+            evaluator.evaluate_single(
+                EvaluationQuery(query_id="q", question="?"),
+                EvaluationResult(
+                    query_id="q", question="?", generated_answer="x", ground_truth=""
+                ),
+                "Depot",
+            )
+
+    def test_other_spans_build_no_model(self, mocker, config) -> None:
+        setup = mocker.patch.object(answer_match_evaluator, "setup_chain")
+        AnswerMatchEvaluator(config)
+        setup.assert_not_called()
+
+
+class TestHotpotQARule:
+    @pytest.mark.parametrize(
+        ("mode", "f1"), [("official_squad", 0.5), ("hotpotqa", 0.0)]
+    )
+    def test_yes_no_gets_no_partial_credit(
+        self, config: Config, mode: str, f1: float
+    ) -> None:
+        config.evaluation.answer_normalization = mode
+        report = _report(config, "No, it is", "no", {})
+        assert _values(report)["token_f1"] == pytest.approx(f1)
+
+    def test_equal_yes_no_still_scores(self, config: Config) -> None:
+        config.evaluation.answer_normalization = "hotpotqa"
+        assert _values(_report(config, "Yes.", "yes", {}))["token_f1"] == 1.0
+        # Other golds keep partial credit, with the official normalization.
+        report = _report(config, "Depot and Mill", "Depot", {})
+        assert _values(report)["token_f1"] == pytest.approx(0.5)
+
+
+def test_answer_contains_reads_through_a_possessive() -> None:
+    assert answer_contains("Depot's crew stores the widgets.", "Depot") == 1.0
+    assert answer_contains("Depots store the widgets.", "Depot") == 0.0

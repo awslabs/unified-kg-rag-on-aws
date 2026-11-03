@@ -950,6 +950,66 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     assert comparison["pairwise_vs_baseline"] == {"mix": judged}
 
 
+async def test_eval_runner_json_reports_judge_reliability_and_categories(
+    config, mocker, tmp_path, capsys
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
+    judged = {
+        "judged": 2,
+        "failed": 0,
+        "candidate_errors": 0,
+        "baseline_errors": 0,
+        "position_consistency": 0.0,
+        "criteria": {"directness": {"candidate_win_rate": 0.5}},
+    }
+    judge.return_value.acompare = mocker.AsyncMock(return_value=judged)
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {"question": "Who ships?", "answer": "Vendor", "category": "1hop"},
+                {"question": "Who buys?", "answer": "Vendor", "category": "2hop"},
+            ]
+        )
+    )
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--pairwise-judge",
+            "--output-format",
+            "json",
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    out = capsys.readouterr().out
+    payload = json.loads(out[out.index("{") :])
+    run = payload["runs"][0]
+    assert run["abstention_statistics"]["abstained"] == 0
+    assert run["answer_span_statistics"] == {
+        "answer_span": "first_line",
+        "scored": 2,
+        "fallbacks": 0,
+    }
+    comparison = payload["comparison"]
+    assert set(comparison["deltas_by_category"]["mix"]) == {"1hop", "2hop"}
+    warnings = " ".join(comparison["warnings"])
+    # The default judge is the answer model, and this one decides by position.
+    assert "pairwise judge is the answer model" in warnings
+    assert "agreed on 0% of the verdicts" in warnings
+    assert comparison["run_manifest"]["models"]["judge_is_answer_model"] is True
+
+
 # --- run_ingestion_pipeline: parser --------------------------------------
 
 

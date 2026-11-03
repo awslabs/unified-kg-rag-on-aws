@@ -1471,11 +1471,21 @@ choices:
   interval (pooled means would mix query difficulty and noise into the
   difference). The optional pairwise judge (comprehensiveness, diversity,
   empowerment, directness, as in the GraphRAG and LightRAG papers) judges both
-  answer orders and keeps only order-stable verdicts. A failed answer is never
-  dropped (a strategy failing on the queries it would lose would look as good
-  as one answering them): it scores 0 on every metric another run scored the
-  query on, and a pair with one failed answer goes to the other side
+  answer orders, keeps only order-stable verdicts and reports how often the
+  orders agreed (`position_consistency`), so a position-biased judge's ties
+  are not read as equal answers. A failed answer is never dropped (a strategy
+  failing on the queries it would lose would look as good as one answering
+  them): it scores 0 on every metric another run scored the query on and its
+  own strategy scores somewhere (a metric the strategy never produces is no
+  loss to invent), and a pair with one failed answer goes to the other side
   unjudged.
+- **EM/F1 read a span, not the whole answer.** The reading-comprehension
+  metrics were defined over a short predicted span; over a sentence plus its
+  support they reward brevity. `evaluation.answer_span` picks the scored
+  text: the first answer line (default, free), a fast-model extraction
+  (cached, falling back to the first line) or the whole answer. The choice is
+  recorded in the manifest and each report, and a comparison warns when its
+  runs differ.
 - **Run manifest.** Ingestion records an `IndexBuildRecord` (pipeline id,
   mode, build time, documents, extraction fingerprint and settings, package
   version) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
@@ -1483,8 +1493,9 @@ choices:
   shape answers (§12), so it is equal across environments.
 - **Benchmarks.** `prepare-benchmark` (`evaluation/benchmarks/musique.py`)
   builds a MuSiQue corpus and dataset at run time;
-  `evaluation.answer_normalization: official_squad` makes EM/F1 comparable
-  with published numbers.
+  `evaluation.answer_normalization: official_squad` with
+  `evaluation.answer_span: extracted` brings EM/F1 close to published
+  numbers (a RAG answer still is not a trained reader's span).
 
 ---
 

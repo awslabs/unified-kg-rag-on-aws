@@ -23,7 +23,10 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
-from unified_kg_rag.domain.prompts import PairwiseComparisonPrompt
+from unified_kg_rag.domain.prompts import (
+    PairwiseComparisonOverallPrompt,
+    PairwiseComparisonPrompt,
+)
 from unified_kg_rag.evaluation import pairwise
 from unified_kg_rag.evaluation.answer_match_evaluator import AnswerMatchEvaluator
 from unified_kg_rag.evaluation.benchmarks import musique
@@ -257,6 +260,106 @@ class TestPairwiseJudge:
         ]
         assert pairwise_budget_breaches({"mix": {**out, "judged": 3}}, 0.5) == []
 
+    def test_a_judge_that_always_picks_the_first_answer_is_inconsistent(
+        self, mocker
+    ) -> None:
+        # Before, its all-tie verdicts read as "the answers are equal".
+        judge = self._judge(mocker)
+        judge.chain.ainvoke = mocker.AsyncMock(
+            return_value={c: {"winner": "1"} for c in pairwise.CRITERIA}
+        )
+        out = asyncio.run(
+            judge.acompare(
+                [_result(q, "short") for q in "abc"],
+                [_result(q, "long") for q in "abc"],
+            )
+        )
+        assert out["position_consistency"] == 0.0
+        directness = out["criteria"]["directness"]
+        assert directness["position_consistency"] == 0.0
+        assert (directness["ties"], directness["candidate_win_rate"]) == (3, 0.5)
+        assert (directness["ci_low"], directness["ci_high"]) == (0.5, 0.5)
+
+    def test_win_rate_comes_with_a_bootstrap_interval(self, mocker) -> None:
+        judge = self._judge(mocker)
+        out = asyncio.run(
+            judge.acompare(
+                [_result(q, "short") for q in "abcd"],
+                [_result(q, "detailed") for q in "abcd"],
+            )
+        )
+        comprehensiveness = out["criteria"]["comprehensiveness"]
+        assert comprehensiveness["position_consistency"] == 1.0
+        assert comprehensiveness["candidate_win_rate"] == 1.0
+        assert (comprehensiveness["ci_low"], comprehensiveness["ci_high"]) == (1.0, 1.0)
+        # Three of the four criteria flip with the order.
+        assert out["position_consistency"] == 0.25
+        assert out["bootstrap"] == {"resamples": 2000, "confidence": 0.95, "seed": 0}
+
+    def test_no_win_rate_when_the_judge_decided_nothing(self, mocker) -> None:
+        # Before, a failed candidate answer alone gave a win rate of 0.0 even
+        # though every judge call failed.
+        judge = self._judge(mocker)
+        judge.chain.ainvoke = mocker.AsyncMock(side_effect=RuntimeError("throttled"))
+        out = asyncio.run(
+            judge.acompare(
+                [_result("a", "x"), _result("b", "x")],
+                [_result("a", "y"), _result("b", "", error=True)],
+            )
+        )
+        assert (out["judged"], out["failed"], out["candidate_errors"]) == (0, 1, 1)
+        for stats in out["criteria"].values():
+            assert stats["candidate_win_rate"] is None
+            assert stats["ci_low"] is None and stats["position_consistency"] is None
+        assert out["position_consistency"] is None
+
+    def test_unanswerable_items_are_not_judged(self, mocker) -> None:
+        judge = self._judge(mocker)
+        unanswerable = _result("u", "The context does not say.")
+        unanswerable.metadata["answerable"] = False
+        out = asyncio.run(
+            judge.acompare(
+                [_result("a", "short"), unanswerable],
+                [_result("a", "detailed"), unanswerable.model_copy()],
+            )
+        )
+        assert (out["pairs"], out["judged"], out["unanswerable_skipped"]) == (2, 1, 1)
+        assert "u" not in out["per_query"]
+        assert len(judge.chain.calls) == 2
+
+    def test_overall_is_an_optional_criterion(self, mocker) -> None:
+        setup = mocker.patch.object(pairwise, "setup_chain", return_value=_FakeChain())
+        mocker.patch.object(pairwise.Providers, "resolve")
+        assert pairwise.PairwiseJudge(Config()).criteria == pairwise.CRITERIA
+        config = Config()
+        config.evaluation.pairwise_overall = True
+        judge = pairwise.PairwiseJudge(config)
+        assert setup.call_args.args[2] is PairwiseComparisonOverallPrompt
+        assert judge.criteria == (*pairwise.CRITERIA, "overall")
+        judge.chain.ainvoke = mocker.AsyncMock(
+            return_value={c: {"winner": "2"} for c in judge.criteria}
+        )
+        out = asyncio.run(judge.acompare([_result("a", "x")], [_result("a", "y")]))
+        assert set(out["criteria"]) == set(judge.criteria)
+        # A judge that names no overall winner fails the pair.
+        judge.chain.ainvoke = mocker.AsyncMock(
+            return_value={c: {"winner": "2"} for c in pairwise.CRITERIA}
+        )
+        out = asyncio.run(judge.acompare([_result("a", "x")], [_result("a", "y")]))
+        assert out["failed"] == 1
+
+    def test_overall_prompt_shares_the_override_key(self) -> None:
+        assert (
+            PairwiseComparisonOverallPrompt.prompt_key
+            == PairwiseComparisonPrompt.prompt_key
+        )
+        assert (
+            '"overall"'
+            in PairwiseComparisonOverallPrompt.resolve().system_prompt_template.replace(
+                "{{", "{"
+            )
+        )
+
     def test_prompt_templates_declare_their_variables(self) -> None:
         resolved = PairwiseComparisonPrompt.resolve()
         for name in PairwiseComparisonPrompt.input_variables:
@@ -475,3 +578,100 @@ def test_prepare_benchmark_refuses_a_used_directory_before_downloading(
         prepare_benchmark.main(["musique", "--output-directory", str(tmp_path / "b")])
     assert exit_info.value.code == 2
     download.assert_not_called()
+
+
+def _metric_report(qid: str, evaluator: EvaluatorType, metric, value: float, **meta):
+    return EvaluationReport(
+        query_id=qid,
+        evaluator_type=evaluator,
+        metrics=[EvaluationMetric(metric_type=metric, value=value)],
+        evaluation_time=datetime(2026, 1, 1),
+        metadata=meta,
+    )
+
+
+class TestFailedAnswerZeroFill:
+    _RETRIEVED = EvaluationMetricType.RETRIEVED_ENTITY_COVERAGE
+
+    def _runs(self, global_scores_anything: bool = True):
+        # "local" scores retrieved entity coverage on both queries; "global"
+        # reports no entities, so it never does, and fails on "b".
+        local = _run({"a": 1.0, "b": 1.0})
+        local[0].extend(
+            _metric_report(q, EvaluatorType.GRAPH_AWARE, self._RETRIEVED, 1.0)
+            for q in ("a", "b")
+        )
+        reports, results = _run({"a": 1.0}, "global")
+        if not global_scores_anything:
+            reports = []
+        results.append(_result("b", "", error=True))
+        return {"local": [local], "global": [(reports, results)]}
+
+    def test_a_metric_the_strategy_never_scores_is_not_filled(self) -> None:
+        # Before, "global" failing on "b" scored 0 on retrieved coverage it
+        # never measures: a significant -1.0 delta out of nothing.
+        out = paired_comparison(self._runs())
+        deltas = out["deltas_vs_baseline"]["global"]
+        assert "graph_aware/retrieved_entity_coverage" not in deltas
+        assert "graph_aware/retrieved_entity_coverage" not in (
+            out["strategies"]["global"]["metrics"]
+        )
+        # The failure still costs it every metric it does score.
+        f1 = deltas["answer_match/token_f1"]
+        assert (f1["pairs"], f1["mean_delta"]) == (2, -0.5)
+
+    def test_a_strategy_that_scored_nothing_is_filled_on_everything(self) -> None:
+        out = paired_comparison(self._runs(global_scores_anything=False))
+        deltas = out["deltas_vs_baseline"]["global"]
+        assert deltas["graph_aware/retrieved_entity_coverage"]["per_query"] == {
+            "b": -1.0
+        }
+        assert deltas["answer_match/token_f1"]["per_query"] == {"b": -1.0}
+
+
+class TestCategoryDeltas:
+    def test_deltas_split_by_category(self) -> None:
+        out = paired_comparison(
+            {
+                "local": [_run({"a": 0.0, "b": 0.0, "c": 1.0})],
+                "mix": [_run({"a": 1.0, "b": 1.0, "c": 0.0}, "mix")],
+            },
+            categories={"a": "1hop", "b": "1hop", "c": "2hop"},
+        )
+        by_category = out["deltas_by_category"]["mix"]
+        one, two = (by_category[c]["answer_match/token_f1"] for c in ("1hop", "2hop"))
+        assert (one["pairs"], one["mean_delta"]) == (2, 1.0)
+        assert (two["pairs"], two["mean_delta"]) == (1, -1.0)
+        # The pooled delta hides both.
+        pooled = out["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
+        assert pooled["mean_delta"] == pytest.approx(1 / 3)
+
+    def test_no_categories_no_block(self) -> None:
+        out = paired_comparison(
+            {"local": [_run({"a": 0.0})], "mix": [_run({"a": 1.0})]}
+        )
+        assert "deltas_by_category" not in out
+
+
+def test_runs_scored_on_different_spans_are_warned() -> None:
+    def run(span: str, strategy: str):
+        reports = [
+            _metric_report(
+                "a",
+                EvaluatorType.ANSWER_MATCH,
+                EvaluationMetricType.TOKEN_F1,
+                0.5,
+                answer_span=span,
+            )
+        ]
+        return reports, _run({"a": 0.5}, strategy)[1]
+
+    same = paired_comparison(
+        {"local": [run("first_line", "local")], "mix": [run("first_line", "mix")]}
+    )
+    assert same["warnings"] == []
+    mixed = paired_comparison(
+        {"local": [run("full", "local")], "mix": [run("first_line", "mix")]}
+    )
+    (warning,) = mixed["warnings"]
+    assert "first_line: mix; full: local" in warning

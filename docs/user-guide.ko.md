@@ -400,7 +400,7 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 | 계층 | 역할 |
 | --- | --- |
 | `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
-| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
 
 ```yaml
 models:
@@ -1207,7 +1207,8 @@ F1은 내지 않습니다.
 
 - **`answer_contains`**가 대표 지표입니다. 정답이나 별칭이 생성된 답변에 단어 단위
   구문으로 나타나면 1.0입니다. 긴 RAG 답변이 짧은 정답 구간과 똑같은 경우는 드물어서
-  exact match보다 정답 여부를 훨씬 잘 따라갑니다.
+  exact match보다 정답 여부를 훨씬 잘 따라갑니다. 소유격은 그 단어로 읽습니다(`Depot`은
+  `Depot's`와 맞고, `Depots`는 다른 단어). `graph_aware`도 같은 방식으로 맞춥니다.
 - **한국어와 CJK.** 단어 뒤의 한국어 조사는 허용합니다(`AWS`는 `AWS는`과 맞음). 숫자만
   있는 정답에는 한국어 단위가 붙어도 되지만(`2024`는 `2024년에`와 맞음) 수의 크기 단위는
   안 됩니다(`3`은 `3억`과 맞지 않음). CJK 문자 옆의 띄어쓰기는 무시하고(`3억 원` =
@@ -1218,12 +1219,28 @@ F1은 내지 않습니다.
   답하는 첫 예/아니요 단어의 극성으로 채점합니다(`there is no clause`, `네 가지`,
   `(예: …)`, `No. 5`는 답이 아니므로 `네, 맞습니다`는 예로 답한 것이지만
   `네 맞습니다`는 아님).
-- **`exact_match`와 `token_f1`**은 SQuAD v1.1 정규화(NFKC, 소문자화, 문장 부호와 영어
-  관사 제거, 공백 압축)를 따르되 의미를 바꾸는 문장 부호(`-5`, `1.5`, `C++`)는 남기므로,
-  점수는 리더보드 수치에 가깝지만 그대로 비교할 수는 없습니다. 공식 스크립트를 쓰려면
-  `evaluation.answer_normalization: official_squad`로 설정하세요. token F1은 공백으로
-  나누므로 중국어와 일본어에서는 exact match와 같아지고, 한국어 조사가 붙으면 두 지표
-  모두 낮게 나옵니다.
+- **`exact_match`와 `token_f1`**은 답변 가운데 `evaluation.answer_span`이 가리키는 부분을
+  채점합니다. SQuAD, HotpotQA, MuSiQue는 모델이 예측한 짧은 답(`Depot` 같은 구간)을 정답과
+  비교하는데, 답변 프롬프트는 한 문장 답에 근거를 덧붙여 쓰므로 답변 전체를 채점하면 정답
+  여부만큼 답변 길이를 재게 됩니다.
+  - `first_line`(기본값, 비용 없음): 비어 있지도 않고 Markdown 제목도 아닌 첫 줄, 즉 한
+    문장 답입니다(`Depot stores widgets for Vendor.`는 `Depot`에 대해 token F1 1/3. EM은
+    여전히 낮게 나옴).
+  - `extracted`: `models.roles.answer_span` 모델(fast 계층. 프롬프트
+    `custom_prompts.answer_span_extraction_*`)이 답변에서 짧은 구간을 그대로 옮겨 옵니다.
+    서로 다른 질문·답변마다 한 번 호출하고 반복과 전략 사이에서 다시 씁니다. 호출이
+    실패하거나, 빈 응답이거나, 답변에 없는 구간이면 첫 줄로 대신 채점하고
+    `answer_span_statistics.fallbacks`에 셉니다. 논문 수치에 가깝게 보려면 이 설정을
+    쓰세요.
+  - `full`: 답변 전체.
+
+  리포트마다 `answer_span`과 채점한 `scored_span`이 기록됩니다. 정규화는 SQuAD v1.1
+  방식(NFKC, 소문자화, 문장 부호와 영어 관사 제거, 공백 압축)이되 의미를 바꾸는 문장
+  부호(`-5`, `1.5`, `C++`)는 남깁니다. `evaluation.answer_normalization: official_squad`는
+  공식 스크립트(MuSiQue 평가도 같음)이고, `hotpotqa`는 여기에 `yes`/`no`/`noanswer`인
+  구간이나 정답은 둘이 같을 때만 token F1을 받는 HotpotQA 규칙을 더합니다. token F1은
+  공백으로 나누므로 중국어와 일본어에서는 exact match와 같아지고, 한국어 조사가 붙으면 두
+  지표 모두 낮게 나옵니다.
 
 ### 평가 데이터 형식
 
@@ -1300,6 +1317,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   블록이 있습니다. 체인은 검색 결과가 없을 때만 이 응답을 반환하고 모델이 자기 말로 거절한
   것은 감지하지 않으므로, 데이터가 색인된 상태에서 `unanswerable` 비율은 올바른 거절의
   하한입니다. 각 결과에는 `abstained`가 기록됩니다.
+- `answer_span_statistics`: exact match와 token F1이 읽은 `answer_span`, 채점한 리포트
+  수(`scored`), 추출에 실패해 첫 줄로 채점한 수(`fallbacks`)입니다.
 - `rerank_status_counts`: [재순위화 상태](#재순위화-상태)별 질의 수입니다. 각 결과에는
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
@@ -1312,7 +1331,11 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`
   - 모델 ID와 `judge_is_answer_model`(심사 모델이 답변 모델이면, 즉 기본값이면 심사
-    점수가 부풀려지므로 시스템을 비교할 때는 `models.roles.evaluation`을 다른 모델로 두세요)
+    점수가 부풀려지므로 시스템을 비교할 때는 `models.roles.evaluation`을 다른 모델로 두세요).
+    비교의 `--pairwise-judge`도 심사 모델로 세며, `pairwise_judge`에 그 설정이 기록됩니다.
+  - `answer_scoring`: exact match와 token F1에 쓴 `answer_span`과
+    `answer_normalization`(`answer_match` 사용 시), `models.answer_span`은 구간을 추출한
+    모델입니다. 채점 방식이 다른 실행은 이 두 지표로 비교할 수 없습니다.
   - `retrieval_config_sha256`: 답변이나 점수를 바꿀 수 있는 모든 설정의 해시(모델 ID와
     수집 설정 포함, 리전·엔드포인트·자격 증명·경로·시간 제한 같은 운영 설정은 제외)이므로
     같은 평가는 어느 환경에서든 같은 해시가 됩니다.
@@ -1341,20 +1364,35 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 - `deltas_vs_baseline.<s>.<metric>`: 두 전략이 모두 채점한 질의에서 첫 전략과 짝지어
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 구간(`ci_low`/`ci_high`. 2,000번
   재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이, `unpaired`가 있습니다. 답변
-  생성에 실패한 질의는 다른 실행이 채점한 모든 지표에서 0점이므로(`answer_length` 제외)
-  실패로 이득을 볼 수 없습니다(`failed_answers` / `failed_queries`. 차단 수는
-  `guardrail_blocked_counts`. 전략마다 실패하거나 차단된 수가 다르면 `warnings`에 이름이
-  나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
+  생성에 실패한 질의는 다른 실행이 채점한 지표 가운데 자기 전략이 어느 질의에서든 채점하는
+  지표에서 0점이므로(`answer_length` 제외) 실패로 이득을 볼 수 없고, 그 전략이 만들지 않는
+  지표(`global`은 엔터티를 보고하지 않으므로 `retrieved_entity_coverage`가 없음)는 손실로
+  지어내지 않습니다. 아무것도 채점하지 못한 전략은 모든 지표에서 0점입니다. 이 규칙은
+  데이터로 판단하므로 실패한 질의만 채점할 수 있던 지표(`expected_relationships`가 있는
+  항목이 하나뿐인 경우 등)도 0점으로 채우지 않습니다(`failed_answers` / `failed_queries`.
+  차단 수는 `guardrail_blocked_counts`. 전략마다 실패하거나 차단된 수가 다르거나, 실행마다
+  exact match와 token F1이 읽은 `answer_span`이 다르면 `warnings`에 나옴). 구간이 0을
+  포함하지 않으면 그 차이가 뒷받침됩니다.
   이진 지표의 10%p 차이는 질의 50개에서 15%, 200개에서 59%의 실행에서만 찾아지므로 수백
   개 질의로 비교하세요.
+- `deltas_by_category.<s>.<category>.<metric>`: 같은 차이를 데이터셋 `category`(MuSiQue의
+  홉 수 등)별로 나눈 값입니다. 구간은 범주마다 따로 구하고 범주와 지표 수에 따른 다중 비교
+  보정을 하지 않으므로, 여러 개 가운데 하나만 0을 벗어난 결과는 탐색적으로 읽으세요.
 - `pairwise_vs_baseline.<s>`(`--pairwise-judge` 사용 시): GraphRAG / LightRAG 논문의
   맞비교 LLM 판정으로, `models.roles.evaluation`이 첫 반복의 답변을 포괄성
   (comprehensiveness), 다양성(diversity), 이해 도움(empowerment), 직접성(directness)으로
-  판정합니다(프롬프트: `custom_prompts.pairwise_comparison_*`). 쌍마다 순서를 바꿔 두 번
-  판정하고 두 순서가 일치한 기준만 승리로 세며, `candidate_win_rate`는 무승부를 0.5로
-  셉니다. 한쪽 답변이 실패한 쌍은 판정하지 않고 다른 쪽이 이깁니다(`candidate_errors`,
-  `baseline_errors`. 둘 다 실패: `both_errors`). `failed`는 판정 모델이 결정하지 못한
-  쌍(호출 실패, 또는 `1`, `2`, `tie`가 아닌 판정)의 수이며 `--max-failure-rate`가 적용됩니다.
+  판정합니다(`evaluation.pairwise_overall: true`이면 LightRAG의 `overall`도 추가. 프롬프트:
+  `custom_prompts.pairwise_comparison_*`). 쌍마다 순서를 바꿔 두 번 판정하고 두 순서가
+  일치한 기준만 승리로 셉니다. `position_consistency`(전체와 기준별)는 판정한 쌍 가운데 두
+  순서가 일치한 비율이며, 0.5 미만이면 경고합니다. 그런 판정 모델은 위치로 결정하므로
+  무승부가 답변에 대해 말해 주는 것이 없습니다. `candidate_win_rate`는 결정된 쌍을 승리 1,
+  무승부 0.5, 패배 0으로 매긴 평균이고, 이 질의별 점수에 대한 부트스트랩 구간
+  (`ci_low`/`ci_high`)이 함께 나옵니다. 판정 모델이 결정한 쌍이 없으면 `null`입니다. 한쪽
+  답변이 실패한 쌍은 판정하지 않고 다른 쪽이 이깁니다(`candidate_errors`,
+  `baseline_errors`. 둘 다 실패: `both_errors`). `answerable: false` 항목은 판정하지
+  않습니다(`unanswerable_skipped`). `failed`는 판정 모델이 결정하지 못한 쌍(호출 실패, 또는
+  `1`, `2`, `tie`가 아닌 판정)의 수이며 `--max-failure-rate`가 적용됩니다. 판정 모델이 답변
+  모델과 같으면 경고합니다.
 - 첫 실행의 `run_manifest`.
 
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준은 모든 실행에 적용됩니다.
@@ -1382,7 +1420,7 @@ prepare-benchmark musique --output-directory bench/musique --limit 100
 # 2. 단락을 별도 접미사로 수집
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
-# 3. 두 방법론을 짝지어 비교하고 논문과 같은 방식으로 채점
+# 3. 두 방법론을 짝지어 비교하고 EM / F1은 짧은 답 구간으로 채점
 run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
@@ -1394,11 +1432,21 @@ processing:
   document_parsing:
     index_value: musique          # 벤치마크를 기존 인덱스와 분리
 evaluation:
-  answer_normalization: official_squad   # MuSiQue가 보고하는 방식의 EM / F1
+  answer_span: extracted                 # 답변이 제시한 짧은 구간으로 EM / F1 채점
+  answer_normalization: official_squad   # MuSiQue 평가 스크립트의 정규화
   enabled_evaluators: [answer_match, retrieval]   # 판정 모델 없이. 필요하면 langchain / ragas 추가
 ```
 
-`answer_contains` / `token_f1`과 `retrieval`(`category`별)을 읽으세요. 수집 비용은 단락
+MuSiQue는 HotpotQA, SQuAD처럼 독해(reader) 모델이 예측한 짧은 답을 정답과 별칭에 대해 공식
+정규화의 EM과 token F1로 채점합니다. RAG 답변은 한 문장 답과 근거이므로
+`answer_span: extracted`(답변마다 fast 모델 호출 한 번)가 먼저 모델로 구간을 옮겨 옵니다.
+이렇게 하면 수치가 논문에 가까워지지만, 논문의 독해 모델은 구간을 출력하도록 학습되었으므로
+같지는 않습니다. 기본값 `first_line`은 비용이 없지만 한 문장 답을 채점하므로 EM이 논문보다
+훨씬 낮습니다. GraphRAG와 LightRAG 논문은 EM / F1을 보고하지 않고 맞비교 LLM 판정
+(`--pairwise-judge`)을 씁니다.
+
+`answer_contains` / `token_f1`과 `retrieval`(`category`별, 비교에서는
+`deltas_by_category`)을 읽으세요. 수집 비용은 단락
 수(질문당 약 19개)에 비례합니다. 결과를 발표할 때는 논문을 인용하세요.
 
 ---
@@ -1525,7 +1573,9 @@ custom_prompts:
 `community_report`, `answer_generation`, `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `strategy_selection`,
 `keywords_extraction`, `global_map`, `pairwise_comparison`(`--pairwise-judge` 판정
-모델. JSON 판정 형식은 유지), 그리고 프롬프트 튜닝의 `corpus_profile`.
+모델. JSON 판정 형식은 유지하고, `evaluation.pairwise_overall`이면 `overall` 판정도 포함),
+`answer_span_extraction`(`evaluation.answer_span: extracted`의 구간 추출기), 그리고 프롬프트
+튜닝의 `corpus_profile`.
 
 재정의는 설정을 읽을 때 검사하며, 잘못되면 해당 키를 알리고 읽기에 실패합니다.
 

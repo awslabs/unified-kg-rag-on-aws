@@ -11,6 +11,7 @@ import pytest
 from unified_kg_rag.evaluation.text_matching import (
     is_spaceless_script,
     phrase_in_text,
+    strip_possessives,
     tokenize,
 )
 
@@ -164,3 +165,31 @@ class TestLoneLetters:
         tokens = tokenize(text)
         assert time.perf_counter() - started < 1.0
         assert tokens.count("word") == 4_000
+
+
+class TestPossessives:
+    @pytest.mark.parametrize(
+        ("phrase", "text"),
+        [
+            ("Depot", "Depot's widgets ship today."),
+            ("Depot", "Depot’s widgets ship today."),  # typographic apostrophe
+            ("Depot", "DEPOT'S widgets"),
+            ("Depot", "Depot＇s widgets"),  # fullwidth, folded by NFKC
+            ("Vendor's depot", "the Vendor’s depot"),
+            ("Vendor's depot", "the Vendor depot"),
+        ],
+    )
+    def test_a_possessive_matches_its_word(self, phrase: str, text: str) -> None:
+        # Before, punctuation removal left "depots", which "depot" missed.
+        assert phrase_in_text(phrase, text)
+
+    @pytest.mark.parametrize(
+        ("phrase", "text"), [("Depot", "Depots store widgets."), ("Depot", "Depotsy")]
+    )
+    def test_a_plural_is_not_a_possessive(self, phrase: str, text: str) -> None:
+        assert not phrase_in_text(phrase, text)
+
+    def test_only_the_matching_path_drops_them(self) -> None:
+        assert strip_possessives("Depot's and Mill’s") == "Depot and Mill"
+        # Exact match and token F1 keep the official normalization.
+        assert tokenize("Depot's") == ["depots"]

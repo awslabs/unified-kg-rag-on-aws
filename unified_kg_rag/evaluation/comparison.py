@@ -17,10 +17,19 @@ A query whose answer generation failed has no reports, and dropping it
 would let a strategy that crashes on the queries it would lose look as good
 as one that answers them. So a failed answer scores 0 on every metric
 another run scored that query on (``answer_length``, a diagnostic rather than
-a score, excepted), and each strategy reports its failed answers;
-``warnings`` names the strategies whose failure counts differ. Likewise each
-strategy reports its guardrail-blocked answers (by blocked text), and
-different counts are warned about too.
+a score, excepted) and that its own strategy scores on some query: a metric
+the strategy never produces (``global`` reports no entities, so no
+``retrieved_entity_coverage``) is not one it lost, and filling it would invent
+a delta. A strategy that scored nothing at all is filled on every metric.
+Each strategy reports its failed answers; ``warnings`` names the strategies
+whose failure counts differ. Likewise each strategy reports its
+guardrail-blocked answers (by blocked text), and different counts are warned
+about too, as are runs whose exact match and token F1 read different answer
+spans (``evaluation.answer_span``).
+
+Given each query's category, ``deltas_by_category`` repeats the deltas per
+category. Its intervals are per category and uncorrected for the number of
+categories and metrics compared: read them as exploratory.
 
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
@@ -38,8 +47,11 @@ from unified_kg_rag.domain.models import (
     EvaluationMetricType,
     EvaluationReport,
     EvaluationResult,
+    EvaluatorType,
 )
 from unified_kg_rag.shared import get_logger
+
+from .answer_match_evaluator import ANSWER_SPAN_KEY
 
 logger = get_logger(__name__)
 
@@ -48,6 +60,25 @@ Run = tuple[list[EvaluationReport], list[EvaluationResult]]
 
 # Not a score: a failed answer gets no value for it.
 _DIAGNOSTICS = frozenset({EvaluationMetricType.ANSWER_LENGTH.value})
+
+
+def _strategy_failed_scores(
+    runs: Mapping[str, Sequence[Run]], scored: Mapping[str, set[str]]
+) -> dict[str, dict[str, set[str]]]:
+    """Per strategy, the metrics a failed answer counts 0 on, per query.
+
+    Those of ``scored`` the strategy itself scored at least once; all of
+    them when it scored none (every answer failed).
+    """
+    failed: dict[str, dict[str, set[str]]] = {}
+    for strategy, strategy_runs in runs.items():
+        produced = set().union(*_scored_metrics({strategy: strategy_runs}).values())
+        failed[strategy] = (
+            {q: keys & produced for q, keys in scored.items()}
+            if produced
+            else dict(scored)
+        )
+    return failed
 
 
 def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
@@ -102,24 +133,60 @@ def bootstrap_ci(
     return float(low), float(high)
 
 
+def _delta_stats(
+    base: Mapping[str, float],
+    other: Mapping[str, float],
+    *,
+    resamples: int,
+    confidence: float,
+    seed: int,
+) -> dict[str, Any] | None:
+    """Paired delta of ``other`` against ``base`` over the queries both
+    scored; ``None`` when they share none."""
+    paired = sorted(set(base) & set(other))
+    if not paired:
+        return None
+    diff = [other[q] - base[q] for q in paired]
+    low, high = bootstrap_ci(
+        diff, resamples=resamples, confidence=confidence, seed=seed
+    )
+    return {
+        "pairs": len(paired),
+        # Scored by one side only: a metric skipped there (no expectation,
+        # no source of that type, a metric the strategy never produces).
+        "unpaired": len(set(base) ^ set(other)),
+        "mean_delta": float(np.mean(diff)),
+        "ci_low": low,
+        "ci_high": high,
+        "wins": sum(d > 0 for d in diff),
+        "ties": sum(d == 0 for d in diff),
+        "losses": sum(d < 0 for d in diff),
+        "per_query": dict(zip(paired, diff, strict=True)),
+    }
+
+
 def paired_comparison(
     runs: Mapping[str, Sequence[Run]],
     *,
     resamples: int = 2000,
     confidence: float = 0.95,
     seed: int = 0,
+    categories: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compare strategies run over the same queries (the first is the baseline).
 
-    ``runs`` maps each strategy, in the order given, to its repeats.
+    ``runs`` maps each strategy, in the order given, to its repeats;
+    ``categories`` (query id to category) adds ``deltas_by_category``.
     """
     strategies = list(runs)
     baseline = strategies[0]
-    scored = _scored_metrics(runs)
-    means = {s: per_query_means(runs[s], scored) for s in strategies}
+    failed_scores = _strategy_failed_scores(runs, _scored_metrics(runs))
+    means = {s: per_query_means(runs[s], failed_scores[s]) for s in strategies}
     summary: dict[str, Any] = {}
     for strategy in strategies:
-        run_means = [per_query_means([run], scored) for run in runs[strategy]]
+        run_means = [
+            per_query_means([run], failed_scores[strategy]) for run in runs[strategy]
+        ]
         metrics: dict[str, Any] = {}
         for key, by_query in means[strategy].items():
             per_repeat = [
@@ -170,47 +237,86 @@ def paired_comparison(
             "metrics": metrics,
         }
 
+    stats: dict[str, Any] = {
+        "resamples": resamples,
+        "confidence": confidence,
+        "seed": seed,
+    }
     deltas: dict[str, Any] = {}
     for strategy in strategies[1:]:
         by_metric: dict[str, Any] = {}
         for key, base in means[baseline].items():
-            other = means[strategy].get(key, {})
-            paired = sorted(set(base) & set(other))
-            if not paired:
-                continue
-            # Scored by one side only: a metric skipped there (no
-            # expectation, no source of that type), never a failed answer.
-            unpaired = len(set(base) ^ set(other))
-            diff = [other[q] - base[q] for q in paired]
-            low, high = bootstrap_ci(
-                diff, resamples=resamples, confidence=confidence, seed=seed
-            )
-            by_metric[key] = {
-                "pairs": len(paired),
-                "unpaired": unpaired,
-                "mean_delta": float(np.mean(diff)),
-                "ci_low": low,
-                "ci_high": high,
-                "wins": sum(d > 0 for d in diff),
-                "ties": sum(d == 0 for d in diff),
-                "losses": sum(d < 0 for d in diff),
-                "per_query": dict(zip(paired, diff, strict=True)),
-            }
+            delta = _delta_stats(base, means[strategy].get(key, {}), **stats)
+            if delta is not None:
+                by_metric[key] = delta
         deltas[strategy] = by_metric
-    warnings = _failure_warnings(summary)
+    warnings = [*_failure_warnings(summary), *_span_warnings(runs)]
     for warning in warnings:
         logger.warning("%s", warning)
-    return {
+    comparison: dict[str, Any] = {
         "baseline": baseline,
         "strategies": summary,
         "deltas_vs_baseline": deltas,
         "warnings": warnings,
-        "bootstrap": {
-            "resamples": resamples,
-            "confidence": confidence,
-            "seed": seed,
-        },
+        "bootstrap": dict(stats),
     }
+    if categories:
+        comparison["deltas_by_category"] = _category_deltas(
+            means, baseline, categories, stats
+        )
+    return comparison
+
+
+def _category_deltas(
+    means: Mapping[str, dict[str, dict[str, float]]],
+    baseline: str,
+    categories: Mapping[str, str],
+    stats: Mapping[str, Any],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """``{strategy: {category: {metric: delta}}}`` over each category's queries."""
+    by_category: dict[str, dict[str, dict[str, Any]]] = {}
+    for strategy, strategy_means in list(means.items())[1:]:
+        per_category: dict[str, dict[str, Any]] = {}
+        for category in sorted(set(categories.values())):
+            in_category = {q for q, c in categories.items() if c == category}
+            by_metric: dict[str, Any] = {}
+            for key, base in means[baseline].items():
+                delta = _delta_stats(
+                    {q: v for q, v in base.items() if q in in_category},
+                    {
+                        q: v
+                        for q, v in strategy_means.get(key, {}).items()
+                        if q in in_category
+                    },
+                    **stats,
+                )
+                if delta is not None:
+                    by_metric[key] = delta
+            if by_metric:
+                per_category[category] = by_metric
+        by_category[strategy] = per_category
+    return by_category
+
+
+def _span_warnings(runs: Mapping[str, Sequence[Run]]) -> list[str]:
+    """A warning when the runs' exact match and token F1 read different
+    answer spans (the ``answer_span`` their answer_match reports record)."""
+    spans: dict[str, set[str]] = defaultdict(set)
+    for strategy, strategy_runs in runs.items():
+        for reports, _ in strategy_runs:
+            for report in reports:
+                span = report.metadata.get(ANSWER_SPAN_KEY)
+                if span and report.evaluator_type is EvaluatorType.ANSWER_MATCH:
+                    spans[str(span)].add(strategy)
+    if len(spans) < 2:
+        return []
+    listed = "; ".join(
+        f"{span}: {', '.join(sorted(s))}" for span, s in sorted(spans.items())
+    )
+    return [
+        f"The runs scored exact_match and token_f1 on different answer spans "
+        f"({listed}); those deltas compare the spans, not the strategies."
+    ]
 
 
 def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:

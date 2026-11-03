@@ -304,6 +304,16 @@ class EvaluationSummary(BaseModel):
             "unanswerable items the rate is a lower bound on correct declines."
         ),
     )
+    answer_span_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The answer span the answer_match exact_match and token_f1 scored "
+            "(evaluation.answer_span): 'answer_span', 'scored' (reports with "
+            "those scores) and 'fallbacks' (extracted spans that failed and "
+            "were scored on the first line instead). Empty without "
+            "answer_match."
+        ),
+    )
     rerank_status_counts: dict[str, int] = Field(
         default_factory=dict,
         description=(

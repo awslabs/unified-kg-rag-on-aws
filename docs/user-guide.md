@@ -427,7 +427,7 @@ switches the pipeline; a `models.roles` entry (a model id, or `default` /
 | Tier | Roles |
 | --- | --- |
 | `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
-| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
 
 ```yaml
 models:
@@ -1363,7 +1363,8 @@ list, top level or under `metadata`, which wins), taking the maximum.
 - **`answer_contains`** is the headline: 1.0 when the gold answer or an alias
   appears in the generated answer as a whole-word phrase. Long RAG answers
   rarely equal a short gold span, so it tracks correctness far better than
-  exact match.
+  exact match. A possessive is read as its word (`Depot` matches `Depot's`;
+  `Depots` is another word); `graph_aware` matches the same way.
 - **Korean and CJK.** Korean particles are tolerated after a word (`AWS`
   matches `AWS는`); a bare number may carry a Korean unit (`2024` matches
   `2024년에`) but not a magnitude numeral (`3` does not match `3억`); spacing
@@ -1375,13 +1376,32 @@ list, top level or under `metadata`, which wins), taking the maximum.
   scored by the polarity of the first yes/no word that answers the question,
   as in HotpotQA (`there is no clause`, `네 가지`, `(예: …)` and `No. 5` are
   not answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
-- **`exact_match` and `token_f1`** follow the SQuAD v1.1 normalization
-  (NFKC, lowercase, punctuation and English articles removed, whitespace
-  collapsed), keeping punctuation that changes meaning (`-5`, `1.5`, `C++`),
-  so scores are close to, not comparable with, leaderboard numbers: set
-  `evaluation.answer_normalization: official_squad` for the official script.
-  Token F1 splits on whitespace, so for Chinese and Japanese it degrades to
-  exact match, and Korean particles make both under-count.
+- **`exact_match` and `token_f1`** score the part of the answer
+  `evaluation.answer_span` names. SQuAD, HotpotQA and MuSiQue score a short
+  predicted answer (a span such as `Depot`) against the gold answer, while
+  the answer prompt writes a one-sentence answer and then its support, so
+  the whole answer would score its length as much as its correctness:
+  - `first_line` (default, free): the first line that is neither empty nor a
+    Markdown heading, the one-sentence answer (`Depot stores widgets for
+    Vendor.` scores token F1 1/3 against `Depot`; EM still under-counts).
+  - `extracted`: the `models.roles.answer_span` model (fast tier; prompt
+    `custom_prompts.answer_span_extraction_*`) copies the short span out of
+    the answer, one call per distinct question and answer, reused across
+    repeats and strategies. A failed call, an empty reply or a span that is
+    not in the answer is scored on the first line instead and counted in
+    `answer_span_statistics.fallbacks`. This is the setting for numbers
+    close to the papers'.
+  - `full`: the whole answer.
+
+  Each report records `answer_span` and the `scored_span`. The normalization
+  is SQuAD v1.1's (NFKC, lowercase, punctuation and English articles
+  removed, whitespace collapsed), keeping punctuation that changes meaning
+  (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
+  the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
+  HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1
+  only when the two are equal. Token F1 splits on whitespace, so for Chinese
+  and Japanese it degrades to exact match, and Korean particles make both
+  under-count.
 
 ### Eval data format
 
@@ -1464,6 +1484,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   finds nothing, and a model declining in its own words is not detected, so
   on a populated index the `unanswerable` rate is a lower bound on correct
   declines. Each result carries `abstained`.
+- `answer_span_statistics`: the `answer_span` exact match and token F1
+  read, the reports `scored` and the extracted spans that fell back to the
+  first line (`fallbacks`).
 - `rerank_status_counts`: queries per [rerank status](#rerank-status); each
   result carries `rerank_status` (`null` when answer generation failed
   first).
@@ -1481,7 +1504,12 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
     `dropped_evaluators`;
   - the model ids and `judge_is_answer_model` (a judge that is the answer
     model, the default, inflates judge scores: set `models.roles.evaluation`
-    to another model when comparing systems);
+    to another model when comparing systems). The `--pairwise-judge` of a
+    comparison counts as a judge, and `pairwise_judge` records its settings;
+  - `answer_scoring`: the `answer_span` and `answer_normalization` exact
+    match and token F1 used (with `answer_match`), and `models.answer_span`
+    the extracting model; runs scored differently are not comparable on
+    those two metrics;
   - `retrieval_config_sha256`, a hash of every setting that can change an
     answer or a score (model ids and ingestion settings included; regions,
     endpoints, credentials, paths, timeouts and other operational knobs left
@@ -1515,23 +1543,43 @@ adds `evaluation_comparison_<timestamp>.json`:
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
   per-query deltas and `unpaired`. A query whose answer generation failed
-  scores 0 on every metric the other run scored (`answer_length` excepted),
-  so failing cannot help a strategy (`failed_answers` / `failed_queries`;
+  scores 0 on every metric the other run scored (`answer_length` excepted)
+  that its own strategy scores on some query, so failing cannot help a
+  strategy, and a metric it never produces (`global` reports no entities,
+  so no `retrieved_entity_coverage`) is not invented as a loss; a strategy
+  that scored nothing is filled on every metric. The rule reads the data, so
+  a metric that only the failed query could score (one item with
+  `expected_relationships`, say) is not filled either
+  (`failed_answers` / `failed_queries`;
   `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
-  failed, or had blocked, different numbers). A difference is
+  failed, or had blocked, different numbers, and runs whose exact match and
+  token F1 read different `answer_span`s). A difference is
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.
+- `deltas_by_category.<s>.<category>.<metric>`: the same deltas over each
+  dataset `category` (MuSiQue's hop count, say). Each interval is per
+  category and not corrected for the number of categories and metrics read,
+  so treat a lone excluded 0 among many as exploratory.
 - `pairwise_vs_baseline.<s>` (with `--pairwise-judge`): the GraphRAG /
   LightRAG head-to-head LLM judge on comprehensiveness, diversity,
-  empowerment and directness, using `models.roles.evaluation` (prompt:
-  `custom_prompts.pairwise_comparison_*`) on the first repeat's answers. Each
-  pair is judged in both orders and a criterion counts as a win only when
-  both agree; `candidate_win_rate` counts a tie as half. A pair where one
-  answer failed is not judged: the other side wins (`candidate_errors`,
-  `baseline_errors`; both failed: `both_errors`). `failed` counts pairs the
-  judge could not decide (a failed call, or a verdict other than `1`, `2` or
-  `tie`), and `--max-failure-rate` applies to them.
+  empowerment and directness (plus LightRAG's `overall` with
+  `evaluation.pairwise_overall: true`), using `models.roles.evaluation`
+  (prompt: `custom_prompts.pairwise_comparison_*`) on the first repeat's
+  answers. Each pair is judged in both orders and a criterion counts as a
+  win only when both agree; `position_consistency` (overall and per
+  criterion) is the share of judged pairs whose two orders agreed, and a
+  value under 0.5 is warned about: such a judge decides by position, and its
+  ties say nothing about the answers. `candidate_win_rate` scores each
+  decided pair 1, a tie 0.5 and a loss 0, with a bootstrap interval
+  (`ci_low`/`ci_high`) over those per-query scores; it is `null` when the
+  judge decided no pair. A pair where one answer failed is not judged: the
+  other side wins (`candidate_errors`, `baseline_errors`; both failed:
+  `both_errors`). `answerable: false` items are not judged
+  (`unanswerable_skipped`). `failed` counts pairs the judge could not decide
+  (a failed call, or a verdict other than `1`, `2` or `tie`), and
+  `--max-failure-rate` applies to them. A judge that is the answer model is
+  warned about.
 - `run_manifest` of the first run.
 
 The console prints the same summary; the failure budget applies to every run.
@@ -1564,7 +1612,7 @@ prepare-benchmark musique --output-directory bench/musique --limit 100
 # 2. Ingest the paragraphs under their own suffix.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
-# 3. Paired comparison of both methodologies, scored like the papers.
+# 3. Paired comparison of both methodologies, EM / F1 on the short answer span.
 run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```
@@ -1576,11 +1624,23 @@ processing:
   document_parsing:
     index_value: musique          # keep the benchmark out of your own index
 evaluation:
-  answer_normalization: official_squad   # EM / F1 as MuSiQue reports them
+  answer_span: extracted                 # EM / F1 on the short span the answer gives
+  answer_normalization: official_squad   # MuSiQue's evaluation script normalization
   enabled_evaluators: [answer_match, retrieval]   # judge-free; add langchain / ragas if wanted
 ```
 
-Read `answer_contains` / `token_f1` and `retrieval` (per `category`).
+MuSiQue (like HotpotQA and SQuAD) scores the short answer a reader model
+predicts against the gold answer and its aliases, with EM and token F1 under
+the official normalization. A RAG answer is a sentence and its support, so
+`answer_span: extracted` (one fast-model call per answer) has a model copy
+the span out of it first; the numbers are then close to, but not the same
+as, a paper's, whose readers were trained to output spans. The default
+`first_line` costs nothing but scores the one-sentence answer, so its EM is
+far below a paper's. The GraphRAG and LightRAG papers report no EM / F1;
+they use the pairwise LLM judge (`--pairwise-judge`).
+
+Read `answer_contains` / `token_f1` and `retrieval` (per `category`, and
+`deltas_by_category` in a comparison).
 Ingestion cost grows with the paragraph count (about 19 per question). Cite
 the paper when you publish results.
 
@@ -1724,7 +1784,9 @@ Override keys (each `_system` + `_human`): `graph_extraction`,
 `community_report`, `answer_generation`, `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `strategy_selection`,
 `keywords_extraction`, `global_map`, `pairwise_comparison` (the
-`--pairwise-judge` judge; keep its JSON verdict format) and the prompt-tuning
+`--pairwise-judge` judge; keep its JSON verdict format, with an `overall`
+verdict under `evaluation.pairwise_overall`), `answer_span_extraction` (the
+`evaluation.answer_span: extracted` span extractor) and the prompt-tuning
 `corpus_profile`.
 
 Overrides are checked when the config loads; a mistake fails the load naming

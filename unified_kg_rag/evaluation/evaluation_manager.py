@@ -60,7 +60,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
-from .answer_match_evaluator import AnswerMatchEvaluator
+from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
@@ -913,6 +913,7 @@ class EvaluationManager:
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
             abstention_statistics=self._calculate_abstention_statistics(results),
+            answer_span_statistics=self._calculate_answer_span_statistics(reports),
             rerank_status_counts=dict(
                 sorted(
                     Counter(
@@ -1036,7 +1037,15 @@ class EvaluationManager:
         holds; see ``_read_index_builds``) is recorded as ``index``.
         """
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
-        uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
+        args = cli_args or {}
+        # run-eval judges pairs only when it compares two or more strategies.
+        pairwise_judge = bool(args.get("pairwise_judge")) and (
+            len(args.get("search_strategy") or ()) > 1
+        )
+        uses_judge = pairwise_judge or bool(
+            enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
+        )
+        evaluation = self.config.evaluation
         answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
         judge_model = self.config.model_id(ModelRole.EVALUATION)
         dataset: dict[str, Any] = {}
@@ -1096,7 +1105,26 @@ class EvaluationManager:
                     if EvaluatorType.RAGAS in enabled
                     else None
                 ),
+                "answer_span": (
+                    model_id_value(self.config.model_id(ModelRole.ANSWER_SPAN))
+                    if EvaluatorType.ANSWER_MATCH in enabled
+                    and evaluation.answer_span == "extracted"
+                    else None
+                ),
             },
+            # How exact match and token F1 read an answer: two runs scored
+            # differently are not comparable on them.
+            "answer_scoring": (
+                {
+                    "answer_span": evaluation.answer_span,
+                    "answer_normalization": evaluation.answer_normalization,
+                }
+                if EvaluatorType.ANSWER_MATCH in enabled
+                else None
+            ),
+            "pairwise_judge": (
+                {"overall": evaluation.pairwise_overall} if pairwise_judge else None
+            ),
             "enabled_evaluators": sorted(e.value for e in enabled),
             "dropped_evaluators": dict(self.dropped_evaluators),
         }
@@ -1215,6 +1243,22 @@ class EvaluationManager:
                 for metric_name in report.metadata.get(key) or {}:
                     _bump(evaluator_name, metric_name, kind)
         return outcomes
+
+    def _calculate_answer_span_statistics(
+        self, reports: list[EvaluationReport]
+    ) -> dict[str, Any]:
+        if EvaluatorType.ANSWER_MATCH not in self.evaluators:
+            return {}
+        scored = [
+            r
+            for r in reports
+            if r.evaluator_type is EvaluatorType.ANSWER_MATCH and r.metrics
+        ]
+        return {
+            "answer_span": self.config.evaluation.answer_span,
+            "scored": len(scored),
+            "fallbacks": sum(SPAN_FALLBACK_KEY in r.metadata for r in scored),
+        }
 
     @classmethod
     def _calculate_abstention_statistics(
