@@ -822,7 +822,7 @@ From 0.2.3 (or a `main` checkout since):
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #510, #PR).
+  #503, #509, #510, #513).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an
@@ -862,7 +862,7 @@ From 0.2.3 (or a `main` checkout since):
 - Public API: `register_seed_source`, `SeedSourceContext`,
   `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge`,
   `SeedGraphError` and `ConfirmationDeclinedError` (#498, #500, #510,
-  #PR).
+  #513).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
   and §15 (#506).
 
@@ -980,7 +980,7 @@ From 0.2.3 (or a `main` checkout since):
   spelling of its source (`s3://bkt/corpus` for `s3://bkt/corpus/`) and
   for a scope with no record beside other scopes' documents (a new or
   mistyped prefix); a seed-only scope's reset, which has seed records of
-  its own, still asks (#503, #509, #PR).
+  its own, still asks (#503, #509, #513).
 
 ### Fixed
 Bugs present in 0.2.3.
