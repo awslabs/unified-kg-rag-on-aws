@@ -13,6 +13,7 @@ before it drops another scope's seed documents.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.stores import FakeGraphStore
 from tests.fixtures.seed_graphs import EDGES, NODES, PROCURE, lines
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractionStats
 from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
@@ -29,7 +31,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import ExtractionStats
 from unified_kg_rag.adapters.ingestion.translator import TranslationStats
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from unified_kg_rag.application.cli import run_ingestion_pipeline
+from unified_kg_rag.application.cli import preflight, run_ingestion_pipeline
 from unified_kg_rag.application.ingestion import incremental
 from unified_kg_rag.application.ingestion import pipeline as pipeline_module
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
@@ -60,6 +62,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     seed_text_units,
 )
 from unified_kg_rag.domain.models import (
+    Community,
     Config,
     DocStatus,
     DocStatusRecord,
@@ -431,13 +434,15 @@ def test_a_new_scope_importing_a_seed_another_scope_holds_is_warned(
     assert "already imported" not in caplog.text
 
 
-def test_run_ingestion_answers_the_reset_with_its_confirm(mocker) -> None:
-    built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+def _runner(mocker, config: Config, **args: Any) -> Any:
+    """An ingestion runner with ``args``, its pipeline mocked."""
     runner: Any = run_ingestion_pipeline.IngestionPipelineRunner.__new__(
         run_ingestion_pipeline.IngestionPipelineRunner
     )
-    runner.args = SimpleNamespace(yes=True, verify_metadata=True)
-    runner.config = Config()
+    runner.args = SimpleNamespace(
+        verify_metadata=True, source_directory=None, output_directory=None, **args
+    )
+    runner.config = config
     for name in (
         "_display_run_info",
         "_require_indexing_endpoints",
@@ -447,13 +452,52 @@ def test_run_ingestion_answers_the_reset_with_its_confirm(mocker) -> None:
         mocker.patch.object(runner, name, create=True)
     mocker.patch.object(runner, "_create_pipeline_config")
     mocker.patch.object(run_ingestion_pipeline, "display_ascii_art")
+    return runner
+
+
+@pytest.mark.parametrize(("yes", "confirm_reset"), [(True, False), (False, True)])
+def test_run_ingestion_answers_the_reset_with_its_confirm(
+    mocker, yes: bool, confirm_reset: bool
+) -> None:
+    built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=False)
+    runner = _runner(mocker, Config(), yes=yes, confirm_reset=confirm_reset)
     mocker.patch.object(
         run_ingestion_pipeline, "missing_extras_error", return_value=None
     )
-    runner.args.source_directory = runner.args.output_directory = None
     runner.run()
     confirm = built.call_args.kwargs["confirm"]
     assert confirm("Drop it?") is True
+
+
+def test_run_ingestion_preflights_the_seed_sources_extras(
+    mocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only run-ingestion loads the seeds: an rdf seed without the ontology
+    # extra fails before the pipeline is built.
+    built = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    mocker.patch.object(preflight, "_installed", side_effect=lambda m: m != "rdflib")
+    config = Config()
+    config.processing.seed_graphs = [
+        SeedGraphConfig(name="procure", kind="rdf", path="procure.ttl")
+    ]
+    runner = _runner(mocker, config, yes=False, confirm_reset=False)
+    with pytest.raises(SystemExit) as exc:
+        runner.run()
+    assert exc.value.code == 2
+    assert "processing.seed_graphs 'procure' kind 'rdf'" in capsys.readouterr().err
+    built.assert_not_called()
+
+
+def test_an_unanswerable_reset_question_names_its_flag(
+    mocker, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=False)
+    runner = _runner(mocker, Config(), yes=False, confirm_reset=False)
+    with pytest.raises(ConfirmationDeclinedError):
+        runner._confirm_reset("Drop it?")
+    printed = " ".join(capsys.readouterr().out.split())
+    assert "Re-run with --confirm-reset (or UKR_CONFIRM_RESET=1) to proceed" in printed
 
 
 @pytest.mark.parametrize(
@@ -1012,3 +1056,92 @@ def test_a_stored_member_evidences_a_community_through_a_kept_document(
 ) -> None:
     entity = Entity(id="e", name="Vendor", text_unit_ids=units, source_kinds=kinds)
     assert ps._document_backed(entity, removed={"u-old"}) is backed
+
+
+SEED_UNIT = "sg-00000000-0000-0000-0000-000000000001"
+
+
+def _evidence(
+    mocker, graph: Any, *, reset: bool = False
+) -> tuple[Any, PipelineContext, Any]:
+    """A community stage of an incremental run (``reset``: a reset's) whose
+    graph store is ``graph``, and the run's context: Vendor (default suffix)
+    and Harbor (suffix ``other``), each stated by the seed alone."""
+    config = Config()
+    config.indexing.reset = reset
+    # No detector (it would build the report model): only the stored reads.
+    mocker.patch.object(ps, "CommunityDetector")
+    providers = mocker.MagicMock()
+    providers.build_graph_indexer.return_value = graph
+    stage = ps.CommunityDetectionStage(
+        config=config, providers=providers, doc_status=FakeDocStatusStore()
+    )
+    context = _context(incremental_delta=DocumentDelta(new=["seed-doc"]))
+    context.resolved_entities = [
+        Entity(id="vendor", name="Vendor", text_unit_ids=[SEED_UNIT]),
+        Entity(
+            id="harbor",
+            name="Harbor",
+            text_unit_ids=[SEED_UNIT],
+            attributes={"index": "other"},
+        ),
+    ]
+    return stage, context, providers
+
+
+def _communities() -> list[Community]:
+    return [
+        Community(
+            id=f"c-{member}",
+            name=member,
+            level="0",
+            parent="",
+            children=[],
+            entity_ids=[member],
+            text_unit_ids=[SEED_UNIT],
+        )
+        for member in ("vendor", "harbor")
+    ]
+
+
+def _stored_graph() -> FakeGraphStore:
+    graph = FakeGraphStore()
+    graph.upsert_entities(
+        [
+            Entity(id="vendor", name="Vendor", text_unit_ids=["u1"]),
+            Entity(
+                id="harbor",
+                name="Harbor",
+                text_unit_ids=["u2"],
+                attributes={"index": "other"},
+            ),
+        ]
+    )
+    return graph
+
+
+def test_stored_members_are_read_in_their_own_suffix(mocker) -> None:
+    stage, context, _ = _evidence(mocker, _stored_graph())
+    assert stage._evidenced_by_stored_members(context, _communities()) == {
+        "c-vendor",
+        "c-harbor",
+    }
+
+
+def test_a_reset_reads_no_stored_member(mocker) -> None:
+    # A reset rebuilds from this corpus alone: what the stores held before
+    # evidences nothing.
+    stage, context, providers = _evidence(mocker, _stored_graph(), reset=True)
+    assert stage._evidenced_by_stored_members(context, _communities()) == set()
+    providers.build_graph_indexer.assert_not_called()
+
+
+def test_an_unreadable_member_leaves_its_community_without_a_report(
+    mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    graph = _stored_graph()
+    mocker.patch.object(graph, "read_entities", side_effect=RuntimeError("down"))
+    stage, context, _ = _evidence(mocker, graph)
+    with caplog.at_level(logging.WARNING):
+        assert stage._evidenced_by_stored_members(context, _communities()) == set()
+    assert "Could not read the stored members of 2 communities" in caplog.text

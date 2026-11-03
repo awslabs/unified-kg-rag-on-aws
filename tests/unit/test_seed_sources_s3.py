@@ -31,7 +31,11 @@ from tests.fixtures.seed_graphs import (
     PROCURE,
     lines,
 )
-from unified_kg_rag.adapters.seed_sources import SeedSourceContext, get_seed_source
+from unified_kg_rag.adapters.seed_sources import (
+    SeedSourceContext,
+    get_seed_source,
+    jsonl,
+)
 from unified_kg_rag.application.bootstrap import load_seed_graphs
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import SeedGraphConfig
@@ -208,8 +212,30 @@ def test_an_s3_object_that_grew_since_it_was_sized_is_refused() -> None:
         {"Body": _body(b"x" * 20)},
         {"Bucket": BUCKET, "Key": "seeds/procure.jsonl"},
     )
-    with stubber, pytest.raises(SeedGraphError, match="grew since it was sized"):
+    # Read within the cap: the object is never fetched whole.
+    with (
+        stubber,
+        pytest.raises(
+            SeedGraphError, match="procure.jsonl' holds more than 10 bytes .it grew"
+        ),
+    ):
         get_seed_source("jsonl")(context)
+
+
+def test_an_s3_prefix_reads_each_object_within_the_bytes_left(
+    s3: Any, mocker: Any
+) -> None:
+    # Sized within the cap, the second object is read with what the first
+    # left of it: one byte too few.
+    first = _put(s3, "seeds/a.jsonl", lines(*NODES))
+    _put(s3, "seeds/b.jsonl", lines(*EDGES))
+    cap = len(lines(*NODES)) + len(lines(*EDGES)) - 1
+    mocker.patch.object(jsonl, "check_total")
+    with pytest.raises(
+        SeedGraphError,
+        match=f"b.jsonl' holds more than {len(lines(*EDGES)) - 1} bytes",
+    ):
+        _load(first.rsplit("/", 1)[0] + "/", max_bytes=cap)
 
 
 def test_s3_prefix_files_over_max_bytes_are_never_fetched(s3: Any, mocker: Any) -> None:

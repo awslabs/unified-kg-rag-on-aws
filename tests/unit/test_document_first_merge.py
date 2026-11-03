@@ -354,6 +354,18 @@ def test_the_incremental_merge_is_document_first(stored_is_seed: bool) -> None:
     assert set(merged.text_unit_ids) == {_seed(0), _doc(0)}
 
 
+@pytest.mark.parametrize("stored_iri", [EX + "a", EX + "b"])
+def test_the_incremental_merge_keeps_the_smallest_iri(stored_iri: str) -> None:
+    # Whichever side holds it: a full build keeps the smallest too.
+    other = EX + "b" if stored_iri == EX + "a" else EX + "a"
+    stored = _stated("Acme", _seed(0), iri=stored_iri)
+    delta = _stated("Acme", _seed(1), iri=other)
+
+    (merged,), _ = merge_entities([stored], [delta])
+
+    assert merged.iri == EX + "a"
+
+
 def test_derivation_takes_the_iri_and_drops_a_removed_seeds() -> None:
     doc, seed = _doc(0), _seed(0)
     stored = Entity(

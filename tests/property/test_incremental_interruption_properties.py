@@ -18,7 +18,11 @@ that reach every point (also run as explicit examples of the property).
 The seed variant puts a seed graph's shard documents beside the documents
 of each corpus (its nodes name document entities): the interrupted run
 adds, edits, re-shards or removes the seed, and the follow-up converges the
-same way.
+same way. A seed may spell a name twice (merged or qualified; one that
+refuses the collision fails its run at start-up, so it is not drawn). The
+strict variant runs it all under a strict extraction schema: the documents'
+statements and the seeds are checked as extraction and the conversion check
+them, and the off-schema ones dropped.
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ from tests.fixtures.incremental_runs import (
     expected_state,
 )
 from tests.fixtures.seed_graphs import EX, Seed, random_seeds, seeded_corpus
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, ExtractionSchema
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedNode
+from unified_kg_rag.shared.exceptions import SeedGraphError
 
 pytestmark = pytest.mark.property
 
@@ -158,17 +163,18 @@ def _check_follow_up(
     point: str,
     k: int,
     follow: str,
+    config: Config | None = None,
 ) -> bool:
-    """Run the three runs and check the follow-up; return whether the
-    interruption fired."""
+    """Run the three runs (under ``config``, the default when ``None``) and
+    check the follow-up; return whether the interruption fired."""
     corpus = _follow_up(follow, before, interrupted)
-    harness = IncrementalRun(FakeDocStatusStore())
+    harness = IncrementalRun(FakeDocStatusStore(), config)
     harness.run(before)
     fired = harness.run(interrupted, interrupt=point, k=k)
 
     harness.run(corpus)
 
-    assert harness.state() == expected_state(corpus)
+    assert harness.state() == expected_state(corpus, config)
     assert harness.registry_problems(corpus) == []
     harness.run(corpus)
     assert harness.extracted == []
@@ -189,11 +195,35 @@ def test_each_interruption_point_fires(case: dict) -> None:
 # --- seed graphs ------------------------------------------------------------------
 
 _SCHEMA = Config().processing.graph_extraction.extraction_schema()
-_seed = st.none() | random_seeds(
-    [*_NAMES, "Harbor"], (None, "ORG", "PRODUCT"), ("RELATED_TO", "SUPPLIES")
-)
-_seeded_corpus = st.tuples(_corpus, _seed).map(
-    lambda drawn: seeded_corpus(drawn[0], {"alpha": drawn[1]}, _SCHEMA)
+
+
+def _seeded(
+    seed: st.SearchStrategy[Seed], schema: ExtractionSchema
+) -> st.SearchStrategy[Corpus]:
+    """Corpora with ``seed`` (or none) beside the documents, converted
+    against ``schema``; a seed that does not convert is not drawn."""
+
+    def convert(drawn: tuple[Corpus, Seed | None]) -> Corpus | None:
+        try:
+            return seeded_corpus(drawn[0], {"alpha": drawn[1]}, schema)
+        except SeedGraphError:
+            return None
+
+    return (
+        st.tuples(_corpus, st.none() | seed)
+        .map(convert)
+        .filter(lambda corpus: corpus is not None)
+    )
+
+
+_seeded_corpus = _seeded(
+    random_seeds(
+        [*_NAMES, "Harbor"],
+        (None, "ORG", "PRODUCT"),
+        ("RELATED_TO", "SUPPLIES"),
+        collisions=("merge", "qualify"),
+    ),
+    _SCHEMA,
 )
 
 
@@ -292,3 +322,98 @@ def test_an_interrupted_seed_round_converges(
 )
 def test_each_seed_interruption_fires(case: dict) -> None:
     assert _check_follow_up(**case)
+
+
+# --- under a strict schema ----------------------------------------------------------
+
+# The documents' types are ORG (odd strengths: off the schema, dropped) and
+# PERSON; their edges RELATED_TO. The seeds' types are declared, a spelling
+# of a declared one, undeclared or none.
+_STRICT = Config.model_validate(
+    {
+        "processing": {
+            "graph_extraction": {
+                "schema_mode": "strict",
+                "entity_types": [
+                    {"label": "ORGANIZATION", "iri": EX + "Organization"},
+                    "PERSON",
+                ],
+                "relationship_types": ["RELATED_TO", "SUPPLIES"],
+                "relationship_patterns": ["ORGANIZATION -SUPPLIES-> PERSON"],
+            }
+        }
+    }
+)
+_strict_seeded_corpus = _seeded(
+    random_seeds(
+        [*_NAMES, "Harbor"],
+        ("ORGANIZATION", "person", "vendor", None),
+        ("RELATED_TO", "supplies", "KNOWS"),
+        collisions=("merge", "qualify"),
+    ),
+    _STRICT.processing.graph_extraction.extraction_schema(),
+)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=100,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
+)
+@given(
+    before=_strict_seeded_corpus,
+    interrupted=_strict_seeded_corpus,
+    point=st.sampled_from(POINTS),
+    k=st.integers(1, 3),
+    follow=st.sampled_from(["same", "reverted", "new_docs_removed"]),
+)
+@example(
+    before=seeded_corpus(
+        _BEFORE,
+        {"alpha": _SEED_V1},
+        _STRICT.processing.graph_extraction.extraction_schema(),
+    ),
+    interrupted=seeded_corpus(
+        _CHANGED_AND_REMOVED,
+        {"alpha": _SEED_V2},
+        _STRICT.processing.graph_extraction.extraction_schema(),
+    ),
+    point="mid_index_delta",
+    k=2,
+    follow="same",
+)
+def test_an_interrupted_strict_seed_round_converges(
+    before: Corpus,
+    interrupted: Corpus,
+    point: str,
+    k: int,
+    follow: str,
+) -> None:
+    fired = _check_follow_up(before, interrupted, point, k, follow, _STRICT)
+    event(f"{point}: {'interrupted' if fired else 'not reached'}")
+
+
+def test_the_strict_variant_drops_off_schema_statements() -> None:
+    # What makes the strict variant one: the full build differs.
+    corpus = seeded_corpus(
+        _BEFORE,
+        {"alpha": _SEED_V1},
+        _STRICT.processing.graph_extraction.extraction_schema(),
+    )
+    assert expected_state(corpus, _STRICT) != expected_state(
+        _with_seed(_BEFORE, _SEED_V1)
+    )
+    assert _check_follow_up(
+        corpus,
+        seeded_corpus(
+            _CHANGED_AND_REMOVED,
+            {"alpha": _SEED_V2},
+            _STRICT.processing.graph_extraction.extraction_schema(),
+        ),
+        "mid_index_delta",
+        2,
+        "same",
+        _STRICT,
+    )

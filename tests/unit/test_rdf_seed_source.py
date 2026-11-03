@@ -325,6 +325,45 @@ def test_only_vocabulary_types_make_no_instance() -> None:
     assert graph.report.skipped == {"subjects_not_instances": 2}
 
 
+def test_a_typed_property_or_class_is_t_box_not_an_instance() -> None:
+    # Punning: ex:knowsOf is a predicate and ex:Partner a class (an rdf:type
+    # object), each also typed with a non-vocabulary type.
+    triples = [
+        *_typed(EX + "acme", EX + "Partner"),
+        *_typed(EX + "globex", BUYER),
+        (iri(EX + "acme"), iri(EX + "knowsOf"), iri(EX + "globex")),
+        *_typed(EX + "knowsOf", EX + "Relation"),
+        *_typed(EX + "Partner", EX + "MetaClass"),
+    ]
+    graph = _map(triples)
+    assert [n.id for n in graph.nodes] == [EX + "acme", EX + "globex"]
+    assert [(e.source, e.target) for e in graph.edges] == [(EX + "acme", EX + "globex")]
+
+
+def test_a_named_reified_statement_is_no_instance_whatever_its_type() -> None:
+    claim = iri(EX + "claim")
+    triples = [
+        *_typed(EX + "acme", VENDOR),
+        *_typed(EX + "claim", EX + "Claim"),
+        (claim, iri(RDF + "subject"), iri(EX + "acme")),
+        (claim, iri(RDF + "predicate"), iri(EX + "supplies")),
+    ]
+    graph = _map(triples)
+    assert [n.id for n in graph.nodes] == [EX + "acme"]
+    assert graph.report.skipped == {"reified_statements": 1}
+
+
+def test_a_typed_literal_is_never_a_name() -> None:
+    acme = iri(EX + "acme")
+    triples = [
+        *_typed(EX + "acme", VENDOR),
+        (acme, iri(RDFS + "label"), literal("42", XSD + "int")),
+        (acme, iri(RDFS + "comment"), literal("true", XSD + "boolean")),
+    ]
+    (node,) = _map(triples).nodes
+    assert (node.name, node.description, node.properties) == ("acme", None, {})
+
+
 def test_edges_join_instances_only_and_are_typed_by_predicate() -> None:
     triples = [
         *_typed(EX + "acme", VENDOR),
@@ -467,6 +506,12 @@ def test_property_keys_use_the_options_then_well_known_then_file_prefixes() -> N
     assert set(graph.nodes[0].properties) == {"a:country", "skos:note", "urn:x:flag"}
     graph = _map(triples, prefixes={"proc": EX})
     assert "proc:country" in graph.nodes[0].properties
+    # The options' prefix beats a well-known one of the same namespace.
+    graph = _map(triples, prefixes={"sk": SKOS})
+    assert "sk:note" in graph.nodes[0].properties
+    # A urn: term of the options is an IRI, not a CURIE of prefix "urn".
+    graph = _map(triples, properties=["urn:x:flag"])
+    assert graph.nodes[0].properties == {"urn:x:flag": True}
 
 
 def test_an_invalid_node_fails_naming_it_instead_of_a_validation_error() -> None:

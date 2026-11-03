@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import SeedGraphConfig
+from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared.exceptions import ConfirmationDeclinedError
 
 # Every test runs with each AWS entry point patched to fail.
@@ -300,6 +301,42 @@ def test_a_seed_beside_a_corpus_lives_through_its_lifecycle(tmp_path: Path) -> N
     assert harness.seed_units() == []
 
 
+SEED_VENDOR_LINE = "Vendor of record in the procurement master data."
+
+
+def _document_first(description: str) -> None:
+    """``description`` holds the document lines and then the seed's one."""
+    lines = description.split("\n")
+    assert len(lines) > 1 and lines[-1] == SEED_VENDOR_LINE, lines
+
+
+@pytest.mark.parametrize("seed_first", [False, True])
+def test_a_merged_description_puts_the_document_lines_first(
+    tmp_path: Path, seed_first: bool
+) -> None:
+    # Records merge in unit-id order: the chunker's ids of the document
+    # units must sort before the seed's "sg-" ids, whichever run came first.
+    harness = _Harness(tmp_path, corpus={} if seed_first else CORPUS)
+    harness.seed.write_text(_seed_text({"n-vendor": SEED_VENDOR_LINE}))
+    context = harness.ok()
+    if seed_first:
+        for name, text in CORPUS.items():
+            (harness.source / name).write_text(text)
+        context = harness.ok()
+    units = [u.id for u in context.text_units or []]
+    documents = [u for u in units if not u.startswith("sg-")]
+    seeds = [u for u in units if u.startswith("sg-")]
+    assert documents and max(documents) < min(seeds or ["sg-"])
+    vendor = harness.entities()["Vendor"]
+    _document_first(vendor["description"])
+    graph = harness.providers.build_graph_indexer()
+    try:
+        (vertex,) = graph.read_entities([vendor["id"]])
+    finally:
+        graph.close()
+    _document_first(vertex.description or "")
+
+
 def test_a_seed_only_run_makes_no_model_call(tmp_path: Path) -> None:
     harness = _Harness(tmp_path, corpus={})
     harness.ok()
@@ -373,6 +410,16 @@ def test_a_reset_asks_before_it_drops_another_scopes_seed(
         with pytest.raises(ConfirmationDeclinedError, match=re.escape(question)):
             seeded.run(confirm=confirm)
         assert set(seeded.registry()) == set(_seed_paths())
+        # Recorded like a failed stage, for a resume.
+        (metadata,) = (seeded.tmp_path / f"run-{seeded.runs}").rglob(
+            PIPELINE_METADATA_FILE
+        )
+        (stopped,) = [
+            r
+            for r in json.loads(metadata.read_text())["stage_results"]
+            if r["status"] == PipelineStageStatus.FAILED.value
+        ]
+        assert question in stopped["error_message"]
     # A cancellation, not a failure: nothing logged an error.
     assert not [r for r in caplog.records if r.levelname == "ERROR"]
     # A yes (run-ingestion --yes): the namespace is the documents' alone.

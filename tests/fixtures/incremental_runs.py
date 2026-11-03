@@ -51,6 +51,7 @@ from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
 )
+from unified_kg_rag.domain.ingestion.schema_conformance import SchemaConformance
 from unified_kg_rag.domain.ingestion.seed_graph import annotate_sources
 from unified_kg_rag.domain.models import (
     Claim,
@@ -117,12 +118,17 @@ class Extraction(NamedTuple):
 
 
 def _unit_records(
-    path: str, index: int, unit: list[tuple[str, str, int]]
+    path: str,
+    index: int,
+    unit: list[tuple[str, str, int]],
+    conformance: SchemaConformance,
 ) -> tuple[TextUnit, TextUnitExtraction, list[Claim]]:
     """One unit's text unit, record and claims. Each statement carries the
     unit's own text, so removing a unit must remove what it said: an edge's
     name endpoints are listed with a type that follows the strength's parity
-    (types are voted on), and a strength-3 edge also states a claim."""
+    (types are voted on), and a strength-3 edge also states a claim. The
+    statements are checked against the schema as extraction checks them
+    (``conformance``: a strict one drops the off-schema ones)."""
     unit_id = _unit_id(path, index, unit)
     where = f"{path}#{index}"
     text_unit = TextUnit(
@@ -174,19 +180,26 @@ def _unit_records(
                     text_unit_ids=[unit_id],
                 )
             )
+    checked = conformance.conform(entities, relationships, unit=unit_id)
     record = TextUnitExtraction(
         text_unit_id=unit_id,
-        entities=merge_entity_contributions(entities),
-        relationships=merge_relationship_contributions(relationships),
+        entities=merge_entity_contributions(checked.entities),
+        relationships=merge_relationship_contributions(checked.relationships),
         gleaned=True,
     )
     return text_unit, record, claims
 
 
-def extract(corpus: Corpus) -> Extraction:
+def extract(corpus: Corpus, config: Config | None = None) -> Extraction:
     """Text units, their records, and the graph a build over ``corpus``
-    produces: the records merged and resolved by the full build's code. A
-    seed shard's units and records are the pipeline's; it states no claim."""
+    produces under ``config`` (its extraction schema; the default when
+    ``None``): the records merged and resolved by the full build's code. A
+    seed shard's units and records are the pipeline's (converted under the
+    same schema); it states no claim."""
+    config = config or Config()
+    conformance = SchemaConformance(
+        config.processing.graph_extraction.extraction_schema()
+    )
     units: list[TextUnit] = []
     records: list[TextUnitExtraction] = []
     claim_records: dict[str, list[Claim]] = {}
@@ -197,11 +210,10 @@ def extract(corpus: Corpus) -> Extraction:
             records += seed_records
             continue
         for index, unit in enumerate(content):
-            text_unit, record, claims = _unit_records(path, index, unit)
+            text_unit, record, claims = _unit_records(path, index, unit, conformance)
             units.append(text_unit)
             records.append(record)
             claim_records[text_unit.id] = claims
-    config = Config()
     entities, relationships = merge_contributions(records)
     resolved, _ = GraphResolver(
         config, max_workers=1, use_process_pool=False
@@ -271,9 +283,10 @@ def _provenance(
     }
 
 
-def expected_state(corpus: Corpus) -> dict[str, Any]:
-    """What a fresh full build of ``corpus`` stores (see :meth:`state`)."""
-    built = extract(corpus)
+def expected_state(corpus: Corpus, config: Config | None = None) -> dict[str, Any]:
+    """What a fresh full build of ``corpus`` under ``config`` stores (see
+    :meth:`IncrementalRun.state`)."""
+    built = extract(corpus, config)
     entity_units = {e.id: frozenset(e.text_unit_ids or []) for e in built.entities}
     # The indexing annotates an item's source kinds from its text units.
     provenance = _provenance(built.entities, built.relationships, annotate_sources)
@@ -298,9 +311,11 @@ def expected_state(corpus: Corpus) -> dict[str, Any]:
 class IncrementalRun:
     """One registry + graph + vector store, indexed by successive runs."""
 
-    def __init__(self, store: DocStatusPort | None = None) -> None:
-        self.config = Config()
-        self.graph = FakeGraphStore()
+    def __init__(
+        self, store: DocStatusPort | None = None, config: Config | None = None
+    ) -> None:
+        self.config = config or Config()
+        self.graph = FakeGraphStore(self.config)
         self.vector = FakeVectorStore(opensearch_config=self.config.indexing.opensearch)
         self.manager = self._manager()
         self.store: DocStatusPort = store or FakeDocStatusStore()
@@ -351,7 +366,9 @@ class IncrementalRun:
         self.extracted = sorted(d.file_path for d in extracted)
         if self.crash_on is not None and self.crash_on(self.extracted):
             raise Killed("crash_on")
-        built = extract({d.file_path: corpus[d.file_path] for d in extracted})
+        built = extract(
+            {d.file_path: corpus[d.file_path] for d in extracted}, self.config
+        )
         # The extraction stages store the units' records before indexing.
         self.vector.write_extraction_records(
             {

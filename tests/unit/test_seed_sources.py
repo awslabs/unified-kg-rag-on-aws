@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import unified_kg_rag.adapters.seed_sources.jsonl as jsonl
 import unified_kg_rag.adapters.seed_sources.property_graph as property_graph
 import unified_kg_rag.adapters.seed_sources.registry as seed_registry
 from tests.fixtures.extras import requires_ontology
@@ -513,6 +514,10 @@ def test_conversion_does_not_depend_on_line_order(tmp_path: Path) -> None:
             "property 'k' holds a lone surrogate",
         ),
         (
+            '{"kind": "node", "id": "v1", "properties": {"k\\udfff": 1}}\n',
+            "a property key holds a lone surrogate .U\\+DFFF",
+        ),
+        (
             '{"kind": "node", "id": "v1", "name": "' + "n" * 1001 + '"}\n',
             "name: String should have at most 1000 characters",
         ),
@@ -567,10 +572,26 @@ def test_jsonl_refuses_files_over_max_bytes_before_reading(
 def test_jsonl_refuses_a_file_that_grew_past_max_bytes(
     procure_jsonl: Path, mocker: Any
 ) -> None:
+    # Sized within the cap (the check before reading passes), then read
+    # larger.
     size = procure_jsonl.stat().st_size
-    mocker.patch.object(property_graph, "check_total")
-    with pytest.raises(SeedGraphError, match="more than max_bytes"):
+    mocker.patch.object(jsonl, "check_total")
+    with pytest.raises(SeedGraphError, match="grew since it was sized"):
         _load(procure_jsonl, max_bytes=size - 1)
+    assert len(_load(procure_jsonl, max_bytes=size).nodes) == len(NODES)
+
+
+def test_jsonl_counts_every_file_read_against_max_bytes(
+    tmp_path: Path, mocker: Any
+) -> None:
+    # Each file within the cap alone, both over it.
+    root = tmp_path / "seed"
+    _write(root / "a.jsonl", lines(*NODES))
+    _write(root / "b.jsonl", lines(*EDGES))
+    largest = max(p.stat().st_size for p in root.iterdir())
+    mocker.patch.object(jsonl, "check_total")
+    with pytest.raises(SeedGraphError, match="grew since it was sized"):
+        _load(root, max_bytes=largest)
 
 
 @pytest.mark.parametrize(

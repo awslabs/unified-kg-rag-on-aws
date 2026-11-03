@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 from hypothesis import strategies as st
 
@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.models.config import SeedNameCollision
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
 
 EX = "https://example.org/procure#"
@@ -103,17 +104,22 @@ def seed_shards(
     *,
     shards: int = 1,
     max_items_per_unit: int = 2,
+    on_name_collision: SeedNameCollision = "merge",
 ) -> dict[str, Document]:
     """The shard documents of a seed by relative path, converted against
-    ``schema`` as bootstrap converts a configured one (colliding names
-    merge)."""
+    ``schema`` as bootstrap converts a configured one.
+
+    Raises:
+        SeedGraphError: The seed does not convert (names collide under
+            ``on_name_collision: error``, say): its run fails at start-up.
+    """
     conversion = convert_seed(
         SeedGraph(nodes=tuple(nodes), edges=tuple(edges)),
         SeedConversionSettings(
             name=name,
             shards=shards,
             max_items_per_unit=max_items_per_unit,
-            on_name_collision="merge",
+            on_name_collision=on_name_collision,
         ),
         schema,
     )
@@ -141,9 +147,14 @@ def seed_shard_extraction(
     return units, [parse_seed_unit(unit) for unit in units]
 
 
-# A seed for the incremental properties: (its shard count, its nodes, its
-# edges).
-Seed = tuple[int, tuple[SeedNode, ...], tuple[SeedEdge, ...]]
+class Seed(NamedTuple):
+    """A seed for the incremental properties (a plain ``(shards, nodes,
+    edges)`` tuple is one whose colliding names merge)."""
+
+    shards: int
+    nodes: tuple[SeedNode, ...]
+    edges: tuple[SeedEdge, ...]
+    on_name_collision: SeedNameCollision = "merge"
 
 
 def _node_id(name: str) -> str:
@@ -157,10 +168,23 @@ def random_seeds(
     names: Sequence[str],
     entity_types: Sequence[str | None],
     relationship_types: Sequence[str],
+    collisions: Sequence[SeedNameCollision] = (),
 ) -> Seed:
     """A random seed over ``names``: 1-3 shards, nodes with a drawn type,
     IRI (two nodes may share one), description and confidence, and edges
-    between them."""
+    between them.
+
+    With ``collisions``, up to two drawn names are also spelled upper- or
+    lower-case by a node of their own (an in-seed name collision, unless the
+    nodes share an IRI), and the seed's ``on_name_collision`` is drawn from
+    them.
+    """
+    chosen = draw(st.lists(st.sampled_from(names), min_size=1, max_size=4, unique=True))
+    if collisions:
+        variants = sorted(
+            {v for n in chosen for v in (n.upper(), n.lower())} - {*chosen}
+        )
+        chosen += draw(st.lists(st.sampled_from(variants), max_size=2, unique=True))
     nodes = tuple(
         SeedNode(
             id=_node_id(name),
@@ -174,9 +198,7 @@ def random_seeds(
             ),
             confidence=draw(st.sampled_from([None, 0.3, 0.9])),
         )
-        for name in draw(
-            st.lists(st.sampled_from(names), min_size=1, max_size=4, unique=True)
-        )
+        for name in chosen
     )
     ids = [node.id for node in nodes]
     edges = tuple(
@@ -201,7 +223,8 @@ def random_seeds(
         )
         if source != target
     )
-    return draw(st.integers(1, 3)), nodes, edges
+    policy = draw(st.sampled_from(collisions)) if collisions else "merge"
+    return Seed(draw(st.integers(1, 3)), nodes, edges, policy)
 
 
 def seeded_corpus(
@@ -215,8 +238,17 @@ def seeded_corpus(
     corpus = {path: content for path, content in documents.items() if content}
     for name, seed in seeds.items():
         if seed is not None:
-            shards, nodes, edges = seed
-            corpus.update(seed_shards(name, nodes, edges, schema, shards=shards))
+            shards, nodes, edges, policy = Seed(*seed)
+            corpus.update(
+                seed_shards(
+                    name,
+                    nodes,
+                    edges,
+                    schema,
+                    shards=shards,
+                    on_name_collision=policy,
+                )
+            )
     return corpus
 
 

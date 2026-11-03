@@ -45,7 +45,9 @@ from unified_kg_rag.domain.models import (
     RelationshipTypeSpec,
 )
 from unified_kg_rag.domain.models.seed_graph import (
+    MAX_IRI_CHARS,
     MAX_NAME_CHARS,
+    MAX_TYPE_CHARS,
     SeedEdge,
     SeedGraph,
     SeedNode,
@@ -458,6 +460,32 @@ def test_strict_checks_qualified_homonyms_against_their_own_types() -> None:
     assert merged.stats.relationships_dropped_off_pattern == 1
 
 
+def test_strict_checks_homonyms_sharing_an_iri_as_one_entity_under_qualify() -> None:
+    # One IRI, one identity: nothing to qualify, so qualify checks the
+    # patterns of the one entity as merge does (one edge off its pattern).
+    graph = _graph(
+        [
+            {"id": "m1", "name": "Mercury", "type": "VENDOR", "iri": EX + "m"},
+            {"id": "m2", "name": "MERCURY", "type": "BUYER", "iri": EX + "m"},
+            {"id": "b", "name": "Globex", "type": "BUYER"},
+            {"id": "a", "name": "Acme", "type": "VENDOR"},
+        ],
+        [
+            {"source": "m1", "target": "b", "type": "SUPPLIES"},
+            {"source": "a", "target": "m2", "type": "SUPPLIES"},
+        ],
+    )
+
+    qualified, merged = (
+        convert_seed(graph, _settings(on_name_collision=policy), _schema("strict"))
+        for policy in ("qualify", "merge")
+    )
+
+    assert qualified.stats.names_qualified == 0
+    assert qualified.stats.relationships_dropped_off_pattern == 1
+    assert _statements(qualified) == _statements(merged)
+
+
 def test_a_qualified_name_over_the_name_cap_fails() -> None:
     # The name cap holds for a qualified name too (a store keeps it as an
     # indexed keyword).
@@ -469,6 +497,19 @@ def test_a_qualified_name_over_the_name_cap_fails() -> None:
             _settings(on_name_collision="qualify", qualifier_property="city"),
             _schema(),
         )
+
+
+def test_a_qualified_name_of_exactly_the_name_cap_converts() -> None:
+    city = "S" * (MAX_NAME_CHARS - len("MERCURY ()"))
+    conversion = convert_seed(
+        _homonyms(properties={"city": city}),
+        _settings(on_name_collision="qualify", qualifier_property="city"),
+        _schema(),
+    )
+
+    names = {s["name"] for s in _statements(conversion) if s["kind"] == "node"}
+    assert f"MERCURY ({city})" in names
+    assert max(len(name) for name in names) == MAX_NAME_CHARS
 
 
 def test_qualified_names_that_still_collide_fail() -> None:
@@ -779,6 +820,8 @@ def test_a_hub_over_the_unit_limit_fails_naming_it() -> None:
     message = str(error.value)
     assert "node 'Hub' (id 'hub')" in message
     assert f"is {spokes + 1} statements" in message
+    # 3 * MAX_UNITS_PER_SHARD + 1 statements, 3 a unit: one more unit.
+    assert f"{MAX_UNITS_PER_SHARD + 1} units at max_items_per_unit 3" in message
     assert "raise max_items_per_unit" in message
     assert "raise shards" not in message
     converted = convert_seed(
@@ -843,13 +886,16 @@ def test_self_loops_are_dropped_and_counted() -> None:
         [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}],
         [
             {"source": "a", "target": "a", "type": "BUYS"},
+            {"source": "a", "target": "a", "type": "BUYS", "weight": 2},
             {"source": "a", "target": "b", "type": "BUYS"},
         ],
     )
 
     conversion = convert_seed(graph, _settings(), _schema())
 
-    assert conversion.stats.self_loops_dropped == 1
+    # Each dropped as read: never merged, typed or checked against the schema.
+    assert conversion.stats.self_loops_dropped == 2
+    assert conversion.stats.duplicate_edges_merged == 0
     assert conversion.stats.edges == 1
 
 
@@ -880,6 +926,24 @@ def test_seed_node_rules() -> None:
 
 
 @pytest.mark.parametrize(
+    ("model", "field", "cap"),
+    [
+        (SeedNode, "name", MAX_NAME_CHARS),
+        (SeedNode, "type", MAX_TYPE_CHARS),
+        (SeedNode, "type_iri", MAX_IRI_CHARS),
+        (SeedNode, "iri", MAX_IRI_CHARS),
+        (SeedEdge, "type", MAX_TYPE_CHARS),
+        (SeedEdge, "predicate_iri", MAX_IRI_CHARS),
+    ],
+)
+def test_names_types_and_iris_are_capped(model: Any, field: str, cap: int) -> None:
+    ends = {"id": "v1"} if model is SeedNode else {"source": "a", "target": "b"}
+    assert len(getattr(model(**ends, **{field: "x" * cap}), field)) == cap
+    with pytest.raises(ValidationError, match=f"at most {cap} characters"):
+        model(**ends, **{field: "x" * (cap + 1)})
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"name": "Procure"},
@@ -904,3 +968,104 @@ def test_settings_are_frozen_and_order_free() -> None:
     assert settings.document_filters == {"a": 2, "b": 1, "seed_graph": "procure"}
     with pytest.raises(TypeError):
         settings.filters["c"] = 3  # type: ignore[index]
+
+
+def test_a_nodes_own_confidence_beats_the_seed_default_into_its_record() -> None:
+    conversion = convert_seed(
+        _graph([{"id": "a", "name": "Alpha", "confidence": 0.4}, {"id": "b"}]),
+        _settings(confidence=0.9),
+        _schema("off"),
+    )
+
+    by_id = {s["id"]: s["confidence"] for s in _statements(conversion)}
+    assert by_id == {"a": 0.4, "b": 0.9}
+    (document,) = conversion.documents()
+    parsed = {
+        e.name: e.confidence
+        for unit in seed_text_units(document)
+        for e in parse_seed_unit(unit).entities
+    }
+    assert parsed == {"Alpha": 0.4, "b": 0.9}
+
+
+def test_a_seed_of_exactly_max_nodes_converts() -> None:
+    conversion = convert_seed(
+        _graph(_catalog(3)), _settings(max_nodes=3), _schema("off")
+    )
+
+    assert conversion.stats.nodes == 3
+    with pytest.raises(SeedGraphError, match="max_nodes"):
+        convert_seed(_graph(_catalog(4)), _settings(max_nodes=3), _schema("off"))
+
+
+def test_a_description_of_exactly_the_limit_is_not_cut() -> None:
+    text = "word " * 4 + "word"  # 24 characters
+
+    def described(limit: int) -> str:
+        conversion = convert_seed(
+            _graph([{"id": "a", "description": text}]),
+            _settings(max_description_chars=limit),
+            _schema("off"),
+        )
+        assert conversion.stats.descriptions_truncated == int(limit < len(text))
+        return str(_statements(conversion)[0]["description"])
+
+    assert described(len(text)) == text
+    assert described(len(text) - 1) == "word word word word…"
+
+
+def test_edge_weights_are_clamped_as_extracted_ones_are() -> None:
+    conversion = convert_seed(
+        _graph(
+            [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+            [
+                {"source": "a", "target": "b", "type": "BUYS", "weight": 1e12},
+                {"source": "a", "target": "c", "type": "BUYS", "weight": 1e-12},
+            ],
+        ),
+        _settings(),
+        _schema("off"),
+    )
+
+    weights = {
+        s["target"]: s["weight"] for s in _statements(conversion) if s["kind"] == "edge"
+    }
+    assert weights == {"b": 1e9, "c": 0.0}
+
+
+def test_duplicate_edges_merge_by_type_key_in_a_canonical_order() -> None:
+    # "ships to" and "SHIPS_TO" share a type key: one edge, the smallest
+    # label and IRI, weights added; later edges of the canonical order (by
+    # their whole statement, so "a" before "b") win a property.
+    edges = [
+        {
+            "source": "a",
+            "target": "b",
+            "type": "ships to",
+            "predicate_iri": EX + "shipsB",
+            "description": "b",
+            "weight": 2,
+            "properties": {"k": "from b", "only_b": 1},
+        },
+        {
+            "source": "a",
+            "target": "b",
+            "type": "SHIPS_TO",
+            "predicate_iri": EX + "shipsA",
+            "description": "a",
+            "weight": 1,
+            "properties": {"k": "from a", "only_a": 1},
+        },
+    ]
+    for ordered in (edges, edges[::-1]):
+        conversion = convert_seed(
+            _graph([{"id": "a"}, {"id": "b"}], ordered), _settings(), _schema("off")
+        )
+
+        (edge,) = [s for s in _statements(conversion) if s["kind"] == "edge"]
+        assert conversion.stats.duplicate_edges_merged == 1
+        assert edge["type"] == "SHIPS_TO"
+        assert edge["predicate_iri"] == EX + "shipsA"
+        assert edge["weight"] == 3.0
+        assert edge["description"] == "a\nb"
+        assert edge["properties"] == {"k": "from b", "only_a": 1, "only_b": 1}

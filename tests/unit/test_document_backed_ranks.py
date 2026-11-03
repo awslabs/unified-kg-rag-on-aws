@@ -48,6 +48,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     TextUnit,
 )
+from unified_kg_rag.shared.exceptions import PipelineStageError
 
 pytestmark = pytest.mark.unit
 
@@ -243,6 +244,44 @@ def test_another_seed_only_edge_of_the_pair_does_not_keep_the_link() -> None:
     assert [e.rank for e in entities] == [1]
 
 
+def test_a_stored_edge_under_its_old_id_is_demoted_by_its_rekeyed_write() -> None:
+    # A rename rekeys the stored r-old to r-new, written seed-only.
+    manager, graph = _manager()
+    stored = _rel("r-old", "a", "b", ["u1", SEED])
+    _store(graph, [stored])
+
+    links = manager._demoted_links(
+        "default", [_rel("r-new", "a", "b", [SEED])], [stored], {"r-old": "r-new"}, ()
+    )
+    assert links == {frozenset(("a", "b"))}
+
+
+def test_a_stored_seed_only_edge_written_seed_only_is_not_demoted() -> None:
+    # Its stored copy never counted: nothing changes.
+    manager, graph = _manager()
+    stored = _rel("r-ab", "a", "b", [SEED])
+    _store(graph, [stored])
+
+    links = manager._demoted_links(
+        "default", [_rel("r-ab", "a", "b", [SEED, SEED_2])], [stored], {}, ()
+    )
+    assert links == set()
+
+
+def test_a_dropped_document_edge_of_the_pair_does_not_keep_the_link() -> None:
+    manager, graph = _manager()
+    stored = _rel("r-ab", "a", "b", ["u1", SEED])
+    _store(graph, [stored, _rel("r-ba", "b", "a", ["u3"], "PAYS")])
+
+    def demoted(dropped: tuple[str, ...]) -> set[frozenset[str]]:
+        return manager._demoted_links(
+            "default", [_rel("r-ab", "a", "b", [SEED])], [stored], {}, dropped
+        )
+
+    assert demoted(()) == set()
+    assert demoted(("r-ba",)) == {frozenset(("a", "b"))}
+
+
 def test_without_a_seed_only_edge_nothing_more_is_read(mocker) -> None:
     manager, graph = _manager()
     _store(graph, [_rel("r-ab", "a", "b", ["u1"])])
@@ -348,6 +387,24 @@ def test_report_rank_and_entity_order_count_document_backed_edges() -> None:
     assert {first["source"], first["target"]} == {"Vendor", "Buyer"}
 
 
+def test_an_edge_with_one_document_relationship_counts_in_the_degrees() -> None:
+    # One graph edge carries both relationships of the pair: the document
+    # one keeps it counted beside a seed-only one of another type.
+    detector = _detector()
+    detector.graph = GraphBuilder(
+        [
+            Entity(id="v", name="Vendor", type="ORG", text_unit_ids=["u1", SEED]),
+            Entity(id="b", name="Buyer", type="ORG", text_unit_ids=["u1", SEED]),
+        ],
+        [
+            _rel("r-doc", "v", "b", ["u1"], "SUPPLIES"),
+            _rel("r-seed", "v", "b", [SEED], "SHIPS_TO"),
+        ],
+    ).build()
+
+    assert detector._document_degrees() == {"v": 1, "b": 1}
+
+
 def test_the_degrees_follow_the_graph() -> None:
     detector = _detector()
     detector.graph = _seeded_graph()
@@ -422,6 +479,11 @@ def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf"])
     _, _, metrics = stage._execute_core(context)
     assert metrics is not None and metrics["communities_seed_only"] == 2
+    # Both evidenced ones failing is 100%, over the limit; over all four it
+    # would be 50%, within it.
+    stage, context, _ = _community_stage(mocker, communities, failed=["leaf", "other"])
+    with pytest.raises(PipelineStageError, match="for 2 of 2 communities"):
+        stage._execute_core(context)
 
 
 def test_without_seed_units_every_community_is_reported(mocker) -> None:
