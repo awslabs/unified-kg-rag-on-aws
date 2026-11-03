@@ -353,10 +353,13 @@ async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(
     )
 
     llm_configs = [c for ch in factory.chains for c in ch.configs]
+    # The entity extraction is auto's speculative one (search.
+    # auto_speculative_extraction), started alongside the router for local.
     assert {cls for cls, _ in factory.calls} == {
         StrategySelectionPrompt,
         TranslationPrompt,
         KeywordsExtractionPrompt,
+        EntityExtractionPrompt,
     }
     for received in [*llm_configs, *strategy_configs]:
         manager = received["callbacks"]

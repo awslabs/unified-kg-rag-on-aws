@@ -52,9 +52,11 @@ from unified_kg_rag.domain.models.config import (
     TransientRetryConfig,
 )
 from unified_kg_rag.ports.model_factory import (
+    EFFORT_THINKING_TOKENS,
     EmbeddingModelInfo,
     LanguageModelInfo,
     RerankModelInfo,
+    ceiled_output_tokens,
     effective_max_output_tokens,
 )
 from unified_kg_rag.shared import (
@@ -719,6 +721,14 @@ class BedrockLanguageModelFactory(
             ),
             model_info,
         )
+        # A short-answer query prompt caps it (search.output_ceilings), with
+        # room left for the request's reasoning.
+        if not kwargs.get("max_tokens") and (ceiling := kwargs.get("output_ceiling")):
+            final_max_tokens = ceiled_output_tokens(
+                final_max_tokens,
+                int(ceiling),
+                self._thinking_tokens(model_info, **kwargs),
+            )
         config = self._build_base_config(
             resolved_model_id, is_cross_region, model_info, **kwargs
         )
@@ -879,6 +889,21 @@ class BedrockLanguageModelFactory(
             "thinking": {"type": "adaptive"},
             "output_config": {"effort": effort},
         }
+
+    def _thinking_tokens(self, model_info: LanguageModelInfo, **kwargs: Any) -> int:
+        """The reasoning budget of a request, for sizing an output ceiling:
+        the manual ``budget_tokens``, or the effort level's
+        ``EFFORT_THINKING_TOKENS`` (adaptive thinking, OpenAI reasoning); 0
+        when the request does not reason."""
+        if not self._should_enable_thinking(
+            kwargs.get("enable_thinking", False), model_info
+        ):
+            return 0
+        if model_info.provider == "openai" or model_info.uses_adaptive_thinking:
+            return EFFORT_THINKING_TOKENS[self._resolve_effort(model_info, **kwargs)]
+        return int(
+            kwargs.get("thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS)
+        )
 
     def _resolve_effort(self, model_info: LanguageModelInfo, **kwargs: Any) -> str:
         """Pick the effort level and validate it.

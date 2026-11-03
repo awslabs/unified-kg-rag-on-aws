@@ -420,7 +420,11 @@ models:
   미리 확보하므로, 모델 최대값을 요청하면 동시 수집 호출이 스로틀링됩니다.
   `aws.bedrock.default_max_output_tokens`가 16384인 이유입니다. 출력이 긴 프롬프트는 더
   높은 하한을 계산하고 그 값이 우선하며(기본으로 그래프 추출과 gleaning 23192, 문서 번역
-  18992, 주장 29792), 청크당 한도를 올리면 함께 올라갑니다.
+  18992, 주장 29792), 청크당 한도를 올리면 함께 올라갑니다. 답이 짧은 질의 호출은 더 적게
+  요청합니다(`search.output_ceilings`, 각 4096. 라우터, 질의 엔티티·키워드 추출, 동적 선택의
+  리포트 평가. 답변 구간 추출기는 `evaluation.answer_span_output_ceiling`). 다만 호출의 사고
+  (thinking) 예산에 1024를 더한 값보다 작게 요청하지 않으므로(effort low는 2048, high는
+  8192), `auto` 질의가 확보하는 출력 토큰은 49k에서 약 29k로 줄어듭니다.
 - 선별된 모델, 요청 형식, 프롬프트 캐싱, `aws.bedrock.model_overrides`는
   [모델 카탈로그](./models.md)에 있습니다.
 
@@ -771,7 +775,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
-| `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. |
+| `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 후보 전략이 읽는 엔티티·키워드 추출과 질의 번역을 라우터와 동시에 실행하므로(`search.auto_speculative_extraction`), local이나 mix로 분기한 `auto`는 그 전략을 직접 고른 질의와 걸리는 시간이 같습니다. 분기한 전략이 읽지 않는 추출은 취소하거나 버립니다(기본 설정에서 질의마다 fast 모델 호출 1회, global로 분기하면 2회). |
 
 **LightRAG(이중 레벨 키워드):**
 
@@ -793,6 +797,30 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 `vector`는 upstream LightRAG의 기본값처럼 인용된 청크 중 질의와 가장 잘 맞는 청크를
 엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 평가로 두 방식을 비교하기 전까지
 기본값은 `weight`입니다.
+
+### 답변 형식
+
+모든 전략은 기본으로 간결한 답변 프롬프트를 씁니다. 한 문장으로 바로 답한 뒤 근거를
+짧게 붙입니다(`custom_prompts.answer_generation_*`). `search.answer_prompt_style`로
+전략별로 포괄적(comprehensive) 프롬프트를 고를 수 있습니다. MS GraphRAG의 global reduce
+프롬프트를 본뜬 것으로, 핵심 내용을 모두 설명하는 여러 문단의 마크다운 답변을
+씁니다(`custom_prompts.comprehensive_answer_*`).
+
+```yaml
+search:
+  answer_prompt_style: {global: comprehensive, drift: comprehensive}
+```
+
+`auto`는 분기한 전략의 형식을 따릅니다. 평가로 두 형식을 비교하기 전까지 간결한 형식이
+기본값입니다. `answer_match` 점수는 제목이 아닌 첫 줄을 읽으므로(`evaluation.answer_span`)
+포괄적 답변은 품질과 관계없이 정확 일치(exact match) 점수가 낮게 나옵니다.
+
+global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 리포트를 붙여 답변 모델에
+넘깁니다. `search.global_search.evidence_tokens`는 이 리포트 본문의 토큰 수를 제한합니다
+(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). null(기본값)은 컨텍스트 예산이
+허용하는 만큼 넣으며, 단면이 크면 global 질의 입력 토큰의 대부분을 차지합니다. `0`은 MS
+GraphRAG의 reduce 단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
+내용은 모델 출력이기 때문입니다).
 
 ### 예시
 
@@ -1414,7 +1442,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 
 - `strategies.<s>.metrics.<evaluator>/<metric>`: 질의별 반복 평균을 질의 전체로 평균한
   값과 `repeat_stdev`(실행 간 잡음)입니다. `routed_strategies`는 `auto`가 어떻게
-  분기했는지 보여 줍니다.
+  분기했는지 보여 줍니다. 체인은 질문마다 엔티티와 키워드를 한 번만 추출하므로
+  (`search.query_extraction_cache_size`, 질문 1024개), 반복 실행과 이를 읽는 전략(`mix`와
+  `hybrid`는 키워드, `local`은 엔티티)은 같은 엔티티·키워드로 검색하고, 실행 간 잡음은
+  검색과 답변에서만 생깁니다.
 - `deltas_vs_baseline.<s>.<metric>`: 두 전략이 모두 채점한 질의에서 첫 전략과 짝지어
   비교한 값입니다. `mean_delta`, 95% 짝지은 부트스트랩 구간(`ci_low`/`ci_high`. 2,000번
   재표집, 시드 0), `wins`/`ties`/`losses`, 질의별 차이, `unpaired`가 있습니다. 답변

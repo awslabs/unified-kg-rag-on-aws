@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import contextvars
+import hashlib
 import json
 import re
 import threading
@@ -10,6 +11,7 @@ import time
 import unicodedata
 import uuid
 import weakref
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
@@ -21,7 +23,6 @@ from langchain_core.output_parsers import (
 )
 from langchain_core.runnables import (
     Runnable,
-    RunnableBranch,
     RunnableConfig,
     RunnableLambda,
     RunnablePassthrough,
@@ -101,6 +102,7 @@ from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
+    ComprehensiveAnswerPrompt,
     EntityExtractionPrompt,
     KeywordsExtractionPrompt,
     QueryRewritePrompt,
@@ -133,6 +135,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
+from unified_kg_rag.shared.utils.concurrency import discard
 
 if TYPE_CHECKING:
     import boto3
@@ -485,6 +488,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
         self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
+        # Query entity and keyword extractions by question, language, model
+        # and prompt (search.query_extraction_cache_size): repeats and the
+        # arms of a comparison reuse them.
+        self._extractions = _ExtractionCache(
+            self.config.search.query_extraction_cache_size
+        )
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
@@ -515,10 +524,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         base_chain: Runnable = (
             RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(standalone_query=self._rewrite_query_step)
-            | RunnableLambda(self._resolve_strategy)
-            | RunnablePassthrough.assign(
-                processed_query=self._query_processing_branch()
-            )
+            | RunnableLambda(self._route_and_process_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
@@ -546,9 +552,58 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         return base_chain | rag_branch
 
-    async def _resolve_strategy(
+    async def _route_and_process_step(
         self, state: dict[str, Any], config: RunnableConfig | None = None
     ) -> dict[str, Any]:
+        """Resolve the strategy (auto routing), then process the query.
+
+        One step, so the extractions an auto query starts alongside its
+        router call (``search.auto_speculative_extraction``) never outlive
+        it. One the resolved strategy does not read is never waited for: it
+        runs on while the query processing the strategy needs does (and, if
+        it answers by then, fills the extraction cache for a later query),
+        and is cancelled when the step returns.
+        """
+        processing = state.get("enable_query_processing", True)
+        prefetch: dict[str, asyncio.Future[Any]] | None = (
+            {}
+            if processing and self.config.search.auto_speculative_extraction
+            else None
+        )
+        try:
+            state = await self._resolve_strategy(state, config, prefetch=prefetch)
+            state["processed_query"] = (
+                await self._process_query_step(state, config, prefetched=prefetch)
+                if processing
+                else self._simple_query(state)
+            )
+            return state
+        finally:
+            if prefetch:
+                await discard(list(prefetch.values()))
+
+    def _simple_query(self, inputs: dict[str, Any]) -> ProcessedQuery:
+        """The query as is (``enable_query_processing`` off): no LLM call."""
+        return ProcessedQuery(
+            original_query=inputs["query"],
+            standalone_query=inputs.get("standalone_query"),
+            final_query=self._question(inputs),
+        )
+
+    async def _resolve_strategy(
+        self,
+        state: dict[str, Any],
+        config: RunnableConfig | None = None,
+        *,
+        prefetch: dict[str, asyncio.Future[Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Set ``resolved_strategy``: the requested one, or auto's route.
+
+        Given ``prefetch``, an auto query that calls the router first starts
+        the query processing calls the routable strategies may read (see
+        :meth:`_start_query_inputs`) into it, to run alongside the router.
+        The caller owns the tasks (awaits or discards them).
+        """
         strategy = state.get("search_strategy", SearchStrategy.AUTO)
 
         if strategy != SearchStrategy.AUTO:
@@ -563,9 +618,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # Nothing to choose between: no router call.
             state["resolved_strategy"] = routable[0]
             return state
+        if prefetch is not None:
+            prefetch.update(
+                self._start_query_inputs(
+                    state,
+                    entities=any(
+                        QueryInput.ENTITIES in get_strategy_spec(s).query_inputs
+                        for s in routable
+                    ),
+                    keywords=any(
+                        QueryInput.DUAL_KEYWORDS in get_strategy_spec(s).query_inputs
+                        for s in routable
+                    ),
+                    config=config,
+                )
+            )
         try:
             router = self._get_chain_for_prompt(
-                StrategySelectionPrompt, StrOutputParser()
+                StrategySelectionPrompt,
+                StrOutputParser(),
+                output_ceiling=self.config.search.output_ceilings.strategy_selection,
             )
             query = self._question(state)
             selected_strategy_str = await router.ainvoke(
@@ -640,6 +712,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             StrategySelectionPrompt: self.config.model_id(ModelRole.STRATEGY_SELECTION),
             QueryRewritePrompt: self.config.model_id(ModelRole.QUERY_REWRITE),
             AnswerGenerationPrompt: self.config.model_id(ModelRole.ANSWER_GENERATION),
+            ComprehensiveAnswerPrompt: self.config.model_id(
+                ModelRole.ANSWER_GENERATION
+            ),
         }
         model_id = model_id_map.get(prompt_class)
         if model_id is None:
@@ -663,81 +738,115 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 )
             return cached
 
-    def _query_processing_branch(self) -> Runnable:
-        def _simple_query(inputs: dict[str, Any]) -> ProcessedQuery:
-            return ProcessedQuery(
-                original_query=inputs["query"],
-                standalone_query=inputs.get("standalone_query"),
-                final_query=self._question(inputs),
-            )
+    def _query_language(self, inputs: dict[str, Any]) -> tuple[str, bool]:
+        """The language the query is processed into, and whether its
+        translation is skipped.
 
-        return RunnableBranch(
-            (
-                lambda x: (
-                    x.get("enable_query_processing", True)
-                    if isinstance(x, dict)
-                    else True
-                ),
-                self._process_query_step,
-            ),
-            RunnableLambda(_simple_query),
+        Translation is skipped when it would be a no-op: no explicit target
+        was requested AND the corpus is same-language (mirrors the ingestion
+        side's TranslationConfig.is_noop skip). This avoids paying an LLM
+        call per query for e.g. an English-only or Japanese-only corpus, and
+        — more importantly — avoids the failure mode where the translator
+        LLM returns a meta-response ("I notice the text you...") for a query
+        already in the target language, which would then be used verbatim as
+        the search query.
+        """
+        requested_language = inputs.get("target_language")
+        target_language = language_name(
+            requested_language or self.config.processing.translation.target_language
+        )
+        skip_translation = (
+            requested_language is None and self.config.processing.translation.is_noop
+        )
+        return target_language, skip_translation
+
+    def _start_query_inputs(
+        self,
+        inputs: dict[str, Any],
+        *,
+        entities: bool,
+        keywords: bool,
+        translation: bool = True,
+        config: RunnableConfig | None,
+    ) -> dict[str, asyncio.Future[Any]]:
+        """Start the query processing calls as tasks: the entity and keyword
+        extractions asked for, and the translation (``translation``) unless
+        the query needs none (:meth:`_query_language`).
+
+        Their errors surface when they are awaited (``_process_query_step``).
+        """
+        question = self._question(inputs)
+        target_language, skip_translation = self._query_language(inputs)
+        coroutines: dict[str, Awaitable[Any]] = {}
+        if entities:
+            coroutines["entities"] = self._extract_query_entities(
+                question, target_language, config
+            )
+        # The keyword prompt writes its keywords in the target language
+        # itself, so it reads the untranslated question and runs alongside
+        # the translation instead of after it.
+        if keywords:
+            coroutines["keywords"] = self._extract_dual_keywords(
+                question, target_language, config
+            )
+        if translation and not skip_translation:
+            coroutines["translation"] = self._translate_query(
+                question, target_language, config
+            )
+        return {
+            name: asyncio.ensure_future(coroutine)
+            for name, coroutine in coroutines.items()
+        }
+
+    async def _translate_query(
+        self, query: str, target_language: str, config: RunnableConfig | None
+    ) -> str:
+        translator = self._get_chain_for_prompt(TranslationPrompt, StrOutputParser())
+        return str(
+            await translator.ainvoke(
+                {"query": query, "target_language": target_language}, config
+            )
         )
 
     async def _process_query_step(
-        self, inputs: dict[str, Any], config: RunnableConfig | None = None
+        self,
+        inputs: dict[str, Any],
+        config: RunnableConfig | None = None,
+        *,
+        prefetched: dict[str, asyncio.Future[Any]] | None = None,
     ) -> ProcessedQuery:
+        """Translate the query and extract what the resolved strategy reads.
+
+        A call already started for this query (``prefetched``, auto's
+        speculative extractions) is awaited instead of started again; it is
+        taken out of ``prefetched``.
+        """
         original_query = inputs.get("query", "")
         standalone_query = inputs.get("standalone_query")
         question = standalone_query or original_query
+        prefetched = {} if prefetched is None else prefetched
 
         try:
-            requested_language = inputs.get("target_language")
-            target_language = language_name(
-                requested_language or self.config.processing.translation.target_language
-            )
-
-            # Skip query translation when it would be a no-op: no explicit target
-            # was requested AND the corpus is same-language (mirrors the ingestion
-            # side's TranslationConfig.is_noop skip). This avoids paying an LLM
-            # call per query for e.g. an English-only or Japanese-only corpus, and
-            # — more importantly — avoids the failure mode where the translator
-            # LLM returns a meta-response ("I notice the text you...") for a query
-            # already in the target language, which would then be used verbatim as
-            # the search query.
-            skip_translation = (
-                requested_language is None
-                and self.config.processing.translation.is_noop
-            )
-
             # The strategy is resolved (AUTO routing included) before this step,
             # so only pay for the LLM extractions the resolved strategy reads.
-            needs_entities = self._needs_query_entities(inputs)
-            needs_keywords = self._needs_dual_keywords(inputs)
-
-            tasks: dict[str, Any] = {}
-            if needs_entities:
-                entity_extractor = self._get_chain_for_prompt(
-                    EntityExtractionPrompt, CommaSeparatedListOutputParser()
+            needs = {
+                "entities": self._needs_query_entities(inputs),
+                "keywords": self._needs_dual_keywords(inputs),
+            }
+            tasks: dict[str, Any] = {
+                name: prefetched.pop(name)
+                for name in ("entities", "keywords", "translation")
+                if name in prefetched and needs.get(name, True)
+            }
+            tasks.update(
+                self._start_query_inputs(
+                    inputs,
+                    entities=needs["entities"] and "entities" not in tasks,
+                    keywords=needs["keywords"] and "keywords" not in tasks,
+                    translation="translation" not in tasks,
+                    config=config,
                 )
-                tasks["entities"] = entity_extractor.ainvoke(
-                    {"query": question, "target_language": target_language},
-                    config,
-                )
-            # The keyword prompt writes its keywords in the target language
-            # itself, so it reads the untranslated question and runs alongside
-            # the translation instead of after it.
-            if needs_keywords:
-                tasks["keywords"] = self._extract_dual_keywords(
-                    question, target_language, config
-                )
-            if not skip_translation:
-                translator = self._get_chain_for_prompt(
-                    TranslationPrompt, StrOutputParser()
-                )
-                tasks["translation"] = translator.ainvoke(
-                    {"query": question, "target_language": target_language},
-                    config,
-                )
+            )
 
             results = (
                 await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -863,6 +972,59 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return False
         return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
 
+    async def _extract_query_entities(
+        self, query: str, target_language: str, config: RunnableConfig | None
+    ) -> list[str]:
+        """The entities the query names (entity extraction), from the
+        extraction cache when this question was extracted before."""
+        key = self._extraction_key(EntityExtractionPrompt, query, target_language)
+        if (cached := self._cached_extraction(key)) is not None:
+            return list(cached)
+        extractor = self._get_chain_for_prompt(
+            EntityExtractionPrompt,
+            CommaSeparatedListOutputParser(),
+            output_ceiling=self.config.search.output_ceilings.query_extraction,
+        )
+        entities = await extractor.ainvoke(
+            {"query": query, "target_language": target_language}, config
+        )
+        if not isinstance(entities, list):
+            return []
+        self._cache_extraction(key, tuple(entities))
+        return entities
+
+    def _extraction_key(
+        self, prompt_class: type[BasePrompt], query: str, target_language: str
+    ) -> tuple[str, ...]:
+        """The extraction cache key: the prompt, its model, a digest of its
+        templates (a custom_prompts override is another key), the question
+        and the target language."""
+        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
+        templates = hashlib.sha256(
+            f"{resolved.system_prompt_template}\0{resolved.human_prompt_template}".encode()
+        ).hexdigest()
+        return (
+            prompt_class.__name__,
+            self.config.model_id(ModelRole.ENTITY_EXTRACTION),
+            templates,
+            query,
+            target_language,
+        )
+
+    def _cached_extraction(self, key: tuple[str, ...]) -> Any:
+        cache: _ExtractionCache | None = getattr(self, "_extractions", None)
+        hit = cache.get(key) if cache is not None else None
+        if hit is not None:
+            logger.debug(
+                "Reused the cached %s for query %s", key[0], text_digest(key[3])
+            )
+        return hit
+
+    def _cache_extraction(self, key: tuple[str, ...], value: Any) -> None:
+        cache: _ExtractionCache | None = getattr(self, "_extractions", None)
+        if cache is not None:
+            cache.put(key, value)
+
     async def _extract_dual_keywords(
         self,
         query: str,
@@ -875,8 +1037,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         empty lists on failure when ``ignore_errors`` is set.
         """
         try:
+            key = self._extraction_key(KeywordsExtractionPrompt, query, target_language)
+            if (cached := self._cached_extraction(key)) is not None:
+                high, low = cached
+                return list(high), list(low)
             extractor = self._get_chain_for_prompt(
-                KeywordsExtractionPrompt, StrOutputParser()
+                KeywordsExtractionPrompt,
+                StrOutputParser(),
+                output_ceiling=self.config.search.output_ceilings.query_extraction,
             )
             raw = await extractor.ainvoke(
                 {"query": query, "target_language": target_language}, config
@@ -884,7 +1052,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # Strict: with ignore_errors=False a broken keyword extraction
             # surfaces instead of silently yielding empty keyword lists.
             payload = parse_llm_json(raw, strict=True)
-            return self._keyword_lists(payload)
+            hl_keywords, ll_keywords = self._keyword_lists(payload)
+            self._cache_extraction(key, (tuple(hl_keywords), tuple(ll_keywords)))
+            return hl_keywords, ll_keywords
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -1509,7 +1679,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         enable_thinking = state.get("enable_thinking", False)
         answer_chain = self._get_chain_for_prompt(
-            AnswerGenerationPrompt,
+            self._answer_prompt(state.get("resolved_strategy")),
             StrOutputParser(),
             enable_thinking=enable_thinking,
         )
@@ -1521,6 +1691,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             | answer_chain
         )
+
+    def _answer_prompt(self, strategy: SearchStrategy | None) -> type[BasePrompt]:
+        """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
+        the concise default, or the comprehensive one."""
+        style = (
+            self.config.search.answer_prompt_style.get(strategy)
+            if strategy is not None
+            else None
+        )
+        if style == "comprehensive":
+            return ComprehensiveAnswerPrompt
+        return AnswerGenerationPrompt
 
     def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
         """The question and context the answer model was given, or ``None``
@@ -2235,6 +2417,32 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         state["answer"] = "".join(chunks)
         async with deadline.scope():
             await self._save_memory(self._format_output_step(state), rag_input)
+
+
+class _ExtractionCache:
+    """A bounded, thread-safe LRU of query extractions (immutable values);
+    a size of 0 keeps nothing."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+        self._entries: OrderedDict[tuple[str, ...], Any] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, ...]) -> Any:
+        with self._lock:
+            value = self._entries.get(key)
+            if value is not None:
+                self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: tuple[str, ...], value: Any) -> None:
+        if self._size <= 0:
+            return
+        with self._lock:
+            self._entries[key] = value
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._size:
+                self._entries.popitem(last=False)
 
 
 # The grounding context of the answer an ``_ainvoke`` call generates, handed

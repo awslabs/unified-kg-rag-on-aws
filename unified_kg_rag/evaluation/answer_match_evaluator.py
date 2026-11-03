@@ -270,6 +270,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 StrOutputParser(),
                 custom_prompts=self.config.custom_prompts,
                 model_purpose=ModelPurpose.EVALUATION,
+                output_ceiling=self.config.evaluation.answer_span_output_ceiling,
                 **judge_model_kwargs(self.config),
             )
 

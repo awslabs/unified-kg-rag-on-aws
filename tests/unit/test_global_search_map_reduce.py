@@ -112,6 +112,7 @@ def _strategy(
     reducer: Any = None,
     token_cost: int = 10,
     reduce_with_llm: bool = False,
+    evidence_tokens: int | None = None,
 ) -> GlobalSearchStrategy:
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
     strat.global_search_config = SimpleNamespace(
@@ -126,6 +127,7 @@ def _strategy(
         use_dynamic_selection=False,
         community_depth=2,
         text_unit_slots=0,
+        evidence_tokens=evidence_tokens,
     )
     strat.retrievers = {}
     strat.ignore_errors = ignore_errors
@@ -948,3 +950,57 @@ async def test_reduce_failure_degrades_with_ignore_errors(path: str) -> None:
     # The reports pass through without a synthesis; the failure is recorded.
     assert out == results
     assert degraded == ["RuntimeError"]
+
+
+# --------------------------------------------------------------------------- #
+# evidence_tokens — the cited report text after the key points
+# --------------------------------------------------------------------------- #
+
+
+def _ranked_three() -> list[str]:
+    return [
+        json.dumps(
+            {
+                "points": [
+                    {"description": "a", "score": 90, "report_ids": ["1"]},
+                    {"description": "b", "score": 60, "report_ids": ["2"]},
+                    {"description": "c", "score": 30, "report_ids": ["3"]},
+                ]
+            }
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("evidence_tokens", "kept"),
+    [(None, ["c0", "c1", "c2"]), (25, ["c0", "c1"]), (10, ["c0"]), (9, []), (0, [])],
+)
+async def test_evidence_tokens_caps_the_cited_reports(
+    evidence_tokens: int | None, kept: list[str]
+) -> None:
+    # Each report costs 10 tokens: whole reports, best point first, until the
+    # next would exceed the cap; null keeps them all.
+    strat = _strategy(
+        map_batch_size=3, map_outputs=_ranked_three(), evidence_tokens=evidence_tokens
+    )
+    stats: dict[str, Any] = {}
+    out = await strat._apply_map_reduce(
+        _communities(3), SearchQuery(query="q"), stats=stats
+    )
+    assert out[0].source == "synthesized_key_points"
+    assert [r.source for r in out[1:]] == kept
+    if evidence_tokens is None:
+        assert "global_evidence_reports" not in stats
+    else:
+        assert stats["global_evidence_reports"] == len(kept)
+
+
+async def test_evidence_tokens_also_caps_the_reduce_call_path() -> None:
+    strat = _strategy(
+        map_batch_size=3,
+        map_outputs=_ranked_three(),
+        evidence_tokens=0,
+        reduce_with_llm=True,
+    )
+    out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
+    assert [r.source for r in out] == ["synthesized_summary"]

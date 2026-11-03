@@ -343,6 +343,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "observability": _neutral("telemetry"),
     "custom_prompts.answer_generation_system": _QUERY_PROMPT,
     "custom_prompts.answer_generation_human": _QUERY_PROMPT,
+    "custom_prompts.comprehensive_answer_system": _QUERY_PROMPT,
+    "custom_prompts.comprehensive_answer_human": _QUERY_PROMPT,
     "custom_prompts.entity_extraction_system": _QUERY_PROMPT,
     "custom_prompts.entity_extraction_human": _QUERY_PROMPT,
     "custom_prompts.keywords_extraction_system": _QUERY_PROMPT,

@@ -1171,7 +1171,8 @@ rather than as slower answers: `run-eval` keeps `processing.max_concurrency`
 queries in flight, each with up to `search.max_concurrency` model calls (the
 global map step, DRIFT). Lower `processing.max_concurrency` for the
 evaluation, lower `aws.bedrock.default_max_output_tokens` (it is reserved
-whether used or not), or ask for a higher quota; raising the deadline only
+whether used or not; the short query calls reserve `search.output_ceilings`
+instead), or ask for a higher quota; raising the deadline only
 lets queries queue longer. The `BedrockThrottling` alarm and the dashboard's
 throttle widget show whether this is the cause.
 

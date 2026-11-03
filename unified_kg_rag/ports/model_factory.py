@@ -263,6 +263,33 @@ def effective_max_output_tokens(
     return min(max(cap, min_output_tokens), model_info.max_output_tokens)
 
 
+# Reasoning tokens an adaptive-thinking (or OpenAI reasoning) request is
+# budgeted at each effort level when an output ceiling is sized: thinking
+# counts toward max_tokens, so a ceiling below it would cut the answer off.
+EFFORT_THINKING_TOKENS: dict[str, int] = {
+    "low": 2048,
+    "medium": 4096,
+    "high": 8192,
+    "xhigh": 16384,
+    "max": 32768,
+}
+# Answer tokens an output ceiling always leaves above the thinking budget.
+CEILING_ANSWER_TOKENS = 1024
+
+
+def ceiled_output_tokens(max_tokens: int, ceiling: int, thinking_tokens: int) -> int:
+    """max_tokens for a request whose prompt sets an ``output_ceiling``.
+
+    ``max_tokens`` (what the request would ask for without one) is lowered
+    to ``ceiling``, but never below the request's thinking budget
+    (``thinking_tokens``, 0 when it does not reason) plus
+    :data:`CEILING_ANSWER_TOKENS`: thinking counts toward max_tokens, and a
+    manual thinking budget must be below it. Never raised above
+    ``max_tokens``.
+    """
+    return min(max_tokens, max(ceiling, thinking_tokens + CEILING_ANSWER_TOKENS))
+
+
 # Generic over the model-id enum and the returned model type so each concrete
 # factory keeps its narrow id type (EmbeddingModelId etc.) WITHOUT breaking
 # structural conformance. A non-generic union here would be contravariantly
@@ -290,7 +317,9 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     ``model_purpose`` (a ``ModelPurpose``; unspecified means ``QUERY``): the
     built-in factories give query models the shorter request timeout of
     ``search.model_timeout_seconds``. A factory that does not use it ignores
-    it.
+    it. A language-model ``get_model`` may also receive ``output_ceiling``
+    (an int): the short-answer query prompts' cap on max_tokens, which the
+    built-in factories apply through :func:`ceiled_output_tokens`.
 
     Parameterized over the id enum, the model type and the record type, so a
     custom backend adapter can annotate
