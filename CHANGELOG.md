@@ -640,7 +640,7 @@ From 0.2.3 (or a `main` checkout since):
   `observability_secret_keys` inject Langfuse or OTLP credentials from
   Secrets Manager as task secrets. The runbook has what to do for each
   pipeline-run alarm, capacity sizing and the Neptune major-version
-  upgrade (#PR).
+  upgrade (#519).
 - Extraction schema settings under `processing.graph_extraction`:
   `entity_types` items may be `{label, description, iri}` mappings, and the
   new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
@@ -973,7 +973,7 @@ From 0.2.3 (or a `main` checkout since):
   instances keep maintenance in a set weekly window (Sunday 20:00-21:00
   UTC) and backups in a daily one (18:00-19:00 UTC) instead of windows
   Neptune picked; a deployed cluster moves to them on the next deploy,
-  without downtime (#PR).
+  without downtime (#519).
 - Documentation: the user guide, runbook and design doc were reorganized and
   describe the current release only; only `README.ko.md` and
   `docs/user-guide.ko.md` remain in Korean, and they link the English
