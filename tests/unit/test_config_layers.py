@@ -148,7 +148,10 @@ def _load(config_path: Path | None) -> Config:
 @pytest.fixture
 def local_file(tmp_path: Path) -> Path:
     path = tmp_path / "local.yaml"
-    path.write_text("backend: local\nlogging:\n  log_to_file: false\n", "utf-8")
+    path.write_text(
+        "backend: local\nlogging:\n  log_to_file: false\n  log_format: plain\n",
+        "utf-8",
+    )
     return path
 
 
@@ -250,7 +253,7 @@ def test_backend_switch_strips_the_preset_but_keeps_the_env(
     assert config.providers.graph.kind == "neptune"
     assert config.aws.neptune.endpoint is None  # the preset's localhost is gone
     assert config.aws.opensearch.endpoint == "env.example"
-    assert config.logging.log_to_file is False  # what the file set stays
+    assert config.logging.log_format == "plain"  # what the file set stays
 
 
 def test_cli_flag_wins_over_env_for_the_same_field(

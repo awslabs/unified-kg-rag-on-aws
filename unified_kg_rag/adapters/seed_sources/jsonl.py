@@ -57,7 +57,7 @@ def load_jsonl_seed(context: SeedSourceContext) -> SeedGraph:
 
     Raises:
         SeedGraphError: An option is unknown or invalid; ``secret_arn`` is
-            set; the path is a URL other than ``s3://``, is missing (or
+            set; the path is a URL other than ``file://`` or ``s3://``, is missing (or
             access is denied) or a directory without ``.jsonl`` files; the
             files hold more than ``max_bytes``; a line is too long, not
             UTF-8, not a JSON object, has an unknown ``kind`` or key, an

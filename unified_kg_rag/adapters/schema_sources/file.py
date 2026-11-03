@@ -27,9 +27,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.source_files.context import format_validation_errors
 from unified_kg_rag.adapters.source_files.locations import (
-    is_s3,
     read_source_bytes,
+    resolve_source_path,
     split_s3,
 )
 from unified_kg_rag.domain.models.schema import SchemaDocument
@@ -48,7 +49,8 @@ def load_schema_file(context: SchemaSourceContext) -> SchemaDocument:
 
     Raises:
         SchemaSourceError: No path is set, the path is a URL other than
-            ``s3://`` (an HTTP location needs a source registered for it),
+            ``file://`` or ``s3://`` (an HTTP location needs a source
+            registered for it),
             ``options`` or ``secret_arn`` is set, or the file is missing,
             unreadable (a directory or an S3 prefix, say; access denied),
             larger than :data:`MAX_S3_BYTES` in S3, not a YAML/JSON mapping,
@@ -60,21 +62,23 @@ def load_schema_file(context: SchemaSourceContext) -> SchemaDocument:
             "processing.graph_extraction.schema_source.path is required for "
             "kind 'file'"
         )
-    if "://" in source.path and not is_s3(source.path):
-        raise SchemaSourceError(
+    resolved = resolve_source_path(
+        source.path,
+        refusal=(
             f"Schema file '{context.location}' is a URL; kind 'file' reads a "
-            "local path or an s3:// object only. Copy the file next to the "
-            "config (or into the image, or S3), or register a schema source "
-            "for the location's scheme"
-        )
+            "local path (or a file:// URL) or an s3:// object only. Copy the "
+            "file next to the config (or into the image, or S3), or register "
+            "a schema source for the location's scheme"
+        ),
+    )
     if source.options or source.secret_arn:
         raise SchemaSourceError(
             "kind 'file' takes no schema_source.options or secret_arn; "
             "leave them unset"
         )
-    if is_s3(source.path):
-        return _load_s3(context, source.path)
-    path = Path(source.path)
+    if isinstance(resolved, str):
+        return _load_s3(context, resolved)
+    path = resolved
     if path.suffix.lower() not in _SUFFIXES:
         raise SchemaSourceError(
             f"Schema file '{path}' must end in {', '.join(_SUFFIXES)}"
@@ -118,7 +122,9 @@ def _document(name: str, suffix: str, text: str) -> SchemaDocument:
     try:
         return SchemaDocument.model_validate(data)
     except ValidationError as e:
-        raise SchemaSourceError(f"Invalid schema file '{name}': {_summary(e)}") from e
+        raise SchemaSourceError(
+            f"Invalid schema file '{name}': {format_validation_errors('', e)}"
+        ) from e
 
 
 def _parse(path: str, suffix: str, text: str) -> Any:
@@ -133,12 +139,3 @@ def _parse(path: str, suffix: str, text: str) -> Any:
             f"Schema file '{path}' must hold a mapping, got {type(data).__name__}"
         )
     return data
-
-
-def _summary(error: ValidationError) -> str:
-    """Each invalid key and why, without the rejected values."""
-    return "; ".join(
-        f"{'.'.join(str(part) for part in detail['loc']) or '<root>'}: "
-        f"{detail['msg']}"
-        for detail in error.errors(include_url=False, include_input=False)
-    )

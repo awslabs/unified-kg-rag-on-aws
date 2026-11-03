@@ -1052,6 +1052,18 @@ From 0.2.3 (or a `main` checkout since):
   without seed graphs too: the prompt of each community with such a
   member changes once, so its report misses the LLM cache once (#515,
   #523).
+- Every source kind that reads files (`schema_source` kinds `file` and
+  `owl`, seed kinds `jsonl`, `csv` and `rdf`) takes a local path written
+  as a `file://` URL (no host, or `localhost`), as `owl` alone did; any
+  other URL fails the load with the same message for each (#PR).
+- `logging.log_to_file` defaults to `false`: a CLI started in a directory
+  it cannot write (a read-only container root) failed creating `logs/`
+  before any work. The console carries every record; set it to `true` for
+  the dated `logging.log_file_path` file as before (#PR).
+- `langchain` is no longer a core dependency: nothing imports it, and it
+  pulled in LangGraph. The `eval` extra, whose ragas needs it, declares it
+  with the same `>=1.3.9` security floor, so a pip install of `[eval]`
+  gets the floor too (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

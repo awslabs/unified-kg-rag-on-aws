@@ -55,7 +55,8 @@ dependencies = [
     # `<1.0.0` ceiling made them unreachable. langchain-classic supplies the
     # legacy `langchain.*` modules that 1.x removed (evaluation, memory,
     # OutputFixingParser) and is a direct import, so it is declared here.
-    "langchain>=1.3.9,<2.0.0",
+    # `langchain` itself is not imported (it only pulls in langgraph); the
+    # eval extra, whose ragas brings it in, declares its security floor.
     # 1.8.1 is the first release that raises BedrockContextOverflowError (a
     # langchain-core ContextOverflowError) for a prompt longer than the model's
     # context; on older releases it is a plain ValidationException, which the
@@ -107,6 +108,10 @@ unstructured = [
 # enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
 # retrieval, answer_match) need none of it.
 eval = [
+    # Not imported here: ragas and langchain-community depend on it. 1.3.9 is
+    # the security floor of the LangChain 1.x line (see the langchain-core
+    # comment in dependencies), declared so a pip install of [eval] gets it.
+    "langchain>=1.3.9,<2.0.0",
     # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
     # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
     # langchain-community removed in 0.4 — see the ragas floor below.
@@ -317,6 +322,7 @@ python_functions = ["test_*"]
 # command line overrides this selector.
 addopts = '--tb=short --strict-markers -m "not aws"'
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 # Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
 # two minutes instead of letting it burn the whole CI job. The slowest test
 # takes a few seconds; override per test with @pytest.mark.timeout(n).

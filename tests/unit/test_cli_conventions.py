@@ -6,6 +6,7 @@ codes (``application/cli/conventions.py``)."""
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import re
@@ -1049,7 +1050,11 @@ def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
 
     def _interrupted_run(coro: object) -> None:
         # The runner has started (and chosen JSON) when the loop, waiting on
-        # I/O, gets the Ctrl-C.
+        # I/O, gets the Ctrl-C. Close the coroutine stoppable() wraps too: it
+        # never runs, so it would warn that it was never awaited.
+        inner = coro.cr_frame.f_locals.get("main")  # type: ignore[attr-defined]
+        if inspect.iscoroutine(inner):
+            inner.close()
         coro.close()  # type: ignore[attr-defined]
         json_output(argparse.Namespace(output_format="json"))
         raise KeyboardInterrupt

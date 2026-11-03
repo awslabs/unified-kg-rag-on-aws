@@ -24,33 +24,20 @@ the prompt and of the cache keys, so a reordering re-extracts the corpus.
 
 from __future__ import annotations
 
-import re
-import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TypeVar
 
-from unified_kg_rag.adapters.source_files.locations import redact_location
-from unified_kg_rag.domain.models.config import (
-    INLINE_SCHEMA_SOURCE,
-    Config,
-    SchemaSourceConfig,
+from unified_kg_rag.adapters.source_files.context import (
+    KIND_PATTERN,
+    KindRegistry,
+    SourceContextBase,
 )
+from unified_kg_rag.domain.models.config import INLINE_SCHEMA_SOURCE, SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
-if TYPE_CHECKING:
-    import boto3
 
-
-def _default_session(config: Config) -> boto3.Session:
-    import boto3
-
-    return boto3.Session(
-        profile_name=config.aws.profile_name, region_name=config.aws.region_name
-    )
-
-
-class SchemaSourceContext:
+class SchemaSourceContext(SourceContextBase[SchemaSourceConfig]):
     """What a schema loader is given; a
     :class:`.source_files.locations.SourceClientProvider`, so the shared
     location readers read its S3 objects.
@@ -63,60 +50,15 @@ class SchemaSourceContext:
             ...); its schema keys are not loaded yet.
     """
 
-    def __init__(
-        self,
-        source: SchemaSourceConfig,
-        config: Config,
-        *,
-        session_factory: Callable[[], boto3.Session] | None = None,
-    ) -> None:
-        """``session_factory`` builds the AWS session, once, on the first
-        :meth:`boto_session` (by default from ``aws.profile_name`` and
-        ``aws.region_name``), so a loader that makes no AWS call builds
-        none."""
-        self.source = source
-        self.config = config
-        self._session_factory = session_factory or (lambda: _default_session(config))
-        self._session: boto3.Session | None = None
-        self._lock = threading.Lock()
-
-    @property
-    def location(self) -> str:
-        """``source.path`` as logs and errors may show it
-        (:func:`redact_location`)."""
-        return redact_location(self.source.path)
-
-    def boto_session(self) -> boto3.Session:
-        """The run's AWS session, built on the first call."""
-        with self._lock:
-            if self._session is None:
-                self._session = self._session_factory()
-            return self._session
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        """A client of the run's session in the region the config sends
-        ``service_name`` to: ``aws.bedrock_region`` for the Bedrock
-        services, ``aws.region_name`` for every other one."""
-        region = (
-            self.config.aws.bedrock_region
-            if service_name.startswith("bedrock")
-            else self.config.aws.region_name
-        )
-        kwargs.setdefault("region_name", region)
-        # Any: the service name is only known at run time.
-        session: Any = self.boto_session()
-        return session.client(service_name, **kwargs)
-
 
 SchemaLoader = Callable[[SchemaSourceContext], SchemaDocument]
 LoaderT = TypeVar("LoaderT", bound=SchemaLoader)
 
-_REGISTRY: dict[str, SchemaLoader] = {}
+_KINDS: KindRegistry[SchemaLoader] = KindRegistry()
+_REGISTRY = _KINDS.loaders
 # Kind -> (module, how to install it) of the optional dependency its loader
 # imports.
-_REQUIRES: dict[str, tuple[str, str]] = {}
-# The form schema_source.kind takes (SchemaSourceConfig.kind).
-_KIND = re.compile(r"^[a-z][a-z0-9_]*$")
+_REQUIRES = _KINDS.requires
 
 
 def register_schema_source(
@@ -137,7 +79,7 @@ def register_schema_source(
         ValueError: ``kind`` is ``inline`` (the inline keys themselves) or
             not of the form ``schema_source.kind`` takes.
     """
-    if kind == INLINE_SCHEMA_SOURCE or not _KIND.match(kind):
+    if kind == INLINE_SCHEMA_SOURCE or not KIND_PATTERN.match(kind):
         raise ValueError(
             f"Cannot register a schema source as {kind!r}: a kind is "
             f"lower-case letters, digits and '_', and not "
@@ -145,11 +87,7 @@ def register_schema_source(
         )
 
     def decorator(loader: LoaderT) -> LoaderT:
-        _REGISTRY[kind] = loader
-        if requires is None:
-            _REQUIRES.pop(kind, None)
-        else:
-            _REQUIRES[kind] = requires
+        _KINDS.register(kind, loader, requires)
         return loader
 
     return decorator
@@ -161,7 +99,7 @@ def get_schema_source(kind: str) -> SchemaLoader:
     Raises:
         SchemaSourceError: Nothing is registered under ``kind``.
     """
-    loader = _REGISTRY.get(kind)
+    loader = _KINDS.get(kind)
     if loader is None:
         raise SchemaSourceError(
             f"Unknown processing.graph_extraction.schema_source.kind '{kind}'; "
@@ -172,9 +110,9 @@ def get_schema_source(kind: str) -> SchemaLoader:
 
 def schema_source_requirement(kind: str) -> tuple[str, str] | None:
     """The ``(module, how to install it)`` ``kind`` declared, or None."""
-    return _REQUIRES.get(kind)
+    return _KINDS.requirement(kind)
 
 
 def registered_schema_sources() -> list[str]:
     """The registered kinds, sorted (``inline`` is built in, not listed)."""
-    return sorted(_REGISTRY)
+    return _KINDS.kinds()

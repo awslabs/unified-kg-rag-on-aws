@@ -37,7 +37,6 @@ before any model call, say how to install it.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -45,6 +44,7 @@ from pydantic import Field
 from unified_kg_rag.adapters.schema_sources import INSTALL_HINT
 from unified_kg_rag.adapters.source_files import rdf_files
 from unified_kg_rag.domain.models.seed_graph import SeedGraph
+from unified_kg_rag.shared import get_logger
 
 from .abox_mapping import AboxMappingOptions, RdfTerm, Triple, map_abox
 from .property_graph import FileReader, check_path
@@ -53,7 +53,7 @@ from .registry import SeedSourceContext, register_seed_source
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.source_files.rdf_parse import Statements
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RdfSeedOptions(AboxMappingOptions):

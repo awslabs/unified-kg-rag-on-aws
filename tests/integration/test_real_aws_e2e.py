@@ -145,7 +145,7 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     assert context.status != PipelineStageStatus.FAILED, context.stage_results
 
     async def _ask() -> RAGOutput | dict:
-        chain = await create_rag_chain(live_config)
+        chain = create_rag_chain(live_config)
         try:
             return await chain.ainvoke(RAGInput(query="Where does Alice work?"))
         finally:

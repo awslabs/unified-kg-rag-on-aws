@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.source_files.locations import resolve_source_path
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -163,12 +164,24 @@ def _same_file(a: Path, b: Path) -> bool:
     return a.resolve() == b.resolve()
 
 
+def _local_schema_path(source: str | None) -> Path | None:
+    """The local file the schema source ``source`` names (a plain path or
+    a ``file://`` URL), or None for none, S3 or another scheme."""
+    if not source:
+        return None
+    try:
+        resolved = resolve_source_path(source, refusal="")
+    except ConfigurationError:
+        return None
+    return resolved if isinstance(resolved, Path) else None
+
+
 def _check_outputs(args: argparse.Namespace, config: Config) -> None:
     """Exit 2 before any model call when an output would replace the
     ``--config-path`` file or the schema file the config loads, names an
     existing file without ``--force``, or both outputs name one file."""
     source = config.processing.graph_extraction.schema_source.path
-    loaded = Path(source) if source and "://" not in source else None
+    loaded = _local_schema_path(source)
     config_file = Path(args.config_path) if args.config_path else None
     outputs = [("--output-path", args.output_path)]
     if args.schema_out is not None:

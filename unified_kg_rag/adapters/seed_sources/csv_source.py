@@ -85,7 +85,7 @@ def load_csv_seed(context: SeedSourceContext) -> SeedGraph:
 
     Raises:
         SeedGraphError: An option is unknown or invalid; ``secret_arn`` is
-            set; the path is a URL other than ``s3://``, not a directory (or
+            set; the path is a URL other than ``file://`` or ``s3://``, not a directory (or
             prefix), or a file is missing (or access is denied); the files
             hold more than ``max_bytes``; a row is too long or malformed, a
             column repeats or a required one is missing, a

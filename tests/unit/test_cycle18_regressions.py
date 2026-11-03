@@ -20,7 +20,7 @@ async def test_run_rag_passes_only_chain_keywords(mocker) -> None:
     """run-rag's chain kwargs must bind to GraphRAGChain (it raised TypeError)."""
     captured: dict = {}
 
-    async def fake_create(**kwargs):
+    def fake_create(**kwargs):
         captured.update(kwargs)
         return SimpleNamespace(aclose=None)
 

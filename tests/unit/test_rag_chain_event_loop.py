@@ -288,7 +288,11 @@ def test_runner_rejects_reentrant_sync_call() -> None:
     runner = _LoopRunner()
 
     async def reenter() -> None:
-        runner.run(asyncio.sleep(0))
+        pending = asyncio.sleep(0)
+        try:
+            runner.run(pending)
+        finally:
+            pending.close()  # refused, so never awaited
 
     try:
         with pytest.raises(RuntimeError, match="own event loop"):

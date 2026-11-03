@@ -43,29 +43,28 @@ before any model call, say how to install it.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-from urllib.parse import urlsplit
-from urllib.request import url2pathname
 
 from pydantic import Field, ValidationError
 
 from unified_kg_rag.adapters.source_files import rdf_files
+from unified_kg_rag.adapters.source_files.context import format_validation_errors
 from unified_kg_rag.adapters.source_files.locations import (
     SourceReader,
     SourceTerms,
     is_s3,
-    split_s3,
+    resolve_source_path,
 )
 from unified_kg_rag.domain.models.config import SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
 from .ontology_mapping import MappingOptions, map_ontology
 from .ontology_model import OntologyModel
 from .registry import SchemaSourceContext, register_schema_source
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 INSTALL_HINT = (
     "the ontology extra: uv sync --extra ontology (pip install "
@@ -144,19 +143,14 @@ def _path(source: SchemaSourceConfig, location: str) -> Path | str:
         raise SchemaSourceError(
             "kind 'owl' takes no schema_source.secret_arn; leave it unset"
         )
-    if "://" not in source.path:
-        return Path(source.path)
-    if is_s3(source.path):
-        split_s3(source.path)
-        return source.path
-    parts = urlsplit(source.path)
-    if parts.scheme.lower() != "file" or parts.netloc not in ("", "localhost"):
-        raise SchemaSourceError(
+    return resolve_source_path(
+        source.path,
+        refusal=(
             f"Ontology '{location}' is a URL; kind 'owl' reads a local file "
             "or directory (or a file:// URL) or an s3:// object or prefix. "
             "Copy the ontology next to the config (or into the image, or S3)"
-        )
-    return Path(url2pathname(parts.path))
+        ),
+    )
 
 
 def _options(source: SchemaSourceConfig) -> OwlSourceOptions:
@@ -164,12 +158,7 @@ def _options(source: SchemaSourceConfig) -> OwlSourceOptions:
         return OwlSourceOptions.model_validate(source.options)
     except ValidationError as e:
         raise SchemaSourceError(
-            "; ".join(
-                "schema_source.options"
-                + "".join(f".{part}" for part in detail["loc"])
-                + f": {detail['msg']}"
-                for detail in e.errors(include_url=False, include_input=False)
-            )
+            format_validation_errors("schema_source.options", e)
         ) from e
 
 

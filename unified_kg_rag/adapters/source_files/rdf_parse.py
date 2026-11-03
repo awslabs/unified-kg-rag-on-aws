@@ -13,7 +13,6 @@ given, never re-read from a location; errors are the caller's
 from __future__ import annotations
 
 import json
-import logging
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -21,9 +20,11 @@ from typing import Any
 from rdflib import Dataset, Graph
 from rdflib.namespace import NamespaceManager
 
+from unified_kg_rag.shared import get_logger
+
 from .locations import SourceTerms
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Formats parsed into a dataset: their statements may sit in named graphs.
 _QUAD_FORMATS = ("nquads", "trig", "json-ld")

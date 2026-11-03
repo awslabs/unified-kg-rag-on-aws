@@ -6,7 +6,7 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.models import CommunityMetrics, Config
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -60,9 +60,6 @@ class GraphStatistics(BaseModel):
     )
     largest_component_size: int | None = Field(
         default=None, description="Number of nodes in the largest connected component"
-    )
-    community_metrics: CommunityMetrics | None = Field(
-        default=None, description="Metrics related to community structure"
     )
 
 

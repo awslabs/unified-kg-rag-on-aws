@@ -11,6 +11,7 @@ exits non-zero while keeping the local results.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 
@@ -265,7 +266,12 @@ def test_main_reports_s3_errors_and_exits_1(eval_config, mocker, monkeypatch) ->
     mocker.patch.object(run_evaluation, "GraphRAGChain")
 
     def _fail(coro, **_kwargs):
-        coro.close()  # never started; close it so it is not left un-awaited
+        # Never started: close it, and the coroutine stoppable() wraps, so
+        # neither is left un-awaited.
+        inner = coro.cr_frame.f_locals.get("main")
+        if inspect.iscoroutine(inner):
+            inner.close()
+        coro.close()
         raise AWSServiceError("Failed to download 's3://my-bucket/d.json'")
 
     mocker.patch.object(run_evaluation.event_loop, "run", side_effect=_fail)

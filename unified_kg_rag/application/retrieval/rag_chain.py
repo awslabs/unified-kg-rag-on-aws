@@ -2559,9 +2559,10 @@ def _iterate_async_generator(
                 loop_runner.stop()
 
 
-async def create_rag_chain(
+def create_rag_chain(
     config: Config,
     boto_session: "boto3.Session | None" = None,
     **kwargs: Any,
 ) -> GraphRAGChain:
+    """A :class:`GraphRAGChain` of ``config`` (what ``run-rag`` builds)."""
     return GraphRAGChain(config=config, boto_session=boto_session, **kwargs)

@@ -771,15 +771,7 @@ def test_a_shard_over_the_unit_limit_fails_asking_for_more_shards() -> None:
     assert at_limit.stats.units == MAX_UNITS_PER_SHARD
 
 
-# A seed of 20k nodes and 100k edges converts well within this many seconds
-# (about 6 s on one core); the edge check went quadratic (about 60 s).
-_CONVERSION_BOUND_SECONDS = 40.0
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(180)
-def test_a_large_seed_converts_in_linear_time() -> None:
-    nodes, edges = 20_000, 100_000
+def _random_seed(nodes: int, edges: int) -> tuple[SeedGraph, SeedConversionSettings]:
     generator = random.Random(7)
     graph = SeedGraph(
         nodes=tuple(
@@ -794,14 +786,38 @@ def test_a_large_seed_converts_in_linear_time() -> None:
             for _ in range(edges)
         ),
     )
-    settings = _settings(shards=16, max_nodes=nodes, max_edges=edges)
+    return graph, _settings(shards=16, max_nodes=nodes, max_edges=edges)
 
-    start = time.perf_counter()
-    conversion = convert_seed(graph, settings, _schema("off"))
-    elapsed = time.perf_counter() - start
 
-    assert conversion.stats.nodes == nodes
-    assert elapsed < _CONVERSION_BOUND_SECONDS, f"{elapsed:.1f} s"
+def _conversion_seconds(nodes: int, edges: int, runs: int, cap: float) -> float:
+    """The least CPU time of ``runs`` conversions of a random seed of this
+    size; stops after a run over ``cap`` seconds (it already fails)."""
+    graph, settings = _random_seed(nodes, edges)
+    best = float("inf")
+    for _ in range(runs):
+        # CPU time: a busy runner delays the process, it does not add to it.
+        start = time.process_time()
+        conversion = convert_seed(graph, settings, _schema("off"))
+        best = min(best, time.process_time() - start)
+        assert conversion.stats.nodes == nodes
+        if best > cap:
+            break
+    return best
+
+
+# Four times the seed takes about four times as long; the quadratic edge
+# check (a set difference against every node id per edge) took about 16.
+# The bound is 2.5 times the linear ratio, and the smaller seed takes about
+# a second, so timer noise on a shared runner stays well inside it.
+_SCALING_BOUND = 10.0
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_a_large_seed_converts_in_linear_time() -> None:
+    small = _conversion_seconds(10_000, 50_000, runs=3, cap=float("inf"))
+    large = _conversion_seconds(40_000, 200_000, runs=3, cap=_SCALING_BOUND * small)
+    assert large / small < _SCALING_BOUND, f"{small:.2f} s -> {large:.2f} s"
 
 
 def test_a_hub_over_the_unit_limit_fails_naming_it() -> None:

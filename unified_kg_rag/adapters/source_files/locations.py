@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
+from urllib.request import url2pathname
 
 from pydantic import BaseModel, ConfigDict
 
@@ -117,6 +118,32 @@ def split_s3(
             "bucket; write s3://bucket/key (or s3://bucket/prefix/)"
         )
     return bucket, key
+
+
+def resolve_source_path(
+    path: str, *, refusal: str, terms: SourceTerms = SCHEMA_SOURCE_TERMS
+) -> Path | str:
+    """The local path ``path`` names, or the ``s3://`` URL as is.
+
+    A plain path is a local one, and so is a ``file://`` URL without a host
+    (or with ``localhost``); an ``s3://`` URL must name a valid bucket. Every
+    source kind that reads files resolves its ``path`` here, so they accept
+    the same locations.
+
+    Raises:
+        terms.error: ``path`` is a URL of another scheme (or a ``file://``
+            URL naming another host), with ``refusal`` as the message; or
+            an ``s3://`` URL naming no valid bucket.
+    """
+    if "://" not in path:
+        return Path(path)
+    if is_s3(path):
+        split_s3(path, terms=terms)
+        return path
+    parts = urlsplit(path)
+    if parts.scheme.lower() != "file" or parts.netloc not in ("", "localhost"):
+        raise terms(refusal)
+    return Path(url2pathname(parts.path))
 
 
 class SourceFile(BaseModel):

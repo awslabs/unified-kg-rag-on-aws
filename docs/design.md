@@ -2008,9 +2008,11 @@ This section is the single reference for extending the framework. Strategies, re
   run's corpus (§4.5).
 
   **Reusing the readers.** `adapters/source_files/` serves seed sources as
-  it serves schema sources: `locations.SourceReader(context,
-  terms=context.terms)` heads, lists and reads S3 objects within a byte
-  cap, and `rdf_files` / `rdf_parse` locate, check and parse RDF files
+  it serves schema sources: `locations.resolve_source_path` turns a `path`
+  into a local `Path` (a plain path or a `file://` URL) or the `s3://` URL,
+  refusing other schemes, as every built-in kind does;
+  `locations.SourceReader(context, terms=context.terms)` heads, lists and
+  reads S3 objects within a byte cap, and `rdf_files` / `rdf_parse` locate, check and parse RDF files
   with the `owl` source's safety checks (pass `context.terms`);
   `rdf_terms` names RDF terms as both built-in RDF readers do. The
   property-graph helpers of the built-ins (`property_graph.FileReader`,
