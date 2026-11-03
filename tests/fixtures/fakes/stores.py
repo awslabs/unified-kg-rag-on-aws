@@ -471,6 +471,9 @@ class FakeVectorStore(_Recorder):
     def set_doc_status_tracking(self, tracked: bool) -> None:
         return None
 
+    def set_embedding_reuse(self, reuse: bool) -> None:
+        return None
+
     def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
         # The latest build per suffix, as the indices' _meta would hold it.
         key = suffix or Constants.DEFAULT_SUFFIX.value

@@ -9,6 +9,11 @@ injected instead, so both backends share one copy of the indexing and
 retrieval logic. The method list is exactly what those two classes call;
 ``tests/unit/test_fake_port_signatures.py`` keeps ``OpenSearchClient``'s
 signatures in step with it.
+
+An engine may also have a ``store_identity`` attribute (a hashable naming
+the store, equal for two clients of it): the indexer then reads each alias
+and index mapping once per pipeline run (``shared.store_lookups``). An
+engine without one is asked every time.
 """
 
 from typing import Any, Protocol

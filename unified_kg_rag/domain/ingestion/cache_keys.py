@@ -896,6 +896,47 @@ def unit_record_fingerprint(
     )
 
 
+# The format of a pre-chunk's boundary record: bump it when the record or the
+# way the chunker reads it changes.
+_BOUNDARY_FORMAT_VERSION = 1
+
+
+def chunk_boundary_fingerprint(config: Config) -> str:
+    """Fingerprint the settings a pre-chunk's boundary answer depends on.
+
+    The settings of every model call and of chunking (the chunking model
+    resolved through its tier, the size range the prompt asks for, the
+    length unit), and the boundary prompt (code). The extraction store keys
+    the answer by this fingerprint and the hash of the pre-chunk's text
+    (``contributions.record_key``), so an unchanged pre-chunk is not sent
+    to the model again (a reset, an edited document's untouched part).
+    """
+    from unified_kg_rag.domain.prompts import TextChunkingPrompt
+    from unified_kg_rag.domain.prompts.base import fill_slots
+
+    settings = _settings(
+        config,
+        lambda rule: rule.per_document
+        and (rule.stage is None or rule.stage is _P.TEXT_CHUNKING),
+    )
+    resolved = TextChunkingPrompt.resolve(config.custom_prompts)
+    return _digest(
+        {
+            "record": "chunk_boundaries",
+            "version": _BOUNDARY_FORMAT_VERSION,
+            "settings": settings,
+            "prompt": compute_hash(
+                fill_slots(
+                    resolved.system_prompt_template
+                    + "\n"
+                    + resolved.human_prompt_template,
+                    TextChunkingPrompt.inlined_slots(config),
+                )
+            ),
+        }
+    )
+
+
 # --- stage cache keys --------------------------------------------------------
 
 

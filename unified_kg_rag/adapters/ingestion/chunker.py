@@ -3,9 +3,10 @@
 import statistics
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
@@ -24,7 +25,13 @@ from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProces
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.cache_keys import chunk_boundary_fingerprint
 from unified_kg_rag.domain.ingestion.chunk_length import max_chars
+from unified_kg_rag.domain.ingestion.contributions import (
+    CHUNKS_RECORD_KIND,
+    RECORD_KEYS_ATTRIBUTE,
+    record_key,
+)
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     ChunkLengthUnit,
@@ -33,12 +40,35 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     TextUnit,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
-from unified_kg_rag.shared import DataProcessingError, get_logger
+from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
+from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
+
+
+class BoundaryRecords(Protocol):
+    """Where the boundary-model answers of pre-chunks are kept across runs
+    (the extraction store), by index suffix and record key.
+
+    Both are best-effort: a read that fails reads nothing (the model is
+    asked), a write that fails is logged."""
+
+    def read_records(
+        self, keys: Mapping[str, Collection[str]]
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """The stored records of ``keys`` (by suffix), by suffix and key."""
+        ...
+
+    def write_records(
+        self, records: Mapping[str, Mapping[str, dict[str, Any]]]
+    ) -> None:
+        """Store ``records`` (by suffix, then key)."""
+        ...
 
 
 class ChunkingStats(BaseModel):
@@ -695,6 +725,24 @@ class SimpleTextChunker(BaseChunker):
             ) from e
 
 
+def _document_suffix(doc: Document) -> str | None:
+    """The index suffix of ``doc``'s text units (``BaseIndexer.get_suffix``
+    of the ``index`` they copy from its metadata); ``None`` for one the
+    stores refuse (its indexing fails)."""
+    attributes = {"index": doc.metadata["index"]} if "index" in doc.metadata else {}
+    try:
+        return BaseIndexer.get_suffix(_Attributed(attributes))
+    except ConfigurationError:
+        return None
+
+
+class _Attributed:
+    """What ``BaseIndexer.get_suffix`` reads of an item."""
+
+    def __init__(self, attributes: dict[str, Any]) -> None:
+        self.attributes = attributes
+
+
 class IntelligentTextChunker(BaseChunker):
     def __init__(
         self,
@@ -702,9 +750,17 @@ class IntelligentTextChunker(BaseChunker):
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
+        boundary_records: BoundaryRecords | None = None,
     ) -> None:
         super().__init__(config, show_progress=show_progress)
         self.providers = Providers.resolve(config, providers)
+        # The boundary answers kept across runs (None: every pre-chunk that
+        # needs the model asks it): a pre-chunk whose text and chunking
+        # settings are unchanged (a reset, an edited document's untouched
+        # part) takes its stored answer, so a model that answers otherwise
+        # each time (no temperature control) does not move its boundaries.
+        self.boundary_records = boundary_records
+        self._boundary_fingerprint = chunk_boundary_fingerprint(config)
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_config(
@@ -736,9 +792,10 @@ class IntelligentTextChunker(BaseChunker):
         self.line_boundary_processor = LineBasedBoundaryProcessor(
             max_line_miss_rate=self.chunking_config.max_marker_miss_rate,
         )
-        # Pre-chunks and boundary answers per document of the running
-        # chunk_documents call (keyed by id(document)).
-        self._planned: dict[int, tuple[list[str], dict[int, Any]]] = {}
+        # Pre-chunks, boundary answers and the record keys of the answers
+        # per document of the running chunk_documents call (keyed by
+        # id(document)).
+        self._planned: dict[int, tuple[list[str], dict[int, Any], dict[int, str]]] = {}
         logger.debug(
             "Initialized IntelligentTextChunker with model %s",
             self.config.model_id(ModelRole.CHUNKING),
@@ -752,14 +809,18 @@ class IntelligentTextChunker(BaseChunker):
         at a time; the documents are then assembled one by one.
         """
         planned: dict[int, list[str]] = {}
+        suffixes: list[str | None] = []
         for doc in documents:
             if not doc.is_error:
                 planned[id(doc)] = self._pre_chunks_of(doc)
-        responses = self._request_boundaries(list(planned.values()), "all documents")
+                suffixes.append(_document_suffix(doc))
+        responses, record_keys = self._request_boundaries(
+            list(planned.values()), "all documents", suffixes
+        )
         self._planned = {
-            key: (pre_chunks, response)
-            for (key, pre_chunks), response in zip(
-                planned.items(), responses, strict=True
+            key: (pre_chunks, response, keys)
+            for (key, pre_chunks), response, keys in zip(
+                planned.items(), responses, record_keys, strict=True
             )
         }
         try:
@@ -774,8 +835,8 @@ class IntelligentTextChunker(BaseChunker):
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
         try:
             plan = self._planned.get(id(doc))
-            pre_chunks, responses = (
-                plan if plan is not None else (self._pre_chunks_of(doc), None)
+            pre_chunks, responses, record_keys = (
+                plan if plan is not None else (self._pre_chunks_of(doc), None, {})
             )
             if not pre_chunks:
                 return []
@@ -794,12 +855,21 @@ class IntelligentTextChunker(BaseChunker):
                     validation["issues"],
                 )
 
-            return [
+            units = [
                 self._create_text_unit(
                     text, doc, i + 1, len(final_chunks_info), method, src_id
                 )
                 for i, (method, text, src_id) in enumerate(final_chunks_info)
             ]
+            # Each unit names the record of its pre-chunk's answer, so the
+            # store keeps it while a unit cut by it is indexed.
+            for unit, (_, _, src_id) in zip(units, final_chunks_info, strict=True):
+                if (key := record_keys.get(src_id - 1)) is not None:
+                    unit.attributes = {
+                        **(unit.attributes or {}),
+                        RECORD_KEYS_ATTRIBUTE: {CHUNKS_RECORD_KIND: key},
+                    }
+            return units
         except Exception as e:
             raise DataProcessingError(
                 f"Failed to chunk single document '{doc.file_name}': {e}"
@@ -817,14 +887,47 @@ class IntelligentTextChunker(BaseChunker):
         size = self.length_function(pre_chunk)
         return size >= 2 * processor.min_chunk_size or size > processor.max_chunk_size
 
-    def _request_boundaries(
-        self, pre_chunk_lists: list[list[str]], label: str
-    ) -> list[dict[int, Any]]:
-        """Boundary answers for each list's pre-chunks that need the model.
+    def boundary_key(self, pre_chunk: str) -> str:
+        """The record key of ``pre_chunk``'s boundary answer: its text under
+        the chunking settings (``chunk_boundary_fingerprint``)."""
+        return record_key(self._boundary_fingerprint, pre_chunk)
 
-        One batch call covers every list. A list's answers map a pre-chunk's
-        index to the parsed response, or None when the call failed (the
-        pre-chunk is then split by size).
+    def _stored_answers(
+        self,
+        keys: dict[tuple[int, int], tuple[str, str]],
+    ) -> dict[tuple[int, int], dict[str, Any]]:
+        """The stored boundary answers of the ``keys`` (suffix, record key)
+        of requests (see ``boundary_records``)."""
+        if self.boundary_records is None or not keys:
+            return {}
+        wanted: dict[str, set[str]] = defaultdict(set)
+        for suffix, key in keys.values():
+            wanted[suffix].add(key)
+        stored = self.boundary_records.read_records(
+            {suffix: sorted(found) for suffix, found in wanted.items()}
+        )
+        answers: dict[tuple[int, int], dict[str, Any]] = {}
+        for request, (suffix, key) in keys.items():
+            record = stored.get(suffix, {}).get(key)
+            response = record.get("response") if isinstance(record, dict) else None
+            if isinstance(response, dict):
+                answers[request] = response
+        return answers
+
+    def _request_boundaries(
+        self,
+        pre_chunk_lists: list[list[str]],
+        label: str,
+        suffixes: list[str | None] | None = None,
+    ) -> tuple[list[dict[int, Any]], list[dict[int, str]]]:
+        """Boundary answers for each list's pre-chunks that need the model,
+        and the record keys of the answers kept (by pre-chunk index).
+
+        With ``boundary_records`` and the lists' index ``suffixes``, a
+        pre-chunk with a stored answer takes it; the others are asked in one
+        batch call, and their answers stored. A list's answers map a
+        pre-chunk's index to the parsed response, or None when the call
+        failed (the pre-chunk is then split by size).
         """
         requests = [
             (n, i)
@@ -833,8 +936,32 @@ class IntelligentTextChunker(BaseChunker):
             if self._needs_llm(pre_chunk)
         ]
         answers: list[dict[int, Any]] = [{} for _ in pre_chunk_lists]
+        record_keys: list[dict[int, str]] = [{} for _ in pre_chunk_lists]
         if not requests:
-            return answers
+            return answers, record_keys
+        # (suffix, record key) of each request whose answer is kept.
+        keys: dict[tuple[int, int], tuple[str, str]] = {}
+        if self.boundary_records is not None and suffixes is not None:
+            for n, i in requests:
+                if (suffix := suffixes[n]) is not None:
+                    keys[(n, i)] = (suffix, self.boundary_key(pre_chunk_lists[n][i]))
+        stored = self._stored_answers(keys)
+        for (n, i), response in stored.items():
+            answers[n][i] = response
+            record_keys[n][i] = keys[(n, i)][1]
+        if stored:
+            logger.info(
+                "Reused %d of %d stored chunk-boundary answers",
+                len(stored),
+                len(requests),
+            )
+            # Model calls the run did not make (shared.usage).
+            model = model_id_value(self.config.model_id(ModelRole.CHUNKING))
+            for _ in stored:
+                record_cache_hit(ModelPurpose.INGESTION.value, model)
+            requests = [request for request in requests if request not in stored]
+        if not requests:
+            return answers, record_keys
         try:
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=[pre_chunk_lists[n][i] for n, i in requests],
@@ -846,9 +973,16 @@ class IntelligentTextChunker(BaseChunker):
         except Exception as e:
             logger.error("Failed to get boundary results for %s: %s", label, e)
             results = [None] * len(requests)
+        new_records: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         for (n, i), result in zip(requests, results, strict=True):
             answers[n][i] = None if result is BATCH_ITEM_FAILED else result
-        return answers
+            if (n, i) in keys and isinstance(answers[n][i], dict):
+                suffix, key = keys[(n, i)]
+                record_keys[n][i] = key
+                new_records[suffix][key] = {"response": answers[n][i]}
+        if new_records and self.boundary_records is not None:
+            self.boundary_records.write_records(new_records)
+        return answers, record_keys
 
     def _process_pre_chunks(
         self,
@@ -868,7 +1002,7 @@ class IntelligentTextChunker(BaseChunker):
             self.stats.num_pre_chunks_processed or 0
         ) + len(pre_chunks)
         if responses is None:
-            responses = self._request_boundaries([pre_chunks], f"'{doc_name}'")[0]
+            responses = self._request_boundaries([pre_chunks], f"'{doc_name}'")[0][0]
 
         final_chunks: list[tuple[str, str, int]] = []
         for i, pre_chunk in enumerate(pre_chunks):
@@ -1070,10 +1204,16 @@ class ChunkerFactory:
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
+        boundary_records: BoundaryRecords | None = None,
     ) -> BaseChunker:
         logger.info("Creating chunker of type: '%s'", chunker_type.value)
         if chunker_type == ChunkingStrategy.SIMPLE:
             return SimpleTextChunker(config, show_progress, providers=providers)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
-            return IntelligentTextChunker(config, show_progress, providers=providers)
+            return IntelligentTextChunker(
+                config,
+                show_progress,
+                providers=providers,
+                boundary_records=boundary_records,
+            )
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

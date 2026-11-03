@@ -380,6 +380,12 @@ class OpenSearchClient:
         # owner's next close() releases).
         self._closed = False
 
+    @property
+    def store_identity(self) -> tuple[str, str | None]:
+        """Names the domain: two clients of one endpoint are one store (the
+        indexers' run cache of lookups, ``shared.store_lookups``)."""
+        return ("opensearch", self.opensearch_config.endpoint)
+
     @cached_property
     def boto_session(self) -> "boto3.Session":
         """The session IAM auth signs with (a default one unless given).

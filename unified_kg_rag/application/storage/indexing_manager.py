@@ -25,6 +25,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
 from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hierarchy
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
+    RECORD_KINDS,
     attribute_record_keys,
     claims_from_payload,
     record_from_payload,
@@ -3019,7 +3020,7 @@ class IndexingManager:
         for suffix, keys in sorted(self._removed_record_keys.items()):
             try:
                 naming: set[str] = set()
-                for kind in ("graph", "claims"):
+                for kind in RECORD_KINDS:
                     naming.update(
                         vector.find_documents(
                             prefix,

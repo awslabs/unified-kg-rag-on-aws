@@ -418,6 +418,18 @@ gets its models and stores from the run's `Providers` bundle.
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
   swaps the alias); an incremental run deletes the records only removed text
   units named.
+- **Chunk boundaries are records too.** The intelligent chunker stores each
+  pre-chunk's boundary answer in the same index, keyed by
+  `<cache_keys.chunk_boundary_fingerprint>:<SHA-256 of the pre-chunk>` (the
+  every-call and chunking settings, the chunking model and the boundary
+  prompt), and the text units cut from it name the record (`chunks` in
+  `attributes.extraction_records`), so it is kept and removed like the
+  others. A pre-chunk with a stored answer takes it instead of a model call:
+  a reset of an unchanged corpus asks the boundary model nothing, and a
+  model that answers otherwise each time (no temperature control) cannot
+  move the boundaries, and with them every downstream cache key, of
+  unchanged text. The stage cache could not hold them: it is per pipeline
+  id and keyed by the whole corpus. `--force-rebuild` asks again.
 - **Gleaning stops on observed output**: a unit is re-sent (up to
   `max_rounds`) only while its previous answer added something new. An empty
   answer is the "nothing missing" signal MS GraphRAG asks for with a separate
@@ -922,6 +934,22 @@ A generation switch (new labels plus a pointer) was rejected: Neptune labels
 cannot be renamed, so every retriever would resolve the current generation on
 each query and the graph would be stored twice during the rebuild.
 
+**Unchanged text is not embedded again**, by a rebuild or a delta run. Each
+vector field stores the digest of the text it embeds next to the vector
+(`embedding_digests.<field>`), with the embedding provider, model, dimension
+and (outside Bedrock) input cap hashed in. A write reads the stored vectors
+and digests of its items, one search per write slice of 1,000 ids, from the
+alias's live index: the one an upsert writes, or the one a rebuild is about
+to replace (still the alias's target until the swap), and embeds only the
+texts whose digest it does not find. Reusing across a reset is safe because
+the digest names the embedding settings: a reset after a model or dimension
+change finds no matching digest (nor reads at all: the live index's `_meta`
+records its model) and embeds everything. A vector a write replaced is kept
+for a later write of its text (a removal rewrites items the commit writes
+back). An index an earlier release built gets the digest field with the
+other missing ones (§5.1) and its items are embedded once more.
+`--force-rebuild` embeds every text again.
+
 ### 5.3 Crash recovery (write-ahead protocol)
 
 The registry is not updated atomically with the stores, so a run can stop
@@ -1140,6 +1168,16 @@ second run fails with `NamespaceLeaseError` before it reads or writes.
 
 Without the registry nothing locks, and concurrent runs on one suffix race on
 its aliases and labels ([runbook](./operations.md#concurrent-runs)).
+
+**Lookups read once per run** (`shared/store_lookups.py`). Only a run's own
+writes move its namespace's aliases and mappings while it holds the lease,
+so the pipeline installs a run-scoped cache of which index each alias points
+at and of each index's mappings, shared by the run's vector indexers (and
+their worker threads). An alias swap or removal, an index deletion or a
+mapping or `_meta` update through any of them drops the entries it changes
+before its request is sent. A run that indexes nothing (an empty delta)
+writes no build record and no extraction settings, so it writes nothing but
+its lease.
 
 ---
 

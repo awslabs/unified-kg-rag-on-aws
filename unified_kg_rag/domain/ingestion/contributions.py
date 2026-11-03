@@ -192,13 +192,18 @@ def unit_entities(record: TextUnitExtraction) -> list[Entity]:
 
 
 # Text-unit attribute naming the extraction-store keys of the unit's records:
-# {"graph": key, "claims": key}. Written with the text unit, so a later run
-# finds the records of a stored unit by its id.
+# {"graph": key, "claims": key, "chunks": key}. Written with the text unit, so
+# a later run finds the records of a stored unit by its id.
 RECORD_KEYS_ATTRIBUTE = "extraction_records"
+# The kind of the record of the boundary answer of the pre-chunk a unit was
+# cut from (set by the intelligent chunker): kept while a unit names it.
+CHUNKS_RECORD_KIND = "chunks"
+# Every record kind a text unit names.
+RECORD_KINDS = ("graph", "claims", CHUNKS_RECORD_KIND)
 
 
 def record_keys(unit: TextUnit) -> dict[str, str]:
-    """The unit's extraction-store keys by record kind ("graph", "claims")."""
+    """The unit's extraction-store keys by record kind (``RECORD_KINDS``)."""
     return attribute_record_keys(unit.attributes)
 
 

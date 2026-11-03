@@ -21,13 +21,15 @@ after the extraction stages writes the same keys.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import (
+    CHUNKS_RECORD_KIND,
     RECORD_KEYS_ATTRIBUTE,
     record_key,
+    record_keys,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
@@ -75,6 +77,8 @@ def with_record_keys(
     the unit's text (``ExtractionStore.key``), so they are the ones the
     extraction stages stored the records under. A seed graph's unit names
     its graph record only, under the seed fingerprint (it has no claims).
+    The record of its pre-chunk's boundary answer, which the chunker named,
+    stays named.
     """
     gleaned = {r.text_unit_id: r.gleaned for r in records}
     # The fingerprint depends only on the settings: one per (gleaned, claims).
@@ -90,7 +94,11 @@ def with_record_keys(
 
     keyed: list[TextUnit] = []
     for unit in units:
-        keys: dict[str, str] = {}
+        keys: dict[str, str] = {
+            kind: key
+            for kind, key in record_keys(unit).items()
+            if kind == CHUNKS_RECORD_KIND
+        }
         if is_seed_unit(unit.id):
             if unit.id in gleaned and unit.id not in graph_failed:
                 keys["graph"] = record_key(SEED_RECORD_FINGERPRINT, unit.text)
@@ -221,6 +229,56 @@ class ExtractionStore:
                             type(e).__name__,
                         )
         return found
+
+    def read_records(
+        self, keys: Mapping[str, Collection[str]]
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """The stored records of ``keys`` by suffix and key, read as a cache:
+        none without reuse, and a suffix whose read fails reads none
+        (``BoundaryRecords``: the chunker's pre-chunk answers)."""
+        store = self._store()
+        if store is None or not self._reuse:
+            return {}
+        found: dict[str, dict[str, dict[str, Any]]] = {}
+        for suffix, wanted in keys.items():
+            try:
+                found[suffix] = store.read_extraction_records(
+                    sorted(wanted), suffix=suffix
+                )
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the store is a cache
+                logger.warning(
+                    "Reading the extraction store of '%s' failed: %s", suffix, e
+                )
+        return found
+
+    def write_records(
+        self, records: Mapping[str, Mapping[str, dict[str, Any]]]
+    ) -> None:
+        """Store ``records`` (by suffix, then key), best-effort: a record not
+        stored is made again by a later run (``BoundaryRecords``)."""
+        store = self._store()
+        if store is None:
+            return
+        for suffix, by_key in records.items():
+            try:
+                stats = store.write_extraction_records(dict(by_key), suffix=suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the store is a cache
+                logger.warning(
+                    "Writing the extraction records of '%s' failed: %s", suffix, e
+                )
+                continue
+            if stats.failed_items:
+                logger.warning(
+                    "Writing %s of %s extraction records of '%s' failed: %s",
+                    stats.failed_items,
+                    len(by_key),
+                    suffix,
+                    "; ".join(stats.errors[:3]),
+                )
 
     def save(
         self, items: Iterable[tuple[TextUnit, dict[str, Any]]], fingerprint: str

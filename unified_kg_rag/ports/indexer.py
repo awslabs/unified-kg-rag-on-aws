@@ -558,6 +558,12 @@ class VectorIndexer(BaseIndexer):
         nothing."""
         return None
 
+    def set_embedding_reuse(self, reuse: bool) -> None:
+        """Whether writes from now on may reuse the stored vector of a text
+        they embed unchanged (``False``: every text is embedded again, as
+        ``--force-rebuild`` asks). Default does nothing."""
+        return None
+
     def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
         """Record on ``suffix``'s indices which ingestion run last wrote them.
 

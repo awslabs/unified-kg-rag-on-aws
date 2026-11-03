@@ -34,7 +34,7 @@ from gremlin_python.driver.client import Client
 from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory, HashingEmbeddings
 from tests.fixtures.store_backends import clear_extraction_records, local_store_config
 from tests.integration.test_incremental_source_scopes import (
     A_TEXT,
@@ -582,3 +582,63 @@ def test_default_lucene_mapping_takes_vectors_wider_than_1024(
     finally:
         client.client.indices.delete(index=name, ignore_unavailable=True)
         client.close()
+
+
+class _CountingEmbeddings(HashingEmbeddings):
+    def __init__(self, dimensions: int) -> None:
+        super().__init__(dimensions)
+        self.texts: list[str] = []
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return super().embed_documents(texts)
+
+
+def test_unchanged_text_keeps_its_stored_vector_on_opensearch(
+    local_config: Config,
+) -> None:
+    # The digest field the mapping keeps in _source only (a keyword neither
+    # indexed nor in doc values) is accepted by OpenSearch, added to a live
+    # index without it, and read back with the vectors by id.
+    embeddings = _CountingEmbeddings(8)
+    factory = HashingEmbeddingFactory(dimensions=8)
+    factory.get_model = lambda model_id, **_: embeddings  # type: ignore[method-assign]
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"reuse{uuid.uuid4().hex[:8]}"
+    indexer = OpenSearchIndexer(config, embedding_factory=factory)
+    prefix = config.indexing.opensearch.entities_index_prefix
+    alias = indexer._get_name(prefix, None)
+    client = indexer.opensearch_client
+    try:
+        indexer.index_entities(_entities())
+        assert len(embeddings.texts) == 6
+        live = client.get_index_name_by_alias(alias)
+        assert live is not None
+        digests = client.get_index_mappings(live)["properties"]["embedding_digests"]
+        assert digests["properties"]["description_embedding"]["index"] is False
+
+        # A live index built before the field: the check maps it.
+        client.client.indices.delete(index=live)
+        old = f"{alias}-20260101000000000"
+        mapping = indexer._get_entities_mapping()
+        del mapping["mappings"]["properties"]["embedding_digests"]
+        client.create_index(old, mapping)
+        client.update_alias(alias, old)
+        indexer.check_index_settings()
+        assert "embedding_digests" in client.get_index_mappings(old)["properties"]
+
+        embeddings.texts.clear()
+        indexer.upsert_entities(_entities())
+        assert len(embeddings.texts) == 6  # no digests stored yet: once
+        embeddings.texts.clear()
+        changed = _entities()
+        changed[0].description = "Vendor supplies gadgets"
+        indexer.upsert_entities(changed)
+        assert embeddings.texts == ["Vendor supplies gadgets"]
+        # A rebuild reads the live index it replaces.
+        embeddings.texts.clear()
+        indexer.index_entities(changed)
+        assert embeddings.texts == []
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()

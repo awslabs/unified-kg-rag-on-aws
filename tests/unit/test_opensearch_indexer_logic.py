@@ -652,8 +652,10 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
     mocker.patch.object(
         indexer,
         "_generate_embeddings",
-        side_effect=lambda items, extractors: events.append(("embed", len(items)))
-        or [([0.1],) for _ in items],
+        side_effect=lambda items, spec, stored=None: events.append(
+            ("embed", len(items))
+        )
+        or ([([0.1],) for _ in items], [{} for _ in items]),
     )
     indexer.opensearch_client.bulk_index.side_effect = lambda index, docs, refresh: (
         events.append(("write", len(docs))) or {"errors": False}
