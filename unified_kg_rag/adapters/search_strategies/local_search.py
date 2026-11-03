@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,
@@ -24,14 +25,15 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
-from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
+from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
 
 logger = get_logger(__name__)
 
 
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
 class LocalSearchStrategy(BaseSearchStrategy):
-    # Entities-index candidates fetched per focus entity.
+    # Entities-index hits fetched per focus entity, among which its exact
+    # name match is looked for (``_find_candidate_entities``).
     ENTITY_CANDIDATES_PER_FOCUS: ClassVar[int] = 2
     # The section types reranked against the query. DRIFT, whose follow-up
     # queries are local searches, clears it and reranks their evidence once.
@@ -143,7 +145,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
         # The candidates were found under the caller's filters.
         expanded_entity_nodes = await self._expand_via_graph(
-            query, candidate_entity_ids, seeds_pass=True
+            query,
+            candidate_entity_ids,
+            seeds_pass=True,
+            seed_weights=self.seed_weights(query, candidate_hits),
         )
         if not expanded_entity_nodes and candidate_hits:
             # A successful expansion returns at least the seeds, so none means
@@ -257,36 +262,101 @@ class LocalSearchStrategy(BaseSearchStrategy):
     async def _find_candidate_entities(
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
-        """The entities-index hits that seed graph expansion (each with an id)."""
+        """The entities-index hits that seed graph expansion (each with an id).
+
+        Each focus entity is looked up on its own, concurrently (at most
+        ``search.max_concurrency`` at once), and seeds the expansion with
+        the hits that are its name (``compact_name_key``), else with its top
+        hit when that scores at least
+        ``search.local_search.seed_score_ratio`` of the best hit of any
+        focus entity. One query of the joined names, two hits per name and
+        no floor seeded a wrong neighbour beside the right entity on every
+        query of a synthetic 12-query multi-hop corpus, and a generic focus
+        word ("province") seeded unrelated entities. Without an
+        entity focus the raw query text is looked up instead (as the
+        claims/community-report/relationship sections do), its ``top_k``
+        hits the seeds, so local search still seeds graph expansion.
+        """
         if not self.document_retriever:
             return []
+        focus = self._focus_names(query)
+        if not focus:
+            if not query.query:
+                return []
+            return await self._entity_hits(query, query.query, query.top_k)
+        per_focus = await gather_bounded(
+            self.config.search.max_concurrency,
+            (
+                self._entity_hits(query, name, self.ENTITY_CANDIDATES_PER_FOCUS)
+                for name in focus
+            ),
+        )
+        return self.focus_seeds(
+            focus, per_focus, self.config.search.local_search.seed_score_ratio
+        )
 
-        # Map the extracted entity focus onto the entities index; when no
-        # entities were extracted, fall back to the raw query text (as the
-        # claims/community-report/relationship sections do) so local search
-        # still seeds graph expansion instead of returning no chunks at all.
-        if query.entity_focus:
-            entity_query = " ".join(query.entity_focus)
-            n_candidates = len(query.entity_focus) * self.ENTITY_CANDIDATES_PER_FOCUS
-        else:
-            entity_query = query.query
-            n_candidates = query.top_k
-        if not entity_query:
+    async def _entity_hits(
+        self, query: SearchQuery, text: str, top_k: int
+    ) -> list[RetrievalResult]:
+        """The ``top_k`` entities-index hits of ``text`` that have an id."""
+        if not self.document_retriever:
             return []
-
         search_query = SearchQuery(
-            query=entity_query,
+            query=text,
             search_type=query.search_type,
-            top_k=n_candidates,
+            top_k=top_k,
             index_prefixes=[self.config.indexing.opensearch.entities_index_prefix],
             suffix=query.suffix,
             filters=self._scoped_filters(query),
         )
-
         results = await self._safe_aretrieve(
             self.document_retriever, search_query, "Candidate entity lookup"
         )
         return [res for res in results if res.source]
+
+    @staticmethod
+    def _focus_names(query: SearchQuery) -> list[str]:
+        """The query's focus entities, each once, without blank ones."""
+        return [name for name in dict.fromkeys(query.entity_focus) if name.strip()]
+
+    @staticmethod
+    def focus_seeds(
+        focus: list[str], per_focus: list[list[RetrievalResult]], ratio: float
+    ) -> list[RetrievalResult]:
+        """The seeds of the focus entities ``focus`` from their own hits
+        ``per_focus`` (best first): a focus entity's exact name matches
+        (every entity of that ``compact_name_key``), else its top hit if it
+        scores at least ``ratio`` times the best hit of all; each seed once,
+        in focus order."""
+        best = max(
+            (hit.score or 0.0 for hits in per_focus for hit in hits), default=0.0
+        )
+        seeds: dict[str, RetrievalResult] = {}
+        for name, hits in zip(focus, per_focus, strict=True):
+            key = compact_name_key(name)
+            chosen = [
+                hit
+                for hit in hits
+                if key
+                and compact_name_key(str((hit.metadata or {}).get("name") or "")) == key
+            ]
+            if not chosen and hits and (hits[0].score or 0.0) >= ratio * best:
+                chosen = hits[:1]
+            for hit in chosen:
+                seeds.setdefault(str(hit.source), hit)
+        return list(seeds.values())
+
+    @classmethod
+    def seed_weights(
+        cls, query: SearchQuery, seeds: list[RetrievalResult]
+    ) -> dict[str, float] | None:
+        """The graph walk's weight of each seed of a focused query: its score,
+        so a seed reaches as many entities as its share of the seeds' total
+        score (``seed_shares``); ``None`` (an even split) without an entity
+        focus, whose ``top_k`` seeds are the raw query's hits."""
+        if not cls._focus_names(query):
+            return None
+        return {str(seed.source): float(seed.score or 0.0) for seed in seeds}
 
     async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
         # Only consume the claims (covariate) index when extraction is enabled;
@@ -423,12 +493,13 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # on-topic, but it makes widening the expansion actively harmful: more
         # candidate chunks then means fewer relevant ones survive the quota.
         #
-        # MS GraphRAG local ranks candidate text units by how many distinct
-        # query-relevant entities reference them, with the entity's own rank as
-        # the tiebreak, before applying its text-unit budget. Mirror that here:
-        # score each chunk by (number of referencing entities, best referencing
-        # entity score) and return ids in descending order, so downstream
-        # truncation keeps the chunks with the most graph support.
+        # MS GraphRAG local (mixed_context._build_text_unit_context) orders
+        # the candidate text units by the rank of the first selected entity
+        # that cites them, then by how many of that entity's relationships
+        # the unit states, before applying its text-unit budget. This ranks
+        # by graph support instead: each chunk by (number of expanded
+        # entities citing it, best citing entity score), in descending order,
+        # so downstream truncation keeps the chunks most entities point to.
         #
         # A seed graph's units are no text chunks (the retriever leaves them
         # out of every text search too): they take no slot of the quota.

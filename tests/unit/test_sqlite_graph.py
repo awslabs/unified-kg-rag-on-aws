@@ -488,6 +488,21 @@ def test_traversal_budget_is_split_per_seed(indexer: SQLiteGraphIndexer) -> None
     assert paths == [("s",), ("s", "n0"), ("s", "n1"), ("t",), ("t", "m0"), ("t", "m1")]
 
 
+def test_traversal_takes_each_seeds_own_share(indexer: SQLiteGraphIndexer) -> None:
+    # seed_shares: local search weights its seeds by score.
+    edges = [("s", f"n{i}") for i in range(5)] + [("t", f"m{i}") for i in range(5)]
+    _graph(indexer, edges)
+    paths = _traverse(indexer, ["s", "t"], per_seed_limit={"s": 3, "t": 1})
+    assert paths == [
+        ("s",),
+        ("s", "n0"),
+        ("s", "n1"),
+        ("s", "n2"),
+        ("t",),
+        ("t", "m0"),
+    ]
+
+
 def test_max_results_per_hop_caps_each_vertex(indexer: SQLiteGraphIndexer) -> None:
     _graph(indexer, [("z", "a"), ("z", "b"), ("z", "c"), ("a", "x"), ("a", "y")])
     assert _traverse(indexer, ["z"], max_results_per_hop=1) == [

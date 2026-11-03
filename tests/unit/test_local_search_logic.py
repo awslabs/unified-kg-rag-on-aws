@@ -54,7 +54,9 @@ def _bare_strategy(
             neptune=SimpleNamespace(entity_label_prefix="Entity"),
         ),
         search=SimpleNamespace(
-            local_search=SimpleNamespace(entity_frequency_threshold=20),
+            local_search=SimpleNamespace(
+                entity_frequency_threshold=20, seed_score_ratio=0.6
+            ),
             max_concurrency=4,
         ),
     )
@@ -250,18 +252,106 @@ async def test_retrieve_documents_merges_caller_filters_with_id_scope() -> None:
     assert caller == {"year": 2024, "id": ["t1", "other"]}
 
 
-async def test_find_candidate_entities_returns_sources_and_top_k() -> None:
-    retriever = _StubRetriever([_result("e1"), _result(None), _result("e2")])
+class _ByQueryRetriever(_StubRetriever):
+    """Stub whose hits depend on the query text; records every query."""
+
+    def __init__(self, hits: dict[str, list[RetrievalResult]]) -> None:
+        super().__init__()
+        self._hits = hits
+        self.queries: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery):
+        self.queries.append(query)
+        return self._hits.get(query.query, [])
+
+
+def _entity(source: str | None, name: str, score: float) -> RetrievalResult:
+    return _result(source, score=score, metadata={"name": name})
+
+
+async def test_find_candidate_entities_looks_each_focus_entity_up_alone() -> None:
+    retriever = _ByQueryRetriever(
+        {
+            "Alice": [_entity("e1", "Alice", 1.0), _entity(None, "Ghost", 0.9)],
+            "Bob": [_entity("e2", "Bob", 1.0)],
+        }
+    )
     strat = _bare_strategy(retrievers={"document": retriever})
-    query = SearchQuery(query="q", entity_focus=["Alice", "Bob"])
+    query = SearchQuery(query="q", entity_focus=["Alice", "Bob", "Alice"])
     out = await strat._find_candidate_entities(query)
-    # Drops the result with no source; keeps the rest.
+    # Drops the result with no source; one lookup per distinct focus entity,
+    # never the joined names.
     assert _sources(out) == ["e1", "e2"]
-    # top_k = len(entity_focus) * candidates per focus entity = 2 * 2.
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.top_k == 4
-    assert sent.index_prefixes == ["entities"]
+    assert [q.query for q in retriever.queries] == ["Alice", "Bob"]
+    assert {q.top_k for q in retriever.queries} == {
+        LocalSearchStrategy.ENTITY_CANDIDATES_PER_FOCUS
+    }
+    assert {tuple(q.index_prefixes or ()) for q in retriever.queries} == {("entities",)}
+
+
+async def test_find_candidate_entities_prefers_the_exact_name_match() -> None:
+    # The similarity search ranks a neighbour above the entity the query
+    # names: the exact match (by compact name key) seeds, the neighbour not.
+    retriever = _ByQueryRetriever(
+        {
+            "acme corp": [
+                _entity("e9", "Acme Holdings", 1.0),
+                _entity("e1", "ACME Corp.", 0.9),
+            ]
+        }
+    )
+    strat = _bare_strategy(retrievers={"document": retriever})
+    query = SearchQuery(query="q", entity_focus=["acme corp"])
+    assert _sources(await strat._find_candidate_entities(query)) == ["e1"]
+
+
+async def test_find_candidate_entities_drops_a_weak_top_hit() -> None:
+    # "firm" names no entity: its top hit scores 0.5 against the exact
+    # match's 1.0, under the 0.6 floor; "Bexley" (0.7) clears it.
+    retriever = _ByQueryRetriever(
+        {
+            "Alvar": [_entity("e1", "Alvar", 1.0), _entity("e2", "Jarek", 0.5)],
+            "firm": [_entity("e3", "Calvex", 0.5)],
+            "Bexly": [_entity("e4", "Bexley", 0.7)],
+        }
+    )
+    strat = _bare_strategy(retrievers={"document": retriever})
+    query = SearchQuery(query="q", entity_focus=["Alvar", "firm", "Bexly"])
+    assert _sources(await strat._find_candidate_entities(query)) == ["e1", "e4"]
+    strat.config.search.local_search.seed_score_ratio = 0.0
+    assert _sources(await strat._find_candidate_entities(query)) == [
+        "e1",
+        "e3",
+        "e4",
+    ]
+
+
+async def test_retrieve_entity_chain_weights_the_seeds_by_score() -> None:
+    strat = _bare_strategy()
+    weights: list[dict[str, float] | None] = []
+
+    async def candidates(query: SearchQuery) -> list[RetrievalResult]:
+        return [_entity("e1", "Alvar", 1.0), _entity("e4", "Bexley", 0.7)]
+
+    async def expand(query, seeds, *, seeds_pass=False, seed_weights=None):
+        weights.append(seed_weights)
+        return []
+
+    strat._find_candidate_entities = candidates  # type: ignore[method-assign]
+    strat._expand_via_graph = expand  # type: ignore[method-assign]
+    strat._filter_entities = lambda nodes, **_: nodes  # type: ignore[method-assign]
+    strat._per_type_quota = lambda top_k: {"text": 0}  # type: ignore[method-assign]
+
+    async def none(*_args, **_kwargs):
+        return {}
+
+    strat._passing_ranked_units = none  # type: ignore[method-assign]
+    strat._retrieve_documents = none  # type: ignore[method-assign]
+    strat._retrieve_bridge_relationships = none  # type: ignore[method-assign]
+    await strat._retrieve_entity_chain(SearchQuery(query="q", entity_focus=["Alvar"]))
+    # Without an entity focus the raw query's hits split the walk evenly.
+    await strat._retrieve_entity_chain(SearchQuery(query="q"))
+    assert weights == [{"e1": 1.0, "e4": 0.7}, None]
 
 
 async def test_find_candidate_entities_swallows_retriever_error() -> None:

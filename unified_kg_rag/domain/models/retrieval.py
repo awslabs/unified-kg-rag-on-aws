@@ -151,6 +151,11 @@ class SearchQuery(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional search query metadata"
     )
+    seed_weights: dict[str, float] | None = Field(
+        default=None,
+        description="Graph expansion: each seed id's weight, its share of the "
+        "fetch budget proportional to it (seed_shares); None splits it evenly",
+    )
 
     @field_validator("suffix")
     @classmethod

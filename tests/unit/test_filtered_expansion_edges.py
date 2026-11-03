@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share
+from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share, seed_shares
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
@@ -1615,3 +1615,45 @@ async def test_an_emptied_wave_does_not_end_the_waves(config: Config) -> None:
     (reached,) = [f["id"] for p, f in index.calls if p == o.entities_index_prefix]
     assert not any(v.startswith("BX") for v in reached)  # B's wave was empty
     assert any(v.startswith("EX") for v in reached)
+
+
+async def test_the_walk_splits_its_budget_by_the_seed_weights(
+    config: Config,
+) -> None:
+    # Local search weights its seeds by score: a seed of three times the
+    # other's weight reaches three times as many entities (6 and 2 of 8),
+    # where an even split gave each 4.
+    seeds = ["M0", "M1"]
+    edges = [
+        (f"m{j}-{i:03d}", f"M{j}", f"V{j}-{i:03d}", 100.0)
+        for j in range(2)
+        for i in range(20)
+    ]
+    index = _Index(config, edges=edges, passing={e[0] for e in edges})
+    config.indexing.neptune.max_hops = 1
+    config.indexing.neptune.traversal_fetch_multiplier = 1
+    query = SearchQuery(query="q", top_k=8, filters={"attr_grp": "a"})
+    strategy = _strategy(config, _Graph(), index)
+
+    def reached(kept: list[RetrievalResult]) -> list[int]:
+        return [sum(str(r.source).startswith(f"V{j}-") for r in kept) for j in range(2)]
+
+    weighted = await strategy._expand_via_graph(
+        query, seeds, seed_weights={"M0": 0.9, "M1": 0.3}
+    )
+    assert reached(weighted) == [6, 2]
+    assert reached(await strategy._expand_via_graph(query, seeds)) == [4, 4]
+
+
+def test_seed_shares_split_the_budget_in_proportion_to_the_weights() -> None:
+    query = SearchQuery(query="q", top_k=10, seed_weights={"a": 1.0, "b": 0.5})
+    # 30 entities (top_k 10 x fetch multiplier 3), 2:1, rounded up.
+    assert seed_shares(query, 3, ["a", "b"]) == {"a": 20, "b": 10}
+    tiny = query.model_copy(update={"seed_weights": {"a": 1.0, "b": 0.001}})
+    assert seed_shares(tiny, 3, ["a", "b"]) == {"a": 30, "b": 1}
+    # A seed without a positive weight: the even split, as without weights.
+    even = seed_share(query, 3, 3)
+    assert seed_shares(query, 3, ["a", "b", "c"]) == dict.fromkeys("abc", even)
+    unweighted = SearchQuery(query="q", top_k=10)
+    assert seed_shares(unweighted, 3, ["a", "b"]) == {"a": 15, "b": 15}
+    assert seed_shares(query, 3, []) == {}

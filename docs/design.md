@@ -534,9 +534,18 @@ gets its models and stores from the run's `Providers` bundle.
   `graspologic_native` returns labels in a per-process order, so the detector
   sorts nodes and edges and renumbers each level by its smallest member id:
   the same graph and `random_state` always yield the same communities and ids.
-- **Reports (MS GraphRAG parity).** A report's input sorts the community's
-  entities by degree (document-backed, §4.5), caps them at `max_entities_per_report` and packs them
-  into `max_report_context_tokens` (the top entity always fits). Reports are
+- **Reports (MS GraphRAG parity).** A report's input takes the community's
+  entities by degree (document-backed, §4.5), capped at
+  `max_entities_per_report`, and packs them into `max_report_context_tokens`
+  edge by edge, as MS GraphRAG's `sort_context`: the relationships among them
+  by combined endpoint degree (then weight and id), each with its endpoints
+  and, with claim extraction on, the claims about them; one that does not fit
+  is left out and the next tried; the entities with no relationship among
+  them come last; the top entity always fits. Packing the entities first left
+  the relationships whatever budget remained (with 200-token descriptions, 2
+  of 40 edges). MS GraphRAG's 8000-token budget with `max_cluster_size` 10 is
+  the tuning point for larger reports: the defaults (4000, 20) are kept for
+  cost. Reports are
   generated bottom-up, so a parent whose context would overflow folds in its
   children's report summaries instead of truncating
   (`enable_sub_community_rollup`). The prompt returns a structured report
@@ -1204,7 +1213,14 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   claims index joins the sweep only when claim extraction is on.
 - **local** — candidate entities → graph expansion → frequency filter → their
   text units, plus a community-report section and a relationship section
-  (MS GraphRAG local search). With
+  (MS GraphRAG local search). Each query entity is looked up in the entities
+  index on its own, concurrently: the entities of its name
+  (`compact_name_key`) seed the expansion, else its top hit when that scores
+  at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
+  any query entity; the seeds share the expansion budget in proportion to
+  their scores (`seed_shares`; Neptune walks the seeds of each share in a
+  request of its own). One lookup of the joined names seeded a wrong
+  neighbour beside every right seed on a synthetic multi-hop corpus. With
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too, edges
   between two retrieved entities first: they carry the hops of a multi-hop

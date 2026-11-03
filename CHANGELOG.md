@@ -1011,6 +1011,15 @@ From 0.2.3 (or a `main` checkout since):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- Local search looks each query entity up on its own, concurrently, and
+  seeds graph expansion with the entity of its name, else with its top hit
+  when that scores at least `search.local_search.seed_score_ratio` (new,
+  0.6) of the best hit: one lookup of the joined names seeded a wrong
+  neighbour beside every right seed (12 of 12 synthetic multi-hop queries;
+  a generic query entity seeded unrelated ones), and all-gold context went
+  from 8/12 to 12/12. The seeds share the expansion budget in proportion
+  to their scores; Neptune walks each share's seeds in a request of its own
+  (#PR).
 - Graph expansion returns every seed and its neighbourhood and ranks by
   distance first, so hub neighbours no longer push seeds out (#161, #218).
 - Graph expansion no longer depends on the order the graph store keeps a
@@ -1184,6 +1193,14 @@ Ingestion and incremental indexing.
 - The summary reports stage-cache hits and restored stages (#227, #248),
   `run-ingestion` prints why it exits 1 (#248), and a failed stage's error
   is logged once (#439).
+- Community report input is packed edge by edge, as MS GraphRAG's
+  `sort_context`: relationships by combined endpoint degree, each with its
+  two entities (and, with claim extraction on, their claims, which the
+  report prompt now lists), then the entities with no relationship. Packing
+  the entities first left the relationships whatever budget remained (with
+  200-token descriptions, 2 of 40 edges); on a synthetic grid, 241 instead
+  of 126 relationships reach the same 4000-token budget and every packed
+  entity has one (51.6% before) (#PR).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero

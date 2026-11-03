@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any
@@ -269,7 +269,7 @@ class SQLiteGraphStore:
         *,
         max_hops: int,
         max_results_per_hop: int,
-        per_seed_limit: int,
+        per_seed_limit: int | Mapping[str, int],
         keep: VertexFilter | None = None,
         with_degree: bool = False,
     ) -> list[dict[str, Any]]:
@@ -279,7 +279,8 @@ class SQLiteGraphStore:
         breadth-first walk of ``max_hops`` over ``label``'s edges, taking each
         vertex's first ``max_results_per_hop`` neighbours by id, skipping the
         seeds and the vertices this seed already reached, and stopping after
-        ``per_seed_limit`` vertices. ``keep`` filters the rows (seeds
+        ``per_seed_limit`` vertices (with a seed id -> limit mapping, that
+        seed's own: ``seed_shares``). ``keep`` filters the rows (seeds
         included); it does not change the walk. Rows have the shape
         ``GraphExpansionRetriever`` documents.
         """
@@ -300,7 +301,11 @@ class SQLiteGraphStore:
                         seed_set,
                         max_hops,
                         max_results_per_hop,
-                        per_seed_limit,
+                        (
+                            per_seed_limit.get(seed, 0)
+                            if isinstance(per_seed_limit, Mapping)
+                            else per_seed_limit
+                        ),
                     )
                 )
             maps = self.vertex_maps(

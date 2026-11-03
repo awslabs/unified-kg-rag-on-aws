@@ -5,7 +5,7 @@ import json
 import math
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, ClassVar
@@ -162,6 +162,26 @@ def seed_share(query: SearchQuery, fetch_multiplier: int, seeds: int) -> int:
     return math.ceil(
         query.top_k * query.retrieval_multiplier * fetch_multiplier / seeds
     )
+
+
+def seed_shares(
+    query: SearchQuery, fetch_multiplier: int, seeds: Sequence[Any]
+) -> dict[str, int]:
+    """How many entities each of ``seeds`` reaches at most: the expansion's
+    budget (``seed_share``'s) split in proportion to ``query.seed_weights``
+    (local search's seed scores), rounded up so every seed gets one; split
+    evenly when a seed has no positive weight. The one split of the graph
+    walks and the filtered walk."""
+    ids = [str(seed) for seed in dict.fromkeys(seeds)]
+    if not ids:
+        return {}
+    weights = query.seed_weights or {}
+    if not all((weights.get(seed) or 0.0) > 0.0 for seed in ids):
+        share = seed_share(query, fetch_multiplier, len(ids))
+        return dict.fromkeys(ids, share)
+    budget = query.top_k * query.retrieval_multiplier * fetch_multiplier
+    total = sum(weights[seed] for seed in ids)
+    return {seed: max(1, math.ceil(budget * weights[seed] / total)) for seed in ids}
 
 
 def graph_relevance(path_length: int, importance: float) -> float:
@@ -833,6 +853,7 @@ class BaseSearchStrategy(ABC):
         seed_entity_ids: list[str],
         *,
         seeds_pass: bool = False,
+        seed_weights: dict[str, float] | None = None,
     ) -> list[RetrievalResult]:
         """Expand seed entities through the graph (GraphRAG local and LightRAG).
 
@@ -845,11 +866,15 @@ class BaseSearchStrategy(ABC):
         as they are under an entity key the graph does not store
         (``name.keyword``, ``attributes.<path>``). ``seeds_pass``: the seeds
         were found under ``query.filters`` on the entities index (local's),
-        so they are not checked again.
+        so they are not checked again. ``seed_weights``: each seed's share of
+        the walk's budget, in proportion (``seed_shares``); an even split
+        without.
         """
         graph = self.graph_retriever
         if graph is None or not seed_entity_ids:
             return []
+        if seed_weights is not None:
+            query = query.model_copy(update={"seed_weights": seed_weights})
         seeds = {str(s) for s in seed_entity_ids}
         filtered = bool(document_filters(query.filters))
         if (
@@ -926,7 +951,7 @@ class BaseSearchStrategy(ABC):
         neptune = self.config.indexing.neptune
         filters = document_filters(query.filters)
         limit = query.top_k * query.retrieval_multiplier
-        share = seed_share(query, neptune.traversal_fetch_multiplier, len(seeds))
+        shares = seed_shares(query, neptune.traversal_fetch_multiplier, seeds)
         # Text units only decide an edge under two or more keys.
         fields = [
             f for f in _WALK_EDGE_FIELDS if len(filters) > 1 or f != "text_unit_ids"
@@ -967,7 +992,7 @@ class BaseSearchStrategy(ABC):
             """How many more neighbours ``vertex`` may take this hop."""
             return min(
                 neptune.max_results_per_hop - per_vertex.get(vertex, 0),
-                share - taken[root[vertex]],
+                shares[root[vertex]] - taken[root[vertex]],
             )
 
         def open_(vertex: str) -> bool:

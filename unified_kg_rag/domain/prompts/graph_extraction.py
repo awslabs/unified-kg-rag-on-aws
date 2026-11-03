@@ -677,6 +677,7 @@ class CommunityReportPrompt(BasePrompt):
         "community_id",
         "entities",
         "relationships",
+        "claims",
         "sub_community_reports",
         "content_length",
     ]
@@ -719,7 +720,7 @@ class CommunityReportPrompt(BasePrompt):
 <relationship_data>
 {relationships}
 </relationship_data>
-
+{claims}
 ## SUB-COMMUNITY REPORTS:
 The following are summaries of finer-grained sub-communities nested within this
 community. When present, treat them as authoritative synthesis of the parts of

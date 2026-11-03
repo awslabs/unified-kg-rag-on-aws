@@ -835,7 +835,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 | Strategy | Use when | How it works |
 |---|---|---|
 | `simple` | Fast factual lookups | OpenSearch vector + keyword retrieval, no graph traversal; the claims index too when claims are on. Fastest. |
-| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. |
+| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one. |
 | `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
 | `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
 | `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). |
@@ -2982,6 +2982,14 @@ flight (this run's, or those of the run whose expired lease it took over),
   expanded hub (on Gremlin Server, 6.8 to 23.2 ms per query for
   2,500-neighbour hubs; unmeasured on Neptune). If hub-heavy queries are
   too slow, `false` takes the first neighbours Neptune returns instead.
+- **Community reports:** a report's prompt packs the community's
+  relationships edge by edge, each with its two entities (and their claims
+  with claim extraction on), into
+  `graph.community_detection.report_generation.max_report_context_tokens`
+  (4000). MS GraphRAG uses 8000 with `max_cluster_size` 10: if reports of
+  large communities cover too few relationships, raise the budget (more input
+  tokens per report call) or lower `max_cluster_size` (more, smaller
+  communities and report calls).
 - **Multilingual:** see [Multilingual ingestion](#multilingual-ingestion).
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](#index-suffix).
