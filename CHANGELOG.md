@@ -873,6 +873,15 @@ From 0.2.3 (or a `main` checkout since):
   #513).
 - Docs: seed graphs in user guide §9 D, the runbook and design doc §4.5
   and §15 (#506).
+- Evaluation: `evaluation.answer_span: extracted` scores exact match and
+  token F1 on the short span a fast model (`models.roles.answer_span`,
+  prompt `custom_prompts.answer_span_extraction_*`) copies out of the
+  answer, cached per question and answer and falling back to the first
+  line (`answer_span_statistics` counts the fallbacks);
+  `evaluation.answer_normalization: hotpotqa` adds HotpotQA's yes/no rule;
+  `evaluation.pairwise_overall` adds LightRAG's `overall` verdict; a
+  comparison reports `deltas_by_category`, and the `run-eval` JSON runs
+  carry `abstention_statistics` (#516).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -989,6 +998,14 @@ From 0.2.3 (or a `main` checkout since):
   for a scope with no record beside other scopes' documents (a new or
   mistyped prefix); a seed-only scope's reset, which has seed records of
   its own, still asks (#503, #509, #513).
+- `answer_match` exact match and token F1 read the answer's first line
+  (`evaluation.answer_span: first_line`, the one-sentence answer the answer
+  prompt writes) instead of the whole answer, whose supporting sentences
+  diluted them: a correct `Depot stores widgets for Vendor.` plus support
+  scored token F1 0.125 against `Depot`, now 1/3. `answer_span: full`
+  restores the old scores; the span is recorded in the run manifest
+  (`answer_scoring`) and each report, and a comparison warns when its runs
+  differ. The docs no longer claim EM/F1 are "scored like the papers" (#516).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1182,6 +1199,19 @@ Evaluation, visualization and tuning.
 - `run-prompt-tuning` profiles with the `graph_extraction` model, writes
   types UPPERCASE in its examples, logs no model output at ERROR, and
   rejects `--max-docs` below 1 (#227, #292, #353).
+- A comparison scores a failed answer 0 only on the metrics its strategy
+  scores somewhere, so `global` failing one query no longer shows a
+  significant -1.0 `retrieved_entity_coverage` delta it never measures; a
+  strategy that scored nothing is still filled on every metric (#516).
+- The pairwise judge reports `position_consistency` (a judge that always
+  picks the first answer scored all ties, read as equal answers, now 0.0
+  and warned about) and a bootstrap interval on its win rate, gives no win
+  rate when it decided no pair (it was 0.0 from failed answers alone),
+  skips `answerable: false` items, and counts in the run manifest's
+  `judge_is_answer_model`, with a warning when it is the answer model
+  (#516).
+- `answer_contains` and `graph_aware` match a word through its possessive
+  (`Depot` in `Depot's`); exact match and token F1 are unchanged (#516).
 
 CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage

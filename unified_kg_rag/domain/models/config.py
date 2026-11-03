@@ -345,6 +345,7 @@ class ModelRole(str, Enum):
     DRIFT_PRIMER = "drift_primer"
     DRIFT_ACTION = "drift_action"
     EVALUATION = "evaluation"
+    ANSWER_SPAN = "answer_span"
 
 
 _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
@@ -376,6 +377,11 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.DRIFT_PRIMER: ("fast", "writes DRIFT's primer and follow-ups"),
     ModelRole.DRIFT_ACTION: ("fast", "answers each DRIFT follow-up"),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
+    ModelRole.ANSWER_SPAN: (
+        "fast",
+        "extracts the short answer span run-eval scores exact match and token "
+        "F1 on (evaluation.answer_span: extracted)",
+    ),
 }
 # The tier each role runs on unless models.roles says otherwise.
 ROLE_TIERS: dict[ModelRole, ModelTier] = {
@@ -417,6 +423,7 @@ class RoleModelsConfig(BaseModel):
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
     evaluation: str | None = _role_field(ModelRole.EVALUATION)
+    answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
 
     @field_validator("*", mode="before")
     @classmethod
@@ -4031,6 +4038,20 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for the run-eval --pairwise-judge LLM judge",
     )
+    answer_span_extraction_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the run-eval answer-span extractor "
+            "(evaluation.answer_span: extracted)"
+        ),
+    )
+    answer_span_extraction_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the run-eval answer-span extractor "
+            "(evaluation.answer_span: extracted)"
+        ),
+    )
     drift_hyde_system: str | None = Field(
         default=None,
         description="Custom system prompt for the DRIFT query expansion (HyDE)",
@@ -4092,11 +4113,14 @@ class CustomPromptConfig(BaseModel):
 
         errors: list[str] = []
         brace_hint = False
+        checked: set[str] = set()
         for name in prompts.__all__:
             prompt = getattr(prompts, name)
             key = getattr(prompt, "prompt_key", None)
-            if not key:
+            # Variants of one prompt share its key (and its overrides).
+            if not key or key in checked:
                 continue
+            checked.add(key)
             system = getattr(self, f"{key}_system")
             human = getattr(self, f"{key}_human")
             if system is None and human is None:
@@ -4141,6 +4165,7 @@ class CustomPromptConfig(BaseModel):
 # The variables that carry each prompt's data: an override must keep them.
 _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "answer_generation": frozenset({"query", "context"}),
+    "answer_span_extraction": frozenset({"question", "answer"}),
     "claim_extraction": frozenset({"input_text"}),
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
@@ -4292,15 +4317,50 @@ class EvaluationConfig(BaseModel):
             "per-job timeout)."
         ),
     )
-    answer_normalization: Literal["default", "official_squad"] = Field(
+    answer_span: Literal["full", "first_line", "extracted"] = Field(
+        default="first_line",
+        description=(
+            "The part of a generated answer the answer_match exact_match and "
+            "token_f1 scores read. The benchmarks they come from (SQuAD, "
+            "MuSiQue, HotpotQA) score a short predicted answer span, while "
+            "the answer prompt writes a one-sentence answer and then its "
+            "support. 'first_line' (default, free) scores the first line that "
+            "is neither empty nor a Markdown heading: the one-sentence answer, "
+            "still longer than a span, so EM under-counts. 'extracted' asks "
+            "the models.roles.answer_span model (fast tier) for the short "
+            "span, one call per distinct answer, cached for the run; a call "
+            "that fails falls back to 'first_line' and is counted in the "
+            "summary's answer_span_statistics. Use it, with "
+            "answer_normalization official_squad, for numbers close to the "
+            "papers'. 'full' scores the whole answer, so the score measures "
+            "answer length as much as correctness. answer_contains always "
+            "reads the whole answer. "
+            "Recorded in the run manifest (answer_scoring) and each "
+            "answer_match report."
+        ),
+    )
+    answer_normalization: Literal["default", "official_squad", "hotpotqa"] = Field(
         default="default",
         description=(
             "Normalization of the answer_match exact_match and token_f1 scores. "
             "'default' keeps meaning-bearing punctuation (minus signs, decimal "
             "points, 'C++') and folds Unicode; 'official_squad' is the official "
             "SQuAD v1.1 script (lowercase, ASCII punctuation and English "
-            "articles removed), so scores compare with published MuSiQue / "
-            "HotpotQA numbers. answer_contains always uses 'default'."
+            "articles removed), which MuSiQue's evaluation uses too; "
+            "'hotpotqa' adds the HotpotQA script's rule on top: a prediction or "
+            "gold of 'yes', 'no' or 'noanswer' scores token F1 0 unless both "
+            "are equal. The scores compare with published numbers only when "
+            "the scored text is a short span (answer_span 'extracted'). "
+            "answer_contains always uses 'default'."
+        ),
+    )
+    pairwise_overall: bool = Field(
+        default=False,
+        description=(
+            "Ask the run-eval --pairwise-judge judge for an 'overall' winner "
+            "too, as LightRAG's evaluation prompt does, reported as a fifth "
+            "criterion. A custom_prompts.pairwise_comparison_* override must "
+            "then return an 'overall' verdict as well."
         ),
     )
     retrieval_k: int = Field(

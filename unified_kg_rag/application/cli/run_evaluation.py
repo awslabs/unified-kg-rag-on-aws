@@ -141,6 +141,31 @@ def pairwise_budget_breaches(
     return breaches
 
 
+def pairwise_warnings(
+    pairwise: dict[str, dict[str, Any]], manifest: dict[str, Any] | None
+) -> list[str]:
+    """Warnings on the pairwise judge's reliability: it is the answer model
+    (self-preference), or its verdicts flip with the answer order."""
+    warnings = []
+    if ((manifest or {}).get("models") or {}).get("judge_is_answer_model"):
+        warnings.append(
+            "The pairwise judge is the answer model (models.roles.evaluation "
+            "is unset or the same model); LLM judges favour their own "
+            "answers, so set it to another model to compare strategies."
+        )
+    for strategy, judged in pairwise.items():
+        consistency = judged.get("position_consistency")
+        if consistency is not None and consistency < 0.5:
+            warnings.append(
+                f"Pairwise judge {strategy}: the two answer orders agreed on "
+                f"{consistency:.0%} of the verdicts, so its ties and win rate "
+                "mostly reflect position bias."
+            )
+    for warning in warnings:
+        logger.warning("%s", warning)
+    return warnings
+
+
 def _over(failed: int, total: int, max_failure_rate: float) -> bool:
     return total == 0 or failed >= total or failed / total > max_failure_rate
 
@@ -414,10 +439,15 @@ class EvaluationRunner:
                 if stats["candidate_win_rate"] is not None
             )
             errors = judged["candidate_errors"] + judged["baseline_errors"]
+            consistency = judged.get("position_consistency")
+            agreed = (
+                f", orders agreed {consistency:.0%}" if consistency is not None else ""
+            )
             console.print(
                 f"[cyan]Pairwise judge, {strategy} win rate vs {baseline} "
                 f"({judged['judged']} judged, {errors} decided by a failed "
-                f"answer, {judged['failed']} judge failures): {rates}[/cyan]"
+                f"answer, {judged['failed']} judge failures{agreed}): "
+                f"{rates or 'none'}[/cyan]"
             )
 
     async def run(self) -> int:
@@ -615,6 +645,8 @@ class EvaluationRunner:
                                 "average_response_time",
                                 "metric_statistics",
                                 "metric_outcomes",
+                                "abstention_statistics",
+                                "answer_span_statistics",
                                 "guardrail_blocked_counts",
                             },
                         ),
@@ -630,7 +662,10 @@ class EvaluationRunner:
                 )
 
         if comparing:
-            comparison = paired_comparison(runs)
+            comparison = paired_comparison(
+                runs,
+                categories={q.query_id: q.category for q in queries if q.category},
+            )
             if self.args.pairwise_judge and len(strategies) > 1:
                 judge = PairwiseJudge(
                     self.config, providers=self.evaluation_manager.providers
@@ -642,6 +677,9 @@ class EvaluationRunner:
                     )
                     for strategy in strategies[1:]
                 }
+                comparison["warnings"].extend(
+                    pairwise_warnings(comparison["pairwise_vs_baseline"], manifest)
+                )
                 breaches.extend(
                     pairwise_budget_breaches(
                         comparison["pairwise_vs_baseline"],

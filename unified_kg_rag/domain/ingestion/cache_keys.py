@@ -203,6 +203,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.roles.drift_primer": Unkeyed(_QUERY),
     "models.roles.drift_action": Unkeyed(_QUERY),
     "models.roles.evaluation": Unkeyed("read by run-eval only"),
+    "models.roles.answer_span": Unkeyed("read by run-eval only"),
     "models.embedding": Unkeyed(_AT_INDEXING),
     "models.rerank": Unkeyed(_QUERY),
     # --- the corpus, its identity and the registry it is diffed against ----
@@ -359,6 +360,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "custom_prompts.corpus_profile_human": _neutral("read by run-prompt-tuning only"),
     "custom_prompts.pairwise_comparison_system": Unkeyed("read by run-eval only"),
     "custom_prompts.pairwise_comparison_human": Unkeyed("read by run-eval only"),
+    "custom_prompts.answer_span_extraction_system": Unkeyed("read by run-eval only"),
+    "custom_prompts.answer_span_extraction_human": Unkeyed("read by run-eval only"),
 }
 
 # Keyed settings naming where a run reads or writes: they key the stage

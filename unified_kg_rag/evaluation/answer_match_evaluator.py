@@ -2,17 +2,31 @@
 # SPDX-License-Identifier: Apache-2.0
 """Answer-match evaluator: answer containment, SQuAD-style exact match and token F1.
 
-Deterministic and LLM-free, so scores are reproducible across runs and judge
-models. Both the generated answer and each reference are normalized SQuAD-style after
-Unicode NFKC (``text_matching.normalize_answer``: lowercase, delete punctuation
-except a number's sign, decimal point and percent sign and "C++"-style
-suffixes, split dashed ranges and compounds, drop the English articles
-``a``/``an``/``the``, collapse whitespace; not identical to the official SQuAD
-v1.1 script, so scores are not leaderboard-comparable). With
-``evaluation.answer_normalization: official_squad`` exact match and token F1
-use the official script's normalization instead
-(``text_matching.normalize_answer_squad``), for numbers comparable with
-published MuSiQue / HotpotQA results. Then:
+Deterministic and LLM-free by default, so scores are reproducible across runs
+and judge models. Both the generated answer and each reference are normalized
+SQuAD-style after Unicode NFKC (``text_matching.normalize_answer``: lowercase,
+delete punctuation except a number's sign, decimal point and percent sign and
+"C++"-style suffixes, split dashed ranges and compounds, drop the English
+articles ``a``/``an``/``the``, collapse whitespace; not identical to the
+official SQuAD v1.1 script). With ``evaluation.answer_normalization:
+official_squad`` exact match and token F1 use the official script's
+normalization instead (``text_matching.normalize_answer_squad``, MuSiQue's
+too); ``hotpotqa`` adds the HotpotQA script's yes/no rule to it.
+
+Exact match and token F1 read the part of the answer ``evaluation.answer_span``
+names. The benchmarks they come from score a short predicted span; a RAG
+answer is a sentence plus its support, and scored whole (``full``) the two
+metrics measure its length as much as its correctness. ``first_line`` (the
+default) scores the answer's first line that is neither empty nor a Markdown
+heading, the one-sentence answer the answer prompt asks for: closer to a span,
+but EM still under-counts. ``extracted`` asks the ``answer_span`` model role
+for the span (``AnswerSpanExtractionPrompt``, one call per distinct question
+and answer, cached for the evaluator's life); a failed call, an empty reply
+or a span that is not in the answer falls back to ``first_line`` and is
+recorded in the report (``answer_span_fallback``). Only an extracted span with
+an official normalization gives numbers close to the papers'. Each report
+records the span mode (``answer_span``) and the text scored
+(``scored_span``). Then:
 
 - ``answer_contains``: 1.0 if the gold answer appears in the generated answer
   as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
@@ -23,9 +37,10 @@ published MuSiQue / HotpotQA results. Then:
   "はい"/"いいえ") is instead compared with the polarity of the first yes/no
   word that answers the question (not a heading, not the determiner in
   "there is no clause", not part of a longer word such as "예외").
-- ``exact_match``: 1.0 if the normalized strings are equal.
+- ``exact_match``: 1.0 if the normalized span equals the normalized reference.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
-  (multiset overlap).
+  (multiset overlap). Under ``hotpotqa`` a span or reference that is "yes",
+  "no" or "noanswer" scores 0 unless the two are equal.
 
 References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
 (a string or list of strings); each metric takes the max over references.
@@ -38,6 +53,7 @@ under-count for Korean.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections import Counter
@@ -45,11 +61,17 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import Runnable
+
 from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    judge_model_kwargs,
 )
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -58,14 +80,27 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
+    ModelRole,
 )
+from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
+from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .text_matching import normalize_answer, normalize_answer_squad, phrase_in_text
+
+logger = get_logger(__name__)
+
+# Report-metadata keys: the span mode, the text exact match and token F1
+# scored, and why an extracted span fell back to the first line.
+ANSWER_SPAN_KEY = "answer_span"
+SCORED_SPAN_KEY = "scored_span"
+SPAN_FALLBACK_KEY = "answer_span_fallback"
 
 __all__ = [
     "AnswerMatchEvaluator",
     "answer_contains",
     "exact_match",
+    "first_answer_line",
     "normalize_answer",
     "token_f1",
 ]
@@ -168,13 +203,40 @@ def answer_contains(prediction: str, reference: str) -> float:
     return float(phrase_in_text(reference, prediction))
 
 
+def first_answer_line(answer: str) -> str:
+    """The answer's first line that is neither empty nor a Markdown heading
+    (the whole answer, stripped, when every line is one of those)."""
+    for line in answer.splitlines():
+        if line.strip() and not _MARKDOWN_HEADING.match(line):
+            return line.strip()
+    return answer.strip()
+
+
+# The HotpotQA script scores these only on equality: partial token credit
+# for "no" in "no, it does not" would reward a wrong polarity half the time.
+_HOTPOTQA_EXACT_ONLY = frozenset({"yes", "no", "noanswer"})
+
+
 def token_f1(
     prediction: str,
     reference: str,
     normalize: Callable[[str], str] = normalize_answer,
+    *,
+    yes_no_exact: bool = False,
 ) -> float:
-    pred_tokens = normalize(prediction).split()
-    ref_tokens = normalize(reference).split()
+    """Token F1; with ``yes_no_exact`` (HotpotQA's rule) a prediction or
+    reference that normalizes to "yes", "no" or "noanswer" scores 0 unless
+    the two normalize equal."""
+    normalized_prediction = normalize(prediction)
+    normalized_reference = normalize(reference)
+    if (
+        yes_no_exact
+        and normalized_prediction != normalized_reference
+        and {normalized_prediction, normalized_reference} & _HOTPOTQA_EXACT_ONLY
+    ):
+        return 0.0
+    pred_tokens = normalized_prediction.split()
+    ref_tokens = normalized_reference.split()
     if not pred_tokens or not ref_tokens:
         return float(pred_tokens == ref_tokens)
     overlap = sum((Counter(pred_tokens) & Counter(ref_tokens)).values())
@@ -190,6 +252,26 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
 
     def __init__(self, config: Config, **kwargs: Any):
         super().__init__(config, EvaluatorType.ANSWER_MATCH, **kwargs)
+
+    def _initialize_evaluator(
+        self, providers: Providers | None = None, **kwargs: Any
+    ) -> None:
+        self.answer_span = self.config.evaluation.answer_span
+        # Extracted spans by (question, answer): repeats and strategies that
+        # give the same answer reuse it.
+        self._spans: dict[str, str] = {}
+        self._span_chain: Runnable | None = None
+        if self.answer_span == "extracted":
+            providers = Providers.resolve(self.config, providers)
+            self._span_chain = setup_chain(
+                providers.llm_factory,
+                self.config.model_id(ModelRole.ANSWER_SPAN),
+                AnswerSpanExtractionPrompt,
+                StrOutputParser(),
+                custom_prompts=self.config.custom_prompts,
+                model_purpose=ModelPurpose.EVALUATION,
+                **judge_model_kwargs(self.config),
+            )
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
@@ -213,6 +295,81 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
+        if self.answer_span == "extracted":
+            raise EvaluationException(
+                "answer_span 'extracted' calls a model: use aevaluate_single"
+            )
+        answer = result.generated_answer or ""
+        span = first_answer_line(answer) if self.answer_span == "first_line" else answer
+        return self._score(query, result, ground_truth, span, {})
+
+    async def aevaluate_single(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        **kwargs: Any,
+    ) -> EvaluationReport:
+        if self.answer_span != "extracted":
+            return self.evaluate_single(query, result, ground_truth, **kwargs)
+        if not self._references(ground_truth, result.metadata):
+            # Nothing to score: no model call.
+            return self._score(query, result, ground_truth, "", {})
+        answer = result.generated_answer or ""
+        try:
+            span = await self._extracted_span(result.question, answer)
+        except Exception as e:  # noqa: BLE001 - scored on the first line instead
+            logger.warning(
+                "Answer-span extraction failed for '%s' (scoring its first "
+                "line): %s",
+                query.query_id,
+                e,
+            )
+            return self._score(
+                query,
+                result,
+                ground_truth,
+                first_answer_line(answer),
+                {SPAN_FALLBACK_KEY: str(e) or type(e).__name__},
+            )
+        return self._score(query, result, ground_truth, span, {})
+
+    async def _extracted_span(self, question: str, answer: str) -> str:
+        """The model's short span of ``answer`` ("" when it gives none).
+
+        Raises:
+            EvaluationException: The reply is empty, or a span the answer
+                does not contain (the model answered the question itself).
+        """
+        key = hashlib.sha256(f"{question}\0{answer}".encode()).hexdigest()
+        if key in self._spans:
+            return self._spans[key]
+        if self._span_chain is None:
+            raise EvaluationException("no span extractor is configured")
+        reply = await self._span_chain.ainvoke({"question": question, "answer": answer})
+        lines = [line.strip() for line in str(reply).splitlines() if line.strip()]
+        if not lines:
+            raise EvaluationException("the span extractor returned nothing")
+        span = lines[0].strip("\"'`“”‘’").strip()
+        if span.upper() == NO_ANSWER_SPAN:
+            span = ""
+        elif normalize_answer(span) not in _POLARITY and not phrase_in_text(
+            span, answer
+        ):
+            raise EvaluationException(
+                f"the extracted span {span!r} is not in the answer"
+            )
+        self._spans[key] = span
+        return span
+
+    def _score(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        span: str,
+        span_metadata: dict[str, Any],
+    ) -> EvaluationReport:
         references = self._references(ground_truth, result.metadata)
         if not references:
             return EvaluationReport(
@@ -228,13 +385,16 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             )
         answer = result.generated_answer or ""
         contains = max(answer_contains(answer, ref) for ref in references)
+        normalization = self.config.evaluation.answer_normalization
         normalize = (
-            normalize_answer_squad
-            if self.config.evaluation.answer_normalization == "official_squad"
-            else normalize_answer
+            normalize_answer if normalization == "default" else normalize_answer_squad
         )
-        em = max(exact_match(answer, ref, normalize) for ref in references)
-        f1 = max(token_f1(answer, ref, normalize) for ref in references)
+        yes_no_exact = normalization == "hotpotqa"
+        em = max(exact_match(span, ref, normalize) for ref in references)
+        f1 = max(
+            token_f1(span, ref, normalize, yes_no_exact=yes_no_exact)
+            for ref in references
+        )
         return EvaluationReport(
             query_id=query.query_id,
             evaluator_type=self.evaluator_type,
@@ -251,5 +411,9 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             metadata={
                 **self._extract_search_metadata(result),
                 "num_references": len(references),
+                ANSWER_SPAN_KEY: self.answer_span,
+                # The whole answer is in the result already.
+                **({} if self.answer_span == "full" else {SCORED_SPAN_KEY: span}),
+                **span_metadata,
             },
         )
