@@ -675,9 +675,22 @@ so the config in the image stays as it is:
               "--s3-bucket-name", "<cache bucket>"],
   "environment": [{"name": "UKR__INDEXING__RESET", "value": "true"},
                   {"name": "UKR_CONFIRM_RESET", "value": "1"},
+                  {"name": "UKR_CONFIRM_DELETIONS", "value": "1"},
                   {"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
                   {"name": "UKR_PIPELINE_ID", "value": "reset-001"}]}]}
 ```
+
+Each answer covers one question; keep only the ones the run asks.
+`UKR_CONFIRM_RESET=1` is for this reset (`UKR__INDEXING__RESET=true`) when
+another scope holds seeds or the corpus is seeds alone, and for an
+empty-corpus seed build with the registry off (**Seeds with the registry
+off**, below). `UKR_CONFIRM_DELETIONS=1` is for an
+incremental run, without the reset, that deletes more than
+`indexing.max_deletion_share` of its scope's documents ([Mass deletions
+ask first](#incremental-runs)): for that re-run drop the two reset lines.
+A reset is never checked for mass deletions, so with the reset on
+`UKR_CONFIRM_DELETIONS` changes nothing; neither answers a resume's
+integrity check (`--yes` does).
 
 Two resets from an empty corpus (seeds alone) fail whatever the answer,
 `UKR_CONFIRM_RESET=1` included: of a scope that holds documents, under

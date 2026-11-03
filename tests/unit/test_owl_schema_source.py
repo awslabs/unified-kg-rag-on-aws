@@ -26,7 +26,6 @@ from typing import Any
 import pytest
 
 from tests.fixtures.extras import requires_ontology
-from tests.fixtures.logs import log_message
 from tests.fixtures.ontology_models import EX, PROCURE_GOLDEN, procure_model
 from tests.fixtures.schema_annotation import schema_annotation_digest
 from unified_kg_rag.adapters.schema_sources import (
@@ -565,7 +564,8 @@ def test_unfollowed_imports_are_warned_once(
         assert _load(directory) == PROCURE_GOLDEN
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
-    assert log_message(warnings[0]).startswith(
+    message = warnings[0].getMessage()
+    assert message.startswith(
         "Ontology: owl:imports not followed: https://example.org/money, "
         "https://example.org/parties;"
     )
@@ -586,7 +586,7 @@ def test_unfollowed_imports_are_warned_once(
 def test_the_mapping_report_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG):
         _load(PROCURE)
-    messages = [log_message(r) for r in caplog.records]
+    messages = [r.getMessage() for r in caplog.records]
     assert any(
         m.startswith(f"Ontology '{PROCURE}' (1 file): 4 entity types, 5 relationship")
         for m in messages
