@@ -30,7 +30,10 @@ node cards name document entities) in each round: the shard documents are
 converted as bootstrap converts them, their units and records are the
 pipeline's, and the stores must hold what a full build over the documents
 and the configured seeds holds, with each item's IRI, source kinds and
-confidence. The schema variant types the seeds too.
+confidence. A seed may spell a name twice, with or without a shared IRI,
+under each ``on_name_collision`` (one that refuses the collision fails its
+run at start-up, which leaves the stores as they were). The schema variant
+types the seeds too.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from hypothesis import HealthCheck, example, given, settings
+from hypothesis import HealthCheck, event, example, given, settings
 from hypothesis import strategies as st
 
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
@@ -91,7 +94,9 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.models.config import SeedNameCollision
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedNode
+from unified_kg_rag.shared.exceptions import SeedGraphError
 
 pytestmark = pytest.mark.property
 
@@ -692,15 +697,22 @@ def _seeds(
     names: list[str] = _SEED_NODE_NAMES,
     entity_types: tuple[str | None, ...] = (None, "ORG", "PRODUCT"),
     relationship_types: tuple[str, ...] = (_TYPE, "SUPPLIES"),
+    collisions: tuple[SeedNameCollision, ...] = (),
 ) -> st.SearchStrategy[Seed]:
-    return random_seeds(names, entity_types, relationship_types)
+    return random_seeds(names, entity_types, relationship_types, collisions)
 
+
+# Every policy for names a seed spells twice: error (and a qualify whose
+# qualified names collide again) fails the run at start-up.
+_COLLISIONS: tuple[SeedNameCollision, ...] = ("merge", "qualify", "error")
 
 # One round: the documents' contents and each seed graph, or None when it is
 # not configured (a seed that was is removed).
 _seeded_round = st.tuples(
     _round,
-    st.fixed_dictionaries({name: st.none() | _seeds() for name in _SEED_GRAPHS}),
+    st.fixed_dictionaries(
+        {name: st.none() | _seeds(collisions=_COLLISIONS) for name in _SEED_GRAPHS}
+    ),
 )
 
 
@@ -710,6 +722,19 @@ def _seeded_corpus(
     return seeded_corpus(
         state, seeds, config.processing.graph_extraction.extraction_schema()
     )
+
+
+def _convertible_corpus(
+    state: dict[str, Any], seeds: dict[str, Seed | None], config: Config
+) -> dict[str, Any] | None:
+    """:func:`_seeded_corpus`, or None when a seed does not convert: the
+    run fails at start-up, before any write, so the stores keep the last
+    round's build."""
+    try:
+        return _seeded_corpus(state, seeds, config)
+    except SeedGraphError:
+        event("a seed refused its colliding names")
+        return None
 
 
 def _seed_entity_state(entity: Entity, kinds: list[str] | None) -> tuple[Any, ...]:
@@ -878,7 +903,9 @@ def test_incremental_seed_rounds_match_a_full_build(rounds) -> None:
     inc = IncrementalIndexer(FakeDocStatusStore(), manager)
 
     for state, seeds in rounds:
-        corpus = _seeded_corpus(state, seeds, config)
+        corpus = _convertible_corpus(state, seeds, config)
+        if corpus is None:
+            continue
         _run(inc, corpus)
 
         assert _stored_seed_state(graph, vector) == _expected_seed_state(corpus)
@@ -892,6 +919,7 @@ _typed_seeded_round = st.tuples(
             | _seeds(
                 entity_types=("ORGANIZATION", "person", "vendor", None),
                 relationship_types=tuple(_RELATIONSHIP_TYPES),
+                collisions=_COLLISIONS,
             )
             for name in _SEED_GRAPHS
         }
@@ -985,7 +1013,9 @@ def test_incremental_typed_seed_rounds_match_a_full_build(mode: str, rounds) -> 
         return _strict_extract(corpus, mode)
 
     for state, seeds in rounds:
-        corpus = _seeded_corpus(state, seeds, config)
+        corpus = _convertible_corpus(state, seeds, config)
+        if corpus is None:
+            continue
         _run(inc, corpus, extract)
 
         assert _stored_seed_state(graph, vector) == _expected_seed_state(

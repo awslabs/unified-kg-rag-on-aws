@@ -37,6 +37,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.ports.indexer import StoredAnnotation
 from unified_kg_rag.shared import ConfigurationError, NamespaceLeaseError
+from unified_kg_rag.shared.exceptions import GraphRAGException
 
 pytestmark = pytest.mark.integration
 
@@ -1022,6 +1023,17 @@ def test_a_lineage_update_sets_the_filters_and_keeps_other_attributes(
         indexer.find_documents(prefix, "attributes.filters.year", ["2024"], "default")
         == {}
     )
+    # An item that lost its last filtered document: no key matches.
+    stats = indexer.update_entity_lineage(
+        [vendor.model_copy(update={"text_unit_ids": ["t8"], "attributes": None})]
+    )
+    assert stats.failed_items == 0, stats.errors
+    assert (
+        indexer.find_documents(prefix, "attributes.filters.region", ["eu"], "default")
+        == {}
+    )
+    copies = indexer.read_vector_copies("entities", [vendor.id])
+    assert copies[vendor.id]["seed_properties"] == {"tier": "gold"}
 
 
 def _entities_index_without_seed_properties(
@@ -1091,6 +1103,45 @@ def test_incremental_run_refuses_seed_properties_mapped_key_by_key(
         match="'attributes.seed_properties' field by field.*indexing.reset: true",
     ):
         harness.vector_indexer.check_index_settings("default")
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_live_objects_own_parameters_cannot_change(harness: StoreHarness) -> None:
+    # Why an index whose seed properties a dynamic mapping made is refused,
+    # not remapped: a sub-field may be added, enabled may not change.
+    _write(harness, "entities", "index", _entities()[:1])
+    client = harness.vector_indexer.opensearch_client
+    index_name = client.get_index_name_by_alias(
+        harness.vector_indexer._get_name(
+            harness.config.indexing.opensearch.entities_index_prefix, None
+        )
+    )
+    assert index_name
+    # OpenSearch answers a 500 mapper_exception, the embedded engine a 400.
+    with pytest.raises(GraphRAGException, match="enabled"):
+        client.put_index_mapping(
+            index_name,
+            {
+                "properties": {
+                    "attributes": {
+                        "properties": {
+                            "seed_properties": {
+                                "type": "object",
+                                "enabled": True,
+                                "properties": {"code": {"type": "long"}},
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    client.put_index_mapping(
+        index_name,
+        {"properties": {"attributes": {"properties": {"note": {"type": "keyword"}}}}},
+    )
+    attributes = client.get_index_mappings(index_name)["properties"]["attributes"]
+    assert attributes["properties"]["note"] == {"type": "keyword"}
+    assert attributes["properties"]["seed_properties"]["enabled"] is False
 
 
 def test_a_date_like_filter_value_does_not_type_its_field(

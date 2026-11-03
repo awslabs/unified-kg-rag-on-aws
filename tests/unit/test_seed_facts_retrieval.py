@@ -96,7 +96,7 @@ class _Client:
     def __init__(
         self,
         *,
-        mapped: bool = True,
+        mapped: bool | list[bool] = True,
         seeded: bool = False,
         denied: bool = False,
         unread: bool = False,
@@ -112,12 +112,18 @@ class _Client:
             raise StoreAccessDeniedError("denied")
         if self.unread:
             raise RuntimeError("connection reset")
-        properties: dict[str, Any] = {
-            "text_embedding": {"type": "knn_vector", "dimension": DIM}
-        }
-        if self.mapped:
-            properties["source_kind"] = {"type": "keyword"}
-        return {f"{index}-1": {"properties": properties}}
+        # A list: the alias's indexes, each mapping the field or not.
+        found = {}
+        for n, mapped in enumerate(
+            self.mapped if isinstance(self.mapped, list) else [self.mapped], 1
+        ):
+            properties: dict[str, Any] = {
+                "text_embedding": {"type": "knn_vector", "dimension": DIM}
+            }
+            if mapped:
+                properties["source_kind"] = {"type": "keyword"}
+            found[f"{index}-{n}"] = {"properties": properties}
+        return found
 
     async def asearch(self, **request: Any) -> dict[str, Any]:
         body = request["body"]
@@ -288,6 +294,9 @@ async def test_the_probe_is_asked_once_per_query(retriever, config, mocker) -> N
         (_Client(mapped=False), False),
         (_Client(denied=True), False),
         (_Client(unread=True), False),
+        # An alias over two indexes is known only when both map it.
+        (_Client(mapped=[True, False]), False),
+        (_Client(mapped=[True, True]), True),
     ],
 )
 async def test_a_mapped_index_is_known_from_the_embedding_check(

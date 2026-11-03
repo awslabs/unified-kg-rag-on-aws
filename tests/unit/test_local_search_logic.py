@@ -442,3 +442,37 @@ def test_a_seed_entity_graph_node_takes_its_hits_document_filters() -> None:
     assert kept[0].metadata["source_kinds"] == ["seed_graph"]
     assert kept[1] is nodes[1] and kept[2] is nodes[2]
     assert "attributes" not in nodes[0].metadata
+
+
+def test_a_seed_entity_node_keeps_its_attributes_and_the_first_hits_filters() -> None:
+    first = {"seed_graph": "procure"}
+    hits = [
+        _result("v", metadata={"id": "v", "attributes": {"filters": first}}),
+        _result("v", metadata={"id": "v", "attributes": {"filters": {"k": "x"}}}),
+        _result("w", metadata={"id": "w", "attributes": {"filters": first}}),
+    ]
+    own = {"seed_graph": "other"}
+    nodes = [
+        _result(
+            "v",
+            metadata={
+                "id": "v",
+                "source_kinds": ["seed_graph"],
+                "attributes": {"tier": "gold"},
+            },
+        ),
+        # Filters of its own: left as they are.
+        _result(
+            "w",
+            metadata={
+                "id": "w",
+                "source_kinds": ["document", "seed_graph"],
+                "attributes": {"filters": own},
+            },
+        ),
+    ]
+
+    kept = LocalSearchStrategy._with_hit_filters(nodes, hits)
+
+    assert kept[0].metadata["attributes"] == {"tier": "gold", "filters": first}
+    assert kept[1] is nodes[1]

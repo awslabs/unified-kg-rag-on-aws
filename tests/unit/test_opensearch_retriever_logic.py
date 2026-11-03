@@ -855,6 +855,44 @@ async def test_a_document_source_kinds_filter_on_an_index_without_the_field(
         assert all(("source_kinds" in str(b["query"])) == filtered for b in searches)
 
 
+class _FailedFieldProbeClient(_SourceKindsClient):
+    """``_SourceKindsClient`` over a seeded index whose ``source_kinds``
+    probe fails (a transient error)."""
+
+    async def asearch(self, **request) -> dict:
+        query = str(request["body"]["query"])
+        if "exists" in query and "must_not" not in query:
+            self.requests.append(request)
+            raise RuntimeError("connection reset")
+        return await super().asearch(**request)
+
+
+@pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.VECTOR])
+async def test_a_failed_source_kinds_probe_keeps_the_filter(
+    retriever, config, mocker, search_type
+) -> None:
+    # Unknown whether the index holds the field: the filter stays (dropped,
+    # seed-only items would match document evidence).
+    prefix = config.indexing.opensearch.entities_index_prefix
+    client = _FailedFieldProbeClient({prefix: [("e1", 1.0)]}, seeded=True)
+    object.__setattr__(retriever, "_opensearch_client", client)
+    mocker.patch.object(
+        OpenSearchRetriever, "_get_query_vector", mocker.AsyncMock(return_value=[0.1])
+    )
+    mocker.patch.object(OpenSearchRetriever, "_check_embedding_settings")
+    await retriever.aretrieve(
+        SearchQuery(
+            query="x",
+            search_type=search_type,
+            index_prefixes=[prefix],
+            filters={"source_kinds": "document"},
+        )
+    )
+    searches = [b for b in client.bodies if b.get("_source") is not False]
+    assert searches
+    assert all("source_kinds" in str(b["query"]) for b in searches)
+
+
 async def test_a_lexical_source_kinds_filter_is_not_probed_for_the_field(
     retriever, config, mocker
 ) -> None:

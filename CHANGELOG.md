@@ -936,8 +936,8 @@ From 0.2.3 (or a `main` checkout since):
   `BASE_IMAGE` argument; a layering test enforces the hexagonal import rules,
   statically and, for every module that has its backends injected, in a
   clean interpreter; the core-install job runs without the dev group (a
-  `test` group holds the test runner) (#119, #257, #297, #303, #428, #456,
-  #464, #465, #470).
+  `test` group holds the test runner) and runs a JSONL seed graph end to
+  end too (#119, #257, #297, #303, #428, #456, #464, #465, #470, #PR).
 - Settings set in code on `processing.chunking`, `indexing.neptune`,
   `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and
