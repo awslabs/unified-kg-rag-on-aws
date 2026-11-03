@@ -546,6 +546,116 @@ def test_create_pipeline_metrics_surfaces_unstored_records_and_underived_items()
     assert metrics.underived_items == 4
 
 
+def test_create_pipeline_metrics_surfaces_corpus_coverage() -> None:
+    # Old behaviour: none of these reached the EMF metrics, so a run that
+    # skipped, failed or deleted documents looked like a clean one.
+    from unified_kg_rag.domain.models import DocumentDelta
+    from unified_kg_rag.domain.models.cache import CacheStats
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.cache_manager = SimpleNamespace(get_cache_stats=lambda pid: CacheStats())
+    ctx = _ctx_with_results(
+        [
+            _result(
+                "document_parsing", metrics={"files_failed": 2, "files_skipped": 3}
+            ),
+            _result(
+                "document_loading",
+                metrics={"files_failed": 1, "documents_excluded": 4},
+            ),
+            _result("indexing", metrics={"documents_deleted": 5}),
+        ]
+    )
+    ctx.duration_seconds = 1.0
+    ctx.incremental_delta = DocumentDelta(deleted=["x"])
+    ctx.recorded_failed_doc_ids = ["a", "b"]
+    ctx.retrying_doc_ids = ["a"]
+    ctx.claims_missing_doc_ids = ["c", "d", "e"]
+
+    metrics = DataIngestionPipeline._create_pipeline_metrics(pipe, ctx)
+
+    assert metrics.total_files_failed == 3
+    assert metrics.total_files_skipped == 3
+    assert metrics.total_documents_excluded == 4
+    # What the indexing stage removed, not what the delta planned.
+    assert metrics.total_documents_deleted == 5
+    assert metrics.total_documents_failed == 2
+    assert metrics.total_documents_retrying == 1
+    assert metrics.total_documents_without_claims == 3
+
+
+def test_coverage_metrics_are_emitted_once_by_the_stage_that_completes_them() -> None:
+    from unified_kg_rag.domain.models import PipelineMetrics
+
+    class Sink:
+        def __init__(self) -> None:
+            self.records: list[tuple[str | None, dict]] = []
+
+        def emit(self, namespace, metrics, dimensions=None) -> None:
+            self.records.append((self.stage, dict(metrics)))
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.metrics_sink = sink = Sink()
+    pipe.stages = [
+        SimpleNamespace(name=stage.value)
+        for stage in (
+            PipelineStageType.DOCUMENT_PARSING,
+            PipelineStageType.DOCUMENT_LOADING,
+            PipelineStageType.INDEXING,
+        )
+    ]
+    metrics = PipelineMetrics(
+        pipeline_id="pid",
+        total_duration_seconds=1.0,
+        total_documents_processed=0,
+        total_text_units_created=0,
+        total_translated_units=0,
+        total_entities_extracted=0,
+        total_relationships_extracted=0,
+        total_claims_extracted=0,
+        total_communities_detected=0,
+        total_community_reports_generated=0,
+        total_files_failed=1,
+        total_files_skipped=2,
+        total_documents_excluded=3,
+        total_documents_deleted=4,
+        total_documents_failed=5,
+        total_documents_retrying=6,
+        total_documents_without_claims=7,
+    )
+    for stage in ("document_parsing", "document_loading", "indexing", None):
+        sink.stage = stage
+        DataIngestionPipeline._emit_metrics(pipe, metrics, "pid", stage)
+
+    emitted = {
+        name: stage
+        for stage, record in sink.records
+        for name in record
+        if name
+        in {
+            "total_files_failed",
+            "total_files_skipped",
+            "total_documents_excluded",
+            "total_documents_deleted",
+            "total_documents_failed",
+            "total_documents_retrying",
+            "total_documents_without_claims",
+        }
+    }
+    assert emitted == {
+        "total_files_skipped": "document_parsing",
+        "total_files_failed": "document_loading",
+        "total_documents_excluded": "document_loading",
+        "total_documents_deleted": "indexing",
+        # Recorded by the indexing commit or a stage that stopped the run.
+        "total_documents_failed": None,
+        "total_documents_retrying": None,
+        "total_documents_without_claims": None,
+    }
+    values = {k: v for _, record in sink.records for k, v in record.items()}
+    assert [values[name] for name in sorted(emitted)] == [4, 3, 5, 6, 7, 1, 2]
+
+
 # --- helpers -------------------------------------------------------------
 
 

@@ -97,8 +97,30 @@ scope, and a WARNING names the spelling used). So:
   logs a WARNING naming the suffix's other local source directories (a
   document only a refused or failed run recorded counts as new).
 - **Never let corpus files expire or disappear**: the next run removes their
-  content.
+  content. A file the run cannot read keeps it: one that fails to parse or
+  load, and one skipped because no loader reads its type (an optional extra
+  such as `unstructured` dropped from the image, a loader plugin not
+  imported; `Skipping N file(s) ... of a type no loader reads ...`,
+  `total_files_skipped`).
 - **One index suffix and config file per tenant or corpus version.**
+
+**Mass deletions ask first.** A run that would delete more than
+`indexing.max_deletion_share` (default `0.5`) of the documents the registry
+holds for its source scope stops at `document_loading`, before it writes
+(`This run deletes N of the M documents ... ; continue?`, exit 1), unless
+the deletion is confirmed: `run-ingestion` asks on a terminal, and
+`--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1` or `--yes` answers yes. A
+partial S3 sync, an expired prefix and a volume not mounted look the same
+as files removed on purpose. Only scopes of at least 10 documents are
+checked; a retired scope's records (`--retire-source-scope`) do not count;
+a reset, and a run with the registry off, are not checked (without the
+registry every run is a full build of what it reads, so keep the registry
+on for a corpus that may arrive partial; an empty corpus with seeds asks as
+in [Seeds with the registry off](#seed-graphs-in-the-image-or-s3)). When the files are really gone, re-run once with
+`UKR_CONFIRM_DELETIONS=1` as an environment override, as for the reset in
+[Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3); set the
+share to `1.0` or `null` to turn the check off. `total_documents_deleted`
+counts what a run removed.
 
 **Rebuild periodically.** Delta runs append communities instead of
 re-clustering, and stored communities and reports keep an entity's old id
@@ -933,6 +955,18 @@ calls, throttles and latency by model, and the incremental degradations no
 alarm watches (`total_documents_deferred`, `community_rebuild_recommended`,
 `total_records_not_stored`, `underived_items`).
 
+Corpus coverage metrics, one value per run (Sum):
+
+| Metric | Emitted after | Counts |
+|---|---|---|
+| `total_files_failed` | `document_loading` | Corpus files that failed to parse or load (kept, not deleted) |
+| `total_files_skipped` | `document_parsing` | Corpus files of a type no loader reads (kept, not deleted) |
+| `total_documents_excluded` | `document_loading` | Changed documents no longer retried (`indexing.max_document_failures`) |
+| `total_documents_deleted` | `indexing` | Documents removed as gone from the corpus or of a retired scope |
+| `total_documents_failed` | run end | Documents recorded `FAILED` (JSON `failed_documents`) |
+| `total_documents_retrying` | run end | Documents failed again for an error not their own (JSON `documents_retrying`) |
+| `total_documents_without_claims` | run end | Documents indexed without some claims (JSON `documents_without_claims`) |
+
 ## Query access and tenant isolation
 
 Queries (`run-rag`, `run-eval`, an embedded `GraphRAGChain`) get their own
@@ -1177,7 +1211,7 @@ model or credential error fails a query rather than answering from no context.
 | `... needs confirmation, but stdin is not a terminal` | Completed stages' outputs are no longer cached under the current inputs | `--yes` (recomputes them), or a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
 | `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
-| `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it or convert the files |
+| `Skipping N file(s) in '<dir>' of a type no loader reads (2 '.md', ...)` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed (`.md`, `.markdown`, `.htm`, `.html`), or no loader is registered for the type. The files are not indexed; an incremental run keeps what they indexed before and lists them as `failed` (`total_files_skipped`) | Install the extra the message names (rebuild the image with it), or convert the files. Until then the skipped files' indexed content stays as it was, edits to them included |
 | `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --extra ontology`, or build the image with it ([Ontology schema in the image](#ontology-schema-in-the-image)) |
 | `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([User Guide](./user-guide.md#from-an-owlrdfs-ontology)) |
 | `Ontology file '...' holds ... (MAX_XML_TEXT_CHUNKS)` / `... (MAX_XML_LITERAL_ELEMENTS)` / `... has a line of N bytes ... (MAX_LINE_BYTES)` / `... limit on input amplification factor ...` (exit 2) | A shape the RDF/XML or N-Triples parser takes quadratic time over (refused before parsing) | Convert the file to Turtle (`robot convert --input onto.rdf --output onto.ttl`) |
@@ -1223,6 +1257,7 @@ model or credential error fails a query rather than answering from no context.
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
 | `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...` (or `rebuilds it from this run's seed graphs alone ...`, or, with the registry off, `No source document reached this run, ... rebuild the index '...' from the seed graphs alone, replacing what it holds`) `; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-reset does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, or, from seeds alone, another scope's documents; or, with the registry off, seeds alone would replace an index that holds items; and no one answered yes | Re-run with `--confirm-reset` or `UKR_CONFIRM_RESET=1` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` (a no raises `ConfirmationDeclinedError`) |
+| `This run deletes N of the M documents the doc-status registry holds for source scope '...' (P%, over indexing.max_deletion_share S) ...; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-deletions does)` (exit 1, at `document_loading`, before any write) | More than `indexing.max_deletion_share` of the scope's indexed documents are missing from the corpus | Check the corpus (sync, prefix, mount) and re-run. If the files are really gone, re-run with `--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`, or `--yes`) ([Incremental runs](#incremental-runs)) |
 | `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope (User Guide, *Lifecycle*) |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |

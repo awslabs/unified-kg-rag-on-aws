@@ -37,6 +37,7 @@ class _Ctx:
     documents: list[Document] = []
     incremental_scope: str | None = None
     failed_source_files: list[str] = []
+    skipped_source_files: list[str] = []
     pipeline_id = "pipeline"
 
 

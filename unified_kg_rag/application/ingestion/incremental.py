@@ -1139,6 +1139,13 @@ def retired_scope_readings(value: str) -> tuple[list[str], bool]:
     return readings, not scope.startswith("/") and len(readings) > 1
 
 
+def unread_source_files(context: PipelineContext) -> list[str]:
+    """The corpus files the run could not read: failed to parse or load,
+    or skipped for a file type no loader reads. A delta never deletes
+    their documents."""
+    return [*context.failed_source_files, *context.skipped_source_files]
+
+
 def run_registry_scope(
     config: Config, source_directory: Path, failed_source_files: list[str]
 ) -> tuple[str, str, str, list[str]]:
@@ -1214,7 +1221,7 @@ def dedup_preferences(
     graph is in the stores. A PENDING record (an interrupted run) is neither.
     """
     _, _, source_scope, _ = run_registry_scope(
-        config, source_directory, context.failed_source_files
+        config, source_directory, unread_source_files(context)
     )
     keys: dict[int, str] = {}
     for document in documents:
@@ -1574,6 +1581,7 @@ def filter_to_delta(
     doc_status: Callable[[], DocStatusPort],
     source_directory: Path,
     confirm: Callable[[str], bool] | None = None,
+    confirm_deletions: Callable[[str], bool] | None = None,
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
@@ -1581,7 +1589,9 @@ def filter_to_delta(
     IndexingStage can prune stale artifacts, propagate deletions, and record
     per-document lineage (the full incremental commit path). A reset asks
     ``confirm`` first when it drops another scope's seed graph documents
-    (see ``_confirm_reset_of_seed_scopes``).
+    (see ``_confirm_reset_of_seed_scopes``); a run that would delete more
+    than ``indexing.max_deletion_share`` of its scope's documents asks
+    ``confirm_deletions`` (see ``_confirm_mass_deletion``).
 
     Raises :class:`DocStatusRegistryError` when the registry cannot be
     read. There is no safe fallback: without a delta the indexing stage
@@ -1590,7 +1600,7 @@ def filter_to_delta(
     scopes' documents would be lost and every later run would rebuild.
     """
     scope, namespace, source_scope, failed_doc_ids = run_registry_scope(
-        config, source_directory, context.failed_source_files
+        config, source_directory, unread_source_files(context)
     )
     # Fails before any registry read or write when the run would retire
     # its own scope.
@@ -1685,13 +1695,22 @@ def filter_to_delta(
         respelled = config.model_copy(deep=True)
         respelled.processing.document_parsing.source_scope = stored_spelling
         return filter_to_delta(
-            documents, context, respelled, doc_status, source_directory, confirm
+            documents,
+            context,
+            respelled,
+            doc_status,
+            source_directory,
+            confirm,
+            confirm_deletions,
         )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
         _refuse_seeds_over_documents(
             _seed_scope_records(store, delta, scope), source_scope
         )
+    _confirm_mass_deletion(
+        delta, config.indexing.max_deletion_share, source_scope, confirm_deletions
+    )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
@@ -1732,6 +1751,65 @@ def filter_to_delta(
         len(delta.deferred),
     )
     return to_process, skipped
+
+
+# A scope holding fewer documents is never checked against
+# indexing.max_deletion_share: removing a few files from a small corpus is
+# routine, and its share swings by whole tens of percent.
+MASS_DELETION_MIN_DOCUMENTS = 10
+
+
+def _confirm_mass_deletion(
+    delta: DocumentDelta,
+    max_share: float | None,
+    source_scope: str,
+    confirm: Callable[[str], bool] | None,
+) -> None:
+    """Ask before a run deletes more than ``max_share`` of its scope's
+    documents.
+
+    A file gone from the corpus reads deleted, and so does every file of a
+    partial S3 sync, an expired prefix or a volume not mounted: the run
+    would remove what only they stated. The share is of the scope's
+    records the diff read (``DocumentDelta.scope_documents``); a retired
+    scope's records (``DocumentDelta.retired``) were asked for, and files
+    the run could not read are kept, not deleted. A scope of fewer than
+    ``MASS_DELETION_MIN_DOCUMENTS`` documents, or ``max_share`` ``None`` or
+    1.0, is not checked. ``confirm`` answers (``--confirm-deletions``,
+    ``UKR_CONFIRM_DELETIONS=1`` or ``--yes``); ``None`` cannot, and the run
+    stops before it writes.
+
+    Raises:
+        ConfirmationDeclinedError: The deletion is not confirmed.
+    """
+    if max_share is None or max_share >= 1.0:
+        return
+    retired = set(delta.retired)
+    deleted = sum(1 for doc_id in delta.deleted if doc_id not in retired)
+    total = delta.scope_documents
+    if total < MASS_DELETION_MIN_DOCUMENTS or deleted / total <= max_share:
+        return
+    question = (
+        f"This run deletes {deleted} of the {total} documents the doc-status "
+        f"registry holds for source scope {source_scope!r} "
+        f"({deleted / total:.0%}, over indexing.max_deletion_share "
+        f"{max_share:g}): their files are not in the corpus, and what only "
+        "they stated is removed from the index. A partial sync or a missing "
+        "volume looks the same; continue?"
+    )
+    if confirm is None:
+        raise ConfirmationDeclinedError(
+            f"{question} No one can confirm it (run-ingestion "
+            "--confirm-deletions does)"
+        )
+    if not confirm(question):
+        raise ConfirmationDeclinedError(f"Deletion cancelled: {question}")
+    logger.warning(
+        "Deleting %d of the %d documents of source scope %r (confirmed)",
+        deleted,
+        total,
+        source_scope,
+    )
 
 
 def _written_by(

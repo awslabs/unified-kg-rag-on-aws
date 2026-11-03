@@ -3116,6 +3116,21 @@ class IndexingConfig(BaseModel):
         "next runs process half of the documents it died with and defer the "
         "other new and changed documents until the culprit is alone.",
     )
+    max_deletion_share: float | None = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Incremental runs: when a run would delete more than "
+        "this share of the documents the doc-status registry holds for its "
+        "source scope (files gone from the corpus: a partial S3 sync, an "
+        "expired prefix, a volume not mounted look the same), it stops at "
+        "document_loading before any write unless the deletion is "
+        "confirmed (run-ingestion asks on the terminal; --confirm-deletions, "
+        "UKR_CONFIRM_DELETIONS=1 or --yes answers yes). Only scopes holding "
+        "at least 10 documents are checked; retired scopes "
+        "(retire_source_scopes) do not count, and a reset or a run with the "
+        "registry off is never checked. 1.0 or null disables the check.",
+    )
     lease_seconds: float = Field(
         default=600.0,
         ge=10.0,
