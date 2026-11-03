@@ -37,22 +37,51 @@ def _skip_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if "Skipping" in r.getMessage()]
 
 
-def test_skipped_extensions_are_warned_once_each(
+def test_skipped_files_are_warned_once_with_counts_and_remedies(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     for name in ("a.md", "b.md", "page.html", "notes.docx", "keep.txt", ".hidden"):
         (tmp_path / name).write_text("Vendor ships goods to Buyer.")
 
     with caplog.at_level(logging.WARNING):
-        files = _stage(tmp_path)._discover_files()
+        files, skipped = _stage(tmp_path)._discover_source_files()
 
     assert [f.name for f in files] == ["keep.txt"]
-    warnings = sorted(_skip_warnings(caplog))
-    assert len(warnings) == 3  # .docx, .html, .md; hidden files are not reported
-    md = next(w for w in warnings if "'.md'" in w)
-    assert "2 " in md and "uv sync --extra unstructured" in md
-    docx = next(w for w in warnings if "'.docx'" in w)
-    assert "unstructured" not in docx
+    # Hidden files are neither read nor reported.
+    assert sorted(Path(p).name for p in skipped) == [
+        "a.md",
+        "b.md",
+        "notes.docx",
+        "page.html",
+    ]
+    (warning,) = _skip_warnings(caplog)
+    assert f"Skipping 4 file(s) in '{tmp_path}'" in warning
+    assert "2 '.md'" in warning and "1 '.html'" in warning and "1 '.docx'" in warning
+    assert "for .html, .md, install the optional 'unstructured' extra" in warning
+    assert "uv sync --extra unstructured" in warning
+    assert "for .docx, convert them" in warning
+    assert "keeps what they indexed before" in warning
+
+
+def test_the_stage_reports_skipped_files_apart_from_failed_ones(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a.md").write_text("Vendor ships goods to Buyer.")
+    (tmp_path / "keep.txt").write_text("Vendor ships goods to Buyer.")
+    context = PipelineContext(
+        pipeline_id="p",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+
+    _, _, metrics = _stage(tmp_path)._execute_core(context)
+
+    assert context.skipped_source_files == [str(tmp_path / "a.md")]
+    assert context.failed_source_files == []
+    assert metrics is not None
+    assert (metrics["files_skipped"], metrics["files_failed"]) == (1, 0)
 
 
 def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(

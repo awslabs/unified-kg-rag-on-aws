@@ -308,6 +308,9 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "indexing.max_failure_rate": _neutral(
         "fails a stage or the run, never changes what a stage produces"
     ),
+    "indexing.max_deletion_share": _neutral(
+        "stops a run before it writes, never changes what a stage produces"
+    ),
     # Which neighbours graph expansion keeps (deterministic_order) included:
     # shapes answers (eval manifests record it), no cached stage output.
     "indexing.neptune": Unkeyed(_AT_INDEXING),

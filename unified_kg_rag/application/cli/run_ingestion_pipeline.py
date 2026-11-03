@@ -92,6 +92,8 @@ def _source_scope_arg(value: str) -> str:
 # The env var answering yes to a reset's question (--confirm-reset), for a
 # task whose command is fixed (Step Functions) or overridden by env only.
 CONFIRM_RESET_ENV = "UKR_CONFIRM_RESET"
+# And to a mass deletion's (--confirm-deletions, indexing.max_deletion_share).
+CONFIRM_DELETIONS_ENV = "UKR_CONFIRM_DELETIONS"
 _TRUE = frozenset({"1", "true", "yes"})
 _FALSE = frozenset({"", "0", "false", "no"})
 
@@ -197,8 +199,9 @@ class CommandLineInterface:
             action="store_true",
             help="Answer yes to confirmation prompts (continuing after a failed "
             "integrity check, or a reset that asks first, as --confirm-reset "
-            "does). Without it, a prompt that cannot be asked because stdin is "
-            "not a terminal fails the run",
+            "does, or a mass deletion, as --confirm-deletions does). Without "
+            "it, a prompt that cannot be asked because stdin is not a "
+            "terminal fails the run",
         )
         parser.add_argument(
             "--confirm-reset",
@@ -211,6 +214,17 @@ class CommandLineInterface:
             f"the {CONFIRM_RESET_ENV} env var: 1, true or yes). "
             "Without it (or --yes), the question is asked on the terminal, and "
             "the run stops (exit 1) when stdin is not one",
+        )
+        parser.add_argument(
+            "--confirm-deletions",
+            action="store_true",
+            help="Answer yes to the question of an incremental run that would "
+            "delete more than indexing.max_deletion_share of its source "
+            "scope's documents (their files are gone from the corpus); "
+            "nothing else (falls back to the "
+            f"{CONFIRM_DELETIONS_ENV} env var: 1, true or yes). Without it "
+            "(or --yes), the question is asked on the terminal, and the run "
+            "stops (exit 1) before it writes when stdin is not one",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -268,14 +282,19 @@ class CommandLineInterface:
                 "--output-format json cannot be combined with --metrics-sink "
                 "cloudwatch, which writes its records to stdout"
             )
-        if not args.confirm_reset:
-            value = os.getenv(CONFIRM_RESET_ENV, "").strip().lower()
+        for flag, env in (
+            ("confirm_reset", CONFIRM_RESET_ENV),
+            ("confirm_deletions", CONFIRM_DELETIONS_ENV),
+        ):
+            if getattr(args, flag):
+                continue
+            value = os.getenv(env, "").strip().lower()
             if value not in _TRUE | _FALSE:
                 self.parser.error(
-                    f"{CONFIRM_RESET_ENV} must be 1, true or yes (or 0, false, "
-                    f"no or empty), not {os.environ[CONFIRM_RESET_ENV]!r}"
+                    f"{env} must be 1, true or yes (or 0, false, "
+                    f"no or empty), not {os.environ[env]!r}"
                 )
-            args.confirm_reset = value in _TRUE
+            setattr(args, flag, value in _TRUE)
         return args
 
 
@@ -460,6 +479,20 @@ class IngestionPipelineRunner:
             getattr(self.args, "yes", False),
         )
 
+    def _confirm_deletions(self, question: str) -> bool:
+        """Ask a mass deletion's ``question`` (the pipeline's
+        ``confirm_deletions``): ``--confirm-deletions`` (or its env var)
+        answers it, and so does ``--yes``; without a terminal to ask on the
+        run stops."""
+        if getattr(self.args, "confirm_deletions", False):
+            console.print(f"{question} [dim](--confirm-deletions)[/dim]")
+            return True
+        return self._ask(
+            question,
+            f"--confirm-deletions (or {CONFIRM_DELETIONS_ENV}=1)",
+            getattr(self.args, "yes", False),
+        )
+
     @staticmethod
     def _ask(question: str, flag: str, answered: bool) -> bool:
         """Ask ``question`` on the terminal unless ``answered`` (by --yes);
@@ -598,6 +631,7 @@ class IngestionPipelineRunner:
             target_directory=self.args.output_directory,
             metrics_sink=self._build_metrics_sink(),
             confirm=self._confirm_reset,
+            confirm_deletions=self._confirm_deletions,
         )
 
         previous_handlers = self._stop_on_signals(self.pipeline)

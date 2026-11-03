@@ -987,6 +987,29 @@ whose processing kills the task would stop every later run the same way.
   another run deleted. Metrics:
   `total_documents_quarantined` (CDK `DocumentsQuarantined` alarm) and
   `total_documents_deferred`.
+- **Unread files and mass deletions.** The diff never deletes a file the
+  run could not read: `failed_doc_ids` holds the files that failed to
+  parse or load and those the parsing stage skipped because no loader
+  reads their type (`PipelineContext.skipped_source_files`; an optional
+  extra dropped from an image used to read as the deletion of every such
+  file). Skipped files are kept apart from failed ones only for the empty
+  corpus rule: a seed-only scope with a stray unsupported file is still a
+  seed-only run. Before its first write (`open_attempts`),
+  `incremental._confirm_mass_deletion` asks the pipeline's
+  `confirm_deletions` when the run's own deletions exceed
+  `indexing.max_deletion_share` of `DocumentDelta.scope_documents` (the
+  scope's records the diff read, counted by `detect_delta` before any
+  document moves between the lists) in a scope of at least 10 documents.
+  The retired scopes' records (`DocumentDelta.retired`) are left out: the
+  run was told to delete them. Its own input (`--confirm-deletions` /
+  `UKR_CONFIRM_DELETIONS`) for the same reason as the reset's. A run with
+  the registry off is not checked: the stores hold no per-document count
+  to compare the corpus with (a port method on every backend for one
+  check), and its empty-corpus case, the likeliest mistake, is already
+  asked (`_confirm_seeds_alone` with seeds; without them an empty corpus
+  fails the parsing stage). Metrics: `total_files_failed`,
+  `total_files_skipped`, `total_documents_excluded`,
+  `total_documents_deleted`.
 
 The cost is one extra batched registry write per run (two more writes and
 reads for the attempts) and a few batched store lookups per suffix.

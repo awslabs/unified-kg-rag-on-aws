@@ -286,6 +286,10 @@ class DataIngestionPipeline:
         "total_extraction_failures": frozenset({"graph_extraction"}),
         "total_documents_quarantined": frozenset({"document_loading"}),
         "total_documents_deferred": frozenset({"document_loading"}),
+        "total_documents_excluded": frozenset({"document_loading"}),
+        "total_files_failed": frozenset({"document_parsing", "document_loading"}),
+        "total_files_skipped": frozenset({"document_parsing"}),
+        "total_documents_deleted": frozenset({"indexing"}),
         "total_records_not_stored": frozenset({"graph_resolution", "claim_extraction"}),
         "underived_items": frozenset({"indexing"}),
         "total_gleaning_failures": frozenset({"gleaning"}),
@@ -305,8 +309,10 @@ class DataIngestionPipeline:
     # (application.bootstrap.load_seed_graphs): part of its corpus, so their
     # content is folded into the corpus fingerprint. None imported yet.
     seed_conversions: tuple[SeedConversion, ...] = ()
-    # Asks the questions a run needs answered (see __init__'s confirm).
+    # Asks the questions a run needs answered (see __init__'s confirm and
+    # confirm_deletions).
     _confirm: Callable[[str], bool] | None = None
+    _confirm_deletions: Callable[[str], bool] | None = None
     # The id of the latest run, once resolved (the CLI reports it on a stop).
     pipeline_id: str | None = None
 
@@ -335,6 +341,7 @@ class DataIngestionPipeline:
         vector_indexer: VectorIndexer | None = None,
         graph_indexer: GraphIndexer | None = None,
         confirm: Callable[[str], bool] | None = None,
+        confirm_deletions: Callable[[str], bool] | None = None,
     ) -> None:
         """Build the stages; every backend may be injected.
 
@@ -357,6 +364,12 @@ class DataIngestionPipeline:
                 ``UKR_CONFIRM_RESET=1`` or ``--yes`` answers). ``None``
                 cannot ask: such a run raises ``ConfirmationDeclinedError``
                 before it writes, as a no does.
+            confirm_deletions: Asks before an incremental run deletes more
+                than ``indexing.max_deletion_share`` of its source scope's
+                documents (the CLI asks on the terminal;
+                ``--confirm-deletions``, ``UKR_CONFIRM_DELETIONS=1`` or
+                ``--yes`` answers). ``None`` cannot ask: such a run raises
+                ``ConfirmationDeclinedError`` before it writes.
 
         Raises:
             ValueError: ``providers`` and one of the shorthand components are
@@ -375,6 +388,7 @@ class DataIngestionPipeline:
             load_seed_graphs(config, providers, boto_session=boto_session)
         )
         self._confirm = confirm
+        self._confirm_deletions = confirm_deletions
         self.config = config
         # The write lease of the latest run (see _namespace_lease).
         self._lease: NamespaceLease | None = None
@@ -506,6 +520,7 @@ class DataIngestionPipeline:
                 "doc_status": doc_status,
                 "seed_conversions": self.seed_conversions,
                 "confirm": self._confirm,
+                "confirm_deletions": self._confirm_deletions,
             },
             # --force-rebuild re-extracts every unit (and refreshes the
             # extraction store) instead of reusing the stored records.
@@ -595,7 +610,8 @@ class DataIngestionPipeline:
             NamespaceLeaseError: Another run writes the namespace.
             ConfirmationDeclinedError: A question the run asked before it
                 writes (``confirm``: a reset that drops another source
-                scope's content) was answered no, or nothing could answer it.
+                scope's content; ``confirm_deletions``: a mass deletion) was
+                answered no, or nothing could answer it.
         """
         # The root span of an ingestion trace: stages, batches and model calls
         # nest under it. A failure leaving the block is recorded on it.
@@ -1133,6 +1149,7 @@ class DataIngestionPipeline:
                     doc_status=stage._doc_status,
                     seed_conversions=stage.seed_conversions,
                     confirm=stage.confirm,
+                    confirm_deletions=stage.confirm_deletions,
                 )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:
@@ -2376,6 +2393,32 @@ class DataIngestionPipeline:
                     context, "document_loading", "documents_deferred"
                 )
             ),
+            # Documents an incremental run stopped retrying (each failed
+            # indexing.max_document_failures runs for an error of its own).
+            "total_documents_excluded": int(
+                self._get_stage_metric(
+                    context, "document_loading", "documents_excluded"
+                )
+            ),
+            # Corpus files the run could not read: their documents are
+            # neither processed nor deleted.
+            "total_files_failed": sum(
+                int(self._get_stage_metric(context, stage, "files_failed"))
+                for stage in ("document_parsing", "document_loading")
+            ),
+            "total_files_skipped": int(
+                self._get_stage_metric(context, "document_parsing", "files_skipped")
+            ),
+            "total_documents_deleted": int(
+                self._get_stage_metric(context, "indexing", "documents_deleted")
+            ),
+            # The run's document outcomes, as run-ingestion's JSON result
+            # reports them (failed_documents, documents_retrying,
+            # documents_without_claims): recorded by the indexing commit or
+            # a stage that stopped the run, so emitted when the run ends.
+            "total_documents_failed": len(context.recorded_failed_doc_ids),
+            "total_documents_retrying": len(context.retrying_doc_ids),
+            "total_documents_without_claims": len(context.claims_missing_doc_ids),
             "total_records_not_stored": sum(
                 int(self._get_stage_metric(context, stage, "records_not_stored"))
                 for stage in ("graph_resolution", "claim_extraction")

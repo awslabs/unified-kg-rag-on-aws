@@ -448,9 +448,11 @@ class DocumentLoadingStage(_RegistryStage):
     only ``.json`` files.
     """
 
-    # The run's seed graphs, and who answers a reset's question (__init__).
+    # The run's seed graphs, and who answers a reset's question and a mass
+    # deletion's (__init__).
     seed_conversions: tuple[SeedConversion, ...] = ()
     confirm: Callable[[str], bool] | None = None
+    confirm_deletions: Callable[[str], bool] | None = None
 
     def __init__(
         self,
@@ -460,6 +462,7 @@ class DocumentLoadingStage(_RegistryStage):
         providers: Providers | None = None,
         seed_conversions: Sequence[SeedConversion] = (),
         confirm: Callable[[str], bool] | None = None,
+        confirm_deletions: Callable[[str], bool] | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
         # The run's seed graphs (bootstrap.load_seed_graphs): their shards
@@ -469,6 +472,9 @@ class DocumentLoadingStage(_RegistryStage):
         # graph documents (incremental.filter_to_delta), and a registry-off
         # run's from seeds alone (_confirm_seeds_alone); None cannot.
         self.confirm = confirm
+        # Answers an incremental run's question before it deletes more than
+        # indexing.max_deletion_share of its scope's documents; None cannot.
+        self.confirm_deletions = confirm_deletions
         # Without parsing, the directory holds pre-parsed Document JSON.
         # Deduplication runs in this stage, after document identity is
         # assigned, so an incremental run can prefer indexed documents.
@@ -514,6 +520,7 @@ class DocumentLoadingStage(_RegistryStage):
                 )
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
+            context.skipped_source_files = []
 
         incremental = self._registry_on
         if self.config.processing.deduplicate:
@@ -573,6 +580,7 @@ class DocumentLoadingStage(_RegistryStage):
                 else 0
             ),
             "failed_files": failed_files,
+            "files_failed": len(failed_files),
         }
 
         return input_count + len(seeds), output_count, metrics
@@ -687,6 +695,7 @@ class DocumentLoadingStage(_RegistryStage):
             self._build_doc_status_store,
             self.loader.source_directory,
             self.confirm,
+            self.confirm_deletions,
         )
 
     @staticmethod
@@ -752,8 +761,12 @@ class DocumentParsingStage(PipelineStage):
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
-        files_to_parse = self._discover_files()
+        files_to_parse, skipped_files = self._discover_source_files()
         input_count = len(files_to_parse)
+        # Incremental delta detection must not mistake a file of a type no
+        # loader reads (an optional extra dropped from the image, a loader
+        # plugin not imported) for a deleted one: kept like a parse failure.
+        context.skipped_source_files = skipped_files
 
         if not files_to_parse:
             if self.config.processing.seed_graphs:
@@ -769,7 +782,16 @@ class DocumentParsingStage(PipelineStage):
             # Cleared: a context restored from an earlier run keeps its files.
             context.documents = []
             context.failed_source_files = []
-            return 0, 0, {"parsed_files": [], "failed_files": []}
+            return (
+                0,
+                0,
+                {
+                    "parsed_files": [],
+                    "failed_files": [],
+                    "files_failed": 0,
+                    "files_skipped": len(skipped_files),
+                },
+            )
 
         logger.info("Found %s files to parse", input_count)
 
@@ -809,6 +831,8 @@ class DocumentParsingStage(PipelineStage):
             "input_files": input_count,
             "parsed_files": [doc.file_name for doc in parsed_documents],
             "failed_files": failed_files,
+            "files_failed": len(failed_files),
+            "files_skipped": len(skipped_files),
             "success_rate": (
                 (output_count / input_count * 100) if input_count > 0 else 0
             ),
@@ -817,6 +841,11 @@ class DocumentParsingStage(PipelineStage):
         return input_count, output_count, metrics
 
     def _discover_files(self) -> list[Path]:
+        return self._discover_source_files()[0]
+
+    def _discover_source_files(self) -> tuple[list[Path], list[str]]:
+        """The files to parse, and the files skipped for a file type no
+        loader reads (one WARNING names them by extension)."""
         if not self.source_directory.exists():
             raise FileNotFoundError(
                 f"Source directory not found: {self.source_directory}"
@@ -829,6 +858,7 @@ class DocumentParsingStage(PipelineStage):
             d.resolve() for d in (self.target_directory, self.cache_directory) if d
         ]
         files = []
+        skipped_files: list[str] = []
         skipped: Counter[str] = Counter()
         for file_path in self.source_directory.rglob("*"):
             if (
@@ -842,22 +872,33 @@ class DocumentParsingStage(PipelineStage):
                 files.append(file_path)
             elif suffix:
                 skipped[suffix] += 1
+                skipped_files.append(str(file_path))
 
-        for suffix, count in sorted(skipped.items()):
-            remedy = (
-                UNSTRUCTURED_INSTALL_HINT
-                if suffix in UNSTRUCTURED_EXTENSIONS
-                else "convert them to a supported format"
-            )
+        if skipped:
+            optional = sorted(s for s in skipped if s in UNSTRUCTURED_EXTENSIONS)
+            others = sorted(s for s in skipped if s not in UNSTRUCTURED_EXTENSIONS)
+            remedies = []
+            if optional:
+                remedies.append(
+                    f"for {', '.join(optional)}, {UNSTRUCTURED_INSTALL_HINT}"
+                )
+            if others:
+                remedies.append(
+                    f"for {', '.join(others)}, convert them to a supported "
+                    "format or register a loader"
+                )
             logger.warning(
-                "Skipping %s '%s' file(s) in '%s': unsupported file type; to "
-                "ingest them, %s",
-                count,
-                suffix,
+                "Skipping %s file(s) in '%s' of a type no loader reads (%s): "
+                "they are not indexed, and an incremental run keeps what they "
+                "indexed before (not treated as deleted); to ingest them, %s",
+                sum(skipped.values()),
                 self.source_directory,
-                remedy,
+                ", ".join(
+                    f"{count} '{suffix}'" for suffix, count in sorted(skipped.items())
+                ),
+                "; ".join(remedies),
             )
-        return sorted(files)
+        return sorted(files), sorted(skipped_files)
 
     def _save_parsed_document(
         self, document: Document, original_path: Path, output_directory: Path
@@ -2296,8 +2337,11 @@ class IndexingStage(_RegistryStage):
             )
 
         drift = None
+        documents_deleted = 0
         if context.incremental_delta is not None and not self.config.indexing.reset:
             warn_about_unapplied_retired_scopes(self.config, context)
+            # Applied once the stage completes: a failed removal fails it.
+            documents_deleted = len(context.incremental_delta.deleted)
             indexing_results, drift = self._index_incremental(
                 context,
                 text_units,
@@ -2433,6 +2477,9 @@ class IndexingStage(_RegistryStage):
             # Stored items an incremental run could not derive (a text unit
             # they cite names no stored record): stale until a rebuild.
             "underived_items": self.indexing_manager.underived_items,
+            # Documents gone from the corpus (or of a retired scope) whose
+            # exclusive content and records this incremental run removed.
+            "documents_deleted": documents_deleted,
             "success_rate": (
                 total_indexed / (total_indexed + total_failed)
                 if (total_indexed + total_failed) > 0

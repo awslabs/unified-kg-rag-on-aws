@@ -168,6 +168,46 @@ class PipelineMetrics(BaseModel):
         "later run while the run isolates the document that keeps killing "
         "runs (it processes half of the suspects)",
     )
+    total_documents_excluded: int = Field(
+        default=0,
+        description="Incremental runs: changed documents not retried, each "
+        "having failed indexing.max_document_failures consecutive runs for "
+        "an error of its own (kept FAILED)",
+    )
+    total_files_failed: int = Field(
+        default=0,
+        description="Corpus files that failed to parse or load; an incremental "
+        "run keeps what they indexed before",
+    )
+    total_files_skipped: int = Field(
+        default=0,
+        description="Corpus files skipped for a file type no loader reads (an "
+        "optional extra not installed, a loader plugin not imported); an "
+        "incremental run keeps what they indexed before",
+    )
+    total_documents_deleted: int = Field(
+        default=0,
+        description="Incremental runs: documents gone from the corpus (or of a "
+        "retired source scope) whose exclusive content and records the "
+        "indexing stage removed",
+    )
+    total_documents_failed: int = Field(
+        default=0,
+        description="Documents the run recorded FAILED (retried next run); "
+        "run-ingestion's JSON failed_documents",
+    )
+    total_documents_retrying: int = Field(
+        default=0,
+        description="Documents failed for an error not their own (an outage, a "
+        "setting) that the run before failed too; run-ingestion's JSON "
+        "documents_retrying",
+    )
+    total_documents_without_claims: int = Field(
+        default=0,
+        description="Documents indexed without the claims of some text units "
+        "(their claim extraction failed for an error of their own); "
+        "run-ingestion's JSON documents_without_claims",
+    )
     total_records_not_stored: int = Field(
         default=0,
         description="Extraction records graph resolution and claim extraction "
@@ -350,6 +390,14 @@ class PipelineContext(BaseModel):
         default_factory=list,
         description="Corpus files that failed to parse or load this run. "
         "Incremental delta detection keeps them out of the deleted set.",
+    )
+    skipped_source_files: list[str] = Field(
+        default_factory=list,
+        description="Corpus files the parsing stage skipped for a file type no "
+        "loader reads (an optional extra not installed, a loader plugin not "
+        "imported). Incremental delta detection keeps them out of the deleted "
+        "set, as failed_source_files; unlike those, they do not make an empty "
+        "corpus with seed graphs a failed run.",
     )
     failed_text_unit_ids: dict[str, list[str]] = Field(
         default_factory=dict,

@@ -882,6 +882,16 @@ From 0.2.3 (or a `main` checkout since):
   `evaluation.pairwise_overall` adds LightRAG's `overall` verdict; a
   comparison reports `deltas_by_category`, and the `run-eval` JSON runs
   carry `abstention_statistics` (#516).
+- `indexing.max_deletion_share` (default `0.5`): an incremental run that
+  would delete more than this share of its source scope's documents (a
+  scope of 10 or more; retired scopes not counted) stops at
+  `document_loading` before it writes unless confirmed:
+  `--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1`, `--yes`, the terminal
+  prompt, or `DataIngestionPipeline(confirm_deletions=...)` (#518).
+- EMF metrics for corpus coverage: `total_files_failed`,
+  `total_files_skipped`, `total_documents_excluded`,
+  `total_documents_deleted`, `total_documents_failed`,
+  `total_documents_retrying` and `total_documents_without_claims` (#518).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1201,6 +1211,11 @@ Ingestion and incremental indexing.
   200-token descriptions, 2 of 40 edges); on a synthetic grid, 241 instead
   of 126 relationships reach the same 4000-token budget and every packed
   entity has one (51.6% before) (#517).
+- A file skipped because no loader reads its type (an optional extra such
+  as `unstructured` dropped from the image, a loader plugin not imported)
+  no longer reads as deleted: an incremental run keeps what it indexed, as
+  for a file that fails to parse, and one WARNING names the count, the
+  extensions and the extra to install (#518).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero

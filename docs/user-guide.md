@@ -1165,8 +1165,22 @@ documents, a subfolder run as its own source directory never deletes the rest
 of the corpus (its files register as separate documents: do not index the
 same files from two roots into one suffix), and two sources indexed into one
 suffix stay separate even for the same relative path. A file that fails to
-parse or load is reported as `failed` and keeps its indexed content until a
-run reads it again.
+parse or load, or that the run skips because no loader reads its type (an
+optional extra such as `unstructured` not installed), is reported as
+`failed` and keeps its indexed content until a run reads it again.
+
+**Mass deletions.** A run that would delete more than
+`indexing.max_deletion_share` (default `0.5`) of the documents its scope
+holds stops before it writes and asks (`This run deletes N of the M
+documents ...; continue?`): a partial sync or a missing volume looks like
+files removed on purpose. `run-ingestion` asks on a terminal;
+`--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`) answers yes to this
+question only, `--yes` to every question, and a no, or no terminal, stops
+the run (exit 1). Scopes of fewer than 10 documents, a retired scope's
+records, a reset and a run with the registry off are not checked; `1.0` or
+`null` turns the check off. From Python, pass
+`DataIngestionPipeline(..., confirm_deletions=callable)`; without it, or on
+a no, `run` raises `ConfirmationDeclinedError`.
 
 **Moving a corpus** with the default scope changes its scope, and no run
 deletes another scope's documents (a directory missing here may be another

@@ -304,6 +304,19 @@ class DocumentDelta(BaseModel):
         "of killing it (``domain.ingestion.attempts.plan_attempts``). Neither "
         "processed nor deleted; their records are left as they are",
     )
+    retired: list[str] = Field(
+        default_factory=list,
+        description="The ``deleted`` doc ids of retired source scopes "
+        "(``indexing.retire_source_scopes``), not of the run's own scope",
+    )
+    scope_documents: int = Field(
+        default=0,
+        ge=0,
+        description="The records of the run's scope the diff read: its stored "
+        "documents still in the corpus plus those gone from it, before any "
+        "is kept as failed. What ``indexing.max_deletion_share`` takes a "
+        "share of. Set by ``detect_delta``; 0 from a bare ``diff``",
+    )
     settings_changed: list[str] = Field(
         default_factory=list,
         description="The ``changed`` doc ids whose content and status alone "

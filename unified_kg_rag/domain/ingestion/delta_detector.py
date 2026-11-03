@@ -297,6 +297,9 @@ def detect_delta(
     delta = doc_status.diff(
         fingerprints, scope=scope, extraction_fingerprint=extraction_fingerprint
     )
+    # Before anything moves between the lists: a new document has no record,
+    # every other one of the corpus has one of the scope (its id holds it).
+    delta.scope_documents = len(fingerprints) - len(delta.new) + len(delta.deleted)
     exempt = keep_seed_settings_unchanged(
         delta,
         {document_doc_id(d) for d in documents if is_seed_document(d)},
@@ -326,8 +329,9 @@ def detect_delta(
         delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in failed]
         delta.failed = sorted(failed)
         logger.warning(
-            "%d corpus files failed to parse or load; their indexed content is "
-            "kept (not treated as deleted) until a run reads them",
+            "%d corpus files failed to parse or load, or were skipped for "
+            "their file type; their indexed content is kept (not treated as "
+            "deleted) until a run reads them",
             len(failed),
         )
     logger.info(
@@ -545,6 +549,7 @@ def retire_source_scopes(
             group.value,
         )
         delta.deleted.extend(doc_ids)
+        delta.retired.extend(doc_ids)
         added += len(doc_ids)
     return added
 
