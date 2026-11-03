@@ -387,6 +387,35 @@ def test_report_rank_and_entity_order_count_document_backed_edges() -> None:
     assert {first["source"], first["target"]} == {"Vendor", "Buyer"}
 
 
+def test_an_attributeless_member_reads_no_none_placeholder() -> None:
+    # A node with neither a type nor a description (a seed edge's endpoint)
+    # reads "unknown" and an empty description, or the stored type it is
+    # given (generate_reports(types=)), never "None".
+    detector = _detector()
+    detector.graph = GraphBuilder(
+        [
+            Entity(id="v", name="Vendor", type="ORG", text_unit_ids=["u1"]),
+            Entity(id="h", name="Harbor Port", text_unit_ids=[SEED]),
+        ],
+        [_rel("r", "v", "h", [SEED], "SHIPS_FROM")],
+        [],
+    ).build()
+    community = _community("c", ["v", "h"], ["u1", SEED])
+
+    def harbor_line() -> str:
+        (line,) = [
+            detector._format_entity_line(e)
+            for e in detector._prepare_report_input(community)["entities"]
+            if e["id"] == "h"
+        ]
+        return line
+
+    assert harbor_line() == "- Harbor Port (unknown): "
+    detector._report_types = {"h": "location"}
+    detector._report_descriptions = {"h": "Harbor docks."}
+    assert harbor_line() == "- Harbor Port (location): Harbor docks."
+
+
 def test_an_edge_with_one_document_relationship_counts_in_the_degrees() -> None:
     # One graph edge carries both relationships of the pair: the document
     # one keeps it counted beside a seed-only one of another type.
@@ -484,6 +513,32 @@ def test_the_failure_rate_counts_the_evidenced_communities_only(mocker) -> None:
     stage, context, _ = _community_stage(mocker, communities, failed=["leaf", "other"])
     with pytest.raises(PipelineStageError, match="for 2 of 2 communities"):
         stage._execute_core(context)
+
+
+def test_unread_members_count_their_communities_failed(mocker) -> None:
+    # The stored members of the seed-only-looking communities could not be
+    # read: whether the corpus evidences them is unknown, so they are
+    # stored without a report and count as failed, not seed-only.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    communities = [
+        _community("leaf", ["v"], ["u1"]),
+        _community("s1", ["cat"], [SEED]),
+        _community("s2", ["x"], [SEED_2]),
+    ]
+    stage, context, detector = _community_stage(mocker, communities, failed=[])
+    mocker.patch.object(
+        stage,
+        "_evidenced_by_stored_members",
+        return_value=ps._StoredMembers(None, {}, {}),
+    )
+    _, _, metrics = stage._execute_core(context)
+    (asked,) = detector.generate_reports.call_args.args
+    assert [c.id for c in asked] == ["leaf"]
+    assert metrics is not None
+    assert (metrics["reports_failed"], metrics["communities_seed_only"]) == (2, 0)
+    # Seed units only: no document is recorded failed for them.
+    assert context.failed_text_unit_ids == {"community_detection": []}
 
 
 def test_without_seed_units_every_community_is_reported(mocker) -> None:

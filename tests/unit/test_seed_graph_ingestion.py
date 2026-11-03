@@ -26,6 +26,9 @@ from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.seed_graphs import EDGES, NODES, PROCURE, lines
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractionStats
+from unified_kg_rag.adapters.ingestion.description_summarizer import (
+    SUMMARIZED_FROM_ATTRIBUTE,
+)
 from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
 from unified_kg_rag.adapters.ingestion.graph_extractor import ExtractionStats
 from unified_kg_rag.adapters.ingestion.translator import TranslationStats
@@ -37,6 +40,11 @@ from unified_kg_rag.application.ingestion import pipeline as pipeline_module
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.extraction_store import with_record_keys
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.storage import indexing_manager
+from unified_kg_rag.application.storage.indexing_manager import (
+    stripped_descriptions,
+    unit_records,
+)
 from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import record_key, record_payload
 from unified_kg_rag.domain.ingestion.delta_detector import (
@@ -48,6 +56,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     keep_seed_settings_unchanged,
     registry_scope,
 )
+from unified_kg_rag.domain.ingestion.derivation import Derived
 from unified_kg_rag.domain.ingestion.document_identity import (
     RELATIVE_PATH_KEY,
     compute_doc_id,
@@ -85,6 +94,7 @@ from unified_kg_rag.shared.exceptions import (
     PipelineStageError,
     SeedGraphError,
 )
+from unified_kg_rag.shared.utils import compute_hash
 
 SEED_PATH = "seed_graphs/procure/0000-of-0001.jsonl"
 
@@ -1401,12 +1411,24 @@ def _stored_graph() -> FakeGraphStore:
     return graph
 
 
+def _read(stage: Any, context: PipelineContext) -> tuple[Any, dict[str, Any]]:
+    """The evidenced communities and the backed members' descriptions."""
+    stored = stage._evidenced_by_stored_members(context, _communities())
+    return stored.evidenced, {
+        entity_id: entity.description for entity_id, entity in stored.backed.items()
+    }
+
+
 def test_stored_members_are_read_in_their_own_suffix(mocker) -> None:
     stage, context, _ = _evidence(mocker, _stored_graph())
-    assert stage._evidenced_by_stored_members(context, _communities()) == (
+    assert _read(stage, context) == (
         {"c-vendor", "c-harbor"},
         {"vendor": "Vendor sells.", "harbor": "Harbor docks."},
     )
+    stored = stage._evidenced_by_stored_members(context, _communities())
+    # Tagged with the suffix they were read from, as the indexing groups
+    # the summaries made of them.
+    assert ps.BaseIndexer.get_suffix(stored.backed["harbor"]) == "other"
 
 
 def test_only_the_backed_members_community_is_evidenced(mocker) -> None:
@@ -1424,7 +1446,7 @@ def test_only_the_backed_members_community_is_evidenced(mocker) -> None:
         ]
     )
     stage, context, _ = _evidence(mocker, graph)
-    evidenced, _ = stage._evidenced_by_stored_members(context, _communities())
+    evidenced, _ = _read(stage, context)
     assert evidenced == {"c-vendor"}
 
 
@@ -1441,10 +1463,7 @@ def test_a_deleted_documents_units_evidence_nothing(mocker) -> None:
         )
     )
     context.incremental_delta = DocumentDelta(new=["seed-doc"], deleted=["gone"])
-    assert stage._evidenced_by_stored_members(context, _communities()) == (
-        {"c-harbor"},
-        {"harbor": "Harbor docks."},
-    )
+    assert _read(stage, context) == ({"c-harbor"}, {"harbor": "Harbor docks."})
 
 
 def test_the_stored_members_graph_store_is_closed(mocker) -> None:
@@ -1490,9 +1509,7 @@ def test_a_replaced_units_lines_leave_the_stored_description(
     stage, context, providers = _evidence(mocker, graph)
     providers.build_vector_indexer.return_value = vector
     context.text_units = [TextUnit(id=SEED_UNIT, text="seed v2")]
-    evidenced, descriptions = stage._evidenced_by_stored_members(
-        context, _communities()
-    )
+    evidenced, descriptions = _read(stage, context)
     assert evidenced == {"c-vendor", "c-harbor"}
     assert descriptions == {
         "vendor": (
@@ -1503,11 +1520,260 @@ def test_a_replaced_units_lines_leave_the_stored_description(
     assert close.call_count == 1
 
 
+def _stripped_vendor(mocker, records: dict[str, Any]) -> tuple[Any, PipelineContext]:
+    """The community stage of a seed edit: Vendor's stored copy cites the
+    document units of ``records`` (unit -> record or raw payload) and the
+    seed unit the run replaces; the run states Vendor with the seed's new
+    line."""
+    graph = _stored_graph()
+    graph.upsert_entities(
+        [
+            Entity(
+                id="vendor-old",
+                name="Vendor",
+                description="Vendor sells.\nVendor buys.\nSeed v1 says vendor.",
+                text_unit_ids=[*records, SEED_UNIT],
+            )
+        ]
+    )
+    vector = FakeVectorStore()
+    vector.upsert_text_units(
+        [
+            TextUnit(id=u, text="", attributes={"extraction_records": {"graph": u}})
+            for u in records
+        ]
+    )
+    vector.write_extraction_records(
+        {
+            u: record_payload(r) if isinstance(r, TextUnitExtraction) else r
+            for u, r in records.items()
+        }
+    )
+    stage, context, providers = _evidence(mocker, graph)
+    providers.build_vector_indexer.return_value = vector
+    context.text_units = [TextUnit(id=SEED_UNIT, text="seed v2")]
+    context.resolved_entities[0] = Entity(
+        id="vendor-old",
+        name="Vendor",
+        type="ORGANIZATION",
+        description="Seed v2 says vendor.",
+        text_unit_ids=[SEED_UNIT],
+    )
+    return stage, context
+
+
+def _vendor_record(unit: str, entity_id: str, description: str) -> TextUnitExtraction:
+    return TextUnitExtraction(
+        text_unit_id=unit,
+        entities=[Entity(id=entity_id, name="Vendor", description=description)],
+    )
+
+
+def _communities_of(*members: str) -> list[Community]:
+    return [
+        Community(
+            id=f"c-{member}",
+            name=member,
+            level="0",
+            parent="",
+            children=[],
+            entity_ids=[member],
+            text_unit_ids=[SEED_UNIT],
+        )
+        for member in members
+    ]
+
+
+def test_a_stripped_member_follows_its_rekeyed_id(mocker) -> None:
+    # The records name Vendor under another id (ids follow the current
+    # name): the derivation re-keys the stored copy, and its description is
+    # the re-keyed entity's.
+    stage, context = _stripped_vendor(
+        mocker,
+        {
+            "u1": _vendor_record("u1", "vendor", "Vendor sells."),
+            "u3": _vendor_record("u3", "vendor", "Vendor buys."),
+        },
+    )
+    stored = stage._evidenced_by_stored_members(context, _communities_of("vendor-old"))
+    assert stored.backed["vendor-old"].description == "Vendor sells.\nVendor buys."
+
+
+def test_a_stripped_member_no_record_states_keeps_its_description(mocker) -> None:
+    # No record of its other units states Vendor: the derivation keeps it
+    # as it was, and so does its description.
+    other = TextUnitExtraction(
+        text_unit_id="u1", entities=[Entity(id="buyer", name="Buyer")]
+    )
+    stage, context = _stripped_vendor(mocker, {"u1": other})
+    stored = stage._evidenced_by_stored_members(context, _communities_of("vendor-old"))
+    assert stored.backed["vendor-old"].description == (
+        "Vendor sells.\nVendor buys.\nSeed v1 says vendor."
+    )
+
+
+def test_a_stripped_member_the_derivation_lacks_keeps_its_description(
+    mocker,
+) -> None:
+    # Defensive: a derivation without an entity for the stripped one (no
+    # derivation drops an entity today) leaves its stored description, not
+    # an empty one.
+    vector = FakeVectorStore()
+    vector.upsert_text_units(
+        [TextUnit(id="u1", text="", attributes={"extraction_records": {"graph": "u1"}})]
+    )
+    mocker.patch.object(indexing_manager, "derive", return_value=Derived())
+    vendor = Entity(
+        id="vendor",
+        name="Vendor",
+        description="Vendor sells.\nSeed v1 says vendor.",
+        text_unit_ids=["u1", SEED_UNIT],
+    )
+    assert stripped_descriptions(
+        Config(), vector, "default", [vendor], {SEED_UNIT}
+    ) == {"vendor": "Vendor sells.\nSeed v1 says vendor."}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"entities": [{"name": "Vendor"}]},  # no id: a ValueError
+        {"entities": [], "rejected": 5},  # not a mapping: a TypeError
+    ],
+)
+def test_an_unreadable_record_is_ignored_by_unit_records(
+    payload: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    vector = FakeVectorStore()
+    vector.upsert_text_units(
+        [
+            TextUnit(id=u, text="", attributes={"extraction_records": {"graph": u}})
+            for u in ("u1", "u2")
+        ]
+    )
+    good = _vendor_record("u2", "vendor", "Vendor sells.")
+    vector.write_extraction_records({"u1": payload, "u2": record_payload(good)})
+    with caplog.at_level(logging.WARNING):
+        records, claims = unit_records(vector, "default", ["u1", "u2"])
+    assert set(records) == {"u2"} and claims == {}
+    assert "Ignoring an unreadable extraction record of text unit" in caplog.text
+
+
+class _FakeSummarizer:
+    """Summarizes each entity it is given to ``Summary of <name>.``, marked
+    as ``DescriptionSummarizer`` marks it."""
+
+    def __init__(self) -> None:
+        self.asked: list[list[str]] = []
+
+    def summarize_entities(self, entities: list[Entity]) -> list[Entity]:
+        self.asked.append([e.description or "" for e in entities])
+        for entity in entities:
+            entity.attributes = {
+                **(entity.attributes or {}),
+                SUMMARIZED_FROM_ATTRIBUTE: compute_hash(entity.description or ""),
+            }
+            entity.description = f"Summary of {entity.name}."
+        return entities
+
+
+def test_a_derived_member_description_is_summarized_as_the_indexing_does(
+    mocker,
+) -> None:
+    # Over the threshold (4 tokens), Vendor's description derived without
+    # the replaced unit is summarized, and so is that summary followed by
+    # the seed's line, as the indexing summarizes its strip and then its
+    # merge. Both summaries are kept for the indexing to reuse, marked with
+    # what they were made from; Harbor's fits and is not summarized.
+    stage, context = _stripped_vendor(
+        mocker,
+        {
+            "u1": _vendor_record("u1", "vendor-old", "Vendor sells."),
+            "u3": _vendor_record("u3", "vendor-old", "Vendor buys."),
+        },
+    )
+    summarization = stage.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 4
+    summarizer = _FakeSummarizer()
+    stage._description_summarizer = summarizer
+    stored = stage._evidenced_by_stored_members(
+        context, _communities_of("vendor-old", "harbor")
+    )
+    assert stage._report_descriptions(context, stored) == {
+        "vendor-old": "Summary of Vendor.",
+        "harbor": "Harbor docks.",
+    }
+    derived = "Vendor sells.\nVendor buys."
+    merged = "Summary of Vendor.\nSeed v2 says vendor."
+    assert summarizer.asked == [[derived], [merged]]
+    assert [
+        (e.id, e.description, (e.attributes or {})[SUMMARIZED_FROM_ATTRIBUTE])
+        for e in context.member_summaries
+    ] == [
+        ("vendor-old", "Summary of Vendor.", compute_hash(derived)),
+        ("vendor-old", "Summary of Vendor.", compute_hash(merged)),
+    ]
+
+
+def test_without_summarization_a_derived_description_is_read_whole(mocker) -> None:
+    # As a full build without summarization reads it: no summarizer is
+    # built, nothing is kept for the indexing.
+    stage, context = _stripped_vendor(
+        mocker,
+        {
+            "u1": _vendor_record("u1", "vendor-old", "Vendor sells."),
+            "u3": _vendor_record("u3", "vendor-old", "Vendor buys."),
+        },
+    )
+    summarization = stage.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 4
+    summarization.enabled = False
+    stored = stage._evidenced_by_stored_members(context, _communities_of("vendor-old"))
+    assert stage._report_descriptions(context, stored) == {
+        "vendor-old": "Vendor sells.\nVendor buys.\nSeed v2 says vendor."
+    }
+    assert stage._description_summarizer is None
+    assert context.member_summaries == []
+
+
+def test_an_unattributed_member_reads_its_stored_type_and_description(
+    mocker,
+) -> None:
+    # Harbor is stated by the run with neither a type nor a description
+    # (the endpoint of a seed edge): its stored copy fills both, though it
+    # evidences nothing (seed-only). Vendor, stated with a description, is
+    # not filled.
+    graph = FakeGraphStore()
+    graph.upsert_entities(
+        [
+            Entity(id="vendor", name="Vendor", type="ORG", text_unit_ids=["u1"]),
+            Entity(
+                id="harbor",
+                name="Harbor",
+                type="LOCATION",
+                description="Harbor docks.",
+                text_unit_ids=[SEED_UNIT],
+                attributes={"index": "other"},
+            ),
+        ]
+    )
+    stage, context, _ = _evidence(mocker, graph)
+    context.resolved_entities[0].description = "Seed says vendor."
+    stored = stage._evidenced_by_stored_members(context, _communities())
+    assert stored.evidenced == {"c-vendor"}
+    assert set(stored.unattributed) == {"harbor"}
+    assert stored.unattributed["harbor"].type == "LOCATION"
+    assert stage._report_descriptions(context, stored) == {
+        "vendor": "Seed says vendor.",
+        "harbor": "Harbor docks.",
+    }
+
+
 def test_a_reset_reads_no_stored_member(mocker) -> None:
     # A reset rebuilds from this corpus alone: what the stores held before
     # evidences nothing.
     stage, context, providers = _evidence(mocker, _stored_graph(), reset=True)
-    assert stage._evidenced_by_stored_members(context, _communities()) == (set(), {})
+    assert _read(stage, context) == (set(), {})
     providers.build_graph_indexer.assert_not_called()
 
 
@@ -1518,8 +1784,7 @@ def test_an_unreadable_member_leaves_its_community_without_a_report(
     mocker.patch.object(graph, "read_entities", side_effect=RuntimeError("down"))
     stage, context, _ = _evidence(mocker, graph)
     with caplog.at_level(logging.WARNING):
-        assert stage._evidenced_by_stored_members(context, _communities()) == (
-            set(),
-            {},
-        )
+        # None: unread, not "evidenced by none" (the communities count as
+        # failed, see test_unread_members_count_their_communities_failed).
+        assert _read(stage, context) == (None, {})
     assert "Could not read the stored members of 2 communities" in caplog.text

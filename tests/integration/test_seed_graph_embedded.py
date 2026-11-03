@@ -703,6 +703,145 @@ def test_a_seed_edit_reports_the_current_descriptions_only(tmp_path: Path) -> No
         assert lines[1:] == ([line] if line else [])
 
 
+def _entity_lines(harness: _Harness, name: str, start: int = 0) -> list[str]:
+    """The report prompts' entity lines of ``name`` since ``start``."""
+    return [
+        line
+        for prompt in harness.server.prompts[start:]
+        for line in prompt.split("\n")
+        if line.startswith(f"- {name} (") or line.startswith(f"- {name}:")
+    ]
+
+
+def test_a_seed_edit_reports_an_unattributed_endpoint_as_stored(
+    tmp_path: Path,
+) -> None:
+    # The edited shard holds Vendor's SHIPS_FROM edge to Harbor Port, whose
+    # node is in the other, unchanged shard: the run states Harbor Port
+    # with neither a type nor a description. Its report line reads the
+    # stored copy's type, as a full build reads the node's.
+    harness = _Harness(tmp_path / "edited")
+    assert _shard("n-vendor") != _shard("n-port")
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v1 says vendor."}))
+    harness.ok()
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v2 says vendor."}))
+    before = len(harness.server.prompts)
+    harness.ok()
+    built = _Harness(tmp_path / "built")
+    built.seed.write_text(harness.seed.read_text())
+    built.ok()
+    lines = _entity_lines(harness, "Harbor Port", before)
+    assert lines and set(lines) == set(_entity_lines(built, "Harbor Port"))
+    assert not any("None" in line for line in lines)
+
+
+# A fake summary: short, so a stored summary with a seed line appended
+# stays under the threshold the tests set.
+SUMMARY = "Vendor supplies many buyers."
+
+
+def _summarizing(monkeypatch: pytest.MonkeyPatch) -> list[set[str]]:
+    """Patch the fake model: each document states Vendor with its own line
+    (``Vendor per BuyerN``), and a summarization answers ``SUMMARY``. Returns
+    the line sets of the Vendor descriptions summarized, in call order."""
+    respond = e2e._respond
+    asked: list[set[str]] = []
+
+    def answer(system: str, human: str) -> str:
+        if "expert knowledge-graph editor" in system:
+            match = re.search(
+                r"<descriptions>\n(.*?)\n</descriptions>", human, re.DOTALL
+            )
+            assert match, "summarization prompt has no descriptions"
+            lines = {line for line in match.group(1).split("\n") if line.strip()}
+            if any(line.startswith("Vendor ") for line in lines):
+                asked.append(lines)
+            return SUMMARY
+        out = respond(system, human)
+        if "knowledge graph extraction expert" in system:
+            text = re.search(r"<input_text>\n(.*?)\n</input_text>", human, re.DOTALL)
+            tag = text.group(1).split()[-1].strip(".") if text else "x"
+            out = out.replace(
+                "Vendor in the supply chain</description>",
+                f"Vendor per {tag}</description>",
+            )
+        return out
+
+    monkeypatch.setattr(e2e, "_respond", answer)
+    return asked
+
+
+def _buyers(count: int) -> dict[str, str]:
+    return {
+        f"c{i:04d}.txt": f"Vendor supplies widgets to Buyer{i}." for i in range(count)
+    }
+
+
+def test_a_seed_edit_on_a_summarized_entity_reports_its_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Vendor's stored description is a summary. The seed edit replaces the
+    # seed unit: the report reads Vendor's description derived again from
+    # its documents' records, summarized as the indexing summarizes it,
+    # followed by the seed's new line. That is the description the run
+    # stores, and it summarizes what a full build's summary does: the
+    # documents' lines and the seed's current one. The model is asked once
+    # (the indexing reuses the report's summary).
+    asked = _summarizing(monkeypatch)
+    corpus = _buyers(8)
+    doc_lines = {f"Vendor per Buyer{i}" for i in range(8)}
+
+    def make(path: Path) -> _Harness:
+        harness = _Harness(path, corpus=corpus)
+        summarization = (
+            harness.config.processing.graph_extraction.description_summarization
+        )
+        summarization.force_summary_threshold_tokens = 20
+        return harness
+
+    harness = make(tmp_path / "edited")
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v1 says vendor."}))
+    harness.ok()
+    assert harness.entities()["Vendor"]["description"] == SUMMARY
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v2 says vendor."}))
+    asked.clear()
+    before = len(harness.server.prompts)
+    harness.ok()
+    stored = harness.entities()["Vendor"]["description"]
+    assert stored == f"{SUMMARY}\nSeed v2 says vendor."
+    assert _vendor_entries(harness, before) == [f"- Vendor (organization): {stored}"]
+    assert asked == [doc_lines]
+
+    built = make(tmp_path / "built")
+    built.seed.write_text(harness.seed.read_text())
+    asked.clear()
+    built.ok()
+    assert asked == [doc_lines | {"Seed v2 says vendor."}]
+    assert _vendor_entries(built) == [f"- Vendor (organization): {SUMMARY}"]
+
+
+@pytest.mark.timeout(300)
+def test_a_hub_entitys_report_entry_stays_a_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 320 documents state Vendor (default summarization settings): after a
+    # seed edit, the report reads a summary, not the 320 lines Vendor's
+    # documents state, and the run asks the model once for it.
+    asked = _summarizing(monkeypatch)
+    harness = _Harness(tmp_path, corpus=_buyers(320))
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v1 says vendor."}))
+    harness.ok()
+    harness.seed.write_text(_seed_text({"n-vendor": "Seed v2 says vendor."}))
+    asked.clear()
+    before = len(harness.server.prompts)
+    harness.ok()
+    (entry,) = _vendor_entries(harness, before)
+    assert entry == f"- Vendor (organization): {SUMMARY}\nSeed v2 says vendor."
+    (lines,) = asked
+    assert len(lines) == 320 and "Seed v1 says vendor." not in lines
+    assert harness.entities()["Vendor"]["description"] == entry.split(": ", 1)[1]
+
+
 SEED_ONLY = SEED_NAMES - {"Vendor"}
 
 

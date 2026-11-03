@@ -820,13 +820,17 @@ From 0.2.3 (or a `main` checkout since):
   seeds evidence gets no report (`communities_seed_only`); on an
   incremental run its stored members count too, so a seed added beside
   unchanged documents reports their communities as a full build does,
-  from the members' stored descriptions merged with the seed's (an
-  edited seed's earlier lines left out).
+  from the members' stored descriptions merged with the seed's as the
+  run indexes them (an edited seed's earlier lines left out, a
+  description over the summarization threshold summarized once for the
+  report and the indexing, a seed edge's attribute-less endpoint read
+  with its stored type); when those members cannot be read, the
+  communities count in `reports_failed`.
   Seed descriptions reach the description summarizer, the reports of
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #510, #513, #514).
+  #503, #509, #510, #513, #514, #PR).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an

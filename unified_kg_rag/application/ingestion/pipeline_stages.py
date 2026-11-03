@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.ingestion.community_detector import (
 )
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
+    needs_summary,
 )
 from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import (
@@ -1646,6 +1647,27 @@ def _components_reaching(
     return found, unclustered
 
 
+class _StoredMembers(NamedTuple):
+    """What the stores hold of an incremental run's report members (see
+    ``CommunityDetectionStage._evidenced_by_stored_members``)."""
+
+    # The communities a stored member evidences; None when the read failed.
+    evidenced: set[str] | None
+    # The document-backed stored members by id, each with the description
+    # its report reads before the run's lines.
+    backed: dict[str, Entity]
+    # The stored copies of the members the run states with neither a type
+    # nor a description, by id.
+    unattributed: dict[str, Entity]
+
+
+def _in_suffix(entity: Entity, suffix: str) -> Entity:
+    """``entity`` (a copy) tagged with the index ``suffix`` it was read
+    from, as the indexing groups items."""
+    entity.attributes = {**(entity.attributes or {}), Constants.INDEX.value: suffix}
+    return entity
+
+
 def _document_backed(entity: Entity, removed: set[str]) -> bool:
     """Whether the stored ``entity`` is stated by a document a full build
     keeps: it cites a document unit not ``removed``, or, stored without
@@ -1709,6 +1731,7 @@ class CommunityDetectionStage(_RegistryStage):
         self.detector = CommunityDetector(config, providers=self.providers)
         self.cache_directory = Path(cache_directory) if cache_directory else None
         self._doc_status = doc_status
+        self._description_summarizer: DescriptionSummarizer | None = None
 
     def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
         # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
@@ -1887,16 +1910,18 @@ class CommunityDetectionStage(_RegistryStage):
 
     def _evidenced_by_stored_members(
         self, context: PipelineContext, communities: list[Community]
-    ) -> tuple[set[str], dict[str, str]]:
+    ) -> _StoredMembers:
         """The ids of ``communities`` (every member seed-only in this run's
         graph) that a stored member makes document-evidenced, on an
-        incremental run, and the stored descriptions of those members by
-        id: a full build's report reads them merged with the seed's lines
-        (``generate_reports(descriptions=)``). A member citing a unit the
-        run replaces (a seed's earlier version) has its description derived
-        again from the records of its other units first
+        incremental run, and the stored copies of those members by id: a
+        full build's report reads their descriptions merged with the seed's
+        lines (``generate_reports(descriptions=)``). A member citing a unit
+        the run replaces (a seed's earlier version) has its description
+        derived again from the records of its other units first
         (``stripped_descriptions``, as the indexing's strip does): the
-        replaced unit's lines are not the corpus's.
+        replaced unit's lines are not the corpus's. Such a derived
+        description over the summarization threshold is summarized, as the
+        strip's indexing summarizes it (``_summarize_members``).
 
         An incremental run's graph holds its delta only: a seed added or
         edited beside unchanged documents states their entities with seed
@@ -1906,32 +1931,45 @@ class CommunityDetectionStage(_RegistryStage):
         lineage, when its ``source_kinds`` is absent (written before seed
         graphs, or document-only) or names documents. One batched read of
         the members per suffix (and of the records of the stripped ones'
-        units); a failure keeps the communities without a report, as
-        before.
+        units); a failure leaves ``evidenced`` ``None``: the communities
+        are stored without a report and count as failed ones.
+
+        A member the run states with neither a type nor a description (the
+        endpoint of a seed edge whose own node is in a shard the run keeps)
+        is in ``unattributed`` with its stored copy, its description derived
+        alike: the report reads the stored type and description, as a full
+        build reads the node's.
         """
         delta = context.incremental_delta
         if not communities or delta is None or self.config.indexing.reset:
-            return set(), {}
+            return _StoredMembers(set(), {}, {})
         members = {str(e) for c in communities for e in c.entity_ids or []}
         groups: dict[str, list[str]] = defaultdict(list)
         for entity in context.resolved_entities:
             if entity.id in members:
                 groups[BaseIndexer.get_suffix(entity)].append(entity.id)
-        backed: dict[str, str] = {}
+        bare = {
+            e.id for e in context.resolved_entities if not (e.type or e.description)
+        }
+        backed: dict[str, Entity] = {}
+        unattributed: dict[str, Entity] = {}
+        stripped: list[Entity] = []
         try:
             removed = self._replaced_unit_ids(context, delta)
             graph = self.providers.build_graph_indexer()
             try:
-                stored = {
-                    suffix: [
-                        entity
-                        for entity in graph.read_entities(sorted(ids), suffix=suffix)
-                        if _document_backed(entity, removed)
-                    ]
+                read = {
+                    suffix: graph.read_entities(sorted(ids), suffix=suffix)
                     for suffix, ids in sorted(groups.items())
                 }
             finally:
                 graph.close()
+            stored = {
+                suffix: [
+                    e for e in entities if _document_backed(e, removed) or e.id in bare
+                ]
+                for suffix, entities in read.items()
+            }
             # The lines of the units this run replaces (a seed's earlier
             # version) are not the corpus's: their descriptions are derived
             # again without them, as the indexing's strip does before it
@@ -1944,35 +1982,115 @@ class CommunityDetectionStage(_RegistryStage):
             vector = self.providers.build_vector_indexer() if stale else None
             try:
                 for suffix, entities in stored.items():
-                    backed.update(
+                    descriptions = (
                         stripped_descriptions(
                             self.config, vector, suffix, entities, removed
                         )
                         if vector is not None
-                        else {e.id: e.description or "" for e in entities}
+                        else {}
                     )
+                    for entity in entities:
+                        copy = _in_suffix(
+                            entity.model_copy(
+                                update={
+                                    "description": descriptions.get(
+                                        entity.id, entity.description
+                                    )
+                                }
+                            ),
+                            suffix,
+                        )
+                        if _document_backed(entity, removed):
+                            backed[entity.id] = copy
+                        if entity.id in bare:
+                            unattributed[entity.id] = copy
+                        if removed.intersection(entity.text_unit_ids or []):
+                            stripped.append(copy)
             finally:
                 if vector is not None:
                     vector.close()
         except Exception as e:
             logger.warning(
                 "Could not read the stored members of %s communities only seed "
-                "graphs state in this run; storing them without a report "
-                "(indexing.reset: true reports them): %s",
+                "graphs state in this run; storing them without a report, "
+                "counted in reports_failed (indexing.reset: true reports "
+                "them): %s",
                 len(communities),
                 e,
             )
-            return set(), {}
+            return _StoredMembers(None, {}, {})
+        self._summarize_members(context, stripped)
         evidenced = {
             c.id
             for c in communities
             if backed.keys() & set(map(str, c.entity_ids or []))
         }
-        return evidenced, {
-            entity_id: description
-            for entity_id, description in backed.items()
-            if description
+        return _StoredMembers(evidenced, backed, unattributed)
+
+    @property
+    def description_summarizer(self) -> DescriptionSummarizer:
+        """The summarizer of the stored members' descriptions, built on
+        first use (most runs summarize none here)."""
+        if self._description_summarizer is None:
+            self._description_summarizer = DescriptionSummarizer(
+                self.config, providers=self.providers
+            )
+        return self._description_summarizer
+
+    def _summarize_members(
+        self, context: PipelineContext, members: list[Entity]
+    ) -> None:
+        """Summarize the descriptions of ``members`` (copies of the run's
+        report members) over the summarization threshold, in place, as the
+        indexing summarizes the descriptions it derives (``needs_summary``),
+        and keep each summary in ``context.member_summaries``: marked with
+        the description it was made from (``summarized_from``), it is the
+        one the indexing reuses (``reuse_summaries``) when it derives that
+        description again, so the run asks the model once. A failed summary
+        leaves the description as derived (the indexing tries again)."""
+        over = [m for m in members if needs_summary(self.config, m.description)]
+        if not over:
+            return
+        derived = [m.description for m in over]
+        self.description_summarizer.summarize_entities(over)
+        context.member_summaries.extend(
+            m for m, d in zip(over, derived, strict=True) if m.description != d
+        )
+
+    def _report_descriptions(
+        self,
+        context: PipelineContext,
+        stored: _StoredMembers,
+    ) -> dict[str, str]:
+        """The description each report reads of a member the stores hold
+        (see :meth:`_evidenced_by_stored_members`), by id: a stored
+        member's description followed by the run's lines, as the full
+        build's merge orders them (documents first) and the indexing merges
+        them, summarized when over the threshold as the indexing summarizes
+        the merge (``_summarize_members``); and an unattributed member's
+        stored description."""
+        merged: list[Entity] = []
+        for entity in context.resolved_entities:
+            copy = stored.backed.get(entity.id)
+            if copy is None:
+                continue
+            merged.append(
+                copy.model_copy(
+                    update={
+                        "description": merge_descriptions(
+                            (copy.description, entity.description)
+                        )
+                    }
+                )
+            )
+        self._summarize_members(context, merged)
+        descriptions = {
+            entity_id: entity.description
+            for entity_id, entity in stored.unattributed.items()
+            if entity.description and entity_id not in stored.backed
         }
+        descriptions.update({m.id: m.description for m in merged if m.description})
+        return descriptions
 
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
@@ -2010,15 +2128,19 @@ class CommunityDetectionStage(_RegistryStage):
         # holds its children's members, so one evidenced child evidences it.
         # On an incremental run the stored members count too.
         looks_seed_only = [c for c in community_objects if seed_only(c.text_unit_ids)]
-        stored_evidence, stored_descriptions = self._evidenced_by_stored_members(
-            context, looks_seed_only
-        )
+        context.member_summaries = []
+        stored = self._evidenced_by_stored_members(context, looks_seed_only)
+        # Communities whose stored members could not be read: without a
+        # report, and failed rather than seed-only (the corpus may evidence
+        # them).
+        unread = [c.id for c in looks_seed_only] if stored.evidenced is None else []
+        stored_evidence = stored.evidenced or set()
         evidenced = [
             c
             for c in community_objects
             if not seed_only(c.text_unit_ids) or c.id in stored_evidence
         ]
-        seed_only_count = len(community_objects) - len(evidenced)
+        seed_only_count = len(community_objects) - len(evidenced) - len(unread)
         if seed_only_count:
             logger.info(
                 "%s of %s communities have members stated only by seed graphs: "
@@ -2032,13 +2154,11 @@ class CommunityDetectionStage(_RegistryStage):
         community_reports, failed_community_ids = self.detector.generate_reports(
             evidenced,
             text_units=context.text_units or context.translated_units,
-            descriptions={
-                entity.id: merge_descriptions(
-                    (stored_descriptions[entity.id], entity.description)
-                )
-                or ""
-                for entity in entities
-                if entity.id in stored_descriptions
+            descriptions=self._report_descriptions(context, stored),
+            types={
+                entity_id: entity.type
+                for entity_id, entity in stored.unattributed.items()
+                if entity.type
             },
         )
         metrics_obj = self.detector.get_community_metrics()
@@ -2074,7 +2194,7 @@ class CommunityDetectionStage(_RegistryStage):
             "relationships_processed": len(relationships),
             "communities_detected": communities_count,
             "reports_generated": reports_count,
-            "reports_failed": len(failed_community_ids),
+            "reports_failed": len(failed_community_ids) + len(unread),
             "communities_seed_only": seed_only_count,
             "unclustered_stored_entities": self.unclustered_stored,
             "modularity_score": metrics_obj.modularity if metrics_obj else 0.0,
@@ -2125,6 +2245,9 @@ class IndexingStage(_RegistryStage):
         # derivation decided carries over (a failed commit's re-keys would
         # delete old ids whose replacements were never written).
         self.indexing_manager.reset_run_state()
+        # The summaries community detection made of the stored members'
+        # descriptions: the indexing derives those descriptions again.
+        self.indexing_manager.offer_summaries(context.member_summaries)
 
         text_units = _with_record_keys(
             self.config, context, context.translated_units or context.text_units

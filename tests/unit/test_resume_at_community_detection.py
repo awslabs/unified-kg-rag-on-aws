@@ -71,7 +71,7 @@ class _Detector:
         ]
 
     def generate_reports(
-        self, communities, text_units=None, descriptions=None
+        self, communities, text_units=None, descriptions=None, types=None
     ):  # noqa: ANN001
         return [], []
 

@@ -288,6 +288,15 @@ class PipelineContext(BaseModel):
     community_reports: "list[CommunityReport]" = Field(
         default_factory=list, description="Human-readable reports for each community."
     )
+    member_summaries: "list[Entity]" = Field(
+        default_factory=list,
+        description="Summaries community detection made of stored members' "
+        "descriptions on an incremental run, each marked with the description "
+        "it was made from (summarized_from): the indexing reuses one when it "
+        "derives that description again instead of summarizing it a second "
+        "time. Not kept in the run metadata: a resumed indexing summarizes "
+        "again.",
+    )
     stage_results: list[PipelineStageResult] = Field(
         default_factory=list,
         description="A collection of results from each executed stage.",

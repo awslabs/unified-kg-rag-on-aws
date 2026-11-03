@@ -2818,8 +2818,13 @@ items.
   is clustered on its own shards' entities until a reset re-clusters the
   graph. Those communities are reported when a stored member is
   document-backed, from the stored members' descriptions followed by the
-  seed's lines, as a full build reads them: an edited seed's earlier
-  lines are left out.
+  seed's lines, as the run indexes them: an edited seed's earlier lines
+  are left out, and a description over
+  `description_summarization.force_summary_threshold_tokens` is
+  summarized first (once: the indexing reuses that summary). A full build
+  summarizes all of a member's lines at once, so the incremental text is
+  an equivalent summary rather than the same one; with summarization off
+  both read the lines whole.
 - **Translation.** Seed statements are never translated, while the
   documents' entities are extracted from the translated text: write seed
   names in `processing.translation.target_language` for them to link.

@@ -475,6 +475,9 @@ class IndexingManager:
         # By suffix, the entities this run's graph merge or strip derived (to
         # be written): the claims about them are derived against these.
         self._derived_entities: dict[str, dict[str, Entity]] = {}
+        # By suffix, the summaries this run made before indexing (see
+        # offer_summaries): reused as the stored ones are.
+        self._offered_summaries: dict[str, list[Entity]] = {}
 
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
@@ -1685,7 +1688,9 @@ class IndexingManager:
         ``rewired``) are compared with their vector copies too.
         """
         rekey = rekey or {}
-        reuse_summaries(entities, stored_entities)
+        reuse_summaries(
+            entities, [*stored_entities, *self._offered_summaries.get(suffix, ())]
+        )
         reuse_summaries(relationships, stored_relationships)
         if any(needs_summary(self.config, i.description) for i in entities):
             entities = self.description_summarizer.summarize_entities(entities)
@@ -2119,6 +2124,16 @@ class IndexingManager:
         self.discard_retired_ids()
         self.outdated_reports.clear()
         self._removed_record_keys.clear()
+        self._offered_summaries.clear()
+
+    def offer_summaries(self, entities: Sequence[Entity]) -> None:
+        """Summaries this run made before indexing (community detection's
+        of its stored members, ``PipelineContext.member_summaries``), each
+        marked with the description it was made from: an entity derived
+        with that description takes the summary (``reuse_summaries``) rather
+        than being summarized again. Grouped by their index suffix."""
+        for suffix, group in self._group_by_suffix(list(entities)).items():
+            self._offered_summaries.setdefault(suffix, []).extend(group)
 
     def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
         """Write the note ``key`` (one extraction-store record of ``suffix``).

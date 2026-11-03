@@ -80,6 +80,9 @@ class _RecordingManager:
     def reset_run_state(self) -> None:
         return None
 
+    def offer_summaries(self, entities: Any) -> None:
+        return None
+
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(kwargs)
         return {"entities": IndexingStats(total_items=2, successful_items=2)}

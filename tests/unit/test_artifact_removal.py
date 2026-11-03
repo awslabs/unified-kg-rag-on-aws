@@ -15,6 +15,9 @@ import pytest
 
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.incremental_runs import Corpus, IncrementalRun, expected_state
+from unified_kg_rag.adapters.ingestion.description_summarizer import (
+    SUMMARIZED_FROM_ATTRIBUTE,
+)
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.delta_detector import (
@@ -30,6 +33,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.shared.utils import compute_hash
 
 pytestmark = pytest.mark.unit
 
@@ -859,6 +863,48 @@ def test_a_strip_derives_claims_with_the_stored_spellings_of_derived_names() -> 
 
     assert keys == [sorted({compact_name_key("Acme"), compact_name_key("Globex Ltd")})]
     assert reads == [["a"], ["g"]]
+
+
+def test_a_summary_offered_before_indexing_is_reused(mocker) -> None:
+    # Community detection summarized the description the indexing derives
+    # (PipelineContext.member_summaries): the indexing takes that summary
+    # instead of asking the model again. One offered in another suffix, or
+    # in an earlier run, is not reused.
+    manager, graph, _ = _manager()
+    summarization = manager.config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 3
+    mocker.patch.object(graph, "find_incident_relationship_ids", return_value=[])
+    summarizer = mocker.MagicMock()
+    summarizer.summarize_entities.side_effect = lambda entities: entities
+    manager._description_summarizer = summarizer
+    derived = "A buys.\nA sells.\nA ships."
+
+    def offered(suffix: str) -> Entity:
+        return Entity(
+            id="a",
+            name="A",
+            description="A trades.",
+            attributes={
+                SUMMARIZED_FROM_ATTRIBUTE: compute_hash(derived),
+                "index": suffix,
+            },
+        )
+
+    def finish() -> str | None:
+        (entity,), _ = manager._finish(
+            "default", [Entity(id="a", name="A", description=derived)], []
+        )
+        return entity.description
+
+    manager.offer_summaries([offered("other")])
+    assert finish() == derived
+    assert summarizer.summarize_entities.call_count == 1
+    manager.offer_summaries([offered("default")])
+    assert finish() == "A trades."
+    assert summarizer.summarize_entities.call_count == 1
+    manager.reset_run_state()
+    assert finish() == derived
+    assert summarizer.summarize_entities.call_count == 2
 
 
 def test_a_dropped_edge_still_stored_does_not_rank_its_endpoints(mocker) -> None:
