@@ -909,7 +909,7 @@ From 0.2.3 (or a `main` checkout since):
 - `search.lightrag_search.kg_chunk_pick_method` (`weight`, the default, or
   `vector`): `vector` picks the chunks LightRAG `mix`/`hybrid` follow from
   the matched entities and relationships by one search of each side's cited
-  chunks for the query, as upstream's default `VECTOR` method does (#PR).
+  chunks for the query, as upstream's default `VECTOR` method does (#521).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1046,7 +1046,7 @@ From 0.2.3 (or a `main` checkout since):
   `[id]` prefix (a UUID was about a quarter of their tokens; nothing reads
   those ids); passages, claims and reports keep theirs. Entity lines show
   the entity's type. The incident-edge page-cap warning is logged once a
-  process, then at DEBUG (#PR).
+  process, then at DEBUG (#521).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1131,7 +1131,7 @@ Queries and retrieval.
   of up to `chunk_stream_top_k` chunks, dropping only the chunks the entity
   side picked, and the text quota cuts after the rerank, as upstream
   does. A lineage is read in chunk-id order, so an incremental build and a
-  full build of one corpus pick the same chunks (#PR).
+  full build of one corpus pick the same chunks (#521).
 - Hybrid search on OpenSearch 2.13 no longer drops the `size`-th lexical hit
   or normalizes over a lower one (#295, #306); kNN on lucene uses
   `vector_search.ef_search` (#306).
