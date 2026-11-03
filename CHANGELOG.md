@@ -428,7 +428,10 @@ Library API (Python callers and custom backends).
   and SQLite registries implement them (#488). A custom backend that
   rewrites schema annotations may override `holds_any_item(suffix)` on
   `GraphIndexer` / `VectorIndexer` with a bounded read; the default lists
-  the items through `read_schema_annotations` (#490).
+  the items through `read_schema_annotations` (#490). A custom vector
+  backend may override `VectorIndexer.holds_any_text_unit(suffix)` too;
+  the default (`None`, cannot tell) makes a registry-off run of seeds
+  alone ask before it builds (#514).
 - A custom graph backend implements `GraphIndexer.find_ids_citing` and a
   custom vector backend `VectorIndexer.find_documents` and
   `delete_extraction_records`: without them a removal cannot find what a
@@ -807,9 +810,9 @@ From 0.2.3 (or a `main` checkout since):
   that does, under any spelling of its source, the run fails before it
   writes rather than delete them, and a scope's first run warns when
   another scope already imports the same seed); with the registry off,
-  seeds alone replace an index that holds items only when the run is
-  confirmed (`--confirm-reset`, `UKR_CONFIRM_RESET=1` or `--yes`), and
-  build an empty one unasked. What a seed converts to keys every stage, where it is
+  seeds alone replace an index that holds items (or only text units)
+  only when the run is confirmed (`--confirm-reset`,
+  `UKR_CONFIRM_RESET=1` or `--yes`), and build an empty one unasked. What a seed converts to keys every stage, where it is
   read from keys nothing, and no document re-extracts for it. Merges are
   document-first: a seed fills a type, name or confidence only where no
   document states one, its description lines follow the documents', its
@@ -817,12 +820,13 @@ From 0.2.3 (or a `main` checkout since):
   seeds evidence gets no report (`communities_seed_only`); on an
   incremental run its stored members count too, so a seed added beside
   unchanged documents reports their communities as a full build does,
-  from the members' stored descriptions merged with the seed's.
+  from the members' stored descriptions merged with the seed's (an
+  edited seed's earlier lines left out).
   Seed descriptions reach the description summarizer, the reports of
   communities documents also state and the answer context. Loading,
   chunking and extraction report `seed_documents`, `seed_units`,
   `seed_entities` and `seed_relationships` (#498, #499, #500, #502,
-  #503, #509, #510, #513).
+  #503, #509, #510, #513, #514).
 - Seed sources: `jsonl` and `csv` read local files or S3, sized before
   any byte is fetched, and refuse a duplicate node id, a dangling edge
   (unless `options.dangling: skip`), a non-scalar property, an

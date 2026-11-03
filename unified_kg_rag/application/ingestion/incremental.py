@@ -1343,7 +1343,15 @@ def _same_source(record_scope: str | None, namespace: str, source_scope: str) ->
     """Whether a record of ``record_scope`` is a record of the run's corpus:
     of ``namespace`` and a spelling of ``source_scope``
     (:func:`normalize_source_scope`: an ``s3://`` URI with or without a
-    trailing slash), as an incremental run keys it (``_stored_spelling``)."""
+    trailing slash), as an incremental run keys it (``_stored_spelling``).
+
+    The callers pass the records of ``namespace``'s listing, each scoped
+    ``namespace|source``, so the separator and namespace checks never fail
+    there. They are defensive, and kept: without them a record of another
+    namespace, or of a scope without a source part (``partition`` gives an
+    empty source), would count as the run's own when the run's source
+    scope normalises alike, and its documents would be deleted or kept by
+    the wrong run."""
     namespace_of, separator, source = (record_scope or "").partition("|")
     return (
         bool(separator)

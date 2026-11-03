@@ -2754,7 +2754,8 @@ the seeds' content is part of every stage's cache key.
 build of the corpus and the configured seeds, and nothing tells an empty
 corpus from a missing one. So with the registry off, an empty corpus
 builds from the seeds alone without asking only while the index holds no
-entity or relationship yet (a first seed-only build: nothing to lose).
+entity, relationship or text unit yet (a first seed-only build: nothing
+to lose).
 Once it holds some, the run asks first (`... rebuild the index 'default'
 from the seed graphs alone, replacing what it holds; continue?`), as a
 reset does below: `--confirm-reset`, `UKR_CONFIRM_RESET=1` or `--yes`
@@ -2816,8 +2817,9 @@ items.
 - **Delta runs cluster the delta** (§5): a seed added by an incremental run
   is clustered on its own shards' entities until a reset re-clusters the
   graph. Those communities are reported when a stored member is
-  document-backed, from the descriptions the run's graph holds (the
-  seed's).
+  document-backed, from the stored members' descriptions followed by the
+  seed's lines, as a full build reads them: an edited seed's earlier
+  lines are left out.
 - **Translation.** Seed statements are never translated, while the
   documents' entities are extracted from the translated text: write seed
   names in `processing.translation.target_language` for them to link.

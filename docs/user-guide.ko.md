@@ -2434,7 +2434,7 @@ RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procur
 **수명 주기.** 아래 동작에는 문서 상태 레지스트리(`providers.doc_status.enabled`)가
 필요합니다. 레지스트리가 없으면 매 실행이 코퍼스와 설정한 시드의 전체 빌드이며, 빈
 코퍼스와 없는 코퍼스를 구분할 수 없습니다. 그래서 레지스트리를 끄면 빈 코퍼스는 인덱스에
-엔티티나 관계가 아직 없을 때만(첫 시드 전용 빌드, 잃을 것이 없음) 묻지 않고 시드만으로
+엔티티, 관계, 텍스트 단위가 아직 없을 때만(첫 시드 전용 빌드, 잃을 것이 없음) 묻지 않고 시드만으로
 빌드합니다. 무언가 있으면 아래 재설정처럼 먼저 묻습니다(`... rebuild the index 'default'
 from the seed graphs alone, replacing what it holds; continue?`). `--confirm-reset`,
 `UKR_CONFIRM_RESET=1`, `--yes`가 '예'로 답하고, '아니요'로 답하거나 터미널이 없으면 쓰기
@@ -2482,8 +2482,9 @@ from the seed graphs alone, replacing what it holds; continue?`). `--confirm-res
   단계 캐시에 둡니다.
 - **증분 실행은 델타만 군집화합니다**(§5). 증분 실행으로 더한 시드는 재설정으로 그래프
   전체를 다시 군집화할 때까지 자기 샤드의 엔티티끼리만 군집화됩니다. 이 커뮤니티는 저장된
-  구성원 중 문서가 뒷받침하는 것이 있으면 실행의 그래프가 가진 설명(시드의 설명)으로
-  리포트를 만듭니다.
+  구성원 중 문서가 뒷받침하는 것이 있으면 저장된 구성원의 설명 뒤에 시드의 설명 줄을
+  붙여 전체 빌드와 같은 입력으로 리포트를 만듭니다. 시드를 고치면 이전 버전의 줄은
+  빠집니다.
 - **번역.** 시드 진술은 번역하지 않지만 문서의 엔티티는 번역된 텍스트에서 추출합니다.
   시드 이름이 문서와 이어지려면 `processing.translation.target_language`로 쓰세요.
 - **로컬 백엔드.** SQLite 그래프와 임베디드 벡터 저장소도 같은 필드를 두고 같은 필터를

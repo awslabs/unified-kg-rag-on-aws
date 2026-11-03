@@ -558,7 +558,7 @@ without the reset, then reset it.
 **Seeds with the registry off.** Without the doc-status registry every
 run is a full build, so an empty corpus beside seeds would replace the
 whole index with the seeds. The run builds from seeds alone unasked only
-while the index holds no entity or relationship (a first seed-only
+while the index holds no entity, relationship or text unit (a first seed-only
 build); otherwise it asks (`... rebuild the index '...' from the seed
 graphs alone, replacing what it holds; continue?`) and an ECS task stops
 at `document_loading` before it writes, exit 1, unless
