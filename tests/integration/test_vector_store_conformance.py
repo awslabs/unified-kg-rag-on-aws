@@ -1821,3 +1821,17 @@ def test_holds_any_text_unit_tells_a_suffix_with_text_units(
     assert indexer.holds_any_text_unit(suffix=tenant) is True
     assert indexer.holds_any_item(suffix=tenant) is False
     assert indexer.holds_any_text_unit(suffix=other) is False
+
+
+@pytest.mark.parametrize("kind", ["text_units", "entities"])
+def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> None:
+    # A live index that a full build emptied exists but holds no document:
+    # neither probe reads it as holding one.
+    indexer = harness.vector_indexer
+    tenant = harness.suffix("emptied")
+    items = _text_units(tenant) if kind == "text_units" else _entities(tenant)
+    _write(harness, kind, "upsert", items)
+    _write(harness, kind, "index", [], suffixes=[tenant])
+    assert harness.stored_ids(kind, tenant) == set()
+    assert indexer.holds_any_text_unit(suffix=tenant) is False
+    assert indexer.holds_any_item(suffix=tenant) is False

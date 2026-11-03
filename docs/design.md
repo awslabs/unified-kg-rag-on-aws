@@ -683,7 +683,23 @@ of the documents plus the configured seeds. No model reads a seed.
   unit the run replaces (an edited seed's earlier shard) has its stored
   description derived again from the records of its other units first,
   as the indexing's strip does (`stripped_descriptions`, one read of
-  those units' records). The relationship lines are the run's graph's
+  those units' records). The report then reads what the run indexes:
+  that derived description, and the merge with the run's lines, are
+  each summarized when over the threshold (`needs_summary`), as the
+  strip and the merge summarize them, and the summaries go to the
+  indexing through `PipelineContext.member_summaries`, marked
+  `summarized_from`, so `reuse_summaries` takes them and the model is
+  asked once (a resumed indexing summarizes again; the context does not
+  persist them). Without that, a hub's report entry was every line its
+  documents state and could crowd it out of its own report. A full build
+  summarizes the member's lines in one pass, so the two summaries are
+  equivalent, not equal; with summarization off both read the lines
+  whole (no cap: a cap would make the incremental input differ from the
+  full build's). A member the run states with neither a type nor a
+  description (the endpoint of a seed edge into a kept shard) reads its
+  stored copy's type and description; an unread member store counts the
+  communities in `reports_failed`, not `communities_seed_only`. The
+  relationship lines are the run's graph's
   only (the delta's seed edges; a stored document edge between members
   is not read): clustering the delta only, the community itself can
   differ from a full build's. Global search answers from the

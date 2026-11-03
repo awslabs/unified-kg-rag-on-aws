@@ -95,6 +95,9 @@ class _RecordingManager:
     def reset_run_state(self) -> None:
         return None
 
+    def offer_summaries(self, entities: Any) -> None:
+        return None
+
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         return {}
 

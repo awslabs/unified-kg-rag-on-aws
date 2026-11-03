@@ -60,6 +60,7 @@ class PipelineStateManager:
         "documents",
         "graph",
         "knowledge_graph",
+        "member_summaries",
         "resolved_claims",
         "resolved_entities",
         "resolved_relationships",

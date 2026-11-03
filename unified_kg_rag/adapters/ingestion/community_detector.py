@@ -182,9 +182,10 @@ class CommunityDetector:
         self.ignore_errors = self.config.processing.ignore_errors
 
         self.graph: nx.Graph = nx.Graph()
-        # The descriptions report inputs read instead of the nodes'
-        # (generate_reports).
+        # The descriptions and types report inputs read instead of the
+        # nodes' (generate_reports).
         self._report_descriptions: dict[str, str] = {}
+        self._report_types: dict[str, str] = {}
         self.all_communities: dict[str, HierarchicalCommunity] = {}
         self.node_to_community_l0: dict[str, str] = {}
         # Entities of the components too small to form a community.
@@ -1026,6 +1027,7 @@ class CommunityDetector:
         communities: list[Community],
         text_units: list[TextUnit] | None = None,
         descriptions: Mapping[str, str] | None = None,
+        types: Mapping[str, str] | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
@@ -1038,6 +1040,9 @@ class CommunityDetector:
             descriptions: Entity id -> the description its report input
                 reads instead of the graph node's (an incremental run's
                 member merged with what the stores hold of it).
+            types: Entity id -> the type its report input reads instead of
+                the graph node's (a member an incremental run states
+                without one, read from the stores).
 
         Returns:
             One report per community that produced a non-empty LLM result, and
@@ -1055,6 +1060,7 @@ class CommunityDetector:
             return [], []
 
         self._report_descriptions = dict(descriptions or {})
+        self._report_types = dict(types or {})
         try:
             logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
@@ -1322,9 +1328,9 @@ class CommunityDetector:
             entity = {
                 "id": eid,
                 "name": node.get("name", eid),
-                "type": node.get("type", "unknown"),
+                "type": self._report_types.get(eid, node.get("type") or "unknown"),
                 "description": self._report_descriptions.get(
-                    eid, node.get("description", "")
+                    eid, node.get("description") or ""
                 ),
             }
             cost = estimate_token_count(self._format_entity_line(entity))
