@@ -5,7 +5,7 @@
 # other key, with its type, default and description, is in
 # docs/reference/configuration.md (generated from the code); how the
 # configuration loads (the backend preset, UKR__<SECTION>__<KEY> environment
-# variables, CLI flags) is in docs/user-guide.md section 2.
+# variables, CLI flags) is in docs/guides/configure.md.
 
 # Provider preset. "aws": Bedrock, Neptune, OpenSearch and DynamoDB. "local":
 # Ollama models, a cross-encoder reranker and embedded SQLite stores, filled

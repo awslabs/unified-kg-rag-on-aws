@@ -52,12 +52,12 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
-| **Local mode** (development, no AWS) | Embedded SQLite graph and vector stores and registry, no server; or Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Local mode](./docs/user-guide.md#local-mode-no-aws): pull the two Ollama models, then pass `--backend local` |
-| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
+| **Local mode** (development, no AWS) | Embedded SQLite graph and vector stores and registry, no server; or Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Getting started locally](./docs/getting-started/local.md): pull the two Ollama models, then pass `--backend local` |
+| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache) | Amazon Bedrock | Follow [Getting started on AWS](./docs/getting-started/aws.md): copy `config-template.yaml` to `config.yaml` and set the endpoints |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
 The AWS paths call Amazon Bedrock, so enable the
-[required models](./docs/user-guide.md#required-models) first. Local mode is
+[required models](./docs/getting-started/aws.md#required-models) first. Local mode is
 for development and evaluation only: the embedded stores serve one host and
 about 100,000 documents per index, the containers have no authentication or TLS, and small
 local models extract weaker graphs.
@@ -114,8 +114,8 @@ Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.m
 
 | You are | Start with |
 |---|---|
-| **First-time evaluator** (no AWS) | [Local mode](./docs/user-guide.md#local-mode-no-aws), then the [Overview](./docs/concepts/overview.md) |
-| **Builder on AWS** | [Required models](./docs/user-guide.md#required-models) and the [User Guide](./docs/user-guide.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
+| **First-time evaluator** (no AWS) | [Getting started locally](./docs/getting-started/local.md), then the [Overview](./docs/concepts/overview.md) |
+| **Builder on AWS** | [Getting started on AWS](./docs/getting-started/aws.md) and the [User Guide](./docs/user-guide.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
 | **Operator** | The [Operator Runbook](./docs/operations.md) and [`iac/README.md`](./iac/README.md) |
 | **Evaluator or researcher** | [Evaluation](./docs/user-guide.md#6-evaluation-run-eval), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
 | **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |

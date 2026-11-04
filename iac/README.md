@@ -265,7 +265,7 @@ cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
   only: answers in any other language, Korean included, score low and are
   blocked, so leave it off for such a corpus. With `create_guardrail=false`
   the flag only turns the app's check on; your guardrail must have the
-  policy. Limits and cost: [user guide](../docs/user-guide.md#guardrail).
+  policy. Limits and cost: [Guardrail](../docs/guides/guardrail.md).
 - The created guardrail follows `removal_destroy`: deleted in dev, retained
   otherwise; delete a retained one by hand
   (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`)
@@ -591,7 +591,7 @@ What the option changes:
 console, **Application Signals, Transaction Search**, and filter on the
 service `unified-kg-rag`. Each ingestion run is one `kg_rag.ingestion.run`
 trace and each `run-rag` query one `kg_rag.query` trace, with the children
-listed in the [runbook's trace shape](../docs/operations.md#trace-shape). A `run-eval` run is one
+listed in the [trace shape](../docs/reference/telemetry.md#trace-shape). A `run-eval` run is one
 `kg_rag.batch` trace: its queries are `kg_rag.query` children of that root, so
 the list shows the batch, not each query; each evaluator (and
 `--pairwise-judge`) adds one `kg_rag.evaluate` trace holding its judge model

@@ -61,7 +61,7 @@ the [Configuration Reference](./configuration.md).
 - **Configuration flags** (`--config-path`, `--allow-unknown-keys`) and the
   **provider flags** (`--backend`, `--llm-provider`, ...) are shared: each
   provider flag overrides one key of the loaded config, a key the file sets
-  included ([Local mode](../user-guide.md#local-mode-no-aws)).
+  included ([Local mode](../guides/local-mode.md)).
 - **Exit codes** and the `--output-format json` result are described in
   [CLI exit codes and JSON output](../user-guide.md#cli-exit-codes-and-json-output).
 """

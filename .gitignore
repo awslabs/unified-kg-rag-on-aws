@@ -197,7 +197,7 @@ ipynb/
 inputs/
 logs/
 outputs/
-reference/
+/reference/
 references/
 
 config.yaml

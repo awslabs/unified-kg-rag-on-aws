@@ -52,11 +52,11 @@
 
 | 방식 | 그래프·벡터 저장소 | 모델 | 시작 방법 |
 |---|---|---|---|
-| **로컬 모드**(개발용, AWS 불필요) | 서버 없는 내장 SQLite 그래프·벡터 저장소와 레지스트리, 또는 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)를 따라 Ollama 모델 두 개를 내려받은 뒤 `--backend local`을 넘깁니다 |
-| **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(증분 인덱싱을 쓰면 DynamoDB, 단계 캐시 동기화를 쓸 때만 S3 버킷) | Amazon Bedrock | `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
+| **로컬 모드**(개발용, AWS 불필요) | 서버 없는 내장 SQLite 그래프·벡터 저장소와 레지스트리, 또는 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | [로컬에서 시작하기](./docs/getting-started/local.ko.md)를 따라 Ollama 모델 두 개를 내려받은 뒤 `--backend local`을 넘깁니다 |
+| **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(증분 인덱싱을 쓰면 DynamoDB, 단계 캐시 동기화를 쓸 때만 S3 버킷) | Amazon Bedrock | [AWS에서 시작하기](./docs/getting-started/aws.ko.md)를 따라 `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
 | **번들 CDK 스택** | [`iac/`](./iac/README.md)가 Fargate 데이터 플레인, Step Functions 수집 파이프라인과 함께 생성 | Amazon Bedrock | [AWS에 배포](#aws에-배포선택)를 진행한 뒤 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)를 따릅니다 |
 
-AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md#필수-모델)의
+AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/getting-started/aws.ko.md#필수-모델)의
 액세스를 활성화하세요. 로컬 모드는 개발과 평가 전용입니다. 내장 저장소는 호스트 한 대와
 인덱스당 문서 약 100,000개를 기준으로 하고, 컨테이너에는 인증과 TLS가 없으며, 작은
 로컬 모델은 그래프를 더 약하게 추출합니다.
@@ -109,12 +109,12 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 문서 안내
 
-[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
+[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 시작하기 두 문서, 설정 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
 
 | 독자 | 시작할 문서 |
 |---|---|
-| **처음 써 보는 평가자**(AWS 없이) | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이), 다음으로 [개요](./docs/concepts/overview.ko.md) |
-| **AWS에서 구축하는 개발자** | [필수 모델](./docs/user-guide.ko.md#필수-모델)과 [사용자 가이드](./docs/user-guide.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
+| **처음 써 보는 평가자**(AWS 없이) | [로컬에서 시작하기](./docs/getting-started/local.ko.md), 다음으로 [개요](./docs/concepts/overview.ko.md) |
+| **AWS에서 구축하는 개발자** | [AWS에서 시작하기](./docs/getting-started/aws.ko.md)와 [사용자 가이드](./docs/user-guide.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
 | **운영자** | [운영 런북](./docs/operations.md)과 [`iac/README.md`](./iac/README.md)(영문) |
 | **평가자·연구자** | [평가](./docs/user-guide.ko.md#6-평가-run-eval), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
 | **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/design.md#15-extension-guide)(영문) |

@@ -31,7 +31,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # The pages with a Korean twin (``<page>.ko.md`` next to ``<page>.md``), as
 # repo-relative paths without the suffix. Adding a ``.ko.md`` file that is not
 # listed here fails the check.
-TRANSLATED_PAGES = ["README", "docs/index", "docs/concepts/overview", "docs/user-guide"]
+TRANSLATED_PAGES = [
+    "README",
+    "docs/index",
+    "docs/concepts/overview",
+    "docs/getting-started/local",
+    "docs/getting-started/aws",
+    "docs/guides/configure",
+    "docs/user-guide",
+]
 
 # The note a Korean page carries while its translation lags the English page
 # (CONTRIBUTING.md, Documentation); such a page is reported, not failed.
@@ -175,12 +183,21 @@ def tracked_files(root: Path) -> list[Path]:
 
 
 def _check_target(
-    root: Path, source: Path, where: str, target: str, base: Path, report: Report
+    root: Path,
+    source: Path,
+    where: str,
+    target: str,
+    base: Path,
+    report: Report,
+    tracked: set[Path] | None = None,
 ) -> None:
     path, _, fragment = target.partition("#")
     dest = (base / unquote(path)).resolve() if path else source
     if not dest.exists():
         report.failures.append(f"{where}: missing target: {target}")
+    elif tracked is not None and dest.is_file() and dest not in tracked:
+        # On disk but not committed (untracked or ignored): CI would miss it.
+        report.failures.append(f"{where}: target not tracked by Git: {target}")
     elif fragment and dest.suffix == ".md":
         known = {a.lower() for a in fragments(dest)}
         if unquote(fragment).lower() not in known:
@@ -195,6 +212,7 @@ def check_links(root: Path = REPO_ROOT) -> Report:
     """Check Markdown links and images, then code-cited doc paths."""
     report = Report()
     files = tracked_files(root)
+    tracked = {p.resolve() for p in files}
     for md in (p for p in files if p.suffix == ".md"):
         rel = md.relative_to(root).as_posix()
         for number, target, image in links(md.read_text(encoding="utf-8")):
@@ -204,7 +222,7 @@ def check_links(root: Path = REPO_ROOT) -> Report:
             elif _SCHEME.match(target) or target.startswith("//"):
                 continue
             report.counts["images" if image else "links"] += 1
-            _check_target(root, md, f"{rel}:{number}", target, base, report)
+            _check_target(root, md, f"{rel}:{number}", target, base, report, tracked)
     code = [
         p
         for p in files

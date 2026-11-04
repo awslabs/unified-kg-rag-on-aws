@@ -9,8 +9,8 @@ the project? Read the [Overview](./concepts/overview.md) first.
 
 | You are | Goal | Read, in order | Done when |
 |---|---|---|---|
-| **First-time evaluator** | See it work without AWS | [README](../README.md#quickstart) → [Local mode](./user-guide.md#local-mode-no-aws) → [Overview](./concepts/overview.md) → [Search strategies](./user-guide.md#search-strategies--when-to-use-which) → [Evaluators](./user-guide.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
-| **Builder on AWS** | Ingest a real corpus and query it | [Required models](./user-guide.md#required-models) → [Install](./user-guide.md#install) (existing stores) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./user-guide.md#2-configuration) → [Ingestion](./user-guide.md#3-ingestion-run-ingestion) → [Querying](./user-guide.md#4-querying-run-rag) → [Incremental indexing](./user-guide.md#5-incremental-indexing) → [Domain adaptation](./user-guide.md#9-domain-adaptation) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
+| **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./user-guide.md#search-strategies--when-to-use-which) → [Evaluators](./user-guide.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
+| **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./user-guide.md#3-ingestion-run-ingestion) → [Querying](./user-guide.md#4-querying-run-rag) → [Incremental indexing](./user-guide.md#5-incremental-indexing) → [Domain adaptation](./user-guide.md#9-domain-adaptation) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
 | **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [common errors](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./user-guide.md#6-evaluation-run-eval) → [Comparing strategies](./user-guide.md#comparing-strategies) → [Benchmarks](./user-guide.md#benchmarks-musique) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
 | **Extender** | Add a backend, strategy, parser, schema or seed source | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./user-guide.md#c-extraction-schema) / [Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph) | A registered plugin that passes the fake-port conformance tests |
@@ -21,28 +21,33 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Type | Page | Covers |
 |---|---|---|
 | Tutorial | [README Quickstart](../README.md#quickstart) | Choose how to run, install, first ingestion, query and evaluation |
-| Tutorial | Getting started locally, Getting started on AWS (planned) | Step-by-step first runs; until then, the Quickstart and [User Guide §1](./user-guide.md#1-prerequisites--installation) |
+| Tutorial | [Getting started locally](./getting-started/local.md), [Getting started on AWS](./getting-started/aws.md) | Step-by-step first runs: a sample corpus without AWS (both methodologies, a judge-free evaluation); prerequisites, required models, install, authentication and IAM for existing Neptune and OpenSearch |
 | Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the two methodologies, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
 | Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
 | Explanation | Retrieval, Scopes and namespaces (planned) | Strategy concepts and scoring; index suffix, namespace and source scope |
-| How-to | [User Guide](./user-guide.md) | Every task for now: installation and local mode, configuration, ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation, exit codes, library use |
+| How-to | [User Guide](./user-guide.md) | The tasks not yet split out: ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation, exit codes, library use |
 | How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
-| How-to | Task guides (planned) | One page per task, split out of the User Guide |
+| How-to | [Local mode](./guides/local-mode.md), [Configuration](./guides/configure.md) | Local providers, differences from AWS mode, stores in containers; how configuration loads, the settings most runs change, environment variables, what the logs contain |
+| How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
+| How-to | More task guides (planned) | One page per task, split out of the User Guide |
 | Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
 | Reference | [Configuration Reference](./reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
-| Reference | [Model Catalog](./reference/models.md) | Supported Bedrock models and per-provider request differences |
-| Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation, observability, common errors |
+| Reference | [Model Catalog](./reference/models.md) | Supported Bedrock models, per-provider request differences, model selection notes (tiers, roles, the judge, output caps) |
+| Reference | [Telemetry reference](./reference/telemetry.md) | Every span and attribute, vendor attribute names, known limits, model-usage counters |
+| Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation, common errors |
 | Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
 
 ## I want to
 
 | I want to | Go to |
 |---|---|
-| Try it without an AWS account | [Local mode](./user-guide.md#local-mode-no-aws) |
+| Try it without an AWS account | [Getting started locally](./getting-started/local.md) |
 | Deploy the whole stack on AWS | [`iac/README.md`](../iac/README.md#quick-start) |
-| Enable the Bedrock models it needs | [Required models](./user-guide.md#required-models) |
-| Change a model or a setting | [Configuration](./user-guide.md#2-configuration), [Configuration Reference](./reference/configuration.md) |
+| Enable the Bedrock models it needs | [Required models](./getting-started/aws.md#required-models) |
+| Change a model or a setting | [Configuration](./guides/configure.md), [Model selection notes](./reference/models.md#model-selection-notes), [Configuration Reference](./reference/configuration.md) |
+| Screen queries and answers | [Guardrail](./guides/guardrail.md) |
+| Trace queries and ingestion runs | [Observability](./guides/observability.md) |
 | Ingest a corpus, resume or rebuild | [Ingestion](./user-guide.md#3-ingestion-run-ingestion) |
 | Index a Korean or mixed-language corpus | [Multilingual ingestion](./user-guide.md#multilingual-ingestion) |
 | Pick a search strategy | [Search strategies](./user-guide.md#search-strategies--when-to-use-which) |

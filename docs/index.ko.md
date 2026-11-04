@@ -4,14 +4,14 @@
 
 `unified-kg-rag-on-aws` 문서를 하려는 일에 따라 정리했습니다. 처음이라면
 [개요](./concepts/overview.ko.md)부터 읽으세요. 한국어 문서는 README, 이 페이지, 개요,
-사용자 가이드이며, "(영문)"으로 표시한 문서는 영문으로만 제공합니다.
+시작하기 두 문서, 설정 가이드, 사용자 가이드이며, "(영문)"으로 표시한 문서는 영문으로만 제공합니다.
 
 ## 여기서 시작하기
 
 | 독자 | 목표 | 읽는 순서 | 완료 기준 |
 |---|---|---|---|
-| **처음 써 보는 평가자** | AWS 없이 동작 확인 | [README](../README.ko.md#빠른-시작) → [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) → [개요](./concepts/overview.ko.md) → [검색 전략 선택](./user-guide.ko.md#검색-전략-선택) → [평가기](./user-guide.ko.md#평가기) | 예제 코퍼스에서 두 방법론의 답변을 받고, 판정 모델 없이 `run-eval` 실행 |
-| **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [필수 모델](./user-guide.ko.md#필수-모델) → [설치](./user-guide.ko.md#설치)(기존 저장소) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./user-guide.ko.md#2-설정) → [수집](./user-guide.ko.md#3-수집-run-ingestion) → [질의](./user-guide.ko.md#4-질의-run-rag) → [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) → [도메인 적응](./user-guide.ko.md#9-도메인-적응) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
+| **처음 써 보는 평가자** | AWS 없이 동작 확인 | [로컬에서 시작하기](./getting-started/local.ko.md) → [개요](./concepts/overview.ko.md) → [검색 전략 선택](./user-guide.ko.md#검색-전략-선택) → [평가기](./user-guide.ko.md#평가기) | 예제 코퍼스에서 두 방법론의 답변을 받고, 판정 모델 없이 `run-eval` 실행 |
+| **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [AWS에서 시작하기](./getting-started/aws.ko.md)(기존 저장소, [필수 모델](./getting-started/aws.ko.md#필수-모델)) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./guides/configure.ko.md) → [수집](./user-guide.ko.md#3-수집-run-ingestion) → [질의](./user-guide.ko.md#4-질의-run-rag) → [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) → [도메인 적응](./user-guide.ko.md#9-도메인-적응) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
 | **운영자** | 실행, 모니터링, 복구, 업그레이드 | [`iac/README.md`](../iac/README.md)(영문) → [운영 런북](./operations.md)(영문: [실행 전](./operations.md#before-a-run), [실행이 실패하면](./operations.md#when-a-run-fails), [경보](./operations.md#alarms), [자주 보는 오류](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | 모든 경보와 오류에서 대응 절차를 찾을 수 있음 |
 | **평가자·연구자** | 품질과 비용 측정, 기본값 재현, 논문과 비교 | [평가](./user-guide.ko.md#6-평가-run-eval) → [전략 비교](./user-guide.ko.md#전략-비교) → [벤치마크](./user-guide.ko.md#벤치마크-musique) → [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) → [원 논문을 넘어서](./concepts/overview.ko.md#원-논문을-넘어서) | MuSiQue나 자체 데이터로 신뢰 구간과 게이트가 있는 짝지은 비교 실행 |
 | **확장 개발자** | 백엔드, 전략, 파서, 스키마, 시드 소스 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [추출 스키마](./user-guide.ko.md#c-추출-스키마) / [시드 그래프](./user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기) | 등록한 플러그인이 가짜 포트(fake port) 적합성 테스트를 통과 |
@@ -22,28 +22,33 @@
 | 유형 | 문서 | 내용 |
 |---|---|---|
 | 튜토리얼 | [README 빠른 시작](../README.ko.md#빠른-시작) | 실행 방법 선택, 설치, 첫 수집, 질의, 평가 |
-| 튜토리얼 | 로컬에서 시작하기, AWS에서 시작하기(작성 예정) | 단계별 첫 실행. 그전까지는 빠른 시작과 [사용자 가이드 §1](./user-guide.ko.md#1-사전-요구사항과-설치) |
+| 튜토리얼 | [로컬에서 시작하기](./getting-started/local.ko.md), [AWS에서 시작하기](./getting-started/aws.ko.md) | 단계별 첫 실행. AWS 없이 예제 코퍼스로 두 방법론 질의와 판정 모델 없는 평가, 기존 Neptune·OpenSearch를 쓸 때의 사전 요구사항, 필수 모델, 설치, 인증, IAM |
 | 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 두 방법론, 원 논문 대비 확장한 부분, 제한 사항 |
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
 | 설명 | [설계 문서](./design.md)(영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
 | 설명 | 검색, 범위와 네임스페이스(작성 예정) | 전략 개념과 점수 계산. 인덱스 접미사, 네임스페이스, 소스 범위 |
-| 사용 방법 | [사용자 가이드](./user-guide.ko.md) | 당분간 모든 작업: 설치와 로컬 모드, 설정, 수집, 질의와 필터, 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응, 종료 코드, 라이브러리 사용법 |
+| 사용 방법 | [사용자 가이드](./user-guide.ko.md) | 아직 분리하지 않은 작업: 수집, 질의와 필터, 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응, 종료 코드, 라이브러리 사용법 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
-| 사용 방법 | 작업별 가이드(작성 예정) | 사용자 가이드에서 작업마다 한 페이지로 분리 |
+| 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
+| 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
+| 사용 방법 | 나머지 작업별 가이드(작성 예정) | 사용자 가이드에서 작업마다 한 페이지로 분리 |
 | 레퍼런스 | [CLI 레퍼런스](./reference/cli.md)(영문) | 모든 CLI의 모든 플래그(파서에서 생성) |
 | 레퍼런스 | [설정 레퍼런스](./reference/configuration.md)(영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
-| 레퍼런스 | [모델 카탈로그](./reference/models.md)(영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
-| 런북 | [운영 런북](./operations.md)(영문) | 용량, 재수집, 증분 실행, 캐시, 백업과 복원, 업그레이드, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리, 관측성, 자주 보는 오류 |
+| 레퍼런스 | [모델 카탈로그](./reference/models.md)(영문) | 지원하는 Bedrock 모델, 공급자별 요청 차이, 모델 선택 참고 사항(계층, 역할, 판정 모델, 출력 상한) |
+| 레퍼런스 | [Telemetry reference](./reference/telemetry.md)(영문) | 모든 스팬과 속성, 벤더 속성 이름, 알려진 제한, 모델 사용량 집계 |
+| 런북 | [운영 런북](./operations.md)(영문) | 용량, 재수집, 증분 실행, 캐시, 백업과 복원, 업그레이드, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리, 자주 보는 오류 |
 | 프로젝트 | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md)(영문) | 개발 절차, 릴리스 노트, 보안 이슈 신고 |
 
 ## 하려는 일별 안내
 
 | 하려는 일 | 문서 |
 |---|---|
-| AWS 계정 없이 써 보기 | [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) |
+| AWS 계정 없이 써 보기 | [로컬에서 시작하기](./getting-started/local.ko.md) |
 | AWS에 전체 스택 배포 | [`iac/README.md`](../iac/README.md#quick-start)(영문) |
-| 필요한 Bedrock 모델 활성화 | [필수 모델](./user-guide.ko.md#필수-모델) |
-| 모델이나 설정 변경 | [설정](./user-guide.ko.md#2-설정), [설정 레퍼런스](./reference/configuration.md)(영문) |
+| 필요한 Bedrock 모델 활성화 | [필수 모델](./getting-started/aws.ko.md#필수-모델) |
+| 모델이나 설정 변경 | [설정](./guides/configure.ko.md), [모델 선택 참고 사항](./reference/models.md#model-selection-notes)(영문), [설정 레퍼런스](./reference/configuration.md)(영문) |
+| 질의와 답변 검사 | [Guardrail](./guides/guardrail.md)(영문) |
+| 질의와 수집 실행 추적 | [Observability](./guides/observability.md)(영문) |
 | 코퍼스 수집, 재개, 재구축 | [수집](./user-guide.ko.md#3-수집-run-ingestion) |
 | 한국어나 여러 언어가 섞인 코퍼스 인덱싱 | [다국어 수집](./user-guide.ko.md#다국어-수집) |
 | 검색 전략 고르기 | [검색 전략 선택](./user-guide.ko.md#검색-전략-선택) |
