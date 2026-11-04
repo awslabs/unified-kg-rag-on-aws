@@ -131,7 +131,7 @@ class CommandLineInterface:
             description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
-                "4-querying-run-rag",
+                "guides/query.md#examples",
                 'run-rag --query "What are the main themes?" --search-strategy global '
                 "--config-path config.yaml",
             ),

@@ -57,12 +57,12 @@ attempt count includes the first attempt; `1` disables the retry.
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | Other models ([notes](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | Lower on `ThrottlingException` retries, raise if quota allows |
 | `processing.graph_extraction.entity_types` | 7 generic types | [Domain adaptation](../user-guide.md#9-domain-adaptation) |
-| `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](../user-guide.md#multilingual-ingestion)) |
+| `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](./multilingual.md)) |
 | `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
-| `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../user-guide.md#index-suffix)) |
+| `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) |
 | `graph.community_detection.enabled` | `true` | LightRAG-only, lighter ingestion (`global` and `drift` need it) |
 | `search.reranking.enabled` | `true` | No rerank model in the region, or no reranking wanted |
-| `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](../user-guide.md#context-budget)) |
+| `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](../concepts/retrieval.md#context-budget)) |
 | `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus (quarantined documents skipped) |
 | `aws.bedrock.guardrail.identifier` | `null` | Screen queries and answers ([Guardrail](./guardrail.md)) |
 | `observability.enabled` | `false` | OpenTelemetry traces ([Observability](./observability.md)) |

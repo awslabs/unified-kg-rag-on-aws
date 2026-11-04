@@ -8,7 +8,7 @@ edit by hand. Run the script after changing a flag or its help text. -->
 
 Every flag of every command line tool, its default and what it does, taken
 from the same parsers `--help` prints. What each tool is for and worked
-examples are in the [User Guide](../user-guide.md); configuration keys are in
+examples are in the guide each command links; configuration keys are in
 the [Configuration Reference](./configuration.md).
 
 - **Defaults** are what a run gets when the flag is omitted: `off` for a
@@ -32,7 +32,7 @@ the [Configuration Reference](./configuration.md).
 
 GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs
 
-Guide: [User Guide](../user-guide.md#3-ingestion-run-ingestion). Also takes the [provider flags](#provider-flags).
+Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -61,7 +61,7 @@ Guide: [User Guide](../user-guide.md#3-ingestion-run-ingestion). Also takes the 
 
 GraphRAG Chain - Retrieval-augmented generation using knowledge graphs
 
-Guide: [User Guide](../user-guide.md#4-querying-run-rag). Also takes the [provider flags](#provider-flags).
+Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|

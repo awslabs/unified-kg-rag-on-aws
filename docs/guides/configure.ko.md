@@ -51,12 +51,12 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델([참고 사항](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | `ThrottlingException` 재시도가 보이면 낮추고, 할당량이 허용하면 높임 |
 | `processing.graph_extraction.entity_types` | 일반 유형 7개 | [도메인 적응](../user-guide.ko.md#9-도메인-적응) |
-| `processing.translation.target_language` | `"en"` | 코퍼스나 답변 언어가 다를 때([다국어 수집](../user-guide.ko.md#다국어-수집)) |
+| `processing.translation.target_language` | `"en"` | 코퍼스나 답변 언어가 다를 때([다국어 코퍼스](./multilingual.ko.md)) |
 | `processing.claim_extraction.enabled` | `false` | `local` 검색에 주장을 넣을 때(텍스트 단위마다 LLM 호출 1회 추가) |
-| `processing.document_parsing.index_value` | `null`(`default`) | 코퍼스나 테넌트 분리([인덱스 접미사](../user-guide.ko.md#인덱스-접미사)) |
+| `processing.document_parsing.index_value` | `null`(`default`) | 코퍼스나 테넌트 분리([인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)) |
 | `graph.community_detection.enabled` | `true` | LightRAG만 쓰고 수집을 가볍게 할 때(`global`, `drift`에는 필요) |
 | `search.reranking.enabled` | `true` | 리전에 재순위화 모델이 없거나 재순위화를 쓰지 않을 때 |
-| `search.token_manager.max_context_tokens` | `30000` | 컨텍스트를 늘리거나 비용을 줄이려고 줄일 때([컨텍스트 예산](../user-guide.ko.md#컨텍스트-예산)) |
+| `search.token_manager.max_context_tokens` | `30000` | 컨텍스트를 늘리거나 비용을 줄이려고 줄일 때([컨텍스트 예산](../concepts/retrieval.ko.md#컨텍스트-예산)) |
 | `indexing.reset` | `false` | 코퍼스 전체로 저장소를 다시 만드는 한 번의 실행(격리된 문서는 건너뜀) |
 | `aws.bedrock.guardrail.identifier` | `null` | 질의와 답변 검사([가드레일](./guardrail.md), 영문) |
 | `observability.enabled` | `false` | OpenTelemetry 트레이스([관측성](./observability.md), 영문) |

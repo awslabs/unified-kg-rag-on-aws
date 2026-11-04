@@ -73,7 +73,7 @@ uv run run-rag --backend local --search-strategy mix --query "How are Acme Robot
 ```
 
 `--search-strategy`를 생략하면 LLM 라우터가 질의마다 전략을 고릅니다(`auto`). 어떤
-전략을 언제 쓰는지는 [검색 전략 선택](../user-guide.ko.md#검색-전략-선택)에 있습니다.
+전략을 언제 쓰는지는 [검색 전략 선택](../concepts/retrieval.ko.md#검색-전략-선택)에 있습니다.
 
 ## LLM 판정 모델 없이 평가
 

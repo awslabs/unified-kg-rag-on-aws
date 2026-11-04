@@ -4,14 +4,14 @@
 
 from __future__ import annotations
 
-USER_GUIDE_URL = (
-    "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/docs/user-guide.md"
-)
+DOCS_URL = "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/docs/"
 
 
-def doc_epilog(section: str, example: str) -> str:
-    """Epilog naming the user-guide section and one example invocation.
+def doc_epilog(page: str, example: str) -> str:
+    """Epilog naming the documentation page and one example invocation.
 
-    Use with an ``argparse`` raw formatter so the line breaks are kept.
+    ``page`` is a path under ``docs/``, optionally with a ``#`` heading id
+    (``guides/ingest.md``, ``user-guide.md#6-evaluation-run-eval``). Use with
+    an ``argparse`` raw formatter so the line breaks are kept.
     """
-    return f"example:\n  {example}\n\ndocumentation:\n  {USER_GUIDE_URL}#{section}\n"
+    return f"example:\n  {example}\n\ndocumentation:\n  {DOCS_URL}{page}\n"

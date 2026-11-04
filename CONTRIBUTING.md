@@ -144,7 +144,9 @@ than an edit to dispatch code.
 - [docs/index.md](./docs/index.md) maps every documentation page; add a new page to it.
 - User-facing documentation is in English. The pages listed in `TRANSLATED_PAGES` (`scripts/check_docs.py`) have a
   Korean twin `<page>.ko.md`: `README.md`, `docs/index.md`, `docs/concepts/overview.md`,
-  `docs/getting-started/local.md`, `docs/getting-started/aws.md`, `docs/guides/configure.md` and `docs/user-guide.md`.
+  `docs/concepts/retrieval.md`, `docs/concepts/scopes-and-namespaces.md`, `docs/getting-started/local.md`,
+  `docs/getting-started/aws.md`, `docs/guides/configure.md`, `docs/guides/ingest.md`, `docs/guides/multilingual.md`,
+  `docs/guides/query.md` and `docs/user-guide.md`.
   The other documents are English-only. A new `.ko.md` file must be added to that list, with the same structure as
   its English page.
 - **EN/KO sync rule:** a change to a page in `TRANSLATED_PAGES` updates its `.ko.md` twin in the same pull

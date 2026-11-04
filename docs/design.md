@@ -1,7 +1,7 @@
 # Unified Knowledge Graph RAG on AWS — Technical Documentation
 
 This is the **design reference for contributors and advanced users**: how the
-library is built and why. Usage is in the [User Guide](user-guide.md), every
+library is built and why. Usage is in the guides of the [documentation hub](./index.md), every
 configuration key in the [Configuration Reference](./reference/configuration.md), the
 contribution workflow in [CONTRIBUTING.md](../CONTRIBUTING.md), and extension
 recipes in [§15](#15-extension-guide).
@@ -606,6 +606,28 @@ gets its models and stores from the run's `Providers` bundle.
   every stage, data before the metadata that refers to it. On SIGTERM,
   `run-ingestion` stops the running stage (`request_stop`: deferred while a
   checkpoint is written, no I/O in the handler) and uploads its checkpoint.
+- **Reuse across runs.** Within what a run writes, a text embedded before
+  with the same embedding provider, model and dimension keeps its stored
+  vector (each vector stores a digest of its text, §5.2), so a changed
+  document re-embeds only the chunks, descriptions and reports whose text
+  changed, and a reset of an unchanged corpus embeds again only what it
+  regenerates. The intelligent chunker's boundary answers are kept per
+  pre-chunk in the extraction store (§4.1), so a reset or an edit asks the
+  model only for pre-chunks whose text or chunking settings changed, and an
+  unchanged pre-chunk keeps its boundaries even with a model that answers
+  otherwise each time. Only an answer the chunker used is kept: a pre-chunk
+  split by size instead (the answer named lines that do not exist) asks the
+  model again on the next run. A full build (a reset, a first run, or a run
+  without the registry) does the same for the corpus-wide answers: a
+  description over the summarization threshold whose stored copy was
+  summarized from the same text with the same summarization settings keeps
+  that summary, and a community whose report input (its members,
+  descriptions, edges and claims as packed, its roll-up text and name) and
+  report settings are unchanged takes the stored answer (the extraction
+  store keeps it, and the report names it in `attributes.report_record`). A
+  community's name (`Level 0 Community 1a2b3c4d`) derives from its members,
+  so a document that adds a community leaves the others' names, and their
+  stored answers, as they were.
 - **LLM response cache** (`adapters/llm/response_cache.py`): a LangChain
   `BaseCache` on every ingestion model, keyed by the rendered messages and the
   model and generation settings, stored with the stage cache. An earlier

@@ -76,7 +76,7 @@ uv run run-rag --backend local --search-strategy mix --query "How are Acme Robot
 ```
 
 Without `--search-strategy`, an LLM router picks a strategy per query
-(`auto`). [Search strategies](../user-guide.md#search-strategies--when-to-use-which)
+(`auto`). [Search strategies](../concepts/retrieval.md#search-strategies--when-to-use-which)
 explains when to use which.
 
 ## Evaluate without an LLM judge

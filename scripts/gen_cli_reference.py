@@ -31,15 +31,27 @@ PROVIDER_GROUP = "providers"
 # the parsers are built so the reference does not depend on the shell.
 ENV_DEFAULTS = ("UKR_SOURCE_DIRECTORY", "UKR_PIPELINE_ID")
 
-# (command, user-guide section, factory). The factories are imported lazily so
-# importing this module stays cheap.
-COMMANDS: list[tuple[str, str, str]] = [
-    ("run-ingestion", "3-ingestion-run-ingestion", "ingestion"),
-    ("run-rag", "4-querying-run-rag", "rag"),
-    ("run-eval", "6-evaluation-run-eval", "eval"),
-    ("run-visualization", "7-visualization-run-visualization", "visualization"),
-    ("run-prompt-tuning", "8-prompt-tuning-run-prompt-tuning", "prompt_tuning"),
-    ("prepare-benchmark", "benchmarks-musique", "benchmark"),
+# (command, (guide title, guide path under docs/), factory). The factories are
+# imported lazily so importing this module stays cheap.
+COMMANDS: list[tuple[str, tuple[str, str], str]] = [
+    ("run-ingestion", ("Ingestion", "guides/ingest.md"), "ingestion"),
+    ("run-rag", ("Querying", "guides/query.md"), "rag"),
+    ("run-eval", ("User Guide", "user-guide.md#6-evaluation-run-eval"), "eval"),
+    (
+        "run-visualization",
+        ("User Guide", "user-guide.md#7-visualization-run-visualization"),
+        "visualization",
+    ),
+    (
+        "run-prompt-tuning",
+        ("User Guide", "user-guide.md#8-prompt-tuning-run-prompt-tuning"),
+        "prompt_tuning",
+    ),
+    (
+        "prepare-benchmark",
+        ("User Guide", "user-guide.md#benchmarks-musique"),
+        "benchmark",
+    ),
 ]
 
 HEADER = """\
@@ -53,7 +65,7 @@ edit by hand. Run the script after changing a flag or its help text. -->
 
 Every flag of every command line tool, its default and what it does, taken
 from the same parsers `--help` prints. What each tool is for and worked
-examples are in the [User Guide](../user-guide.md); configuration keys are in
+examples are in the guide each command links; configuration keys are in
 the [Configuration Reference](./configuration.md).
 
 - **Defaults** are what a run gets when the flag is omitted: `off` for a
@@ -187,11 +199,14 @@ def provider_group(parser: argparse.ArgumentParser) -> argparse._ArgumentGroup |
     return None
 
 
-def _section(command: str, guide: str, parser: argparse.ArgumentParser) -> str:
+def _section(
+    command: str, guide: tuple[str, str], parser: argparse.ArgumentParser
+) -> str:
     lines = [f"## `{command}`", ""]
     if parser.description:
         lines += [_cell(parser.description), ""]
-    guide_link = f"[User Guide](../user-guide.md#{guide})"
+    title, path = guide
+    guide_link = f"[{title}](../{path})"
     if provider_group(parser) is not None:
         lines += [
             f"Guide: {guide_link}. Also takes the "
