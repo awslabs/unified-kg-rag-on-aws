@@ -945,7 +945,13 @@ class IntelligentTextChunker(BaseChunker):
             for n, i in requests:
                 if (suffix := suffixes[n]) is not None:
                     keys[(n, i)] = (suffix, self.boundary_key(pre_chunk_lists[n][i]))
-        stored = self._stored_answers(keys)
+        # A stored answer the pre-chunk falls back from (an earlier release
+        # kept those) is asked again, and the new answer replaces it.
+        stored = {
+            (n, i): response
+            for (n, i), response in self._stored_answers(keys).items()
+            if self._accepted(pre_chunk_lists[n][i], response)
+        }
         for (n, i), response in stored.items():
             answers[n][i] = response
             record_keys[n][i] = keys[(n, i)][1]
@@ -976,13 +982,21 @@ class IntelligentTextChunker(BaseChunker):
         new_records: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         for (n, i), result in zip(requests, results, strict=True):
             answers[n][i] = None if result is BATCH_ITEM_FAILED else result
-            if (n, i) in keys and isinstance(answers[n][i], dict):
+            # Only an answer that cuts the pre-chunk is kept: one it falls
+            # back from would split it by size on every later run too.
+            if (n, i) in keys and self._accepted(pre_chunk_lists[n][i], answers[n][i]):
                 suffix, key = keys[(n, i)]
                 record_keys[n][i] = key
                 new_records[suffix][key] = {"response": answers[n][i]}
         if new_records and self.boundary_records is not None:
             self.boundary_records.write_records(new_records)
         return answers, record_keys
+
+    def _accepted(self, pre_chunk: str, response: Any) -> bool:
+        """Whether ``response`` cuts ``pre_chunk`` (no size-split fallback)."""
+        return isinstance(response, dict) and bool(
+            self._get_chunks_from_response(pre_chunk, response)
+        )
 
     def _process_pre_chunks(
         self,

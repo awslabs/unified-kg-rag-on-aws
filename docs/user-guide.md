@@ -751,7 +751,9 @@ unchanged corpus embeds again only what it regenerates. The intelligent
 chunker's boundary answers are kept per pre-chunk in the extraction store,
 so a reset or an edit asks the model only for pre-chunks whose text or
 chunking settings changed, and an unchanged pre-chunk keeps its boundaries
-even with a model that answers otherwise each time.
+even with a model that answers otherwise each time. Only an answer the
+chunker used is kept: a pre-chunk split by size instead (the answer named
+lines that do not exist) asks the model again on the next run.
 
 **LLM response cache** (`cache.llm_responses`, on by default). Every
 ingestion model response is kept under `llm-cache/` in the run's cache
@@ -1295,9 +1297,11 @@ documents ...; continue?`): a partial sync or a missing volume looks like
 files removed on purpose. `run-ingestion` asks on a terminal;
 `--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`) answers yes to this
 question only, `--yes` to every question, and a no, or no terminal, stops
-the run (exit 1). Scopes of fewer than 10 documents, a retired scope's
-records, a reset and a run with the registry off are not checked; `1.0` or
-`null` turns the check off. From Python, pass
+the run (exit 1). The share counts documents only: seed graph shards
+follow `processing.seed_graphs`, so removing or resharding a seed graph
+never asks, and its shards do not dilute the share. Scopes of fewer than 10
+documents, a retired scope's records, a reset and a run with the registry
+off are not checked; `1.0` or `null` turns the check off. From Python, pass
 `DataIngestionPipeline(..., confirm_deletions=callable)`; without it, or on
 a no, `run` raises `ConfirmationDeclinedError`.
 

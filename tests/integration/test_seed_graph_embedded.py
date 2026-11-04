@@ -15,6 +15,7 @@ no seed statement ever reaches it.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -352,6 +353,28 @@ def test_a_seed_only_run_makes_no_model_call(tmp_path: Path) -> None:
     assert context.incremental_delta is not None
     assert context.incremental_delta.is_empty
     assert harness.server.chat_models == []
+
+
+def test_a_seed_only_scope_warns_of_a_settings_change_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The settings do not apply to the shards (kept unchanged), so no
+    # document is recorded; the new settings still are.
+    harness = _Harness(tmp_path, corpus={})
+    harness.ok()
+    harness.config.processing.graph_extraction.max_entities_per_chunk = 7
+    warned = []
+    for _ in range(2):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            context = harness.ok()
+        warned.append(
+            any("extraction settings changed" in r.getMessage() for r in caplog.records)
+        )
+    assert warned == [True, False]
+    assert context.incremental_delta is not None
+    # The shards keep their earlier fingerprint and are exempted again.
+    assert len(context.incremental_delta.seed_settings_exempt) == SHARDS
 
 
 class _Died(BaseException):

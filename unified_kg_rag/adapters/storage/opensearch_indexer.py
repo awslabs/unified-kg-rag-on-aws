@@ -1,10 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
+import threading
 import time
 import uuid
 from array import array
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Collection, Hashable, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
@@ -79,10 +80,18 @@ _EMBED_WORKERS = 16
 _READ_BATCH_SIZE = 1000
 # Items embedded and bulk-written at a time. Holding a whole item type's
 # vectors as float lists before one bulk call took gigabytes on a large
-# corpus. One read-back search per slice fetches the stored vectors it may
-# reuse (_reusable_vectors); its texts to embed take about one round of the
-# concurrent embedding requests (_EMBED_BATCH_SIZE * _EMBED_WORKERS = 800).
-_WRITE_SLICE_SIZE = _READ_BATCH_SIZE
+# corpus. Its texts to embed take about one round of the concurrent
+# embedding requests (_EMBED_BATCH_SIZE * _EMBED_WORKERS = 800), and one
+# search reads the stored digests of a slice (_reusable_vectors).
+_WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
+# Ids per read of the stored vectors a write takes (_reusable_vectors): at
+# 1,024 dimensions three vectors are about 64 KB of JSON per document, and
+# reading a whole slice's at once held over 60 MB of response and its
+# parsed floats.
+_VECTOR_READ_BATCH_SIZE = 100
+# Reads of stored vectors in flight at once: the store serves one while the
+# client parses another.
+_VECTOR_READ_WORKERS = 4
 # Values per terms search of find_documents at most.
 _FIND_BATCH_SIZE = 100
 # The settings _get_base_mapping adds for the vector indices (the config
@@ -146,7 +155,7 @@ _SEED_PROPERTIES_MAPPING: dict[str, Any] = {"type": "object", "enabled": False}
 # same type).
 _DIGESTS_FIELD = "embedding_digests"
 _DIGEST_LENGTH = 16
-# The stored vectors writes replaced, kept (by digest, as float64 arrays) for
+# The stored vectors upserts replaced, kept (by digest, as float64 arrays) for
 # a later write of their text: a removal rewrites an item the commit after it
 # rewrites again. At 1,024 dimensions, 16 MB at most.
 _REPLACED_VECTORS = 2048
@@ -310,6 +319,8 @@ class OpenSearchIndexer(VectorIndexer):
     _doc_status_tracked: bool | None = None
     # Whether writes reuse stored vectors (set_embedding_reuse).
     _reuse_embeddings: bool = True
+    # Guards _replaced: a build writes its item types concurrently.
+    _replaced_lock = threading.Lock()
 
     def __init__(
         self,
@@ -479,14 +490,27 @@ class OpenSearchIndexer(VectorIndexer):
         return compute_hash(f"{self._digest_seed}\x1e{text}", length=_DIGEST_LENGTH)
 
     def _reusable_vectors(
-        self, alias_prefix: str, suffix: str, items: list[Any], spec: _ItemSpec
+        self,
+        alias_prefix: str,
+        suffix: str,
+        items: list[Any],
+        spec: _ItemSpec,
+        keep_replaced: bool = False,
     ) -> dict[str, dict[str, Any]]:
-        """The stored vectors and digests of ``items`` in ``suffix``'s live
-        index of ``alias_prefix``, by id: one read of at most
-        ``_READ_BATCH_SIZE`` ids. None to read when reuse is off, or the live
-        index holds no digests (an earlier release built it) or another
-        model's vectors. Best-effort: a failed read reads none (every text
-        is embedded)."""
+        """The stored vectors (and digests) a write of ``items`` takes from
+        ``suffix``'s live index of ``alias_prefix``, by id: those whose
+        digest is the digest of one of the items' texts now.
+
+        Two steps, so a write never holds a vector it does not take: one read
+        of the items' stored digests (at most ``_READ_BATCH_SIZE`` ids), then
+        reads of only the matching fields' vectors,
+        ``_VECTOR_READ_BATCH_SIZE`` ids at a time. With ``keep_replaced`` (an
+        upsert) the vectors the write replaces are read as well, up to
+        ``_REPLACED_VECTORS``, into ``_replaced``, for a later write of their
+        text (a removal rewrites an item the commit after it writes again).
+        None to read when reuse is off, or the live index holds no digests
+        (an earlier release built it) or another model's vectors.
+        Best-effort: a failed read reads none (every text is embedded)."""
         if not self._reuse_embeddings or not items:
             return {}
         try:
@@ -501,15 +525,59 @@ class OpenSearchIndexer(VectorIndexer):
                 or not dimensions <= {self._embedding_dimension}
             ):
                 return {}
-            return {
-                source["id"]: source
-                for source in self._read_sources(
-                    alias_prefix,
-                    sorted({item.id for item in items}),
-                    suffix,
-                    fields=[*spec.vector_fields, _DIGESTS_FIELD],
-                )
+            current = {
+                self._embedding_digest(text)
+                for item in items
+                for extractor in spec.extractors
+                if (text := extractor(item)) and text.strip()
             }
+            # Ids by the fields whose vectors to read.
+            wanted: dict[tuple[str, ...], list[str]] = defaultdict(list)
+            replaced = 0
+            for source in self._read_sources(
+                alias_prefix,
+                sorted({item.id for item in items}),
+                suffix,
+                fields=[_DIGESTS_FIELD],
+            ):
+                kept = source.get(_DIGESTS_FIELD)
+                if not isinstance(kept, dict):
+                    continue
+                fields = []
+                for field in spec.vector_fields:
+                    digest = kept.get(field)
+                    if not isinstance(digest, str):
+                        continue
+                    if digest in current:
+                        fields.append(field)
+                    elif keep_replaced and replaced < _REPLACED_VECTORS:
+                        replaced += 1
+                        fields.append(field)
+                if fields:
+                    wanted[tuple(fields)].append(source["id"])
+            reads = [
+                (
+                    ids[start : start + _VECTOR_READ_BATCH_SIZE],
+                    [*fields, _DIGESTS_FIELD],
+                )
+                for fields, ids in wanted.items()
+                for start in range(0, len(ids), _VECTOR_READ_BATCH_SIZE)
+            ]
+            reusable: dict[str, dict[str, Any]] = {}
+            if not reads:
+                return reusable
+            with ContextThreadPoolExecutor(
+                max_workers=min(_VECTOR_READ_WORKERS, len(reads))
+            ) as executor:
+                for sources in executor.map(
+                    lambda read: self._read_sources(
+                        alias_prefix, read[0], suffix, fields=read[1]
+                    ),
+                    reads,
+                ):
+                    for source in sources:
+                        reusable[source["id"]] = self._keep_replaced(source, current)
+            return reusable
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - every text is embedded instead
@@ -519,6 +587,26 @@ class OpenSearchIndexer(VectorIndexer):
                 e,
             )
             return {}
+
+    def _keep_replaced(
+        self, source: dict[str, Any], current: Collection[str]
+    ) -> dict[str, Any]:
+        """``source`` without the vectors whose digest is none of ``current``
+        (the texts written now): those are kept in ``_replaced`` instead, as
+        float64 arrays."""
+        kept = source.get(_DIGESTS_FIELD)
+        for field, digest in (kept if isinstance(kept, dict) else {}).items():
+            vector = source.get(field)
+            if digest in current or not isinstance(vector, list):
+                continue
+            del source[field]
+            if isinstance(digest, str) and len(vector) == self._embedding_dimension:
+                with self._replaced_lock:
+                    self._replaced[digest] = array("d", vector)
+                    self._replaced.move_to_end(digest)
+                    while len(self._replaced) > _REPLACED_VECTORS:
+                        self._replaced.popitem(last=False)
+        return source
 
     def _index_prefixes(self) -> list[str]:
         return [spec.alias_prefix for spec in self._specs()]
@@ -1931,7 +2019,9 @@ class OpenSearchIndexer(VectorIndexer):
                     self._update_alias(alias_name, index_name)
 
                 total_stats.merge(
-                    self._embed_and_write(index_name, chunk_items, spec, suffix)
+                    self._embed_and_write(
+                        index_name, chunk_items, spec, suffix, keep_replaced=True
+                    )
                 )
             except NamespaceLeaseError:
                 raise
@@ -2076,7 +2166,12 @@ class OpenSearchIndexer(VectorIndexer):
         return total_stats
 
     def _embed_and_write(
-        self, index_name: str, items: list[Any], spec: _ItemSpec, suffix: str
+        self,
+        index_name: str,
+        items: list[Any],
+        spec: _ItemSpec,
+        suffix: str,
+        keep_replaced: bool = False,
     ) -> IndexingStats:
         """Embed ``items`` and bulk-write them into ``index_name``, a slice at a
         time, so only one slice's vectors are held at once. The index is
@@ -2085,11 +2180,14 @@ class OpenSearchIndexer(VectorIndexer):
         A text whose digest (``_embedding_digest``) is the one stored with
         the vector of its field in ``suffix``'s live index (the index an
         upsert writes, or the one a rebuild replaces) takes that vector
-        instead of being embedded again: one read per slice."""
+        instead of being embedded again (``_reusable_vectors``; an upsert
+        ``keep_replaced``)."""
         stats = IndexingStats()
         for start in range(0, len(items), _WRITE_SLICE_SIZE):
             chunk = items[start : start + _WRITE_SLICE_SIZE]
-            stored = self._reusable_vectors(spec.alias_prefix, suffix, chunk, spec)
+            stored = self._reusable_vectors(
+                spec.alias_prefix, suffix, chunk, spec, keep_replaced
+            )
             embeddings, digests = self._generate_embeddings(chunk, spec, stored)
             docs, failed_ids = self._prepare_documents(
                 chunk,
@@ -2216,7 +2314,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         A text whose digest is that of a ``stored`` vector of this run's
         dimension (``_reusable_vectors``, read for these items) or of one an
-        earlier write of this indexer replaced (``_replaced``: a run that
+        earlier upsert of this indexer replaced (``_replaced``: a run that
         rewrites an item twice, as a removal and the commit after it do)
         takes that vector; the other texts are embedded, all in one
         ``_batch_embed`` call."""
@@ -2239,27 +2337,19 @@ class OpenSearchIndexer(VectorIndexer):
                     available[digest] = vector
         vectors: list[list[list[float] | None]] = []
         pending: list[tuple[int, int]] = []
-        for i, row in enumerate(digests):
-            found: list[list[float] | None] = []
-            for j, digest in enumerate(row):
-                vector = None
-                if digest is not None:
-                    vector = available.get(digest)
-                    if vector is None and (memo := self._replaced.get(digest)):
-                        vector = memo.tolist()
-                if vector is None:
-                    pending.append((i, j))
-                found.append(vector)
-            vectors.append(found)
-        # The stored vectors this write replaces, for a later write of the
-        # text they embed.
-        written = {digest for row in digests for digest in row if digest}
-        for digest, vector in available.items():
-            if digest not in written:
-                self._replaced[digest] = array("d", vector)
-                self._replaced.move_to_end(digest)
-        while len(self._replaced) > _REPLACED_VECTORS:
-            self._replaced.popitem(last=False)
+        with self._replaced_lock:
+            for i, row in enumerate(digests):
+                found: list[list[float] | None] = []
+                for j, digest in enumerate(row):
+                    vector = None
+                    if digest is not None:
+                        vector = available.get(digest)
+                        if vector is None and (memo := self._replaced.get(digest)):
+                            vector = memo.tolist()
+                    if vector is None:
+                        pending.append((i, j))
+                    found.append(vector)
+                vectors.append(found)
         embedded = self._batch_embed([texts[i][j] for i, j in pending])
         for (i, j), vector in zip(pending, embedded, strict=True):
             vectors[i][j] = vector

@@ -312,10 +312,26 @@ class DocumentDelta(BaseModel):
     scope_documents: int = Field(
         default=0,
         ge=0,
-        description="The records of the run's scope the diff read: its stored "
-        "documents still in the corpus plus those gone from it, before any "
-        "is kept as failed. What ``indexing.max_deletion_share`` takes a "
-        "share of. Set by ``detect_delta``; 0 from a bare ``diff``",
+        description="The records of the run's scope the diff read, seed graph "
+        "shards aside: its stored documents still in the corpus plus those "
+        "gone from it, before any is kept as failed. What "
+        "``indexing.max_deletion_share`` takes a share of. Set by "
+        "``detect_delta``; 0 from a bare ``diff``",
+    )
+    seed_deleted: list[str] = Field(
+        default_factory=list,
+        description="The ``deleted`` doc ids of the run's scope that are seed "
+        "graph shards (a seed graph taken out of ``processing.seed_graphs``, "
+        "or resharded). ``indexing.max_deletion_share`` does not count them: "
+        "the configuration, not the corpus, removed them. Set by "
+        "``detect_delta``",
+    )
+    seed_settings_exempt: list[str] = Field(
+        default_factory=list,
+        description="The seed graph shards whose stored extraction fingerprint "
+        "differs from the run's, classified ``unchanged``: the settings do not "
+        "apply to them (``keep_seed_settings_unchanged``). Set by "
+        "``detect_delta``",
     )
     settings_changed: list[str] = Field(
         default_factory=list,

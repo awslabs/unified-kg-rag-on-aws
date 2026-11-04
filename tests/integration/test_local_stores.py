@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     Relationship,
+    TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
 
@@ -639,6 +641,80 @@ def test_unchanged_text_keeps_its_stored_vector_on_opensearch(
         embeddings.texts.clear()
         indexer.index_entities(changed)
         assert embeddings.texts == []
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()
+
+
+def test_a_concurrent_rebuild_reads_back_only_the_vectors_it_takes(
+    local_config: Config,
+) -> None:
+    # A full build writes its item types at once: each reads the digests of
+    # a slice, then the vectors of matching fields only, several searches
+    # in flight. Every vector written is the one of its own text.
+    embeddings = _CountingEmbeddings(8)
+    factory = HashingEmbeddingFactory(dimensions=8)
+    factory.get_model = lambda model_id, **_: embeddings  # type: ignore[method-assign]
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"reuse{uuid.uuid4().hex[:8]}"
+    indexer = OpenSearchIndexer(config, embedding_factory=factory)
+    count = 250  # over one read of stored vectors (100 ids)
+
+    def build(tag: str) -> None:
+        units = [
+            TextUnit(id=f"t{i:03d}", text=f"unit {i} {tag if i % 3 == 0 else ''}")
+            for i in range(count)
+        ]
+        entities = [
+            Entity(
+                id=f"e{i:03d}",
+                name=f"Part {i}",
+                description=f"part {i} {tag if i % 2 == 0 else ''}",
+            )
+            for i in range(count)
+        ]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for stats in pool.map(
+                lambda write: write(),
+                [
+                    lambda: indexer.index_text_units(units),
+                    lambda: indexer.index_entities(entities),
+                ],
+            ):
+                assert stats.successful_items == count
+
+    hashing = HashingEmbeddings(8)
+    try:
+        build("v1")
+        embeddings.texts.clear()
+        build("v2")
+
+        changed = sorted(
+            [f"unit {i} v2" for i in range(0, count, 3)]
+            + [f"part {i} v2" for i in range(0, count, 2)]
+        )
+        assert sorted(embeddings.texts) == changed
+        opensearch = config.indexing.opensearch
+        for prefix, key, fields in (
+            (opensearch.text_units_index_prefix, "t", {"text_embedding": "text"}),
+            (
+                opensearch.entities_index_prefix,
+                "e",
+                {"name_embedding": "name", "description_embedding": "description"},
+            ),
+        ):
+            stored = indexer._read_sources(
+                prefix,
+                [f"{key}{i:03d}" for i in range(count)],
+                None,
+                fields=[*fields, *fields.values()],
+            )
+            assert len(stored) == count
+            for source in stored:
+                for field, text_field in fields.items():
+                    assert source[field] == pytest.approx(
+                        hashing.embed_query(source[text_field])
+                    ), (source["id"], field)
     finally:
         indexer.clear([_SUFFIX])
         indexer.close()

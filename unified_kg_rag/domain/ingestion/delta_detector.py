@@ -62,7 +62,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     registry_namespace,
     relative_source_path,
 )
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_document
+from unified_kg_rag.domain.ingestion.seed_graph import is_seed_document, is_seed_path
 from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
@@ -297,13 +297,27 @@ def detect_delta(
     delta = doc_status.diff(
         fingerprints, scope=scope, extraction_fingerprint=extraction_fingerprint
     )
+    seeds = {document_doc_id(d) for d in documents if is_seed_document(d)}
+    # The records of seed graph shards the corpus no longer has: a seed graph
+    # taken out of processing.seed_graphs, or resharded.
+    if delta.deleted:
+        delta.seed_deleted = sorted(
+            doc_id
+            for doc_id, record in doc_status.get_many(delta.deleted).items()
+            if is_seed_path(record.file_path)
+        )
     # Before anything moves between the lists: a new document has no record,
     # every other one of the corpus has one of the scope (its id holds it).
-    delta.scope_documents = len(fingerprints) - len(delta.new) + len(delta.deleted)
-    exempt = keep_seed_settings_unchanged(
-        delta,
-        {document_doc_id(d) for d in documents if is_seed_document(d)},
+    # Seed shards do not count: they follow the configuration, and a large
+    # seed graph's many shards would dilute a mass deletion's share.
+    delta.scope_documents = (
+        len(fingerprints.keys() - seeds)
+        - len(set(delta.new) - seeds)
+        + len(delta.deleted)
+        - len(delta.seed_deleted)
     )
+    exempt = keep_seed_settings_unchanged(delta, seeds)
+    delta.seed_settings_exempt = exempt
     if exempt:
         delta.quarantined_unchanged.extend(
             doc_id

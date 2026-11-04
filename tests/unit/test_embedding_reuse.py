@@ -235,7 +235,22 @@ def test_a_rewrite_reuses_the_vector_an_earlier_write_replaced(
     assert model.texts == []
 
 
-def test_one_read_of_stored_vectors_per_write_slice(
+def _counting_reads(
+    indexer: OpenSearchIndexer, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[int, tuple[str, ...]]]:
+    """The (ids, fields) of each ``_read_sources`` call from now on."""
+    reads: list[tuple[int, tuple[str, ...]]] = []
+    read = indexer._read_sources
+
+    def counting(prefix: str, ids: list[str], suffix: Any, fields: Any = None):
+        reads.append((len(ids), tuple(fields or ())))
+        return read(prefix, ids, suffix, fields=fields)
+
+    monkeypatch.setattr(indexer, "_read_sources", counting)
+    return reads
+
+
+def test_one_read_of_stored_digests_per_write_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     indexer, model = _indexer(tmp_path / "v.sqlite3")
@@ -243,17 +258,40 @@ def test_one_read_of_stored_vectors_per_write_slice(
     units = [TextUnit(id=f"t{i:05d}", text=f"unit {i}") for i in range(count)]
     indexer.index_text_units(units)
     model.texts.clear()
-    reads: list[int] = []
-    read = indexer._read_sources
-
-    def counting(prefix: str, ids: list[str], suffix: Any, fields: Any = None):
-        reads.append(len(ids))
-        return read(prefix, ids, suffix, fields=fields)
-
-    monkeypatch.setattr(indexer, "_read_sources", counting)
+    reads = _counting_reads(indexer, monkeypatch)
 
     indexer.upsert_text_units(units)
 
     assert model.texts == []
-    assert module._WRITE_SLICE_SIZE == module._READ_BATCH_SIZE == 1000
-    assert reads == [module._WRITE_SLICE_SIZE, 5]
+    assert module._WRITE_SLICE_SIZE <= module._READ_BATCH_SIZE
+    digests = (module._DIGESTS_FIELD,)
+    assert [n for n, fields in reads if fields == digests] == [
+        module._WRITE_SLICE_SIZE,
+        5,
+    ]
+    vectors = [n for n, fields in reads if fields != digests]
+    assert sum(vectors) == count
+    assert max(vectors) == module._VECTOR_READ_BATCH_SIZE
+
+
+def test_a_rebuild_reads_only_the_vectors_it_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Read whole, the stored vectors of a slice whose texts changed took
+    # gigabytes of responses and floats for vectors no write took.
+    indexer, model = _indexer(tmp_path / "v.sqlite3")
+    indexer.index_entities(_entities(Vendor="sells", Buyer="buys", Depot="stores"))
+    model.texts.clear()
+    reads = _counting_reads(indexer, monkeypatch)
+
+    indexer.index_entities(_entities(Vendor="sells", Buyer="buys gadgets", Depot="x"))
+
+    assert sorted(model.texts) == ["buys gadgets", "x"]
+    digests = (module._DIGESTS_FIELD,)
+    assert sorted(fields for _, fields in reads if fields != digests) == sorted(
+        [
+            ("name_embedding", digests[0]),
+            ("name_embedding", "description_embedding", digests[0]),
+        ]
+    )
+    assert indexer._replaced == {}

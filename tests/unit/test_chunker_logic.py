@@ -947,6 +947,45 @@ class TestBoundaryRecords:
         assert records.stored == {}
         assert all(RECORD_KEYS_ATTRIBUTE not in u.attributes for u in units)
 
+    def test_an_answer_the_pre_chunk_falls_back_from_is_not_stored(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        # Lines that do not exist: rejected, the pre-chunk is split by size.
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [40, 41, 42]}
+        )
+        units = intelligent_chunker.chunk_documents([_doc(_LONG)])
+        assert intelligent_chunker.stats.fallback_chunks_used
+        assert records.stored == {}
+        assert all(RECORD_KEYS_ATTRIBUTE not in u.attributes for u in units)
+
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        assert intelligent_chunker.chunker.invoke.call_count == 1
+
+    def test_a_stored_answer_the_pre_chunk_falls_back_from_is_replaced(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        # An earlier release kept rejected answers.
+        key = intelligent_chunker.boundary_key(_LONG)
+        records.stored[("default", key)] = {"response": {"chunk_boundaries": [40]}}
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+
+        units = intelligent_chunker.chunk_documents([_doc(_LONG)])
+
+        assert intelligent_chunker.chunker.invoke.call_count == 1
+        assert records.stored == {
+            ("default", key): {"response": {"chunk_boundaries": [2]}}
+        }
+        assert all(
+            u.attributes[RECORD_KEYS_ATTRIBUTE] == {CHUNKS_RECORD_KIND: key}
+            for u in units
+        )
+
     def test_without_records_nothing_is_read(self, intelligent_chunker, mocker) -> None:
         intelligent_chunker.chunker.invoke = mocker.Mock(
             return_value={"chunk_boundaries": [2]}

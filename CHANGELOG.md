@@ -914,10 +914,12 @@ From 0.2.3 (or a `main` checkout since):
   carry `abstention_statistics` (#516).
 - `indexing.max_deletion_share` (default `0.5`): an incremental run that
   would delete more than this share of its source scope's documents (a
-  scope of 10 or more; retired scopes not counted) stops at
+  scope of 10 or more; retired scopes and seed graph shards not counted, so
+  removing a seed graph never asks and its shards do not dilute the share:
+  11 of 12 documents gone beside 16 shards asks) stops at
   `document_loading` before it writes unless confirmed:
   `--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1`, `--yes`, the terminal
-  prompt, or `DataIngestionPipeline(confirm_deletions=...)` (#518).
+  prompt, or `DataIngestionPipeline(confirm_deletions=...)` (#518, #531).
 - EMF metrics for corpus coverage: `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded`,
   `total_documents_deleted`, `total_documents_failed`,
@@ -1170,26 +1172,32 @@ From 0.2.3 (or a `main` checkout since):
   factory's `get_model` may receive `output_ceiling` (#525).
 - Indexing embeds only text it has not embedded: each vector stores a
   digest of its text with the embedding provider, model and dimension, and
-  an upsert or a rebuild reads the stored vectors of its items (one search
-  per 1,000 ids) and embeds only the texts whose digest differs. An index
+  an upsert or a rebuild reads the stored digests of its items (one search
+  per 800 ids), then only the vectors whose digest matches (100 ids per
+  search), and embeds only the texts whose digest differs: rebuilding 2,000
+  reports at 1,024 dimensions with a third of the texts changed peaks at
+  165 MiB instead of 388 MiB. An index
   built before gets the digest field on its next incremental run and its
   items are embedded once more. A one-chunk edit of the cost harness's
   corpus embeds 44 texts instead of 94, a reset of the unchanged corpus 15
   (its regenerated community reports) instead of 376; `--force-rebuild`
-  embeds everything (#527).
+  embeds everything (#527, #531).
 - The intelligent chunker keeps each pre-chunk's boundary answer in the
   extraction store (keyed by the pre-chunk's text, the chunking settings
   and model), named by the text units cut from it: a reset of an unchanged
   corpus asks the boundary model nothing (24 calls before), and a model
   that answers otherwise each time no longer moves the chunks, and with
-  them the extraction records, of unchanged text. A stored answer counts
-  as a cache hit in the stage's usage. `--force-rebuild` asks again (#527).
+  them the extraction records, of unchanged text. Only an answer the
+  chunker used is kept: one it fell back from (lines that do not exist) is
+  asked again next run. A stored answer counts as a cache hit in the
+  stage's usage. `--force-rebuild` asks again (#527, #531).
 - A run reads each alias and index mapping of the vector store once
   (they change only by its own writes while it holds the lease), and a run
-  that indexes nothing writes no build record and no extraction settings:
-  a no-op incremental run writes nothing but its lease, with 29 store
-  calls instead of 56, and a one-chunk edit looks up 6 aliases instead of
-  61 (#527).
+  that indexes nothing writes no build record and no extraction settings
+  (unless they changed: a scope of seed graphs alone warns of a settings
+  change once, not on every run): a no-op incremental run writes nothing
+  but its lease, with 29 store calls instead of 56, and a one-chunk edit
+  looks up 6 aliases instead of 61 (#527, #531).
 
 ### Fixed
 Bugs present in 0.2.3.
