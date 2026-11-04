@@ -968,7 +968,7 @@ From 0.2.3 (or a `main` checkout since):
   similar reports are used. `similarity`, the default, keeps the current
   reports: offline the membership reports cost 5% fewer tokens, a
   difference too small to change the default without a real-model run
-  (#PR).
+  (#535).
 - Always-on LLM usage accounting, tracing or not: model calls, input and
   output tokens and cache hits (the LLM response cache and the query
   extraction cache) per model role and model id, in
