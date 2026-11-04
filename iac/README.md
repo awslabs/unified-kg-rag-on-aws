@@ -77,7 +77,7 @@ several environments coexist in one account and region.
 
 | Stack | Resources |
 |---|---|
-| `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals |
+| `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS (plus X-Ray with tracing and Secrets Manager with `observability_secret_arn`), each with an endpoint policy that admits only this account's principals |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket; with `opensearch_nori_package`, the custom resource that associates the Nori package (Lambda handlers in `iac/custom_resources/`, roles scoped to the domain and the stack) |
 | `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
 | `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
@@ -119,7 +119,7 @@ did-you-mean hint.
 |---|---|---|
 | `env_name` | `dev` | Name prefix: `dev` keeps the bare names, any other value scopes them (`GraphRagProd*`, `prod-graphrag-*`) |
 | `network_mode` | `private` | `private`: isolated subnets and VPC endpoints, no NAT; `public`: subnets with NAT egress |
-| `vpc_id` | — | Reuse a VPC. The stack adds no endpoints or subnets to it (synth lists what it needs): `private` needs `PRIVATE_ISOLATED` subnets, the S3/DynamoDB gateway endpoints and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs`, `sts` (and `xray` with tracing); `public` needs `PRIVATE_WITH_EGRESS` subnets |
+| `vpc_id` | — | Reuse a VPC. The stack adds no endpoints or subnets to it (synth lists what it needs): `private` needs `PRIVATE_ISOLATED` subnets, the S3/DynamoDB gateway endpoints and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs`, `sts` (and `xray` with tracing, `secretsmanager` with `observability_secret_arn`); `public` needs `PRIVATE_WITH_EGRESS` subnets |
 | `max_azs` | `2` | AZs of a created VPC; at least 2 (Neptune needs two) |
 | `bedrock_region` | deploy region | Bedrock runtime region (`UKR__AWS__BEDROCK__REGION_NAME`) and the guardrail stack's region. In `private` mode it must equal the deploy region |
 | `vpc_flow_logs` | `false` (dev) / `true` | VPC flow logs (created VPC only), kept `flow_log_retention_days` (default `731`) |
@@ -178,7 +178,7 @@ did-you-mean hint.
 |---|---|---|
 | `alarm_email` | — | Subscribe an email to the alarm topic |
 | `query_latency_alarm_seconds` | `60` | `QueryLatencyHigh` fires when the p90 latency of `run-rag --metrics-sink cloudwatch` queries is above it in 2 of 3 5-minute periods |
-| `observability_secret_arn` | — | Complete ARN of a Secrets Manager secret (JSON) whose `observability_secret_keys` both task definitions read as environment variables of the same names (ECS task secrets; the execution role gets `GetSecretValue` on it). A secret encrypted with your own KMS key also needs `kms:Decrypt` for the execution role in the key policy |
+| `observability_secret_arn` | — | Complete ARN of a Secrets Manager secret (JSON) whose `observability_secret_keys` both task definitions read as environment variables of the same names (ECS task secrets; the execution role gets `GetSecretValue` on it). In `private` mode the stack adds a `secretsmanager` interface endpoint, which a reused VPC must provide, or the tasks fail to start with `ResourceInitializationError`. A secret encrypted with your own KMS key also needs `kms:Decrypt` for the execution role in the key policy |
 | `observability_secret_keys` | `LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY` | JSON keys of that secret (a list, or comma-separated), e.g. `OTEL_EXPORTER_OTLP_HEADERS` or `PHOENIX_API_KEY`; a missing key fails the task start, a key the stack sets itself fails synth |
 | `enable_cloudwatch_tracing` | `false` | Send traces to CloudWatch through an ADOT collector sidecar ([CloudWatch tracing](#cloudwatch-tracing-optional)); `env_name` may then be at most 10 characters |
 | `enable_cdk_nag` | `false` | Run the cdk-nag AwsSolutions checks at synth |
@@ -307,7 +307,7 @@ for your region and sizes. What scales each service's cost:
 | Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, I/O-Optimized storage when I/O is above about 25% of the Neptune bill ([Neptune I/O-Optimized storage](../docs/operations.md#neptune-io-optimized-storage)), `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
 | Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
-| Interface endpoints (`private`) | Seven endpoints (eight with tracing) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
+| Interface endpoints (`private`) | Seven endpoints (one more each with tracing and with `observability_secret_arn`) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
 | S3 | Checkpoints, corpus, access logs, noncurrent versions (the bucket is versioned) | 30-day expiry on `pipeline-runs/` (noncurrent versions there after 1 day, elsewhere after 30) |
 | DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |

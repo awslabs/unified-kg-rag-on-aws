@@ -145,8 +145,9 @@ jobs:
       - name: Check the extras are absent
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
-          present = [m for m in ('bokeh', 'datasets', 'langchain_community',
-          'langchain_openai', 'pandas', 'pyvis', 'ragas', 'rdflib')
+          present = [m for m in ('bokeh', 'datasets', 'langchain',
+          'langchain_community', 'langchain_openai', 'langgraph', 'pandas',
+          'pyvis', 'ragas', 'rdflib')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end

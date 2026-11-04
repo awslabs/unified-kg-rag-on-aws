@@ -8,10 +8,17 @@ import json
 from typing import Any
 
 import aws_cdk as cdk
+import pytest
 from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import INTERFACE_ENDPOINTS, NetworkingStack
+
+_SECRET = {
+    "observability_secret_arn": (
+        "arn:aws:secretsmanager:us-west-2:111111111111:secret:obs-AbCdEf"
+    )
+}
 
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 
@@ -39,6 +46,29 @@ def test_private_mode_creates_only_needed_interface_endpoints() -> None:
     assert {"bedrock-runtime", "bedrock-agent-runtime", "ecr.dkr", "logs"} <= (
         short_names
     )
+
+
+def _interface_services(stack: NetworkingStack) -> list[str]:
+    endpoints = Template.from_stack(stack).find_resources(
+        "AWS::EC2::VPCEndpoint", {"Properties": {"VpcEndpointType": "Interface"}}
+    )
+    return [json.dumps(r["Properties"]["ServiceName"]) for r in endpoints.values()]
+
+
+@pytest.mark.parametrize(("context", "expected"), [({}, 0), (_SECRET, 1)])
+def test_secrets_manager_endpoint_only_with_an_observability_secret(
+    context: dict[str, Any], expected: int
+) -> None:
+    # The Fargate agent fetches the task secrets before the containers start;
+    # without a route to Secrets Manager the private-mode tasks never start.
+    services = _interface_services(_network(context))
+    assert len(services) == len(INTERFACE_ENDPOINTS) + expected
+    assert sum(".secretsmanager" in s for s in services) == expected
+
+
+def test_public_mode_adds_no_secrets_manager_endpoint() -> None:
+    stack = _network({**_SECRET, "network_mode": "public"})
+    assert _endpoint_counts(stack) == {"Gateway": 2, "Interface": 0}
 
 
 def test_public_mode_creates_only_free_gateway_endpoints() -> None:
@@ -112,6 +142,14 @@ def test_reused_vpc_warns_with_required_endpoints() -> None:
     assert "PRIVATE_ISOLATED" in warning
     for service in INTERFACE_ENDPOINTS.values():
         assert service.short_name in warning
+
+
+@pytest.mark.parametrize(("context", "listed"), [({}, False), (_SECRET, True)])
+def test_reused_vpc_warning_lists_secretsmanager_only_with_a_secret(
+    context: dict[str, Any], listed: bool
+) -> None:
+    (warning,) = _reuse_warnings(_network({**context, "vpc_id": "vpc-0example"}))
+    assert ("secretsmanager" in warning.split(":")[-1]) is listed
 
 
 def test_reused_vpc_public_mode_warns_about_egress_subnets() -> None:

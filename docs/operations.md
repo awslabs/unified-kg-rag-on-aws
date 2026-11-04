@@ -228,7 +228,7 @@ the roles already read:
 | Location | Ingestion task role | Query task role (`run-rag`, `run-eval`) |
 |---|---|---|
 | The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`, whose files are ingested as documents) | Read | Read |
-| The cache bucket, outside `pipeline-runs/` (expired after 30 days) | Read | No |
+| The cache bucket, outside `pipeline-runs/` (which expires after 30 days) | Read | No |
 | The cache bucket under `eval/` | Read | Read |
 
 In private mode the S3 gateway endpoint also reaches only these two
@@ -630,7 +630,7 @@ files in one of two places.
 | Location | Ingestion task role |
 |---|---|
 | The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`: its files are ingested as documents, a `.csv` seed too) | Read |
-| The cache bucket, outside `pipeline-runs/` (expired after 30 days) | Read |
+| The cache bucket, outside `pipeline-runs/` (which expires after 30 days) | Read |
 | The cache bucket under `eval/` | Read |
 
 In private mode the S3 gateway endpoint reaches only these two buckets
@@ -1048,7 +1048,7 @@ cannot catch, such as an input without `pipeline_id`, or a failed publish).
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution | Find the failed writes in the task log (store errors, rejections), fix the store, and re-run with the same `pipeline_id` ([Stores](#stores-connection-permissions-requests)) |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units | The graph is partial. Look for throttling or model errors in the log; the next incremental run retries the affected documents ([Failed documents](#failed-documents)) |
 | `DocumentsQuarantined` | A run quarantined documents ([Quarantined documents](#quarantined-documents)) | Inspect the document; fix or remove it, then release it as that section describes |
-| `DocumentsNotIndexed` | Source files failed to parse, were skipped (no loader reads them, e.g. a missing extra) or documents were recorded `FAILED` | Check the run summary's file and document counts and the warnings naming each file; install the missing extra in the image or fix the files, then run again ([Failed documents](#failed-documents)) |
+| `DocumentsNotIndexed` | Source files failed to parse or load, or documents were recorded `FAILED` | Check the run summary's file and document counts and the warnings naming each file; fix the files, then run again ([Failed documents](#failed-documents)). Files no loader reads (a missing extra, an unsupported type) do not alarm: their count, `total_files_skipped`, is on the dashboard's "Document outcomes (EMF)" widget, so keep unsupported files out of the synced source prefix and watch that count after an image change |
 
 The last four read the EMF metrics of `run-ingestion --metrics-sink cloudwatch`,
 emitted as each stage finishes (a stopped run still reports its completed
@@ -1413,7 +1413,9 @@ Known limits:
   JSON keys of one Secrets Manager secret and deploy with
   `-c observability_secret_arn=<complete secret ARN>` and, for keys other
   than the two Langfuse ones,
-  `-c observability_secret_keys=OTEL_EXPORTER_OTLP_HEADERS,...`; the
+  `-c observability_secret_keys=OTEL_EXPORTER_OTLP_HEADERS,...` (in
+  `private` mode the stacks then add a Secrets Manager interface endpoint,
+  which a reused VPC must provide, or the tasks fail to start); the
   non-secret settings (`LANGFUSE_HOST`, `UKR__OBSERVABILITY__*`) go in the
   image config or the run's container overrides. The start-up line
   `Observability exporter for backend '...'` shows the endpoint and header
