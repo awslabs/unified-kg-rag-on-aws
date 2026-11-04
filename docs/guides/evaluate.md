@@ -106,8 +106,10 @@ reached with the config's `aws.profile_name` / `aws.region_name`; the shell's
 The principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
 prefix.
 
-Each run writes `evaluation_{results,reports,summary}_<timestamp>.json`
-(find the latest by sorting the names). The summary holds the per-metric
+Each run writes `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+(without `<strategy>` when the queries used several; find the latest run by
+modification time, `ls -t`, since names of different strategies do not sort by
+time). The summary holds the per-metric
 statistics, scored/failed/skipped counts, abstentions, rerank and guardrail
 counts and a run manifest that records what was measured, so two runs can be
 compared: [Evaluation output](../reference/evaluation-output.md). The

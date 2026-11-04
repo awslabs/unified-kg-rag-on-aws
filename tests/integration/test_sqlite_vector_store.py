@@ -326,14 +326,18 @@ def test_retriever_search_types_through_the_registry(tmp_path: Path) -> None:
     hybrid = hit_lists[list(SearchType).index(SearchType.HYBRID)]
     assert all(0.0 <= (r.score or 0.0) <= 1.0 for r in hybrid)
     assert sorted(r.source for r in fetched) == ["e-buyer", "e-depot"]
-    # A suffix never ingested is reported, not answered from nothing.
-    with pytest.raises(IndexNotFoundError, match="No indices found for suffix 'other'"):
+    # A suffix never ingested is reported, not answered from nothing, in
+    # words that do not name OpenSearch on the embedded store.
+    with pytest.raises(
+        IndexNotFoundError, match="No indices found for suffix 'other'"
+    ) as raised:
         _retrieve(
             providers,
             SearchQuery(
                 query="widgets", search_type=SearchType.LEXICAL, suffix="other"
             ),
         )
+    assert "OpenSearch" not in str(raised.value)
 
 
 def test_untranslated_korean_corpus_has_lexical_recall(tmp_path: Path) -> None:

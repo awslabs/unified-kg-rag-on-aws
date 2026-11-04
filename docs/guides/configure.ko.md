@@ -100,7 +100,8 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 해시(`query: len=42 sha=1a2b3c4d`)로만 기록합니다. 질의 원문, 다시 쓴 질의, 엔티티
 이름, 모델 원본 출력은 `DEBUG`에서만 기록하며, 예외 메시지에는 모델 출력을 넣지
 않습니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`,
-`--verbose`)와 `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(`botocore`는 요청
+`run-eval --verbose`. `run-rag --verbose`는 콘솔에 더 많이 출력할 뿐 로그 수준은 바꾸지
+않음)와 `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(`botocore`는 요청
 본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고 보세요.
 
 `logging.log_to_file: true`로 두면 CLI는 `logging.log_file_path`(`logs/log.txt`,

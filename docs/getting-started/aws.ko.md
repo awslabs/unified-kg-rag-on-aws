@@ -46,7 +46,7 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 | 재순위화 | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **리전.** 모든 Bedrock 호출은 `aws.bedrock.region_name`(기본값은
-  `aws.region_name`인 `us-west-2`이며 네 모델이 모두 있음)으로 갑니다. 재순위화 모델이
+  `aws.region_name`인 `us-west-2`이며 다섯 모델이 모두 있음)으로 갑니다. 재순위화 모델이
   없는 리전(예: `ap-northeast-2`)에서는 이 값을 모델이 있는 리전으로 지정하거나
   `search.reranking.enabled: false`로 설정하세요. Bedrock으로 가는 경로가 VPC
   엔드포인트뿐인 프라이빗 VPC는 자기 리전을 유지해야 합니다.
@@ -90,9 +90,9 @@ GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없
 오류로 바로 실패합니다.
 
 배포용 이미지(`docker/Dockerfile`)에는 이 extra가 빠져 있으므로(약 200MB 증가) Step
-Functions로 `.md` / `.html` 파일을 수집하면 "No supported files found"로 실패합니다.
-파일을 변환하거나 `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요. 이렇게
-빌드하면 이미지에 spaCy 모델도 설치됩니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
+Functions로 수집하면 `.md` / `.html` 파일은 경고와 함께 건너뛰고, 이런 파일만 있으면
+"No supported source files found in '<dir>'"로 실패합니다. 파일을 변환하거나
+`--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요. 이렇게 빌드하면 이미지에 spaCy 모델도 설치됩니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK compute 스택이 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
@@ -103,8 +103,8 @@ Functions로 `.md` / `.html` 파일을 수집하면 "No supported files found"�
 1. **AWS 자격 증명**은 표준 자격 증명 체인에서 가져옵니다. `aws.profile_name`은
    프로파일 이름이며, `null`이면 기본 체인(환경 변수, 인스턴스 역할 등)을 씁니다.
    `aws.neptune.use_iam: true`이면 Neptune 요청에 SigV4로 서명합니다.
-2. **OpenSearch**는 IAM(`aws.opensearch.use_iam: true`)을 쓰거나, `use_iam: false`이면
-   `.env` 파일(`.env-template` 복사)의 사용자 이름과 비밀번호를 씁니다. `run-*` CLI가
+2. **OpenSearch**는 IAM(`aws.opensearch.use_iam: true`)을 쓰거나,
+   `use_iam: false`(기본값)이면 `.env` 파일(`.env-template` 복사)의 사용자 이름과 비밀번호를 씁니다. `run-*` CLI가
    이 파일을 읽습니다.
 
    ```bash
@@ -136,7 +136,9 @@ CLI를 실행하는 주체에는 Bedrock(설정한 모델 ID와 임베딩에 대
 
 템플릿을 복사한 뒤 `config.yaml`에 저장소 엔드포인트 두 개(`aws.neptune.endpoint`,
 `aws.opensearch.endpoint`)를 적고, 저장소가 `us-west-2`에 있지 않으면
-`aws.region_name`도 지정하세요.
+`aws.region_name`도 지정하세요. IAM(SigV4) 서명 요청을 허용하는 도메인이라면
+`aws.opensearch.use_iam: true`도 설정하세요. 기본값 `false`는 `.env`의 사용자 이름과
+비밀번호를 씁니다([인증](#인증)).
 
 ```bash
 cp config-template.yaml config.yaml
