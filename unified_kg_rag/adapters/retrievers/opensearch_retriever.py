@@ -1468,8 +1468,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return  # Cannot tell: keep skipping just the missing index.
         shown = suffix or Constants.DEFAULT_SUFFIX.value
         raise IndexNotFoundError(
-            f"No indices found for suffix '{shown}' (OpenSearch alias '{alias}' "
-            "does not exist). Did you run ingestion with "
+            f"No indices found for suffix '{shown}' (the text units index "
+            f"'{alias}' does not exist). Did you run ingestion with "
             f"processing.document_parsing.index_value '{shown}'? Query with the "
             "suffix the corpus was ingested under (run-rag/run-eval --suffix)."
         ) from cause
