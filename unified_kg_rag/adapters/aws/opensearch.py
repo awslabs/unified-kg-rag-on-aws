@@ -251,11 +251,25 @@ def _wrap_transport_error(
     Logged at ``log_level`` with the traceback: the async calls serve the
     retriever only, which logs the errors it keeps and discards the rest (a
     search cancelled once its index's attribute probe found nothing), so they
-    log at DEBUG.
+    log at DEBUG. A request the cluster rejected is logged without it (at
+    DEBUG only): the server's reason says all, and the traceback, of the
+    client library's frames alone, buried the message the caller adds (an
+    index creation that OpenSearch 2.13 refuses for vector_mode, say).
     """
     reason = error_reason(exc)
     msg = f"{context}: status={exc.status_code}, error={reason}"
-    logger.log(log_level, "%s", msg, exc_info=True)
+    error = _typed_transport_error(exc, msg, reason)
+    rejected = isinstance(error, StoreRequestRejectedError)
+    logger.log(log_level, "%s", msg, exc_info=None if rejected else exc)
+    if rejected:
+        logger.debug("Traceback of the rejected request", exc_info=exc)
+    return error
+
+
+def _typed_transport_error(
+    exc: TransportError, msg: str, reason: str
+) -> AWSServiceError:
+    """The typed error of ``_wrap_transport_error``, unlogged."""
     if isinstance(exc, ConnectionTimeout):
         return StoreTimeoutError(msg)
     if isinstance(exc, OpenSearchConnectionError):

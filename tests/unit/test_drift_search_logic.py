@@ -282,6 +282,32 @@ async def test_without_reports_the_question_itself_is_searched() -> None:
     assert "answer to question" in _answers(result)
 
 
+@pytest.mark.parametrize("kinds", ["document", "seed_graph", ["Document"]])
+async def test_a_source_kinds_filter_reads_no_report(kinds: Any) -> None:
+    # A report carries no source_kinds and summarizes seed-only members too:
+    # under source_kinds: document it brought seed-only facts into the answer.
+    reports, local = _Reports(), _Local()
+    strat = _strategy(reports=reports, local=local)
+    result = await strat.asearch(
+        SearchQuery(query="question", filters={"source_kinds": kinds})
+    )
+    assert reports.queries == []
+    assert strat.primer.calls == [] and strat.hyde.calls == []
+    assert local.queries == ["question"]
+    assert result.metadata["drift_primer_reports"] == 0
+
+
+async def test_a_source_kinds_filter_naming_every_kind_keeps_the_reports() -> None:
+    reports = _Reports()
+    strat = _strategy(reports=reports, n_depth=1)
+    await strat.asearch(
+        SearchQuery(
+            query="question", filters={"source_kinds": ["document", "seed_graph"]}
+        )
+    )
+    assert len(reports.queries) == 2
+
+
 # --------------------------------------------------------------------------- #
 # Actions
 # --------------------------------------------------------------------------- #

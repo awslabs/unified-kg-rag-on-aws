@@ -49,6 +49,10 @@ WORKDIR /app
 # only. Markdown and HTML need the `unstructured` extra, which adds ~30 packages
 # (spaCy, thinc, pypdfium2, ...) and about 200 MB, so it is opt-in:
 #   docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .
+# With it the build also installs the spaCy model unstructured tokenizes with
+# (en_core_web_sm, ~13 MB, below): unstructured would otherwise download it
+# from GitHub at the first Markdown/HTML file, which a private VPC (no egress)
+# cannot, and the file would wait 120 s and fail.
 # The image renders no visualization (run-visualization runs where its HTML is
 # read), so it leaves the `viz` extra out.
 ARG UV_EXTRAS=""
@@ -62,6 +66,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra eval ${UV_EXTRAS}
+
+# unstructured's own download (the version and SHA-256 it pins), run once at
+# build time into the venv; the import check fails the build if it did not
+# install.
+RUN case "${UV_EXTRAS}" in \
+      *unstructured*) \
+        /app/.venv/bin/python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')" \
+        && /app/.venv/bin/python -c "import en_core_web_sm" ;; \
+    esac
 
 # Baked-in, endpoint-free config (deployed endpoints come from env vars the
 # compute stack injects; see docker/config.yaml) and the S3-sync entrypoint.

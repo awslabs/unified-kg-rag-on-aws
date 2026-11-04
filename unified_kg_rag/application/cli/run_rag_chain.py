@@ -47,7 +47,10 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
-from unified_kg_rag.application.cli.query_args import add_query_arguments
+from unified_kg_rag.application.cli.query_args import (
+    add_query_arguments,
+    query_suffix,
+)
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -288,6 +291,8 @@ class RAGChainRunner:
             return f"[dim]Index/Label Suffix:[/dim] [orange3]{markup_safe(self.args.suffix)}[/orange3]"
 
         try:
+            if suffix := query_suffix(self.args, self.config):
+                return f"[dim]Index/Label Suffix:[/dim] [orange3]{markup_safe(suffix)}[/orange3]"
             default_suffix = Constants.DEFAULT_SUFFIX.value
             if self.config.indexing.additional_suffix:
                 final_suffix = (
@@ -450,7 +455,7 @@ class RAGChainRunner:
         """A query with the command line's search settings."""
         return RAGInput(
             query=query,
-            suffix=self.args.suffix,
+            suffix=query_suffix(self.args, self.config),
             enable_thinking=self.args.enable_thinking,
             search_strategy=self.args.search_strategy,
             search_type=self.args.search_type,

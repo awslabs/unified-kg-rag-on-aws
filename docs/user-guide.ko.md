@@ -123,9 +123,17 @@ extra가 없으면 해당 명령이 extra 이름을 알려 주고 상태 코드 
 `.json`만 파싱하며, 수집은 `.md` / `.html` 파일을
 건너뛰고 확장자마다 경고를 한 번 남깁니다.
 
+이 extra는 spaCy 모델(`en_core_web_sm`)로 토큰을 나누며, 첫 Markdown·HTML 파일을 읽을 때
+GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없는 환경이라면 네트워크가 되는 곳에서
+한 번 미리 설치하세요:
+`python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
+설치하지 않으면 첫 파일은 최대 120초를 기다린 뒤 실패하고, 같은 실행의 나머지 파일은 같은
+오류로 바로 실패합니다.
+
 배포용 이미지(`docker/Dockerfile`)에는 이 extra가 빠져 있으므로(약 200MB 증가) Step
 Functions로 `.md` / `.html` 파일을 수집하면 "No supported files found"로 실패합니다.
-파일을 변환하거나 `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요.
+파일을 변환하거나 `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요. 이렇게
+빌드하면 이미지에 spaCy 모델도 설치됩니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK compute 스택이 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
@@ -736,8 +744,10 @@ Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를
 코퍼스의 인덱스와 그래프 레이블 이름은 모두 `<prefix>-<suffix>`이며
 `indexing.additional_suffix`를 지정하면 `-<additional_suffix>`가 붙습니다. 이
 `<suffix>`가 **인덱스 접미사**입니다. 수집은
-`processing.document_parsing.index_value`에서 가져오고(플래그 없음), 질의는
-`--suffix`(Python에서는 `RAGInput.suffix`)로 고릅니다. 둘 다 기본값은 `default`입니다.
+`processing.document_parsing.index_value`에서 가져오고(플래그 없음), `run-rag`와
+`run-eval`은 `--suffix`로 다른 값을 지정하지 않으면 설정 파일의 같은 `index_value`를
+질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(체인은 `index_value`를 읽지
+않음). 모두 기본값은 `default`입니다.
 테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 하나씩 두고,
 `indexing.additional_suffix`는 양쪽에서 같게 하세요. 증분 인덱싱과 삭제는 인덱스 접미사
 단위입니다(§5).
@@ -2730,7 +2740,10 @@ ex:berlin rdfs:label "Berlin"@en .
 - **필터**([필터](#필터)):
   - `source_kinds`(엔티티, 관계, Neptune 엔티티 정점): `seed_graph`는 시드가 진술한 것,
     `document`는 문서가 진술한 것(둘 다 진술한 엔티티도 시드 설명 줄과 함께 포함)을
-    남깁니다. 목록은 둘 중 하나와 일치합니다. 대소문자는 상관없습니다.
+    남깁니다. 목록은 둘 중 하나와 일치합니다. 대소문자는 상관없습니다. 커뮤니티 보고서에는
+    출처 종류가 없고 시드에만 있는 구성원까지 커뮤니티 전체를 요약하므로, 한 종류만 남기는
+    필터에서는 `local`과 `drift`가 보고서를 읽지 않습니다(DRIFT는 질문 자체로 local 검색을 한
+    번 실행). 보고서만 읽는 `global`은 이 키를 거부합니다.
   - `iri`(엔티티, Neptune 엔티티 정점): 정확한 IRI.
   - `attr_seed_graph: procure`는 모든 인덱스가 가진 문서 필터로 그 시드가 진술한 것을
     남깁니다. `attr_department: legal` 같은 테넌트 필터는 시드의 `filters`에 그 키가 없으면

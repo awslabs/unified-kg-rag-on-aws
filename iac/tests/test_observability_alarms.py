@@ -442,3 +442,24 @@ def test_query_latency_alarm_reads_the_run_rag_metric() -> None:
         assert alarm["Threshold"] == seconds * 1000
         assert (alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == (3, 2)
         assert alarm["TreatMissingData"] == "notBreaching"
+
+
+def test_each_widget_holds_at_most_one_metrics_insights_query() -> None:
+    # GetMetricWidgetImage renders a widget only with at most one Metrics
+    # Insights query ("Maximum number of queries (1) exceeded").
+    (dashboard,) = _template().find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    # Tokens (names, ARNs) are joined into JSON string values.
+    body = json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+    queries = {
+        widget["properties"].get("title", ""): [
+            item
+            for metric in widget["properties"].get("metrics", [])
+            for item in metric
+            if isinstance(item, dict)
+            and str(item.get("expression", "")).lstrip().upper().startswith("SELECT")
+        ]
+        for widget in body["widgets"]
+    }
+    assert any(queries.values())
+    assert {title: len(q) for title, q in queries.items() if len(q) > 1} == {}

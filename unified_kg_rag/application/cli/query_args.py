@@ -6,7 +6,12 @@ from __future__ import annotations
 
 import argparse
 
-from unified_kg_rag.domain.models import SearchStrategy, SearchType, validate_safe_name
+from unified_kg_rag.domain.models import (
+    Config,
+    SearchStrategy,
+    SearchType,
+    validate_safe_name,
+)
 
 
 def positive_int(value: str) -> int:
@@ -23,6 +28,14 @@ def _suffix(value: str) -> str:
         return validate_safe_name(value, "--suffix")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def query_suffix(args: argparse.Namespace, config: Config) -> str | None:
+    """The index suffix to query: ``--suffix``, else the config's
+    ``processing.document_parsing.index_value`` (the namespace ingestion
+    wrote with the same config), else ``None`` (the chain's ``default``)."""
+    given: str | None = getattr(args, "suffix", None)
+    return given or config.processing.document_parsing.index_value
 
 
 def _strategy_list(value: str) -> list[str]:
@@ -71,8 +84,9 @@ def add_query_arguments(
     parser.add_argument(
         "--suffix",
         type=_suffix,
-        help="Index suffix to query (default: 'default'); must match the "
-        "corpus's processing.document_parsing.index_value",
+        help="Index suffix to query (default: the config's "
+        "processing.document_parsing.index_value, as ingestion writes, else "
+        "'default'); must match the index_value the corpus was ingested with",
     )
     parser.add_argument(
         "--enable-thinking",

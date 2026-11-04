@@ -210,6 +210,41 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
 
 
 @pytest.mark.parametrize(
+    ("flags", "index_value", "expected"),
+    [
+        ([], "corpus-a", "corpus-a"),
+        (["--suffix", "other"], "corpus-a", "other"),
+        ([], None, None),
+    ],
+    ids=["config-index-value", "flag-wins", "neither"],
+)
+async def test_rag_runner_queries_the_configs_index_value(
+    store_config, mocker, flags: list[str], index_value: str | None, expected
+) -> None:
+    # Regression: run-rag ignored processing.document_parsing.index_value and
+    # queried 'default' (no indices found) unless --suffix repeated it.
+    config = store_config.model_copy(deep=True)
+    config.processing.document_parsing.index_value = index_value
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "display_ascii_art")
+    mocker.patch.object(
+        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
+    )
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", *flags])
+    )
+    run_query = mocker.patch.object(
+        runner, "_run_query", return_value={"success": True}
+    )
+    mocker.patch.object(runner, "_print_result")
+
+    await runner.run()
+
+    (rag_input,) = run_query.call_args.args
+    assert rag_input.suffix == expected
+
+
+@pytest.mark.parametrize(
     "flags",
     [["--use-memory"], ["--conversation-id", "s1"]],
     ids=["use-memory", "conversation-id"],
@@ -725,6 +760,34 @@ def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
     args = _eval_parser().parse_args(["--data-path", str(data)])
     runner = run_evaluation.EvaluationRunner(args, object(), config)  # no exit
     assert runner.args.data_path == data
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [([], "corpus-a"), (["--suffix", "other"], "other")],
+    ids=["config-index-value", "flag-wins"],
+)
+async def test_eval_runner_queries_the_configs_index_value(
+    config, mocker, tmp_path, flags: list[str], expected: str
+) -> None:
+    # Regression: run-eval ignored processing.document_parsing.index_value
+    # and every query failed with "No indices found for suffix default".
+    config = config.model_copy(deep=True)
+    config.processing.document_parsing.index_value = "corpus-a"
+    data = tmp_path / "eval.json"
+    data.write_text("[]", encoding="utf-8")
+    args = _eval_parser().parse_args(["--data-path", str(data), *flags])
+    runner = run_evaluation.EvaluationRunner(args, AsyncMock(), config)
+    load = mocker.patch.object(
+        run_evaluation.EvaluationManager,
+        "load_data",
+        side_effect=run_evaluation.InvalidDatasetError("stop"),
+    )
+
+    with pytest.raises(run_evaluation.InvalidDatasetError):
+        await runner._answer_and_score(None, tmp_path, tmp_path, None)
+
+    assert load.call_args.kwargs["base_metadata"]["suffix"] == expected
 
 
 def test_eval_parser_max_failure_rate_default_and_range() -> None:

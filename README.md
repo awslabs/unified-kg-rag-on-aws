@@ -73,7 +73,7 @@ uv sync --extra eval --extra viz        # or: pip install -e '.[eval,viz]'
 cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 
-If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. `uv sync` alone installs ingestion and queries; `run-eval`'s LangChain and RAGAS judges need the `eval` extra and `run-visualization` the `viz` extra. Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
+If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. `uv sync` alone installs ingestion and queries; `run-eval`'s LangChain and RAGAS judges need the `eval` extra and `run-visualization` the `viz` extra. Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`), which downloads a spaCy model (`en_core_web_sm`) from GitHub at the first such file; without network access, install it beforehand (the deployed image does at build time, [iac/README.md](iac/README.md)). PDF, TXT, CSV, and JSON work out of the box.
 
 ### Ingest, query, evaluate
 

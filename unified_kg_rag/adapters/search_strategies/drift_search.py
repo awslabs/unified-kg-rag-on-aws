@@ -309,6 +309,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
         retriever = self.document_retriever
         if retriever is None:
             return []
+        if self._source_kinds_skip_reports(query):
+            # No primer: the question itself is the one follow-up, a local
+            # search, which reads no report under the filter either.
+            logger.info(
+                "DRIFT primer skipped: the source_kinds filter keeps one "
+                "source kind and a community report carries none"
+            )
+            return []
         # The template the hypothetical answer takes its shape from: MS
         # GraphRAG picks a random report; the most important one is stable.
         template = await self._safe_aretrieve(

@@ -436,6 +436,12 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # path; degrade to no section on any retrieval error.
         if not self.document_retriever:
             return []
+        if self._source_kinds_skip_reports(query):
+            logger.info(
+                "Community reports skipped: the source_kinds filter keeps one "
+                "source kind and a report carries none"
+            )
+            return []
 
         report_query = (
             " ".join(query.entity_focus) if query.entity_focus else query.query

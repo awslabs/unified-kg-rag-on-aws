@@ -61,6 +61,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     positive_int,
+    query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -912,7 +913,7 @@ class EvaluationRunner:
             queries, ground_truths = self.evaluation_manager.load_data(
                 eval_data_path=eval_data_path,
                 base_metadata={
-                    "suffix": self.args.suffix,
+                    "suffix": query_suffix(self.args, self.config),
                     "enable_thinking": self.args.enable_thinking,
                     # A comparison sets each run's strategy itself (below).
                     "search_strategy": None if comparing else strategies[0],

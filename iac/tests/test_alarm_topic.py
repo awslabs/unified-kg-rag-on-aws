@@ -92,6 +92,66 @@ def test_topic_key_policy_allows_cloudwatch(template: Template) -> None:
     assert set(cloudwatch[0]["Action"]) == {"kms:Decrypt", "kms:GenerateDataKey*"}
 
 
+def _topic_policy_statements(template: Template) -> list[dict[str, Any]]:
+    (policy,) = template.find_resources("AWS::SNS::TopicPolicy").values()
+    return list(policy["Properties"]["PolicyDocument"]["Statement"])
+
+
+def test_topic_policy_allows_cloudwatch_alarms_to_publish(template: Template) -> None:
+    # A topic policy replaces the default one: without this Allow, every
+    # CloudWatch alarm action fails "not authorized to perform: SNS:Publish".
+    allow = [
+        s
+        for s in _topic_policy_statements(template)
+        if s["Effect"] == "Allow"
+        and s.get("Principal", {}).get("Service") == "cloudwatch.amazonaws.com"
+    ]
+    assert len(allow) == 1, _topic_policy_statements(template)
+    (statement,) = allow
+    assert statement["Action"] == "sns:Publish"
+    assert statement["Resource"] == {"Ref": _topic_logical_id(template)}
+    assert statement["Condition"] == {
+        "StringEquals": {"aws:SourceAccount": "111111111111"}
+    }
+
+
+def test_topic_policy_keeps_the_tls_deny(template: Template) -> None:
+    deny = [s for s in _topic_policy_statements(template) if s["Effect"] == "Deny"]
+    assert len(deny) == 1
+    assert deny[0]["Principal"] == {"AWS": "*"}
+    assert deny[0]["Action"] == "sns:Publish"
+    assert deny[0]["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
+    # No other statement: the Step Functions role publishes through its
+    # identity policy, and an Allow for "*" would open the topic.
+    assert len(_topic_policy_statements(template)) == 2
+
+
+def _topic_logical_id(template: Template) -> str:
+    (logical_id,) = template.find_resources("AWS::SNS::Topic")
+    return str(logical_id)
+
+
+def test_state_machine_role_can_publish_to_the_topic(template: Template) -> None:
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": Match.array_with(
+                    [
+                        Match.object_like(
+                            {
+                                "Action": "sns:Publish",
+                                "Effect": "Allow",
+                                "Resource": {"Ref": _topic_logical_id(template)},
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
 def test_state_machine_role_can_use_topic_key(template: Template) -> None:
     key_id = _topic_key_id(template)
     template.has_resource_properties(

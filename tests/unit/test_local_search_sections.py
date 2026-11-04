@@ -71,6 +71,33 @@ async def test_community_reports_section_queried(config: Config) -> None:
     assert report_calls and report_calls[0].query == "Acme"
 
 
+@pytest.mark.parametrize("kinds", ["document", "seed_graph", ["DOCUMENT"]])
+async def test_a_source_kinds_filter_reads_no_community_report(
+    config: Config, kinds: object
+) -> None:
+    # A report carries no source_kinds (the reports index drops the key) and
+    # summarizes seed-only members too: under source_kinds: document it
+    # brought seed-only facts into the answer.
+    strategy, os_r, _ = _make_strategy(config)
+
+    await strategy.asearch(_query(filters={"source_kinds": kinds}))
+
+    reports_prefix = config.indexing.opensearch.community_reports_index_prefix
+    assert reports_prefix not in _doc_index_prefixes(os_r)
+    assert _doc_index_prefixes(os_r)  # the other sections still run
+
+
+async def test_a_source_kinds_filter_naming_every_kind_keeps_the_reports(
+    config: Config,
+) -> None:
+    strategy, os_r, _ = _make_strategy(config)
+
+    await strategy.asearch(_query(filters={"source_kinds": ["document", "seed_graph"]}))
+
+    reports_prefix = config.indexing.opensearch.community_reports_index_prefix
+    assert reports_prefix in _doc_index_prefixes(os_r)
+
+
 async def test_relationships_section_queried_when_vector_index_built(
     config: Config,
 ) -> None:
