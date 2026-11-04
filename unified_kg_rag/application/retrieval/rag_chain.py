@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import contextvars
+import functools
 import hashlib
 import json
 import re
@@ -12,8 +13,15 @@ import unicodedata
 import uuid
 import weakref
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
-from contextlib import AbstractContextManager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Iterator,
+)
+from contextlib import AbstractContextManager, aclosing
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from langchain_core.output_parsers import (
@@ -137,7 +145,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard
+from unified_kg_rag.shared.utils.concurrency import discard, settle
 
 if TYPE_CHECKING:
     import boto3
@@ -506,6 +514,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # This chain's own retriever closes running on daemon threads: chain
         # close waits for these only, never for another chain's.
         self._background_closes = _BackgroundCloses()
+        # The speculative extractions queries left running (keep_in_background).
+        self._background_extractions = _BackgroundExtractions()
         # Safety net for a chain dropped without close()/aclose(): release the
         # cached retrievers' sockets, then stop the loop. The finalizer holds
         # the caches and runner, never the chain itself, so it does not keep
@@ -564,10 +574,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         One step, so the extractions an auto query starts alongside its
         router call (``search.auto_speculative_extraction``) never outlive
-        it. One the resolved strategy does not read is never waited for: it
-        runs on while the query processing the strategy needs does (and, if
-        it answers by then, fills the extraction cache for a later query),
-        and is cancelled when the step returns.
+        their query's deadline. One the resolved strategy does not read is
+        never waited for: the step hands it to the query entry point
+        (``_LEFTOVER_EXTRACTIONS``), which returns without waiting for it
+        and leaves it running in the background (``_BackgroundExtractions``),
+        so its result still fills the extraction cache for a later query.
+        Its request is sent and billed either way; its call counts in the
+        query's usage from its start (``shared.usage``). It is cancelled
+        when the query fails, at the query's deadline, or when the chain
+        closes.
         """
         processing = state.get("enable_query_processing", True)
         prefetch: dict[str, asyncio.Future[Any]] | None = (
@@ -582,10 +597,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if processing
                 else self._simple_query(state)
             )
-            return state
-        finally:
+        except BaseException:
             if prefetch:
                 await discard(list(prefetch.values()))
+            raise
+        if prefetch:
+            leftovers = _LEFTOVER_EXTRACTIONS.get()
+            if leftovers is None:
+                # No entry point keeps them: wait here.
+                await settle(list(prefetch.values()), None)
+            else:
+                leftovers.extend(prefetch.values())
+        return state
 
     def _simple_query(self, inputs: dict[str, Any]) -> ProcessedQuery:
         """The query as is (``enable_query_processing`` off): no LLM call."""
@@ -1023,9 +1046,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.debug(
                 "Reused the cached %s for query %s", key[0], text_digest(key[3])
             )
-            # A model call the query did not make (shared.usage).
-            record_cache_hit(ModelPurpose.QUERY.value, key[1])
+            # A model call the query did not make (shared.usage), under the
+            # id the call's usage is recorded by.
+            record_cache_hit(ModelPurpose.QUERY.value, self._usage_model_id(key[1]))
         return hit
+
+    def _usage_model_id(self, model_id: str) -> str:
+        """The id the LLM factory records ``model_id``'s usage under: the
+        Bedrock factory's resolved inference profile, else ``model_id``."""
+        resolve = getattr(getattr(self, "factory", None), "resolved_model_id", None)
+        return str(resolve(model_id)) if resolve is not None else model_id
 
     def _cache_extraction(self, key: tuple[str, ...], value: Any) -> None:
         cache: _ExtractionCache | None = getattr(self, "_extractions", None)
@@ -1622,12 +1652,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:  # noqa: BLE001 - teardown must never raise
             logger.debug("Error waiting for background retriever closes: %s", e)
         finally:
+            extractions = getattr(self, "_background_extractions", None)
+            if extractions is not None:
+                await extractions.acancel()
             runner = getattr(self, "_loop_runner", None)
             if runner is not None:
                 await asyncio.to_thread(runner.stop)
 
     def close(self) -> None:
         """Synchronous teardown of cached retrievers and the sync-API loop."""
+        extractions = getattr(self, "_background_extractions", None)
+        if extractions is not None:
+            extractions.cancel()
         _release_cached_resources(
             getattr(self, "_retriever_cache", {}),
             getattr(self, "_strategy_cache", {}),
@@ -1977,7 +2013,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ) as span,
             usage_scope() as meter,
         ):
-            result = await self._ainvoke(rag_input, input_dict, config, span, search)
+            started = time.monotonic()
+            leftovers: list[asyncio.Future[Any]] = []
+            token = _LEFTOVER_EXTRACTIONS.set(leftovers)
+            try:
+                result = await self._ainvoke(
+                    rag_input, input_dict, config, span, search
+                )
+            except BaseException:
+                await discard(leftovers)
+                raise
+            finally:
+                _LEFTOVER_EXTRACTIONS.reset(token)
+            # Not waited for: counted from their start below, at an
+            # estimate until they answer.
+            self._background_extractions.keep(leftovers, self._time_left(started))
             # The query's model calls and tokens (shared.usage).
             result.metadata["usage"] = meter.snapshot()
             span.set_attributes(
@@ -1990,6 +2040,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 }
             )
             return result
+
+    def _time_left(self, started: float) -> float | None:
+        """Seconds left of the query deadline (``search.query_timeout_seconds``)
+        of a query that started at ``time.monotonic()`` ``started``."""
+        seconds = self.config.search.query_timeout_seconds
+        if seconds is None:
+            return None
+        return max(0.0, seconds - (time.monotonic() - started))
 
     @staticmethod
     def _identity(rag_input: RAGInput) -> AbstractContextManager[None]:
@@ -2314,6 +2372,29 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         yields the blocked message once, and with ``check_output`` the answer
         is generated in full, screened, and yielded as one chunk.
         """
+        started = time.monotonic()
+        # The speculative extractions its route did not read (see ainvoke).
+        leftovers: list[asyncio.Future[Any]] = []
+        try:
+            async with aclosing(
+                self._astream(input, config, leftovers, **kwargs)
+            ) as chunks:
+                async for chunk in chunks:
+                    yield chunk
+        except BaseException:
+            await discard(leftovers)
+            raise
+        self._background_extractions.keep(leftovers, self._time_left(started))
+
+    async def _astream(
+        self,
+        input: RAGInput,
+        config: RunnableConfig | None,
+        leftovers: list[asyncio.Future[Any]],
+        **kwargs: Any,
+    ) -> AsyncGenerator[str, None]:
+        """The answer chunks of :meth:`astream`; the speculative extractions
+        the route did not read go to ``leftovers``."""
         rag_input, input_dict = self._prepare_invoke(input)
         self._check_requested_filter_keys(rag_input)
         search_config = self.config.search
@@ -2333,6 +2414,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 query_id=uuid.uuid4().hex[:12],
                 conversation_id=rag_input.conversation_id,
             )
+            leftovers_token = _LEFTOVER_EXTRACTIONS.set(leftovers)
             try:
                 # Only the steps before the first yield are traced here, for the
                 # same reason; the streamed answer call gets its own model span.
@@ -2357,6 +2439,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                                 )
                             )
             finally:
+                _LEFTOVER_EXTRACTIONS.reset(leftovers_token)
                 reset_contextvars(**tokens)
             if blocking is not None:
                 yield blocking.text
@@ -2454,6 +2537,101 @@ class _ExtractionCache:
             while len(self._entries) > self._size:
                 self._entries.popitem(last=False)
 
+
+class _BackgroundExtractions:
+    """The speculative extractions queries left running (thread-safe).
+
+    A query does not wait for an extraction its route did not read: it
+    keeps running, uncancelled, so its answer still fills the extraction
+    cache, and its call counts in the query's usage from its start. Each is
+    cancelled at its query's deadline (``search.query_timeout_seconds``), or
+    by :meth:`cancel` / :meth:`acancel` when the chain closes, so none
+    outlives either.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Future[Any]] = set()
+        self._lock = threading.Lock()
+
+    def keep(self, tasks: list[asyncio.Future[Any]], within: float | None) -> None:
+        """Keep ``tasks`` (on the running loop) until they end, cancelling
+        them after ``within`` seconds (``None``: no limit)."""
+        running = [task for task in tasks if not task.done()]
+        for task in tasks:
+            if task.done():
+                _retrieve(task)
+        if not running:
+            return
+        loop = asyncio.get_running_loop()
+        for task in running:
+            timer: asyncio.TimerHandle | None = None
+            if within is not None and within <= 0:
+                task.cancel()
+            elif within is not None:
+                timer = loop.call_later(within, task.cancel)
+            with self._lock:
+                self._tasks.add(task)
+            task.add_done_callback(functools.partial(self._ended, timer=timer))
+
+    def _ended(
+        self, task: asyncio.Future[Any], *, timer: asyncio.TimerHandle | None
+    ) -> None:
+        if timer is not None:
+            timer.cancel()
+        with self._lock:
+            self._tasks.discard(task)
+        _retrieve(task)
+
+    def _take(self) -> list[asyncio.Future[Any]]:
+        with self._lock:
+            tasks, self._tasks = list(self._tasks), set()
+        return tasks
+
+    def cancel(self) -> None:
+        """Cancel every kept task, on its own loop (from any thread)."""
+        for task in self._take():
+            loop = task.get_loop()
+            if loop.is_closed():
+                continue
+            try:
+                running = asyncio.get_running_loop()
+            except RuntimeError:
+                running = None
+            if running is loop:
+                task.cancel()
+            else:
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:  # closed in between
+                    pass
+
+    async def acancel(self) -> None:
+        """:meth:`cancel`, then wait for the kept tasks of the running loop."""
+        loop = asyncio.get_running_loop()
+        own = [task for task in self._snapshot() if task.get_loop() is loop]
+        self.cancel()
+        if own:
+            await asyncio.gather(*own, return_exceptions=True)
+
+    def _snapshot(self) -> list[asyncio.Future[Any]]:
+        with self._lock:
+            return list(self._tasks)
+
+
+def _retrieve(task: asyncio.Future[Any]) -> None:
+    """Read how ``task`` ended, so a failure is not logged as unretrieved
+    (its caller is gone; ``shared.usage`` counted its call)."""
+    if not task.cancelled():
+        task.exception()
+
+
+# The speculative extractions (``auto_speculative_extraction``) an auto query
+# started that its route did not read, handed from ``_route_and_process_step``
+# to the query entry point, which keeps them running in the background
+# (``_BackgroundExtractions``; ``None`` outside one: the step awaits them).
+_LEFTOVER_EXTRACTIONS: contextvars.ContextVar[list[asyncio.Future[Any]] | None] = (
+    contextvars.ContextVar("kg_rag_leftover_extractions", default=None)
+)
 
 # The grounding context of the answer an ``_ainvoke`` call generates, handed
 # from the chain's capture step (``None`` outside a grounded call).

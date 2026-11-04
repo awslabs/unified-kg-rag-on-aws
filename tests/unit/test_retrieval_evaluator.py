@@ -30,7 +30,10 @@ def evaluator(config: Config) -> RetrievalEvaluator:
 
 
 def _score(
-    evaluator: RetrievalEvaluator, ranked: list[list[str]], refs: list[str]
+    evaluator: RetrievalEvaluator,
+    ranked: list[list[str]],
+    refs: list[str],
+    strategy: str | None = None,
 ) -> dict:
     result = EvaluationResult(
         query_id="q",
@@ -38,6 +41,7 @@ def _score(
         generated_answer="a",
         ground_truth="",
         retrieved_source_ids=ranked,
+        search_strategy=strategy,
         metadata={"reference_sources": refs},
     )
     report = evaluator.evaluate_single(
@@ -270,6 +274,33 @@ class TestMetrics:
         assert out["metadata"]["num_sources"] == 0
         assert out["metadata"]["skipped_metrics"] == {
             "attributable_fraction": "no_sources"
+        }
+
+    def test_global_with_no_evidence_by_config_is_skipped(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # evidence_tokens 0: a global answer reads the key points only and
+        # reports no sources by design, which is no retrieval miss.
+        evaluator.config.search.global_search.evidence_tokens = 0
+        out = _score(evaluator, [], ["a.pdf"], strategy="global")
+        assert out["metrics"] == {}
+        assert out["metadata"]["skipped_metrics"] == {
+            "attributable_fraction": "no_sources",
+            "hit_at_k": "no_sources_by_config",
+            "recall_at_k": "no_sources_by_config",
+            "mrr": "no_sources_by_config",
+        }
+        # Another strategy without sources, or global with evidence, misses.
+        assert _score(evaluator, [], ["a.pdf"], strategy="local")["metrics"] == {
+            "hit_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "mrr": 0.0,
+        }
+        evaluator.config.search.global_search.evidence_tokens = None
+        assert _score(evaluator, [], ["a.pdf"], strategy="global")["metrics"] == {
+            "hit_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "mrr": 0.0,
         }
 
     def test_no_provenance_skipped(self, evaluator: RetrievalEvaluator) -> None:

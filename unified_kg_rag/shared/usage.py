@@ -4,8 +4,8 @@
 
 Always on, tracing or not. The model factories attach a callback
 (``adapters.observability.usage_callback``) to every chat model they build;
-it records each finished call here, into every :func:`usage_scope` open in
-the calling context. The ingestion pipeline opens one per stage, the RAG
+it records each call here, into every :func:`usage_scope` open in the
+calling context. The ingestion pipeline opens one per stage, the RAG
 chain one per query (``RAGOutput.metadata["usage"]``), ``run-eval`` one per
 run and one per answer attempt (so a failed answer keeps what it spent);
 scopes nest, so a call counts in each enclosing one. A call made where
@@ -16,8 +16,19 @@ Counts are kept per model role (the purpose the model was built for:
 ``query``, ``ingestion``, ``evaluation``) and per model id. A response the
 ingestion response cache served, a chunk-boundary answer the extraction
 store served, or a query extraction the RAG chain's extraction cache
-served, is a cache hit, not a call: it spends no tokens. A call that failed is not counted (it returned no usage); retries
-and calls abandoned on a timeout whose response still arrived are.
+served, is a cache hit, not a call: it spends no tokens.
+
+A call counts from the moment it starts (:func:`start_llm_call`), at an
+estimate of its input tokens, and is settled when it ends: a returned call
+by the tokens its response reports, a failed one (it returned no usage) is
+taken back out. A call that has not ended when a scope is read (one still
+running in the background, as an auto query's unread speculative
+extraction, or one cancelled in flight by a query deadline) counts with its
+estimated input tokens and no output tokens, in ``estimated_calls`` as well
+as ``llm_calls``: its request was sent (a cancelled task does not stop a
+Bedrock call running on a worker thread), so it is billed. One that ends
+later settles in the scopes still open (a ``run-eval`` run's); a snapshot
+already taken keeps the estimate. Retries are calls too.
 
 The scope is a ``contextvars`` value, so it follows the code into the tasks
 and threads it hands its context to (``asyncio`` tasks, ``to_thread``, the
@@ -37,11 +48,13 @@ from typing import Any
 __all__ = [
     "CACHED_RESPONSE_KEY",
     "COUNT_FIELDS",
+    "LLMCall",
     "UsageMeter",
     "current_meter",
     "merge_usage",
     "record_cache_hit",
     "record_llm_call",
+    "start_llm_call",
     "usage_scope",
 ]
 
@@ -51,6 +64,7 @@ COUNT_FIELDS: tuple[str, ...] = (
     "input_tokens",
     "output_tokens",
     "cache_hits",
+    "estimated_calls",
 )
 
 # Set in the ``generation_info`` of a response the LLM response cache served,
@@ -66,12 +80,11 @@ class _Counts:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_hits: int = 0
+    estimated_calls: int = 0
 
     def add(self, other: _Counts) -> None:
-        self.llm_calls += other.llm_calls
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.cache_hits += other.cache_hits
+        for name in COUNT_FIELDS:
+            setattr(self, name, getattr(self, name) + getattr(other, name))
 
     def as_dict(self) -> dict[str, int]:
         return {name: getattr(self, name) for name in COUNT_FIELDS}
@@ -123,19 +136,77 @@ def current_meter() -> UsageMeter | None:
 
 
 def _record(role: str, model: str, counts: _Counts) -> None:
-    meter = _CURRENT.get()
-    if meter is None:
-        return
+    _add_to(_CURRENT.get(), role, model, counts)
+
+
+def _add_to(meter: UsageMeter | None, role: str, model: str, counts: _Counts) -> None:
     with _LOCK:
         while meter is not None:
             meter._add(role, model, counts)
             meter = meter.parent
 
 
+class LLMCall:
+    """One model call counted from its start (:func:`start_llm_call`), until
+    it is settled: :meth:`finish`, :meth:`served_from_cache` or :meth:`fail`.
+
+    Until then it counts as an estimated call at its estimated input tokens,
+    in the scopes open where it started; settling replaces that estimate
+    (once: a second settle does nothing).
+    """
+
+    def __init__(
+        self, meter: UsageMeter | None, role: str, model: str, estimate: int
+    ) -> None:
+        self._meter = meter
+        self._role = role
+        self._model = model
+        self._estimate = estimate
+        self._settled = False
+        _add_to(meter, role, model, self._pending())
+
+    def _pending(self) -> _Counts:
+        return _Counts(llm_calls=1, input_tokens=self._estimate, estimated_calls=1)
+
+    def _settle(self, counts: _Counts) -> None:
+        with _LOCK:
+            if self._settled:
+                return
+            self._settled = True
+        pending = self._pending()
+        delta = _Counts(
+            **{
+                name: getattr(counts, name) - getattr(pending, name)
+                for name in COUNT_FIELDS
+            }
+        )
+        _add_to(self._meter, self._role, self._model, delta)
+
+    def finish(self, *, input_tokens: int, output_tokens: int) -> None:
+        """The call returned, reporting these tokens."""
+        self._settle(
+            _Counts(llm_calls=1, input_tokens=input_tokens, output_tokens=output_tokens)
+        )
+
+    def served_from_cache(self) -> None:
+        """The LLM response cache answered: a cache hit, not a call."""
+        self._settle(_Counts(cache_hits=1))
+
+    def fail(self) -> None:
+        """The call failed and returned no usage: not a call."""
+        self._settle(_Counts())
+
+
+def start_llm_call(role: str, model: str, *, estimated_input_tokens: int) -> LLMCall:
+    """Count a model call that is starting, in the open scopes (see
+    :class:`LLMCall`)."""
+    return LLMCall(_CURRENT.get(), role, model, estimated_input_tokens)
+
+
 def record_llm_call(
     role: str, model: str, *, input_tokens: int, output_tokens: int
 ) -> None:
-    """Record one finished model call."""
+    """Record one finished model call that was not counted at its start."""
     _record(
         role,
         model,

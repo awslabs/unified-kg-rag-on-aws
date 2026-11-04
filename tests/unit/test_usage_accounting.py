@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.llm.response_cache import (
     CachingLLMFactory,
     LLMResponseCache,
 )
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.domain.models import Config, LLMUsage, ModelPurpose
@@ -137,6 +138,7 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "input_tokens": 0,
             "output_tokens": 0,
             "cache_hits": 1,
+            "estimated_calls": 0,
         }
     }
 
@@ -216,6 +218,10 @@ def test_bedrock_models_get_the_usage_handler_with_tracing_off(mocker) -> None:
     (handler,) = captured["callbacks"]
     assert isinstance(handler, UsageCallbackHandler)
     assert (handler.model_id, handler.role) == (captured["model_id"], "ingestion")
+    # The id a query extraction cache hit is recorded under.
+    assert factory.resolved_model_id(Config().model_id(_answer_role())) == (
+        handler.model_id
+    )
 
 
 def _answer_role() -> Any:
@@ -241,3 +247,118 @@ def test_a_query_extraction_from_the_chains_cache_is_a_cache_hit() -> None:
     assert (snapshot["llm_calls"], snapshot["cache_hits"]) == (0, 1)
     assert snapshot["by_role"]["query"]["cache_hits"] == 1
     assert snapshot["by_model"]["model-x"]["cache_hits"] == 1
+
+
+def test_a_call_counts_from_its_start_until_it_settles() -> None:
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    text = "one two three four five six seven eight"
+    prompt = [[HumanMessage(content=text)]]
+    estimate = estimate_token_count(text)
+    with usage.usage_scope() as meter:
+        returned, failed, cancelled = uuid4(), uuid4(), uuid4()
+        for run_id in (returned, failed, cancelled):
+            handler.on_chat_model_start({}, prompt, run_id=run_id)
+        # In flight: counted at an estimate, as cancelled until it settles.
+        in_flight = meter.snapshot()
+        handler.on_llm_end(
+            _result(
+                content="x",
+                usage_metadata={
+                    "input_tokens": 40,
+                    "output_tokens": 3,
+                    "total_tokens": 43,
+                },
+            ),
+            run_id=returned,
+        )
+        handler.on_llm_error(RuntimeError("throttled"), run_id=failed)
+        handler.on_llm_error(asyncio.CancelledError(), run_id=cancelled)
+    assert (in_flight["llm_calls"], in_flight["estimated_calls"]) == (3, 3)
+    assert in_flight["input_tokens"] == 3 * estimate
+    settled = LLMUsage.model_validate(meter.snapshot())
+    # The returned call by its response, the failed one gone, the cancelled
+    # one at its estimate.
+    assert (settled.llm_calls, settled.estimated_calls) == (2, 1)
+    assert (settled.input_tokens, settled.output_tokens) == (40 + estimate, 3)
+    assert settled.by_model["vendor.model-v1"].estimated_calls == 1
+
+
+def test_a_cancelled_worker_thread_call_is_counted() -> None:
+    # How ChatBedrockConverse runs ainvoke: the request runs on a worker
+    # thread, which a cancelled caller does not stop; LangChain reports no
+    # end or error for it.
+    import threading
+    import time
+
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.outputs import ChatResult
+
+    finished = threading.Event()
+
+    class _ThreadedChat(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "threaded"
+
+        def _generate(self, messages: Any, *a: Any, **k: Any) -> ChatResult:
+            time.sleep(0.2)
+            finished.set()
+            message = AIMessage(
+                content="a",
+                usage_metadata={
+                    "input_tokens": 500,
+                    "output_tokens": 40,
+                    "total_tokens": 540,
+                },
+            )
+            return ChatResult(generations=[ChatGeneration(message=message)])
+
+    model = _ThreadedChat(callbacks=[UsageCallbackHandler("m", role="query")])
+
+    async def _run() -> None:
+        task = asyncio.ensure_future(model.ainvoke("what does the Vendor ship"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    with usage.usage_scope() as meter:
+        asyncio.run(_run())
+    assert finished.wait(5)
+    snapshot = meter.snapshot()
+    assert (snapshot["llm_calls"], snapshot["estimated_calls"]) == (1, 1)
+    assert 0 < snapshot["input_tokens"] < 500 and snapshot["output_tokens"] == 0
+
+
+def test_an_extraction_cache_hit_is_recorded_under_the_resolved_model_id() -> None:
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        _ExtractionCache,
+    )
+
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain._extractions = _ExtractionCache(4)
+    # The Bedrock factory calls a model by its inference profile, and its
+    # usage callback records the calls under that id.
+    chain.factory = SimpleNamespace(  # type: ignore[assignment]
+        resolved_model_id=lambda model_id: f"global.{model_id}"
+    )
+    key = ("EntityExtractionPrompt", "model-x", "templates", "who?", "en")
+    chain._cache_extraction(key, ("Depot",))
+    with usage.usage_scope() as meter:
+        assert chain._cached_extraction(key) == ("Depot",)
+    assert list(meter.snapshot()["by_model"]) == ["global.model-x"]
+
+
+def test_calls_that_never_settle_are_let_go(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(UsageCallbackHandler, "MAX_UNSETTLED", 2)
+    handler = UsageCallbackHandler("m", role="query")
+    with usage.usage_scope() as meter:
+        for _ in range(5):
+            handler.on_chat_model_start(
+                {}, [[HumanMessage(content="hello")]], run_id=uuid4()
+            )
+    assert len(handler._calls) == 2
+    assert meter.snapshot()["estimated_calls"] == 5

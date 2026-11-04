@@ -1280,7 +1280,11 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   index on its own, concurrently: the entities of its name
   (`compact_name_key`) seed the expansion, else its top hit when that scores
   at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
-  any query entity; the seeds share the expansion budget in proportion to
+  any query entity (`seed_floor`: on a hybrid search the ratio is read at
+  equal weights, where a hit only the kNN side found scores at most 0.5 of
+  one both found, and rescaled piecewise linearly so 0.5 lands on
+  `search.hybrid.vector_weight`, that hit's cap at any weights; a vector or
+  lexical search compares raw scores, where the floor separates less); the seeds share the expansion budget in proportion to
   their scores (`seed_shares`; Neptune walks the seeds of each share in a
   request of its own). One lookup of the joined names seeded a wrong
   neighbour beside every right seed on a synthetic multi-hop corpus. With
@@ -1330,8 +1334,13 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   the router (`search.auto_speculative_extraction`), so `auto`'s critical
   path is the router or the extraction, whichever is slower, then the
   strategy: two model round trips before retrieval became one. A routed
-  strategy never waits for an extraction it does not read, which is
-  cancelled when the query processing ends; we chose this over one router
+  strategy never waits for an extraction it does not read, nor does the
+  query: it keeps running in the background (`_BackgroundExtractions`),
+  uncancelled, so its result is cached, and its call counts in the query's
+  usage from its start (`estimated_calls` until it answers; cancelling it
+  saved nothing, since a cancelled task does not stop a request already
+  sent). It is cancelled at the query's deadline or when the chain closes.
+  We chose this over one router
   prompt that also returns entities and keywords because the router prompt
   and its decision stay byte-identical (no re-validation of the routing),
   `custom_prompts.strategy_selection_*` keeps working, and the router's

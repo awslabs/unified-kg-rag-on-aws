@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import (
+    _LEFTOVER_EXTRACTIONS,
     AnswerGenerationPrompt,
     ComprehensiveAnswerPrompt,
     EntityExtractionPrompt,
@@ -41,6 +42,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Config, LanguageModelId, SearchStrategy
 from unified_kg_rag.ports.model_factory import ceiled_output_tokens
+from unified_kg_rag.shared.utils.concurrency import discard
 
 pytestmark = pytest.mark.unit
 
@@ -192,15 +194,34 @@ async def test_the_route_is_the_same_with_and_without_speculation(raw: str) -> N
 async def test_an_unread_extraction_is_never_waited_for(
     route: str, reads: set[type]
 ) -> None:
+    # Handed to the query entry point (which leaves them running in the
+    # background), never cancelled here: their requests are sent and billed.
     factory = _Factory(route=route)
     unread = {EntityExtractionPrompt, KeywordsExtractionPrompt} - reads
     factory.hang = unread
-    state = await asyncio.wait_for(_route(_chain(_config(), factory)), 2)
+    leftovers: list[asyncio.Future[Any]] = []
+    token = _LEFTOVER_EXTRACTIONS.set(leftovers)
+    try:
+        state = await asyncio.wait_for(_route(_chain(_config(), factory)), 2)
+    finally:
+        _LEFTOVER_EXTRACTIONS.reset(token)
     assert state["resolved_strategy"] is SearchStrategy(route)
-    assert set(factory.cancelled) == unread
+    assert factory.cancelled == []
+    assert len(leftovers) == len(unread)
+    assert not any(task.done() for task in leftovers)
     processed = state["processed_query"]
     assert bool(processed.entities) is (EntityExtractionPrompt in reads)
     assert bool(processed.ll_keywords) is (KeywordsExtractionPrompt in reads)
+    await discard(leftovers)
+    assert set(factory.cancelled) == unread
+
+
+async def test_outside_a_query_entry_point_the_step_awaits_the_extraction() -> None:
+    factory = _Factory(route="global")
+    factory.latency[KeywordsExtractionPrompt] = 0.05
+    await _route(_chain(_config(), factory))
+    assert factory.cancelled == []
+    assert set(factory.finished) >= {EntityExtractionPrompt, KeywordsExtractionPrompt}
 
 
 async def test_a_speculative_extraction_that_answers_fills_the_cache() -> None:

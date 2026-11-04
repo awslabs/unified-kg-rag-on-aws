@@ -584,10 +584,10 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
   레코드에는 그 스팬의 `trace_id`와 `span_id`가 들어갑니다.
 - `capture_content: true`가 아니면 스팬에 질의 본문, 문단, 모델 출력이 들어가지 않습니다.
 
-모델 사용량은 추적을 켜든 끄든 셉니다. 팩터리가 만드는 모든 채팅 모델이 끝난 호출마다
+모델 사용량은 추적을 켜든 끄든 셉니다. 팩터리가 만드는 모든 채팅 모델이 호출마다
 응답이 알려 준 토큰 수를 그 호출을 한 질의나 수집 단계에 기록합니다.
 `RAGOutput.metadata["usage"]`(`SearchOutput.metadata["usage"]`도 같음)에는 질의의
-`llm_calls`, `input_tokens`, `output_tokens`, `cache_hits`와 같은 값을 `by_role`(모델 용도:
+`llm_calls`, `input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`와 같은 값을 `by_role`(모델 용도:
 `query`, `ingestion`, `evaluation`)과 `by_model`(팩터리가 확정한 모델 ID)별로 나눈 값이
 있습니다. `run-ingestion --output-format json`은 `token_usage`(이번 실행이 수행한 단계의 합계와
 `stages.<stage>`)를 보고하고, `--metrics-sink cloudwatch`는 단계별로 내보내며
@@ -595,8 +595,12 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
 실행별(`summary.usage`)로 기록합니다. 수집 응답 캐시가 돌려준 응답, 추출 저장소가 돌려준 청크
 경계 응답, 체인의 추출 캐시
 (`search.query_extraction_cache_size`)가 돌려준 질의 엔터티·키워드 추출은 호출이 아니라 캐시
-적중으로 세고, 실패한 호출은 세지 않으며 재시도는 셉니다. `stream` / `astream`은 텍스트만
-내보내므로 사용량을 보고하지 않습니다.
+적중으로 세고, 실패한 호출은 세지 않으며 재시도는 셉니다. 사용량을 읽을 때 아직 응답하지 않은
+호출(백그라운드에서 실행 중인 `auto` 질의의 미사용 추출)이나 `search.query_timeout_seconds`
+등으로 실행 중에 취소된 호출은 요청이 이미 전송되어 과금되므로 `llm_calls`와
+`estimated_calls`에 세고, 입력 토큰은 프롬프트로 추정하며 출력 토큰은 0으로 둡니다. 나중에
+응답한 호출은 `run-eval` 실행 사용량에서 실제 토큰으로 정산됩니다.
+`stream` / `astream`은 텍스트만 내보내므로 사용량을 보고하지 않습니다.
 
 Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.md#trace-shape)(모든
 스팬과 속성, 벤더 속성 이름, 알려진 제한), 전송 제한은 [운영 런북](./operations.md#observability)에
@@ -793,10 +797,10 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
 | `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
-| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. |
+| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. 하이브리드 검색에서는 이 비율을 가중치에 맞춰 환산하므로, 벡터 검색만 찾은 결과는 가중치와 상관없이 이름이 일치한 엔티티와 함께 시작점이 되지 않습니다. 벡터 검색은 원래 유사도 점수끼리 차이가 작아 이 필터가 덜 걸러 냅니다. |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
-| `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 후보 전략이 읽는 엔티티·키워드 추출과 질의 번역을 라우터와 동시에 실행하므로(`search.auto_speculative_extraction`), local이나 mix로 분기한 `auto`는 그 전략을 직접 고른 질의와 걸리는 시간이 같습니다. 분기한 전략이 읽지 않는 추출은 취소하거나 버립니다(기본 설정에서 질의마다 fast 모델 호출 1회, global로 분기하면 2회). |
+| `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 후보 전략이 읽는 엔티티·키워드 추출과 질의 번역을 라우터와 동시에 실행하므로(`search.auto_speculative_extraction`), local이나 mix로 분기한 `auto`는 그 전략을 직접 고른 질의와 걸리는 시간이 같습니다. 분기한 전략이 읽지 않는 추출도 백그라운드에서 계속 실행되고 과금됩니다(기본 설정에서 질의마다 fast 모델 호출 1회, global로 분기하면 2회). 질의는 이 추출을 기다리지 않고 반환하며, 시작 시점부터 질의 사용량에 넣습니다(실행 중이면 `estimated_calls`). 추출 결과는 추출 캐시를 채우고, `search.query_timeout_seconds`가 지나거나 체인을 닫으면 취소합니다. |
 
 **LightRAG(이중 레벨 키워드):**
 
@@ -841,7 +845,8 @@ global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 �
 (가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). null(기본값)은 컨텍스트 예산이
 허용하는 만큼 넣으며, 단면이 크면 global 질의 입력 토큰의 대부분을 차지합니다. `0`은 MS
 GraphRAG의 reduce 단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
-내용은 모델 출력이기 때문입니다).
+내용은 모델 출력이기 때문입니다). 그래서 `retrieval` 평가기는 global 질의의 순위 지표를 0점
+처리하지 않고 건너뜁니다(`no_sources_by_config`).
 
 ### 예시
 

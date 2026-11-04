@@ -637,10 +637,10 @@ with tracing off nothing OpenTelemetry-related is imported.
   `capture_content: true`.
 
 Model usage is counted with tracing on or off: every chat model the factories
-build records each finished call (the tokens its response reports) for the
-query or ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
+build records each call (the tokens its response reports) for the query or
+ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
-`input_tokens`, `output_tokens` and `cache_hits`, and the same counts
+`input_tokens`, `output_tokens`, `cache_hits` and `estimated_calls`, and the same counts
 `by_role` (the model's purpose: `query`, `ingestion`, `evaluation`) and
 `by_model` (the model id the factory resolved). `run-ingestion
 --output-format json` reports `token_usage` (the stages this run executed,
@@ -651,8 +651,12 @@ ingestion response cache served, a chunk-boundary answer the extraction
 store served, or a query entity or keyword extraction the chain's
 extraction cache served (`search.query_extraction_cache_size`), counts as
 a cache hit, not a call; a failed
-call is not counted; retries are. `stream` / `astream` yield text only and
-report no usage.
+call is not counted; retries are. A call that has not answered when the
+usage is read (an `auto` query's unread extraction, still running in the
+background) or was cancelled in flight (by `search.query_timeout_seconds`,
+say) was sent and is billed, so it counts in `llm_calls` and in
+`estimated_calls`, at an estimate of its input tokens and no output tokens;
+one that answers later is settled in `run-eval`'s run usage. `stream` / `astream` yield text only and report no usage.
 
 The [runbook](./operations.md#observability) has the Jaeger, Langfuse and
 Phoenix recipes, the [trace shape](./operations.md#trace-shape) (every span
@@ -870,10 +874,10 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 | Strategy | Use when | How it works |
 |---|---|---|
 | `simple` | Fast factual lookups | OpenSearch vector + keyword retrieval, no graph traversal; the claims index too when claims are on. Fastest. |
-| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one. |
+| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). |
 | `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
 | `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
-| `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read is cancelled or ignored (one fast-model call a query with the defaults, two when routed to global). |
+| `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read keeps running in the background and is billed (one fast-model call a query with the defaults, two when routed to global): the query does not wait for it, counts it in its usage from its start (`estimated_calls` while it runs), and it fills the extraction cache; it is cancelled at `search.query_timeout_seconds` or when the chain closes. |
 
 **LightRAG (dual-level keyword):**
 
@@ -923,7 +927,8 @@ text (whole reports, best point first): null (default) keeps as much as the
 context budget holds, which on a large cut is most of a global query's input
 tokens; `0` sends the key points only, as MS GraphRAG's reduce step reads
 them, and the answer then reports no sources (the key points are model
-output).
+output), so the `retrieval` evaluator skips its rank metrics for a global
+query (`no_sources_by_config`) instead of scoring a miss.
 
 ### Examples
 

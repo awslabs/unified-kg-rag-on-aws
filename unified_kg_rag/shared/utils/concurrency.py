@@ -104,6 +104,15 @@ async def discard(tasks: Sequence[asyncio.Future[Any]]) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def settle(tasks: Sequence[asyncio.Future[Any]], within: float | None) -> None:
+    """Wait for ``tasks`` to finish, at most ``within`` seconds (``None``: no
+    limit), then :func:`discard` the ones still running, ignoring how any
+    ended."""
+    if tasks:
+        await asyncio.wait(tasks, timeout=within)
+    await discard(tasks)
+
+
 @contextmanager
 def shut_down_after(executor: _E) -> Iterator[_E]:
     """Use ``executor`` for the enclosed block, then shut it down: waiting

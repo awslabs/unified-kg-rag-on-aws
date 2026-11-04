@@ -57,6 +57,7 @@ def _bare_strategy(
             local_search=SimpleNamespace(
                 entity_frequency_threshold=20, seed_score_ratio=0.6
             ),
+            hybrid=SimpleNamespace(lexical_weight=0.5, vector_weight=0.5),
             max_concurrency=4,
         ),
     )
@@ -326,6 +327,62 @@ async def test_find_candidate_entities_drops_a_weak_top_hit() -> None:
     ]
 
 
+@pytest.mark.parametrize(("lexical", "vector"), [(0.5, 0.5), (0.2, 0.8), (0.8, 0.2)])
+async def test_a_vector_only_hit_never_seeds_beside_a_name_match(
+    lexical: float, vector: float
+) -> None:
+    # A hybrid hit only the kNN search found fuses to at most vector_weight
+    # (here exactly: the top kNN hit), one both found to 1.0. A fixed 0.6
+    # floor let it seed at a 0.8 vector weight.
+    retriever = _ByQueryRetriever(
+        {
+            "Alvar": [_entity("e1", "Alvar", 1.0)],
+            "province": [_entity("e3", "Istrel", vector)],
+        }
+    )
+    strat = _bare_strategy(retrievers={"document": retriever})
+    strat.config.search.hybrid = SimpleNamespace(
+        lexical_weight=lexical, vector_weight=vector
+    )
+    query = SearchQuery(query="q", entity_focus=["Alvar", "province"])
+    assert _sources(await strat._find_candidate_entities(query)) == ["e1"]
+    # A lexical or vector search compares raw scores against the ratio.
+    for search_type in (SearchType.VECTOR, SearchType.LEXICAL):
+        raw = query.model_copy(update={"search_type": search_type})
+        expected = ["e1", "e3"] if vector >= 0.6 else ["e1"]
+        assert _sources(await strat._find_candidate_entities(raw)) == expected
+
+
+@pytest.mark.parametrize(
+    ("ratio", "vector", "floor"),
+    [
+        (0.6, 0.5, 0.6),  # equal weights: the ratio as is
+        (0.0, 0.8, 0.0),  # 0 keeps every top hit at any weights
+        (1.0, 0.2, 1.0),
+        (0.5, 0.8, 0.8),  # 0.5 lands on the vector-only cap
+        (0.6, 0.8, 0.84),
+        (0.6, 0.2, 0.36),
+        (0.25, 0.8, 0.4),
+    ],
+)
+def test_the_hybrid_seed_floor_is_read_at_equal_weights(
+    ratio: float, vector: float, floor: float
+) -> None:
+    assert LocalSearchStrategy.seed_floor(
+        ratio, SearchType.HYBRID, vector
+    ) == pytest.approx(floor)
+    assert LocalSearchStrategy.seed_floor(ratio, SearchType.VECTOR, vector) == ratio
+
+
+@pytest.mark.parametrize("vector", [0.0, 0.2, 0.5, 0.8, 1.0])
+@pytest.mark.parametrize("ratio", [0.51, 0.6, 0.9])
+def test_above_half_the_floor_clears_the_vector_only_cap(
+    ratio: float, vector: float
+) -> None:
+    floor = LocalSearchStrategy.seed_floor(ratio, SearchType.HYBRID, vector)
+    assert floor > vector or vector == 1.0
+
+
 async def test_retrieve_entity_chain_weights_the_seeds_by_score() -> None:
     strat = _bare_strategy()
     weights: list[dict[str, float] | None] = []
@@ -566,3 +623,26 @@ def test_a_seed_entity_node_keeps_its_attributes_and_the_first_hits_filters() ->
 
     assert kept[0].metadata["attributes"] == {"tier": "gold", "filters": first}
     assert kept[1] is nodes[1]
+
+
+def test_a_hybrid_search_without_its_lexical_side_warns_the_floor_is_inert(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.domain.models.config import _warn_seed_floor_inert
+
+    _warn_seed_floor_inert.cache_clear()
+    with caplog.at_level("WARNING"):
+        Config(search={"hybrid": {"lexical_weight": 0.5, "vector_weight": 0.5}})
+        assert "seed_score_ratio" not in caplog.text
+        Config(search={"hybrid": {"lexical_weight": 0.0, "vector_weight": 1.0}})
+        assert "has no effect on a hybrid search" in caplog.text
+        caplog.clear()
+        _warn_seed_floor_inert.cache_clear()
+        Config(
+            search={
+                "hybrid": {"lexical_weight": 0.0, "vector_weight": 1.0},
+                "local_search": {"seed_score_ratio": 0.0},
+            }
+        )
+        assert "seed_score_ratio" not in caplog.text
