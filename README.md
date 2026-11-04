@@ -115,7 +115,7 @@ Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.m
 | You are | Start with |
 |---|---|
 | **First-time evaluator** (no AWS) | [Getting started locally](./docs/getting-started/local.md), then the [Overview](./docs/concepts/overview.md) |
-| **Builder on AWS** | [Getting started on AWS](./docs/getting-started/aws.md) and the [User Guide](./docs/user-guide.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
+| **Builder on AWS** | [Getting started on AWS](./docs/getting-started/aws.md), then [Configuration](./docs/guides/configure.md), [Ingestion](./docs/guides/ingest.md) and [Querying](./docs/guides/query.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
 | **Operator** | The [Operator Runbook](./docs/operations.md) and [`iac/README.md`](./iac/README.md) |
 | **Evaluator or researcher** | [Evaluation](./docs/guides/evaluate.md), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
 | **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |

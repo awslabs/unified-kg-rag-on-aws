@@ -128,14 +128,50 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
 
 ## 제한 사항
 
-주요 제한 사항을 짧게 정리하면 다음과 같습니다.
-
-- 추출 과정에서 엔티티나 관계를 지어낼 수 있고, LLM 출력이 매번 달라 실행 결과를 그대로
-  재현할 수 없습니다. 설정은 여러 번 실행해 비교하세요.
-- 서빙 계층(HTTP API, 최종 사용자 인증, 요청 속도 제한)이 없고, 필터는 접근 제어가
-  아닙니다. 테넌트는 인덱스 접미사로 나누세요.
-- 증분 인덱싱은 주기적으로 재구축하기 전까지 커뮤니티를 전체 구축과 근사하게만 맞추며,
-  동시 실행에는 레지스트리의 쓰기 임대(lease)가 필요합니다.
-- 수집을 가볍게 하면(커뮤니티 없음, 관계 인덱스 없음) 실행할 수 있는 전략이 줄어듭니다.
-
-전체 목록은 [사용자 가이드 §12](../user-guide.ko.md#12-제한-사항)에 있습니다.
+- **추출 단계에서 환각이 생길 수 있습니다.** 원문이 뒷받침하지 않는 엔티티나 관계가
+  만들어져 검색까지 이어질 수 있습니다.
+  `processing.graph_extraction.entity_grounding.enabled`(기본은 꺼짐)는 인용한
+  `source_text`가 청크에 없는 항목을 버리거나 가중치를 낮춥니다.
+- **실행 결과를 재현할 수 없습니다.** LLM 출력(추출, 리포트, `auto` 라우터, 답변)은
+  달라지므로 설정은 여러 번 실행해 비교하세요. 모델 응답과 소스 범위가 같으면 나머지
+  처리는 어느 프로세스에서든(`PYTHONHASHSEED`와 관계없이) 결정적입니다. 문서 상태
+  레지스트리를 켜면 텍스트 단위 ID가 소스 범위에서 나오며, 소스 범위의 기본값은 소스
+  디렉터리의 절대 경로이므로 같은 코퍼스도 다른 디렉터리에서 수집하면 ID가 달라집니다.
+  코퍼스 위치와 관계없는 ID가 필요하면 `processing.document_parsing.source_scope`를
+  설정하세요.
+- **서빙 계층이 없습니다.** HTTP API, 최종 사용자 인증, 요청 속도 제한은 없습니다.
+- **필터는 접근 제어가 아닙니다**
+  ([범위와 네임스페이스](./scopes-and-namespaces.ko.md#접근-제어-경계가-아님)).
+  테넌트는 인덱스 접미사로 분리하세요.
+- **기본 제공 백엔드.** 모델: Bedrock(기본값), Ollama, OpenAI 호환 서버. 재순위화:
+  Bedrock이나 sentence-transformers 크로스 인코더([Local mode](../guides/local-mode.md), 영문).
+  저장소: Neptune(또는 Gremlin Server)과 OpenSearch, 또는 내장 SQLite 저장소(호스트 한
+  대, 인덱스당 문서 약 100,000개). 그 밖의 것은 `register_provider` 빌더나 사용자 정의
+  어댑터가 필요합니다([설계 문서 §15](../design.md#15-extension-guide), 영문).
+- **재순위화는 리전에 따라 다릅니다**([필수 모델](../getting-started/aws.ko.md#필수-모델)). 없으면 융합 순서를 쓰며,
+  `metadata.rerank`에 나타납니다([재순위화 상태](../guides/query.ko.md#재순위화-상태)).
+- **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티 탐지를 끄면
+  (`graph.community_detection.enabled: false`) `global`과 `drift`가 쓸 리포트가 없고,
+  관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
+  `mix`와 `hybrid`가 고수준 키워드를, `local`이 관계 섹션을 쓰지 못하고, 문서 필터가 걸린 그래프
+  확장은 엔티티에 닿는 관계가 아니라 엔티티 인덱스 확인만으로 엔티티를 남깁니다.
+- **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너 이미지에는 기본으로
+  빠져 있습니다([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed), 영문).
+- **증분 인덱싱은 전체 구축의 근사치입니다**([재구축 신호](../guides/incremental.ko.md#재구축-신호)). 증분 실행은 다시 군집화하지 않고 커뮤니티를
+  덧붙이며, 엔티티가 현재 이름의 id를 받은 뒤에도 저장된 커뮤니티와 리포트에는 이전
+  id가 남습니다. 둘 다 전체 재구축(`indexing.reset: true`)으로 갱신됩니다. DynamoDB에서는
+  문서 하나의 청크 ID가 400KB 항목 하나에 들어가야 합니다([*문서 크기 한도*](../guides/incremental.ko.md#문서-크기-한도)).
+- **동시 실행에는 레지스트리가 필요합니다.** 레지스트리의 쓰기 임대(lease)가 한
+  네임스페이스의 두 번째 실행을 멈춥니다. 레지스트리가 없거나 `IncrementalIndexer`
+  API를 직접 쓰면 잠그는 장치가 없어, 같은 접미사의 수집 두 개가 서로의 인덱스를 지울
+  수 있습니다([동시 실행](../operations.md#concurrent-runs), 영문).
+- **태스크를 죽이는 문서를 가려내려면 여러 번 실행해야 합니다**([*격리된 문서*](../guides/incremental.ko.md#격리된-문서)). 함께
+  죽은 문서 `n`개 가운데 원인 문서 하나에 대략 `log2(n) + 1`번이 걸리고, 그동안 미룬
+  문서는 기다립니다.
+- **임베딩 모델(또는 차원)을 바꾸면** `indexing.reset: true`가 필요합니다. 증분 실행은
+  다른 모델의 인덱스에 쓰지 않습니다([작업 흐름](../guides/incremental.ko.md#작업-흐름)).
+- **시드 그래프는 이름으로만 이어집니다**
+  ([Seed graphs: Precedence](../guides/seed-graphs.md#precedence-documents-decide), 영문).
+  시드 노드와 이름이 같은 관계없는 문서 엔티티는 한 엔티티가 됩니다. IRI는 저장하고
+  필터로 쓸 수 있지만 정체성이 아니며, `owl:sameAs`는 따라가지 않고 아무것도 추론하지
+  않습니다.

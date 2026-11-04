@@ -109,12 +109,12 @@ CLI마다의 가이드는 [문서 안내](./docs/index.ko.md)에(평가 데이�
 
 ## 문서 안내
 
-[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의·증분 인덱싱·도메인 적응·평가 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
+[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의·증분 인덱싱·도메인 적응·평가 가이드와 옮긴 절 목록인 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
 
 | 독자 | 시작할 문서 |
 |---|---|
 | **처음 써 보는 평가자**(AWS 없이) | [로컬에서 시작하기](./docs/getting-started/local.ko.md), 다음으로 [개요](./docs/concepts/overview.ko.md) |
-| **AWS에서 구축하는 개발자** | [AWS에서 시작하기](./docs/getting-started/aws.ko.md)와 [사용자 가이드](./docs/user-guide.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
+| **AWS에서 구축하는 개발자** | [AWS에서 시작하기](./docs/getting-started/aws.ko.md), 이어서 [설정](./docs/guides/configure.ko.md), [수집](./docs/guides/ingest.ko.md), [질의](./docs/guides/query.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
 | **운영자** | [운영 런북](./docs/operations.md)과 [`iac/README.md`](./iac/README.md)(영문) |
 | **평가자·연구자** | [평가](./docs/guides/evaluate.ko.md), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
 | **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/design.md#15-extension-guide)(영문) |

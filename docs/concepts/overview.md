@@ -149,16 +149,60 @@ purpose:
 
 ## Limitations
 
-The main ones, in short:
-
-- Extraction can hallucinate entities or relationships, and LLM outputs make
-  runs non-reproducible; compare configurations over several runs.
-- There is no serving layer (no HTTP API, end-user authentication or rate
-  limiting), and filters are not access control: separate tenants by index
-  suffix.
-- Incremental indexing approximates a full build for communities until a
-  periodic rebuild, and concurrent runs need the registry's lease.
-- A lighter ingestion (no communities, no relationship index) limits the
-  strategies that can run.
-
-The full list: [User Guide §12](../user-guide.md#12-limitations).
+- **Extraction can hallucinate** entities or relationships the text does not
+  support, which then reach retrieval.
+  `processing.graph_extraction.entity_grounding.enabled` (off by default)
+  drops or down-weights items whose quoted `source_text` is not in the chunk.
+- **Runs are not reproducible**: LLM outputs (extraction, reports, the
+  `auto` router, answers) vary, so compare configurations over several runs.
+  Given the same model responses and the same source scope, everything else
+  is deterministic in any process, whatever its `PYTHONHASHSEED`. With the
+  doc-status registry on, text-unit ids derive from the source scope, which
+  defaults to the absolute source directory: the same corpus ingested from
+  another directory gets other ids. Set
+  `processing.document_parsing.source_scope` for ids that do not depend on
+  where the corpus sits.
+- **No serving layer**: no HTTP API, end-user authentication or rate limiting.
+- **Filters are not access control**
+  ([Scopes and namespaces](./scopes-and-namespaces.md#not-an-access-control-boundary)):
+  separate tenants by index suffix.
+- **Shipped backends.** Models: Bedrock (default), Ollama or
+  OpenAI-compatible servers; reranking: Bedrock or a sentence-transformers
+  cross-encoder ([Local mode](../guides/local-mode.md)). Stores: Neptune (or a
+  Gremlin Server) with OpenSearch, or the embedded SQLite stores (one host,
+  about 100,000 documents per index). Others need a `register_provider`
+  builder or custom adapters ([Design Doc §15](../design.md#15-extension-guide)).
+- **Reranking is regional** ([Required models](../getting-started/aws.md#required-models)); without it
+  results keep the fusion order, as `metadata.rerank` shows
+  ([Rerank status](../guides/query.md#rerank-status)).
+- **A lighter ingestion limits the strategies.** Without community detection
+  (`graph.community_detection.enabled: false`) `global` and `drift` have no
+  reports; without the relationship vector index
+  (`indexing.opensearch.build_relationship_vector_index: false`) `mix` and
+  `hybrid` lose high-level keywords, `local` its relationship section, and
+  graph expansion under a document filter keeps entities on the
+  entities-index check alone, not on the relationships that reach them.
+- **Markdown and HTML** need the `unstructured` extra, which the container
+  image leaves out by default
+  ([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed)).
+- **Incremental indexing approximates** a full build
+  ([Rebuild signals](../guides/incremental.md#rebuild-signals)): delta runs append communities
+  instead of re-clustering, and stored communities and reports keep an
+  entity's old id after it took its current name's; a full rebuild
+  (`indexing.reset: true`) refreshes both. With DynamoDB one document's chunk
+  ids must fit one 400 KB item ([*Document size limit*](../guides/incremental.md#document-size-limit)).
+- **Concurrent runs need the registry**, whose write lease stops a second run
+  on a namespace; without it (or through the direct `IncrementalIndexer` API)
+  nothing locks, and two ingestions on one suffix can delete each other's
+  index ([Concurrent runs](../operations.md#concurrent-runs)).
+- **Isolating a document that kills the task takes runs**
+  ([*Quarantined documents*](../guides/incremental.md#quarantined-documents)): about `log2(n) + 1` for one culprit among `n` documents that
+  died together, while the deferred ones wait.
+- **Changing the embedding model** or dimension needs `indexing.reset: true`;
+  an incremental run refuses to write into another model's indices
+  ([Workflows](../guides/incremental.md#workflows)).
+- **Seed graphs link by name only**
+  ([Seed graphs: Precedence](../guides/seed-graphs.md#precedence-documents-decide)):
+  a seed node and an unrelated document entity of the same name are one
+  entity. IRIs are stored and filterable but are no identity, `owl:sameAs`
+  is not followed, and nothing is inferred.

@@ -513,7 +513,7 @@ The container's exit code is `run-eval`'s: `1` when the failure budget is
 exceeded, the dataset cannot be downloaded or a result fails to upload; `2`
 for a usage or configuration error; `143` when the task is stopped (the
 finished runs' results are still uploaded). See
-[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output); what
+[exit codes](../docs/reference/exit-codes-and-json.md); what
 the result files hold: [Evaluation output](../docs/reference/evaluation-output.md).
 
 ## CloudWatch tracing (optional)
