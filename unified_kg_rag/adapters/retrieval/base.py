@@ -26,10 +26,13 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     TokenManager,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    SOURCE_KINDS,
+    SOURCE_KINDS_FIELD,
     FilterFields,
     IndexLimits,
     document_filters,
     opensearch_filter_fields,
+    source_kinds_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
@@ -1500,6 +1503,25 @@ class BaseSearchStrategy(ABC):
                 values = value if isinstance(value, list) else [value]
                 ids.update(dict.fromkeys(str(v) for v in values))
         return list(ids)
+
+    @staticmethod
+    def _source_kinds_skip_reports(query: SearchQuery) -> bool:
+        """Whether ``query`` filters ``source_kinds`` to fewer than every
+        kind, which a community report cannot honour.
+
+        A report carries no ``source_kinds``: it summarizes a community of
+        entities, seed-only ones included, so under ``source_kinds:
+        document`` it would bring seed-only facts into the answer (and
+        under ``seed_graph`` document-only ones). The reports index does not
+        declare the key, so the retriever would drop it there instead of
+        filtering: local and DRIFT read no report then (``global``, which
+        reads nothing else, refuses the key).
+        """
+        value = (query.filters or {}).get(SOURCE_KINDS_FIELD)
+        if value is None:
+            return False
+        kinds = {str(kind).strip().lower() for kind in source_kinds_values(value)}
+        return not SOURCE_KINDS <= kinds
 
     @staticmethod
     def _scoped_filters(query: SearchQuery, **scope: Any) -> dict[str, Any] | None:

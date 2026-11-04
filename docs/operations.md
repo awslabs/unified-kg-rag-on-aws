@@ -1146,25 +1146,28 @@ same counts in `token_usage`:
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), and chunk-boundary answers the extraction store served, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
-`InputTokenCount` / `OutputTokenCount` metrics of the `AWS/Bedrock`
-namespace for its models over the run's window (other callers of the same
-models in the account and region count there too). `InputTokenCount`
-excludes the prompt-cache tokens, which Bedrock reports as
-`CacheReadInputTokenCount` / `CacheWriteInputTokenCount`; the app's input
-tokens include them, and `token_usage` has them apart
-(`cache_read_input_tokens`, `cache_write_input_tokens`). `Invocations`
-counts every request Bedrock accepted, those that later failed included,
-and not throttled ones, while `llm_calls` counts each returned call once:
-a call botocore resent after a read timeout or a server error is one call
-but several invocations (`request_retries` in `token_usage`), a call that
-failed in the end is in `failed_calls` only, and calls made outside a usage
-scope (the `run-eval` warm-up queries, scripts) are not counted. In the
-package's November 2026 benchmark runs Bedrock counted 13% more Sonnet 5.5
-invocations than recorded calls while the tokens agreed within 4.6%
-(input, cache included) and 0.9% (output), which points to resent and
-failed requests that spent few tokens; those runs predate
-`request_retries` and `failed_calls`, so the split was not measured. Haiku
-5.5 agreed within 0.2%.
+metrics of the `AWS/Bedrock` namespace for its models over the run's window
+(other callers of the same models in the account and region count there
+too): `llm_output_tokens_<stage>` with `OutputTokenCount`, and
+`llm_input_tokens_<stage>` with `InputTokenCount` +
+`CacheReadInputTokenCount` + `CacheWriteInputTokenCount`. The app's input
+tokens include the prompt-cache reads and writes, which Bedrock reports
+apart from `InputTokenCount` (`token_usage` has them apart too:
+`cache_read_input_tokens`, `cache_write_input_tokens`), so with prompt
+caching on `InputTokenCount` alone falls well short: about half of the
+input on a run whose calls share a long prompt prefix. Calls compare less
+exactly. `Invocations` counts every request Bedrock accepted, those that
+later failed included, and not throttled ones, while `llm_calls` counts
+each returned call once: a call botocore resent after a read timeout or a
+server error is one call but several invocations (`request_retries` in
+`token_usage`), a call that failed in the end is in `failed_calls` only,
+and calls made outside a usage scope (the `run-eval` warm-up queries,
+scripts) are not counted. In the package's November 2026 benchmark runs
+Bedrock counted 13% more Sonnet 5.5 invocations than recorded calls while
+the tokens agreed within 4.6% (input, cache included) and 0.9% (output),
+which points to resent and failed requests that spent few tokens; those
+runs predate `request_retries` and `failed_calls`, so the split was not
+measured. Haiku 5.5 agreed within 0.2%.
 
 ## Query deadlines and model timeouts
 

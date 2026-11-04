@@ -919,6 +919,14 @@ def _sources_named(out: RAGOutput, names: set[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _reports(out: RAGOutput) -> list[str]:
+    return [
+        str(result.source)
+        for result in out.search_results.results
+        if result.retriever_type == "community"
+    ]
+
+
 def _assert_no_seed_text(out: RAGOutput, strategy: SearchStrategy) -> None:
     """No seed unit reached a TEXT section, its sources or the answer prompt."""
     for result in out.search_results.results:
@@ -975,17 +983,28 @@ def test_seed_facts_are_retrieved_and_cited_but_never_as_text(
                 if source["metadata"].get("name") in {"Buyer", "Depot"}:
                     assert "provenance" not in source["metadata"]
 
-        # source_kinds: document keeps what documents state only.
-        out = chain.invoke(
+        # source_kinds: document keeps what documents state only. A community
+        # report carries no source kind and may summarize seed-only members,
+        # so local and DRIFT read none under the filter.
+        unfiltered = chain.invoke(
             RAGInput(
                 query="Who stores the gadgets for Vendor?",
                 search_strategy=SearchStrategy.LOCAL,
-                filters={"source_kinds": "document"},
             )
         )
-        assert out.sources
-        assert _sources_named(out, SEED_ONLY) == []
-        _assert_no_seed_text(out, SearchStrategy.LOCAL)
+        assert _reports(unfiltered)
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.DRIFT):
+            out = chain.invoke(
+                RAGInput(
+                    query="Who stores the gadgets for Vendor?",
+                    search_strategy=strategy,
+                    filters={"source_kinds": "document"},
+                )
+            )
+            assert out.sources, strategy
+            assert _sources_named(out, SEED_ONLY) == [], strategy
+            assert _reports(out) == [], strategy
+            _assert_no_seed_text(out, strategy)
     finally:
         chain.close()
     # The answer prompts held no seed statement either.

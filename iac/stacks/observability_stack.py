@@ -391,17 +391,23 @@ class ObservabilityStack(Stack):
                 right=[self._emf("llm_cache_hits")],
             ),
         )
+        # One Metrics Insights query per widget: GetMetricWidgetImage (the
+        # API that renders a widget to a PNG, e.g. for a report) refuses a
+        # widget holding two ("Maximum number of queries (1) exceeded").
         dashboard.add_widgets(
             cw.GraphWidget(
-                title="Bedrock invocations and throttles (all models)",
+                title="Bedrock invocations by model",
                 left=[
                     self._insights(
                         'SELECT SUM(Invocations) FROM SCHEMA("AWS/Bedrock", ModelId)'
                         " GROUP BY ModelId",
                         "Invocations",
-                    ),
-                    self._insights(BEDROCK_THROTTLES, "Throttles"),
+                    )
                 ],
+            ),
+            cw.GraphWidget(
+                title="Bedrock throttles (all models)",
+                left=[self._insights(BEDROCK_THROTTLES, "Throttles")],
             ),
             cw.GraphWidget(
                 title="Bedrock invocation latency by model (ms, average)",

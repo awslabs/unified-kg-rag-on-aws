@@ -93,6 +93,22 @@ class OrchestrationStack(Stack):
             topic_name=f"{config.prefix}-pipeline-alarms",
             master_key=self.topic_key,
         )
+        # The first add_to_resource_policy creates an AWS::SNS::TopicPolicy
+        # that REPLACES the topic's default policy, so a policy holding only
+        # the TLS Deny leaves CloudWatch alarms (a service principal) without
+        # an Allow and every alarm action fails with "not authorized to
+        # perform: SNS:Publish". The Step Functions role is an IAM principal
+        # of this account: its identity policy (SnsPublish grants it) is
+        # enough, and the topic policy needs no statement for it.
+        self.alarm_topic.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudWatchAlarmsToPublish",
+                principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
+                actions=["sns:Publish"],
+                resources=[self.alarm_topic.topic_arn],
+                conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+            )
+        )
         # Require TLS for all publishers (defense in depth).
         self.alarm_topic.add_to_resource_policy(
             iam.PolicyStatement(

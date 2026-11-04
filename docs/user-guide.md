@@ -124,10 +124,18 @@ fixes URL-partitioning SSRF and unescaped markup). Without it, only `.pdf`,
 `.txt`, `.csv` and `.json` are parsed and ingestion skips `.md` / `.html` files with one warning
 per extension.
 
+The extra tokenizes with a spaCy model (`en_core_web_sm`) that it downloads
+from GitHub at the first Markdown or HTML file. Without network access,
+install it beforehand, once, where the network is reachable:
+`python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
+Otherwise the first such file waits up to 120 s and fails, and every later
+one of the run fails at once with the same error.
+
 The deployed image (`docker/Dockerfile`) leaves the extra out (it adds about
 200 MB), so a Step Functions ingest of `.md` / `.html` files fails with "No
 supported files found": convert the files, or build with
-`--build-arg UV_EXTRAS="--extra unstructured"`. The image's
+`--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the spaCy
+model in the image (a task in the private VPC cannot download it). The image's
 `docker/config.yaml` holds no endpoints; the CDK compute stack injects them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra
@@ -811,8 +819,10 @@ prompt plus the model id, max tokens, temperature and reasoning.
 Every index and graph label of a corpus is named `<prefix>-<suffix>`
 (plus `-<additional_suffix>` with `indexing.additional_suffix`); `<suffix>` is
 the **index suffix**. Ingestion takes it from
-`processing.document_parsing.index_value` (no flag); queries select it with `--suffix` (`RAGInput.suffix` in Python).
-Both default to `default`. Use one index suffix, and one config file, per
+`processing.document_parsing.index_value` (no flag); `run-rag` and `run-eval`
+query the same `index_value` of their config unless `--suffix` names another,
+and in Python `RAGInput.suffix` selects it (the chain does not read
+`index_value`). All default to `default`. Use one index suffix, and one config file, per
 tenant or corpus version, with the same `indexing.additional_suffix` on both
 sides; incremental indexing and deletion are scoped to it (§5).
 
@@ -3125,7 +3135,11 @@ reach those strategies through the communities documents also state.
   - `source_kinds` (entities, relationships, Neptune entity vertices):
     `seed_graph` keeps what a seed states, `document` what a document
     states (also an entity both state, with its seed description lines);
-    a list matches either. Any case.
+    a list matches either. Any case. A community report carries no source
+    kind and summarizes every member of its community, seed-only ones
+    included, so under a filter that keeps one kind `local` and `drift` read
+    no report (DRIFT then runs one local search on the question itself) and
+    `global`, which reads reports only, refuses the key.
   - `iri` (entities, Neptune entity vertices): the exact IRI.
   - `attr_seed_graph: procure` keeps what that seed states, through the
     document filters every index carries. A tenant filter such as

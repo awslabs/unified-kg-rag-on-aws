@@ -1339,8 +1339,9 @@ class DocumentParsingConfig(BaseModel):
         default=None,
         description=(
             "Index suffix the run writes: every OpenSearch index and Neptune "
-            "label is named <prefix>-<index_value>. null = 'default'. Query "
-            "the corpus with the same value as run-rag / run-eval --suffix. "
+            "label is named <prefix>-<index_value>. null = 'default'. run-rag "
+            "and run-eval query it too unless --suffix names another "
+            "(RAGInput.suffix in Python, which does not read it). "
             "run-ingestion has no flag for it: use one config file per tenant "
             "or corpus version. Lowercase letters, digits, '-' and '_'."
         ),
@@ -3092,7 +3093,8 @@ class IndexingConfig(BaseModel):
             "Appended after the run's suffix in every OpenSearch index name "
             "and Neptune label (<prefix>-<suffix>-<additional_suffix>; the "
             "suffix is processing.document_parsing.index_value at ingestion "
-            "and --suffix at query time, both 'default' when unset). Set it "
+            "and --suffix at query time, else index_value too, all 'default' "
+            "when unset). Set it "
             "identically for ingestion and queries, for versioned or "
             "multi-tenant separation. Lowercase letters, digits, '-' and '_'."
         ),

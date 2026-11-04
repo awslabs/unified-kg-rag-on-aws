@@ -1232,6 +1232,45 @@ def _through_handler(exc: Exception) -> Exception:
     raise AssertionError("the handler did not raise")
 
 
+_UNKNOWN_MODE_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "mapper_parsing_exception",
+                "reason": "unknown parameter [mode] on mapper [text_embedding] "
+                "of type [knn_vector]",
+            }
+        ],
+        "type": "mapper_parsing_exception",
+        "reason": "unknown parameter [mode] on mapper [text_embedding] of type "
+        "[knn_vector]",
+    },
+    "status": 400,
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "traceback"),
+    [
+        (400, _UNKNOWN_MODE_BODY, False),
+        (500, {"error": {"type": "x", "reason": "node failed"}}, True),
+    ],
+    ids=["rejected", "server-error"],
+)
+def test_a_rejected_request_is_logged_without_its_traceback(
+    caplog: pytest.LogCaptureFixture, status: int, body: dict, traceback: bool
+) -> None:
+    # The on_disk refusal of OpenSearch 2.13 logged an ERROR traceback of the
+    # client's frames before the message naming the fix.
+    exc = _server_error(RequestsHttpConnection, status, body)
+    with caplog.at_level(logging.ERROR, logger="unified_kg_rag.adapters.aws"):
+        _through_handler(exc)
+    (record,) = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert "Transport error in 'search'" in record.getMessage()
+    assert "unknown parameter [mode]" in record.getMessage() or status != 400
+    assert bool(record.exc_info) is traceback
+
+
 _NO_SUCH_INDEX_BODY = {
     "error": {
         "root_cause": [

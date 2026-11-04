@@ -59,6 +59,9 @@ def test_skipped_files_are_warned_once_with_counts_and_remedies(
     assert "2 '.md'" in warning and "1 '.html'" in warning and "1 '.docx'" in warning
     assert "for .html, .md, install the optional 'unstructured' extra" in warning
     assert "uv sync --extra unstructured" in warning
+    # An image needs the build argument, which also bakes in the spaCy model.
+    assert '--build-arg UV_EXTRAS="--extra unstructured"' in warning
+    assert "spaCy model" in warning
     assert "for .docx, convert them" in warning
     assert "keeps what they indexed before" in warning
 

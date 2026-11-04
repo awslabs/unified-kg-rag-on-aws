@@ -34,7 +34,11 @@ UNSTRUCTURED_EXTENSIONS = frozenset({".htm", ".html", ".markdown", ".md"})
 UNSTRUCTURED_INSTALL_HINT = (
     "install the optional 'unstructured' extra: "
     "`uv sync --extra unstructured` or "
-    "`pip install -e '.[unstructured]'` in a source checkout"
+    "`pip install -e '.[unstructured]'` in a source checkout (the "
+    "docker/Dockerfile image: build with "
+    '`--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the '
+    "spaCy model unstructured would otherwise download from GitHub at the "
+    "first file, out of reach of a private VPC)"
 )
 
 

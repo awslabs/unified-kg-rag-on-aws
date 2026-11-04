@@ -373,7 +373,10 @@ docker push "$REGISTRY/graphrag-app:latest"
   so a pushed image cannot be swapped under the running task definition.
 - Extras: the image always installs `eval` (the `run-eval` judges of the
   query task). Add `--build-arg UV_EXTRAS="--extra unstructured"` to parse
-  `.md` / `.html` files, `--extra otel` with `enable_cloudwatch_tracing`,
+  `.md` / `.html` files (the build then also installs the spaCy model
+  `en_core_web_sm` the extra needs, which a task in the private VPC could
+  not download: without it each such file waited 120 s and failed),
+  `--extra otel` with `enable_cloudwatch_tracing`,
   `--extra ontology` for a `schema_source.kind: owl` config
   ([Ontology schema in the image](../docs/operations.md#ontology-schema-in-the-image));
   several go in one argument (`"--extra otel --extra unstructured"`).

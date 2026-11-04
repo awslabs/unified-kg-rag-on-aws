@@ -331,8 +331,8 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 **Index suffix.** Every OpenSearch index and Neptune label is named
 `<prefix>-<suffix>[-<additional_suffix>]`: ingestion writes
 `processing.document_parsing.index_value`, queries select `RAGInput.suffix`
-(`--suffix`), both `default` when unset; one suffix per tenant or corpus
-version.
+(`run-rag` / `run-eval`: `--suffix`, else the config's `index_value`), all
+`default` when unset; one suffix per tenant or corpus version.
 
 **Display names and identity keys.**
 
@@ -1268,7 +1268,13 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   document evidence, items without the field included (OpenSearch
   `should[term, must_not exists]`, Gremlin `or(has, hasNot)`, the SQLite
   vertex filter alike), and is dropped on an index none of whose
-  documents holds the field, where it filters nothing. A reported source
+  documents holds the field, where it filters nothing. Community reports
+  carry no source kind (a report summarizes its members, seed-only ones
+  included; deriving one from the members would go stale whenever a seed
+  edit changes a member's kinds without regenerating the report), so a
+  `source_kinds` filter keeping one kind skips them in `local` and the DRIFT
+  primer (`BaseSearchStrategy._source_kinds_skip_reports`), and `global`
+  refuses the key (no index it reads declares it). A reported source
   with seed evidence gets `provenance` (`rag_chain.seed_provenance`:
   kind, the seed graphs its document filters name, the entity IRI);
   graph expansion projects a vertex's `iri` and `source_kinds` (kept a

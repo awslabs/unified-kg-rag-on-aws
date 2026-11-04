@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import csv
 import importlib
+import importlib.util
+import threading
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +34,8 @@ from typing import Any, Literal
 
 from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document as LangChainDocument
+
+from unified_kg_rag.shared.exceptions import DataProcessingError
 
 
 class TextFileLoader(BaseLoader):
@@ -163,6 +167,56 @@ def _pdf_metadata(raw: dict[str, Any]) -> dict[str, Any]:
 
 PartitionFormat = Literal["html", "md"]
 
+# The spaCy model unstructured's partitioners tokenize with. When it is not
+# installed, unstructured downloads it from GitHub on first use, waiting up to
+# 120 s, and tries again for every file: with no network (a private VPC) each
+# Markdown or HTML file waited that long and failed alike. The image bakes it
+# in (docker/Dockerfile); elsewhere the first failure is kept for the process
+# and every later file fails at once with it.
+SPACY_MODEL = "en_core_web_sm"
+SPACY_MODEL_INSTALL = (
+    'python -c "from unstructured.nlp.tokenize import sent_tokenize; '
+    "sent_tokenize('Ready.')\" (once, with network access; docker/Dockerfile "
+    "does it at build time with the unstructured extra)"
+)
+_spacy_lock = threading.Lock()
+# None until checked, then "" when the model is installed, else why it is not.
+_spacy_problem: str | None = None
+
+
+def require_spacy_model() -> None:
+    """Make sure the spaCy model unstructured needs is installed, downloading
+    it once (unstructured's own download) when it is not.
+
+    Raises:
+        DataProcessingError: The model is not installed and could not be
+            installed; raised at once for every later call of the process.
+    """
+    global _spacy_problem
+    with _spacy_lock:
+        if _spacy_problem is None:
+            _spacy_problem = _spacy_model_problem()
+        problem = _spacy_problem
+    if problem:
+        raise DataProcessingError(problem)
+
+
+def _spacy_model_problem() -> str:
+    """Why the spaCy model is not installed and could not be, or an empty
+    string once it is (downloaded now when it was not)."""
+    if importlib.util.find_spec(SPACY_MODEL) is not None:
+        return ""
+    try:
+        tokenize = importlib.import_module("unstructured.nlp.tokenize")
+        tokenize.sent_tokenize("Ready.")
+    except (OSError, RuntimeError) as exc:
+        return (
+            f"the spaCy model {SPACY_MODEL} that unstructured parses Markdown "
+            f"and HTML with is not installed and could not be downloaded "
+            f"({exc}); install it with {SPACY_MODEL_INSTALL}"
+        )
+    return ""
+
 
 class UnstructuredPartitionLoader(BaseLoader):
     """Load a Markdown or HTML file as one document with ``unstructured``.
@@ -181,6 +235,7 @@ class UnstructuredPartitionLoader(BaseLoader):
 
     def lazy_load(self) -> Iterator[LangChainDocument]:
         module = importlib.import_module(f"unstructured.partition.{self.partition}")
+        require_spacy_model()
         partition = getattr(module, f"partition_{self.partition}")
         elements = partition(filename=str(self.file_path))
         yield LangChainDocument(
