@@ -603,6 +603,19 @@ From 0.2.3 (or a `main` checkout since):
     in `answers_without_usage` / `answers_without_latency`, and a `--fail-if`
     on a `usage/*` or `latency/*` measure fails for them, so run them again
     to compare cost (#526, #529).
+14. A deployed CDK stack (0.2.3 or a `main` checkout): the ingestion task
+    definition moved from `GraphRagCompute` to `GraphRagOrchestration`. Run
+    `cdk deploy GraphRagOrchestration --exclusively` once, with the deploy's
+    usual `-c` flags (the new `image_tag` included), then `cdk deploy
+    --all`. The first deploy creates the task definition in the
+    orchestration stack and points the state machine at it, so the compute
+    stack's old one is no longer imported and the second deploy removes it.
+    A plain `cdk deploy --all` stops at `GraphRagCompute` (`Cannot delete
+    export ... as it is in use by GraphRagOrchestration`) and rolls that
+    stack back with nothing changed. The ingestion task's family is renamed
+    (`<stack prefix>OrchestrationIngestionTask...`), so its Container
+    Insights series start again under the new name; the alarms and the
+    dashboard follow it (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1760,6 +1773,18 @@ Deployment (CDK).
 - The dashboard plots Bedrock invocations and throttles in two widgets: with
   both Metrics Insights queries in one, `GetMetricWidgetImage` could not
   render it (#534).
+- A deploy that replaced the ingestion task definition (a new `image_tag`,
+  guardrail id or version, Korean analyzer, size, tracing or secret) failed:
+  the state machine's stack imported the task definition's ARN, an export
+  CloudFormation cannot change while another stack imports it (`Export ...
+  cannot be updated as it is in use by GraphRagOrchestration`), and a
+  deploy of the compute stack alone left the state machine on the old
+  revision. The ingestion task definition is now in the orchestration
+  stack, next to the state machine that pins its revision, so `cdk deploy
+  --all` replaces both and the state machine runs the new revision; its
+  role, the cluster, the image repository and the log group stay in the
+  compute stack. Upgrading a deployed stack takes one extra deploy
+  (*Upgrading* above) (#PR).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter

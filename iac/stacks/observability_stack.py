@@ -109,6 +109,7 @@ class ObservabilityStack(Stack):
         self.config = config
         self.storage = storage
         self.compute = orchestration.compute
+        self.ingestion_task_definition = orchestration.task_definition
         sm = orchestration.state_machine
 
         # Alarm: any failed Step Functions execution -> SNS. A failed task is
@@ -463,7 +464,7 @@ class ObservabilityStack(Stack):
         """
         dims = {
             "ClusterName": self.compute.cluster.cluster_name,
-            "TaskDefinitionFamily": self.compute.task_definition.family,
+            "TaskDefinitionFamily": self.ingestion_task_definition.family,
         }
 
         def metric(name: str) -> cw.Metric:

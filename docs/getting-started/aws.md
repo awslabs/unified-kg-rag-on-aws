@@ -100,7 +100,7 @@ warning, and a corpus of only such files fails with "No supported source
 files found in '<dir>'": convert the files, or build with
 `--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the spaCy
 model in the image (a task in the private VPC cannot download it). The image's
-`docker/config.yaml` holds no endpoints; the CDK compute stack injects them.
+`docker/config.yaml` holds no endpoints; the CDK task definitions inject them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra
 (`uv sync --extra ontology`; [Ontology](../guides/ontology.md#install)).

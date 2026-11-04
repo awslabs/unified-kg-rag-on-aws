@@ -93,7 +93,7 @@ GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없
 Functions로 수집하면 `.md` / `.html` 파일은 경고와 함께 건너뛰고, 이런 파일만 있으면
 "No supported source files found in '<dir>'"로 실패합니다. 파일을 변환하거나
 `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요. 이렇게 빌드하면 이미지에 spaCy 모델도 설치됩니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
-이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK compute 스택이 주입합니다.
+이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK 태스크 정의(task definition)가 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
 (`uv sync --extra ontology`, [Ontology](../guides/ontology.md#install), 영문).

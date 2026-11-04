@@ -325,11 +325,14 @@ analyzer only once the AWS-provided `analysis-nori` plugin package is
 associated with it. `-c opensearch_nori_package=true` associates it: a
 custom resource looks up the package of the domain's engine version
 (`DescribePackages`), associates it (`AssociatePackage`, a blue/green
-deployment) and waits until it is `ACTIVE`, up to two hours; the compute
-stack, deployed after storage, then maps `ko` to `nori`.
+deployment) and waits until it is `ACTIVE`, up to two hours; the task
+definitions, deployed after storage, then map `ko` to `nori`.
 
 1. Stop ingestion (no `RUNNING` execution).
-2. `cdk deploy GraphRagStorage GraphRagCompute -c opensearch_nori_package=true`.
+2. `cdk deploy --all -c opensearch_nori_package=true`, with the deploy's
+   other `-c` flags: the ingestion task definition is in
+   `GraphRagOrchestration`, next to the state machine that runs it, and the
+   query task definition in `GraphRagCompute`.
    A large domain whose blue/green deployment takes longer than two hours
    fails the resource: associate the package by hand first
    (`aws opensearch associate-package --package-id <id> --domain-name <domain>`,
@@ -724,8 +727,13 @@ deployed stack:
 4. Build and push the image under a new tag, with the extras the
    configuration needs ([Shipping configuration to the deployed
    tasks](#shipping-configuration-to-the-deployed-tasks)), then run
-   `cd iac && uv sync` and deploy every stack together with
-   `-c image_tag=<tag>` ([`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)).
+   `cd iac && uv sync` and `cdk deploy --all -c image_tag=<tag>` with the
+   deploy's other `-c` flags
+   ([`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)).
+   Deploy every stack, not one: a new tag replaces both task definitions,
+   and the state machine runs the ingestion revision of its own deploy. When
+   the notes ask for one stack first (`cdk deploy <stack> --exclusively`),
+   deploy it before `--all`.
    A role with a custom IAM policy needs the permissions the notes list.
 5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))
    as a one-off task with `UKR__INDEXING__RESET=true` as an environment
