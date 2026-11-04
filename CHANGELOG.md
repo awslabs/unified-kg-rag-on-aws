@@ -919,7 +919,7 @@ From 0.2.3 (or a `main` checkout since):
   11 of 12 documents gone beside 16 shards asks) stops at
   `document_loading` before it writes unless confirmed:
   `--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1`, `--yes`, the terminal
-  prompt, or `DataIngestionPipeline(confirm_deletions=...)` (#518, #PR).
+  prompt, or `DataIngestionPipeline(confirm_deletions=...)` (#518, #531).
 - EMF metrics for corpus coverage: `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded`,
   `total_documents_deleted`, `total_documents_failed`,
@@ -1181,7 +1181,7 @@ From 0.2.3 (or a `main` checkout since):
   items are embedded once more. A one-chunk edit of the cost harness's
   corpus embeds 44 texts instead of 94, a reset of the unchanged corpus 15
   (its regenerated community reports) instead of 376; `--force-rebuild`
-  embeds everything (#527, #PR).
+  embeds everything (#527, #531).
 - The intelligent chunker keeps each pre-chunk's boundary answer in the
   extraction store (keyed by the pre-chunk's text, the chunking settings
   and model), named by the text units cut from it: a reset of an unchanged
@@ -1190,14 +1190,14 @@ From 0.2.3 (or a `main` checkout since):
   them the extraction records, of unchanged text. Only an answer the
   chunker used is kept: one it fell back from (lines that do not exist) is
   asked again next run. A stored answer counts as a cache hit in the
-  stage's usage. `--force-rebuild` asks again (#527, #PR).
+  stage's usage. `--force-rebuild` asks again (#527, #531).
 - A run reads each alias and index mapping of the vector store once
   (they change only by its own writes while it holds the lease), and a run
   that indexes nothing writes no build record and no extraction settings
   (unless they changed: a scope of seed graphs alone warns of a settings
   change once, not on every run): a no-op incremental run writes nothing
   but its lease, with 29 store calls instead of 56, and a one-chunk edit
-  looks up 6 aliases instead of 61 (#527, #PR).
+  looks up 6 aliases instead of 61 (#527, #531).
 
 ### Fixed
 Bugs present in 0.2.3.
