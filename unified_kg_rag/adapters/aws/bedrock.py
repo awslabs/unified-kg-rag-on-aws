@@ -651,6 +651,17 @@ class BedrockLanguageModelFactory(
             model_id, self.config.aws.bedrock.model_overrides
         )
 
+    def resolved_model_id(self, model_id: str) -> str:
+        """The id :meth:`get_model` invokes ``model_id`` by, and records its
+        usage under: its cross-region inference profile when one resolves."""
+        return BedrockCrossRegionModelHelper.get_cross_region_model_id(
+            self.boto_session,
+            str(model_id),
+            self.region_name or "",
+            assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
+            enable_global_profile=self.config.aws.bedrock.enable_global_profile,
+        )
+
     def get_model(
         self,
         model_id: str,
@@ -658,13 +669,7 @@ class BedrockLanguageModelFactory(
     ) -> ChatBedrock | ChatBedrockConverse:
         model_id = str(model_id)
         model_info = self.get_model_info(model_id)
-        resolved_model_id = BedrockCrossRegionModelHelper.get_cross_region_model_id(
-            self.boto_session,
-            model_id,
-            self.region_name or "",
-            assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
-            enable_global_profile=self.config.aws.bedrock.enable_global_profile,
-        )
+        resolved_model_id = self.resolved_model_id(model_id)
         is_cross_region = base_model_id(resolved_model_id) != resolved_model_id
         if model_info.requires_inference_profile and not is_cross_region:
             # Claude 4.6+ ships INFERENCE_PROFILE-only (no ON_DEMAND throughput),
@@ -1170,13 +1175,25 @@ def bedrock_token_counter_factory(
                     boto_session(),
                     assumed_role_arn=config.aws.bedrock.assumed_role_arn,
                 )
+                search = config.search
                 client = session.client(
                     "bedrock-runtime",
                     region_name=config.aws.bedrock_region,
-                    # Sized like the model clients: every query's
-                    # count_tokens_many sends several counts at once.
+                    # The query model client's timeouts and attempts
+                    # (search.model_timeout_seconds, model_max_attempts): a
+                    # count sits on a query's critical path, and botocore's
+                    # 60 s x 4 requests held a query on a stalled one. A
+                    # failed count degrades to the local estimate, so the
+                    # ingestion counters lose nothing by them. Sized like the
+                    # model clients: every query's count_tokens_many sends
+                    # several counts at once.
                     config=BotoConfig(
-                        retries={"max_attempts": 3},
+                        connect_timeout=BaseBedrockModelFactory.BOTO_CONNECT_TIMEOUT,
+                        read_timeout=search.model_timeout_seconds,
+                        retries={
+                            "total_max_attempts": search.model_max_attempts,
+                            "mode": BaseBedrockModelFactory.BOTO_RETRY_MODE,
+                        },
                         max_pool_connections=(
                             BaseBedrockModelFactory.max_pool_connections(config)
                         ),

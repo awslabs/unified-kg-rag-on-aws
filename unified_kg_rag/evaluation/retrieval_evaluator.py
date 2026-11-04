@@ -48,7 +48,10 @@ is part of the name, so titles such as ``"St. Louis Cardinals"``,
 The rank metrics are skipped when the query has no ``reference_sources``, or
 when it has sources but none is attributable — scoring 0 there would report
 missing metadata as a retrieval miss. A query that retrieved no sources at
-all is a miss and scores 0. Every metric is skipped (``guardrail_blocked``)
+all is a miss and scores 0, unless the config makes it report none
+(``no_sources_by_config``: a global query with
+``search.global_search.evidence_tokens`` 0 answers from the key points
+only). Every metric is skipped (``guardrail_blocked``)
 when the guardrail blocked the answer, since that drops its sources.
 """
 
@@ -72,7 +75,12 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    SearchStrategy,
 )
+
+# Why the rank metrics of a query the config makes report no sources are
+# skipped (``_reports_no_sources``).
+SKIP_REASON_NO_SOURCES_BY_CONFIG = "no_sources_by_config"
 
 # Report-metadata key of the per-section-type scores, and the type of a source
 # whose section type is not reported.
@@ -212,12 +220,21 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             EvaluationMetricType.RECALL_AT_K,
             EvaluationMetricType.MRR,
         )
-        # No sources at all is a retrieval miss (scored 0); sources that exist
-        # but none attributable cannot be judged, so they are skipped.
+        # No sources at all is a retrieval miss (scored 0), unless the config
+        # asks for none; sources that exist but none attributable cannot be
+        # judged, so they are skipped.
         skip_reason = (
             "no_reference_sources"
             if not references
-            else "no_source_provenance" if sources and not files else None
+            else (
+                "no_source_provenance"
+                if sources and not files
+                else (
+                    SKIP_REASON_NO_SOURCES_BY_CONFIG
+                    if not sources and self._reports_no_sources(result)
+                    else None
+                )
+            )
         )
         if skip_reason:
             skipped.update({m.value: skip_reason for m in rank_metrics})
@@ -249,6 +266,17 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             ],
             evaluation_time=datetime.now(),
             metadata=metadata,
+        )
+
+    def _reports_no_sources(self, result: EvaluationResult) -> bool:
+        """Whether the config makes the query's strategy report no sources:
+        global search with ``search.global_search.evidence_tokens`` 0 answers
+        from the key points alone (model output, not sources)."""
+        global_search = self.config.search.global_search
+        return (
+            result.search_strategy == SearchStrategy.GLOBAL.value
+            and global_search.enable_map_reduce
+            and global_search.evidence_tokens == 0
         )
 
     def _rank_scores(

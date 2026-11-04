@@ -3457,12 +3457,17 @@ class LocalSearchConfig(BaseModel):
             "and seeds graph expansion with the entities of its name; with "
             "none, with its top hit only when that scores at least this "
             "fraction of the best hit of any query entity, so a generic word "
-            "the entity extraction returned seeds no unrelated entity. A "
-            "hybrid search scores a hit only the vector search found at "
-            "search.hybrid.vector_weight (0.5) of one both found, so 0.6 "
-            "drops such a hit when another query entity matched by name. 0 "
-            "keeps every query entity's top hit. The seeds share the "
-            "expansion budget in proportion to their scores."
+            "the entity extraction returned seeds no unrelated entity. The "
+            "fraction is read at equal hybrid weights, where a hit only the "
+            "vector search found scores at most 0.5 of one both found, so "
+            "above 0.5 it drops such a hit when another query entity matched "
+            "by name; at other weights it is rescaled so that it still does "
+            "(0.5 maps to search.hybrid.vector_weight: 0.6 is 0.84 at a 0.8 "
+            "vector weight). A vector or lexical search compares raw scores, "
+            "where the filter is weaker (similarities of related and "
+            "unrelated entities are close). 0 keeps every query entity's top "
+            "hit. The seeds share the expansion budget in proportion to their "
+            "scores."
         ),
     )
 
@@ -3901,12 +3906,16 @@ class SearchConfig(BaseModel):
             "translation, at the same time as the router call instead of "
             "after it: auto then costs the latency of the strategy it routes "
             "to plus nothing. The router prompt and its decision are "
-            "unchanged. An extraction the chosen strategy does not read is "
-            "cancelled, or ignored when it has already answered (its result "
-            "still fills the query_extraction_cache_size cache): with the "
-            "default routable strategies, one fast-model extraction call per "
-            "auto query (two when it routes to global). false runs them "
-            "after the router, only for the strategy it picked."
+            "unchanged. An extraction the chosen strategy does not read keeps "
+            "running in the background: the query does not wait for it, its "
+            "call is in the query's usage from its start (estimated_calls "
+            "until it answers), its result fills the "
+            "query_extraction_cache_size cache, and it is cancelled at "
+            "query_timeout_seconds or when the chain closes. With the default "
+            "routable strategies that is one fast-model extraction call per "
+            "auto query (two when it routes to global), paid whatever the "
+            "route. false runs them after the router, only for the strategy "
+            "it picked."
         ),
     )
     query_extraction_cache_size: int = Field(
@@ -3947,6 +3956,14 @@ class SearchConfig(BaseModel):
         """A query-time model-server request timeout: ``configured`` (the
         provider's own), capped at ``model_timeout_seconds``."""
         return min(configured, self.model_timeout_seconds)
+
+    @model_validator(mode="after")
+    def _check_seed_floor(self) -> "SearchConfig":
+        if self.local_search.seed_score_ratio > 0 and math.isclose(
+            self.hybrid.lexical_weight, 0.0
+        ):
+            _warn_seed_floor_inert(self.local_search.seed_score_ratio)
+        return self
 
 
 class MemoryConfig(BaseModel):
@@ -4415,6 +4432,18 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
+
+
+@functools.cache
+def _warn_seed_floor_inert(ratio: float) -> None:
+    """Warn once that ``seed_score_ratio`` cannot filter a hybrid search
+    without its lexical side: every lookup's top kNN hit fuses to 1."""
+    _logger.warning(
+        "search.local_search.seed_score_ratio %s has no effect on a hybrid "
+        "search with search.hybrid.lexical_weight 0: every query entity's top "
+        "hit scores 1, so any of them seeds graph expansion",
+        ratio,
+    )
 
 
 @functools.cache

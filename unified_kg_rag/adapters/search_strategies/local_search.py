@@ -291,9 +291,48 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 for name in focus
             ),
         )
+        hybrid = self.config.search.hybrid
         return self.focus_seeds(
-            focus, per_focus, self.config.search.local_search.seed_score_ratio
+            focus,
+            per_focus,
+            self.seed_floor(
+                self.config.search.local_search.seed_score_ratio,
+                query.search_type,
+                hybrid.vector_weight / (hybrid.lexical_weight + hybrid.vector_weight),
+            ),
         )
+
+    # The vector weight the seed_score_ratio scale is set at (the default
+    # equal weights), where a hit only the vector search found scores at most
+    # this fraction of one found by both.
+    _SEED_RATIO_VECTOR_WEIGHT: ClassVar[float] = 0.5
+
+    @classmethod
+    def seed_floor(
+        cls, ratio: float, search_type: SearchType, vector_weight: float
+    ) -> float:
+        """The fraction of the best hit a focus entity's top hit must score
+        to seed: ``ratio`` (``search.local_search.seed_score_ratio``) read
+        on the scale of equal hybrid weights.
+
+        A hybrid search's fused score of a hit only the kNN search found is
+        at most ``vector_weight`` (the weights sum to 1, each side min-max
+        normalized to at most 1), against up to 1 for a hit both found. At
+        equal weights that cap is 0.5, so a ratio above 0.5 drops such a
+        hit when another focus entity matched both ways. The floor maps
+        ``[0, 0.5]`` linearly onto ``[0, vector_weight]`` and ``[0.5, 1]``
+        onto ``[vector_weight, 1]``: equal weights keep ``ratio`` as is, and
+        any ratio above 0.5 stays above the cap at any weights (0.6 is 0.84
+        at a 0.8 vector weight, where 0.6 let every vector-only hit seed).
+        A vector or lexical search compares raw scores, so the floor is
+        ``ratio`` there.
+        """
+        if search_type is not SearchType.HYBRID:
+            return ratio
+        half = cls._SEED_RATIO_VECTOR_WEIGHT
+        if ratio <= half:
+            return ratio / half * vector_weight
+        return vector_weight + (ratio - half) / half * (1.0 - vector_weight)
 
     async def _entity_hits(
         self, query: SearchQuery, text: str, top_k: int

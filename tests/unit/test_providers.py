@@ -164,6 +164,21 @@ def test_count_tokens_client_pool_is_sized_like_the_model_clients() -> None:
     assert boto_config.max_pool_connections == expected
 
 
+def test_count_tokens_client_times_out_like_the_query_model_client() -> None:
+    # A count sits on a query's critical path: botocore's defaults (60 s, 4
+    # requests) held a query on a stalled CountTokens call.
+    config = Config()
+    config.search.model_timeout_seconds = 7.0
+    config.search.model_max_attempts = 3
+    session = MagicMock()
+    Providers(config, boto_session=session).token_counter("model-a")
+
+    boto_config = session.client.call_args.kwargs["config"]
+    assert boto_config.read_timeout == 7.0
+    assert boto_config.retries["total_max_attempts"] == 3
+    assert boto_config.connect_timeout == 10
+
+
 def test_resolve_prefers_the_given_bundle() -> None:
     config = Config()
     bundle = Providers(config, boto_session=MagicMock())
