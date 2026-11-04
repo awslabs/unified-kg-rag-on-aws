@@ -1029,7 +1029,7 @@ From 0.2.3 (or a `main` checkout since):
   (`on_drift_recommendation` adds the community drift recommendation); the
   `community_growth_ratio` and `runs_since_clustering` metrics let an alarm
   watch them. Nothing is reset automatically. A record written by an
-  earlier version has no counters until the next full build (#PR).
+  earlier version has no counters until the next full build (#540).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
