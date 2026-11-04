@@ -9,6 +9,9 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 (community-summary) and **LightRAG** (dual-level keyword), selectable per query.
 
 - For the *what / why* and a one-minute quickstart, see [README.md](../README.md).
+- For a map of every page, see the [documentation hub](./index.md); for the
+  concepts and what the framework adds beyond the papers, the
+  [Overview](./concepts/overview.md).
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
   dependency rule), see [docs/design.md](./design.md).
 
@@ -448,12 +451,10 @@ models:
 
 - **The judge is its own model.** On Bedrock an unset
   `models.roles.evaluation` is `anthropic.claude-opus-5-5`, not the
-  default tier: an LLM judge favours its own answers. Measured on 50 global
-  questions, Sonnet 5.5 judging its own answers against Opus 5.5's moved the
-  directness win rate by -0.27 [-0.38, -0.16] compared with a GPT-5.5
-  judge. Opus 5.5 costs about twice Sonnet 5.5 per token (on-demand,
-  us-west-2, November 2026: $4 / $20 against $2 / $10 per million input /
-  output tokens), and only `run-eval`'s LLM judges call it. When the
+  default tier: an LLM judge favours its own answers
+  ([measurement and dated list prices](./concepts/defaults-and-evidence.md#the-evaluation-judge)).
+  Opus 5.5 costs more per token than Sonnet 5.5, and only `run-eval`'s LLM
+  judges call it. When the
   answer model is Opus 5.5 itself, the unset judge falls back to the default
   tier's model, or to Sonnet 5.5 if that is the answer model too; `run-eval`
   logs the judge it chose, and why, at INFO. With `--from-results` or
@@ -928,7 +929,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 | Strategy | Use when | How it works |
 |---|---|---|
 | `simple` | Fast factual lookups | OpenSearch vector + keyword retrieval, no graph traversal; the claims index too when claims are on. Fastest. |
-| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). Community reports: the most similar to the query entities by default; `search.local_search.report_selection: membership` reads those of the communities the traversed entities belong to instead (MS GraphRAG local), usually fewer of them; on 200 MuSiQue questions it answered worse (exact match -4.0 points, token F1 -4.1, both significant) for about 0.5% fewer tokens, so similarity is the default. |
+| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). Community reports: the most similar to the query entities by default; `search.local_search.report_selection: membership` reads those of the communities the traversed entities belong to instead (MS GraphRAG local), usually fewer of them; it answered measurably worse, so similarity is the default ([evidence](./concepts/defaults-and-evidence.md#local-report-selection)). |
 | `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
 | `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
 | `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read keeps running in the background and is billed (one fast-model call a query with the defaults, two when routed to global): the query does not wait for it, counts it in its usage from its start (`estimated_calls` while it runs), and it fills the extraction cache; it is cancelled at `search.query_timeout_seconds` or when the chain closes. |
@@ -953,14 +954,9 @@ merged chunks are cut to that width after the rerank).
 chunks are taken: `weight` (the default) gives each matched item
 `related_chunk_number` chunks on a decreasing gradient; `vector` takes the
 cited chunks that best match the query, one search a side, as upstream
-LightRAG does by default. `weight` stays the default: on 200 MuSiQue
-questions (two repeats) `vector` measured no significant difference, mix
-`answer_contains` -1.5 points [-4.5, +1.25] and hybrid -1.25 [-4.5, +2.0],
-for about 1.5 s more latency per query. MMR's
-`search.fusion.diversity_lambda` keeps 0.5 for the same reason: 0.7 and 1.0
-were not significantly different on mix (`answer_contains` -1.0 [-3.75,
-+1.5] and -2.25 [-5.25, +0.5] points; the one significant difference, MRR
-+0.9 points [+0.05, +2.15] at 1.0, is small).
+LightRAG does by default. `weight` stays the default, and MMR's
+`search.fusion.diversity_lambda` keeps 0.5: the alternatives measured no
+significant difference ([evidence](./concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
 
 ### Answer style
 
@@ -980,19 +976,14 @@ search:
 # answer_prompt_style: {global: concise}        # concise global answers
 ```
 
-Why. On 50 sensemaking questions over a 3,318-document MuSiQue corpus,
-comprehensive global answers beat concise ones on comprehensiveness,
-diversity and empowerment at win rates of 0.95-0.99 with each of three
-pairwise judges (Opus 5.5, Sonnet 5.5, GPT-5.5), for +$0.016 per query
-(answers 3.2k -> 7.6k characters). They lose directness (win rate 0.00-0.39),
-and pairwise LLM judges are known to favour longer answers, so read the win
-rates as "covers more", not "better for every reader": a user who wants a
-short answer should keep `{global: concise}`. `drift` won the same way
-(comprehensiveness 1.00, directness 0.03-0.04) but stays concise by default:
-its p95 latency rose from 147 s to 168 s, with a maximum of 178 s, against
-the 180 s `search.query_timeout_seconds`. With `{drift: comprehensive}`,
-raise that deadline (300 s leaves room;
-[runbook](./operations.md#query-deadlines-and-model-timeouts)).
+Why. Comprehensive global answers cover more than concise ones but are less
+direct, and pairwise LLM judges favour longer answers: a user who wants a
+short answer should keep `{global: concise}`. `drift` stays concise by
+default because the comprehensive answer brings its latency close to the
+180 s `search.query_timeout_seconds`. With `{drift: comprehensive}`, raise
+that deadline (300 s leaves room;
+[runbook](./operations.md#query-deadlines-and-model-timeouts)). The
+measurements: [Defaults and evidence](./concepts/defaults-and-evidence.md#answer-style).
 
 `auto` uses the style of the strategy it routes to. `answer_match` scores
 read the first line that is not a heading (`evaluation.answer_span`), so a
@@ -1000,14 +991,12 @@ comprehensive answer scores lower on exact match whatever its quality.
 
 Global search hands the answer model its ranked key points followed by the
 reports they cite. `search.global_search.evidence_tokens` caps that report
-text (whole reports, best point first) at 4000 tokens by default. On the
-same 50 questions the cap cut the cost of a global query by 41% ($0.1016 ->
-$0.0597) against no cap, and the three judges could not tell the answers
-apart (position consistency 0.43-0.57; only Opus 5.5's empowerment, 0.41
-[0.33, 0.48], left 0.5, and the other two judges did not replicate it); the
-answer keeps its sources. `null` (no cap) keeps as much as the
+text (whole reports, best point first) at 4000 tokens by default, which
+cut the cost of a global query by about 40% against no cap with no measured
+quality difference, and the answer keeps its sources
+([evidence](./concepts/defaults-and-evidence.md#global-evidence-cap)). `null` (no cap) keeps as much as the
 context budget holds, which on a large cut is most of a global query's input
-tokens; `0` (-49% cost, also no measured difference) sends the key points only, as MS GraphRAG's reduce step reads
+tokens; `0` (cheaper still) sends the key points only, as MS GraphRAG's reduce step reads
 them, and the answer then reports no sources (the key points are model
 output), so the `retrieval` evaluator skips its rank metrics for a global
 query (`no_sources_by_config`) instead of scoring a miss.
@@ -1087,9 +1076,9 @@ model and 900 s query timeouts, since a local server queues requests (a
 A non-streamed answer arrives in one piece, so `search.model_timeout_seconds`
 also caps how long the model may generate it. Raise it (and the query
 timeout) for long answers or high reasoning effort. The defaults come from
-measured query times (p99 47 s, slowest 61 s in all, on real AWS): 90 s
-covers the slowest whole query in one request with room to spare, and 180 s
-lets a stalled first attempt be retried once. Tuning is in the
+measured query times on real AWS ([evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts)):
+90 s covers the slowest whole query in one request with room to spare, and
+180 s lets a stalled first attempt be retried once. Tuning is in the
 [Operator Runbook](./operations.md#query-deadlines-and-model-timeouts).
 
 ### Filters
@@ -3401,13 +3390,10 @@ summarization), fewer gleaning rounds, claims off, the caches and incremental
 indexing.
 
 Gleaning is the largest of these levers. `processing.gleaning.max_rounds`
-stays 3: on a 109-document MuSiQue slice, 3 rounds against 1 raised the
-share of the questions' intermediate (bridge) answers found as graph
-entities from 72.0% to 81.7% (+9.8 points [+3.7, +17.1]) for 38% more ingestion cost ($13.08
-against $9.51; gleaning itself $5.74 against $2.49). The answers did not
-differ significantly (local `answer_contains` +13.3 points [-3.3, +33.3] on
-30 questions). Set `max_rounds: 1` (MS GraphRAG's default) when ingestion
-cost matters more than graph recall.
+stays 3 because 3 rounds found more of a corpus's graph than 1, for about
+38% more ingestion cost, with no significant difference in the answers
+([evidence](./concepts/defaults-and-evidence.md#gleaning-rounds)). Set `max_rounds: 1` (MS GraphRAG's
+default) when ingestion cost matters more than graph recall.
 
 ---
 

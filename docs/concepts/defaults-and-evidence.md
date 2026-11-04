@@ -1,0 +1,249 @@
+# Defaults and evidence
+
+Several defaults were set, or kept, from real-model measurements rather than
+by analogy with the papers. This page is the one place that holds those
+numbers: how they were measured, what each one showed, what it cost, and how
+to run the same comparison on your own corpus. The pages that explain a
+setting ([User Guide](../user-guide.md), [Operator Runbook](../operations.md),
+[Design Doc](../design.md)) link here for the evidence.
+
+Every interval below is a 95% paired bootstrap interval over questions, and
+"n.s." means the interval includes zero. A difference that is not
+significant kept the existing default.
+
+## How the measurements were run
+
+One real-model evaluation in November 2026 (package at commit `f04ee50d`)
+measured most of the defaults below:
+
+- **Models and stores.** Amazon Bedrock in us-west-2: Claude Sonnet 5.5 for
+  the default tier (extraction, reports, answers), Claude Haiku 5.5 for the
+  fast tier, Titan Text Embeddings V2 and Cohere Rerank 3.5. The graph and
+  vector stores were the embedded SQLite stores
+  ([local stores with Bedrock models](../user-guide.md#local-stores-with-bedrock-models)),
+  so latencies include no network hop to Neptune or
+  OpenSearch.
+- **Index.** `prepare-benchmark musique --limit 200 --seed 0`: 200 MuSiQue
+  questions over 3,318 paragraphs (about 280,000 words), ingested once with
+  the defaults and shared by every arm. Building it took 16,069 model calls
+  (51.4M input and 26.9M output tokens), $371.64 at the list prices below,
+  in about 2.5 hours.
+- **Question sets.** The 200 MuSiQue questions for `local`, `mix` and
+  `hybrid` (EM, token F1, `answer_contains`, retrieval MRR); a 50-question
+  sensemaking set (5 personas x 5 tasks x 2, written by Opus 5.5 from the
+  level-0 community report summaries) for `global` and `drift`; and a
+  109-document slice with 30 questions (their supporting paragraphs plus one
+  distractor each) for gleaning, which needs its own ingestion per arm.
+- **Repeats and judges.** Every arm answered twice and each query was
+  averaged over the repeats before pairing. Pairwise verdicts
+  (comprehensiveness, diversity, empowerment, directness) count only when
+  both answer orders agree, judged by Opus 5.5, Sonnet 5.5 and GPT-5.5.
+- **Cost.** Each run's library-metered tokens times the list prices. The
+  meter of that version counted prompt-cache reads and writes as input
+  tokens, so every cost below is an upper bound when the cache hit.
+
+## List prices used
+
+On-demand list prices on 2026-11-04 (AWS Price List API, us-west-2, global
+cross-Region inference profile, standard tier), per million tokens unless
+noted. They were the prices at the time of measurement; check current
+pricing before you reuse a dollar figure.
+
+| Model | Input | Output | Cache write | Cache read |
+|---|---|---|---|---|
+| Claude Sonnet 5.5 | $2.00 | $10.00 | $2.50 | $0.10 |
+| Claude Haiku 5.5 | $0.10 | $0.50 | $0.125 | $0.01 |
+| Claude Opus 5.5 | $4.00 | $20.00 | $5.00 | $0.20 |
+| GPT-5.5 (judge only; in-Region model card price, used as an upper bound) | $5.50 | $33.00 | — | — |
+| Titan Text Embeddings V2 | $0.02 | — | — | — |
+| Cohere Rerank 3.5 | $2.00 per 1,000 search units | — | — | — |
+
+An in-Region inference profile lists Sonnet 5.5 about 10% higher. To price
+your own runs, give `run-eval` your prices (`evaluation.prices`,
+[Comparing strategies](../user-guide.md#comparing-strategies)): the package
+ships no price table, because one would go stale.
+
+## Measured defaults at a glance
+
+| Setting | Default | Measured |
+|---|---|---|
+| `search.answer_prompt_style` | `{global: comprehensive}` | Comprehensive global answers beat concise ones on comprehensiveness, diversity and empowerment at 0.95-0.99 with all three judges, +$0.016 per query; they lose directness. DRIFT stays concise for its latency ([Answer style](#answer-style)) |
+| `search.global_search.evidence_tokens` | 4000 | -41% cost per global query against no cap, no consistent quality difference, sources kept ([Global evidence cap](#global-evidence-cap)) |
+| `models.roles.evaluation` | Opus 5.5 on Bedrock | Against a GPT-5.5 judge, a Sonnet 5.5 judge shifted directness by -0.27 [-0.38, -0.16] when it judged its own answers ([The evaluation judge](#the-evaluation-judge)) |
+| `processing.gleaning.max_rounds` | 3 | +9.8 points [+3.7, +17.1] of intermediate answers found as graph entities against 1 round, for +38% ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
+| `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
+| `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
+| `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
+| `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
+
+## Answer style
+
+On the 50 sensemaking questions, comprehensive `global` answers against
+concise ones:
+
+- **Win rates** on comprehensiveness, diversity and empowerment: 0.98 (Opus
+  5.5 judge), 0.99 (Sonnet 5.5) and 0.95-0.99 (GPT-5.5). Directness: 0.02,
+  0.00 and 0.39. Position consistency (both orders agreed): 0.97, 0.98 and
+  0.84.
+- **Cost and length.** +$0.0164 per query; answers grew from about 3.2k to
+  7.6k characters.
+
+`drift` with the comprehensive answer won the same way (comprehensiveness
+1.00, diversity 0.88-0.95, empowerment 0.98, directness 0.03-0.04; position
+consistency 0.92-0.96) for +$0.0169 per query. Its latency is why it stays
+concise: see [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts).
+
+Pairwise LLM judges favour the longer answer, so these win rates measure
+coverage more than quality for every reader. The directness loss is the
+cost, and `search.answer_prompt_style: {global: concise}` keeps the short
+answers ([Answer style](../user-guide.md#answer-style)).
+
+## Global evidence cap
+
+`search.global_search.evidence_tokens` caps the report text a global answer
+reads beside its ranked key points. On the 50 sensemaking questions:
+
+| Cap | Cost per global query | Quality against no cap | Sources |
+|---|---|---|---|
+| `null` (no cap) | $0.1016 | — | kept |
+| `4000` (default) | $0.0597 (-41%) | No criterion consistently different. Position consistency 0.43-0.57: the judges could not tell the answers apart. Only Opus 5.5's empowerment, 0.41 [0.33, 0.48], left 0.5, and Sonnet 5.5 ([0.34, 0.50]) and GPT-5.5 ([0.37, 0.55]) did not replicate it | kept |
+| `0` (key points only) | $0.0514 (-49%) | All criteria n.s. (position consistency 0.44-0.64) | none |
+
+The cap is a cost change, not a quality change: 4000 keeps the sources the
+`retrieval` evaluator and the user read.
+
+## The evaluation judge
+
+Opus 5.5 and Sonnet 5.5 answered the same 50 global questions from the same
+retrieval (concise answers), and Opus 5.5, Sonnet 5.5 and GPT-5.5 judged
+the pairs:
+
+- **Opus-answer win rates** (comprehensiveness / diversity / empowerment /
+  directness): GPT-5.5 judge 0.74 / 0.64 / 0.67 / 0.76, Opus 5.5 judge
+  0.73 / 0.55 / 0.68 / 0.65, Sonnet 5.5 judge 0.71 / 0.59 / 0.62 / 0.49.
+- **Self-preference.** The Sonnet 5.5 judge's directness win rate for the
+  Opus answers was 0.27 [0.16, 0.38] lower than the GPT-5.5 judge's, and
+  0.16 [0.06, 0.26] lower than the Opus 5.5 judge's; the other criteria
+  were n.s. The Opus 5.5 judge also differed from GPT-5.5 on diversity
+  (-0.09 [-0.16, -0.03]) and directness (-0.11 [-0.21, -0.02]).
+- **Agreement.** On the same pairs the judges agreed on 0.68-0.98 of the
+  verdicts, and opposite decided verdicts were rare (0-10 of 74-194).
+
+So the unset judge on Bedrock is Opus 5.5, a model other than the default
+answer model. At the list prices above it costs twice Sonnet 5.5 per token,
+and only `run-eval`'s LLM judges call it
+([Model selection notes](../user-guide.md#model-selection-notes)).
+
+## Gleaning rounds
+
+On the 109-document slice, ingested once with `processing.gleaning.max_rounds: 3`
+and once with `1`:
+
+- **Graph recall.** The questions' intermediate (bridge) answers found as
+  graph entities, by exact entity key: 72.0% (1 round) against 81.7% (3
+  rounds), +9.8 points [+3.7, +17.1]; 8 of 82 were found only with 3 rounds,
+  none only with 1.
+- **Graph size.** 1,149 entities and 1,279 relationships against 1,268 and
+  1,688.
+- **Ingestion cost.** $9.51 against $13.08 (+38%); gleaning itself $2.49
+  against $5.74.
+- **Answers** (30 questions, two repeats): n.s. `local` `answer_contains`
+  +13.3 points [-3.3, +33.3], `mix` unchanged; query cost unchanged for
+  `local`, +$0.0021 for `mix` (a slightly larger context).
+
+3 rounds stays the default, against MS GraphRAG's 1, for the graph recall.
+`max_rounds: 1` is the lever when ingestion cost matters more
+([Cost notes](../user-guide.md#cost-notes)).
+
+## LightRAG chunk picking and MMR diversity
+
+On the 200 MuSiQue questions:
+
+| Change | `mix` | `hybrid` | Latency and cost |
+|---|---|---|---|
+| `kg_chunk_pick_method: vector` (upstream LightRAG's default) instead of `weight` | `answer_contains` -1.5 points [-4.5, +1.25], EM and F1 n.s. | `answer_contains` -1.25 [-4.5, +2.0], MRR +1.5 [-0.01, +3.2], n.s. | +1.5 s per query (significant), cost unchanged |
+| `diversity_lambda: 0.7` instead of 0.5 | n.s. on every metric | — | +0.57 s |
+| `diversity_lambda: 1.0` instead of 0.5 | `answer_contains` -2.25 [-5.25, +0.5] n.s.; MRR +0.9 [+0.05, +2.15], significant but small | — | -$0.0009 per query |
+
+No change was significantly better on the answers, so both defaults stayed
+([Search strategies](../user-guide.md#search-strategies--when-to-use-which)).
+
+## Local report selection
+
+`search.local_search.report_selection: membership` reads the reports of
+the communities the traversed entities belong to, as MS GraphRAG local
+search does; `similarity` (the default) reads the reports most similar to
+the query entities. A later run on the same 200 questions, two repeats
+each, measured membership against similarity: exact match -4.0 points
+[-7.75, -0.25], token F1 -4.1 [-7.7, -0.6], both significant, for about 0.5%
+fewer tokens. Similarity stays the default
+([Design §6.1](../design.md#61-graphrag-methodology-adapterssearch_strategies)).
+
+## Query deadlines and model timeouts
+
+**Why 90 s and 180 s.** In the package's real-AWS evaluation runs (5,846
+queries) the p99 query took 47 s and the slowest 61 s, in all. A
+non-streamed Converse answer at `default_effort: high` can spend most of
+that in one read, so `search.model_timeout_seconds` is 90 s: about 1.5x the
+slowest whole query and 1.9x the p99, for one request. The deadline,
+`search.query_timeout_seconds` 180 s, is `model_max_attempts x
+model_timeout_seconds`, so a call that stalls once can still be answered by
+its second attempt; it is about 3x the slowest query and 3.8x the p99. Two
+attempts, not more: a third would start only after the deadline.
+
+**DRIFT near the deadline.** Those runs did not include DRIFT. On the
+3,318-document MuSiQue index (50 sensemaking questions, two repeats, one
+`run-eval` at a time), DRIFT with the concise answer took 147 s at p95;
+with the comprehensive answer 168 s at p95 and 178 s at most, 2 s inside
+the 180 s deadline. A second evaluation running at the same time pushed 20
+of 50 comprehensive DRIFT answers past it. So DRIFT keeps the concise
+answer by default, and the runbook's advice for routing DRIFT, serving it
+under load or giving it the comprehensive answer is a 300 s deadline
+([Query deadlines and model timeouts](../operations.md#query-deadlines-and-model-timeouts)).
+
+## Reproducing a measurement
+
+The same tooling runs any of these comparisons on your corpus or on
+MuSiQue ([Benchmarks](../user-guide.md#benchmarks-musique)):
+
+```bash
+# The benchmark corpus and dataset (downloaded at run time, never committed).
+prepare-benchmark musique --output-directory bench/musique --limit 200 --seed 0
+run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
+
+# Two settings on the same index: run each config, then compare the saved runs.
+run-eval --data-path bench/musique/eval_data.json --suffix musique \
+  --search-strategy mix --repeats 2 --output-directory runs/base --config-path musique.yaml
+run-eval --data-path bench/musique/eval_data.json --suffix musique \
+  --search-strategy mix --repeats 2 --output-directory runs/vector --config-path vector.yaml \
+  --baseline-results runs/base
+
+# Pairwise LLM judge across strategies, on your own question set.
+run-eval --data-path my_questions.json --suffix musique --search-strategy global,drift \
+  --repeats 2 --pairwise-judge --config-path musique.yaml
+```
+
+`--baseline-results` pairs each strategy with the earlier run of the same
+strategy, `--from-results` rebuilds or re-judges a comparison from saved
+answers without a model call, and `--fail-if` turns a delta into a CI gate
+([Rebuilding, re-judging and gating a comparison](../user-guide.md#rebuilding-re-judging-and-gating-a-comparison)).
+Run at least two repeats, and read a difference only when its interval
+excludes zero.
+
+## Limits of the evidence
+
+- **One corpus, one model family.** MuSiQue is English, multi-hop
+  Wikipedia text; the answers came from Claude models on Bedrock. A
+  default that was n.s. here may matter on your corpus: measure it there.
+- **LLM judges.** Pairwise judges favour longer answers and, as measured
+  above, their own model's answers. Read win rates with the position
+  consistency, and prefer a judge that is not the answer model.
+- **Embedded stores.** Latencies were measured on the SQLite stores, not on
+  Neptune and OpenSearch, except the 90 s and 180 s timeouts, which come
+  from real-AWS runs.
+- **A partial graph.** In the measured index, 138 of 3,318 text units (4.2%)
+  had no extraction (a model output the parser could not read); every arm
+  read the same graph, so the comparisons are paired, but absolute scores
+  are lower than a complete graph would give.
+- **Costs are upper bounds** when the prompt cache hit, and they use the
+  dated list prices above.

@@ -1,0 +1,79 @@
+# 문서 안내
+
+> 🇬🇧 English version: [docs/index.md](./index.md)
+
+`unified-kg-rag-on-aws` 문서를 하려는 일에 따라 정리했습니다. 처음이라면
+[개요](./concepts/overview.ko.md)부터 읽으세요. 한국어 문서는 README, 이 페이지, 개요,
+사용자 가이드이며, "(영문)"으로 표시한 문서는 영문으로만 제공합니다.
+
+## 여기서 시작하기
+
+| 독자 | 목표 | 읽는 순서 | 완료 기준 |
+|---|---|---|---|
+| **처음 써 보는 평가자** | AWS 없이 동작 확인 | [README](../README.ko.md#빠른-시작) → [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) → [개요](./concepts/overview.ko.md) → [검색 전략 선택](./user-guide.ko.md#검색-전략-선택) → [평가기](./user-guide.ko.md#평가기) | 예제 코퍼스에서 두 방법론의 답변을 받고, 판정 모델 없이 `run-eval` 실행 |
+| **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [필수 모델](./user-guide.ko.md#필수-모델) → [설치](./user-guide.ko.md#설치)(기존 저장소) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./user-guide.ko.md#2-설정) → [수집](./user-guide.ko.md#3-수집-run-ingestion) → [질의](./user-guide.ko.md#4-질의-run-rag) → [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) → [도메인 적응](./user-guide.ko.md#9-도메인-적응) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
+| **운영자** | 실행, 모니터링, 복구, 업그레이드 | [`iac/README.md`](../iac/README.md)(영문) → [운영 런북](./operations.md)(영문: [실행 전](./operations.md#before-a-run), [실행이 실패하면](./operations.md#when-a-run-fails), [경보](./operations.md#alarms), [자주 보는 오류](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | 모든 경보와 오류에서 대응 절차를 찾을 수 있음 |
+| **평가자·연구자** | 품질과 비용 측정, 기본값 재현, 논문과 비교 | [평가](./user-guide.ko.md#6-평가-run-eval) → [전략 비교](./user-guide.ko.md#전략-비교) → [벤치마크](./user-guide.ko.md#벤치마크-musique) → [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) → [원 논문을 넘어서](./concepts/overview.ko.md#원-논문을-넘어서) | MuSiQue나 자체 데이터로 신뢰 구간과 게이트가 있는 짝지은 비교 실행 |
+| **확장 개발자** | 백엔드, 전략, 파서, 스키마, 시드 소스 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [추출 스키마](./user-guide.ko.md#c-추출-스키마) / [시드 그래프](./user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기) | 등록한 플러그인이 가짜 포트(fake port) 적합성 테스트를 통과 |
+| **기여자** | 품질 게이트를 깨지 않고 코드와 문서 수정 | [CONTRIBUTING.md](../CONTRIBUTING.md)(영문) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)와 [§13](./design.md#13-testing-strategy) → [문서 규칙](../CONTRIBUTING.md#documentation) | 문서 검사를 포함한 CI를 통과하는 풀 리퀘스트 |
+
+## 문서 지도
+
+| 유형 | 문서 | 내용 |
+|---|---|---|
+| 튜토리얼 | [README 빠른 시작](../README.ko.md#빠른-시작) | 실행 방법 선택, 설치, 첫 수집, 질의, 평가 |
+| 튜토리얼 | 로컬에서 시작하기, AWS에서 시작하기(작성 예정) | 단계별 첫 실행. 그전까지는 빠른 시작과 [사용자 가이드 §1](./user-guide.ko.md#1-사전-요구사항과-설치) |
+| 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 두 방법론, 원 논문 대비 확장한 부분, 제한 사항 |
+| 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
+| 설명 | [설계 문서](./design.md)(영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
+| 설명 | 검색, 범위와 네임스페이스(작성 예정) | 전략 개념과 점수 계산. 인덱스 접미사, 네임스페이스, 소스 범위 |
+| 사용 방법 | [사용자 가이드](./user-guide.ko.md) | 당분간 모든 작업: 설치와 로컬 모드, 설정, 수집, 질의와 필터, 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응, 종료 코드, 라이브러리 사용법 |
+| 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
+| 사용 방법 | 작업별 가이드(작성 예정) | 사용자 가이드에서 작업마다 한 페이지로 분리 |
+| 레퍼런스 | [CLI 레퍼런스](./reference/cli.md)(영문) | 모든 CLI의 모든 플래그(파서에서 생성) |
+| 레퍼런스 | [설정 레퍼런스](./reference/configuration.md)(영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
+| 레퍼런스 | [모델 카탈로그](./reference/models.md)(영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
+| 런북 | [운영 런북](./operations.md)(영문) | 용량, 재수집, 증분 실행, 캐시, 백업과 복원, 업그레이드, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리, 관측성, 자주 보는 오류 |
+| 프로젝트 | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md)(영문) | 개발 절차, 릴리스 노트, 보안 이슈 신고 |
+
+## 하려는 일별 안내
+
+| 하려는 일 | 문서 |
+|---|---|
+| AWS 계정 없이 써 보기 | [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) |
+| AWS에 전체 스택 배포 | [`iac/README.md`](../iac/README.md#quick-start)(영문) |
+| 필요한 Bedrock 모델 활성화 | [필수 모델](./user-guide.ko.md#필수-모델) |
+| 모델이나 설정 변경 | [설정](./user-guide.ko.md#2-설정), [설정 레퍼런스](./reference/configuration.md)(영문) |
+| 코퍼스 수집, 재개, 재구축 | [수집](./user-guide.ko.md#3-수집-run-ingestion) |
+| 한국어나 여러 언어가 섞인 코퍼스 인덱싱 | [다국어 수집](./user-guide.ko.md#다국어-수집) |
+| 검색 전략 고르기 | [검색 전략 선택](./user-guide.ko.md#검색-전략-선택) |
+| 문서나 속성으로 결과 필터링 | [필터](./user-guide.ko.md#필터) |
+| 문서가 바뀌거나 지워질 때 인덱스 갱신 | [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) |
+| 추출을 도메인에 맞추기 | [도메인 적응](./user-guide.ko.md#9-도메인-적응), [프롬프트 튜닝](./user-guide.ko.md#8-프롬프트-튜닝-run-prompt-tuning) |
+| 온톨로지나 기존 지식 그래프 가져오기 | [OWL/RDFS 온톨로지에서 읽기](./user-guide.ko.md#owlrdfs-온톨로지에서-읽기), [시드 그래프](./user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기) |
+| 전략 비교, CI에서 변경 검증 | [전략 비교](./user-guide.ko.md#전략-비교), [비교 다시 만들기, 다시 판정하기, 게이트](./user-guide.ko.md#저장한-결과로-비교-다시-만들기-다시-판정하기-게이트) |
+| 기본값을 그렇게 정한 이유 확인 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) |
+| Python에서 사용 | [Python 라이브러리로 사용하기](./user-guide.ko.md#11-python-라이브러리로-사용하기) |
+| 오류나 실패한 실행 해결 | [자주 보는 오류](./operations.md#common-errors)(영문), [실행이 실패하면](./operations.md#when-a-run-fails)(영문) |
+| 백엔드, 전략, 파서 추가 | [설계 문서 §15](./design.md#15-extension-guide)(영문) |
+
+## 용어집
+
+한국어 문서는 아래 용어를 씁니다. 괄호 안은 영문 문서와 코드에서 쓰는 용어입니다.
+
+| 용어 | 뜻 |
+|---|---|
+| 수집(ingestion) | 문서를 그래프와 인덱스로 바꾸는 12단계 파이프라인(`run-ingestion`) |
+| 텍스트 단위(text unit) | 문서를 나눈 청크(chunk). 추출, 인용, 삭제가 모두 텍스트 단위로 이뤄짐 |
+| 엔티티(entity), 관계(relationship) | 추출한 지식 그래프의 노드와 에지 |
+| 주장(claim) | 텍스트 단위마다 선택적으로 추출하는 사실 진술(MS GraphRAG의 covariate) |
+| 글리닝(gleaning) | 첫 추출에서 빠진 것을 모델에 다시 묻는 추가 추출 라운드 |
+| 커뮤니티(community), 커뮤니티 리포트(community report) | 엔티티를 Leiden으로 묶은 군집과, `global`과 `drift`가 읽는 LLM 작성 요약 |
+| 방법론(methodology), 전략(strategy) | GraphRAG 또는 LightRAG, 그리고 질의마다 고르는 실제 검색 알고리즘(`local`, `mix` 등) |
+| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`). 테넌트나 코퍼스 버전마다 하나 |
+| 문서 상태 레지스트리(doc-status registry) | 문서마다 해시와 텍스트 단위를 기록해 증분 수집을 가능하게 하는 DynamoDB(또는 SQLite) 테이블 |
+| 네임스페이스(namespace) | 한 인덱스 접미사가 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)) |
+| 소스 범위(source scope) | 실행이 비교하고 삭제하는 코퍼스 출처(기본값은 소스 디렉터리). 문서 ID와 텍스트 단위 ID가 여기서 나옴 |
+| 격리(quarantine) | 처리하다 실행이 거듭 죽은 문서를 따로 둔 상태. 파일이 바뀌거나 한도를 올릴 때까지 건너뜀 |
+| 시드 그래프(seed graph) | 이미 가진 지식 그래프. 가상 문서로 추출 그래프에 병합 |
+| 추출 스키마(extraction schema) | 추출이 따르는 엔티티 유형, 관계 유형, 패턴. 직접 선언하거나 온톨로지에서 읽음 |

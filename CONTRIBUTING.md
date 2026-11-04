@@ -141,9 +141,12 @@ than an edit to dispatch code.
 
 ### Documentation
 
-- User-facing documentation is in English. Only `README.md` and `docs/user-guide.md` have Korean translations
-  (`README.ko.md`, `docs/user-guide.ko.md`); the other documents are English-only. Do not add new `.ko.md` files.
-- **EN/KO sync rule:** a change to `README.md` or `docs/user-guide.md` updates its `.ko.md` twin in the same pull
+- [docs/index.md](./docs/index.md) maps every documentation page; add a new page to it.
+- User-facing documentation is in English. The pages listed in `TRANSLATED_PAGES` (`scripts/check_docs.py`) have a
+  Korean twin `<page>.ko.md`: `README.md`, `docs/index.md`, `docs/concepts/overview.md` and `docs/user-guide.md`.
+  The other documents are English-only. A new `.ko.md` file must be added to that list, with the same structure as
+  its English page.
+- **EN/KO sync rule:** a change to a page in `TRANSLATED_PAGES` updates its `.ko.md` twin in the same pull
   request. If you cannot write the Korean text, say so in the pull request description and add this note at the top
   of the `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
   A maintainer then updates the translation and removes the note.

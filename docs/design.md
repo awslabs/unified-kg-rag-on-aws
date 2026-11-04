@@ -1748,29 +1748,8 @@ choices:
 
 ### 9.1 Measured defaults
 
-Several defaults were set, or kept, from one real-model evaluation (November
-2026, us-west-2; Sonnet 5.5 answers, Haiku 5.5 fast tier, embedded SQLite
-stores). The index: `prepare-benchmark musique --limit 200 --seed 0`, 200
-questions over 3,318 paragraphs; a 50-question sensemaking set (5 personas x
-5 tasks x 2) for `global` and `drift`; a 109-document slice of 30 questions
-for gleaning. Answers ran twice per arm; intervals are 95% paired bootstrap
-intervals over questions; pairwise verdicts count only when both answer
-orders agree, judged by Opus 5.5, Sonnet 5.5 and GPT-5.5.
-
-| Setting | Default | Measured |
-|---|---|---|
-| `search.answer_prompt_style` | `{global: comprehensive}` (was every strategy concise) | Comprehensive global beat concise on comprehensiveness, diversity and empowerment at 0.95-0.99 win rate with all three judges (position consistency 0.84-0.98), +$0.016 per query, answers 3.2k -> 7.6k characters; lost directness (0.00-0.39). DRIFT won the same way but its p95 latency went 147 s -> 168 s (max 178 s) against the 180 s deadline, so it stays concise |
-| `search.global_search.evidence_tokens` | 4000 (was null, no cap) | -41% cost per global query ($0.1016 -> $0.0597); no criterion consistently different (position consistency 0.43-0.57: the judges could not tell the answers apart; only Opus empowerment 0.41 [0.33, 0.48] left 0.5, not replicated); sources kept. `0`: -49%, also no difference, but no sources |
-| `models.roles.evaluation` | Opus 5.5 on Bedrock (was the default tier, the answer model) | Opus vs Sonnet answers to the same retrieval: the Sonnet judge's directness win rate for Opus answers was 0.27 [0.16, 0.38] lower than GPT-5.5's (self-preference); Sonnet vs Opus judge -0.16 [-0.26, -0.06] |
-| `processing.gleaning.max_rounds` | 3 (kept) | vs 1: intermediate answers found as graph entities 72.0% -> 81.7%, +9.8 points [+3.7, +17.1] (8 of 82 gained, none lost); ingestion +38% ($9.51 -> $13.08 for 109 documents); answers n.s. (local `answer_contains` +13.3 points [-3.3, +33.3]) |
-| `search.lightrag_search.kg_chunk_pick_method` | `weight` (kept) | `vector`: mix `answer_contains` -1.5 points [-4.5, +1.25], hybrid -1.25 [-4.5, +2.0], n.s.; +1.5 s latency |
-| `search.fusion.diversity_lambda` | 0.5 (kept) | 0.7: mix `answer_contains` -1.0 [-3.75, +1.5]; 1.0: -2.25 [-5.25, +0.5], n.s. (MRR +0.9 points [+0.05, +2.15] at 1.0, small) |
-
-Pairwise LLM judges favour the longer answer, so the comprehensive-answer
-win rates measure coverage more than quality for every reader; the
-directness loss is the cost, and `{global: concise}` keeps the earlier
-answers. The evidence cap and the judge are pure cost and reliability
-changes.
+The defaults set or kept from real-model measurements, with the method, the
+numbers and dated prices, are in [Defaults and evidence](./concepts/defaults-and-evidence.md).
 
 ---
 

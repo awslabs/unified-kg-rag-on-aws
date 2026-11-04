@@ -11,6 +11,8 @@
 
 An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG on one shared stack, so you choose the retrieval methodology per query rather than per deployment. Running both methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
 
+What each of them adds over GraphRAG and LightRAG, and where the framework deliberately departs from them: [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers).
+
 Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, both retrieval methodologies, and benchmark results.
 
 ## Why this framework
@@ -108,18 +110,18 @@ The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with
 
 ## Documentation
 
-| Document | Covers |
+Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.md)): reading paths by role, a page map and an "I want to" index.
+
+| You are | Start with |
 |---|---|
-| [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Installation and local mode, configuration, ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation (custom prompts, extraction schema, ontology import, seed graphs), exit codes, library usage, [limitations](./docs/user-guide.md#12-limitations) |
-| [CLI Reference](./docs/reference/cli.md) | Every flag of every CLI: default and description (generated from the parsers) |
-| [Configuration Reference](./docs/reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
-| [Model Catalog](./docs/reference/models.md) | Supported Bedrock models and per-provider request differences |
-| [Operator Runbook](./docs/operations.md) | Capacity sizing, re-ingestion, incremental runs, caches, backup and restore, OpenSearch and Neptune upgrades, shipping schemas and seed graphs, failed and quarantined documents, alarms, query deadlines, tenant isolation, observability, common errors |
-| [Design Doc](./docs/design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
-| [`iac/README.md`](./iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, tests, quality gate, branch and commit rules |
-| [CHANGELOG.md](./CHANGELOG.md) | Release notes |
-| [SECURITY.md](./SECURITY.md) | Reporting security issues |
+| **First-time evaluator** (no AWS) | [Local mode](./docs/user-guide.md#local-mode-no-aws), then the [Overview](./docs/concepts/overview.md) |
+| **Builder on AWS** | [Required models](./docs/user-guide.md#required-models) and the [User Guide](./docs/user-guide.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
+| **Operator** | The [Operator Runbook](./docs/operations.md) and [`iac/README.md`](./iac/README.md) |
+| **Evaluator or researcher** | [Evaluation](./docs/user-guide.md#6-evaluation-run-eval), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
+| **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |
+| **Contributor** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+
+Every flag is in the [CLI Reference](./docs/reference/cli.md), every configuration key in the [Configuration Reference](./docs/reference/configuration.md), and the supported models in the [Model Catalog](./docs/reference/models.md). Release notes: [CHANGELOG.md](./CHANGELOG.md); security reports: [SECURITY.md](./SECURITY.md).
 
 ## Security & Disclaimer
 
