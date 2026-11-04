@@ -3,7 +3,8 @@
 """Check the documentation's links, fragments and EN/KO structure.
 
 Every tracked ``*.md`` file is scanned for relative links and images: the
-target must exist and a ``#fragment`` into a Markdown file must match one of its
+target must exist and be tracked by Git (a file, or a directory holding one;
+not through a tracked symlink to an untracked file), and a ``#fragment`` into a Markdown file must match one of its
 headings (GitHub slug rules, duplicate headings get ``-1``, ``-2``...) or an
 ``<a id>``/``<a name>``. Code and configuration under ``unified_kg_rag/``,
 ``scripts/`` and ``iac/`` that cite ``docs/*.md`` paths or this repository's
@@ -191,6 +192,14 @@ def tracked_files(root: Path) -> list[Path]:
     )
 
 
+def _is_tracked(dest: Path, tracked: set[Path]) -> bool:
+    """Whether ``dest`` (resolved) is a tracked file, or a directory holding
+    one."""
+    if dest.is_dir():
+        return any(path.is_relative_to(dest) for path in tracked)
+    return dest in tracked
+
+
 def _check_target(
     root: Path,
     source: Path,
@@ -204,7 +213,7 @@ def _check_target(
     dest = (base / unquote(path)).resolve() if path else source
     if not dest.exists():
         report.failures.append(f"{where}: missing target: {target}")
-    elif tracked is not None and dest.is_file() and dest not in tracked:
+    elif tracked is not None and not _is_tracked(dest, tracked):
         # On disk but not committed (untracked or ignored): CI would miss it.
         report.failures.append(f"{where}: target not tracked by Git: {target}")
     elif fragment and dest.suffix == ".md":
@@ -221,7 +230,9 @@ def check_links(root: Path = REPO_ROOT) -> Report:
     """Check Markdown links and images, then code-cited doc paths."""
     report = Report()
     files = tracked_files(root)
-    tracked = {p.resolve() for p in files}
+    # A tracked symlink is not its target: one to an untracked file is
+    # broken in CI (its target, when tracked, is listed itself).
+    tracked = {p.resolve() for p in files if not p.is_symlink()}
     for md in (p for p in files if p.suffix == ".md"):
         rel = md.relative_to(root).as_posix()
         for number, target, image in links(md.read_text(encoding="utf-8")):
@@ -255,7 +266,7 @@ def check_links(root: Path = REPO_ROOT) -> Report:
                     continue
                 report.counts["code citations"] += 1
                 _check_target(
-                    root, path, f"{rel}:{number}", match.group(), root, report
+                    root, path, f"{rel}:{number}", match.group(), root, report, tracked
                 )
     return report
 
