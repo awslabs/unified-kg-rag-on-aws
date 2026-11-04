@@ -463,7 +463,9 @@ def test_rerunning_a_stage_drops_the_recorded_results_after_it(
         r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
     }
     assert statuses["graph_resolution"] == statuses["indexing"] == "completed"
-    assert harness.llm_calls > calls  # community reports regenerated
+    assert statuses["community_detection"] == "completed"
+    # The rebuild of the same graph takes the stored report answers.
+    assert harness.llm_calls == calls
 
 
 def test_a_stage_that_crashed_then_succeeds_commits_its_documents(

@@ -434,6 +434,31 @@ gets its models and stores from the run's `Providers` bundle.
   over the limit) would split it by size on every later run, so it is asked
   again, and a stored one of that kind is replaced. `--force-rebuild` asks
   again.
+- **A full build reuses the corpus-wide answers of unchanged input.** The
+  LLM response cache keys a call by its prompt and model, which are stable
+  (community ids are content ids), but it lives in the run's cache
+  directory: a reset under a new pipeline id starts it empty, so before
+  this every reset summarized every long description and reported every
+  community again. When the run's graph is the corpus's (no registry, a
+  reset, or no unchanged document), graph resolution reads the stored
+  graph copies of the items over the summarization threshold (one read
+  per suffix) and keeps a summary whose `summarized_from` is the hash of
+  the item's description and whose `summarized_with` is
+  `cache_keys.description_summary_fingerprint` (every-call settings, the
+  summary model, the summarization section, the prompt), so a reset after
+  a summarization setting change summarizes again; a copy the graph capped
+  is not reused. The report answers are extraction-store records keyed by
+  `<cache_keys.community_report_fingerprint>:<SHA-256 of the report input>`
+  (the chain input as packed, with the community's name, which titles the
+  report), stored with their generation time and named by the report
+  (`attributes.report_record`), so the rebuild's retention keeps the ones
+  its reports name. A stored answer gives the same report a call would
+  (rank and lineage are recomputed), and its vectors are reused by digest.
+  An incremental run that leaves documents unchanged neither reads nor
+  writes them: its communities cluster the delta, which a full build
+  clusters otherwise, so the first reset after incremental runs asks for
+  those reports. `--force-rebuild` asks
+  again and refreshes the records.
 - **Gleaning stops on observed output**: a unit is re-sent (up to
   `max_rounds`) only while its previous answer added something new. An empty
   answer is the "nothing missing" signal MS GraphRAG asks for with a separate

@@ -207,6 +207,113 @@ def test_unchanged_runs_ask_embed_and_write_nothing_again(
     assert set(server.embedded) <= report_texts
 
 
+class _CountingServer(_Server):
+    """``_Server``, counting the summary and community report prompts."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.summaries = 0
+        self.reports = 0
+
+    def _answer(self, system: str, human: str) -> str:
+        if "knowledge-graph editor" in system:
+            self.summaries += 1
+        elif "community analysis" in system:
+            self.reports += 1
+        return super()._answer(system, human)
+
+
+def _snapshot(config, providers, graph_path: Path) -> dict:
+    """What the stores hold: every vector document by index and id, and
+    every graph vertex and edge (without the rebuild's tag)."""
+    import json
+    import sqlite3
+
+    os_config = config.indexing.opensearch
+    stored: dict = {
+        prefix: {
+            hit["_id"]: hit["_source"] for hit in e2e._stored(config, providers, prefix)
+        }
+        for prefix in (
+            os_config.text_units_index_prefix,
+            os_config.entities_index_prefix,
+            os_config.relationships_index_prefix,
+            os_config.community_reports_index_prefix,
+            os_config.extraction_records_index_prefix,
+        )
+    }
+    connection = sqlite3.connect(graph_path)
+    try:
+        for table in ("vertices", "edges"):
+            for row in connection.execute(f"SELECT * FROM {table}"):
+                props = json.loads(row[-1])
+                props.pop("build_tag", None)
+                stored[(table, *row[:-1])] = props
+    finally:
+        connection.close()
+    return stored
+
+
+def test_a_reset_of_an_unchanged_corpus_asks_no_summary_or_report(
+    tmp_path: Path, no_aws
+) -> None:
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    summarization = config.processing.graph_extraction.description_summarization
+    # Every merged description is summarized.
+    summarization.force_summary_threshold_tokens = 3
+    server = _CountingServer()
+    providers = e2e._providers(config, server, e2e.FakeCrossEncoder("rerank"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name in ("a", "b", "c"):
+        (source / f"{name}.txt").write_text(f"{_DOCUMENT}\n{name.upper()} closes.")
+    graph_path = tmp_path / "stores" / "graph.sqlite3"
+
+    def run(name: str) -> PipelineContext:
+        context = e2e._ingest(config, providers, source, tmp_path / name)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        return context
+
+    def metrics(context: PipelineContext, stage: PipelineStageType) -> dict:
+        (result,) = [r for r in context.stage_results if r.stage_name == stage.value]
+        return result.metrics
+
+    run("run-1")
+    summaries, reports = server.summaries, server.reports
+    assert summaries > 0 and reports > 0
+    before = _snapshot(config, providers, graph_path)
+
+    # The first build's summaries and report answers are reused: no model
+    # call, the stores as they were (report times and vectors included).
+    config.indexing.reset = True
+    context = run("run-2")
+    assert (server.summaries, server.reports) == (summaries, reports)
+    assert _snapshot(config, providers, graph_path) == before
+    resolution = metrics(context, PipelineStageType.GRAPH_RESOLUTION)
+    assert resolution["summaries_reused"] > 0
+    assert resolution["llm_usage"]["llm_calls"] == 0
+    detection = metrics(context, PipelineStageType.COMMUNITY_DETECTION)
+    assert detection["llm_usage"]["cache_hits"] == detection["reports_generated"]
+    assert detection["llm_usage"]["llm_calls"] == 0
+
+    # Each stored report names its answer, and the rebuild keeps the
+    # answers its reports name.
+    os_config = config.indexing.opensearch
+    named = {
+        hit["_source"]["attributes"]["report_record"]
+        for hit in e2e._stored(
+            config, providers, os_config.community_reports_index_prefix
+        )
+    }
+    records = set(before[os_config.extraction_records_index_prefix])
+    assert len(named) == detection["reports_generated"] and named <= records
+
+    # A summarization setting changed: the reset summarizes again.
+    summarization.max_summary_tokens = 64
+    run("run-3")
+    assert server.summaries == 2 * summaries
+
+
 @pytest.mark.parametrize("force_rebuild", [False, True])
 def test_force_rebuild_asks_and_embeds_everything_again(
     tmp_path: Path, no_aws, force_rebuild: bool
@@ -228,10 +335,16 @@ def test_force_rebuild_asks_and_embeds_everything_again(
         stages = {stage.name: stage for stage in pipeline.stages}
         chunking = stages[PipelineStageType.TEXT_CHUNKING.value]
         indexing = stages[PipelineStageType.INDEXING.value]
+        resolution = stages[PipelineStageType.GRAPH_RESOLUTION.value]
+        detection = stages[PipelineStageType.COMMUNITY_DETECTION.value]
         assert isinstance(chunking, ps.TextChunkingStage)
         assert isinstance(indexing, ps.IndexingStage)
+        assert isinstance(resolution, ps.GraphResolutionStage)
+        assert isinstance(detection, ps.CommunityDetectionStage)
         assert chunking.store is not None
         assert chunking.store._reuse is not force_rebuild
+        assert resolution.reuse_stored is not force_rebuild
+        assert detection.store._reuse is not force_rebuild
         vector = indexing.indexing_manager.opensearch_indexer
         assert vector._reuse_embeddings is not force_rebuild
     finally:

@@ -938,6 +938,80 @@ def chunk_boundary_fingerprint(config: Config) -> str:
     )
 
 
+# The format of a reused description summary or community report: bump it
+# when the record or the way its stage reads it changes.
+_ANSWER_FORMAT_VERSION = 1
+
+
+def _answer_fingerprint(
+    config: Config, record: str, role: ModelRole, prompt: Any, section: str
+) -> str:
+    """Fingerprint the settings a corpus-wide model answer depends on beside
+    its input text: the settings of every model call, the ``role``'s model
+    resolved through its tier, the config ``section`` the stage reads, the
+    target language and ``prompt`` (code, or its ``custom_prompts``
+    override)."""
+    from unified_kg_rag.domain.prompts.base import fill_slots
+
+    node: Any = config
+    for name in section.split("."):
+        node = getattr(node, name)
+    resolved = prompt.resolve(config.custom_prompts)
+    return _digest(
+        {
+            "record": record,
+            "version": _ANSWER_FORMAT_VERSION,
+            "settings": _settings(
+                config, lambda rule: rule.per_document and rule.stage is None
+            ),
+            "model": to_jsonable_python(config.model_id(role)),
+            "section": to_jsonable_python(node),
+            "target_language": config.processing.translation.target_language.value,
+            "prompt": compute_hash(
+                fill_slots(
+                    resolved.system_prompt_template
+                    + "\n"
+                    + resolved.human_prompt_template,
+                    prompt.inlined_slots(config),
+                )
+            ),
+        }
+    )
+
+
+def description_summary_fingerprint(config: Config) -> str:
+    """Fingerprint the settings a description summary depends on beside the
+    description (``_answer_fingerprint``). A summarized item records it, so
+    a full build reuses a stored summary only when it was made the same way
+    (``description_summarizer.reuse_summaries``)."""
+    from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
+
+    return _answer_fingerprint(
+        config,
+        "description_summary",
+        ModelRole.DESCRIPTION_SUMMARY,
+        DescriptionSummarizationPrompt,
+        "processing.graph_extraction.description_summarization",
+    )
+
+
+def community_report_fingerprint(config: Config) -> str:
+    """Fingerprint the settings a community report depends on beside its
+    input (``_answer_fingerprint``). The extraction store keys the report's
+    answer by it and the input's text, so a full build that packs a
+    community's input again does not ask the model again (a reset of an
+    unchanged corpus)."""
+    from unified_kg_rag.domain.prompts import CommunityReportPrompt
+
+    return _answer_fingerprint(
+        config,
+        "community_report",
+        ModelRole.COMMUNITY_REPORT,
+        CommunityReportPrompt,
+        "graph.community_detection.report_generation",
+    )
+
+
 # --- stage cache keys --------------------------------------------------------
 
 

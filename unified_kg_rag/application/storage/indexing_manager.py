@@ -26,6 +26,7 @@ from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hi
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
+    REPORT_RECORD_ATTRIBUTE,
     attribute_record_keys,
     claims_from_payload,
     record_from_payload,
@@ -550,22 +551,32 @@ class IndexingManager:
         )
         written = results.get("opensearch_text_units")
         if written is not None and not written.failed_items:
-            self._retain_extraction_records(text_units or [], suffixes)
+            self._retain_extraction_records(
+                text_units or [], suffixes, community_reports or []
+            )
         return results
 
     def _retain_extraction_records(
-        self, text_units: list[TextUnit], suffixes: list[str]
+        self,
+        text_units: list[TextUnit],
+        suffixes: list[str],
+        community_reports: Sequence[CommunityReport] = (),
     ) -> None:
         """Keep, per rebuilt suffix, only the extraction records its stored
-        text units name: the records of other extraction settings, and of
-        texts no stored unit holds any more (deleted or edited documents),
-        go. Best-effort: a failure keeps the records, which cost space only.
+        text units and community reports name (``REPORT_RECORD_ATTRIBUTE``):
+        the records of other extraction settings, and of texts no stored
+        unit holds any more (deleted or edited documents), go. Best-effort: a
+        failure keeps the records, which cost space only.
         """
         named: dict[str, set[str]] = {suffix: set() for suffix in suffixes}
         for unit in text_units:
             named.setdefault(BaseIndexer.get_suffix(unit), set()).update(
                 record_keys(unit).values()
             )
+        for report in community_reports:
+            key = (report.attributes or {}).get(REPORT_RECORD_ATTRIBUTE)
+            if isinstance(key, str):
+                named.setdefault(BaseIndexer.get_suffix(report), set()).add(key)
         for suffix, keys in sorted(named.items()):
             try:
                 kept = self.opensearch_indexer.retain_extraction_records(

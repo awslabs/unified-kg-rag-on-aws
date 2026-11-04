@@ -480,6 +480,9 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
     config.fixing.enabled = False
+    # Every merged description is summarized (the reset below reuses them).
+    summarization = config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 3
     # The Ollama embedding model's dimension is the configured one.
     config.models.embedding.dimension = 64
     server = FakeOllama(_respond, answer, config.models.embedding.dimension)
@@ -517,6 +520,22 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         assert isinstance(registry, SQLiteDocStatusStore)
         assert len(registry.list_all()) == 2
 
+        # A reset of the unchanged corpus asks the model nothing: the
+        # extraction records, description summaries and report answers are
+        # the ones the stores keep.
+        calls = len(server.chat_models)
+        assert context.community_reports
+        config.indexing.reset = True
+        rebuilt = pipeline.run(source, pipeline_id="local-mode-reset")
+        config.indexing.reset = False
+        assert rebuilt.status is PipelineStageStatus.COMPLETED
+        assert len(server.chat_models) == calls
+        assert [r.model_dump() for r in rebuilt.community_reports] == [
+            r.model_dump() for r in context.community_reports
+        ]
+
+        # The summaries were answered with the fake's answer too.
+        answers = server.answers
         out = chain.invoke(
             RAGInput(
                 query="Who stores the widgets?",
@@ -527,7 +546,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         assert isinstance(out, RAGOutput)
         assert out.answer == answer
         assert out.sources
-        assert server.answers == 1
+        assert server.answers == answers + 1
         assert set(server.embed_models) == {config.embedding_model_id}
     finally:
         chain.close()

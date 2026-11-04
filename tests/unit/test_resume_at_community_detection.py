@@ -71,7 +71,7 @@ class _Detector:
         ]
 
     def generate_reports(
-        self, communities, text_units=None, descriptions=None, types=None
+        self, communities, text_units=None, descriptions=None, types=None, records=None
     ):  # noqa: ANN001
         return [], []
 
@@ -85,6 +85,7 @@ def _community_stage(config: Config, detector: _Detector) -> CommunityDetectionS
     stage.stage_type = PipelineStageType.COMMUNITY_DETECTION
     stage.detector = detector  # type: ignore[assignment]
     stage.cache_directory = None
+    stage.store = None  # type: ignore[assignment]
     return stage
 
 

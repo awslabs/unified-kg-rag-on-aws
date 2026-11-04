@@ -678,8 +678,9 @@ and `failed_calls`, and the same counts
 with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage
 ([runbook](./operations.md#alarms)), and `run-eval` records it per answer
 (`EvaluationResult.usage`) and per run (`summary.usage`). A response the
-ingestion response cache served, a chunk-boundary answer the extraction
-store served, or a query entity or keyword extraction the chain's
+ingestion response cache served, a chunk-boundary or community report
+answer the extraction store served, a description summary a full build took
+from its stored copy, or a query entity or keyword extraction the chain's
 extraction cache served (`search.query_extraction_cache_size`), counts as
 a cache hit, not a call; a failed
 call is not in `llm_calls` but in `failed_calls`; retries are calls.
@@ -772,8 +773,8 @@ cached and skipped on a re-run:
   its delta was computed restarts at `document_loading`, so the delta follows
   the new settings.
 - `--force-rebuild` recomputes every stage and rewrites the cache; it also
-  asks the boundary model for every pre-chunk again and embeds every text
-  again (see below).
+  asks the model for every pre-chunk's boundaries, description summary and
+  community report again and embeds every text again (see below).
 
 **S3 sync** (`--s3-sync`) keeps the stage cache in
 `s3://<bucket>/<prefix>/...`, uploaded after every stage, so a fresh task
@@ -794,7 +795,15 @@ so a reset or an edit asks the model only for pre-chunks whose text or
 chunking settings changed, and an unchanged pre-chunk keeps its boundaries
 even with a model that answers otherwise each time. Only an answer the
 chunker used is kept: a pre-chunk split by size instead (the answer named
-lines that do not exist) asks the model again on the next run.
+lines that do not exist) asks the model again on the next run. A full build
+(a reset, a first run, or a run without the registry) does the same for
+the corpus-wide answers: a description over the summarization threshold
+whose stored copy was summarized from the same text with the same
+summarization settings keeps that summary, and a community whose report
+input (its members, descriptions, edges and claims as packed, its roll-up
+text and name) and report settings are unchanged takes the stored answer
+(the extraction store keeps it, and the report names it in
+`attributes.report_record`).
 
 **LLM response cache** (`cache.llm_responses`, on by default). Every
 ingestion model response is kept under `llm-cache/` in the run's cache
@@ -1339,10 +1348,15 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   is safe to re-run (how it works:
   [Operator Runbook: Re-ingest](./operations.md#re-ingest)). The stored
   chunk boundaries, extraction records and vectors of unchanged text are
-  reused, so a rebuild with the same models costs the model calls of what it
-  regenerates (description summaries, community reports); after an embedding
-  model or dimension change every text is embedded again. Add
-  `--force-rebuild` to ask and embed everything again.
+  reused, and so are the stored description summaries and community report
+  answers whose input is unchanged, so a rebuild with the same models and
+  settings asks the model only for what the corpus changed. A rebuild after
+  incremental runs still asks for the reports of the communities it
+  clusters differently (an incremental run clusters only its delta); after
+  a summarization or report setting change it asks again for every summary
+  or report, and after an embedding model or dimension change every text
+  is embedded again. Add `--force-rebuild` to ask and embed everything
+  again.
 
 ### Deletion scope
 

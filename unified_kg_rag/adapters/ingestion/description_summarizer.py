@@ -30,11 +30,14 @@ from typing import TYPE_CHECKING, TypeVar
 
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain, usage_model_id
 from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    description_summary_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.seed_graph import seed_only
 from unified_kg_rag.domain.models import (
@@ -43,9 +46,11 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     Relationship,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import compute_hash
 
 if TYPE_CHECKING:
@@ -70,14 +75,19 @@ _MAX_MAP_ROUNDS = 4
 # made from, so a run that derives the same description again keeps the
 # summary instead of summarizing it again (see reuse_summaries).
 SUMMARIZED_FROM_ATTRIBUTE = "summarized_from"
+# Attribute of a summarized description: the fingerprint of the settings it
+# was made with (``cache_keys.description_summary_fingerprint``), so a full
+# build reuses only a summary made the way it would make it.
+SUMMARIZED_WITH_ATTRIBUTE = "summarized_with"
 
 _Summarized = TypeVar("_Summarized", Entity, Relationship)
 
 
-def _summarized(item: Entity | Relationship, summary: str) -> None:
+def _summarized(item: Entity | Relationship, summary: str, settings: str) -> None:
     item.attributes = {
         **(item.attributes or {}),
         SUMMARIZED_FROM_ATTRIBUTE: compute_hash(item.description or ""),
+        SUMMARIZED_WITH_ATTRIBUTE: settings,
     }
     item.description = summary
 
@@ -95,42 +105,56 @@ def needs_summary(config: Config, description: str | None) -> bool:
 
 
 def reuse_summaries(
-    items: Sequence[_Summarized], stored: Sequence[_Summarized]
+    items: Sequence[_Summarized],
+    stored: Sequence[_Summarized],
+    *,
+    settings: str | None = None,
 ) -> set[str]:
     """Give each item the summary made from its description (in place).
 
     An item whose description equals the one a ``stored`` copy of its id
-    was summarized from takes that summary and its ``summarized_from`` mark,
-    so it is not summarized again (an LLM call per touched item on every
-    run). ``stored`` may hold several copies of an id (the stored one and
-    the one this run's graph resolution summarized).
+    was summarized from takes that summary and its ``summarized_from`` and
+    ``summarized_with`` marks, so it is not summarized again (an LLM call
+    per touched item on every run). ``stored`` may hold several copies of
+    an id (the stored one and the one this run's graph resolution
+    summarized). With ``settings`` (a full build), only a copy summarized
+    with those settings counts: a reset after a summarization setting
+    changed summarizes again.
 
     Returns the ids of the items that now hold a summary: the ones given
     one, and the ones that already held the summary a ``stored`` copy made
     from their mark (an earlier reuse, or this run's graph resolution on a
     first build). A summary over the threshold is not summarized again.
     """
-    summaries: dict[tuple[str, str], str | None] = {}
+    summaries: dict[tuple[str, str], tuple[str | None, object]] = {}
     for copy in stored:
-        source = (copy.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
-        if isinstance(source, str):
-            summaries.setdefault((copy.id, source), copy.description)
+        attributes = copy.attributes or {}
+        source = attributes.get(SUMMARIZED_FROM_ATTRIBUTE)
+        made_with = attributes.get(SUMMARIZED_WITH_ATTRIBUTE)
+        if isinstance(source, str) and (settings is None or made_with == settings):
+            summaries.setdefault((copy.id, source), (copy.description, made_with))
     reused: set[str] = set()
     for item in items:
         source = compute_hash(item.description or "")
         if (item.id, source) in summaries:
-            item.description = summaries[(item.id, source)]
-            item.attributes = {
-                **(item.attributes or {}),
-                SUMMARIZED_FROM_ATTRIBUTE: source,
+            item.description, made_with = summaries[(item.id, source)]
+            attributes = {
+                key: value
+                for key, value in (item.attributes or {}).items()
+                if key != SUMMARIZED_WITH_ATTRIBUTE
             }
+            attributes[SUMMARIZED_FROM_ATTRIBUTE] = source
+            if isinstance(made_with, str):
+                attributes[SUMMARIZED_WITH_ATTRIBUTE] = made_with
+            item.attributes = attributes
             reused.add(item.id)
             continue
         mark = (item.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
         if (
             isinstance(mark, str)
             and item.description is not None
-            and summaries.get((item.id, mark)) == item.description
+            and (item.id, mark) in summaries
+            and summaries[(item.id, mark)][0] == item.description
         ):
             reused.add(item.id)
     return reused
@@ -192,6 +216,8 @@ class DescriptionSummarizer:
             self.config.processing.graph_extraction.description_summarization
         )
         self.target_language = self.config.processing.translation.target_language.value
+        # Recorded on each summary it makes (SUMMARIZED_WITH_ATTRIBUTE).
+        self.settings = description_summary_fingerprint(self.config)
         self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_config(
@@ -226,6 +252,23 @@ class DescriptionSummarizer:
         available = (window - self.summarization_config.max_summary_tokens) // 2
         return min(MAX_INPUT_TOKENS, max(_MIN_INPUT_TOKENS, available))
 
+    def reuse_stored(
+        self, items: Sequence[_Summarized], stored: Sequence[_Summarized]
+    ) -> set[str]:
+        """Give a full build's ``items`` the summaries their ``stored``
+        copies were made from their descriptions with this summarizer's
+        settings (``reuse_summaries``), in place; returns their ids. Each
+        counts as a model call the run did not make (``shared.usage``)."""
+        reused = reuse_summaries(items, stored, settings=self.settings)
+        if reused:
+            model = usage_model_id(
+                self.factory,
+                model_id_value(self.config.model_id(ModelRole.DESCRIPTION_SUMMARY)),
+            )
+            for _ in reused:
+                record_cache_hit(ModelPurpose.INGESTION.value, model)
+        return reused
+
     def _exceeds_threshold(self, item: Entity | Relationship) -> bool:
         # A seed-only item's description is the seed's, already cut at
         # import (max_description_chars): no model call for it.
@@ -249,7 +292,7 @@ class DescriptionSummarizer:
         )
         for entity, summary in zip(over_threshold, summaries, strict=True):
             if summary:
-                _summarized(entity, summary)
+                _summarized(entity, summary, self.settings)
         return entities
 
     def summarize_relationships(
@@ -272,7 +315,7 @@ class DescriptionSummarizer:
         )
         for rel, summary in zip(over_threshold, summaries, strict=True):
             if summary:
-                _summarized(rel, summary)
+                _summarized(rel, summary, self.settings)
         return relationships
 
     def _build_inputs(
