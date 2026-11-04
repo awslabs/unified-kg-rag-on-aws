@@ -32,6 +32,7 @@ from pydantic import Field
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.held_timeouts import HeldTimeouts
 from unified_kg_rag import QueryTimeoutError
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
@@ -181,54 +182,6 @@ def _query(question: str = "What does Vendor supply?") -> RAGInput:
     )
 
 
-class _HeldTimeouts:
-    """Records the ``asyncio.timeout`` scopes the chain opens, so a test can
-    expire a long deadline at a moment it chooses (once the model call is in
-    flight) instead of racing the setup before it on a slow runner."""
-
-    class _Recorded(asyncio.Timeout):
-        exited = False
-
-        async def __aexit__(self, *exc: Any) -> bool | None:
-            self.exited = True
-            return await super().__aexit__(*exc)
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.opened: list[_HeldTimeouts._Recorded] = []
-
-        def opening(delay: float | None) -> asyncio.Timeout:
-            loop = asyncio.get_running_loop()
-            when = None if delay is None else loop.time() + delay
-            timeout = self._Recorded(when)
-            self.opened.append(timeout)
-            return timeout
-
-        monkeypatch.setattr(asyncio, "timeout", opening)
-
-    def _held(self, beyond: float) -> list[asyncio.Timeout]:
-        now = asyncio.get_running_loop().time()
-        return [
-            t
-            for t in self.opened
-            if not t.exited and (when := t.when()) is not None and when - now > beyond
-        ]
-
-    async def wait_open(self, count: int = 1, beyond: float = 10) -> None:
-        """Wait (bounded) until exactly ``count`` scopes due more than
-        ``beyond`` s from now are open."""
-        deadline = time.monotonic() + 30
-        while len(self._held(beyond)) != count:
-            assert time.monotonic() < deadline, "timed out waiting for a scope"
-            await asyncio.sleep(0.01)
-
-    def expire(self, beyond: float = 10) -> None:
-        """Expire every open scope due more than ``beyond`` s from now (the
-        held deadlines; nothing else in the query waits that long)."""
-        now = asyncio.get_running_loop().time()
-        for timeout in self._held(beyond):
-            timeout.reschedule(now)
-
-
 async def _until(flag: list[bool], within: float = 30.0) -> None:
     """Wait (bounded) until ``flag`` holds an entry."""
     deadline = time.monotonic() + within
@@ -258,7 +211,7 @@ async def test_ainvoke_past_the_deadline_raises_and_cancels_the_model_call(
 ) -> None:
     model = _SlowChatModel(first_delay=600)
     chain = _chain(_config(query_timeout_seconds=300), _Factory(model))
-    timeouts = _HeldTimeouts(monkeypatch)
+    timeouts = HeldTimeouts(monkeypatch)
     query = asyncio.ensure_future(chain.ainvoke(_query()))
     # The deadline expires only once the model call is in flight.
     await _until(model.started)
@@ -322,7 +275,7 @@ async def test_a_stream_without_a_first_chunk_fails_at_the_model_timeout(
     model = _SlowChatModel(first_delay=600)
     config = _config(query_timeout_seconds=600, model_timeout_seconds=300)
     chain = _chain(config, _Factory(model))
-    timeouts = _HeldTimeouts(monkeypatch)
+    timeouts = HeldTimeouts(monkeypatch)
 
     async def consume() -> None:
         async for _ in chain.astream(_query()):
@@ -348,7 +301,7 @@ async def test_a_stream_that_stalls_after_its_first_chunk_ends_at_the_deadline(
     model = _SlowChatModel(chunk_delay=600)
     config = _config(query_timeout_seconds=600, model_timeout_seconds=300)
     chain = _chain(config, _Factory(model))
-    timeouts = _HeldTimeouts(monkeypatch)
+    timeouts = HeldTimeouts(monkeypatch)
     received: list[str] = []
 
     async def consume() -> None:
@@ -385,7 +338,7 @@ async def test_run_eval_counts_a_timed_out_query_as_failed(
     config = _config(query_timeout_seconds=300)
     config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
     model = _SlowChatModel(first_delay=600, stall_on="stall")
-    timeouts = _HeldTimeouts(monkeypatch)
+    timeouts = HeldTimeouts(monkeypatch)
     manager = EvaluationManager(config, rag_chain=_chain(config, _Factory(model)))
     metadata = {"search_strategy": "simple", "enable_query_processing": False}
     queries = [
@@ -623,14 +576,16 @@ def _stall_config() -> Config:
 
 
 def _assert_bounded(server: _StallServer, started: float, deadline: float) -> None:
+    # Timing is the point here (a real socket stalls): the bounds leave
+    # generous headroom for a loaded runner.
     assert time.monotonic() - started < deadline + 5
     # Up to the deadline: 1 s per request, so at most 5, and the one in
-    # flight on the worker thread then makes its second attempt; no retry
-    # starts after it.
-    time.sleep(2.5)
+    # flight on the worker thread then makes its second attempt (sent within
+    # 1 s, ended within 2 s); no retry starts after it.
+    time.sleep(4.0)
     sent = len(server.connections)
     assert 1 <= sent <= 6
-    time.sleep(1.5)
+    time.sleep(2.0)
     assert len(server.connections) == sent
 
 
@@ -664,15 +619,25 @@ def test_an_abandoned_executor_does_not_hold_asyncio_run() -> None:
 
     from unified_kg_rag.shared.utils.event_loop import abandon_default_executor
 
+    running, release, ended = threading.Event(), threading.Event(), threading.Event()
+
+    def left_behind() -> None:
+        running.set()
+        release.wait(30)
+        ended.set()
+
     async def main() -> None:
         loop = asyncio.get_running_loop()
         executor = ThreadPoolExecutor(max_workers=2)
         loop.set_default_executor(executor)
         # A call a timed-out query left behind.
-        loop.run_in_executor(None, time.sleep, 3)
-        await asyncio.sleep(0.05)
+        loop.run_in_executor(None, left_behind)
+        assert await asyncio.to_thread(running.wait, 30)
         abandon_default_executor(loop, executor)
 
-    started = time.monotonic()
-    asyncio.run(main())
-    assert time.monotonic() - started < 2
+    try:
+        asyncio.run(main())
+        # asyncio.run returned while the call still runs: it did not wait.
+        assert not ended.is_set()
+    finally:
+        release.set()

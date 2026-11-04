@@ -21,6 +21,8 @@ import asyncio
 import gc
 import threading
 import time
+from collections import defaultdict
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -31,6 +33,7 @@ from pydantic import Field
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.held_timeouts import HeldTimeouts
 from unified_kg_rag.adapters.local.token_counter import local_token_counter_factory
 from unified_kg_rag.adapters.observability.usage_callback import UsageCallbackHandler
 from unified_kg_rag.adapters.providers import Providers
@@ -57,11 +60,16 @@ _KEYWORDS = '{"high_level_keywords": ["supply"], "low_level_keywords": ["Vendor"
 class _ThreadedChat(BaseChatModel):
     """Answers by prompt kind on a worker thread, as ChatBedrockConverse
     runs ``ainvoke``: a cancelled caller leaves the request running to the
-    end. ``delays`` holds the seconds a kind takes; ``served`` the calls
-    that completed at the "server"."""
+    end. ``delays`` holds the seconds a kind takes, ``gates`` an event a
+    kind waits for (on the worker thread) before it answers; ``started`` and
+    ``served`` the calls sent and completed at the "server"."""
 
     route: str = "simple"
     delays: dict[str, float] = Field(default_factory=dict)
+    gates: dict[str, threading.Event] = Field(default_factory=dict)
+    # defaultdict[str, threading.Event]: set as a kind answers.
+    answered: Any = Field(default_factory=lambda: defaultdict(threading.Event))
+    started: list[str] = Field(default_factory=list)
     served: list[str] = Field(default_factory=list)
     cancelled: list[str] = Field(default_factory=list)
     # False: answer on the event loop instead (a cancel stops the request).
@@ -83,6 +91,11 @@ class _ThreadedChat(BaseChatModel):
 
     def _generate(self, messages: list[BaseMessage], *a: Any, **k: Any) -> ChatResult:
         kind = self.kind(messages)
+        with self.lock:
+            self.started.append(kind)
+        if (gate := self.gates.get(kind)) is not None:
+            # Bounded, so a failed test never leaves the thread behind.
+            gate.wait(30)
         time.sleep(self.delays.get(kind, 0.0))
         return self._reply(kind)
 
@@ -102,6 +115,7 @@ class _ThreadedChat(BaseChatModel):
     def _reply(self, kind: str) -> ChatResult:
         with self.lock:
             self.served.append(kind)
+        self.answered[kind].set()
         content = {"router": self.route, "keywords": _KEYWORDS}.get(
             kind, "Vendor supplies Buyer."
         )
@@ -172,26 +186,72 @@ async def _until(check: Any, within: float = 10.0) -> None:
         await asyncio.sleep(0.01)
 
 
-async def test_the_query_does_not_wait_for_the_unread_extraction() -> None:
+@pytest.fixture
+def release() -> Iterator[threading.Event]:
+    """Holds a gated call at the "server" until set (at the end at the
+    latest, so no worker thread outlives the test)."""
+    event = threading.Event()
+    yield event
+    event.set()
+
+
+class _HeldCancels:
+    """Records the long ``loop.call_later`` timers that cancel a task on the
+    running loop, so a test can fire a long deadline at a moment it chooses
+    instead of racing the query to it on a slow runner."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, beyond: float = 100) -> None:
+        loop = asyncio.get_running_loop()
+        self.timers: list[tuple[float, asyncio.Future[Any], asyncio.TimerHandle]] = []
+        real = loop.call_later
+
+        def call_later(delay: float, callback: Any, *args: Any, **kw: Any) -> Any:
+            handle = real(delay, callback, *args, **kw)
+            task = getattr(callback, "__self__", None)
+            if (
+                delay > beyond
+                and isinstance(task, asyncio.Future)
+                and callback == task.cancel
+            ):
+                self.timers.append((delay, task, handle))
+            return handle
+
+        monkeypatch.setattr(loop, "call_later", call_later)
+
+    def fire(self) -> None:
+        for _, task, handle in self.timers:
+            if not handle.cancelled():
+                handle.cancel()
+                task.cancel()
+
+
+async def test_the_query_does_not_wait_for_the_unread_extraction(
+    release: threading.Event,
+) -> None:
     # Routed to simple, the keyword extraction mix would read runs on in the
     # background: the query returns at the answer, counting it from its start
-    # at an estimate.
-    model = _ThreadedChat(delays={"keywords": 1.0})
+    # at an estimate. The extraction is held at the "server" until the query
+    # has returned (a query that waited for it times out here).
+    model = _ThreadedChat(gates={"keywords": release})
     chain = _chain(model)
-    started = time.monotonic()
-    out = await chain.ainvoke(_auto())
-    assert time.monotonic() - started < 0.8
+    out = await asyncio.wait_for(chain.ainvoke(_auto()), 30)
+    assert "keywords" in model.started and "keywords" not in model.served
+    (pending,) = chain._background_extractions._snapshot()
+    assert not pending.done()
     assert out.metadata["search_strategy"] == "simple"
     usage = out.metadata["usage"]
     assert (usage["llm_calls"], usage["estimated_calls"]) == (3, 1)
     assert usage["output_tokens"] == 10 and usage["input_tokens"] > 100
     # Never cancelled: the request completes at the server.
+    release.set()
     await _until(lambda: "keywords" in model.served)
     await _until(lambda: not chain._background_extractions._snapshot())
+    assert not pending.cancelled()
 
 
 async def test_one_that_answers_before_the_snapshot_has_its_real_tokens() -> None:
-    model = _ThreadedChat(delays={"answer": 0.3})
+    model = _ThreadedChat()
+    model.gates["answer"] = model.answered["keywords"]
     chain = _chain(model)
     out = await chain.ainvoke(_auto())
     assert sorted(model.served) == ["answer", "keywords", "router"]
@@ -200,11 +260,14 @@ async def test_one_that_answers_before_the_snapshot_has_its_real_tokens() -> Non
     assert (usage["input_tokens"], usage["output_tokens"]) == (150, 15)
 
 
-async def test_one_that_answers_later_settles_in_the_open_scopes() -> None:
-    model = _ThreadedChat(delays={"keywords": 0.3})
+async def test_one_that_answers_later_settles_in_the_open_scopes(
+    release: threading.Event,
+) -> None:
+    model = _ThreadedChat(gates={"keywords": release})
     chain = _chain(model)
     with usage_scope() as run:
         out = await chain.ainvoke(_auto())
+        release.set()
         await _until(lambda: not chain._background_extractions._snapshot())
     assert out.metadata["usage"]["estimated_calls"] == 1
     totals = run.snapshot()
@@ -212,10 +275,14 @@ async def test_one_that_answers_later_settles_in_the_open_scopes() -> None:
     assert (totals["input_tokens"], totals["output_tokens"]) == (150, 15)
 
 
-async def test_the_unread_extraction_fills_the_cache() -> None:
-    model = _ThreadedChat(delays={"keywords": 0.2})
+async def test_the_unread_extraction_fills_the_cache(
+    release: threading.Event,
+) -> None:
+    model = _ThreadedChat(gates={"keywords": release})
     chain = _chain(model, query_extraction_cache_size=8)
     await chain.ainvoke(_auto())
+    assert "keywords" not in model.served
+    release.set()
     await _until(lambda: not chain._background_extractions._snapshot())
     model.route = "mix"
     out = await chain.ainvoke(_auto())
@@ -223,28 +290,40 @@ async def test_the_unread_extraction_fills_the_cache() -> None:
     assert out.metadata["usage"]["cache_hits"] == 1
 
 
-async def test_a_stream_leaves_the_unread_extraction_running() -> None:
-    model = _ThreadedChat(delays={"keywords": 0.5})
+async def test_a_stream_leaves_the_unread_extraction_running(
+    release: threading.Event,
+) -> None:
+    model = _ThreadedChat(gates={"keywords": release})
     chain = _chain(model, query_extraction_cache_size=8)
     chunks = [chunk async for chunk in chain.astream(_auto())]
     assert "".join(chunks)
     assert "keywords" not in model.served
+    release.set()
     await _until(lambda: not chain._background_extractions._snapshot())
     model.route = "mix"
     await chain.ainvoke(_auto())
     assert model.served.count("keywords") == 1
 
 
-async def test_the_query_deadline_cancels_the_background_extraction() -> None:
-    model = _ThreadedChat(delays={"keywords": 30.0}, threaded=False)
-    chain = _chain(model, query_timeout_seconds=0.6)
-    started = time.monotonic()
+async def test_the_query_deadline_cancels_the_background_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A long deadline, fired once the query has returned: the background
+    # extraction is cancelled at what was left of it.
+    model = _ThreadedChat(delays={"keywords": 600.0}, threaded=False)
+    chain = _chain(model, query_timeout_seconds=300)
+    timers = _HeldCancels(monkeypatch, beyond=100)
     out = await chain.ainvoke(_auto())
-    assert time.monotonic() - started < 0.5
     assert out.answer != DEFAULT_ERROR_MESSAGE
     assert out.metadata["usage"]["estimated_calls"] == 1
-    await _until(lambda: "keywords" in model.cancelled, within=5)
-    assert time.monotonic() - started < 5
+    (pending,) = chain._background_extractions._snapshot()
+    # One timer, at what is left of the query's deadline.
+    assert [(task, 100 < delay <= 300) for delay, task, _ in timers.timers] == [
+        (pending, True)
+    ]
+    assert model.cancelled == []
+    timers.fire()
+    await _until(lambda: "keywords" in model.cancelled)
     await _until(lambda: not chain._background_extractions._snapshot())
 
 
@@ -266,9 +345,9 @@ async def test_close_cancels_a_background_extraction_on_the_callers_loop() -> No
     await chain.ainvoke(_auto())
     assert chain._background_extractions._snapshot()
     chain.close()
-    await asyncio.sleep(0.1)
-    assert model.cancelled == ["keywords"]
     assert not chain._background_extractions._snapshot()
+    await _until(lambda: bool(model.cancelled))
+    assert model.cancelled == ["keywords"]
 
 
 def test_close_ends_the_sync_paths_background_extraction(
@@ -282,6 +361,7 @@ def test_close_ends_the_sync_paths_background_extraction(
         assert chain._background_extractions._snapshot()
         started = time.monotonic()
         chain.close()
+        # Generous headroom: the extraction would take 30 s, the cancel ms.
         assert time.monotonic() - started < 5
         gc.collect()
     assert model.cancelled == ["keywords"]
@@ -290,13 +370,22 @@ def test_close_ends_the_sync_paths_background_extraction(
     assert "exception was never retrieved" not in caplog.text
 
 
-async def test_a_call_the_deadline_cancels_is_counted() -> None:
-    # The answer call is cut by the deadline: under ignore_errors the query
-    # returns the error answer, whose usage still holds the cut call.
-    model = _ThreadedChat(delays={"answer": 3.0})
-    chain = _chain(model, query_timeout_seconds=0.6)
+async def test_a_call_the_deadline_cancels_is_counted(
+    monkeypatch: pytest.MonkeyPatch, release: threading.Event
+) -> None:
+    # The answer call is cut by the deadline, expired once that call is in
+    # flight: under ignore_errors the query returns the error answer, whose
+    # usage still holds the cut call.
+    model = _ThreadedChat(gates={"answer": release})
+    chain = _chain(model, query_timeout_seconds=300)
     chain.ignore_errors = True
-    out = await chain.ainvoke(_auto())
+    timeouts = HeldTimeouts(monkeypatch)
+    query = asyncio.ensure_future(chain.ainvoke(_auto()))
+    await _until(lambda: "answer" in model.started)
+    timeouts.expire()
+    out = await asyncio.wait_for(query, 30)
+    assert "answer" not in model.served
+    release.set()
     assert out.answer == DEFAULT_ERROR_MESSAGE
     usage = out.metadata["usage"]
     assert (usage["llm_calls"], usage["estimated_calls"]) == (3, 1)
