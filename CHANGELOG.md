@@ -1377,12 +1377,12 @@ Queries and retrieval.
   `local` and `drift` read no community report: a report carries no source
   kind and summarizes seed-only members too, so `source_kinds: document`
   still answered with seed-only facts. DRIFT then runs one local search on
-  the question; `global` refuses the key as before (#PR).
+  the question; `global` refuses the key as before (#534).
 - `run-rag` and `run-eval` query the config's
   `processing.document_parsing.index_value` when `--suffix` is not given,
   as ingestion writes it: they queried `default` and every query of a
   corpus ingested under another value failed with "No indices found"
-  (#PR).
+  (#534).
 
 Ingestion and incremental indexing.
 - A model answer that corrects itself (an answer, a line such as
@@ -1511,10 +1511,10 @@ Ingestion and incremental indexing.
   extra downloads (`en_core_web_sm`), each Markdown or HTML file waited
   120 s and failed: the first failure is now kept, and every later file of
   the run fails at once with it and the command that installs the model
-  (#PR).
+  (#534).
 - A request OpenSearch rejects (a 400) is logged without the client's
   traceback, so the refusal of `vector_mode` on OpenSearch 2.13 shows the
-  message that names the fix (#PR).
+  message that names the fix (#534).
 
 Evaluation, visualization and tuning.
 - Judge failures are recorded per query, failed scoring exits non-zero
@@ -1591,13 +1591,13 @@ Deployment (CDK).
 - CloudWatch alarms deliver to the alarm topic: its topic policy held only
   the TLS deny and replaced the default policy, so no alarm notification
   was ever published ("not authorized to perform: SNS:Publish"). It now
-  allows `cloudwatch.amazonaws.com` to publish from this account (#PR).
+  allows `cloudwatch.amazonaws.com` to publish from this account (#534).
 - An image built with `UV_EXTRAS="--extra unstructured"` installs the spaCy
   model the extra needs, which a task in the private VPC could not download
-  (each `.md` / `.html` file waited 120 s and failed) (#PR).
+  (each `.md` / `.html` file waited 120 s and failed) (#534).
 - The dashboard plots Bedrock invocations and throttles in two widgets: with
   both Metrics Insights queries in one, `GetMetricWidgetImage` could not
-  render it (#PR).
+  render it (#534).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
