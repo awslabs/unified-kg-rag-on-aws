@@ -286,8 +286,13 @@ class CommunityDetector:
         self,
         graph: nx.Graph,
         whole_graph: Callable[[list[set[Any]]], set[Any]] | None = None,
+        *,
+        empty_expected: bool = False,
     ) -> "CommunityDetector":
         """Detect the communities of ``graph``.
+
+        An empty ``graph`` is logged as a warning unless ``empty_expected``
+        (a run with nothing to index).
 
         ``whole_graph`` (an incremental run) returns the entities of the
         given small components that reach ``min_community_size`` entities in
@@ -306,7 +311,7 @@ class CommunityDetector:
             graph.number_of_nodes(),
             graph.number_of_edges(),
         )
-        self.detect_communities()
+        self.detect_communities(empty_expected=empty_expected)
         return self
 
     @staticmethod
@@ -420,9 +425,10 @@ class CommunityDetector:
             graph.edges[source, target]["weight"] = weight
         return graph
 
-    def detect_communities(self) -> None:
+    def detect_communities(self, *, empty_expected: bool = False) -> None:
         if not self.graph or self.graph.number_of_nodes() == 0:
-            logger.warning("Community detection skipped for empty or invalid graph.")
+            log = logger.debug if empty_expected else logger.warning
+            log("Community detection skipped for empty or invalid graph.")
             return
 
         self.analyze_hierarchy()
@@ -1105,6 +1111,8 @@ class CommunityDetector:
         descriptions: Mapping[str, str] | None = None,
         types: Mapping[str, str] | None = None,
         records: ReportRecords | None = None,
+        *,
+        empty_expected: bool = False,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
@@ -1125,6 +1133,8 @@ class CommunityDetector:
                 takes it instead of a model call, a new answer is stored,
                 and each report names its answer's key
                 (``REPORT_RECORD_ATTRIBUTE``).
+            empty_expected: No communities is no fault (a run with nothing
+                to index): logged at debug level, not as a warning.
 
         Returns:
             One report per community that produced a non-empty LLM result, and
@@ -1138,7 +1148,8 @@ class CommunityDetector:
             return [], []
 
         if not communities:
-            logger.warning("No communities provided for report generation")
+            log = logger.debug if empty_expected else logger.warning
+            log("No communities provided for report generation")
             return [], []
 
         self._report_descriptions = dict(descriptions or {})

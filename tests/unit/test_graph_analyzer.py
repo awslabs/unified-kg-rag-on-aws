@@ -10,6 +10,8 @@ NetworkX wiring or the export shape would fail here.
 
 from __future__ import annotations
 
+import logging
+
 import networkx as nx
 import pytest
 
@@ -121,6 +123,17 @@ class TestStatistics:
         assert stats.num_nodes == 0
         assert stats.num_edges == 0
         assert stats.density is None
+
+    @pytest.mark.parametrize("expected", [False, True])
+    def test_an_empty_graph_warns_unless_expected(
+        self, expected: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A run with nothing to index has an empty graph by design.
+        caplog.set_level(logging.DEBUG)
+        analyzer = GraphAnalyzer(Config(), graph=nx.Graph())
+        assert analyzer.get_graph_statistics(empty_expected=expected).num_nodes == 0
+        (record,) = [r for r in caplog.records if "empty graph" in r.message]
+        assert record.levelno == (logging.DEBUG if expected else logging.WARNING)
 
     def test_none_graph_returns_zero_stats(self) -> None:
         analyzer = GraphAnalyzer(Config(), graph=None)

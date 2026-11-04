@@ -67,6 +67,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
+    legacy_unit_record_fingerprints,
     unit_record_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
@@ -1149,10 +1150,13 @@ class GraphExtractionStage(PipelineStage):
         text_units = context.translated_units or context.text_units
         seed_units = [unit for unit in text_units if is_seed_unit(unit.id)]
         document_units = [unit for unit in text_units if not is_seed_unit(unit.id)]
-        fingerprint = unit_record_fingerprint(
-            self.config, gleaned=self.config.processing.gleaning.enabled
+        gleaned = self.config.processing.gleaning.enabled
+        by_unit = self.store.load(
+            document_units,
+            unit_record_fingerprint(self.config, gleaned=gleaned),
+            record_from_payload,
+            legacy_unit_record_fingerprints(self.config, gleaned=gleaned),
         )
-        by_unit = self.store.load(document_units, fingerprint, record_from_payload)
         # A seed unit's record is its parsed text (no model call), stored
         # under the seed fingerprint like any record (graph resolution).
         by_unit.update(
@@ -1502,10 +1506,16 @@ class ClaimExtractionStage(PipelineStage):
         per_unit: dict[str, list[Claim]] = {}
         for gleaned in (False, True):
             units = [u for u in storable.values() if records[u.id].gleaned is gleaned]
-            fingerprint = unit_record_fingerprint(
-                self.config, gleaned=gleaned, claims=True
+            per_unit.update(
+                self.store.load(
+                    units,
+                    unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
+                    claims_from_payload,
+                    legacy_unit_record_fingerprints(
+                        self.config, gleaned=gleaned, claims=True
+                    ),
+                )
             )
-            per_unit.update(self.store.load(units, fingerprint, claims_from_payload))
         reused = len(per_unit)
 
         to_extract = [unit for unit in text_units if unit.id not in per_unit]
@@ -1613,6 +1623,13 @@ class ClaimResolutionStage(PipelineStage):
         return original_claims_count, resolved_count, metrics
 
 
+def _nothing_to_index(context: PipelineContext) -> bool:
+    """An incremental run without a new or changed document (an unchanged
+    corpus, or deletions only): the graph stages receive an empty graph,
+    which is no fault, so they do not warn about it."""
+    return context.incremental_delta is not None and not context.documents
+
+
 class GraphAnalysisStage(PipelineStage):
     def __init__(
         self,
@@ -1635,7 +1652,9 @@ class GraphAnalysisStage(PipelineStage):
         # Centrality is not computed here: no later stage reads it (the
         # visualization computes its own), and betweenness alone takes
         # minutes on a graph of tens of thousands of entities.
-        graph_stats = self.analyzer.get_graph_statistics()
+        graph_stats = self.analyzer.get_graph_statistics(
+            empty_expected=_nothing_to_index(context)
+        )
 
         metrics = {
             "entities_analyzed": len(entities),
@@ -2285,7 +2304,11 @@ class CommunityDetectionStage(_RegistryStage):
             context.knowledge_graph = _build_knowledge_graph(context)
 
         self.unclustered_stored = 0
-        self.detector(context.knowledge_graph, self._whole_graph(context))
+        self.detector(
+            context.knowledge_graph,
+            self._whole_graph(context),
+            empty_expected=_nothing_to_index(context),
+        )
         community_objects = self.detector.generate_community_objects()
         # A community no document evidences (every member stated by a seed
         # graph only) is stored without a report: the corpus says nothing
@@ -2328,6 +2351,7 @@ class CommunityDetectionStage(_RegistryStage):
             # A full build's reports: an incremental run reports the delta's
             # communities, which a later full build clusters otherwise.
             records=self.store if _graph_is_corpus(self.config, context) else None,
+            empty_expected=_nothing_to_index(context),
         )
         metrics_obj = self.detector.get_community_metrics()
 

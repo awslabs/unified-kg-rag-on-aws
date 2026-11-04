@@ -1341,6 +1341,12 @@ From 0.2.3 (or a `main` checkout since):
 - The IaC synth refuses `network_mode=private` with an
   `observability_secret_arn` of another region: the Secrets Manager
   endpoint reaches the deploy region only, so no task could start (#541).
+- An incremental run with nothing to index (an unchanged corpus, or
+  deletions only) logs its empty graph at debug level instead of three
+  warnings ("Cannot calculate statistics for an empty graph", "Community
+  detection skipped…", "No communities provided for report generation"). A
+  full build, or a delta whose documents state no entity, still warns
+  (#545).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1464,10 +1470,10 @@ Queries and retrieval.
 - The first model calls of a batch no longer fail with "dictionary changed
   size during iteration" (#369), and a call that failed once no longer
   fails its item for good while other items retry (#378).
-- A stalled Bedrock call no longer holds a query for about 33 minutes:
-  queries shared the ingestion client (330 s read timeout, 6 botocore
-  attempts, the retry budget checked only between attempts) and had no
-  deadline. The query now fails at `search.query_timeout_seconds` (a
+- A stalled Bedrock call no longer holds a query for about half an hour:
+  queries shared the ingestion client (a 300 s read timeout, 330 s on
+  `main` since #174; 6 botocore attempts; the retry budget checked only
+  between attempts) and had no deadline. The query now fails at `search.query_timeout_seconds` (a
   stalled call gives up after about 3 minutes on its own), the transient
   retries start no new call past the deadline, and `run-rag` exits without
   waiting for the abandoned call (#522).
@@ -1743,7 +1749,12 @@ Deployment (CDK).
   documents. These settings now key graph resolution and are no extraction
   setting; a summary records the settings it was made with, so a stored one
   made otherwise is not reused, and a reset summarizes every description
-  again. Records and scopes stored before keep their keys (#541).
+  again. A document's recorded extraction settings stay valid whatever
+  summary settings they were recorded under, so an incremental run
+  re-extracts nothing. A unit record stored before keeps its key under the
+  default summary settings; one stored under others is found under the key
+  it was stored under and stored under the current one, so the first reset
+  re-extracts nothing either (#541, #545).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

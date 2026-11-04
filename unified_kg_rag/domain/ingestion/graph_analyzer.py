@@ -218,12 +218,15 @@ class GraphAnalyzer:
             if node_id in data:
                 setattr(data[node_id], name, value)
 
-    def get_graph_statistics(self) -> GraphStatistics:
+    def get_graph_statistics(self, *, empty_expected: bool = False) -> GraphStatistics:
+        """The graph's statistics. An empty graph is logged as a warning
+        unless ``empty_expected`` (a run with nothing to index)."""
         if self._statistics_cache is not None:
             return self._statistics_cache
 
         if not self._graph:
-            logger.warning("Cannot calculate statistics for an empty graph")
+            log = logger.debug if empty_expected else logger.warning
+            log("Cannot calculate statistics for an empty graph")
             return GraphStatistics(num_nodes=0, num_edges=0)
 
         logger.info(
