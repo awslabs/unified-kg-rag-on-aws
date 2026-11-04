@@ -147,6 +147,10 @@ than an edit to dispatch code.
   request. If you cannot write the Korean text, say so in the pull request description and add this note at the top
   of the `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
   A maintainer then updates the translation and removes the note.
+- Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative link, `#fragment`
+  (heading id) and image, the `docs/*.md` paths cited in code, and that each translated page in its `TRANSLATED_PAGES`
+  list keeps the same headings, code blocks, table rows and link targets as its English page; it exits 1 and lists
+  each failure. `tests/unit/test_docs_links.py` and `tests/unit/test_docs_translations.py` run the same checks in CI.
 - Describe current behavior only. Do not write "previously", "now" or "(old behaviour)" in the guides; put release
   history in [CHANGELOG.md](./CHANGELOG.md).
 - Every configuration key has a user-facing `Field(description=...)`. After changing a config field, run

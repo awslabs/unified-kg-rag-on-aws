@@ -19,10 +19,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import unquote
 
 import pytest
 
+from tests.fixtures.docs_check import check_docs
 from unified_kg_rag.application.cli import (
+    prepare_benchmark,
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
@@ -1845,16 +1848,7 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
 # --- help epilogs ---------------------------------------------------------
 
 
-def _guide_section_slugs() -> set[str]:
-    """GitHub-style section links of the user guide's headings."""
-    guide = Path(__file__).resolve().parents[2] / "docs" / "user-guide.md"
-    slugs = set()
-    for line in guide.read_text(encoding="utf-8").splitlines():
-        if line.startswith("#"):
-            title = line.lstrip("#").strip().lower()
-            slug = "".join(c for c in title if c.isalnum() or c in " -_")
-            slugs.add(slug.replace(" ", "-"))
-    return slugs
+_DOCS_URL = "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/"
 
 
 @pytest.mark.parametrize(
@@ -1865,16 +1859,19 @@ def _guide_section_slugs() -> set[str]:
         (_eval_parser, "run-eval"),
         (run_visualization._build_parser, "run-visualization"),
         (run_prompt_tuning._build_parser, "run-prompt-tuning"),
+        (prepare_benchmark._parser, "prepare-benchmark"),
     ],
 )
-def test_help_epilog_shows_an_example_and_a_live_guide_section(parser, command) -> None:
+def test_help_epilog_shows_an_example_and_a_live_doc_section(parser, command) -> None:
     help_text = parser().format_help()
     assert f"example:\n  {command} " in help_text
     url = help_text.split("documentation:\n  ", 1)[1].split()[0]
-    assert url.startswith(
-        "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/docs/user-guide.md#"
-    )
-    assert url.split("#", 1)[1] in _guide_section_slugs()
+    assert url.startswith(f"{_DOCS_URL}docs/"), url
+    path, _, fragment = url.removeprefix(_DOCS_URL).partition("#")
+    page = Path(__file__).resolve().parents[2] / path
+    assert page.is_file(), f"{command}: no {path}"
+    assert fragment, f"{command}: {url} names no section"
+    assert unquote(fragment) in check_docs().fragments(page), f"{command}: {url}"
 
 
 @pytest.mark.parametrize("suffix", ["Bad", "a/b", "a,b", "x*", ""])
