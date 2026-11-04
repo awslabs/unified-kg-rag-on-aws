@@ -1155,7 +1155,7 @@ From 0.2.3 (or a `main` checkout since):
   in code, a target of either Git does not track (an untracked file, a
   tracked symlink to one, a directory holding no tracked file), an unlisted
   Korean page, or a Tier-1 pair whose structure differs without the lag note (#337-#342, #351, #469, #542-#544, #546,
-  #547, #549-#554, #555, #PR).
+  #547, #549-#554, #555, #556).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
@@ -1791,7 +1791,7 @@ Deployment (CDK).
   again. The key holds the default configuration's summary settings now, the
   same whatever the tiers; a record stored under the earlier forms (the
   run's summary settings, or their defaults through the run's tiers) is
-  found under the key it was stored under (#PR).
+  found under the key it was stored under (#556).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
