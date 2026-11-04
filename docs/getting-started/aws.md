@@ -102,7 +102,7 @@ model in the image (a task in the private VPC cannot download it). The image's
 `docker/config.yaml` holds no endpoints; the CDK compute stack injects them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra
-(`uv sync --extra ontology`; [From an OWL/RDFS ontology](../user-guide.md#from-an-owlrdfs-ontology)).
+(`uv sync --extra ontology`; [Ontology](../guides/ontology.md#install)).
 
 ## Authentication
 

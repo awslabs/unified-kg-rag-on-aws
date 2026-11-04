@@ -3,8 +3,8 @@
 > 🇬🇧 English version: [domain-adaptation.md](./domain-adaptation.md)
 
 파이프라인을 의료, 법률, 금융 같은 도메인에 맞추는 수단은 네 가지입니다. 엔티티 유형과
-프롬프트는 이 문서에서, 추출 스키마와 시드 그래프는
-[사용자 가이드](../user-guide.ko.md#9-도메인-적응)에서 다룹니다. `run-prompt-tuning`은
+프롬프트는 이 문서에서, 추출 스키마와 시드 그래프는 별도 문서(영문,
+[아래](#추출-스키마와-시드-그래프))에서 다룹니다. `run-prompt-tuning`은
 코퍼스 표본에서 앞의 두 가지 초안을 만듭니다. 엔티티 유형이나 추출 프롬프트를 바꾸면 다음
 증분 실행이 다른 설정으로 추출했던 문서를 다시 추출합니다
 ([증분 인덱싱: 작업 흐름](./incremental.ko.md#작업-흐름)). 프롬프트와 튜닝의 내부 동작은
@@ -51,7 +51,7 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
   설정이 엔티티 유형이나 패턴을 직접 선언하면(인라인 또는 `schema_source`. 튜닝도 수집처럼
   스키마 소스를 읽으며, 읽지 못하면 종료 코드 2로 끝남) 그 스키마를 따릅니다. 이때 예시와
   튜닝한 프롬프트가 안내하는 엔티티 유형은 설정한 유형입니다.
-- `--schema-out schema.yaml`을 주면 [추출 스키마](../user-guide.ko.md#c-추출-스키마)
+- `--schema-out schema.yaml`을 주면 [추출 스키마](./extraction-schema.md)(영문)
   초안도 씁니다. 초안에는 예시를 추출한 엔티티 유형(위 항목), 튜닝 예시가 가장 자주 쓴 관계
   유형(최대 12개, 개수는 주석), 그리고 어떤 관계 유형의 끝점 유형 쌍이 모두 두 번 이상
   나왔을 때만 그 패턴이 들어 있습니다. 설정이 선언한 유형과 패턴은 설명, IRI와 함께 모두
@@ -62,8 +62,8 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
   설정이 읽는 스키마 파일을 `--schema-out`이나 `--output-path`로 지정하면 `--force`를
   주어도 종료 코드 2로 끝나고, 두 옵션 중 하나가 이미 있는 파일을 가리켜도 `--force`가
   없으면 종료 코드 2로 끝납니다. 초안을 검토하고 읽는 방법은
-  [추출 스키마](../user-guide.ko.md#c-추출-스키마)의 *프롬프트 튜닝으로 스키마 초안
-  만들기*에 있습니다.
+  [Extraction schema: Drafting a schema with prompt tuning](./extraction-schema.md#drafting-a-schema-with-prompt-tuning)(영문)에
+  있습니다.
 - 텍스트가 아닌 형식은 수집과 같은 로더(`ParserFactory.register_loader`로 추가한 형식
   포함)를 거치며, 파싱하지 못한 파일은 경고와 함께 건너뜁니다.
 - 모델이 JSON 프로필을 돌려주지 않으면 0이 아닌 코드로 끝나고 아무것도 쓰지 않습니다.
@@ -135,7 +135,12 @@ custom_prompts:
 
 ## 추출 스키마와 시드 그래프
 
-추출이 따르는 관계 유형과 패턴(직접 선언하거나 OWL/RDFS 온톨로지에서 읽음)은
-[사용자 가이드: 추출 스키마](../user-guide.ko.md#c-추출-스키마)에 있습니다. 이미 가지고
-있는 지식 그래프는 시드 그래프로 추출한 그래프에 합칩니다:
-[사용자 가이드: 시드 그래프](../user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기).
+- [Extraction schema](./extraction-schema.md)(영문): 추출이 따르는 관계 유형과 패턴,
+  `schema_mode`(`off`, `align`, `strict`), 저장하는 `in_schema`, `type_iri`,
+  `predicate_iri` 필드와 그 필터, 스키마를 바꾸면 다시 실행되는 것.
+- [Ontology](./ontology.md)(영문): OWL/RDFS 온톨로지에서 읽는 스키마
+  (`schema_source: {kind: owl}`). 모든 옵션과 매핑 규칙은
+  [Ontology mapping 레퍼런스](../reference/ontology-mapping.md)(영문)에 있습니다.
+- [Seed graphs](./seed-graphs.md)(영문): 이미 가지고 있는 지식 그래프를 가상 문서로
+  추출한 그래프에 합칩니다. JSONL, CSV, RDF 형식은
+  [Seed graph formats 레퍼런스](../reference/seed-graph-formats.md)(영문)에 있습니다.

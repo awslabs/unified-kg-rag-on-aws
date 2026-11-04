@@ -516,7 +516,7 @@ indexing:
 ### Ontology schema in the image
 
 A config with `schema_source: {kind: owl}`
-([User Guide: From an OWL/RDFS ontology](./user-guide.md#from-an-owlrdfs-ontology))
+([Ontology](./guides/ontology.md))
 needs the `ontology` extra and the ontology files in every image that runs
 it: ingestion, and also the query and evaluation tasks, which read the
 schema to check filter keys. (To keep the ontology out of the image, put
@@ -565,7 +565,7 @@ The ontology is read at start-up and keyed by the schema it maps to, so
 rebuilding the image with an unchanged ontology, or moving it to another
 path with absolute IRIs, re-extracts nothing. Before the first full
 ingest, preview the mapped schema locally
-([User Guide: *Preview*](./user-guide.md#ontology-preview)) and
+([Ontology: Preview](./guides/ontology.md#preview)) and
 settle the options: a label or description change re-extracts the
 corpus. With `on_collision: qualify`, bind the colliding namespaces in
 `options.prefixes`, so a re-serialised ontology keeps its suffixes.
@@ -575,12 +575,12 @@ Every task that loads the schema parses the ontology into memory: about
 the default `max_bytes` of 64 MiB a load can take about 5 GB of the task's
 memory before ingestion starts. Lower `options.max_bytes` to the size you
 ship, or raise `fargate_memory`, when the ontology is large
-([User Guide: *Load cost*](./user-guide.md#ontology-load-cost)).
+([Ontology: Load cost](./guides/ontology.md#load-cost)).
 
 ### Seed graphs in the image or S3
 
 A config with `processing.seed_graphs`
-([User Guide: Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph))
+([Seed graphs](./guides/seed-graphs.md))
 is read by the ingestion task only, once at start-up: a seed that cannot be
 read or imported exits 2 before any model call, naming the seed. Put the
 files in one of two places.
@@ -607,7 +607,7 @@ In private mode the S3 gateway endpoint reaches only these two buckets
 the image and S3 re-indexes nothing: what it converts to is keyed, not
 where it is read from. Size the task for it: the whole seed is held in
 memory, and each node costs about two embeddings and each edge one
-([User Guide: *Cost and limits*](./user-guide.md#seed-cost-and-limits)).
+([Seed graphs: Cost and limits](./guides/seed-graphs.md#cost-and-limits)).
 
 A seed of kind `rdf` needs the `ontology` extra in the ingestion image:
 `run-ingestion` checks the extras a configured seed kind needs before
@@ -1271,10 +1271,10 @@ model or credential error fails a query rather than answering from no context.
 | `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
 | `Skipping N file(s) in '<dir>' of a type no loader reads (2 '.md', ...)` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed (`.md`, `.markdown`, `.htm`, `.html`), or no loader is registered for the type. The files are not indexed; an incremental run keeps what they indexed before and lists them as `failed` (`total_files_skipped`) | Install the extra the message names (rebuild the image with it), or convert the files. Until then the skipped files' indexed content stays as it was, edits to them included |
 | `Not installed: 'rdflib' (for processing.graph_extraction.schema_source.kind 'owl')` (exit 2) | The `ontology` extra is missing | `uv sync --extra ontology`, or build the image with it ([Ontology schema in the image](#ontology-schema-in-the-image)) |
-| `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([User Guide](./user-guide.md#from-an-owlrdfs-ontology)) |
+| `Ontology file '...' is OWL/XML ...` / `... names a remote JSON-LD context ...` / `... more than max_entity_types ...` (exit 2) | A format the `owl` source does not read, or a selection over a cap | Follow the message: convert the file, inline the context, or narrow the selection ([Ontology mapping](./reference/ontology-mapping.md#not-followed-not-read)) |
 | `Ontology file '...' holds ... (MAX_XML_TEXT_CHUNKS)` / `... (MAX_XML_LITERAL_ELEMENTS)` / `... has a line of N bytes ... (MAX_LINE_BYTES)` / `... limit on input amplification factor ...` (exit 2) | A shape the RDF/XML or N-Triples parser takes quadratic time over (refused before parsing) | Convert the file to Turtle (`robot convert --input onto.rdf --output onto.ttl`) |
 | `Ontology IRIs with whitespace: ...` / `Ontology rdf:List is cyclic ...` (exit 2) | An IRI the RDF/XML or JSON-LD parser let through, or a malformed list | Fix the named IRI (`%20` for a space), or end the list with `rdf:nil` |
-| `SeedGraphError: seed graph '<name>': '<file>' line N: ...` (`duplicate node id ...`, `property ... is not a string, number, boolean or null`, `not valid JSON`, `"kind" is ...`) (exit 2) | A seed record the import refuses | Fix the named line ([User Guide: Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph)) |
+| `SeedGraphError: seed graph '<name>': '<file>' line N: ...` (`duplicate node id ...`, `property ... is not a string, number, boolean or null`, `not valid JSON`, `"kind" is ...`) (exit 2) | A seed record the import refuses | Fix the named line ([Seed graph formats](./reference/seed-graph-formats.md)) |
 | `seed graph '<name>': edges name unknown nodes ...` / `... the edge from ... has no type ...` (exit 2) | An edge to a node the seed does not state, or with neither a `type` nor a `predicate_iri` a relationship type declares | Add the node, set `options.dangling: skip`, or type the edge |
 | `seed graph '<name>': N names are shared by distinct nodes (ids ...); set on_name_collision to merge or qualify` (exit 2) | Two nodes of the seed are one entity by name | Rename them, or set `on_name_collision` |
 | `seed graph '<name>': ... more nodes than max_nodes (N)` (or edges, `max_edges`) / `... exceed max_property_keys ...` / `... more than max_bytes ...` / `shard N would hold M text units, over 2000 ...` (exit 2) | The seed is over a cap (nothing is truncated) | Raise the cap, or for a shard `shards` or `max_items_per_unit` |
@@ -1316,7 +1316,7 @@ model or credential error fails a query rather than answering from no context.
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
 | `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...` (or `rebuilds it from this run's seed graphs alone ...`, or, with the registry off, `No source document reached this run, ... rebuild the index '...' from the seed graphs alone, replacing what it holds`) `; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-reset does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, or, from seeds alone, another scope's documents; or, with the registry off, seeds alone would replace an index that holds items; and no one answered yes | Re-run with `--confirm-reset` or `UKR_CONFIRM_RESET=1` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` (a no raises `ConfirmationDeclinedError`) |
 | `This run deletes N of the M documents the doc-status registry holds for source scope '...' (P%, over indexing.max_deletion_share S) ...; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-deletions does)` (exit 1, at `document_loading`, before any write) | More than `indexing.max_deletion_share` of the scope's indexed documents are missing from the corpus | Check the corpus (sync, prefix, mount) and re-run. If the files are really gone, re-run with `--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`, or `--yes`) ([Incremental runs](#incremental-runs)) |
-| `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope ([User Guide: *Lifecycle*](./user-guide.md#seed-lifecycle)) |
+| `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope ([Seed graphs: Lifecycle](./guides/seed-graphs.md#lifecycle)) |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |

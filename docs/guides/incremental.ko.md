@@ -177,7 +177,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
   동기화된 코퍼스를 가리지도 않습니다.
 - 재구축과 레지스트리를 끈 실행은 검사하지 않습니다. 레지스트리가 없으면 모든 실행이 읽은
   것의 전체 빌드이므로, 일부만 도착할 수 있는 코퍼스는 레지스트리를 켜 두세요(시드가 있는
-  빈 코퍼스는 [레지스트리를 끈 시드](../operations.md#seed-graphs-in-the-image-or-s3)(영문)처럼
+  빈 코퍼스는 [Seed graphs: Lifecycle](./seed-graphs.md#lifecycle)(영문)처럼
   묻습니다).
 - `1.0`이나 `null`로 검사를 끕니다.
 

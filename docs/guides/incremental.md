@@ -215,7 +215,7 @@ terminal, stops the run (exit 1).
 - A reset and a run with the registry off are not checked. Without the
   registry every run is a full build of what it reads, so keep the registry
   on for a corpus that may arrive partial (an empty corpus with seeds asks as
-  in [Seeds with the registry off](../operations.md#seed-graphs-in-the-image-or-s3)).
+  in [Seed graphs: Lifecycle](./seed-graphs.md#lifecycle)).
 - `1.0` or `null` turns the check off.
 
 When the files are really gone, check the corpus first (sync, prefix, mount),

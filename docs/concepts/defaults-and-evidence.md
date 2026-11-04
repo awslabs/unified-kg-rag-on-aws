@@ -214,6 +214,29 @@ after 23 incremental runs, a reset made 17-20 model calls, against 197 for
 the first build. These are call counts, not tokens or dollars: they show
 how much a reset reuses, not what it costs with your models and corpus.
 
+## Ontology and RDF parse cost
+
+An `owl` [schema source](../guides/ontology.md#load-cost) and an `rdf`
+[seed graph](../guides/seed-graphs.md#configure) parse their files into
+memory with the `ontology` extra's parser (rdflib) before anything is
+mapped, so parsing sets the time and memory of a load:
+
+- **Ontology.** A 14 MB Turtle file of 110,000 classes and 500 properties
+  took about 45 s and 1.2 GB peak memory (parse 30 s, reading the classes
+  and properties 10 s, mapping 5 s), that is about 3 s and 85 MB per MB of
+  Turtle; a 20,000-deep `subClassOf` chain maps in under a second. At the
+  default `options.max_bytes` (64 MiB) that would be about 5 GB.
+- **RDF seed.** The parsed graph takes from about 25 (N-Triples) up to
+  about 150 (dense Turtle) times the file size in memory, before
+  `max_nodes` is checked: up to about 5 GB at the `rdf` default
+  `max_bytes` of 32 MiB.
+
+These are per-process load figures, not a benchmark: they depend on the
+machine, the rdflib version and how densely the file is written. Measure
+your own file with the
+[ontology preview](../guides/ontology.md#preview) or the
+[seed preview](../guides/seed-graphs.md#preview) before you size a task.
+
 ## Reproducing a measurement
 
 The same tooling runs any of these comparisons on your corpus or on
