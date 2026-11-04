@@ -174,10 +174,18 @@ class ExtractionStore:
         units: Iterable[TextUnit],
         fingerprint: str,
         parse: Callable[[dict[str, Any], TextUnit], T],
+        legacy_fingerprints: Collection[str] = (),
     ) -> dict[str, T]:
         """The stored records of ``units`` by text unit id, each payload
         ``parse``d for its unit. A unit without one, or whose payload does not
         parse (another release wrote it), is absent: it is extracted.
+
+        A unit without a record under ``fingerprint`` is looked up under each
+        of ``legacy_fingerprints`` (the keys an earlier version stored the
+        same record under: ``cache_keys.legacy_unit_record_fingerprints``),
+        and a record found there is stored under ``fingerprint`` too, so the
+        key its text unit names (:func:`with_record_keys`) holds it. One whose
+        copy is not stored is absent (extracted and stored again).
 
         Each suffix's store is created first (``prepare_extraction_records``),
         reused or not: one the backend refuses to create raises
@@ -217,18 +225,121 @@ class ExtractionStore:
                     e,
                 )
                 continue
-            for key, payload in payloads.items():
-                for unit in by_key.get(key, []):
-                    try:
-                        found[unit.id] = parse(payload, unit)
-                    except (ValueError, TypeError) as e:
-                        logger.warning(
-                            "Ignoring an unreadable extraction record of text "
-                            "unit '%s': %s",
-                            unit.short_id or unit.id,
-                            type(e).__name__,
-                        )
+            self._parse_into(found, payloads, by_key, parse)
+            missing = [
+                u for units in by_key.values() for u in units if u.id not in found
+            ]
+            if missing and legacy_fingerprints:
+                self._load_legacy(
+                    store,
+                    suffix,
+                    missing,
+                    fingerprint,
+                    legacy_fingerprints,
+                    parse,
+                    found,
+                )
         return found
+
+    @staticmethod
+    def _parse_into(
+        found: dict[str, T],
+        payloads: Mapping[str, dict[str, Any]],
+        by_key: Mapping[str, list[TextUnit]],
+        parse: Callable[[dict[str, Any], TextUnit], T],
+    ) -> list[TextUnit]:
+        """Parse ``payloads`` into ``found`` for the units of their key;
+        returns the units parsed."""
+        parsed: list[TextUnit] = []
+        for key, payload in payloads.items():
+            for unit in by_key.get(key, []):
+                try:
+                    found[unit.id] = parse(payload, unit)
+                except (ValueError, TypeError) as e:
+                    logger.warning(
+                        "Ignoring an unreadable extraction record of text "
+                        "unit '%s': %s",
+                        unit.short_id or unit.id,
+                        type(e).__name__,
+                    )
+                else:
+                    parsed.append(unit)
+        return parsed
+
+    def _load_legacy(
+        self,
+        store: VectorIndexer,
+        suffix: str,
+        units: list[TextUnit],
+        fingerprint: str,
+        legacy_fingerprints: Collection[str],
+        parse: Callable[[dict[str, Any], TextUnit], T],
+        found: dict[str, T],
+    ) -> None:
+        """Read ``units``' records under ``legacy_fingerprints`` into
+        ``found`` and store each under ``fingerprint`` (``load``)."""
+        copies: dict[str, dict[str, Any]] = {}
+        copied: dict[str, list[TextUnit]] = defaultdict(list)
+        for legacy in legacy_fingerprints:
+            pending = [u for u in units if u.id not in found]
+            if not pending:
+                break
+            by_key: dict[str, list[TextUnit]] = defaultdict(list)
+            for unit in pending:
+                by_key[self.key(unit, legacy)].append(unit)
+            try:
+                payloads = store.read_extraction_records(sorted(by_key), suffix=suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the store is a cache
+                logger.warning(
+                    "Reading the extraction store of '%s' failed: %s", suffix, e
+                )
+                return
+            for unit in self._parse_into(found, payloads, by_key, parse):
+                key = self.key(unit, fingerprint)
+                copies[key] = payloads[self.key(unit, legacy)]
+                copied[key].append(unit)
+        if not copies:
+            return
+        try:
+            stats = store.write_extraction_records(copies, suffix=suffix)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the units are extracted again
+            logger.warning(
+                "Storing the earlier-keyed extraction records of '%s' under "
+                "their current keys failed; extracting their text units: %s",
+                suffix,
+                e,
+            )
+            failed = set(copies)
+        else:
+            failed = (
+                set(copies)
+                if stats.unattributed_failures
+                else set(stats.failed_ids) & copies.keys()
+            )
+            if failed:
+                logger.warning(
+                    "Storing %s of %s earlier-keyed extraction records of '%s' "
+                    "under their current keys failed; extracting their text "
+                    "units: %s",
+                    len(failed),
+                    len(copies),
+                    suffix,
+                    "; ".join(stats.errors[:3]),
+                )
+        for key in failed:
+            for unit in copied[key]:
+                found.pop(unit.id, None)
+        if reused := sum(len(copied[key]) for key in copies.keys() - failed):
+            logger.info(
+                "Extraction store of '%s': %s text units reused from records "
+                "stored under an earlier key, now stored under the current one",
+                suffix,
+                reused,
+            )
 
     def read_records(
         self, keys: Mapping[str, Collection[str]]

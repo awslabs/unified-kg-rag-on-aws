@@ -742,6 +742,16 @@ class TestEndToEndDetection:
         cd(nx.Graph())
         assert cd.all_communities == {}
 
+    @pytest.mark.parametrize("expected", [False, True])
+    def test_an_empty_graph_warns_unless_expected(
+        self, expected: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A run with nothing to index has an empty graph by design.
+        caplog.set_level(logging.DEBUG)
+        _detector()(nx.Graph(), empty_expected=expected)
+        (record,) = [r for r in caplog.records if "detection skipped" in r.message]
+        assert record.levelno == (logging.DEBUG if expected else logging.WARNING)
+
     @pytest.mark.parametrize("nodes", [1, 3])
     def test_a_graph_without_edges_yields_singleton_communities(
         self, nodes: int
@@ -1152,6 +1162,19 @@ class TestGenerateReportsGuards:
     def test_returns_empty_when_no_communities(self) -> None:
         cd = _detector(report=False)
         assert cd.generate_reports([]) == ([], [])
+
+    @pytest.mark.parametrize("expected", [False, True])
+    def test_no_communities_warns_unless_expected(
+        self, expected: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        cd = _detector(report=False)
+        cd.community_detection_config.report_generation.enabled = True
+        cd.report_generator = mock.Mock()
+        assert cd.generate_reports([], empty_expected=expected) == ([], [])
+        (record,) = [r for r in caplog.records if "No communities" in r.message]
+        assert record.levelno == (logging.DEBUG if expected else logging.WARNING)
+        cd.report_generator.assert_not_called()
 
 
 class TestGenerateReportsFailure:

@@ -983,8 +983,9 @@ records its model) and embeds everything. A vector an upsert replaced is
 read as well (up to 2,048) and kept for a later write of its text (a
 removal rewrites items the commit writes back); the commit, the run's last
 write, and a rebuild read none (an upsert of 2,000 changed descriptions
-reads 2,000 vector fields instead of 4,000). An index an earlier release built gets the digest field with the
-other missing ones (§5.1) and its items are embedded once more.
+reads 2,000 vector fields instead of 4,000). An index without the digest
+field gets it with the other missing ones (§5.1) and its items are embedded
+once more.
 `--force-rebuild` embeds every text again.
 
 ### 5.3 Crash recovery (write-ahead protocol)
@@ -1279,11 +1280,8 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   Edges back to a vertex already reached are left out by the store (a
   `must_not` on the other endpoint), so they cannot fill a page; past
   `max_terms_count` the exclusion keeps the vertices reached last, so edges
-  back to the others can. An index
-  built before
-  relationships carried document filters passes no edge, so expansion keeps
-  the seeds only until it is rebuilt; without the relationships index the
-  graph walk runs, checked against the entities index. So is a graph walk
+  back to the others can. Without the relationships index the graph walk
+  runs, checked against the entities index. So is a graph walk
   under an entity key entity vertices do not store (`name.keyword`,
   `attributes.<path>`): the graph drops it, the entities index applies it
   (`_graph_unapplied_filters`), to LightRAG's seeds too (its relationship
@@ -1298,7 +1296,7 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   and faiss, so seed units take none of the k). OpenSearch 2.13 refuses a
   kNN filter on an unmapped field, so unless the alias's mappings show
   `source_kind`, a kNN search first probes once per query for a unit
-  holding it; an index built before the field gets no clause. An ids-only
+  holding it; an index that holds none gets no clause. An ids-only
   filter check keeps them: it returns no text. Local search ranks and
   fetches document units only and its `entity_frequency_threshold` counts
   document units; the LightRAG chunk follow drops seed units. The
@@ -1881,10 +1879,14 @@ checks that its values are the defaults and each key is in the reference).
   no extraction setting (`per_document=False`: they summarize merged
   descriptions, in no unit's record, and a summary records them in
   `summarized_with`). A unit record's key holds them at their defaults
-  (`_summary_settings_as_keyed_before`), as when they keyed graph
-  extraction, and `changed_settings` ignores them in a scope's earlier
-  record, so stored records keep their keys, documents keep their
-  fingerprints, and a summary change asks no unit again. The schema keys count as extraction sees them
+  (`_summary_settings_as_keyed_before`), and a unit without a record under
+  it is looked up under the key that holds them at the run's values too
+  (`legacy_unit_record_fingerprints`, the key of a record stored while they
+  keyed graph extraction): `ExtractionStore.load` stores a record found
+  there under the current key, the one its unit names. `changed_settings`
+  ignores them in a scope's earlier record. So stored records are found,
+  documents read as unchanged, and a summary change asks no unit again.
+  The schema keys count as extraction sees them
   (`cache_keys._as_extracted`): a type by its label and description (a
   string item as written, a mapping as the string that reads back the
   same), a pattern by its relation and ends, `schema_mode` only where
@@ -1948,8 +1950,8 @@ checks that its values are the defaults and each key is in the reference).
   filter on an annotation the configured schema writes on no item
   (`SchemaAnnotator.fields`), which could only empty the streams reading it,
   and the OpenSearch retriever probes the annotation keys as it probes
-  `attr_*` keys, so an index built before they were mapped matches no value
-  of them instead of failing the kNN filter.
+  `attr_*` keys, so an index that does not map them matches no value of
+  them instead of failing the kNN filter.
 
 ---
 

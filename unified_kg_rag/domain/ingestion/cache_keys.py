@@ -875,13 +875,25 @@ def _is_extraction_setting(path: str) -> bool:
 _RECORD_FORMAT_VERSION = 1
 
 
+def _summary_settings(config: Config) -> dict[str, Any]:
+    """The summary settings (``_SUMMARY_SETTINGS``) in effect, as a unit
+    record's fingerprint held them when they were keyed at graph
+    extraction."""
+    return {
+        path: value
+        for path, value in _settings(config, lambda rule: True).items()
+        if any(path == s or path.startswith(f"{s}.") for s in _SUMMARY_SETTINGS)
+    }
+
+
 def _summary_settings_as_keyed_before(config: Config) -> dict[str, Any]:
-    """The summary settings (``_SUMMARY_SETTINGS``) as a unit record's
-    fingerprint held them when they were keyed at graph extraction, but at
-    their defaults: a record stored then keeps its key, and a summary
-    setting changed since asks no unit again. (A document's extraction
-    settings leave them out: ``changed_settings`` ignores them in an
-    earlier record.)"""
+    """:func:`_summary_settings` at their defaults: a record stored under the
+    default summary settings, when they were keyed at graph extraction, keeps
+    its key, and a summary setting changed since asks no unit again. A record
+    stored under other summary settings is found under its earlier key
+    (:func:`legacy_unit_record_fingerprints`). (A document's extraction
+    settings leave them out: ``changed_settings`` ignores them in an earlier
+    record.)"""
     baseline = config.model_copy(deep=True)
     default = _default_config()
     for path in _SUMMARY_SETTINGS:
@@ -893,11 +905,7 @@ def _summary_settings_as_keyed_before(config: Config) -> dict[str, Any]:
         if isinstance(value, BaseModel):
             value = value.model_copy(deep=True)
         setattr(target, name, value)
-    return {
-        path: value
-        for path, value in _settings(baseline, lambda rule: True).items()
-        if any(path == s or path.startswith(f"{s}.") for s in _SUMMARY_SETTINGS)
-    }
+    return _summary_settings(baseline)
 
 
 def unit_record_fingerprint(
@@ -915,6 +923,34 @@ def unit_record_fingerprint(
     the hash of the unit's text
     (``domain.ingestion.contributions.record_key``).
     """
+    return _unit_record_fingerprint(
+        config, gleaned, claims, _summary_settings_as_keyed_before(config)
+    )
+
+
+def legacy_unit_record_fingerprints(
+    config: Config, *, gleaned: bool, claims: bool = False
+) -> list[str]:
+    """The fingerprints an earlier version stored the same record under,
+    where they differ from :func:`unit_record_fingerprint`.
+
+    While the description summary settings keyed graph extraction, a
+    record's fingerprint held them at the run's values; it holds them at
+    their defaults now, so a record stored under other summary settings is
+    looked up under the fingerprint it was stored under too
+    (``ExtractionStore.load``, which stores what it finds there under the
+    current key).
+    """
+    current = unit_record_fingerprint(config, gleaned=gleaned, claims=claims)
+    legacy = _unit_record_fingerprint(
+        config, gleaned, claims, _summary_settings(config)
+    )
+    return [legacy] if legacy != current else []
+
+
+def _unit_record_fingerprint(
+    config: Config, gleaned: bool, claims: bool, summary: dict[str, Any]
+) -> str:
     from unified_kg_rag.domain.prompts import (
         ClaimExtractionPrompt,
         GraphExtractionPrompt,
@@ -934,7 +970,7 @@ def unit_record_fingerprint(
         config,
         lambda rule: rule.per_document and (rule.stage is None or rule.stage in stages),
     )
-    settings.update(_summary_settings_as_keyed_before(config))
+    settings.update(summary)
     return _digest(
         {
             "settings": settings,

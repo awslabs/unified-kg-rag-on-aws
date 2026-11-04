@@ -53,7 +53,9 @@ class _Detector:
         self.fail = fail
         self.graphs: list[nx.Graph] = []
 
-    def __call__(self, graph: nx.Graph, stored: object = None) -> None:
+    def __call__(
+        self, graph: nx.Graph, stored: object = None, *, empty_expected: bool = False
+    ) -> None:
         self.graphs.append(graph)
         if self.fail:
             raise RuntimeError("community report model unavailable")
@@ -71,7 +73,14 @@ class _Detector:
         ]
 
     def generate_reports(
-        self, communities, text_units=None, descriptions=None, types=None, records=None
+        self,
+        communities,
+        text_units=None,
+        descriptions=None,
+        types=None,
+        records=None,
+        *,
+        empty_expected=False,
     ):  # noqa: ANN001
         return [], []
 

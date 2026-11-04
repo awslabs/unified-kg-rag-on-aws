@@ -325,6 +325,42 @@ def test_a_scope_recorded_with_the_summary_settings_reads_unchanged(
     assert cache_keys.changed_settings(recorded, now) == []
 
 
+@pytest.mark.parametrize("kind", ["prompt", "threshold", "model", "off"])
+def test_a_record_stored_under_other_summary_settings_is_found_by_its_old_key(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The current key holds the summary settings at their defaults, so a
+    # record stored under others while they keyed graph extraction is looked
+    # up under the key it was stored under (a reset re-extracted it all).
+    config = _summarized_otherwise(kind)
+    combinations = [(g, c) for g in (False, True) for c in (False, True)]
+    legacy = {
+        combo: cache_keys.legacy_unit_record_fingerprints(
+            config, gleaned=combo[0], claims=combo[1]
+        )
+        for combo in combinations
+    }
+    with monkeypatch.context() as patched:
+        _keyed_as_before(patched)
+        stored = {
+            combo: cache_keys.unit_record_fingerprint(
+                config, gleaned=combo[0], claims=combo[1]
+            )
+            for combo in combinations
+        }
+    assert legacy == {combo: [stored[combo]] for combo in combinations}
+
+
+def test_default_summary_settings_need_no_old_key() -> None:
+    for gleaned in (False, True):
+        assert (
+            cache_keys.legacy_unit_record_fingerprints(
+                Config(), gleaned=gleaned, claims=True
+            )
+            == []
+        )
+
+
 @pytest.mark.parametrize(
     "configure",
     [
