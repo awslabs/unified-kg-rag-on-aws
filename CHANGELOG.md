@@ -650,7 +650,7 @@ From 0.2.3 (or a `main` checkout since):
   Secrets Manager as task secrets (in `private` mode through a Secrets
   Manager interface endpoint the stack adds). The runbook has what to do
   for each pipeline-run alarm, capacity sizing and the Neptune
-  major-version upgrade (#519, #PR).
+  major-version upgrade (#519, #528).
 - Extraction schema settings under `processing.graph_extraction`:
   `entity_types` items may be `{label, description, iri}` mappings, and the
   new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
@@ -1429,7 +1429,7 @@ CLIs, configuration and library.
   raise on `structlog` context fields, and after `setup_logging` a host's
   own root handler gets the plain message and traceback, not the event
   dict; importing the package configures no logging and does not touch
-  `sys.path` (#178, #245, #251, #255, #PR).
+  `sys.path` (#178, #245, #251, #255, #528).
 - `index_settings` keys all reach the indices, in either spelling (#260,
   #404).
 
