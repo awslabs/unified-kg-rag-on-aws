@@ -1138,6 +1138,78 @@ def test_graph_expansion_returns_seeds_first_then_distance_bands(
     assert len(wide) == 6
 
 
+def test_graph_expansion_projects_the_entities_communities(
+    graph_harness: StoreHarness,
+) -> None:
+    # Local search's report_selection: membership reads the communities an
+    # expanded entity belongs to off the graph (the entities index holds none).
+    h = graph_harness
+    entities = [
+        Entity(id="hub", name="hub", type="ORG", description="d", community_ids=["c1"]),
+        Entity(
+            id="both",
+            name="both",
+            type="ORG",
+            description="d",
+            community_ids=["c1", "c2"],
+        ),
+        Entity(id="none", name="none", type="ORG", description="d"),
+    ]
+    relationships = [
+        Relationship(
+            id=f"r-hub-{b}",
+            source_id="hub",
+            target_id=b,
+            source_name="hub",
+            target_name=b,
+            description=f"hub works with {b}",
+        )
+        for b in ("both", "none")
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+    (expanded,) = _graph_retrieve(
+        h, SearchQuery(query="", suffix=_SUFFIX, top_k=10, filters={"id": ["hub"]})
+    )
+
+    def communities(result: RetrievalResult) -> list[str]:
+        # A graph store unwraps a one-element list to its value.
+        ids = (result.metadata or {}).get("community_ids") or []
+        return sorted([ids] if isinstance(ids, str) else ids)
+
+    assert {r.source: communities(r) for r in expanded} == {
+        "hub": ["c1"],
+        "both": ["c1", "c2"],
+        "none": [],
+    }
+
+
+def test_reports_are_fetched_by_community_id(harness: StoreHarness) -> None:
+    # The membership fetch: no text, a community_id list (local search).
+    _ingest(harness)
+    harness.vector_indexer.upsert_community_reports(
+        [
+            CommunityReport(
+                id="cr2", community_id="c2", name="Gears", summary="s", full_content="f"
+            )
+        ]
+    )
+    (hits,) = _search(
+        harness,
+        _query(
+            "",
+            _prefixes(harness).community_reports_index_prefix,
+            search_type=SearchType.LEXICAL,
+            top_k=5,
+            filters={"community_id": ["c2", "c9"]},
+        ),
+    )
+    assert [(h.source, (h.metadata or {}).get("community_id")) for h in hits] == [
+        ("cr2", "c2")
+    ]
+
+
 def test_graph_expansion_budget_caps_each_seed_breadth_first(
     graph_harness: StoreHarness,
 ) -> None:

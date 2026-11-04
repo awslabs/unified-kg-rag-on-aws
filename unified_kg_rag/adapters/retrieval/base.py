@@ -498,16 +498,19 @@ class BaseSearchStrategy(ABC):
         retriever: BaseGraphRAGRetriever,
         query: SearchQuery,
         label: str,
+        *,
+        key: str = "id",
     ) -> list[RetrievalResult]:
-        """``query``, a fetch by id (no text, ``filters["id"]`` listing the
-        ids), through ``_safe_aretrieve`` in batches one search returns in
+        """``query``, a fetch by id (no text, ``filters[key]`` listing the
+        ids; ``key`` a field each hit holds one value of, ``id`` by default),
+        through ``_safe_aretrieve`` in batches one search returns in
         full: at most ``IndexLimits.id_batch_size`` ids of every index it
         reads (``aindex_limits``), each batch with a ``top_k`` of its ids, at
         most ``search.max_concurrency`` at once. Asked at once, ids past the
         window came back as the window's worth in the store's order, not the
         best-ranked ones. The hits come back batch after batch, each id once
         (a repeated id would be asked, and returned, by two batches)."""
-        ids = list(dict.fromkeys((query.filters or {}).get("id") or ()))
+        ids = list(dict.fromkeys((query.filters or {}).get(key) or ()))
         prefixes = query.index_prefixes or []
         if isinstance(prefixes, str):
             prefixes = [prefixes]
@@ -520,7 +523,7 @@ class BaseSearchStrategy(ABC):
                     retriever,
                     query.model_copy(
                         update={
-                            "filters": {**(query.filters or {}), "id": batch},
+                            "filters": {**(query.filters or {}), key: batch},
                             "top_k": len(batch),
                             "retrieval_multiplier": 1,
                         }

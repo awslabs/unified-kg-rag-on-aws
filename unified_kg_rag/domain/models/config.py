@@ -3524,6 +3524,20 @@ class LocalSearchConfig(BaseModel):
             "scores."
         ),
     )
+    report_selection: Literal["membership", "similarity"] = Field(
+        default="similarity",
+        description=(
+            "How local search (and each DRIFT follow-up) picks its community "
+            "reports. 'membership' (MS GraphRAG local): the reports of the "
+            "level-0 communities the graph-expanded entities belong to, most "
+            "matched entities first, then by report rank; when no expanded "
+            "entity names a community (under a document filter, whose walk "
+            "reads the entities index, or when graph expansion failed), the "
+            "'similarity' reports instead. 'similarity': the reports most "
+            "similar to the joined query entities, which always fill the "
+            "report slots."
+        ),
+    )
 
 
 class DriftSearchConfig(BaseModel):

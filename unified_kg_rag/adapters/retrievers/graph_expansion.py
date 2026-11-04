@@ -11,8 +11,9 @@ with Gremlin::
     {
         "node": {"id": [...], "name": [...], "description": [...],
                  "rank": [...], "text_unit_ids": [...],
-                 "iri": [...], "source_kinds": [...]},  # value_map; the
-                                                        # last two if held
+                 "community_ids": [...], "iri": [...],
+                 "source_kinds": [...]},  # value_map; the last three
+                                          # if held
         "path": [{"name": [...]}, ...],  # seed first, the node last
         "node_type": "<vertex label>",
         "degree": <int>,  # only when entity_importance_source == "degree"

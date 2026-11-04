@@ -1313,7 +1313,24 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   between two retrieved entities first: they carry the hops of a multi-hop
   chain the relationship vector query rarely matches. With claims on,
   matching claims are injected (MS GraphRAG covariates). The section lookups
-  run concurrently with the entity chain.
+  run concurrently with the entity chain. The community reports are, by
+  default (`search.local_search.report_selection: similarity`), those most
+  similar to the joined query entities, at every level, which always fill
+  the report slots (`top_k / 2`). `membership` takes MS GraphRAG local's
+  (`mixed_context._build_community_context`): the reports of the level-0
+  communities the expanded entities name (`community_ids`, which graph
+  expansion projects from the vertex; the entities index holds none), most
+  matched entities first, then by report rank, cut to the report slots and
+  fetched alongside the text units. A community without a report (a seed
+  graph's alone has none) adds nothing; when no expanded entity names a
+  community (the walk under a document filter, which reads the entities
+  index, or a failed expansion) the similar reports stand in. On the
+  synthetic 12-query multi-hop harness, membership put 3.8 reports a query
+  in the context instead of 5.0, 42% of them naming an entity of the
+  query's chain instead of 38% (19 such reports instead of 23), for 5%
+  fewer report tokens (about 1,450 against 1,530); every query kept a
+  relevant report and its gold text units. So similarity stays the default
+  until a real-model run measures the answers.
 - **global** — MS GraphRAG global search over one cut of the community
   hierarchy (below), map-reduced into scored key points.
 - **drift** — MS GraphRAG DRIFT search (`drift_search.py`).
