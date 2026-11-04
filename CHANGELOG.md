@@ -930,7 +930,7 @@ From 0.2.3 (or a `main` checkout since):
   registry) records no document `FAILED`, so its `failed_documents` read 0
   with 138 of 3,318 units failed; the run now ends with a WARNING naming
   the count, each stage, how many failed for an error of their own, and
-  what retries them (the next run, or a re-run, extracts them again) (#PR).
+  what retries them (the next run, or a re-run, extracts them again) (#532).
 - `search.lightrag_search.kg_chunk_pick_method` (`weight`, the default, or
   `vector`): `vector` picks the chunks LightRAG `mix`/`hybrid` follow from
   the matched entities and relationships by one search of each side's cited
@@ -1347,15 +1347,15 @@ Ingestion and incremental indexing.
   Graph extraction failed such a unit as cut-off output (138 of 3,318 units
   of a Sonnet 5.5 run), and a strict keyword parse failed the whole
   `mix`/`hybrid` query with "Extra data"; the pairwise judge read the first,
-  superseded verdict. A single answer cut off is still flagged (#PR).
+  superseded verdict. A single answer cut off is still flagged (#532).
 - Graph extraction output whose entities have no name but whose sections
   are all closed is malformed, not cut off: it is retried
   (`retry.max_attempts`) and, failing every attempt, counted as the unit's
   own error as before; with a section unclosed it is still cut-off output,
   not retried. The response behind a failed graph or claim extraction check
-  is logged at DEBUG (#PR).
+  is logged at DEBUG (#532).
 - Stored chunk-boundary answers count as cache hits under the resolved
-  model id, like the calls and the query extraction cache (#PR).
+  model id, like the calls and the query extraction cache (#532).
 - Incremental runs strip shared items instead of deleting them, repair
   interrupted runs, keep resets and deletions inside their namespace, and
   no longer keep what a changed or deleted document contributed to shared
