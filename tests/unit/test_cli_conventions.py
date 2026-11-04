@@ -864,6 +864,10 @@ def test_ingestion_json_result_reports_the_runs_token_usage(
             "output_tokens": 0,
             "cache_hits": 0,
             "estimated_calls": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "request_retries": 0,
+            "failed_calls": 0,
         }
     }
     assert list(usage["stages"]) == ["graph_extraction"]

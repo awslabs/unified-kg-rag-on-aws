@@ -1068,8 +1068,11 @@ class TestComparability:
         manager.evaluators = {}
         manager.config.evaluation.enabled_evaluators = [EvaluatorType.RAGAS]
         models = manager.build_run_manifest()["models"]
-        # Same tier by default: the judge grades its own answers.
-        assert models["judge_is_answer_model"] is True
+        # The default judge is another model than the answer model.
+        assert models["judge_is_answer_model"] is False
+        # Pinned to the answer model's tier, it grades its own answers.
+        manager.config.models.roles.evaluation = "default"
+        assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is True
         manager.config.models.roles.evaluation = "judge.other-model-v1"
         assert manager.build_run_manifest()["models"]["judge_is_answer_model"] is False
 
@@ -1077,6 +1080,7 @@ class TestComparability:
         # Before, a deterministic-only comparison with --pairwise-judge
         # recorded no judge, hiding that it judged its own answers.
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        config.models.roles.evaluation = "default"
         manager = EvaluationManager(config, rag_chain=object())
         one = {"pairwise_judge": True, "search_strategy": ["local"]}
         two = {"pairwise_judge": True, "search_strategy": ["local", "mix"]}

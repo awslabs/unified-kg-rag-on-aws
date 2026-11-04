@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.evaluation.comparison import (
+    answer_cost_usd,
     cost_comparison,
     paired_comparison,
 )
@@ -139,6 +140,32 @@ class TestCostBlock:
         (warning,) = cost["warnings"]
         assert "m-b" in warning and "evaluation.prices" in warning
         assert cost["prices"]["m-a"]["input_per_million_tokens"] == 3.0
+
+    def test_cache_tokens_are_priced_at_their_own_rates(self) -> None:
+        # input_tokens includes the cache reads and writes; they were priced
+        # at the input rate, over-stating a cached run's cost.
+        from unified_kg_rag.domain.models import LLMUsage
+
+        counts = {
+            "llm_calls": 1,
+            "input_tokens": 1_000_000,
+            "output_tokens": 100_000,
+            "cache_read_input_tokens": 600_000,
+            "cache_write_input_tokens": 100_000,
+        }
+        used = LLMUsage(**counts, by_model={"m-a": counts})
+        rates = {"input_per_million_tokens": 2.0, "output_per_million_tokens": 10.0}
+        cached = ModelPrice(
+            **rates,
+            cache_read_per_million_tokens=0.2,
+            cache_write_per_million_tokens=2.5,
+        )
+        usd, unpriced = answer_cost_usd(used, {"m-a": cached})
+        assert unpriced == set()
+        assert usd == pytest.approx(0.3 * 2.0 + 0.6 * 0.2 + 0.1 * 2.5 + 0.1 * 10.0)
+        # Without cache rates every input token is priced as input, as before.
+        plain, _ = answer_cost_usd(used, {"m-a": ModelPrice(**rates)})
+        assert plain == pytest.approx(1.0 * 2.0 + 0.1 * 10.0)
 
     def test_results_saved_before_usage_have_latency_only(self) -> None:
         comparison = paired_comparison(

@@ -201,8 +201,9 @@ def pairwise_warnings(
     if ((manifest or {}).get("models") or {}).get("judge_is_answer_model"):
         warnings.append(
             "The pairwise judge is the answer model (models.roles.evaluation "
-            "is unset or the same model); LLM judges favour their own "
-            "answers, so set it to another model to compare strategies."
+            "names it, or another provider than Bedrock has no other default "
+            "judge); LLM judges favour their own answers, so set it to "
+            "another model to compare strategies."
         )
     for strategy, judged in pairwise.items():
         consistency = judged.get("position_consistency")
@@ -443,9 +444,22 @@ class EvaluationRunner:
             for path in self._baseline_results or []
         )
 
+    def _uses_llm_judge(self) -> bool:
+        """Whether this run calls an LLM judge: --pairwise-judge, or a
+        langchain/ragas evaluator scoring answers it generates."""
+        if getattr(self.args, "pairwise_judge", False):
+            return True
+        judges = {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
+        return self._from_results is None and bool(
+            judges & set(self.config.evaluation.enabled_evaluators)
+        )
+
     def _validate_args(self) -> None:
         for warning in self._judge_model_warnings():
             logger.warning("%s", warning)
+        if self._uses_llm_judge():
+            judge, reason = self.config.judge_model_choice()
+            logger.info("LLM judge: %s (%s)", judge, reason)
         if self._from_results is not None:
             if self.args.repeats != 1:
                 usage_error(

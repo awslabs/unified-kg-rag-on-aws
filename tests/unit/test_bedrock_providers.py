@@ -413,6 +413,9 @@ def test_defaults_use_sonnet_5_5_and_keep_haiku() -> None:
     assert values == {
         LanguageModelId.CLAUDE_V5_5_SONNET,
         LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V5_5_OPUS,
     }
-    for role in (ModelRole.ANSWER_GENERATION, ModelRole.EVALUATION, ModelRole.FIXING):
+    for role in (ModelRole.ANSWER_GENERATION, ModelRole.FIXING):
         assert config.model_id(role) == LanguageModelId.CLAUDE_V5_5_SONNET, role
+    # The judge is not the answer model: a judge favours its own answers.
+    assert config.model_id(ModelRole.EVALUATION) == LanguageModelId.CLAUDE_V5_5_OPUS

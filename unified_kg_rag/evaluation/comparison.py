@@ -62,6 +62,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     LLMUsage,
+    LLMUsageCounts,
 )
 from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
@@ -535,12 +536,26 @@ def answer_cost_usd(
     if unpriced:
         return None, unpriced
     usd = sum(
-        counts.input_tokens * prices[model].input_per_million_tokens / 1e6
-        + counts.output_tokens * prices[model].output_per_million_tokens / 1e6
+        _counts_usd(counts, prices[model])
         for model, counts in usage.by_model.items()
         if model in prices
     )
     return float(usd), set()
+
+
+def _counts_usd(counts: LLMUsageCounts, price: ModelPrice) -> float:
+    """The USD of one model's counts: ``input_tokens`` includes the cache
+    reads and writes, each priced at its own rate when ``price`` has one."""
+    cached = counts.cache_read_input_tokens + counts.cache_write_input_tokens
+    rate = price.input_per_million_tokens
+    read = price.cache_read_per_million_tokens
+    write = price.cache_write_per_million_tokens
+    return (
+        max(0, counts.input_tokens - cached) * rate
+        + counts.cache_read_input_tokens * (rate if read is None else read)
+        + counts.cache_write_input_tokens * (rate if write is None else write)
+        + counts.output_tokens * price.output_per_million_tokens
+    ) / 1e6
 
 
 def _distribution(values: Sequence[float]) -> dict[str, float] | None:

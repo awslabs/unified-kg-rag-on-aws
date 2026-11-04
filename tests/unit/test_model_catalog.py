@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import Config, LanguageModelId, ModelRole
 from unified_kg_rag.domain.models.config import (
     DEFAULT_MODEL_ID,
     FAST_MODEL_ID,
+    JUDGE_MODEL_ID,
     ROLE_TIERS,
 )
 from unified_kg_rag.shared import LanguageModelError
@@ -57,6 +58,8 @@ def test_every_role_has_a_tier_and_ships_its_default() -> None:
     assert tiers.count("fast") == 12
     for role, tier in ROLE_TIERS.items():
         expected = DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID
+        if role is ModelRole.EVALUATION:
+            expected = JUDGE_MODEL_ID
         assert config.model_id(role) == expected, role
 
 
@@ -68,7 +71,60 @@ def test_tier_keys_move_every_unset_role() -> None:
         expected = (
             "openai.gpt-6-sol" if tier == "default" else "anthropic.claude-sonnet-4-6"
         )
+        if role is ModelRole.EVALUATION:
+            # The Bedrock judge stays its own model, not the answer model's.
+            expected = JUDGE_MODEL_ID
         assert config.model_id(role) == expected, role
+
+
+def test_the_judge_defaults_to_another_model_than_the_answer_model() -> None:
+    config = Config()
+    assert JUDGE_MODEL_ID != DEFAULT_MODEL_ID
+    assert config.model_id(ModelRole.EVALUATION) == JUDGE_MODEL_ID
+    assert config.model_id(ModelRole.ANSWER_GENERATION) == DEFAULT_MODEL_ID
+    # 'default' restores the earlier judge: the default tier's model.
+    pinned = Config(models={"roles": {"evaluation": "default"}})
+    assert pinned.model_id(ModelRole.EVALUATION) == DEFAULT_MODEL_ID
+    # Another provider serves no Bedrock Opus: the judge stays on the tier.
+    local = Config(providers={"llm": {"kind": "ollama"}}, models={"default": "m"})
+    assert local.model_id(ModelRole.EVALUATION) == "m"
+
+
+@pytest.mark.parametrize(
+    ("models", "judge"),
+    [
+        # The answer model is the default judge: the default tier judges.
+        (
+            {"roles": {"answer_generation": "anthropic.claude-opus-5-5"}},
+            DEFAULT_MODEL_ID,
+        ),
+        # A profile prefix names the same model.
+        (
+            {"roles": {"answer_generation": "global.anthropic.claude-opus-5-5"}},
+            DEFAULT_MODEL_ID,
+        ),
+        # The default tier is the answer model too: Sonnet 5.5.
+        ({"default": "anthropic.claude-opus-5-5"}, LanguageModelId.CLAUDE_V5_5_SONNET),
+    ],
+)
+def test_the_default_judge_falls_back_when_it_is_the_answer_model(
+    models: dict, judge: str
+) -> None:
+    config = Config(models=models)
+    chosen, reason = config.judge_model_choice()
+    assert chosen == judge == config.model_id(ModelRole.EVALUATION)
+    assert "is the answer model" in reason
+    assert chosen != config.model_id(ModelRole.ANSWER_GENERATION)
+
+
+def test_a_configured_judge_is_kept_even_when_it_is_the_answer_model() -> None:
+    config = Config(
+        models={
+            "default": "anthropic.claude-opus-5-5",
+            "roles": {"evaluation": "anthropic.claude-opus-5-5"},
+        }
+    )
+    assert config.judge_model_choice() == ("anthropic.claude-opus-5-5", "configured")
 
 
 def test_explicit_role_value_wins_over_its_tier() -> None:

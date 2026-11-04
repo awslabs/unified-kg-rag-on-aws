@@ -6,8 +6,10 @@ Attached by the model factories to every chat model, tracing on or off: each
 call is counted in the open ``shared.usage`` scopes (see that module) when it
 starts, at an estimate of its prompt's tokens, and settled when it ends with
 the tokens the response reports (parsed as the tracing handler parses them,
-``response_token_usage``). A response the LLM response cache served counts
-as a cache hit instead, a failed call not at all; a call still running or
+``response_token_usage``: prompt-cache reads and writes apart too) and the
+requests botocore resent inside it (``request_retries``). A response the
+LLM response cache served counts as a cache hit instead, a failed call as
+``failed_calls`` only; a call still running or
 cancelled in flight keeps its estimate (``estimated_calls``). Outside a scope a call costs one
 context-variable read.
 """
@@ -26,6 +28,8 @@ from langchain_core.outputs import LLMResult
 
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.observability.langchain_callback import (
+    error_retry_attempts,
+    response_retry_attempts,
     response_token_usage,
 )
 from unified_kg_rag.shared import usage
@@ -85,17 +89,17 @@ class UsageCallbackHandler(BaseCallbackHandler):
                 call.served_from_cache()
             return
         tokens = response_token_usage(response)
-        input_tokens = tokens.input_tokens if tokens else 0
-        output_tokens = tokens.output_tokens if tokens else 0
+        counts = {
+            "input_tokens": tokens.input_tokens if tokens else 0,
+            "output_tokens": tokens.output_tokens if tokens else 0,
+            "cache_read_input_tokens": tokens.cache_read if tokens else 0,
+            "cache_write_input_tokens": tokens.cache_creation if tokens else 0,
+            "request_retries": response_retry_attempts(response),
+        }
         if call is None:
-            usage.record_llm_call(
-                self.role,
-                self.model_id,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
+            usage.record_llm_call(self.role, self.model_id, **counts)
         else:
-            call.finish(input_tokens=input_tokens, output_tokens=output_tokens)
+            call.finish(**counts)
 
     def on_chat_model_start(
         self,
@@ -135,4 +139,4 @@ class UsageCallbackHandler(BaseCallbackHandler):
             return
         call = self._take(run_id)
         if call is not None and not isinstance(error, asyncio.CancelledError):
-            call.fail()
+            call.fail(request_retries=error_retry_attempts(error))

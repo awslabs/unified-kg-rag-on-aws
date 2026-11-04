@@ -1141,14 +1141,30 @@ same counts in `token_usage`:
 | Metric | Counts |
 |---|---|
 | `llm_calls_<stage>` | Model calls that returned (retries included, failed calls not) |
-| `llm_input_tokens_<stage>` | Input tokens the responses reported |
+| `llm_input_tokens_<stage>` | Input tokens the responses reported, prompt-cache reads and writes included |
 | `llm_output_tokens_<stage>` | Output tokens the responses reported |
 | `llm_cache_hits` | Responses the run's LLM response cache served instead of a call (a resumed stage), and chunk-boundary answers the extraction store served, summed over the stages |
 
 To check them against Bedrock's own counts, compare a run's sums with the
 `InputTokenCount` / `OutputTokenCount` metrics of the `AWS/Bedrock`
 namespace for its models over the run's window (other callers of the same
-models in the account and region count there too).
+models in the account and region count there too). `InputTokenCount`
+excludes the prompt-cache tokens, which Bedrock reports as
+`CacheReadInputTokenCount` / `CacheWriteInputTokenCount`; the app's input
+tokens include them, and `token_usage` has them apart
+(`cache_read_input_tokens`, `cache_write_input_tokens`). `Invocations`
+counts every request Bedrock accepted, those that later failed included,
+and not throttled ones, while `llm_calls` counts each returned call once:
+a call botocore resent after a read timeout or a server error is one call
+but several invocations (`request_retries` in `token_usage`), a call that
+failed in the end is in `failed_calls` only, and calls made outside a usage
+scope (the `run-eval` warm-up queries, scripts) are not counted. In the
+package's November 2026 benchmark runs Bedrock counted 13% more Sonnet 5.5
+invocations than recorded calls while the tokens agreed within 4.6%
+(input, cache included) and 0.9% (output), which points to resent and
+failed requests that spent few tokens; those runs predate
+`request_retries` and `failed_calls`, so the split was not measured. Haiku
+5.5 agreed within 0.2%.
 
 ## Query deadlines and model timeouts
 
@@ -1179,6 +1195,7 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 |---|---|
 | Answers that need long generation (high `aws.bedrock.default_effort`, long `default_max_output_tokens` answers) fail with a read timeout | Raise `search.model_timeout_seconds` above the longest answer call, and `search.query_timeout_seconds` to at least about twice it |
 | `drift`, or `global` over many reports, fails with `QueryTimeoutError` | Raise `search.query_timeout_seconds` (DRIFT makes up to 27 LLM calls); if those calls are throttled, lower `search.max_concurrency` instead |
+| `drift` runs with the comprehensive answer (`search.answer_prompt_style: {drift: comprehensive}`) | Raise `search.query_timeout_seconds` to about 300 s first (see *DRIFT near the deadline* below) |
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
 | `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
 
@@ -1191,6 +1208,24 @@ slowest whole query and 1.9x the p99, for one request. The deadline,
 stalls once can still be answered by its second attempt; it is about 3x
 the slowest query and 3.8x the p99. Two attempts, not more: a third
 would start only after the deadline.
+
+**DRIFT near the deadline.** Those runs did not include DRIFT. On a
+3,318-document MuSiQue index (embedded SQLite stores, 50 sensemaking
+questions, two repeats, one run-eval at a time) DRIFT with the concise answer
+took 147 s at p95; with the comprehensive answer 168 s at p95 and 178 s at
+most, 2 s inside the 180 s deadline. A second evaluation running at the same
+time pushed 20 of 50 comprehensive DRIFT answers past it. So DRIFT keeps
+the concise answer by default, and a deployment that routes to DRIFT
+(`search.auto_routable_strategies`), serves it under load or gives it the
+comprehensive answer should set `search.query_timeout_seconds: 300` (with
+`model_timeout_seconds` 90 s and two attempts, a stalled call still fits).
+The deadline is one setting for every strategy: a per-strategy deadline is
+not offered, because an `auto` query learns its strategy only after the
+router call, inside the deadline that has already started, and the streamed
+path fixes its deadline before the first chunk. A service that wants a
+short deadline for `local`/`mix` and a long one for `drift` runs two chains
+with two configurations (or two `run-rag` invocations) and sends each
+strategy to its own.
 
 **With the Bedrock quota.** Bedrock reserves input plus `max_tokens` of each
 request against the model's tokens-per-minute (TPM) quota when the request

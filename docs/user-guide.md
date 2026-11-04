@@ -73,7 +73,8 @@ configure replaces the one in its row) before the first run:
 
 | Role | Default model id | Config key |
 |---|---|---|
-| Default tier (extraction, gleaning, community reports, answers, judges) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| Default tier (extraction, gleaning, community reports, answers) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| `run-eval` LLM judges (only when an LLM judge runs) | `anthropic.claude-opus-5-5` | `models.roles.evaluation` |
 | Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `models.fast` |
 | Embeddings (indexing, queries and evaluation) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
 | Reranking | `cohere.rerank-v3-5:0` | `models.rerank` |
@@ -426,7 +427,7 @@ switches the pipeline; a `models.roles` entry (a model id, or `default` /
 
 | Tier | Roles |
 | --- | --- |
-| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
+| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` (with a provider other than Bedrock; see below) |
 | `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
 
 ```yaml
@@ -437,6 +438,24 @@ models:
     query_rewrite: default                          # moved to the other tier
 ```
 
+- **The judge is its own model.** On Bedrock an unset
+  `models.roles.evaluation` is `anthropic.claude-opus-5-5`, not the
+  default tier: an LLM judge favours its own answers. Measured on 50 global
+  questions, Sonnet 5.5 judging its own answers against Opus 5.5's moved the
+  directness win rate by -0.27 [-0.38, -0.16] compared with a GPT-5.5
+  judge. Opus 5.5 costs about twice Sonnet 5.5 per token (on-demand,
+  us-west-2, November 2026: $4 / $20 against $2 / $10 per million input /
+  output tokens), and only `run-eval`'s LLM judges call it. When the
+  answer model is Opus 5.5 itself, the unset judge falls back to the default
+  tier's model, or to Sonnet 5.5 if that is the answer model too; `run-eval`
+  logs the judge it chose, and why, at INFO. Set
+  `models.roles.evaluation: default` for the earlier judge (the answer
+  model; `run-eval` then warns that it judges its own answers, as it does
+  for any configured judge that is the answer model), or another model when
+  Opus 5.5 is not enabled in your account or region. With another provider
+  the judge stays on the `default` tier (and is warned about when it judges
+  its own answers). The CDK stack grants every Bedrock model by default; a
+  scoped `bedrock_model_arns` must list the judge model too.
 - The embedding model (`models.embedding.model_id`) serves the indices, the
   queries and RAGAS; changing it or its
   `dimension` needs a re-index. On Bedrock, embedding and rerank ids are a
@@ -640,7 +659,9 @@ Model usage is counted with tracing on or off: every chat model the factories
 build records each call (the tokens its response reports) for the query or
 ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
-`input_tokens`, `output_tokens`, `cache_hits` and `estimated_calls`, and the same counts
+`input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`,
+`cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`
+and `failed_calls`, and the same counts
 `by_role` (the model's purpose: `query`, `ingestion`, `evaluation`) and
 `by_model` (the model id the factory resolved). `run-ingestion
 --output-format json` reports `token_usage` (the stages this run executed,
@@ -651,7 +672,17 @@ ingestion response cache served, a chunk-boundary answer the extraction
 store served, or a query entity or keyword extraction the chain's
 extraction cache served (`search.query_extraction_cache_size`), counts as
 a cache hit, not a call; a failed
-call is not counted; retries are. A call that has not answered when the
+call is not in `llm_calls` but in `failed_calls`; retries are calls.
+`input_tokens` includes the prompt-cache reads and writes, which are also
+counted apart (`cache_read_input_tokens`, `cache_write_input_tokens`, from
+Bedrock's `cacheReadInputTokens` / `cacheWriteInputTokens`) since they are
+billed at other rates. `request_retries` counts the requests botocore resent
+inside one call (its `RetryAttempts`): the call counts once in `llm_calls`,
+but a request resent after a read timeout or a server error is a Bedrock
+invocation of its own (a resent throttled one is not). So Bedrock's
+CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
+failed_calls`, plus any calls made outside a usage scope (the `run-eval`
+warm-up queries). A call that has not answered when the
 usage is read (an `auto` query's unread extraction, still running in the
 background) or was cancelled in flight (by `search.query_timeout_seconds`,
 say) was sent and is billed, so it counts in `llm_calls` and in
@@ -901,33 +932,61 @@ merged chunks are cut to that width after the rerank).
 chunks are taken: `weight` (the default) gives each matched item
 `related_chunk_number` chunks on a decreasing gradient; `vector` takes the
 cited chunks that best match the query, one search a side, as upstream
-LightRAG does by default. The default stays `weight` until an evaluation
-compares the two.
+LightRAG does by default. `weight` stays the default: on 200 MuSiQue
+questions (two repeats) `vector` measured no significant difference, mix
+`answer_contains` -1.5 points [-4.5, +1.25] and hybrid -1.25 [-4.5, +2.0],
+for about 1.5 s more latency per query. MMR's
+`search.fusion.diversity_lambda` keeps 0.5 for the same reason: 0.7 and 1.0
+were not significantly different on mix (`answer_contains` -1.0 [-3.75,
++1.5] and -2.25 [-5.25, +0.5] points; the one significant difference, MRR
++0.9 points [+0.05, +2.15] at 1.0, is small).
 
 ### Answer style
 
-Every strategy answers with the concise prompt by default: a one-sentence
-direct answer, then brief support (`custom_prompts.answer_generation_*`).
-`search.answer_prompt_style` gives a strategy the comprehensive prompt
-instead, a multi-paragraph markdown answer that explains every key point,
-modelled on MS GraphRAG's global reduce prompt
-(`custom_prompts.comprehensive_answer_*`):
+`global` answers with the comprehensive prompt by default, every other
+strategy with the concise one. The concise prompt writes a one-sentence
+direct answer, then brief support (`custom_prompts.answer_generation_*`);
+the comprehensive one a multi-paragraph markdown answer that explains every
+key point, modelled on MS GraphRAG's global reduce prompt
+(`custom_prompts.comprehensive_answer_*`). `search.answer_prompt_style` is
+merged over that default, so naming one strategy leaves the others as they
+are:
 
 ```yaml
 search:
-  answer_prompt_style: {global: comprehensive, drift: comprehensive}
+  answer_prompt_style: {drift: comprehensive}   # global stays comprehensive
+  query_timeout_seconds: 300                    # see below
+# answer_prompt_style: {global: concise}        # the default before
 ```
 
-`auto` uses the style of the strategy it routes to. The concise default
-stays until an evaluation compares the two; `answer_match` scores read the
-first line that is not a heading (`evaluation.answer_span`), so a
+Why. On 50 sensemaking questions over a 3,318-document MuSiQue corpus,
+comprehensive global answers beat concise ones on comprehensiveness,
+diversity and empowerment at win rates of 0.95-0.99 with each of three
+pairwise judges (Opus 5.5, Sonnet 5.5, GPT-5.5), for +$0.016 per query
+(answers 3.2k -> 7.6k characters). They lose directness (win rate 0.00-0.39),
+and pairwise LLM judges are known to favour longer answers, so read the win
+rates as "covers more", not "better for every reader": a user who wants a
+short answer should keep `{global: concise}`. `drift` won the same way
+(comprehensiveness 1.00, directness 0.03-0.04) but stays concise by default:
+its p95 latency rose from 147 s to 168 s, with a maximum of 178 s, against
+the 180 s `search.query_timeout_seconds`. With `{drift: comprehensive}`,
+raise that deadline (300 s leaves room;
+[runbook](./operations.md#query-deadlines-and-model-timeouts)).
+
+`auto` uses the style of the strategy it routes to. `answer_match` scores
+read the first line that is not a heading (`evaluation.answer_span`), so a
 comprehensive answer scores lower on exact match whatever its quality.
 
 Global search hands the answer model its ranked key points followed by the
 reports they cite. `search.global_search.evidence_tokens` caps that report
-text (whole reports, best point first): null (default) keeps as much as the
+text (whole reports, best point first) at 4000 tokens by default. On the
+same 50 questions the cap cut the cost of a global query by 41% ($0.1016 ->
+$0.0597) against no cap, and the three judges could not tell the answers
+apart (position consistency 0.43-0.57; only Opus 5.5's empowerment, 0.41
+[0.33, 0.48], left 0.5, and the other two judges did not replicate it); the
+answer keeps its sources. `null` (the default before) keeps as much as the
 context budget holds, which on a large cut is most of a global query's input
-tokens; `0` sends the key points only, as MS GraphRAG's reduce step reads
+tokens; `0` (-49% cost, also no measured difference) sends the key points only, as MS GraphRAG's reduce step reads
 them, and the answer then reports no sources (the key points are model
 output), so the `retrieval` evaluator skips its rank metrics for a global
 query (`no_sources_by_config`) instead of scoring a miss.
@@ -1640,8 +1699,10 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
     `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and
     `dropped_evaluators`;
   - the model ids and `judge_is_answer_model` (a judge that is the answer
-    model, the default, inflates judge scores: set `models.roles.evaluation`
-    to another model when comparing systems). The `--pairwise-judge` of a
+    model inflates judge scores; the default Bedrock judge, Opus 5.5, is not
+    the default answer model, and falls back to another when the answer
+    model is Opus 5.5; a configured `models.roles.evaluation` that is the
+    answer model, `default` say, is kept and warned about). The `--pairwise-judge` of a
     comparison counts as a judge, and `pairwise_judge` records its settings;
   - `answer_scoring`: the `answer_span` and `answer_normalization` exact
     match and token F1 used (with `answer_match`), and `models.answer_span`
@@ -1756,7 +1817,8 @@ adds `evaluation_comparison_<timestamp>.json`:
   not counted (`evaluation.warm_up_query`, default `true`), so the first
   strategy's latency does not include opening the store connections and the
   models' first calls; it costs one extra query (its model calls) per
-  strategy, and `false` turns it off.
+  strategy and run, which is in neither the run's usage nor its USD
+  estimate (Bedrock bills it all the same), and `false` turns it off.
 - `run_manifest` of the first run; with `--pairwise-judge`,
   `pairwise_judge_model` and the judge's `pairwise_usage`.
 
@@ -1771,14 +1833,29 @@ current [Amazon Bedrock prices](https://aws.amazon.com/bedrock/pricing/) of
 your region, per million tokens, keyed by the model id the usage records
 name (`usage.by_model`; an inference profile id such as `global.<model>` when
 the factory resolved one). Answers that used a model without a price get no
-estimate, and the comparison warns:
+estimate, and the comparison warns. `input_tokens` includes the prompt-cache
+reads and writes; give their rates (`cache_read_per_million_tokens`,
+`cache_write_per_million_tokens`) and they are priced apart, otherwise at
+the input rate (an upper bound for reads, which cost a tenth of input on
+Claude):
 
 ```yaml
 evaluation:
   prices:
-    "global.<answer-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "global.<answer-model-id>":
+      input_per_million_tokens: 0.0
+      output_per_million_tokens: 0.0
+      cache_read_per_million_tokens: 0.0
+      cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
 ```
+
+The estimate covers the calls the usage records: botocore's resent requests
+(`request_retries`), failed calls (`failed_calls`) and the warm-up queries
+are not priced, so CloudWatch's invocation count and the bill can run a
+little higher (in the package's November 2026 benchmark runs: Sonnet 5.5
+13% more invocations than recorded calls, input tokens within 4.6%, output
+within 0.9%; Haiku 5.5 within 0.2%).
 
 The console prints the same summary; the failure budget applies to every run.
 
@@ -3276,6 +3353,15 @@ unit, off by default) and one answer per query. Levers: Haiku-class models for
 the mechanical roles (the default for chunking, translation, map-reduce and
 summarization), fewer gleaning rounds, claims off, the caches and incremental
 indexing.
+
+Gleaning is the largest of these levers. `processing.gleaning.max_rounds`
+stays 3: on a 109-document MuSiQue slice, 3 rounds against 1 raised the
+share of the questions' intermediate (bridge) answers found as graph
+entities from 72.0% to 81.7% (+9.8 points [+3.7, +17.1]) for 38% more ingestion cost ($13.08
+against $9.51; gleaning itself $5.74 against $2.49). The answers did not
+differ significantly (local `answer_contains` +13.3 points [-3.3, +33.3] on
+30 questions). Set `max_rounds: 1` (MS GraphRAG's default) when ingestion
+cost matters more than graph recall.
 
 ---
 

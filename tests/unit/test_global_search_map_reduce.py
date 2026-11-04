@@ -995,6 +995,14 @@ async def test_evidence_tokens_caps_the_cited_reports(
         assert stats["global_evidence_reports"] == len(kept)
 
 
+def test_evidence_tokens_defaults_to_4000() -> None:
+    # Measured: -41% cost per global query against no cap, with no
+    # consistent quality difference and the sources kept.
+    from unified_kg_rag.domain.models.config import GlobalSearchConfig
+
+    assert GlobalSearchConfig().evidence_tokens == 4000
+
+
 async def test_evidence_tokens_also_caps_the_reduce_call_path() -> None:
     strat = _strategy(
         map_batch_size=3,

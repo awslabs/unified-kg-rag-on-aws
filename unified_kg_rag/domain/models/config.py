@@ -244,6 +244,21 @@ EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
 # unset, so changing a tier default is a one-line edit here.
 DEFAULT_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_SONNET.value
 FAST_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_HAIKU.value
+# The run-eval judge (models.roles.evaluation) when unset, on Bedrock: a model
+# other than the default answer model, since an LLM judge favours its own
+# answers (measured: Sonnet 5.5 judging its own answers against Opus 5.5's
+# moved the directness win rate by -0.27 against a cross-family judge).
+JUDGE_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_OPUS.value
+
+
+# The cross-region inference-profile prefixes a configured model id may carry.
+_PROFILE_PREFIX = re.compile(r"^(?:global|us|us-gov|eu|apac|jp|au|ca)\.")
+
+
+def _bare_model_id(model_id: str) -> str:
+    """``model_id`` without an inference-profile prefix, for comparing two
+    configured models."""
+    return _PROFILE_PREFIX.sub("", str(model_id).strip())
 
 
 def _coerce_model_id(value: Any) -> Any:
@@ -401,6 +416,28 @@ def _role_field(role: ModelRole) -> Any:
     )
 
 
+_EVALUATION_ROLE_FIELD: Any = Field(
+    default=None,
+    min_length=1,
+    description=(
+        "Model of the run-eval LLM judges (the langchain and ragas evaluators "
+        "and --pairwise-judge): a model id, or a tier name ('default' / "
+        f"'fast'). null = {JUDGE_MODEL_ID} on Bedrock, a model other than "
+        "the default answer model; when the answer model is that model, the "
+        "default tier's model or else Claude Sonnet 5.5, whichever is not "
+        "(run-eval logs the choice at INFO): a judge favours its own answers (measured "
+        "on 50 global questions: Sonnet 5.5 judging its own answers against "
+        "Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] "
+        "against a GPT-5.5 judge). It costs about twice the default tier per "
+        "token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / "
+        "output tokens against $2 / $10). With another provider, null runs "
+        "it on the 'default' tier. 'default' restores the judge of earlier "
+        "versions, the answer model (run-eval warns when a configured judge "
+        "is the answer model)."
+    ),
+)
+
+
 class RoleModelsConfig(BaseModel):
     """Per-role model overrides (``models.roles``)."""
 
@@ -422,7 +459,7 @@ class RoleModelsConfig(BaseModel):
     global_reduce: str | None = _role_field(ModelRole.GLOBAL_REDUCE)
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
-    evaluation: str | None = _role_field(ModelRole.EVALUATION)
+    evaluation: str | None = _EVALUATION_ROLE_FIELD
     answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
 
     @field_validator("*", mode="before")
@@ -470,7 +507,8 @@ class ModelsConfig(BaseModel):
         description=(
             "Model of the 'default' tier (extraction, gleaning, claims, "
             "community reports, output fixing, query entity/keyword "
-            "extraction, answer generation, evaluation). null = "
+            "extraction, answer generation; evaluation with another "
+            "provider than Bedrock, see roles.evaluation). null = "
             f"{DEFAULT_MODEL_ID} on Bedrock; required with another provider."
         ),
     )
@@ -1884,8 +1922,12 @@ class GleaningConfig(BaseModel):
             "Maximum gleaning rounds per text unit. Each round after the first"
             " re-sends only the text units whose previous answer added a new "
             "entity or relationship, so a unit stops once an answer adds "
-            "nothing new. 1 is MS GraphRAG's default, for when ingestion cost "
-            "matters more than graph recall."
+            "nothing new. Measured on a 109-document MuSiQue slice, 3 rounds "
+            "against 1 found 9.8 points more of the questions' intermediate "
+            "answers as graph entities (81.7% against 72.0%, [+3.7, +17.1]) "
+            "for 38% more ingestion cost. 1 is MS GraphRAG's default and the "
+            "cost lever, for when ingestion cost matters more than graph "
+            "recall."
         ),
     )
     max_entities_per_prompt: int = Field(
@@ -3237,7 +3279,10 @@ class FusionConfig(BaseModel):
             "(1-lambda)*max_similarity, with relevance min-max normalized to "
             "[0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), "
             "0.0 = maximum diversity. Lower values penalize redundant results "
-            "more strongly. Filtering is skipped at 1.0 (no diversity benefit)."
+            "more strongly. Filtering is skipped at 1.0 (no diversity benefit). "
+            "On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant "
+            "answer difference against 0.5 (answer_contains -1.0 points "
+            "[-3.75, +1.5] and -2.25 [-5.25, +0.5])."
         ),
     )
     fusion_weights: dict[str, float] = Field(
@@ -3413,17 +3458,23 @@ class GlobalSearchConfig(BaseModel):
         ),
     )
     evidence_tokens: int | None = Field(
-        default=None,
+        default=4000,
         ge=0,
         description=(
             "Tokens of the cited reports' text that follow the key points in "
             "the answer context: whole reports, best-scored point first, "
-            "until the next would exceed it. null (default) = no cap: as many "
+            "until the next would exceed it. 4000 (default): measured on 50 "
+            "global questions over a 3,318-document MuSiQue corpus, it cut "
+            "the cost per global query by 41% ($0.1016 -> $0.0597) against "
+            "no cap, with no consistent quality difference across three "
+            "pairwise judges (position consistency 0.43-0.57), and the answer "
+            "keeps its sources. null = no cap (the default before): as many "
             "as the answer's context budget holds, which on a large cut is "
             "most of a global query's input tokens. 0 = the key points only, "
-            "as MS GraphRAG's reduce step reads them; the answer then reports "
-            "no sources, since the key points are model output. Applies to "
-            "the map-reduce path (enable_map_reduce)."
+            "as MS GraphRAG's reduce step reads them (-49% cost, also no "
+            "measured quality difference); the answer then reports no "
+            "sources, since the key points are model output. Applies to the "
+            "map-reduce path (enable_map_reduce)."
         ),
     )
 
@@ -3698,8 +3749,10 @@ class LightRAGSearchConfig(BaseModel):
             "search of the text units restricted to them (the request's "
             "search_type: BM25 + vector by default), "
             "related_chunk_number * hits / 2 of them up to chunk_stream_top_k. "
-            "Upstream defaults to vector; weight stays the default here until "
-            "an evaluation decides."
+            "Upstream defaults to vector; weight stays the default here: on "
+            "200 MuSiQue questions vector measured no significant difference "
+            "(answer_contains mix -1.5 points [-4.5, +1.25], hybrid -1.25 "
+            "[-4.5, +2.0]) and about 1.5 s more latency per query."
         ),
     )
     enable_graph_expansion: bool = Field(
@@ -3723,6 +3776,19 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
 
 
 AnswerPromptStyle = Literal["concise", "comprehensive"]
+
+
+# The answer prompt styles a config that sets none gets; a configured map is
+# merged over them, so naming one strategy leaves the others' defaults.
+DEFAULT_ANSWER_PROMPT_STYLES: dict[SearchStrategy, AnswerPromptStyle] = {
+    SearchStrategy.GLOBAL: "comprehensive"
+}
+
+
+def _over_default_styles(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {**DEFAULT_ANSWER_PROMPT_STYLES, **value}
+    return value
 
 
 def _reject_auto_style(
@@ -3934,18 +4000,29 @@ class SearchConfig(BaseModel):
         ),
     )
     answer_prompt_style: Annotated[
-        dict[SearchStrategy, AnswerPromptStyle], AfterValidator(_reject_auto_style)
+        dict[SearchStrategy, AnswerPromptStyle],
+        BeforeValidator(_over_default_styles),
+        AfterValidator(_reject_auto_style),
     ] = Field(
-        default_factory=dict,
+        default_factory=lambda: dict(DEFAULT_ANSWER_PROMPT_STYLES),
         description=(
-            "Answer prompt per strategy: concise (default for every strategy: "
-            "a one-sentence direct answer and brief support, "
-            "custom_prompts.answer_generation_*) or comprehensive (a "
-            "multi-paragraph markdown answer that explains every key point, "
-            "modelled on MS GraphRAG's global reduce prompt, "
-            "custom_prompts.comprehensive_answer_*), e.g. {global: "
-            "comprehensive, drift: comprehensive}. An auto query uses the "
-            "style of the strategy it routes to."
+            "Answer prompt per strategy: concise (a one-sentence direct "
+            "answer and brief support, custom_prompts.answer_generation_*) "
+            "or comprehensive (a multi-paragraph markdown answer that "
+            "explains every key point, modelled on MS GraphRAG's global "
+            "reduce prompt, custom_prompts.comprehensive_answer_*). The map "
+            "is merged over the default {global: comprehensive}; every other "
+            "strategy is concise unless named. Measured on 50 sensemaking "
+            "questions, comprehensive global answers won comprehensiveness, "
+            "diversity and empowerment against concise ones at 0.95-0.99 "
+            "with three pairwise judges, for +$0.016 per query (3.2k -> 7.6k "
+            "characters), and lost directness (win rate 0.00-0.39); pairwise "
+            "judges also favour longer answers. drift stays concise: "
+            "comprehensive drift won the same way, but its p95 latency rose "
+            "from 147 s to 168 s (max 178 s) against the 180 s "
+            "query_timeout_seconds, so raise that with {drift: "
+            "comprehensive}. {global: concise} restores the earlier default. "
+            "An auto query uses the style of the strategy it routes to."
         ),
     )
     output_ceilings: QueryOutputCeilingsConfig = Field(
@@ -4496,6 +4573,24 @@ class ModelPrice(BaseModel):
     output_per_million_tokens: float = Field(
         ge=0, description="USD per million output tokens."
     )
+    cache_read_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens read from the prompt cache "
+            "(usage cache_read_input_tokens; Claude on Bedrock: a tenth of "
+            "the input price). null = the input price, an upper bound."
+        ),
+    )
+    cache_write_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens written to the prompt cache "
+            "(usage cache_write_input_tokens; Claude on Bedrock: 1.25 x the "
+            "input price for the 5-minute cache). null = the input price."
+        ),
+    )
 
 
 class EvaluationConfig(BaseModel):
@@ -4672,9 +4767,10 @@ class EvaluationConfig(BaseModel):
             "synthetic query with that strategy, untimed, unscored and not "
             "counted in the usage, so the first strategy's latency does not "
             "include opening the store connections and the models' first "
-            "calls. Costs one extra query (its model calls) per strategy. "
-            "false: no warm-up; the first strategy's first answers then read "
-            "slower."
+            "calls. Costs one extra query (its model calls) per strategy "
+            "and run, which is not counted in the run's usage or USD "
+            "estimate (Bedrock bills it all the same). false: no warm-up, "
+            "as in 0.2.3; the first strategy's first answers then read slower."
         ),
     )
     prices: dict[str, ModelPrice] = Field(
@@ -4686,7 +4782,8 @@ class EvaluationConfig(BaseModel):
             "(cost.strategies.<s>.usd_per_query). Empty (default): no USD "
             "estimate, token counts only. No prices ship with the package: "
             "fill in the current Amazon Bedrock on-demand prices of your "
-            "region. Cache-read and cache-write token rates are not modelled."
+            "region. input_tokens includes the cache reads and writes; each "
+            "is priced at its own rate when the model's price sets one."
         ),
     )
 
@@ -4895,10 +4992,50 @@ class Config(BaseModel):
 
     def model_id(self, role: ModelRole) -> str:
         """The model that serves ``role``: its ``models.roles`` entry (a model
-        id or a tier name), else its tier's model."""
+        id or a tier name), else its tier's model (the evaluation judge on
+        Bedrock: ``JUDGE_MODEL_ID``)."""
         chosen: str | None = getattr(self.models.roles, role.value)
         if chosen is None:
+            if role is ModelRole.EVALUATION:
+                return self.judge_model_choice()[0]
             return self.tier_model_id(ROLE_TIERS[role])
+        if chosen == "default":
+            return self.tier_model_id("default")
+        if chosen == "fast":
+            return self.tier_model_id("fast")
+        return chosen
+
+    def judge_model_choice(self) -> tuple[str, str]:
+        """The run-eval judge (``models.roles.evaluation``) and why it is the
+        one.
+
+        A configured judge is used as given, even when it is the answer
+        model (run-eval then warns). Unset on Bedrock, it is
+        ``JUDGE_MODEL_ID`` unless that is the answer model, then the first
+        of the default tier's model and Claude Sonnet 5.5 that is not: a
+        judge favours its own answers. With another provider it is the
+        default tier's model, the only one the config names.
+        """
+        configured: str | None = self.models.roles.evaluation
+        if configured is not None:
+            return self.model_id_for_choice(configured), "configured"
+        if self.providers.llm.kind != BEDROCK:
+            return self.tier_model_id("default"), "the default tier (not Bedrock)"
+        answer = _bare_model_id(self.model_id(ModelRole.ANSWER_GENERATION))
+        if _bare_model_id(JUDGE_MODEL_ID) != answer:
+            return JUDGE_MODEL_ID, "the default judge, not the answer model"
+        for candidate in (
+            self.tier_model_id("default"),
+            LanguageModelId.CLAUDE_V5_5_SONNET.value,
+        ):
+            if _bare_model_id(candidate) != answer:
+                return candidate, (
+                    f"the default judge {JUDGE_MODEL_ID} is the answer model"
+                )
+        return JUDGE_MODEL_ID, "no other model to judge with"
+
+    def model_id_for_choice(self, chosen: str) -> str:
+        """A ``models.roles`` value resolved: a tier name to its model."""
         if chosen == "default":
             return self.tier_model_id("default")
         if chosen == "fast":
