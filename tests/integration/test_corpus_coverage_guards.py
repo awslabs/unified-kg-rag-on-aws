@@ -253,6 +253,57 @@ def test_the_check_off_deletes_without_asking(tmp_path: Path) -> None:
     assert sorted(corpus.registry()) == ["d11.txt"]
 
 
+def _with_a_large_seed_graph(corpus: _Corpus, tmp_path: Path) -> None:
+    seed = tmp_path / "seed.jsonl"
+    seed.write_text(
+        "".join(
+            json.dumps(
+                {"kind": "node", "id": f"n{k}", "name": f"Part {k}", "type": "PRODUCT"}
+            )
+            + "\n"
+            for k in range(60)
+        )
+    )
+    corpus.config.processing.seed_graphs = [
+        SeedGraphConfig(name="catalog", kind="jsonl", path=str(seed))
+    ]
+
+
+def test_seed_shards_neither_dilute_the_share_nor_ask(tmp_path: Path) -> None:
+    corpus = _Corpus(tmp_path)
+    _twelve_documents(corpus)
+    _with_a_large_seed_graph(corpus, tmp_path)
+    corpus.run()
+    shards = len(corpus.registry()) - 12
+    assert shards > 12  # more shard records than documents
+    # 11 of the 12 documents gone: 92% of the documents, under half of the
+    # records with the shards counted.
+    for k in range(11):
+        (corpus.source / f"d{k:02d}.txt").unlink()
+    questions: list[str] = []
+
+    def no(question: str) -> bool:
+        questions.append(question)
+        return False
+
+    with pytest.raises(ConfirmationDeclinedError, match="Deletion cancelled"):
+        corpus.run(confirm_deletions=no)
+    assert "deletes 11 of the 12 documents" in questions[0]
+
+    # The seed graph taken out of the configuration: its shards go, unasked.
+    (tmp_path / "second").mkdir()
+    corpus2 = _Corpus(tmp_path / "second")
+    _twelve_documents(corpus2)
+    _with_a_large_seed_graph(corpus2, tmp_path)
+    corpus2.run()
+    corpus2.config.processing.seed_graphs = []
+    context = corpus2.run()
+    assert context.incremental_delta is not None
+    assert len(context.incremental_delta.deleted) == shards
+    assert len(context.incremental_delta.seed_deleted) == shards
+    assert len(corpus2.registry()) == 12
+
+
 def test_coverage_counts_reach_the_metrics_sink(tmp_path: Path) -> None:
     corpus = _Corpus(tmp_path)
     for k in range(3):

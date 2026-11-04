@@ -429,7 +429,11 @@ gets its models and stores from the run's `Providers` bundle.
   model that answers otherwise each time (no temperature control) cannot
   move the boundaries, and with them every downstream cache key, of
   unchanged text. The stage cache could not hold them: it is per pipeline
-  id and keyed by the whole corpus. `--force-rebuild` asks again.
+  id and keyed by the whole corpus. Only an answer that cuts its pre-chunk
+  is stored: one it falls back from (lines that do not exist, a miss rate
+  over the limit) would split it by size on every later run, so it is asked
+  again, and a stored one of that kind is replaced. `--force-rebuild` asks
+  again.
 - **Gleaning stops on observed output**: a unit is re-sent (up to
   `max_rounds`) only while its previous answer added something new. An empty
   answer is the "nothing missing" signal MS GraphRAG asks for with a separate
@@ -937,16 +941,21 @@ each query and the graph would be stored twice during the rebuild.
 **Unchanged text is not embedded again**, by a rebuild or a delta run. Each
 vector field stores the digest of the text it embeds next to the vector
 (`embedding_digests.<field>`), with the embedding provider, model, dimension
-and (outside Bedrock) input cap hashed in. A write reads the stored vectors
-and digests of its items, one search per write slice of 1,000 ids, from the
-alias's live index: the one an upsert writes, or the one a rebuild is about
-to replace (still the alias's target until the swap), and embeds only the
-texts whose digest it does not find. Reusing across a reset is safe because
+and (outside Bedrock) input cap hashed in. A write reads the stored digests
+of its items, one search per write slice of 800 ids, from the alias's live
+index: the one an upsert writes, or the one a rebuild is about to replace
+(still the alias's target until the swap). It then reads only the vectors
+whose digest is that of a text it writes, only those fields, 100 ids per
+search and four searches in flight, and embeds the texts whose digest it
+does not find. Reading every stored vector of a slice whose texts changed
+held over 60 MB of response and parsed floats per search for vectors no
+write took: rebuilding 2,000 reports at 1,024 dimensions with a third of the
+texts changed peaked at 388 MiB, and peaks at 165 MiB this way. Reusing across a reset is safe because
 the digest names the embedding settings: a reset after a model or dimension
 change finds no matching digest (nor reads at all: the live index's `_meta`
-records its model) and embeds everything. A vector a write replaced is kept
-for a later write of its text (a removal rewrites items the commit writes
-back). An index an earlier release built gets the digest field with the
+records its model) and embeds everything. A vector an upsert replaced is
+read as well (up to 2,048) and kept for a later write of its text (a
+removal rewrites items the commit writes back); a rebuild reads none. An index an earlier release built gets the digest field with the
 other missing ones (§5.1) and its items are embedded once more.
 `--force-rebuild` embeds every text again.
 
@@ -1031,7 +1040,11 @@ whose processing kills the task would stop every later run the same way.
   scope's records the diff read, counted by `detect_delta` before any
   document moves between the lists) in a scope of at least 10 documents.
   The retired scopes' records (`DocumentDelta.retired`) are left out: the
-  run was told to delete them. Its own input (`--confirm-deletions` /
+  run was told to delete them. So are seed graph shards, from both counts
+  (`DocumentDelta.seed_deleted`, by the records' `is_seed_path`): the
+  configuration removes them (a seed graph dropped or resharded), and a
+  seed graph of many shards would dilute the share until a partial sync of
+  most documents passed unasked. Its own input (`--confirm-deletions` /
   `UKR_CONFIRM_DELETIONS`) for the same reason as the reset's. A run with
   the registry off is not checked: the stores hold no per-document count
   to compare the corpus with (a port method on every backend for one

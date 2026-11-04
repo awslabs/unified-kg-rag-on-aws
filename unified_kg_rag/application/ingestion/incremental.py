@@ -555,6 +555,7 @@ class IncrementalIndexer:
         community_reports: list[CommunityReport] | None = None,
         claims: list[Claim] | None = None,
         unclustered_entities: int = 0,
+        settings_changed: bool = False,
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
@@ -578,6 +579,9 @@ class IncrementalIndexer:
         of the same id, which other documents may have contributed to. Once
         the docs are recorded, the extraction records only removed text units
         named are deleted (``IndexingManager.collect_extraction_records``).
+        ``settings_changed`` (the delta held documents re-extracted, or seed
+        shards exempted, for other extraction settings) records the run's
+        settings even when no document is (:meth:`record`).
         """
         check_write_fence()
         # The merge's re-key, split and drop decisions are held in memory
@@ -648,6 +652,7 @@ class IncrementalIndexer:
             owners,
             counted_failed_doc_ids=counted_failed_doc_ids,
             claims_missing_doc_ids=claims_missing_doc_ids,
+            settings_changed=settings_changed,
         ):
             # After the delta's writes: a changed document's new text units
             # name the records its removed ones did.
@@ -714,6 +719,7 @@ class IncrementalIndexer:
         *,
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
+        settings_changed: bool = False,
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -728,6 +734,8 @@ class IncrementalIndexer:
         Under the tolerated failure rate the docs are recorded, but a doc that
         owns an artifact whose write failed is recorded FAILED (see
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
+        The run's extraction settings are recorded for the scope with them,
+        or without a document when ``settings_changed``.
         """
         check_write_fence()
         if self._delta_writes_succeeded(results):
@@ -742,18 +750,7 @@ class IncrementalIndexer:
                 counted_failed_doc_ids,
                 claims_missing_doc_ids,
             )
-            # A commit that recorded no document (nothing changed, or only
-            # deletions) extracted nothing: the stored settings still
-            # describe the indexed documents.
-            if (
-                lineages
-                and self.scope is not None
-                and self.extraction_fingerprint is not None
-                and self.extraction_settings is not None
-            ):
-                self.doc_status.put_extraction_settings(
-                    self.scope, self.extraction_fingerprint, self.extraction_settings
-                )
+            self._record_extraction_settings(bool(lineages), settings_changed)
             return True
         logger.error(
             "Indexing failed for at least one artifact type (complete failure "
@@ -762,6 +759,35 @@ class IncrementalIndexer:
             {k: (v.successful_items, v.failed_items) for k, v in results.items()},
         )
         return False
+
+    def _record_extraction_settings(
+        self, recorded_documents: bool, settings_changed: bool
+    ) -> None:
+        """Record the run's extraction settings for the scope.
+
+        A commit that recorded no document (nothing changed, or only
+        deletions) extracted nothing: the stored settings still describe the
+        indexed documents. Unless the delta saw other settings
+        (``settings_changed``) and the stored ones are not the run's: a
+        scope of seed graphs alone, whose shards the settings do not apply
+        to, would otherwise warn of the change on every run.
+        """
+        if (
+            self.scope is None
+            or self.extraction_fingerprint is None
+            or self.extraction_settings is None
+            or not (recorded_documents or settings_changed)
+        ):
+            return
+        if not recorded_documents:
+            # Exempt shards keep their earlier fingerprint, so every later
+            # run sees them: one read instead of a write each time.
+            stored = self.doc_status.get_extraction_settings(self.scope)
+            if stored is not None and stored[0] == self.extraction_fingerprint:
+                return
+        self.doc_status.put_extraction_settings(
+            self.scope, self.extraction_fingerprint, self.extraction_settings
+        )
 
     def _delta_writes_succeeded(self, results: dict[str, IndexingStats]) -> bool:
         """False if any index type failed hard enough that the delta must retry.
@@ -1775,9 +1801,12 @@ def _confirm_mass_deletion(
     A file gone from the corpus reads deleted, and so does every file of a
     partial S3 sync, an expired prefix or a volume not mounted: the run
     would remove what only they stated. The share is of the scope's
-    records the diff read (``DocumentDelta.scope_documents``); a retired
-    scope's records (``DocumentDelta.retired``) were asked for, and files
-    the run could not read are kept, not deleted. A scope of fewer than
+    records the diff read (``DocumentDelta.scope_documents``), in both
+    counts without seed graph shards (``DocumentDelta.seed_deleted``: the
+    configuration removes those, and a large seed graph's shards would
+    dilute the share); a retired scope's records
+    (``DocumentDelta.retired``) were asked for, and files the run could not
+    read are kept, not deleted. A scope of fewer than
     ``MASS_DELETION_MIN_DOCUMENTS`` documents, or ``max_share`` ``None`` or
     1.0, is not checked. ``confirm`` answers (``--confirm-deletions``,
     ``UKR_CONFIRM_DELETIONS=1`` or ``--yes``); ``None`` cannot, and the run
@@ -1788,8 +1817,9 @@ def _confirm_mass_deletion(
     """
     if max_share is None or max_share >= 1.0:
         return
-    retired = set(delta.retired)
-    deleted = sum(1 for doc_id in delta.deleted if doc_id not in retired)
+    # Seed shards follow processing.seed_graphs, not the corpus files.
+    uncounted = set(delta.retired) | set(delta.seed_deleted)
+    deleted = sum(1 for doc_id in delta.deleted if doc_id not in uncounted)
     total = delta.scope_documents
     if total < MASS_DELETION_MIN_DOCUMENTS or deleted / total <= max_share:
         return
@@ -2712,6 +2742,7 @@ def index_delta(
             communities=communities,
             community_reports=community_reports,
             claims=claims,
+            settings_changed=bool(delta.settings_changed or delta.seed_settings_exempt),
             unclustered_entities=next(
                 (
                     int(r.metrics.get("unclustered_stored_entities", 0))

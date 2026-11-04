@@ -158,8 +158,10 @@ the deletion is confirmed: `run-ingestion` asks on a terminal, and
 `--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1` or `--yes` answers yes. A
 partial S3 sync, an expired prefix and a volume not mounted look the same
 as files removed on purpose. Only scopes of at least 10 documents are
-checked; a retired scope's records (`--retire-source-scope`) do not count;
-a reset, and a run with the registry off, are not checked (without the
+checked; a retired scope's records (`--retire-source-scope`) do not count,
+nor do seed graph shards, in either count (`N` and `M` are documents: the
+configuration adds and removes shards, and a large seed graph's many shard
+records would otherwise hide a partial sync); a reset, and a run with the registry off, are not checked (without the
 registry every run is a full build of what it reads, so keep the registry
 on for a corpus that may arrive partial; an empty corpus with seeds asks as
 in [Seeds with the registry off](#seed-graphs-in-the-image-or-s3)). When the files are really gone, re-run once with

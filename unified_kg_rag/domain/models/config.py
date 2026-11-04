@@ -3128,7 +3128,8 @@ class IndexingConfig(BaseModel):
         "confirmed (run-ingestion asks on the terminal; --confirm-deletions, "
         "UKR_CONFIRM_DELETIONS=1 or --yes answers yes). Only scopes holding "
         "at least 10 documents are checked; retired scopes "
-        "(retire_source_scopes) do not count, and a reset or a run with the "
+        "(retire_source_scopes) and seed graph shards (the configuration "
+        "adds and removes them) do not count, and a reset or a run with the "
         "registry off is never checked. 1.0 or null disables the check.",
     )
     lease_seconds: float = Field(

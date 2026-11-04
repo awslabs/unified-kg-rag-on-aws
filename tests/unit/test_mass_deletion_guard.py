@@ -36,6 +36,11 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_registry_source,
     detect_delta,
 )
+from unified_kg_rag.domain.ingestion.document_identity import RELATIVE_PATH_KEY
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    SEED_SOURCE_KIND,
+    seed_relative_path,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -100,6 +105,17 @@ def test_a_retired_scopes_records_do_not_count() -> None:
     assert confirm.questions == []
 
 
+def test_seed_shard_removals_do_not_count() -> None:
+    # The configuration removed 30 shards; 2 of the 12 documents are gone.
+    shards = [f"s{k}" for k in range(30)]
+    delta = _delta(2, 10)
+    delta.deleted += shards
+    delta.seed_deleted = shards
+    confirm = _Asked(True)
+    _confirm_mass_deletion(delta, 0.5, "s", confirm)
+    assert confirm.questions == []
+
+
 def test_no_confirmation_or_a_no_stops_the_run() -> None:
     with pytest.raises(ConfirmationDeclinedError, match="--confirm-deletions"):
         _confirm_mass_deletion(_delta(8, 4), 0.5, "s3://bucket/corpus-1/", None)
@@ -157,6 +173,31 @@ def test_detect_delta_counts_the_scopes_records_and_marks_retired_ones() -> None
     assert delta.scope_documents == 5
     assert sorted(delta.deleted) == ["gone-0", "old-0", "old-1"]
     assert sorted(delta.retired) == ["old-0", "old-1"]
+
+
+def test_detect_delta_leaves_seed_shards_out_of_the_share() -> None:
+    store = FakeDocStatusStore()
+    documents = [_document(f"k{k}.txt") for k in range(12)]
+    shards = [_document(seed_relative_path("catalog", k, 4)) for k in range(4)]
+    for shard in shards:
+        shard.metadata["source_kind"] = SEED_SOURCE_KIND
+    _, fingerprints = detect_delta([*documents, *shards], store, scope=_SCOPE)
+    for doc_id, document in zip(fingerprints, [*documents, *shards], strict=True):
+        store.put(
+            _record(doc_id, _SCOPE).model_copy(
+                update={"file_path": document.metadata[RELATIVE_PATH_KEY]}
+            )
+        )
+
+    # 11 documents gone and the seed graph resharded (its 4 shards gone, 2 new).
+    resharded = [_document(seed_relative_path("catalog", k, 2)) for k in range(2)]
+    for shard in resharded:
+        shard.metadata["source_kind"] = SEED_SOURCE_KIND
+    delta, _ = detect_delta([documents[-1], *resharded], store, scope=_SCOPE)
+
+    assert len(delta.deleted) == 15
+    assert sorted(delta.seed_deleted) == sorted(list(fingerprints)[12:])
+    assert delta.scope_documents == 12
 
 
 # --- files no loader reads (O-H1) ----------------------------------------------
