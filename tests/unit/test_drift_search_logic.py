@@ -90,7 +90,8 @@ class _Reports:
 
 
 class _Local:
-    """Local search: one chunk naming the follow-up query."""
+    """Local search: one chunk naming the follow-up query; its reports by
+    membership for a "deeper" query, else by similarity."""
 
     def __init__(
         self, empty: set[str] | None = None, fail: set[str] | None = None
@@ -114,6 +115,11 @@ class _Local:
             total_results=len(results),
             search_strategy="local_search",
             processing_time=0.0,
+            metadata={
+                "report_selection": (
+                    "membership" if "deeper" in query.query else "similarity"
+                )
+            },
         )
 
 
@@ -335,6 +341,8 @@ async def test_follow_ups_run_as_local_searches_round_by_round() -> None:
     assert local.queries[5:] == ["deepest?"]
     assert result.metadata["drift_depth"] == 3
     assert result.metadata["drift_follow_up_queries"] == 6
+    # How each follow-up read its reports (local's report_selection).
+    assert result.metadata["report_selection"] == {"similarity": 4, "membership": 2}
     # Each follow-up's context is its own local search.
     contexts = {c["query"]: c["context"] for c in strat.action.calls}
     assert contexts["deeper A?"] == "chunk for deeper A?"

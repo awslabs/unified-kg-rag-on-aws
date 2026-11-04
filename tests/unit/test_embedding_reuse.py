@@ -235,6 +235,29 @@ def test_a_rewrite_reuses_the_vector_an_earlier_write_replaced(
     assert model.texts == []
 
 
+def test_a_last_write_reads_no_replaced_vector_and_takes_the_kept_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An incremental run's commit is its last write: a vector it replaced
+    # was read for no later write. The removal's kept ones still serve it.
+    indexer, model = _indexer(tmp_path / "v.sqlite3")
+    indexer.index_entities(_entities(Vendor="sells widgets", Buyer="buys"))
+    indexer.upsert_entities(_entities(Vendor="sells"))
+    model.texts.clear()
+    indexer.set_replaced_vector_keeping(False)
+    reads = _counting_reads(indexer, monkeypatch)
+
+    indexer.upsert_entities(_entities(Vendor="sells widgets", Buyer="buys gadgets"))
+
+    assert model.texts == ["buys gadgets"]
+    digests = (module._DIGESTS_FIELD,)
+    # Only Vendor's name vector is read (Buyer's replaced one is not).
+    assert [fields for _, fields in reads if fields != digests] == [
+        ("name_embedding", digests[0])
+    ]
+    assert list(indexer._replaced) == [indexer._embedding_digest("sells widgets")]
+
+
 def _counting_reads(
     indexer: OpenSearchIndexer, monkeypatch: pytest.MonkeyPatch
 ) -> list[tuple[int, tuple[str, ...]]]:

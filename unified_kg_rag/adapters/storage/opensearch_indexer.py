@@ -319,6 +319,8 @@ class OpenSearchIndexer(VectorIndexer):
     _doc_status_tracked: bool | None = None
     # Whether writes reuse stored vectors (set_embedding_reuse).
     _reuse_embeddings: bool = True
+    # Whether upserts keep the vectors they replace (set_replaced_vector_keeping).
+    _keep_replaced_vectors: bool = True
     # Guards _replaced: a build writes its item types concurrently.
     _replaced_lock = threading.Lock()
 
@@ -463,6 +465,12 @@ class OpenSearchIndexer(VectorIndexer):
         """Whether writes reuse the stored vectors of unchanged texts (see
         ``_embed_and_write``); off, every text is embedded again."""
         self._reuse_embeddings = reuse
+
+    def set_replaced_vector_keeping(self, keep: bool) -> None:
+        """Whether upserts read and keep the stored vectors they replace (in
+        ``_replaced``, see ``_reusable_vectors``); off, they read only the
+        vectors they take. The vectors kept so far stay for later writes."""
+        self._keep_replaced_vectors = keep
 
     @cached_property
     def _digest_seed(self) -> str:
@@ -2030,7 +2038,11 @@ class OpenSearchIndexer(VectorIndexer):
 
                 total_stats.merge(
                     self._embed_and_write(
-                        index_name, chunk_items, spec, suffix, keep_replaced=True
+                        index_name,
+                        chunk_items,
+                        spec,
+                        suffix,
+                        keep_replaced=self._keep_replaced_vectors,
                     )
                 )
             except NamespaceLeaseError:

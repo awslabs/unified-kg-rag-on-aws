@@ -517,13 +517,15 @@ class LocalSearchStrategy(BaseSearchStrategy):
         entity names a community (the entities index holds no
         ``community_ids``, so a walk under a document filter or the entity
         hits a failed expansion leaves behind have none), when a
-        ``source_kinds`` filter reads no report, or under a range on
-        ``community_id``: the caller reads the similar reports then.
+        ``source_kinds`` filter reads no report, under a range on
+        ``community_id``, or when the caller's ``community_id`` or ``level``
+        filter admits none of these level-0 communities (it asks for other
+        ones): the caller reads the similar reports then, under that filter.
         """
         if not self.document_retriever or self._source_kinds_skip_reports(query):
             return None
         matches = self.community_matches(entity_nodes)
-        if not matches or isinstance((query.filters or {}).get("community_id"), dict):
+        if not matches or self.filters_exclude_members(query.filters, matches):
             return None
         reports = await self._fetch_by_ids(
             self.document_retriever,
@@ -542,6 +544,36 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
         quota = self._per_type_quota(query.top_k)[SectionType.COMMUNITY.value]
         return self.rank_member_reports(reports, matches)[:quota]
+
+    @staticmethod
+    def filters_exclude_members(
+        filters: dict[str, Any] | None, matches: dict[str, int]
+    ) -> bool:
+        """Whether caller ``filters`` admit no report of the level-0
+        ``matches``: a range on ``community_id`` (it cannot narrow them), a
+        ``community_id`` naming none of them, or a ``level`` without 0."""
+        given = (filters or {}).get("community_id")
+        if isinstance(given, dict):  # a range: no member is named
+            given = []
+        if given is not None:
+            allowed = given if isinstance(given, list) else [given]
+            if not {str(value) for value in allowed} & matches.keys():
+                return True
+        level = (filters or {}).get("level")
+        if level is None:
+            return False
+        if isinstance(level, dict):
+            bounds = {
+                "gt": lambda bound: 0 > bound,
+                "gte": lambda bound: 0 >= bound,
+                "lt": lambda bound: 0 < bound,
+                "lte": lambda bound: 0 <= bound,
+            }
+            return not all(
+                bounds[op](bound) for op, bound in level.items() if op in bounds
+            )
+        levels = level if isinstance(level, list) else [level]
+        return 0 not in levels
 
     @staticmethod
     def community_matches(entity_nodes: list[RetrievalResult]) -> dict[str, int]:

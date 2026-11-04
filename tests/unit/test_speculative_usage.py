@@ -258,6 +258,19 @@ async def test_aclose_cancels_the_background_extraction() -> None:
     assert not chain._background_extractions._snapshot()
 
 
+async def test_close_cancels_a_background_extraction_on_the_callers_loop() -> None:
+    # The async path ran on the caller's loop, which no runner of the chain
+    # stops: only the sync close's own cancel ends the extraction.
+    model = _ThreadedChat(delays={"keywords": 30.0}, threaded=False)
+    chain = _chain(model, query_timeout_seconds=None)
+    await chain.ainvoke(_auto())
+    assert chain._background_extractions._snapshot()
+    chain.close()
+    await asyncio.sleep(0.1)
+    assert model.cancelled == ["keywords"]
+    assert not chain._background_extractions._snapshot()
+
+
 def test_close_ends_the_sync_paths_background_extraction(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

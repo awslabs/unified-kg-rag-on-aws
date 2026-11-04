@@ -564,6 +564,13 @@ class VectorIndexer(BaseIndexer):
         ``--force-rebuild`` asks). Default does nothing."""
         return None
 
+    def set_replaced_vector_keeping(self, keep: bool) -> None:
+        """Whether upserts from now on keep the stored vectors they replace,
+        for a later write of the same text in this run (``False`` before a
+        run's last write: none follows to take them). Default does
+        nothing."""
+        return None
+
     def record_build(
         self, record: IndexBuildRecord, suffix: str | None
     ) -> IndexBuildRecord | None:

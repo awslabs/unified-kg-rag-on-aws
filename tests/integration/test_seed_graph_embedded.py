@@ -24,6 +24,7 @@ import pytest
 
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
+from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -356,13 +357,21 @@ def test_a_seed_only_run_makes_no_model_call(tmp_path: Path) -> None:
 
 
 def test_a_seed_only_scope_warns_of_a_settings_change_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The settings do not apply to the shards (kept unchanged), so no
     # document is recorded; the new settings still are.
     harness = _Harness(tmp_path, corpus={})
     harness.ok()
     harness.config.processing.graph_extraction.max_entities_per_chunk = 7
+    put = SQLiteDocStatusStore.put_extraction_settings
+    writes: list[str] = []
+
+    def counted(self: Any, scope: str, *args: Any, **kwargs: Any) -> Any:
+        writes.append(scope)
+        return put(self, scope, *args, **kwargs)
+
+    monkeypatch.setattr(SQLiteDocStatusStore, "put_extraction_settings", counted)
     warned = []
     for _ in range(2):
         caplog.clear()
@@ -372,6 +381,8 @@ def test_a_seed_only_scope_warns_of_a_settings_change_once(
             any("extraction settings changed" in r.getMessage() for r in caplog.records)
         )
     assert warned == [True, False]
+    # Recorded once: the second run reads the settings it would write.
+    assert len(writes) == 1
     assert context.incremental_delta is not None
     # The shards keep their earlier fingerprint and are exempted again.
     assert len(context.incremental_delta.seed_settings_exempt) == SHARDS

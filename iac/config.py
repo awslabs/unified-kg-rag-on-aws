@@ -109,7 +109,8 @@ cannot leave its setting at the default:
   observability_secret_arn None        complete ARN of a Secrets Manager secret
                                        whose JSON keys are injected into both
                                        task definitions as environment
-                                       variables (ECS task secrets)
+                                       variables (ECS task secrets); in
+                                       private mode, of the deploy region
   observability_secret_keys "LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY"
                                        JSON keys of that secret to inject, each
                                        as the variable of the same name (e.g.
@@ -537,6 +538,34 @@ class DeploymentConfig:
     @property
     def create_vpc(self) -> bool:
         return not self.vpc_id
+
+    def check_deploy_region(self, deploy_region: str | None) -> None:
+        """Fail the synth when private mode cannot reach a regional service
+        the tasks call: its VPC interface endpoints (and no NAT) are in the
+        deploy region only, so a call to another region has no route and
+        hangs (Bedrock) or fails the task's start (the secret)."""
+        if not self.is_private or not deploy_region:
+            return
+        if self.bedrock_region and self.bedrock_region != deploy_region:
+            raise ValueError(
+                f"network_mode=private but bedrock_region ('{self.bedrock_region}') "
+                f"differs from the deploy region ('{deploy_region}'). In private mode "
+                "there is no route to Bedrock in another region (VPC endpoints are "
+                "created in the deploy region only), so runtime Bedrock calls would "
+                "hang. Either set bedrock_region to the deploy region, or use "
+                "network_mode=public (NAT) for cross-region Bedrock."
+            )
+        if self.observability_secret_arn:
+            secret_region = self.observability_secret_arn.split(":")[3]
+            if secret_region != deploy_region:
+                raise ValueError(
+                    "network_mode=private but observability_secret_arn is in "
+                    f"'{secret_region}', not the deploy region ('{deploy_region}'). "
+                    "The Secrets Manager endpoint is created in the deploy region "
+                    "only, so no task could read the secret and none would start. "
+                    "Replicate the secret to the deploy region and give that ARN, "
+                    "or use network_mode=public (NAT)."
+                )
 
     def cache_bucket(self, account: str, region: str) -> str:
         """Cache bucket name: the reused bucket, else the one storage creates.

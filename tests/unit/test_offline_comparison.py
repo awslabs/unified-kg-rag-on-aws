@@ -744,6 +744,39 @@ class TestFailedAnswersInCost:
         )
         assert "'latency/response_time_seconds'" in breaches[1]
 
+    def test_failed_answers_that_differ_fail_the_cost_gates(self) -> None:
+        # A failed answer counts with what it spent before failing: a cost
+        # delta between strategies that failed different numbers of answers
+        # compares the failures too (a fast failure looks cheap).
+        failed = _failing_run(_BASE, "mix", {"q1": (_usage(1, 10, 0), 0.1)})
+        comparison = paired_comparison(
+            {"local": [_run(_BASE, "local")], "mix": [failed]}
+        )
+        gates = [
+            parse_gate("usage/total_tokens:mean_delta>1000"),
+            parse_gate("latency/response_time_seconds:mean_delta>1000"),
+            parse_gate("answer_match/token_f1:mean_delta<-1"),
+        ]
+        breaches = gate_breaches(comparison, gates)
+        assert breaches == [
+            "mix: --fail-if usage/total_tokens:mean_delta>1000: failed answers "
+            "differ (local 0, mix 1), so the 'usage/total_tokens' delta compares "
+            "the failures too",
+            "mix: --fail-if latency/response_time_seconds:mean_delta>1000: failed "
+            "answers differ (local 0, mix 1), so the "
+            "'latency/response_time_seconds' delta compares the failures too",
+        ]
+        # The same failures on both sides compare like with like.
+        both = paired_comparison(
+            {
+                "local": [
+                    _failing_run(_BASE, "local", {"q1": (_usage(1, 10, 0), 0.1)})
+                ],
+                "mix": [failed],
+            }
+        )
+        assert gate_breaches(both, gates) == []
+
     def test_repeats_and_cache_hits_that_differ_are_warned(self) -> None:
         def cached(run: Any, hits: int) -> Any:
             for result in run[1]:

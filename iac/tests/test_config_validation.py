@@ -227,3 +227,33 @@ def test_observability_secret_needs_a_complete_arn_and_variable_names() -> None:
         _config({"observability_secret_arn": arn, "observability_secret_keys": "A-B"})
     with pytest.raises(ValueError, match="only applies with observability_secret_arn"):
         _config({"observability_secret_keys": "A"})
+
+
+_SECRET = "arn:aws:secretsmanager:{}:111111111111:secret:obs/headers-AbC123"
+
+
+@pytest.mark.parametrize(
+    ("context", "fails"),
+    [
+        ({"observability_secret_arn": _SECRET.format("us-west-2")}, False),
+        ({"observability_secret_arn": _SECRET.format("us-east-1")}, True),
+        (
+            {
+                "observability_secret_arn": _SECRET.format("us-east-1"),
+                "network_mode": "public",
+            },
+            False,
+        ),
+    ],
+    ids=["private-same-region", "private-cross-region", "public-cross-region"],
+)
+def test_a_private_deployment_needs_the_secret_in_its_region(
+    context: dict[str, Any], fails: bool
+) -> None:
+    # Private mode's Secrets Manager endpoint is in the deploy region only.
+    config = _config(context)
+    if not fails:
+        config.check_deploy_region("us-west-2")
+        return
+    with pytest.raises(ValueError, match="observability_secret_arn is in 'us-east-1'"):
+        config.check_deploy_region("us-west-2")

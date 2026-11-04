@@ -2729,6 +2729,11 @@ def index_delta(
     # Whatever stops the commit after its registry write (a failed or stopped
     # cleanup) leaves the documents it recorded FAILED in the result.
     failures = run_failures(context, text_units)
+    # The commit is the run's last write: no later write takes a vector it
+    # replaces, so its upserts read only the vectors they take (the removal's
+    # replaced ones, kept above, are still taken).
+    vectors = indexing_manager.opensearch_indexer
+    vectors.set_replaced_vector_keeping(False)
     try:
         results = incremental.commit(
             lineages=lineages,
@@ -2753,6 +2758,7 @@ def index_delta(
             ),
         )
     finally:
+        vectors.set_replaced_vector_keeping(True)
         context.record_failed_documents(incremental.recorded_failed_doc_ids)
         context.record_retrying_documents(incremental.retrying_doc_ids)
         context.record_claims_missing_documents(incremental.claims_missing_doc_ids)

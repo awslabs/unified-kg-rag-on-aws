@@ -165,3 +165,24 @@ async def test_pinned_reports_dropped_under_a_single_kind_filter(
     )
     assert len(os_r.calls) == 1
     assert out.results == []
+
+
+async def test_the_reports_skip_is_logged_only_when_the_sweep_held_them(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    strategy, os_r = _make_strategy(config)
+    o = config.indexing.opensearch
+    filters = {"source_kinds": "document"}
+
+    with caplog.at_level("INFO"):
+        await strategy.asearch(
+            SearchQuery(
+                query="q", index_prefixes=[o.entities_index_prefix], filters=filters
+            )
+        )
+    assert os_r.calls[0].index_prefixes == [o.entities_index_prefix]
+    assert "Community reports skipped" not in caplog.text
+
+    with caplog.at_level("INFO"):
+        await strategy.asearch(SearchQuery(query="q", filters=filters))
+    assert "Community reports skipped" in caplog.text

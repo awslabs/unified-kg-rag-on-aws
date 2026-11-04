@@ -105,15 +105,13 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         pinned = query.index_prefixes
         if isinstance(pinned, str):
             pinned = [pinned]
-        prefixes = [
-            prefix
-            for prefix in pinned or configured_index_prefixes(self.config)
-            if prefix != reports
-        ]
-        logger.info(
-            "Community reports skipped: the source_kinds filter keeps one "
-            "source kind and a report carries none"
-        )
+        listed = list(pinned or configured_index_prefixes(self.config))
+        prefixes = [prefix for prefix in listed if prefix != reports]
+        if len(prefixes) < len(listed):
+            logger.info(
+                "Community reports skipped: the source_kinds filter keeps one "
+                "source kind and a report carries none"
+            )
         if not prefixes:
             return None
         return query.model_copy(update={"index_prefixes": prefixes})

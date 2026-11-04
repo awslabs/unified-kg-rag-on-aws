@@ -333,6 +333,22 @@ class TestJSONSelfCorrection:
             parse_llm_json(raw, strict=True)
         assert parse_llm_json(raw) == {"a": 1}
 
+    @pytest.mark.parametrize(
+        "after", ["Sets are written as { a, b.", "Use {name}, or one { alone."]
+    )
+    def test_a_lone_brace_in_prose_after_the_answer_is_not_a_cut(
+        self, after: str
+    ) -> None:
+        raw = '{"a": 1}\n' + after
+        assert parse_llm_json(raw, strict=True) == {"a": 1}
+
+    @pytest.mark.parametrize("cut", ['{ "b', "{\n  ", '{"a": 2} {"b": [', "{"])
+    def test_a_brace_that_starts_json_after_the_answer_is_a_cut(self, cut: str) -> None:
+        # Even after a lone brace in prose.
+        raw = '{"a": 1}\nCorrection: one { brace, then\n' + cut
+        with pytest.raises(json.JSONDecodeError, match="unclosed"):
+            parse_llm_json(raw, strict=True)
+
     def test_the_object_holding_the_answer_keys_is_the_answer(self) -> None:
         keys = ("high_level_keywords", "low_level_keywords")
         answer = json.dumps(outputs.FINAL_KEYWORDS)

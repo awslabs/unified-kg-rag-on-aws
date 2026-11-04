@@ -981,7 +981,9 @@ the digest names the embedding settings: a reset after a model or dimension
 change finds no matching digest (nor reads at all: the live index's `_meta`
 records its model) and embeds everything. A vector an upsert replaced is
 read as well (up to 2,048) and kept for a later write of its text (a
-removal rewrites items the commit writes back); a rebuild reads none. An index an earlier release built gets the digest field with the
+removal rewrites items the commit writes back); the commit, the run's last
+write, and a rebuild read none (an upsert of 2,000 changed descriptions
+reads 2,000 vector fields instead of 4,000). An index an earlier release built gets the digest field with the
 other missing ones (§5.1) and its items are embedded once more.
 `--force-rebuild` embeds every text again.
 
@@ -1362,13 +1364,19 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   fetched alongside the text units. A community without a report (a seed
   graph's alone has none) adds nothing; when no expanded entity names a
   community (the walk under a document filter, which reads the entities
-  index, or a failed expansion) the similar reports stand in. On the
+  index, or a failed expansion), or a `community_id` or `level` filter
+  admits none of those communities, the similar reports stand in (under the
+  filter). The search metadata's `report_selection` says which ran; DRIFT
+  counts its follow-ups by each. On the
   synthetic 12-query multi-hop harness, membership put 3.8 reports a query
   in the context instead of 5.0, 42% of them naming an entity of the
   query's chain instead of 38% (19 such reports instead of 23), for 5%
   fewer report tokens (about 1,450 against 1,530); every query kept a
-  relevant report and its gold text units. So similarity stays the default
-  until a real-model run measures the answers.
+  relevant report and its gold text units. A real-model run then measured
+  the answers: on 200 MuSiQue questions, two repeats each, membership
+  scored exact match 4.0 points lower (95% CI -7.75 to -0.25) and token F1
+  4.1 points lower (-7.7 to -0.6) than similarity, for about 0.5% fewer
+  tokens. So similarity stays the default.
 - **global** — MS GraphRAG global search over one cut of the community
   hierarchy (below), map-reduced into scored key points.
 - **drift** — MS GraphRAG DRIFT search (`drift_search.py`).
@@ -1869,7 +1877,14 @@ checks that its values are the defaults and each key is in the reference).
   holds its default). A field added to a keyed section whose default keeps
   the earlier behaviour is listed in `_KEYED_ONCE_SET`: it counts for no key
   until set otherwise, so an upgrade re-keys no stage cache or extraction
-  record. The schema keys count as extraction sees them
+  record. The description summary settings key graph resolution and are
+  no extraction setting (`per_document=False`: they summarize merged
+  descriptions, in no unit's record, and a summary records them in
+  `summarized_with`). A unit record's key holds them at their defaults
+  (`_summary_settings_as_keyed_before`), as when they keyed graph
+  extraction, and `changed_settings` ignores them in a scope's earlier
+  record, so stored records keep their keys, documents keep their
+  fingerprints, and a summary change asks no unit again. The schema keys count as extraction sees them
   (`cache_keys._as_extracted`): a type by its label and description (a
   string item as written, a mapping as the string that reads back the
   same), a pattern by its relation and ends, `schema_mode` only where

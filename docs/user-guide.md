@@ -930,7 +930,7 @@ share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 | Strategy | Use when | How it works |
 |---|---|---|
 | `simple` | Fast factual lookups | OpenSearch vector + keyword retrieval, no graph traversal; the claims index too when claims are on. Fastest. |
-| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). Community reports: the most similar to the query entities by default; `search.local_search.report_selection: membership` reads those of the communities the traversed entities belong to instead (MS GraphRAG local), usually fewer of them. |
+| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). Community reports: the most similar to the query entities by default; `search.local_search.report_selection: membership` reads those of the communities the traversed entities belong to instead (MS GraphRAG local), usually fewer of them; on 200 MuSiQue questions it answered worse (exact match -4.0 points, token F1 -4.1, both significant) for about 0.5% fewer tokens, so similarity is the default. |
 | `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
 | `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
 | `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read keeps running in the background and is billed (one fast-model call a query with the defaults, two when routed to global): the query does not wait for it, counts it in its usage from its start (`estimated_calls` while it runs), and it fills the extraction cache; it is cancelled at `search.query_timeout_seconds` or when the chain closes. |
@@ -1325,7 +1325,12 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   (models, extraction, gleaning and claim settings, the target language, the
   prompt templates) are unchanged, e.g. after a resolution or chunking change.
   Edits to the built-in prompt templates (code) are not seen: reset after
-  editing one.
+  editing one. A description summary setting (`description_summarization`,
+  its `custom_prompts` or `models.roles.description_summary`) is not an
+  extraction setting: changing it re-extracts nothing. The descriptions a
+  run merges are summarized the new way, and `indexing.reset: true`
+  summarizes every one again (a stored summary records the settings it was
+  made with and is reused only under the same ones).
 - **Change the embedding model or its dimension**
   (`models.embedding.model_id` / `dimension`): each OpenSearch index records
   the model and dimension it was built with, and an incremental run stops
@@ -1970,7 +1975,9 @@ run-eval --data-path eval.json --search-strategy local \
   regression the query sample supports. A strategy with no delta of the
   measure fails the gate too, and so does a cost measure (`usage/*`,
   `latency/*`) that some answers of the strategy or of its baseline have no
-  value of. The result is in `comparison.gates` and the
+  value of, or when the strategy and its baseline failed different numbers
+  of answers (each counts with what it spent before failing, so the delta
+  compares the failures too). The result is in `comparison.gates` and the
   JSON `gate_failures`. It needs a comparison: two strategies, or
   `--baseline-results`.
 

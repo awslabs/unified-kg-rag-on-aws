@@ -66,6 +66,7 @@ class _RecordingManager:
         self.opensearch_indexer = SimpleNamespace(
             check_index_settings=lambda suffix=None: None,
             set_doc_status_tracking=lambda tracked: None,
+            set_replaced_vector_keeping=lambda keep: None,
             record_build=lambda record, suffix: None,
             read_text_unit_ids=lambda ids, suffix=None: ids,
         )
@@ -310,6 +311,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     manager.opensearch_indexer = SimpleNamespace(
         check_index_settings=checked.append,
         set_doc_status_tracking=lambda tracked: None,
+        set_replaced_vector_keeping=lambda keep: None,
         record_build=lambda record, suffix: None,
         read_text_unit_ids=lambda ids, suffix=None: ids,
     )

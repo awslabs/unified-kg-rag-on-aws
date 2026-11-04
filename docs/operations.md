@@ -1500,7 +1500,8 @@ Known limits:
   than the two Langfuse ones,
   `-c observability_secret_keys=OTEL_EXPORTER_OTLP_HEADERS,...` (in
   `private` mode the stacks then add a Secrets Manager interface endpoint,
-  which a reused VPC must provide, or the tasks fail to start); the
+  which a reused VPC must provide, or the tasks fail to start; it reaches
+  the deploy region only, so synth refuses a secret of another region); the
   non-secret settings (`LANGFUSE_HOST`, `UKR__OBSERVABILITY__*`) go in the
   image config or the run's container overrides. The start-up line
   `Observability exporter for backend '...'` shows the endpoint and header

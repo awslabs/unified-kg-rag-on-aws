@@ -161,7 +161,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
             text_digest(query.query),
             query.search_type.value,
         )
-        stats: dict[str, Any] = {"drift_llm_calls": 0}
+        # report_selection: how many follow-up local searches read their
+        # reports by each selection (local's metadata of the same name).
+        stats: dict[str, Any] = {"drift_llm_calls": 0, "report_selection": {}}
         degraded: list[str] = []
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
@@ -435,6 +437,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
             except Exception as e:
                 self._degrade("DRIFT action search", e, degraded)
                 return _Answer(query=follow_up, text="", score=0, error=e)
+            selection = (local.metadata or {}).get("report_selection")
+            if isinstance(selection, str):
+                counts = stats["report_selection"]
+                counts[selection] = counts.get(selection, 0) + 1
             # Counting can be one CountTokens request per section: off the loop.
             optimized = await asyncio.to_thread(
                 self.token_manager.optimize_context,
