@@ -1539,6 +1539,65 @@ def test_build_record_round_trip(tmp_path: Path) -> None:
     assert meta["embedding_dimension"] == 64 and meta["build"]["pipeline_id"] == "run-1"
     indexer.check_index_settings()  # the record does not disturb the check
     # An unknown suffix has no index: nothing to record, no error.
-    indexer.record_build(record, "other")
+    assert indexer.record_build(record, "other") is None
     retriever.close()
+    indexer.close()
+
+
+def test_build_record_carries_the_community_counters(tmp_path: Path) -> None:
+    # Each live index's _meta adds the commit to its stored counters; the
+    # indexer returns the record as written.
+    from datetime import datetime
+
+    from unified_kg_rag.domain.models import (
+        CommunityChange,
+        CommunityCounters,
+        IndexBuildRecord,
+    )
+
+    config = Config()
+    indexer = OpenSearchIndexer(
+        config,
+        embedding_factory=_EMBEDDINGS,
+        opensearch_client=SQLiteSearchEngine(tmp_path / "vector.sqlite3"),
+    )
+    _index_everything(indexer)
+    built_at = datetime(2026, 1, 1, tzinfo=UTC)
+    full = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="full",
+        built_at=built_at,
+        documents=2,
+        extraction_fingerprint="abc",
+        communities=CommunityCounters(
+            clustered_at=built_at,
+            communities_at_clustering=4,
+            communities_now=4,
+            runs_since=0,
+        ),
+    )
+    assert indexer.record_build(full, None) == full
+    delta = full.model_copy(
+        update={
+            "pipeline_id": "run-2",
+            "mode": "incremental",
+            "communities": None,
+            "community_change": CommunityChange(commit="c2", added=3, deleted=1),
+        }
+    )
+    written = indexer.record_build(delta, None)
+    assert written is not None and written.communities is not None
+    assert (written.communities.communities_now, written.communities.runs_since) == (
+        6,
+        1,
+    )
+    engine = indexer.opensearch_client
+    for prefix in (
+        config.indexing.opensearch.entities_index_prefix,
+        config.indexing.opensearch.community_reports_index_prefix,
+    ):
+        index = engine.get_index_name_by_alias(indexer._get_name(prefix, None))
+        stored = engine.get_index_mappings(index)["_meta"]["build"]
+        assert stored["communities"]["communities_now"] == 6
+        assert "community_change" not in stored
     indexer.close()

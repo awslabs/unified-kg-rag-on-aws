@@ -542,6 +542,16 @@ Data indexing configuration
 | `lease_seconds` | number (≥ 10.0) | `600.0` | Incremental runs: the term of an index namespace's write lease, which a run holds from its first stage to its end so no other run writes the namespace meanwhile. The run renews it every sixth of the term and stops writing once less than a third is left since its last renewal, so keep it at least three times the longest store write request (180 s; a run under 540 s logs a WARNING); a run that dies stops renewing, so its lease expires (and another run can start) at most this long after. A stopped run (SIGTERM, Ctrl-C) gives it up expired, so the next run holds its first write about 185 s for the stopped run's requests in flight (with every store embedded it releases it instead). |
 | `retire_source_scopes` | list[string] | `[]` | Incremental runs only: source scopes (a former document_parsing.source_scope value, or the absolute source directory a corpus was indexed from before it moved) whose registry records in this run's index namespace are treated as deleted. The run removes their exclusive artifacts (shared ones are kept) and deletes their records once the removal succeeded. Never the run's own scope. run-ingestion --retire-source-scope adds to this list. |
 
+### `indexing.community_compaction`
+
+Incremental runs: when to recommend re-clustering the communities with indexing.reset: true (a WARNING and the community_growth_ratio and runs_since_clustering metrics).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `max_runs_since_clustering` | integer \| null (≥ 1) | `20` | Recommend indexing.reset: true (a WARNING after the commit) once this many incremental commits ran since the last full build clustered the graph. A suffix whose full build predates the counters starts counting at its next full build. null turns this check off. |
+| `max_community_growth` | number \| null (> 1.0) | `1.5` | Recommend indexing.reset: true once the suffix holds this many times the communities its last full build clustered (each commit adds the communities it appended and subtracts those its removals deleted; the community_growth_ratio metric). null turns this check off. |
+| `on_drift_recommendation` | boolean | `false` | Also give this recommendation when the run's community drift recommends a rebuild (indexing.community_drift_threshold, or a kept report citing removed text), which logs its own WARNING either way. |
+
 ### `indexing.neptune`
 
 Configuration settings for Neptune graph database indexing

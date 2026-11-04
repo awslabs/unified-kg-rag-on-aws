@@ -1018,6 +1018,18 @@ From 0.2.3 (or a `main` checkout since):
   untimed, unscored synthetic query per strategy before its first timed
   run, so the first strategy's latency does not include warming the stores
   and models; it costs one extra query per strategy (#529).
+- Community counters and a reset recommendation: the build record of each
+  suffix keeps `communities` (`clustered_at`, `communities_at_clustering`,
+  `communities_now`, `runs_since`), started by a full build and updated by
+  each incremental commit (the communities it appended minus those its
+  removals deleted), once per commit, so a resumed run does not count its
+  commit twice. Once `indexing.community_compaction.max_runs_since_clustering`
+  (default `20`) or `max_community_growth` (default `1.5`) is reached, the
+  run logs a WARNING with the numbers that recommends `indexing.reset: true`
+  (`on_drift_recommendation` adds the community drift recommendation); the
+  `community_growth_ratio` and `runs_since_clustering` metrics let an alarm
+  watch them. Nothing is reset automatically. A record written by an
+  earlier version has no counters until the next full build (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

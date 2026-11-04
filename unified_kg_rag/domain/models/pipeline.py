@@ -33,6 +33,62 @@ class PipelineStageStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class CommunityCounters(BaseModel):
+    """How far incremental commits moved a suffix's communities from the last
+    full clustering (``indexing.community_compaction``).
+
+    A full build clusters the whole graph and starts the counters; each
+    incremental commit appends the communities of its delta and deletes
+    those citing only removed text units, and adds one run.
+    """
+
+    clustered_at: datetime = Field(
+        description="When the full build that last clustered the whole graph "
+        "finished indexing (UTC)."
+    )
+    communities_at_clustering: int = Field(
+        ge=0, description="Communities (all levels) that full build wrote."
+    )
+    communities_now: int = Field(
+        ge=0,
+        description="communities_at_clustering plus the communities each "
+        "incremental commit since appended, minus those its removals "
+        "deleted. An upper bound: a delta community written under a stored "
+        "community's id counts again.",
+    )
+    runs_since: int = Field(
+        ge=0, description="Incremental commits since that full build."
+    )
+    last_commit: str | None = Field(
+        default=None,
+        description="The incremental commit last counted (see "
+        "CommunityChange.commit): a resumed run that writes the record again "
+        "does not count its commit twice.",
+    )
+
+    @property
+    def growth_ratio(self) -> float | None:
+        """``communities_now / communities_at_clustering`` (None without a
+        clustered community)."""
+        if not self.communities_at_clustering:
+            return None
+        return round(self.communities_now / self.communities_at_clustering, 4)
+
+
+class CommunityChange(BaseModel):
+    """An incremental commit's change to a suffix's communities, which
+    ``IndexBuildRecord.over`` adds to the stored counters."""
+
+    commit: str = Field(
+        description="Identity of the commit: the run's pipeline id and delta "
+        "(a resumed run commits the same delta again)."
+    )
+    added: int = Field(ge=0, description="Communities the commit appended.")
+    deleted: int = Field(
+        ge=0, description="Stored communities the commit's removals deleted."
+    )
+
+
 class IndexBuildRecord(BaseModel):
     """What built an index suffix: recorded by ingestion, read by evaluation.
 
@@ -72,24 +128,71 @@ class IndexBuildRecord(BaseModel):
             "full build or when no full build was recorded."
         ),
     )
+    communities: CommunityCounters | None = Field(
+        default=None,
+        description=(
+            "The suffix's community counters since its last full build; None "
+            "until a full build recorded them (a record written by an earlier "
+            "version starts them at the next full build)."
+        ),
+    )
+    community_change: CommunityChange | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Incremental record, not stored: the commit's change, which "
+            "over() adds to the stored counters."
+        ),
+    )
 
     def over(self, previous: Mapping[str, Any] | None) -> "IndexBuildRecord":
         """This record as it replaces ``previous`` (the stored record's dump):
-        an incremental record keeps the full build ``previous`` is or keeps."""
-        if self.mode != "incremental" or not previous:
+        an incremental record keeps the full build ``previous`` is or keeps,
+        and its community counters with this commit's change added.
+
+        A full record with a ``community_change`` was written by a delta
+        (the registry knew none of the scope's documents, so the suffix may
+        hold what other scopes wrote): it adds to the stored counters too,
+        and starts its own only where none are stored.
+        """
+        if not previous or (
+            self.mode != "incremental" and self.community_change is None
+        ):
             return self
         try:
             stored = IndexBuildRecord.model_validate(previous)
         except ValidationError:
             return self
+        if self.mode != "incremental":
+            if stored.communities is None:
+                return self
+            return self.model_copy(
+                update={"communities": self._counted(stored.communities)}
+            )
+        update: dict[str, Any] = {"communities": self._counted(stored.communities)}
         base = stored if stored.mode == "full" else stored.full_build
-        if base is None:
-            return self
-        return self.model_copy(
+        if base is not None:
+            update["full_build"] = base.model_copy(
+                update={
+                    "extraction_settings": None,
+                    "full_build": None,
+                    "communities": None,
+                }
+            )
+        return self.model_copy(update=update)
+
+    def _counted(self, counters: CommunityCounters | None) -> CommunityCounters | None:
+        """``counters`` with this commit's change added, once per commit."""
+        change = self.community_change
+        if counters is None or change is None or change.commit == counters.last_commit:
+            return counters
+        return counters.model_copy(
             update={
-                "full_build": base.model_copy(
-                    update={"extraction_settings": None, "full_build": None}
-                )
+                "communities_now": max(
+                    0, counters.communities_now + change.added - change.deleted
+                ),
+                "runs_since": counters.runs_since + 1,
+                "last_commit": change.commit,
             }
         )
 
@@ -143,6 +246,18 @@ class PipelineMetrics(BaseModel):
         default=0,
         description="1 when community_drift_overlap_share reached "
         "indexing.community_drift_threshold (rebuild with indexing.reset)",
+    )
+    community_growth_ratio: float = Field(
+        default=0.0,
+        description="Runs that recorded community counters: the stored "
+        "communities over those the last full build clustered (the largest "
+        "of the run's suffixes; 0 without communities)",
+    )
+    runs_since_clustering: int = Field(
+        default=0,
+        description="Runs that recorded community counters: incremental "
+        "commits since the last full build clustered the graph (the largest "
+        "of the run's suffixes)",
     )
     total_extraction_failures: int = Field(
         default=0,

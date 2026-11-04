@@ -203,6 +203,10 @@ def _indexing_stage(
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
 
     fake_mgr = mocker.MagicMock()
+
+    # Writes no build record (so no community counters).
+
+    fake_mgr.opensearch_indexer.record_build.return_value = None
     fake_mgr.index_all_data.return_value = indexing_results
     mocker.patch.object(ps, "IndexingManager", return_value=fake_mgr)
 

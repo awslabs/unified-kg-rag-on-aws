@@ -1158,6 +1158,14 @@ leaving delta communities of already clustered entities out of the cuts
 (their reports are the only ones describing the delta, and stored community
 ids still name removed communities), and re-detecting the full graph on every
 delta run (it would regenerate every report, an LLM call each).
+Across runs, the suffix's build record carries community counters
+(`IndexBuildRecord.communities`): a full build starts them with the
+communities it wrote, and `IndexBuildRecord.over` adds each delta commit's
+appended communities minus those its removals deleted, keyed by a commit
+identity (pipeline id and delta, `community_drift.commit_identity`) so a
+resumed commit is counted once. `indexing.community_compaction` recommends a
+rebuild from them (`community_drift.reset_reasons`); it never resets on its
+own.
 A seed graph added by a delta run is clustered on its own shards' entities
 the same way, until a rebuild; a delta community only seed units evidence
 gets no report (§4.5).
@@ -1723,7 +1731,7 @@ choices:
   runs differ.
 - **Run manifest.** Ingestion records an `IndexBuildRecord` (pipeline id,
   mode, build time, documents, extraction fingerprint and settings, package
-  version) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
+  version, community counters) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
   read back per queried suffix. The config hash covers only the settings that
   shape answers (§12), so it is equal across environments.
 - **Benchmarks.** `prepare-benchmark` (`evaluation/benchmarks/musique.py`)

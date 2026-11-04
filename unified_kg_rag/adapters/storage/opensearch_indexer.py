@@ -833,14 +833,18 @@ class OpenSearchIndexer(VectorIndexer):
                 index_name, {"date_detection": False, "properties": missing}
             )
 
-    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+    def record_build(
+        self, record: IndexBuildRecord, suffix: str | None
+    ) -> IndexBuildRecord | None:
         """Write ``record`` into the ``_meta`` of each live index of ``suffix``.
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
         goes on. An incremental record keeps the full build the index holds
-        (``IndexBuildRecord.over``).
+        and its community counters (``IndexBuildRecord.over``). Returns the
+        first record written that carries counters (else the first written).
         """
+        written: IndexBuildRecord | None = None
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
             try:
@@ -848,8 +852,13 @@ class OpenSearchIndexer(VectorIndexer):
                 if not index_name:
                     continue
                 meta = self._index_mappings(index_name).get("_meta") or {}
-                payload = record.over(meta.get(META_BUILD)).model_dump(mode="json")
+                built = record.over(meta.get(META_BUILD))
+                payload = built.model_dump(mode="json")
                 self._put_index_meta(index_name, {**meta, META_BUILD: payload})
+                if written is None or (
+                    written.communities is None and built.communities is not None
+                ):
+                    written = built
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the record is optional
@@ -860,6 +869,7 @@ class OpenSearchIndexer(VectorIndexer):
                     alias,
                     e,
                 )
+        return written
 
     def clear(self, suffixes: list[str]) -> None:
         if not suffixes:

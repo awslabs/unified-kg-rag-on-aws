@@ -471,6 +471,9 @@ class IndexingManager:
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
+        # By suffix, the stored communities this run's removals deleted
+        # (the build record's community counters subtract them).
+        self.deleted_communities: dict[str, set[str]] = {}
         # Stored items derivation kept as they were: a text unit they cite
         # names no stored record (``Derived.underived``).
         self.underived_items = 0
@@ -2133,10 +2136,12 @@ class IndexingManager:
         """Start a run with no state left from an earlier one: what its
         derivations decided (see :meth:`discard_retired_ids`), and what its
         removals found for after the commit, the community reports they kept
-        and the extraction-record keys of their text units (an earlier run
-        that failed before its commit measured or collected them)."""
+        the communities they deleted and the extraction-record keys of
+        their text units (an earlier run that failed before its commit
+        measured, counted or collected them)."""
         self.discard_retired_ids()
         self.outdated_reports.clear()
+        self.deleted_communities.clear()
         self._removed_record_keys.clear()
         self._offered_summaries.clear()
 
@@ -2962,6 +2967,7 @@ class IndexingManager:
             # tells a removal that got further by their missing copies.
             return results
         deleted_communities = [i for i, u in communities.items() if gone(u)]
+        self.deleted_communities.setdefault(suffix, set()).update(deleted_communities)
         if deleted_communities:
             # A kept text unit may still name one: a later delta wrote the
             # community anew under its id without that unit.

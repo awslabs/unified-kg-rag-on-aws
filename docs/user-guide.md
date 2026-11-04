@@ -1359,6 +1359,18 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   or report, and after an embedding model or dimension change every text
   is embedded again. Add `--force-rebuild` to ask and embed everything
   again.
+- **When to rebuild:** an incremental run clusters only its delta and
+  appends its communities. After 20 incremental runs since the last full
+  build, or once the suffix holds 1.5 times the communities that build
+  clustered, the run logs a WARNING (`Communities of '<suffix>' are due for
+  re-clustering: ...`) that recommends `indexing.reset: true`; nothing is
+  reset automatically. Set the thresholds in
+  `indexing.community_compaction` (`null` turns one off); the counters are
+  in the build record, and the `community_growth_ratio` and
+  `runs_since_clustering` metrics
+  ([Operator Runbook: Incremental runs](./operations.md#incremental-runs)).
+  An index built by an earlier version starts counting at its next full
+  build.
 
 ### Deletion scope
 
@@ -1748,8 +1760,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
     configuration: they are in the CLI arguments, not in the hash;
   - `index`: per queried suffix, the ingestion run that last wrote its vector
     indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
-    settings and, for an incremental run, the `full_build` it was applied
-    on); best-effort, `null` without index metadata.
+    settings, for an incremental run the `full_build` it was applied on,
+    and the `communities` counters, see §5); best-effort, `null` without
+    index metadata.
 
   `EvaluationManager.evaluate_dataset` builds it for library callers too
   (pass `dataset_path=` / `cli_args=`).
