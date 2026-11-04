@@ -39,7 +39,7 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain, usage_model_id
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
@@ -1054,8 +1054,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _usage_model_id(self, model_id: str) -> str:
         """The id the LLM factory records ``model_id``'s usage under: the
         Bedrock factory's resolved inference profile, else ``model_id``."""
-        resolve = getattr(getattr(self, "factory", None), "resolved_model_id", None)
-        return str(resolve(model_id)) if resolve is not None else model_id
+        return usage_model_id(getattr(self, "factory", None), model_id)
 
     def _cache_extraction(self, key: tuple[str, ...], value: Any) -> None:
         cache: _ExtractionCache | None = getattr(self, "_extractions", None)

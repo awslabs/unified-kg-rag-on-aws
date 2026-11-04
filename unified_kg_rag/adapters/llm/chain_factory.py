@@ -446,6 +446,14 @@ class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
         return await super().aparse(completion)
 
 
+def usage_model_id(factory: object, model_id: str) -> str:
+    """The id ``factory`` records ``model_id``'s usage under (``shared.usage``):
+    the Bedrock factory's resolved inference profile, else ``model_id``. A
+    cache hit recorded by it counts under the same model as the calls."""
+    resolve = getattr(factory, "resolved_model_id", None)
+    return str(resolve(model_id)) if resolve is not None else model_id
+
+
 def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,

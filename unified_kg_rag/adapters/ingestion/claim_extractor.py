@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.llm.langchain import (
     BATCH_ITEM_FAILED,
     BatchProcessor,
     RobustXMLOutputParser,
+    output_excerpt,
 )
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
@@ -423,6 +424,8 @@ _CLAIM_CLOSED = re.compile(r"</claim\s*>")
 _SECTION_CLOSED = re.compile(r"</claims\s*>")
 # Set by ClaimsOutputParser on an output whose </claims> closes the section.
 _CLOSED_KEY = "claims_section_closed"
+# Set by ClaimsOutputParser: the response, for a DEBUG log of a failed check.
+_RAW_KEY = "#raw_output"
 
 
 class ClaimsOutputParser(RobustXMLOutputParser):
@@ -435,6 +438,8 @@ class ClaimsOutputParser(RobustXMLOutputParser):
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
+        if isinstance(result, dict):
+            result[_RAW_KEY] = text
         # Only a response without its closing </claims> was cut off: text
         # after the section (a note naming a <claim> tag) is not a claim.
         if _SECTION_CLOSED.search(text):
@@ -473,6 +478,7 @@ def _checked(result: Any) -> dict[str, Any]:
     closes whose claims all lack a field (they are dropped as invalid).
     """
     if not isinstance(result, dict) or "claims" not in result:
+        _log_failed_output(result)
         raise LLMOutputTruncatedError(
             "the claim extraction output has no claims section (output cut off?)"
         )
@@ -482,8 +488,16 @@ def _checked(result: Any) -> dict[str, Any]:
         and not result.get(_CLOSED_KEY)
         and not any(_complete(claim) for claim in listed)
     ):
+        _log_failed_output(result)
         raise LLMOutputTruncatedError(
             f"none of the {len(listed)} claims of the claim extraction output is "
             "complete (output cut off?)"
         )
     return result
+
+
+def _log_failed_output(result: Any) -> None:
+    """Log the response behind a failed claims check at DEBUG (model output
+    can echo corpus text)."""
+    if isinstance(result, dict) and isinstance(raw := result.get(_RAW_KEY), str):
+        logger.debug("Claim extraction output that failed: '%s'", output_excerpt(raw))

@@ -35,10 +35,9 @@ import asyncio
 from collections import Counter
 from typing import Any
 
-from langchain_core.output_parsers import JsonOutputParser
-
 from unified_kg_rag.adapters.evaluators.base import judge_model_kwargs
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -80,7 +79,7 @@ class PairwiseJudge:
             providers.llm_factory,
             config.model_id(ModelRole.EVALUATION),
             prompt,
-            JsonOutputParser(),
+            LLMJsonOutputParser(),
             custom_prompts=config.custom_prompts,
             model_purpose=ModelPurpose.EVALUATION,
             **judge_model_kwargs(config),

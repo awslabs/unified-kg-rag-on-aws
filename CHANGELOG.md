@@ -924,6 +924,13 @@ From 0.2.3 (or a `main` checkout since):
   `total_files_skipped`, `total_documents_excluded`,
   `total_documents_deleted`, `total_documents_failed`,
   `total_documents_retrying` and `total_documents_without_claims` (#518).
+- `run-ingestion`'s JSON `units_failed` and the EMF metric
+  `total_units_failed`: the text units a stage of the run failed on, which
+  are indexed without that stage's output. A full build (no doc-status
+  registry) records no document `FAILED`, so its `failed_documents` read 0
+  with 138 of 3,318 units failed; the run now ends with a WARNING naming
+  the count, each stage, how many failed for an error of their own, and
+  what retries them (the next run, or a re-run, extracts them again) (#532).
 - `search.lightrag_search.kg_chunk_pick_method` (`weight`, the default, or
   `vector`): `vector` picks the chunks LightRAG `mix`/`hybrid` follow from
   the matched entities and relationships by one search of each side's cited
@@ -1330,6 +1337,25 @@ Queries and retrieval.
   waiting for the abandoned call (#522).
 
 Ingestion and incremental indexing.
+- A model answer that corrects itself (an answer, a line such as
+  "Correction: ... the corrected, final output:", the answer again) is
+  parsed by its last complete answer: each XML section written more than
+  once keeps its last closed occurrence (graph extraction, gleaning,
+  claims, community reports, chunk boundaries), and `parse_llm_json` reads
+  the last top-level JSON object that parses when the span holds several
+  (LightRAG keywords, prompt tuning, global and DRIFT search, the judges).
+  Graph extraction failed such a unit as cut-off output (138 of 3,318 units
+  of a Sonnet 5.5 run), and a strict keyword parse failed the whole
+  `mix`/`hybrid` query with "Extra data"; the pairwise judge read the first,
+  superseded verdict. A single answer cut off is still flagged (#532).
+- Graph extraction output whose entities have no name but whose sections
+  are all closed is malformed, not cut off: it is retried
+  (`retry.max_attempts`) and, failing every attempt, counted as the unit's
+  own error as before; with a section unclosed it is still cut-off output,
+  not retried. The response behind a failed graph or claim extraction check
+  is logged at DEBUG (#532).
+- Stored chunk-boundary answers count as cache hits under the resolved
+  model id, like the calls and the query extraction cache (#532).
 - Incremental runs strip shared items instead of deleting them, repair
   interrupted runs, keep resets and deletions inside their namespace, and
   no longer keep what a changed or deleted document contributed to shared

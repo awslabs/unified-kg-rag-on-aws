@@ -92,6 +92,28 @@ class TestExtractDualKeywords:
         assert hl == ["theme"]  # falsy "" filtered out
         assert ll == ["Alice"]
 
+    async def test_a_self_corrected_answer_reads_the_final_keywords(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Before, strict parsing failed the whole mix/hybrid query with
+        # "Extra data": the two objects were parsed as one.
+        from tests.fixtures.self_corrected_outputs import (
+            FINAL_KEYWORDS,
+            KEYWORDS_SELF_CORRECTED,
+        )
+
+        chain.ignore_errors = False
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain(KEYWORDS_SELF_CORRECTED),
+        )
+        hl, ll = await chain._extract_dual_keywords("q", "English")
+        assert (hl, ll) == (
+            FINAL_KEYWORDS["high_level_keywords"],
+            FINAL_KEYWORDS["low_level_keywords"],
+        )
+
     async def test_ignore_errors_returns_empty(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
     ) -> None:

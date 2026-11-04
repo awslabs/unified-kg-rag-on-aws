@@ -826,10 +826,19 @@ an answer that does not parse is a failure), nothing counts; answered, the
 errors count, so a delta of documents the model rejects is still excluded,
 and so is a single document whose output never parses. A content error that
 later clears with no change can thus exclude a document. Graph extraction
-output that lists entities but none with a name (cut off without a stop
-reason) is output cut off (not retried, as at the token limit); output cut
-later keeps the entities before the cut, with a WARNING
-(`XML output ends with <entities> unclosed`). An OpenAI-compatible server's
+output that lists entities but none with a name, with a section left
+unclosed (cut off without a stop reason), is output cut off (not retried, as
+at the token limit); with every section closed it is malformed output,
+retried like output that does not parse and counted the same way when every
+attempt fails. Output cut later keeps the entities before the cut, with a
+WARNING (`XML output ends with <entities> unclosed`). The response behind a
+failed graph or claim extraction check is logged at DEBUG (its start and end
+when long). An answer the model corrects
+(the answer, a line such as "Correction: ... final output:", the answer
+again) is parsed by its last complete answer, each section repeated keeping
+its last closed occurrence (INFO `XML output repeats <entities>, ...`; a
+WARNING when the last one is unclosed), and a JSON answer by the last object
+that parses; a single answer cut off is flagged as before. An OpenAI-compatible server's
 context-length rejection that counts the requested `max_tokens` ("you
 requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
 is a setting and counts for none.
@@ -1120,6 +1129,7 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_documents_failed` | run end | Documents recorded `FAILED` (JSON `failed_documents`) |
 | `total_documents_retrying` | run end | Documents failed again for an error not their own (JSON `documents_retrying`) |
 | `total_documents_without_claims` | run end | Documents indexed without some claims (JSON `documents_without_claims`) |
+| `total_units_failed` | run end | Text units a stage failed on, full builds included (JSON `units_failed`) |
 
 Model usage metrics, emitted right after each stage that called a model or
 was served from the LLM response cache (Sum; a model-free stage emits none,

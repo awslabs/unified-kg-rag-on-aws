@@ -196,6 +196,14 @@ class PipelineMetrics(BaseModel):
         description="Documents the run recorded FAILED (retried next run); "
         "run-ingestion's JSON failed_documents",
     )
+    total_units_failed: int = Field(
+        default=0,
+        description="Distinct text units a stage of the run failed on "
+        "(extraction, gleaning, claims, translation, resolution, reports), "
+        "indexed without that stage's output; run-ingestion's JSON "
+        "units_failed. Counted in a full build too, which records no "
+        "document FAILED",
+    )
     total_documents_retrying: int = Field(
         default=0,
         description="Documents failed for an error not their own (an outage, a "
@@ -442,6 +450,13 @@ class PipelineContext(BaseModel):
         "error of their own, counted for none); the run's "
         "documents_without_claims count.",
     )
+
+    def failed_unit_ids(self) -> set[str]:
+        """The text units a stage of this run failed on (every stage's
+        :attr:`failed_text_unit_ids`)."""
+        return {
+            unit_id for ids in self.failed_text_unit_ids.values() for unit_id in ids
+        }
 
     def record_failed_documents(self, doc_ids: Iterable[str]) -> None:
         """Add ``doc_ids`` to :attr:`recorded_failed_doc_ids`."""

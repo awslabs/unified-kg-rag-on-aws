@@ -904,6 +904,30 @@ class TestBoundaryRecords:
         assert (snapshot["cache_hits"], snapshot["llm_calls"]) == (1, 0)
         assert snapshot["by_role"]["ingestion"]["cache_hits"] == 1
 
+    def test_a_stored_answer_counts_under_the_resolved_model_id(
+        self, intelligent_chunker, records, mocker
+    ) -> None:
+        # The Bedrock factory records its calls under the inference profile
+        # it resolves; a hit under the configured id split the model's usage.
+        from types import SimpleNamespace
+
+        from unified_kg_rag.domain.models import ModelRole, model_id_value
+        from unified_kg_rag.shared.usage import usage_scope
+
+        intelligent_chunker.factory = SimpleNamespace(
+            resolved_model_id=lambda model_id: f"global.{model_id}"
+        )
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
+        )
+        intelligent_chunker.chunk_documents([_doc(_LONG)])
+        with usage_scope() as meter:
+            intelligent_chunker.chunk_documents([_doc(_LONG)])
+        configured = model_id_value(
+            intelligent_chunker.config.model_id(ModelRole.CHUNKING)
+        )
+        assert list(meter.snapshot()["by_model"]) == [f"global.{configured}"]
+
     def test_only_changed_pre_chunks_ask_the_model(
         self, intelligent_chunker, records, mocker
     ) -> None:

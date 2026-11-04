@@ -3207,7 +3207,11 @@ search results (`run-rag`), the pipeline id, status, the number of documents
 the run recorded `FAILED` (`failed_documents`; a model outage that fails
 every unit records none, one that fails some units records their documents,
 retried by the next run without counting toward
-`indexing.max_document_failures`), the number of documents failing
+`indexing.max_document_failures`), the number of text units a stage
+failed on (`units_failed`: indexed without that stage's output and
+extracted again by the next run; counted in a full build too, where no
+registry records a document `FAILED` and `failed_documents` stays 0; the
+run ends with a WARNING naming them by stage and cause), the number of documents failing
 another consecutive run for an error not their own (`documents_retrying`:
 an outage or a setting never excludes them; also warned of with each file
 and its run count), the number of documents indexed without the claims of
