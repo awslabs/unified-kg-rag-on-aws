@@ -38,8 +38,8 @@ Every CLI's `--help` ends with an example invocation and a link to its guide; ev
 5. Incremental indexing: moved to [Incremental indexing](./guides/incremental.md)
 6. [Evaluation (`run-eval`)](#6-evaluation-run-eval)
 7. [Visualization (`run-visualization`)](#7-visualization-run-visualization)
-8. [Prompt tuning (`run-prompt-tuning`)](#8-prompt-tuning-run-prompt-tuning)
-9. [Domain adaptation](#9-domain-adaptation)
+8. Prompt tuning: moved to [Domain adaptation: Prompt tuning](./guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning)
+9. [Domain adaptation](#9-domain-adaptation): extraction schema and seed graphs (entity types and custom prompts: [Domain adaptation](./guides/domain-adaptation.md))
 10. [Operations & troubleshooting](#10-operations--troubleshooting)
 11. [Using the library from Python](#11-using-the-library-from-python)
 12. [Limitations](#12-limitations)
@@ -626,144 +626,13 @@ Ingestion itself renders nothing.
 
 ---
 
-## 8. Prompt tuning (`run-prompt-tuning`)
-
-Samples documents from a directory, profiles the corpus (domain, language,
-persona, entity types) with `models.roles.graph_extraction`, and writes a
-domain-adapted `custom_prompts` YAML fragment to review and merge into
-`config.yaml`. Every flag with its default:
-[CLI Reference](./reference/cli.md#run-prompt-tuning).
-
-```bash
-run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
-```
-
-The output holds a `custom_prompts` block and a `profile` with the detected
-domain and entity types. **Review it**, then copy the prompts you want under
-`custom_prompts:`.
-
-- The tuned `graph_extraction_system` and `community_report_system` are a
-  domain preamble followed by the built-in rules and output format, verbatim;
-  generated few-shot examples come last.
-- Entity categories still come from `processing.graph_extraction.entity_types`
-  (`{entity_types}`): copy the profile's `entity_types` there.
-- The few-shot examples are extracted with the profile's entity types, so
-  they show the types the profile found. A config that declares its own
-  entity types or patterns (inline or from a `schema_source`, which tuning
-  loads as ingestion does; one that cannot be loaded exits 2) is honoured
-  instead: the examples, and the entity types the tuned prompt names, are
-  the configured ones.
-- `--schema-out schema.yaml` also writes an
-  [extraction schema](#c-extraction-schema) draft: the entity types the
-  examples were extracted with (above), the relationship types the tuning
-  examples state most often (at most 12, with their counts in a comment)
-  and a pattern only where every pair of endpoint types of a relationship
-  type appears at least twice. Every type and pattern the config declares
-  stays, with its description and IRI, and a relationship type with
-  configured patterns gets no other. It is a `schema_source: {kind: file}`
-  file, to load with `schema_mode: align` after review (its comment names
-  the path relative to the `--config-path` file's directory); the same
-  model answers give the same file. It never replaces your config or
-  schema: naming the `--config-path` file or the schema file the config
-  loads (with `--schema-out` or `--output-path`) exits 2, even with
-  `--force`, and so does naming an existing file with either unless you
-  add `--force`.
-- Non-text formats go through the ingestion loaders (custom
-  `ParserFactory.register_loader` ones included); unparsable files are skipped
-  with a warning.
-- If the model returns no JSON profile, the command exits non-zero and writes
-  nothing.
-
----
-
 ## 9. Domain adaptation
 
-Three levers specialize the pipeline for a domain (medical, legal, finance,
-...): the entity types (A), the prompts (B) and the extraction schema (C).
-A knowledge graph you already have joins the extracted one as a seed graph
-(D).
-
-### A. `entity_types` (cheapest, highest-impact)
-
-Set the categories the extraction prompt asks for, with no prompt rewrite:
-
-```yaml
-processing:
-  graph_extraction:
-    entity_types:
-      - "GENE: Genes, gene products, loci"
-      - "DISEASE: Disorders, syndromes, conditions"
-      - "DRUG: Medications, compounds, dosages"
-      - "TRIAL: Clinical trials, studies, cohorts"
-```
-
-### B. `custom_prompts` overrides
-
-Override a prompt's `*_system` / `*_human` text (`null` keeps the built-in
-prompt; five prompts have no override, listed at the end of this section).
-Keep the `{braces}` variables, which the framework fills:
-
-```yaml
-custom_prompts:
-  # A human-only override keeps the built-in system prompt and its output format.
-  graph_extraction_human: |
-    Extract medical entities and relationships from this clinical text:
-    {input_text}
-    Extraction Limits:
-    - Maximum Entities: {max_entities_per_chunk}
-    - Maximum Relationships: {max_relationships_per_chunk}
-
-  entity_extraction_system: |
-    You are a financial expert. Extract companies, instruments, markets, and metrics
-    from user queries.
-```
-
-Override keys (each `_system` + `_human`): `graph_extraction`,
-`description_summarization`, `claim_extraction`, `graph_refinement`,
-`community_report`, `answer_generation`, `query_rewrite`, `entity_extraction`,
-`drift_hyde`, `drift_primer`, `drift_action`, `strategy_selection`,
-`keywords_extraction`, `global_map`, `pairwise_comparison` (the
-`--pairwise-judge` judge; keep its JSON verdict format, with an `overall`
-verdict under `evaluation.pairwise_overall`), `answer_span_extraction` (the
-`evaluation.answer_span: extracted` span extractor) and the prompt-tuning
-`corpus_profile`.
-
-Overrides are checked when the config loads; a mistake fails the load naming
-the key:
-
-- A `{name}` the prompt is not called with is an error (it would raise
-  `KeyError` on every call). Write a literal brace as `{{` / `}}`:
-  `{{"name": "Vendor"}}`. `run-prompt-tuning` output is already escaped.
-- Each prompt's data variables must appear in its system or human template
-  (`{input_text}` for `graph_extraction` and `claim_extraction`, `{query}` and
-  `{context}` for `answer_generation`, ...); limits such as
-  `{max_entities_per_chunk}`, `{entity_types}` and `{relationship_types}`
-  (the declared relationship types, else the built-in examples) may be left
-  out.
-
-A `*_system` override replaces the whole built-in system prompt, output
-instructions included. For `graph_extraction` and `community_report` that is
-the XML format the parser reads (and, for extraction, the verbatim
-`<source_text>` rule the hallucination guard checks), so keep it: start from
-`run-prompt-tuning` output or copy the format from
-`unified_kg_rag/domain/prompts/graph_extraction.py`. An override of these two
-that drops a tag the parser reads (`<entities>`, `<relationships>`,
-`<source_text>`; `<community_name>`, `<summary>`, `<rating>`,
-`<rating_explanation>`, `<findings>`) logs a warning naming the tags.
-
-**Recommended flow:** `run-prompt-tuning` → review → merge the useful prompts
-and tune `entity_types` → re-ingest.
-
-Every prompt has a `custom_prompts.*_system` / `*_human` override (default
-`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`) except
-the prompts of the intelligent chunker (`TextChunkingPrompt`), document
-translation (`TextTranslationPrompt`), query translation
-(`TranslationPrompt`), global search's community rating
-(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`), which
-are not overridable. Override what you need and leave the rest `null`.
-Overrides are validated at load: unknown
-`{variables}` and missing data variables (such as `{input_text}`) are errors,
-and a literal brace is written `{{` / `}}`.
+Four levers specialize the pipeline for a domain (medical, legal, finance,
+...). The entity types, the prompts and prompt tuning are in
+[Domain adaptation](./guides/domain-adaptation.md). This section covers the
+other two: the extraction schema (C), and seed graphs (D), which join a
+knowledge graph you already have to the extracted one.
 
 ### C. Extraction schema
 
@@ -976,7 +845,8 @@ whether the model sees the change:
   OpenSearch indices before its first write.
 
 **Drafting a schema with prompt tuning.** `run-prompt-tuning --schema-out
-schema.yaml` also writes a schema file draft (see [§8](#8-prompt-tuning-run-prompt-tuning)):
+schema.yaml` also writes a schema file draft (see
+[Domain adaptation: Prompt tuning](./guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning)):
 
 1. Run it over a representative sample of the corpus.
 2. Review the draft: it lists the profile's entity types (the configured
@@ -2097,7 +1967,7 @@ closes it.
 
 ## Moved sections
 
-Sections 1 to 5 of this guide, and parts of section 10, moved to their own pages. The headings
+Sections 1 to 5 and 8 of this guide, and parts of sections 9 and 10, moved to their own pages. The headings
 below keep older links, including the `--help` output of earlier
 versions, working.
 
@@ -2182,7 +2052,7 @@ Moved to [Configuration: What the logs contain](./guides/configure.md#what-the-l
 
 ### Custom prompts
 
-Moved to [B. `custom_prompts` overrides](#b-custom_prompts-overrides).
+Moved to [Domain adaptation: Custom prompts](./guides/domain-adaptation.md#custom-prompts).
 
 ### Environment variable overrides
 
@@ -2289,3 +2159,17 @@ Moved to [Ingestion: Large and heterogeneous corpora](./guides/ingest.md#large-a
 ### Cost notes
 
 Moved to [Ingestion: Cost levers](./guides/ingest.md#cost-levers).
+
+### 8. Prompt tuning (`run-prompt-tuning`)
+
+Moved to [Domain adaptation: Prompt tuning](./guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning).
+
+### A. `entity_types` (cheapest, highest-impact)
+
+Moved to [Domain adaptation: Entity types](./guides/domain-adaptation.md#entity-types).
+
+### B. `custom_prompts` overrides
+
+Moved to [Domain adaptation: Custom prompts](./guides/domain-adaptation.md#custom-prompts)
+(the five prompts without an override:
+[Prompts without an override](./guides/domain-adaptation.md#prompts-without-an-override)).

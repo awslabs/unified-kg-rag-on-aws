@@ -201,6 +201,19 @@ answer by default, and the runbook's advice for routing DRIFT, serving it
 under load or giving it the comprehensive answer is a 300 s deadline
 ([Query deadlines and model timeouts](../operations.md#query-deadlines-and-model-timeouts)).
 
+## Reset cost after incremental runs
+
+An incremental run clusters only its delta and appends its communities, so
+a [rebuild signal](../guides/incremental.md#rebuild-signals) eventually
+recommends `indexing.reset: true`. A reset re-clusters the whole graph and
+reuses the stored description summaries and community reports whose input
+is unchanged, so it asks the model mostly for the communities it clusters
+differently. An offline harness, which runs ingestion on the embedded local
+backend with a scripted model and counts the model calls, measured it:
+after 23 incremental runs, a reset made 17-20 model calls, against 197 for
+the first build. These are call counts, not tokens or dollars: they show
+how much a reset reuses, not what it costs with your models and corpus.
+
 ## Reproducing a measurement
 
 The same tooling runs any of these comparisons on your corpus or on

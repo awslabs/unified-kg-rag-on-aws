@@ -44,7 +44,10 @@ COMMANDS: list[tuple[str, tuple[str, str], str]] = [
     ),
     (
         "run-prompt-tuning",
-        ("User Guide", "user-guide.md#8-prompt-tuning-run-prompt-tuning"),
+        (
+            "Domain adaptation",
+            "guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning",
+        ),
         "prompt_tuning",
     ),
     (

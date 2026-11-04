@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The user guide names exactly the prompts that have no ``custom_prompts`` key."""
+"""The domain-adaptation guide names exactly the prompts that have no
+``custom_prompts`` key."""
 
 from __future__ import annotations
 
@@ -39,7 +40,9 @@ def _not_overridable() -> set[str]:
     }
 
 
-@pytest.mark.parametrize("guide", ["user-guide.md", "user-guide.ko.md"])
+@pytest.mark.parametrize(
+    "guide", ["guides/domain-adaptation.md", "guides/domain-adaptation.ko.md"]
+)
 def test_the_guide_lists_the_prompts_without_an_override(guide: str) -> None:
     # The guide said every prompt was overridable; five are not.
     text = (_DOCS / guide).read_text(encoding="utf-8")

@@ -67,11 +67,12 @@ def test_config_file_error_names_the_override(tmp_path: Path) -> None:
         ConfigLoader(path).load_config()
 
 
-def test_documented_user_guide_example_is_valid(
+def test_documented_custom_prompts_example_is_valid(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # The custom_prompts example in docs/user-guide.md §9.B: a human-only
-    # override keeps the built-in system prompt, so no output tag is lost.
+    # The custom_prompts example in docs/guides/domain-adaptation.md (Custom
+    # prompts): a human-only override keeps the built-in system prompt, so no
+    # output tag is lost.
     with caplog.at_level("WARNING", logger=_CONFIG_LOGGER):
         Config(
             custom_prompts=CustomPromptConfig(

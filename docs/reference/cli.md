@@ -131,7 +131,7 @@ Guide: [User Guide](../user-guide.md#7-visualization-run-visualization). Also ta
 
 Generate domain-adapted custom_prompts from a corpus sample.
 
-Guide: [User Guide](../user-guide.md#8-prompt-tuning-run-prompt-tuning). Also takes the [provider flags](#provider-flags).
+Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|

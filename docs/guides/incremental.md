@@ -164,9 +164,9 @@ Either signal means global search now maps the appended communities' reports
 next to the original ones, and their reports miss what later runs added (or,
 for `outdated_reports`, may still state what was removed). Run once with
 `indexing.reset: true` ([Rebuild](#rebuild-indexingreset)): it asks the model
-mostly for the communities it clusters differently (on the cost harness,
-17-20 calls after 23 incremental runs against 197 for the first build), and
-the counters start again at that build. A reset is needed too after the
+mostly for the communities it clusters differently
+([measured](../concepts/defaults-and-evidence.md#reset-cost-after-incremental-runs)),
+and the counters start again at that build. A reset is needed too after the
 setting changes in [Workflows](#workflows) that stop an incremental run. The
 CDK dashboard plots `community_rebuild_recommended`, `community_growth_ratio`
 and `runs_since_clustering`; no alarm watches them

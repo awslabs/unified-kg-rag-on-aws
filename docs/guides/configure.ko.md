@@ -50,7 +50,7 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 | `providers.doc_status.enabled` | `false` | [증분 인덱싱](../guides/incremental.ko.md) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델([참고 사항](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | `ThrottlingException` 재시도가 보이면 낮추고, 할당량이 허용하면 높임 |
-| `processing.graph_extraction.entity_types` | 일반 유형 7개 | [도메인 적응](../user-guide.ko.md#9-도메인-적응) |
+| `processing.graph_extraction.entity_types` | 일반 유형 7개 | [도메인 적응](./domain-adaptation.ko.md#엔티티-유형) |
 | `processing.translation.target_language` | `"en"` | 코퍼스나 답변 언어가 다를 때([다국어 코퍼스](./multilingual.ko.md)) |
 | `processing.claim_extraction.enabled` | `false` | `local` 검색에 주장을 넣을 때(텍스트 단위마다 LLM 호출 1회 추가) |
 | `processing.document_parsing.index_value` | `null`(`default`) | 코퍼스나 테넌트 분리([인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)) |

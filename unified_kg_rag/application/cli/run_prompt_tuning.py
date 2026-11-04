@@ -96,7 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Generate domain-adapted custom_prompts from a corpus sample.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
-            "user-guide.md#8-prompt-tuning-run-prompt-tuning",
+            "guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning",
             "run-prompt-tuning --source-directory ./source --output-path "
             "tuned_prompts.yaml",
         ),

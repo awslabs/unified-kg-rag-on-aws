@@ -22,7 +22,7 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 - **Incremental indexing.** With the doc-status registry on (`providers.doc_status.enabled`), only new and changed documents are re-indexed and merged into the live graph; deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or an RDF A-Box) merge a graph you already have into the extracted one as virtual documents: documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([User Guide §9 D](./docs/user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
-- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample; `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges; `run-visualization` renders an exported graph.
+- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges; `run-visualization` renders an exported graph.
 - **Pluggable.** Storage and model backends sit behind ports, and strategies, renderers, parsers and providers register through registries ([extension guide](./docs/design.md#15-extension-guide)).
 
 ## Architecture
