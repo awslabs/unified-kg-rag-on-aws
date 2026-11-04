@@ -104,7 +104,7 @@ Configuration loading.
   warn and go on; `get_config` and `ConfigLoader` take
   `allow_unknown_keys=True` (#335).
 - A moved key fails the load naming the key that replaces it (the *Moved
-  keys* table of `docs/configuration.md`); a removed key loads with a
+  keys* table of `docs/reference/configuration.md`); a removed key loads with a
   WARNING and is ignored (its *Removed keys* table) (#334, #344, #467,
   #468, #470).
 - Environment overrides use one prefix: `UKR__<SECTION>__<KEY>` sets any
@@ -665,7 +665,7 @@ From 0.2.3 (or a `main` checkout since):
   `PipelineExecutionError`, `PipelineInterrupted`, `NamespaceLeaseError`),
   `ModelRole`, `ModelPurpose`, `MetricsSink` and `CloudWatchEMFSink` (#334,
   #365, #366, #416, #420).
-- Generated references: `docs/configuration.md` (#337) and `docs/cli.md`
+- Generated references: `docs/reference/configuration.md` (#337) and `docs/reference/cli.md`
   (#351), checked by unit tests.
 - `run-prompt-tuning` reads every format ingestion parses, and each `run-*`
   `--help` ends with an example and a user-guide link (#121).
@@ -1117,7 +1117,7 @@ From 0.2.3 (or a `main` checkout since):
 - `logging.library_levels` quiets `opensearch`, `httpx`, `httpcore` and
   `numba` by default (#408, #411, #413).
 - `config-template.yaml` is a short starting file with the keys most
-  deployments set; `docs/configuration.md` has every key (#468).
+  deployments set; `docs/reference/configuration.md` has every key (#468).
 - CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended alarm and
   `NeptuneHighCpu` needs 3 consecutive 5-minute periods (#298).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus

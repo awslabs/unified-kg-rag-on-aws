@@ -97,7 +97,8 @@ The rules to keep in mind:
   backend into a manager's `__init__`.
 - A config field change means a user-facing `Field(description=...)` and
   `uv run python scripts/gen_config_reference.py` (regenerates
-  `docs/configuration.md`; `tests/unit/test_config_reference.py` checks it).
+  `docs/reference/configuration.md`; `tests/unit/test_config_reference.py`
+  checks it).
 
 ## Capabilities & CLIs
 
@@ -121,9 +122,9 @@ The rules to keep in mind:
   `prepare-benchmark` (MuSiQue → corpus + `run-eval` dataset, downloaded at
   run time, never committed). `run-eval --search-strategy a,b --repeats N`
   runs a paired comparison (`evaluation/comparison.py`, optional
-  `--pairwise-judge`). `docs/cli.md` lists every flag; it is generated from
-  the parsers by `scripts/gen_cli_reference.py`, so change a flag's `help=`
-  and regenerate (a unit test fails when it is stale).
+  `--pairwise-judge`). `docs/reference/cli.md` lists every flag; it is
+  generated from the parsers by `scripts/gen_cli_reference.py`, so change a
+  flag's `help=` and regenerate (a unit test fails when it is stale).
 - **Evaluation**: `langchain` + `ragas` (LLM judges) plus three LLM-free
   evaluators: `graph_aware` (entity/relationship coverage = recall, from
   ground-truth `expected_entities`/`expected_relationships`; precision/F1

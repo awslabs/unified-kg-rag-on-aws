@@ -3,9 +3,9 @@
 Which Bedrock models the framework knows, how it shapes requests for each
 provider, and how to describe a model it does not know. For which models to
 enable before a first run, see the
-[User Guide §1 Required models](./user-guide.md#required-models); for the two
+[User Guide §1 Required models](../user-guide.md#required-models); for the two
 model tiers and per-role overrides, see
-[§2 Model selection notes](./user-guide.md#model-selection-notes).
+[§2 Model selection notes](../user-guide.md#model-selection-notes).
 
 ## Model ids and capability records
 
@@ -32,7 +32,7 @@ Embedding and rerank model ids work differently: with the Bedrock providers
 (the default `providers.embedding.kind` / `providers.rerank.kind`) they are a
 closed list, and `model_overrides` does not apply to them. With a local
 provider any model name is accepted (see the user guide's
-[Local mode](./user-guide.md#local-mode-no-aws)). `models.embedding.model_id` accepts
+[Local mode](../user-guide.md#local-mode-no-aws)). `models.embedding.model_id` accepts
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3` or
 `cohere.embed-multilingual-v3`; `models.rerank` accepts

@@ -96,7 +96,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, the [CLI Reference](./docs/cli.md) every flag, and the [Configuration Reference](./docs/configuration.md) every configuration key.
+The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, the [CLI Reference](./docs/reference/cli.md) every flag, and the [Configuration Reference](./docs/reference/configuration.md) every configuration key.
 
 ## Deploy on AWS (optional)
 
@@ -111,9 +111,9 @@ The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with
 | Document | Covers |
 |---|---|
 | [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Installation and local mode, configuration, ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation (custom prompts, extraction schema, ontology import, seed graphs), exit codes, library usage, [limitations](./docs/user-guide.md#12-limitations) |
-| [CLI Reference](./docs/cli.md) | Every flag of every CLI: default and description (generated from the parsers) |
-| [Configuration Reference](./docs/configuration.md) | Every configuration key: type, default, description (generated from the code) |
-| [Model Catalog](./docs/models.md) | Supported Bedrock models and per-provider request differences |
+| [CLI Reference](./docs/reference/cli.md) | Every flag of every CLI: default and description (generated from the parsers) |
+| [Configuration Reference](./docs/reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
+| [Model Catalog](./docs/reference/models.md) | Supported Bedrock models and per-provider request differences |
 | [Operator Runbook](./docs/operations.md) | Capacity sizing, re-ingestion, incremental runs, caches, backup and restore, OpenSearch and Neptune upgrades, shipping schemas and seed graphs, failed and quarantined documents, alarms, query deadlines, tenant isolation, observability, common errors |
 | [Design Doc](./docs/design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
 | [`iac/README.md`](./iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |

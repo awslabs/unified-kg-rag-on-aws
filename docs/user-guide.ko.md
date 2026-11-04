@@ -26,12 +26,12 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | 도메인에 맞춘 프롬프트 생성 |
 | `prepare-benchmark` | `application.cli.prepare_benchmark` | 공개 벤치마크(MuSiQue)를 코퍼스와 `run-eval` 데이터셋으로 변환 |
 
-각 CLI의 `--help` 끝에는 실행 예시와 이 문서의 해당 절 링크가 있으며, 모든 플래그는 [CLI 레퍼런스](./cli.md)(영문)에 있습니다.
+각 CLI의 `--help` 끝에는 실행 예시와 이 문서의 해당 절 링크가 있으며, 모든 플래그는 [CLI 레퍼런스](./reference/cli.md)(영문)에 있습니다.
 
 ## 목차
 
 1. [사전 요구사항과 설치](#1-사전-요구사항과-설치)([필수 모델](#필수-모델) 포함)
-2. [설정](#2-설정)(모든 키: [설정 레퍼런스](./configuration.md))
+2. [설정](#2-설정)(모든 키: [설정 레퍼런스](./reference/configuration.md))
 3. [수집 (`run-ingestion`)](#3-수집-run-ingestion)
 4. [질의 (`run-rag`)](#4-질의-run-rag)
 5. [증분 인덱싱](#5-증분-인덱싱)
@@ -43,7 +43,7 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 11. [Python 라이브러리로 사용하기](#11-python-라이브러리로-사용하기)
 12. [제한 사항](#12-제한-사항)
 
-관련 문서: [CLI 레퍼런스](./cli.md)(영문) · [설정 레퍼런스](./configuration.md)(영문) · [모델 카탈로그](./models.md)(영문) · [운영 런북](./operations.md)(영문) ·
+관련 문서: [CLI 레퍼런스](./reference/cli.md)(영문) · [설정 레퍼런스](./reference/configuration.md)(영문) · [모델 카탈로그](./reference/models.md)(영문) · [운영 런북](./operations.md)(영문) ·
 [설계 문서](./design.md)(영문) · [`iac/README.md`](../iac/README.md)
 
 ---
@@ -92,7 +92,7 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
   실패하며 오류 메시지에 이 해결 방법이 나옴).
 - **권한.** [IAM 권한](#iam-권한)을 참고하세요. 재순위화에는 별도 정책 문이 필요합니다.
 
-[모델 카탈로그](./models.md)에 선별된 모델 전체와 각 모델의 한도가 있습니다.
+[모델 카탈로그](./reference/models.md)에 선별된 모델 전체와 각 모델의 한도가 있습니다.
 
 이 프레임워크는 **이미 있는** 서비스에 연결할 뿐 서비스를 만들지 않습니다.
 [로컬 모드](#로컬-모드-aws-없이)로 실행하거나, 기존 서비스에 연결하거나(엔드포인트를
@@ -282,7 +282,7 @@ Bedrock을 쓸 수 있습니다.
 `--model-base-url`)를 받습니다. 플래그마다 읽어 들인 설정의 해당 키를 덮어쓰며(파일에
 적은 키 포함), 생략하면 설정을 그대로 씁니다(`run-visualization`은 모델이나 저장소를
 호출하지 않으므로 받기만 함). 플래그별로 설정하는 키는
-[CLI 레퍼런스](./cli.md#provider-flags)(영문)에 있습니다.
+[CLI 레퍼런스](./reference/cli.md#provider-flags)(영문)에 있습니다.
 
 #### 컨테이너로 띄운 로컬 저장소
 
@@ -348,7 +348,7 @@ cp config-template.yaml config.yaml
 ```
 
 설정 파일에는 바꿀 키만 적고, 나머지 키는 기본값을 유지합니다. 모든 키의 타입, 기본값,
-설명은 코드에서 생성한 [설정 레퍼런스](./configuration.md)(영문)에 있고, 이 절에서는 표
+설명은 코드에서 생성한 [설정 레퍼런스](./reference/configuration.md)(영문)에 있고, 이 절에서는 표
 한 줄로 설명하기 어려운 내용을 다룹니다.
 
 ### 설정을 읽는 순서
@@ -371,7 +371,7 @@ cp config-template.yaml config.yaml
 `UKR__` 변수)는 사용법 오류(종료 코드 2)입니다. 철자가 틀린 키는 아무 표시 없이 설정을
 기본값으로 남기므로 알 수 없는 키를 거부하며, `--allow-unknown-keys`(`get_config`에서는
 `allow_unknown_keys=True`)를 주면 키마다 WARNING만 남깁니다. 위치가 바뀐 키는 대신할 키를
-알려 주며 실패합니다([Moved keys](./configuration.md#moved-keys)).
+알려 주며 실패합니다([Moved keys](./reference/configuration.md#moved-keys)).
 
 재시도는 `retry` 섹션 하나에서 설정합니다. `max_attempts`와 백오프는 모델 호출(수집 항목,
 Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 호출자(모델 서버, 그래프 저장소
@@ -437,7 +437,7 @@ models:
   넣어야 합니다.
 - 임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS에 함께
   쓰이며, 이 모델이나 `dimension`을 바꾸면 다시 인덱싱해야 합니다. Bedrock에서는 임베딩과
-  재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./models.md#model-ids-and-capability-records)),
+  재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./reference/models.md#model-ids-and-capability-records)),
   다른 공급자는 어떤 모델 이름이든 받습니다.
 - 선택하지 않은 공급자의 설정(Bedrock 모델을 쓰는데 `providers.llm.temperature`를
   지정한 경우 등)은 무시하고 WARNING을 남깁니다.
@@ -451,7 +451,7 @@ models:
   (thinking) 예산에 1024를 더한 값보다 작게 요청하지 않으므로(effort low는 2048, high는
   8192), `auto` 질의가 확보하는 출력 토큰은 49k에서 약 29k로 줄어듭니다.
 - 선별된 모델, 요청 형식, 프롬프트 캐싱, `aws.bedrock.model_overrides`는
-  [모델 카탈로그](./models.md)에 있습니다.
+  [모델 카탈로그](./reference/models.md)에 있습니다.
 
 ### 컨텍스트 예산
 
@@ -459,7 +459,7 @@ models:
 프롬프트가 받는 검색 컨텍스트입니다. `models.roles.answer_generation`가 출력 예약분과
 함께 받을 수 있는 크기로 줄이며 줄일 때 경고를 남기고, `null`이면 그 모델의 컨텍스트
 창에서 도출합니다. 유형별 비율과 `local` 슬롯 할당은
-[레퍼런스](./configuration.md#searchtoken_manager)(영문)에 있습니다.
+[레퍼런스](./reference/configuration.md#searchtoken_manager)(영문)에 있습니다.
 
 ### 가드레일
 
@@ -571,7 +571,7 @@ API로 검사합니다. 가드레일은 `aws.bedrock.region_name`에 있어야 �
   `aws.bedrock.region_name`이 `null`이면 `AWS_REGION`이 Bedrock 호출 리전도 정합니다.
   `AWS_DEFAULT_REGION`은 읽지 않습니다.
 - `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID`(설정 키가 아니므로 밑줄 하나)와
-  `UKR_METRICS_ENVIRONMENT`는 `run-ingestion`이 읽습니다([CLI 레퍼런스](./cli.md#run-ingestion)).
+  `UKR_METRICS_ENVIRONMENT`는 `run-ingestion`이 읽습니다([CLI 레퍼런스](./reference/cli.md#run-ingestion)).
   CDK 태스크가 받는 변수는
   [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)에 있습니다.
 - CLI는 python-dotenv로 현재 작업 디렉터리의 `./.env`만 읽고 상위 디렉터리의 파일은
@@ -598,7 +598,7 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
   설정하는 프로세스 전역 트레이서 공급자), `otlp`(패키지가 설치하는 OTLP 익스포터),
   `langfuse` / `phoenix`(그 익스포터를 해당 벤더로 보냄). 나머지 키(`capture_content`,
   `redact_patterns`, `sample_rate`, `service_name`, `export_timeout_seconds`)는
-  [레퍼런스](./configuration.md#observability)에 있습니다.
+  [레퍼런스](./reference/configuration.md#observability)에 있습니다.
 - 익스포터는 설정 파일이 아니라 OpenTelemetry 표준 환경 변수로 설정하므로 수집기 키가
   설정 파일에 들어가지 않습니다. `OTEL_EXPORTER_OTLP_ENDPOINT`(기본값
   `http://localhost:4318`), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT`,
@@ -652,7 +652,7 @@ Jaeger, Langfuse, Phoenix 절차와 [트레이스 구조](./operations.md#trace-
 실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
 증분으로 동작합니다([§5](#5-증분-인덱싱)).
 
-모든 플래그와 기본값은 [CLI 레퍼런스](./cli.md#run-ingestion)(영문)에 있습니다.
+모든 플래그와 기본값은 [CLI 레퍼런스](./reference/cli.md#run-ingestion)(영문)에 있습니다.
 
 ### 파이프라인 단계 12개
 
@@ -828,7 +828,7 @@ processing:
 실제로 본 출처를 함께 돌려줍니다. 전략별 검색 방식은
 [설계 §6](./design.md#6-retrieval-two-methodologies)의 그림에 있습니다.
 
-모든 플래그와 기본값은 [CLI 레퍼런스](./cli.md#run-rag)(영문)에 있습니다.
+모든 플래그와 기본값은 [CLI 레퍼런스](./reference/cli.md#run-rag)(영문)에 있습니다.
 
 ### 검색 전략 선택
 
@@ -1313,7 +1313,7 @@ SQLite 레지스트리에는 이 한도가 없습니다.
 채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고, 둘은 LLM 심사 모델을 씁니다.
 전략을 여럿 주거나 `--repeats`를 주면 짝지은 비교가 됩니다.
 
-모든 플래그와 기본값은 [CLI 레퍼런스](./cli.md#run-eval)(영문)에 있습니다.
+모든 플래그와 기본값은 [CLI 레퍼런스](./reference/cli.md#run-eval)(영문)에 있습니다.
 
 ### 평가기
 
@@ -1762,7 +1762,7 @@ MuSiQue는 HotpotQA, SQuAD처럼 독해(reader) 모델이 예측한 짧은 답�
 
 이미 내보낸 시각화 데이터 JSON으로 그림을 그리는 **독립** 렌더러이며, 수집을 다시
 실행하거나 AWS에 접근하지 **않습니다**. 모든 플래그와 기본값은
-[CLI 레퍼런스](./cli.md#run-visualization)(영문)에 있습니다.
+[CLI 레퍼런스](./reference/cli.md#run-visualization)(영문)에 있습니다.
 
 ```bash
 # Render all renderers
@@ -1801,7 +1801,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 디렉터리에서 문서를 표본으로 뽑아 `models.roles.graph_extraction`으로 코퍼스
 특성(도메인, 언어, 페르소나, 엔티티 유형)을 분석하고, 검토해서 `config.yaml`에 합칠
 도메인 맞춤 `custom_prompts` YAML 조각을 씁니다. 모든 플래그와 기본값은
-[CLI 레퍼런스](./cli.md#run-prompt-tuning)(영문)에 있습니다.
+[CLI 레퍼런스](./reference/cli.md#run-prompt-tuning)(영문)에 있습니다.
 
 ```bash
 run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
