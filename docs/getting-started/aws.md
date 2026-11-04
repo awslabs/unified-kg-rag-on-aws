@@ -49,7 +49,7 @@ configure replaces the one in its row) before the first run:
 | Reranking | `cohere.rerank-v3-5:0` | `models.rerank` |
 
 - **Region.** Every Bedrock call goes to `aws.bedrock.region_name`
-  (default: `aws.region_name`, `us-west-2`, which offers all four). Where
+  (default: `aws.region_name`, `us-west-2`, which offers all five). Where
   rerank models are missing (for example `ap-northeast-2`), point it at a
   region that has them or set `search.reranking.enabled: false`; a private
   VPC whose only Bedrock route is its VPC endpoint must keep its own region.
@@ -95,8 +95,9 @@ Otherwise the first such file waits up to 120 s and fails, and every later
 one of the run fails at once with the same error.
 
 The deployed image (`docker/Dockerfile`) leaves the extra out (it adds about
-200 MB), so a Step Functions ingest of `.md` / `.html` files fails with "No
-supported files found": convert the files, or build with
+200 MB), so a Step Functions ingest skips `.md` / `.html` files with a
+warning, and a corpus of only such files fails with "No supported source
+files found in '<dir>'": convert the files, or build with
 `--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the spaCy
 model in the image (a task in the private VPC cannot download it). The image's
 `docker/config.yaml` holds no endpoints; the CDK compute stack injects them.
@@ -111,8 +112,8 @@ model in the image (a task in the private VPC cannot download it). The image's
    vars, instance role, ...). Neptune signs with SigV4 when
    `aws.neptune.use_iam: true`.
 2. **OpenSearch** uses IAM (`aws.opensearch.use_iam: true`) or, with
-   `use_iam: false`, a username and password in a `.env` file (copy
-   `.env-template`), which the `run-*` CLIs load:
+   `use_iam: false` (the default), a username and password in a `.env` file
+   (copy `.env-template`), which the `run-*` CLIs load:
 
    ```bash
    UKR__AWS__OPENSEARCH__USERNAME=your_opensearch_username
@@ -144,7 +145,10 @@ indexing). Three Bedrock actions need statements of their own:
 
 Copy the template, then set the two store endpoints in `config.yaml`
 (`aws.neptune.endpoint`, `aws.opensearch.endpoint`) and `aws.region_name`
-when the stores are not in `us-west-2`:
+when the stores are not in `us-west-2`. For a domain that authorizes IAM
+(SigV4) requests, also set `aws.opensearch.use_iam: true`; the default
+`false` uses the username and password from `.env`
+([Authentication](#authentication)):
 
 ```bash
 cp config-template.yaml config.yaml

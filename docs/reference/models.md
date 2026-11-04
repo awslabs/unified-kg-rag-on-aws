@@ -17,7 +17,10 @@ works: `anthropic.claude-*` ids get the request shape of their generation,
 request (no reasoning or sampling parameters, 32K window, 4K output), each with
 one WARNING. Describe or correct a model with `aws.bedrock.model_overrides`
 (keys are capability-record fields such as `context_window_size` and
-`max_output_tokens`; an unknown key fails fast):
+`max_output_tokens`). The config load does not check the entries: an unknown
+key or a wrong value fails with `LanguageModelError` when the model's record
+is first read, as its model is built or a budget is sized, and an entry for a
+model no role uses is never read:
 
 ```yaml
 aws:

@@ -100,9 +100,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 그 값을 채웁니다. 실행 주체에는 데이터셋에 대한
 `s3:GetObject`와 접두사에 대한 `s3:PutObject` 권한이 필요합니다.
 
-실행마다 `evaluation_{results,reports,summary}_<timestamp>.json`을 씁니다(최신 실행은
-이름을 정렬해 찾음). 요약에는 지표별 통계, 채점/실패/건너뜀 개수, 답변 거절, 재순위화와
-가드레일 집계, 그리고 무엇을 측정했는지 기록해 두 실행을 비교할 수 있게 하는 실행
+실행마다 `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`을
+씁니다(질의가 여러 전략을 썼으면 `<strategy>`가 빠짐). 전략이 다른 파일은 이름순이
+시간순과 다르므로 최신 실행은 수정 시각(`ls -t`)으로 찾으세요. 요약에는 지표별 통계,
+채점/실패/건너뜀 개수, 답변 거절, 재순위화와 가드레일 집계, 그리고 무엇을 측정했는지 기록해 두 실행을 비교할 수 있게 하는 실행
 매니페스트가 있습니다([Evaluation output](../reference/evaluation-output.md), 영문).
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준(`--max-failure-rate`)은 모든 실행에
 적용됩니다.

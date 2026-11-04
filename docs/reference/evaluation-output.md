@@ -9,11 +9,14 @@ comparison: [Evaluation](../guides/evaluate.md). Every flag:
 
 ## Result files
 
-Results are written as `evaluation_{results,reports,summary}_<timestamp>.json`
-(`..._<strategy>_<timestamp>.json` when every query asked for, or used, one
-strategy; an `auto` run is `..._auto_...`). `<timestamp>` is
-`YYYYMMDD_HHMMSS_<8 hex characters>` (runs started in the same second do not
-collide): find the latest run by sorting the names, not by building one.
+Results are written as `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+when every query asked for, or used, one strategy (an `auto` run is
+`..._auto_...`), and as `evaluation_{results,reports,summary}_<timestamp>.json`
+otherwise; the results and reports only with `evaluation.save_detailed_results`
+(default on). `<timestamp>` is `YYYYMMDD_HHMMSS_<8 hex characters>` (runs
+started in the same second do not collide). The names sort by time only
+within one strategy: find the latest run by modification time (`ls -t`) or by
+the timestamp part, not by building a name.
 A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 ([Comparison](#comparison)).
 

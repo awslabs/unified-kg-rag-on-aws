@@ -49,7 +49,8 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   keep the fused order, logged once and reported as
   `metadata.rerank.status` `unavailable` (`disabled` for `kind: none`).
 - **Embedded stores.** Each `sqlite` store is one file created on first use
-  (a relative `sqlite_path` resolves like the other paths); the
+  (a relative `sqlite_path` resolves against the config file's directory,
+  or the working directory without a config file); the
   `indexing.neptune` and `indexing.opensearch` settings apply to them.
 - **Token counting** uses the script-aware estimate
   (`providers.llm.tokenizer: tiktoken` for a BPE encoding).

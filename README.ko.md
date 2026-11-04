@@ -74,7 +74,7 @@ uv sync --extra eval --extra viz        # 또는: pip install -e '.[eval,viz]'
 cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포인트 입력
 ```
 
-OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. `uv sync`만으로는 수집과 질의만 설치되며, `run-eval`의 LangChain·RAGAS 심사 평가기에는 `eval` extra, `run-visualization`에는 `viz` extra가 필요합니다. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(`uv sync --extra unstructured`). 이 extra는 첫 Markdown·HTML 파일을 읽을 때 GitHub에서 spaCy 모델(`en_core_web_sm`)을 내려받으므로, 네트워크에 접근할 수 없는 환경에서는 미리 설치해 두세요(배포 이미지는 빌드할 때 설치합니다. [iac/README.md](iac/README.md) 참고). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
+OpenSearch는 기본적으로 사용자 이름과 비밀번호로 인증합니다(`aws.opensearch.use_iam: false`). `.env-template`을 CLI를 실행할 디렉터리에 `.env`로 복사하고 자격 증명을 입력하세요. IAM(SigV4) 서명 요청을 허용하는 도메인이라면 대신 `aws.opensearch.use_iam: true`로 설정하세요. `uv sync`만으로는 수집과 질의만 설치되며, `run-eval`의 LangChain·RAGAS 심사 평가기에는 `eval` extra, `run-visualization`에는 `viz` extra가 필요합니다. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(`uv sync --extra unstructured`). 이 extra는 첫 Markdown·HTML 파일을 읽을 때 GitHub에서 spaCy 모델(`en_core_web_sm`)을 내려받으므로, 네트워크에 접근할 수 없는 환경에서는 미리 설치해 두세요. 배포 이미지에는 이 extra가 빠져 있으며, `--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하면 모델도 빌드할 때 함께 설치합니다([iac/README.md](iac/README.md) 참고). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
 
 ### 수집, 질의, 평가
 
@@ -92,8 +92,8 @@ uv run run-rag --interactive --use-memory --conversation-id my-session --config-
 # 평가 (LangChain + RAGAS + 그래프 인식 커버리지, 검색·답변 일치 지표)
 uv run run-eval --data-path eval_data.json --config-path config.yaml
 
-# 선택: 내보낸 그래프 시각화, 도메인 맞춤 프롬프트 튜닝
-uv run run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
+# 선택: 수집이 내보낸 그래프 시각화(파일 경로는 수집 로그에 남음), 도메인 맞춤 프롬프트 튜닝
+uv run run-visualization --data-path ./cache/<pipeline-id>/visualization/visualization_data.json --output-directory ./viz --config-path config.yaml
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 

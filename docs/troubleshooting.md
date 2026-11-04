@@ -130,11 +130,12 @@ the `BedrockThrottling` alarm shows whether this is the cause. Raise the
 deadline only for queries that are slow on their own (`drift`, long answers)
 ([Operator Runbook: Query deadlines and model timeouts](./operations.md#query-deadlines-and-model-timeouts)).
 
-### Why does an incremental run exit 2 with "was built for other ... settings"?
+### Why does an incremental run exit 2 with "holds embeddings of ..." or "was built for other ... settings"?
 
-The live indices were built with another embedding model or dimension,
-other translation languages or other `language_analyzers` than the run's
-configuration, and the run refuses to mix them, before its first model call.
+The live indices were built with another embedding model or dimension
+("holds embeddings of ..."), other translation languages or other
+`language_analyzers` ("was built for other language settings") than the
+run's configuration, and the run refuses to mix them, before its first model call.
 Run once with `indexing.reset: true` (it re-embeds or re-translates the
 whole corpus once), or restore the previous settings
 ([Incremental indexing: Workflows](./guides/incremental.md#workflows)).
@@ -220,6 +221,7 @@ model or credential error fails a query rather than answering from no context.
 | `ConfigurationError: The OpenSearch index '...' maps 'attributes.seed_properties' field by field ...` (exit 2, before any model call) | The live entities index maps seed graph properties (`attributes.seed_properties`), which this version stores unmapped | Run once with `indexing.reset: true` |
 | `ConfigurationError: The OpenSearch index '...' stores the vectors of '...' as ...` (exit 2, before any model call) | `indexing.opensearch.vector_mode` / `compression_level` changed since the live index was built | Run once with `indexing.reset: true`, or restore the previous values ([On-disk vector storage](./operations.md#on-disk-vector-storage)) |
 | `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with (also a run with nothing to extract: no change, or only deletions) | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
+| `ConfigurationError: The OpenSearch index '...' was built by a run with the doc-status registry off ...` (exit 2, before any model call) | The live index was built by a run with `providers.doc_status.enabled: false`, so the registry this run turned on does not list the documents it holds (also on `backend: local`) | Run once with `indexing.reset: true` and the registry on, which rebuilds the stores and fills the registry; or keep the registry off for this suffix |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`) | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one |
 
 ### Queries

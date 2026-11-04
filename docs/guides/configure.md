@@ -108,7 +108,8 @@ At `INFO` and above, user and corpus text is logged only as lengths, counts,
 ids and a stable short hash (`query: len=42 sha=1a2b3c4d`). Query text,
 rewritten queries, entity names and raw model output are logged only at
 `DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
-(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `--verbose`), and
+(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `run-eval --verbose`;
+`run-rag --verbose` prints more to the console but leaves the log level), and
 libraries set to `DEBUG` in `logging.library_levels` (`botocore` logs request
 bodies), as containing user and corpus data.
 

@@ -44,10 +44,13 @@ banner, progress and logs to stderr, so the output pipes into `jq` (not with
 `--metrics-sink cloudwatch`, which also writes to stdout). The document
 holds:
 
-- **`run-rag`**: the answer or the search results.
-- **`run-ingestion`**: the pipeline id, the status, the model calls and
-  tokens of the stages the run executed (`token_usage`), the per-stage
-  results, and these counts:
+- **`run-rag`**: `success` and the answer or the search results; a failed
+  query has `"success": false` and its `error` (exit `1`).
+- **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
+  `"metadata_valid": true` (a missing or corrupt record exits `1` with the
+  status document below). Otherwise the pipeline id, the status, the model
+  calls and tokens of the stages the run executed (`token_usage`), the
+  per-stage results, and these counts:
   - `failed_documents`: the documents the run recorded `FAILED`. A model
     outage that fails every unit records none; one that fails some units
     records their documents, retried by the next run without counting toward
@@ -67,15 +70,21 @@ holds:
     `indexing.max_document_failures` consecutive runs unchanged, at the same
     extraction settings (a settings change starts the count over); also in
     the summary.
-- **`run-eval`**: each run's summary, the comparison, the failure-budget
-  breaches and the failed gates (`gate_failures`).
-- **`run-visualization`**: the written files.
-- **`run-prompt-tuning`**: the output path and the profile.
-- **`prepare-benchmark`**: the counts written.
+- **`run-eval`**: the `output_directory`, `upload_error`, each run's summary
+  (`runs`), the `comparison`, the failure-budget breaches
+  (`failure_budget_breaches`) and the failed gates (`gate_failures`); a
+  breach, a failed gate or an upload error exits `1`.
+- **`run-visualization`**: the `output_directory` and the written `files`; an
+  empty list (nothing rendered) exits `1`.
+- **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
+  `--schema-out`, the `schema_path`.
+- **`prepare-benchmark`**: the `output_directory` and the counts written.
 
 ### Failures and interruptions
 
-stdout is always JSON:
+A run that printed its result prints nothing more; the result shows the
+failure, as listed above. A run that did not prints a status document
+instead:
 
 - A run stopped by a signal before it printed prints
   `{"status": "interrupted", "exit_code": 143}` (`130` for Ctrl-C).
@@ -92,3 +101,9 @@ stdout is always JSON:
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),
   `next_run_writes_from` (UTC, ISO 8601).
+
+One run prints no JSON: a `run-ingestion` resume whose cached stages fail
+the integrity check asks "Continue despite integrity issues?" on the
+terminal, and an answer of no exits `0` with nothing on stdout. Pass `--yes`
+to continue; without a terminal the question stops the run with exit `1` and
+the status document.
