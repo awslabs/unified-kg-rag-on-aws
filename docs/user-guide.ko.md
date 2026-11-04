@@ -2,7 +2,7 @@
 
 > 🇬🇧 English version: [docs/user-guide.md](./user-guide.md)
 
-한국어 문서는 README와 이 사용자 가이드뿐입니다. 설계 문서, 운영 런북, 모델 카탈로그, CLI·설정 레퍼런스는 영문으로만 제공합니다.
+한국어 문서는 README, 문서 안내, 개요와 이 사용자 가이드입니다. 설계 문서, 운영 런북, 모델 카탈로그, CLI·설정 레퍼런스는 영문으로만 제공합니다.
 
 이 문서는 **unified-kg-rag-on-aws**를 실제로 사용하는 방법을 설명하는 가이드입니다.
 unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래프를 만들고 그 그래프를
@@ -11,6 +11,8 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 하나의 스택 위에 재구현했으며, 질의마다 방법론을 고를 수 있습니다.
 
 - 프로젝트 소개와 1분 빠른 시작은 [README.ko.md](../README.ko.md)를 참고하세요.
+- 모든 문서의 지도는 [문서 안내](./index.ko.md), 개념과 원 논문 대비 확장한 부분은
+  [개요](./concepts/overview.ko.md)를 참고하세요.
 - 내부 구조와 아키텍처(헥사고날 레이어, 포트와 어댑터, 의존성 규칙)는
   [설계 문서](./design.md)(영문)를 참고하세요.
 
@@ -421,11 +423,8 @@ models:
 
 - **판정 모델은 따로 둡니다.** Bedrock에서 `models.roles.evaluation`을 비워 두면 기본
   계층이 아니라 `anthropic.claude-opus-5-5`를 씁니다. LLM 판정 모델은 자기 답변을 선호하기
-  때문입니다. global 질문 50개로 측정했을 때, Sonnet 5.5가 자기 답변과 Opus 5.5 답변을
-  판정하면 GPT-5.5 판정 모델보다 directness 승률이 -0.27 [-0.38, -0.16] 달라졌습니다.
-  Opus 5.5는 토큰당 Sonnet 5.5의 약 두 배입니다(온디맨드, us-west-2, 2026년 11월 기준 입력 /
-  출력 100만 토큰당 $4 / $20, Sonnet 5.5는 $2 / $10). 이 모델은 `run-eval`의 LLM 판정만
-  호출합니다. 답변 모델이 Opus 5.5이면 비워 둔 판정 모델은 기본 계층의 모델로, 그것도 답변
+  때문입니다([측정 결과와 측정 당시 정가](./concepts/defaults-and-evidence.md#the-evaluation-judge), 영문). Opus 5.5는
+  토큰당 가격이 Sonnet 5.5보다 높고, `run-eval`의 LLM 판정만 이 모델을 호출합니다. 답변 모델이 Opus 5.5이면 비워 둔 판정 모델은 기본 계층의 모델로, 그것도 답변
   모델이면 Sonnet 5.5로 바뀌며, `run-eval`이 고른 판정 모델과 이유를 INFO로 기록합니다.
   `--from-results`나 `--baseline-results`를 쓰면 저장된 실행의 답변 모델(매니페스트의
   `models.answer_generation`)도 답변 모델로 봅니다. 이전
@@ -842,7 +841,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
 | `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
-| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. 하이브리드 검색에서는 이 비율을 가중치에 맞춰 환산하므로, 벡터 검색만 찾은 결과는 가중치와 상관없이 이름이 일치한 엔티티와 함께 시작점이 되지 않습니다. 벡터 검색은 원래 유사도 점수끼리 차이가 작아 이 필터가 덜 걸러 냅니다. 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다. `search.local_search.report_selection: membership`이면 순회한 엔티티가 속한 커뮤니티의 보고서를 넣으며(MS GraphRAG local 방식), 보통 그 수가 더 적습니다. MuSiQue 질문 200개에서는 토큰을 약 0.5% 덜 쓰는 대신 답변이 나빠졌으므로(exact match -4.0점, token F1 -4.1점, 둘 다 유의함) 기본값은 similarity입니다. |
+| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. 하이브리드 검색에서는 이 비율을 가중치에 맞춰 환산하므로, 벡터 검색만 찾은 결과는 가중치와 상관없이 이름이 일치한 엔티티와 함께 시작점이 되지 않습니다. 벡터 검색은 원래 유사도 점수끼리 차이가 작아 이 필터가 덜 걸러 냅니다. 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다. `search.local_search.report_selection: membership`이면 순회한 엔티티가 속한 커뮤니티의 보고서를 넣으며(MS GraphRAG local 방식), 보통 그 수가 더 적습니다. 측정에서 답변이 유의하게 나빠졌으므로 기본값은 similarity입니다([근거](./concepts/defaults-and-evidence.md#local-report-selection), 영문). |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 후보 전략이 읽는 엔티티·키워드 추출과 질의 번역을 라우터와 동시에 실행하므로(`search.auto_speculative_extraction`), local이나 mix로 분기한 `auto`는 그 전략을 직접 고른 질의와 걸리는 시간이 같습니다. 분기한 전략이 읽지 않는 추출도 백그라운드에서 계속 실행되고 과금됩니다(기본 설정에서 질의마다 fast 모델 호출 1회, global로 분기하면 2회). 질의는 이 추출을 기다리지 않고 반환하며, 시작 시점부터 질의 사용량에 넣습니다(실행 중이면 `estimated_calls`). 추출 결과는 추출 캐시를 채우고, `search.query_timeout_seconds`가 지나거나 체인을 닫으면 취소합니다. |
@@ -865,12 +864,9 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 `search.lightrag_search.kg_chunk_pick_method`는 항목마다 어떤 청크를 고를지 정합니다.
 `weight`(기본값)는 찾은 항목마다 감소하는 비율로 `related_chunk_number`개씩 배정하고,
 `vector`는 upstream LightRAG의 기본값처럼 인용된 청크 중 질의와 가장 잘 맞는 청크를
-엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 기본값은 `weight` 그대로입니다. MuSiQue
-질문 200개(반복 2회)에서 `vector`는 유의한 차이가 없었고(mix `answer_contains` -1.5점
-[-4.5, +1.25], hybrid -1.25점 [-4.5, +2.0]) 질의당 지연 시간만 약 1.5초 늘었습니다. MMR의
-`search.fusion.diversity_lambda`도 같은 이유로 0.5를 유지합니다. mix에서 0.7과 1.0은 유의한
-차이가 없었습니다(`answer_contains` -1.0점 [-3.75, +1.5], -2.25점 [-5.25, +0.5]. 유일하게
-유의한 차이인 1.0의 MRR +0.9점 [+0.05, +2.15]도 작습니다).
+엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 기본값은 `weight` 그대로이고 MMR의
+`search.fusion.diversity_lambda`도 0.5를 유지합니다. 다른 값은 측정에서 유의한 차이가
+없었습니다([근거](./concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
 
 ### 답변 형식
 
@@ -888,28 +884,24 @@ search:
 # answer_prompt_style: {global: concise}        # concise global answers
 ```
 
-근거. MuSiQue 문서 3,318개로 만든 코퍼스에서 의미 파악(sensemaking) 질문 50개로 측정했을 때,
-포괄적 global 답변은 간결한 답변보다 포괄성, 다양성, 역량 강화(empowerment)에서 맞비교 판정
-모델 세 개(Opus 5.5, Sonnet 5.5, GPT-5.5) 모두 0.95-0.99의 승률을 보였고, 비용은 질의당
-+$0.016(답변 3.2천 자 -> 7.6천 자)이었습니다. 대신 직접성(directness)에서는 졌고(승률
-0.00-0.39), 맞비교 LLM 판정은 긴 답변을 선호하는 경향이 있으므로 이 승률은 "더 많이 다룬다"는
-뜻이지 모든 독자에게 낫다는 뜻은 아닙니다. 짧은 답을 원하면 `{global: concise}`를 유지하세요.
-`drift`도 같은 결과였지만(포괄성 1.00, 직접성 0.03-0.04) 기본값은 간결한 형식입니다. p95 지연
-시간이 147초에서 168초로, 최대 178초로 늘어 기본 `search.query_timeout_seconds` 180초에
-가까웠기 때문입니다. `{drift: comprehensive}`를 쓰면 이 마감 시간을 늘리세요(300초면
-여유가 있습니다. [운영 런북](./operations.md#query-deadlines-and-model-timeouts)).
+근거. 포괄적 global 답변은 간결한 답변보다 더 많은 내용을 다루지만 덜 직접적이고, 맞비교
+LLM 판정은 긴 답변을 선호합니다. 짧은 답을 원하면 `{global: concise}`를 유지하세요. `drift`의
+기본값이 간결한 형식인 이유는 포괄적 답변을 쓰면 지연 시간이 기본
+`search.query_timeout_seconds` 180초에 가까워지기 때문입니다. `{drift: comprehensive}`를
+쓰면 이 마감 시간을 늘리세요(300초면 여유가 있습니다.
+[운영 런북](./operations.md#query-deadlines-and-model-timeouts)). 측정 결과는
+[기본값과 근거](./concepts/defaults-and-evidence.md#answer-style)(영문)에 있습니다.
 
 `auto`는 분기한 전략의 형식을 따릅니다. `answer_match` 점수는 제목이 아닌 첫 줄을 읽으므로(`evaluation.answer_span`)
 포괄적 답변은 품질과 관계없이 정확 일치(exact match) 점수가 낮게 나옵니다.
 
 global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 리포트를 붙여 답변 모델에
 넘깁니다. `search.global_search.evidence_tokens`는 이 리포트 본문의 토큰 수를 제한합니다
-(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). 기본값은 4000입니다. 같은 질문
-50개에서 제한이 없을 때보다 global 질의 비용이 41% 줄었고($0.1016 -> $0.0597), 판정 모델 세
-개 모두 답변을 구별하지 못했으며(위치 일관성 0.43-0.57. Opus 5.5의 역량 강화 0.41 [0.33,
-0.48]만 0.5를 벗어났고 다른 두 판정 모델에서는 재현되지 않음) 답변은 출처를 유지합니다.
+(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). 기본값은 4000이며, 제한이 없을
+때보다 global 질의 비용이 약 40% 줄었고 측정된 품질 차이는 없었으며 답변은 출처를
+유지합니다([근거](./concepts/defaults-and-evidence.md#global-evidence-cap), 영문).
 `null`(제한 없음)은 컨텍스트 예산이 허용하는 만큼 넣으며, 단면이 크면 global 질의 입력
-토큰의 대부분을 차지합니다. `0`(비용 -49%, 역시 측정된 차이 없음)은 MS GraphRAG의 reduce
+토큰의 대부분을 차지합니다. `0`(비용이 더 적음)은 MS GraphRAG의 reduce
 단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
 내용은 모델 출력이기 때문입니다). 그래서 `retrieval` 평가기는 global 질의의 순위 지표를 0점
 처리하지 않고 건너뜁니다(`no_sources_by_config`).
@@ -983,8 +975,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 스트리밍하지 않는 답변은 한 번에 도착하므로 `search.model_timeout_seconds`가 모델이 답변을
 생성하는 시간의 상한이기도 합니다. 긴 답변이나 높은 추론 강도(effort)에는 이 값과 질의
-제한 시간을 함께 올리세요. 기본값은 실제 AWS에서 측정한 질의 시간(p99 47초, 가장 느린 질의
-61초, 질의 전체 기준)에서 정했습니다. 90초는 가장 느린 질의 전체를 요청 하나로 받아도 여유가
+제한 시간을 함께 올리세요. 기본값은 실제 AWS에서 측정한 질의 시간에서
+정했습니다([근거](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문). 90초는 가장 느린 질의 전체를 요청 하나로 받아도 여유가
 있고, 180초는 멈춘 첫 시도를 한 번 다시 시도할 수 있는 시간입니다. 조정 방법은
 [운영 런북](./operations.md#query-deadlines-and-model-timeouts)에 있습니다.
 
@@ -2946,11 +2938,9 @@ JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'e
 생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
 gleaning 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
 
-이 중 가장 큰 것은 gleaning입니다. `processing.gleaning.max_rounds`는 3을 유지합니다. MuSiQue
-문서 109개 일부에서 1회 대비 3회는 질문의 중간(bridge) 답이 그래프 엔터티로 들어간 비율을
-72.0%에서 81.7%로 높였고(+9.8점 [+3.7, +17.1]) 수집 비용은 38% 늘었습니다($13.08 대
-$9.51. gleaning만 $5.74 대 $2.49). 답변은 유의한 차이가 없었습니다(질문 30개에서 local
-`answer_contains` +13.3점 [-3.3, +33.3]). 그래프 재현율보다 수집 비용이 중요하면
+이 중 가장 큰 것은 gleaning입니다. `processing.gleaning.max_rounds`는 3을 유지합니다. 3회는
+1회보다 그래프를 더 많이 찾았고 수집 비용은 약 38% 늘었으며, 답변에는 유의한 차이가
+없었습니다([근거](./concepts/defaults-and-evidence.md#gleaning-rounds), 영문). 그래프 재현율보다 수집 비용이 중요하면
 `max_rounds: 1`(MS GraphRAG 기본값)로 두세요.
 
 ---

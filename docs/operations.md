@@ -1236,23 +1236,16 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
 | `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
 
-**Why these defaults.** In the package's real-AWS evaluation runs (5,846
-queries) the p99 query took 47 s and the slowest 61 s, in all. A
-non-streamed Converse answer at `default_effort: high` can spend most of
-that in one read, so `model_timeout_seconds` is 90 s: about 1.5x the
-slowest whole query and 1.9x the p99, for one request. The deadline,
-180 s, is `model_max_attempts x model_timeout_seconds`, so a call that
-stalls once can still be answered by its second attempt; it is about 3x
-the slowest query and 3.8x the p99. Two attempts, not more: a third
-would start only after the deadline.
+**Why these defaults.** 90 s covers the slowest measured whole query in
+one request, and 180 s (`model_max_attempts x model_timeout_seconds`) lets a
+call that stalls once be answered by its second attempt; a third attempt
+would start only after the deadline. The measured query times:
+[Defaults and evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts).
 
-<a id="drift-near-the-deadline"></a>**DRIFT near the deadline.** Those runs did not include DRIFT. On a
-3,318-document MuSiQue index (embedded SQLite stores, 50 sensemaking
-questions, two repeats, one run-eval at a time) DRIFT with the concise answer
-took 147 s at p95; with the comprehensive answer 168 s at p95 and 178 s at
-most, 2 s inside the 180 s deadline. A second evaluation running at the same
-time pushed 20 of 50 comprehensive DRIFT answers past it. So DRIFT keeps
-the concise answer by default, and a deployment that routes to DRIFT
+<a id="drift-near-the-deadline"></a>**DRIFT near the deadline.** The
+comprehensive DRIFT answer measured close to the 180 s deadline, and past
+it under a concurrent load ([evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts)). So DRIFT keeps the concise
+answer by default, and a deployment that routes to DRIFT
 (`search.auto_routable_strategies`), serves it under load or gives it the
 comprehensive answer should set `search.query_timeout_seconds: 300` (with
 `model_timeout_seconds` 90 s and two attempts, a stalled call still fits).

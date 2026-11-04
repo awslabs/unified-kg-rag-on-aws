@@ -1,0 +1,76 @@
+# Documentation
+
+> 🇰🇷 한국어판: [docs/index.ko.md](./index.ko.md)
+
+The documentation of `unified-kg-rag-on-aws`, by what you want to do. New to
+the project? Read the [Overview](./concepts/overview.md) first.
+
+## Start here
+
+| You are | Goal | Read, in order | Done when |
+|---|---|---|---|
+| **First-time evaluator** | See it work without AWS | [README](../README.md#quickstart) → [Local mode](./user-guide.md#local-mode-no-aws) → [Overview](./concepts/overview.md) → [Search strategies](./user-guide.md#search-strategies--when-to-use-which) → [Evaluators](./user-guide.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
+| **Builder on AWS** | Ingest a real corpus and query it | [Required models](./user-guide.md#required-models) → [Install](./user-guide.md#install) (existing stores) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./user-guide.md#2-configuration) → [Ingestion](./user-guide.md#3-ingestion-run-ingestion) → [Querying](./user-guide.md#4-querying-run-rag) → [Incremental indexing](./user-guide.md#5-incremental-indexing) → [Domain adaptation](./user-guide.md#9-domain-adaptation) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
+| **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [common errors](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
+| **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./user-guide.md#6-evaluation-run-eval) → [Comparing strategies](./user-guide.md#comparing-strategies) → [Benchmarks](./user-guide.md#benchmarks-musique) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
+| **Extender** | Add a backend, strategy, parser, schema or seed source | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./user-guide.md#c-extraction-schema) / [Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph) | A registered plugin that passes the fake-port conformance tests |
+| **Contributor** | Change code and docs without breaking the gate | [CONTRIBUTING.md](../CONTRIBUTING.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) and [§13](./design.md#13-testing-strategy) → [Documentation rules](../CONTRIBUTING.md#documentation) | The pull request passes CI, including the docs checks |
+
+## Page map
+
+| Type | Page | Covers |
+|---|---|---|
+| Tutorial | [README Quickstart](../README.md#quickstart) | Choose how to run, install, first ingestion, query and evaluation |
+| Tutorial | Getting started locally, Getting started on AWS (planned) | Step-by-step first runs; until then, the Quickstart and [User Guide §1](./user-guide.md#1-prerequisites--installation) |
+| Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the two methodologies, what the framework adds beyond the papers, limitations |
+| Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
+| Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
+| Explanation | Retrieval, Scopes and namespaces (planned) | Strategy concepts and scoring; index suffix, namespace and source scope |
+| How-to | [User Guide](./user-guide.md) | Every task for now: installation and local mode, configuration, ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation, exit codes, library use |
+| How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
+| How-to | Task guides (planned) | One page per task, split out of the User Guide |
+| Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
+| Reference | [Configuration Reference](./reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
+| Reference | [Model Catalog](./reference/models.md) | Supported Bedrock models and per-provider request differences |
+| Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation, observability, common errors |
+| Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
+
+## I want to
+
+| I want to | Go to |
+|---|---|
+| Try it without an AWS account | [Local mode](./user-guide.md#local-mode-no-aws) |
+| Deploy the whole stack on AWS | [`iac/README.md`](../iac/README.md#quick-start) |
+| Enable the Bedrock models it needs | [Required models](./user-guide.md#required-models) |
+| Change a model or a setting | [Configuration](./user-guide.md#2-configuration), [Configuration Reference](./reference/configuration.md) |
+| Ingest a corpus, resume or rebuild | [Ingestion](./user-guide.md#3-ingestion-run-ingestion) |
+| Index a Korean or mixed-language corpus | [Multilingual ingestion](./user-guide.md#multilingual-ingestion) |
+| Pick a search strategy | [Search strategies](./user-guide.md#search-strategies--when-to-use-which) |
+| Filter results by document or attribute | [Filters](./user-guide.md#filters) |
+| Update the index as documents change or are deleted | [Incremental indexing](./user-guide.md#5-incremental-indexing) |
+| Adapt extraction to my domain | [Domain adaptation](./user-guide.md#9-domain-adaptation), [Prompt tuning](./user-guide.md#8-prompt-tuning-run-prompt-tuning) |
+| Import an ontology or an existing knowledge graph | [From an OWL/RDFS ontology](./user-guide.md#from-an-owlrdfs-ontology), [Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph) |
+| Compare strategies or gate a change in CI | [Comparing strategies](./user-guide.md#comparing-strategies), [Rebuilding, re-judging and gating](./user-guide.md#rebuilding-re-judging-and-gating-a-comparison) |
+| Know why a default is what it is | [Defaults and evidence](./concepts/defaults-and-evidence.md) |
+| Use it from Python | [Using the library from Python](./user-guide.md#11-using-the-library-from-python) |
+| Fix an error or a failed run | [Common errors](./operations.md#common-errors), [When a run fails](./operations.md#when-a-run-fails) |
+| Add a backend, strategy or parser | [Design Doc §15](./design.md#15-extension-guide) |
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| Ingestion | The 12-stage pipeline (`run-ingestion`) that turns documents into the graph and the indexes |
+| Text unit | A chunk of a document; extraction, citations and deletion all work per text unit |
+| Entity, relationship | A node and an edge of the extracted knowledge graph |
+| Claim | An optional factual statement extracted per text unit (MS GraphRAG covariates) |
+| Gleaning | Extra extraction rounds that ask the model what the first pass missed |
+| Community, community report | A Leiden cluster of entities, and the LLM-written summary that `global` and `drift` read |
+| Methodology, strategy | GraphRAG or LightRAG, and the concrete retrieval algorithm (`local`, `mix`, ...) chosen per query |
+| Index suffix | The `<suffix>` in every index and graph label name (`processing.document_parsing.index_value`); one per tenant or corpus version |
+| Doc-status registry | The DynamoDB (or SQLite) table of each document's hash and text units that makes ingestion incremental |
+| Namespace | The indexes one index suffix names; one writing run per namespace at a time (a write lease) |
+| Source scope | The corpus source a run diffs and deletes within (by default the source directory); document and text-unit ids derive from it |
+| Quarantine | A document set aside after runs repeatedly died processing it; skipped until its file changes or the limit is raised |
+| Seed graph | A knowledge graph you already have, merged into the extracted one as virtual documents |
+| Extraction schema | The entity types, relationship types and patterns extraction follows, declared or read from an ontology |

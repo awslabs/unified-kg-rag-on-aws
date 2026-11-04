@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # The pages with a Korean twin (``<page>.ko.md`` next to ``<page>.md``), as
 # repo-relative paths without the suffix. Adding a ``.ko.md`` file that is not
 # listed here fails the check.
-TRANSLATED_PAGES = ["README", "docs/user-guide"]
+TRANSLATED_PAGES = ["README", "docs/index", "docs/concepts/overview", "docs/user-guide"]
 
 # The note a Korean page carries while its translation lags the English page
 # (CONTRIBUTING.md, Documentation); such a page is reported, not failed.

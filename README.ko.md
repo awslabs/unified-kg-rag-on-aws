@@ -11,6 +11,8 @@
 
 대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답하는 AWS 네이티브 지식 그래프 RAG(검색 증강 생성) 프레임워크입니다. 멀티홉 그래프 순회로 여러 문서에 걸친 추론을 수행합니다. Microsoft GraphRAG와 LightRAG를 하나의 공통 스택 위에 다시 구현했기 때문에, 검색 방법론을 배포 단위가 아니라 질의 단위로 고를 수 있습니다. 하나의 스택에서 두 방법론 운영, 3중 하이브리드 검색, 증분 인덱싱, 다국어 처리는 원 논문을 의도적으로 확장한 부분입니다.
 
+각 부분이 GraphRAG와 LightRAG에 무엇을 더했는지, 어디서 일부러 다르게 했는지는 [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서)에 정리했습니다.
+
 전체 아키텍처, 두 검색 방법론과 벤치마크 결과는 [AWS Open Source Blog 소개 글](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/)에서 볼 수 있습니다.
 
 ## 이 프레임워크를 쓰는 이유
@@ -107,20 +109,18 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 문서 안내
 
-한국어 문서는 이 README와 사용자 가이드뿐이며, 나머지 문서는 영문으로만 제공합니다.
+[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
 
-| 문서 | 내용 |
+| 독자 | 시작할 문서 |
 |---|---|
-| [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설치와 로컬 모드, 설정, 수집, 질의와 필터, 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응(사용자 정의 프롬프트, 추출 스키마, 온톨로지 가져오기, 시드 그래프), 종료 코드, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
-| [CLI 레퍼런스](./docs/reference/cli.md) (영문) | 모든 CLI 플래그의 기본값과 설명(파서에서 생성) |
-| [설정 레퍼런스](./docs/reference/configuration.md) (영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
-| [모델 카탈로그](./docs/reference/models.md) (영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
-| [운영 런북](./docs/operations.md) (영문) | 용량 산정, 재수집, 증분 실행, 캐시, 백업과 복원, OpenSearch·Neptune 업그레이드, 스키마와 시드 그래프 배포, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리, 관측성, 자주 보는 오류 |
-| [설계 문서](./docs/design.md) (영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
-| [`iac/README.md`](./iac/README.md) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | 개발 환경, 테스트, 품질 게이트, 브랜치와 커밋 규칙 |
-| [CHANGELOG.md](./CHANGELOG.md) | 릴리스 노트 |
-| [SECURITY.md](./SECURITY.md) | 보안 이슈 신고 |
+| **처음 써 보는 평가자**(AWS 없이) | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이), 다음으로 [개요](./docs/concepts/overview.ko.md) |
+| **AWS에서 구축하는 개발자** | [필수 모델](./docs/user-guide.ko.md#필수-모델)과 [사용자 가이드](./docs/user-guide.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
+| **운영자** | [운영 런북](./docs/operations.md)과 [`iac/README.md`](./iac/README.md)(영문) |
+| **평가자·연구자** | [평가](./docs/user-guide.ko.md#6-평가-run-eval), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
+| **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/design.md#15-extension-guide)(영문) |
+| **기여자** | [CONTRIBUTING.md](./CONTRIBUTING.md)(영문) |
+
+모든 플래그는 [CLI 레퍼런스](./docs/reference/cli.md), 모든 설정 키는 [설정 레퍼런스](./docs/reference/configuration.md), 지원 모델은 [모델 카탈로그](./docs/reference/models.md)에 있습니다(모두 영문). 릴리스 노트는 [CHANGELOG.md](./CHANGELOG.md), 보안 이슈 신고는 [SECURITY.md](./SECURITY.md)를 보세요.
 
 ## 보안 및 면책
 
