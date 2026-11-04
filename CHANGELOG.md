@@ -1154,7 +1154,7 @@ From 0.2.3 (or a `main` checkout since):
   broken relative link, fragment or image, a broken doc path or URL cited
   in code, an unlisted Korean page, or a Tier-1 pair whose structure
   differs without the lag note (#337-#342, #351, #469, #542-#544, #546,
-  #547, #549-#554, #PR).
+  #547, #549-#554, #555).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
