@@ -224,6 +224,16 @@ _MODEL = "arn:aws:bedrock:*::foundation-model/vendor.model-a"
 _PROFILE = "arn:aws:bedrock:us-west-2:111111111111:inference-profile/us.vendor.model-a"
 
 
+def test_the_default_grant_covers_every_default_model_and_the_judge() -> None:
+    # Unscoped by default: the answer and fast tiers, embeddings, rerank and
+    # run-eval's Opus judge (called through a global inference profile) all
+    # authorize without listing them.
+    resources = _invoke_resources({})
+    assert sum(r.endswith(':bedrock:*::foundation-model/*"]]}') for r in resources)
+    assert sum(r.endswith(':bedrock:*::inference-profile/*"]]}') for r in resources)
+    assert sum("inference-profile/*" in r for r in resources) == 2
+
+
 def test_foundation_model_arns_keep_the_inference_profile_grants() -> None:
     # Profile-only models resolve to a profile id at runtime; a profile call
     # still needs the listed foundation-model ARN, so no other model is granted.

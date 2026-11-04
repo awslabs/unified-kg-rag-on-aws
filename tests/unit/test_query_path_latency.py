@@ -506,11 +506,36 @@ def test_the_relevance_rating_and_answer_span_get_their_ceilings(mocker) -> None
 # --- answer prompt per strategy ----------------------------------------------
 
 
-def test_every_strategy_keeps_the_concise_answer_by_default() -> None:
+def test_global_answers_comprehensive_and_the_rest_concise_by_default() -> None:
     chain = GraphRAGChain(config=Config())
     for strategy in SearchStrategy:
-        assert chain._answer_prompt(strategy) is AnswerGenerationPrompt
+        expected = (
+            ComprehensiveAnswerPrompt
+            if strategy is SearchStrategy.GLOBAL
+            else AnswerGenerationPrompt
+        )
+        assert chain._answer_prompt(strategy) is expected, strategy
     assert chain._answer_prompt(None) is AnswerGenerationPrompt
+
+
+def test_a_configured_style_map_merges_over_the_default() -> None:
+    # Naming drift keeps global's default; global: concise restores the
+    # earlier default.
+    drift = Config(search={"answer_prompt_style": {"drift": "comprehensive"}})
+    assert drift.search.answer_prompt_style == {
+        SearchStrategy.GLOBAL: "comprehensive",
+        SearchStrategy.DRIFT: "comprehensive",
+    }
+    concise = GraphRAGChain(
+        config=Config(search={"answer_prompt_style": {"global": "concise"}})
+    )
+    for strategy in SearchStrategy:
+        assert concise._answer_prompt(strategy) is AnswerGenerationPrompt
+    # A dumped config loads back to the same map.
+    dumped = drift.model_dump(mode="json")
+    assert Config.model_validate(dumped).search.answer_prompt_style == (
+        drift.search.answer_prompt_style
+    )
 
 
 def test_a_strategy_can_take_the_comprehensive_answer() -> None:

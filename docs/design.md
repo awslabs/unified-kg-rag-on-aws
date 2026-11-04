@@ -437,7 +437,8 @@ gets its models and stores from the run's `Providers` bundle.
 - **Gleaning stops on observed output**: a unit is re-sent (up to
   `max_rounds`) only while its previous answer added something new. An empty
   answer is the "nothing missing" signal MS GraphRAG asks for with a separate
-  yes/no prompt, so no call is spent on it.
+  yes/no prompt, so no call is spent on it. `max_rounds` stays 3, against
+  MS GraphRAG's 1, for the measured graph recall (§9.1).
 
 ### 4.2 Graph identity and merging (stages 5-7)
 
@@ -1406,11 +1407,13 @@ synthesized section (`reduce_with_llm: false`: a separate reduce call only
 added a rewrite that could drop facts), followed by the reports they cite; a
 point citing none of its batch's reports credits the whole batch.
 `evidence_tokens` caps the cited report text (whole reports, best point
-first); null keeps the reports the answer's context budget holds, the
-largest part of a global query's input, while MS GraphRAG's reduce reads the
-key points only (`0`). The answer prompt is the concise one unless
-`search.answer_prompt_style` gives the strategy the comprehensive one,
-modelled on MS GraphRAG's reduce prompt (multiple paragraphs, markdown).
+first) at 4000 tokens by default; null keeps the reports the answer's
+context budget holds, the largest part of a global query's input, while MS
+GraphRAG's reduce reads the key points only (`0`). Global answers with the
+comprehensive prompt by default, modelled on MS GraphRAG's reduce prompt
+(multiple paragraphs, markdown); every other strategy with the concise one
+(`search.answer_prompt_style`, merged over that default). Both defaults are
+measured choices (§9.1).
 
 **Degradation.** A batch whose map call failed or returned unparseable output
 is *unrated*; when no point passed but some reports were never rated, those
@@ -1453,7 +1456,9 @@ default), one search per side of the cited chunks for the query, under the
 request's `search_type`, keeping `related_chunk_number * hits / 2`. A lineage
 is read in chunk-id order, the order a full build stores; an incremental
 merge appends the delta's chunks in arrival order, so reading the stored
-order made the weighted pick depend on how the graph was built.
+order made the weighted pick depend on how the graph was built. `weight`
+stays the default because the two measured no significant difference
+(§9.1).
 
 The independent queries run concurrently, then the expansions, then the cited
 chunks. Short queries without keywords use the raw query as low-level
@@ -1629,7 +1634,21 @@ choices:
   spent (its own scope and timer), so failing cannot make a strategy look
   cheaper or faster by dropping out of the cost; an answer without a measure
   fails a cost gate rather than leaving the delta to the others. Prices are user-supplied
-  (`evaluation.prices`): a shipped table would be stale.
+  (`evaluation.prices`): a shipped table would be stale. Input tokens
+  include the prompt-cache reads and writes, also counted apart
+  (`cache_read_input_tokens`, `cache_write_input_tokens`) and priced at
+  their own rates when a price gives them. A call counts once however many
+  requests botocore sent for it; those resends (`request_retries`, read from
+  `ResponseMetadata.RetryAttempts`) and calls that failed (`failed_calls`)
+  are counted apart, since Bedrock counts each accepted request as an
+  invocation.
+- **The judge is not the answer model.** `models.roles.evaluation` defaults
+  to Opus 5.5 on Bedrock, a model other than the default answer model, since
+  a judge favours its own answers (§9.1); when the answer model is Opus 5.5
+  the unset judge falls back to the default tier's model, else Sonnet 5.5
+  (`Config.judge_model_choice`, logged at INFO). `judge_is_answer_model` in
+  the run manifest and a warning still flag a configured judge that is the
+  answer model.
 - **A comparison is a pure function of saved files.** `paired_comparison`
   reads only the runs' results and reports, so `run-eval --from-results`
   (`evaluation/saved_results.py`) rebuilds it without a model call, an
@@ -1657,6 +1676,32 @@ choices:
   `evaluation.answer_normalization: official_squad` with
   `evaluation.answer_span: extracted` brings EM/F1 close to published
   numbers (a RAG answer still is not a trained reader's span).
+
+### 9.1 Measured defaults
+
+Several defaults were set, or kept, from one real-model evaluation (November
+2026, us-west-2; Sonnet 5.5 answers, Haiku 5.5 fast tier, embedded SQLite
+stores). The index: `prepare-benchmark musique --limit 200 --seed 0`, 200
+questions over 3,318 paragraphs; a 50-question sensemaking set (5 personas x
+5 tasks x 2) for `global` and `drift`; a 109-document slice of 30 questions
+for gleaning. Answers ran twice per arm; intervals are 95% paired bootstrap
+intervals over questions; pairwise verdicts count only when both answer
+orders agree, judged by Opus 5.5, Sonnet 5.5 and GPT-5.5.
+
+| Setting | Default | Measured |
+|---|---|---|
+| `search.answer_prompt_style` | `{global: comprehensive}` (was every strategy concise) | Comprehensive global beat concise on comprehensiveness, diversity and empowerment at 0.95-0.99 win rate with all three judges (position consistency 0.84-0.98), +$0.016 per query, answers 3.2k -> 7.6k characters; lost directness (0.00-0.39). DRIFT won the same way but its p95 latency went 147 s -> 168 s (max 178 s) against the 180 s deadline, so it stays concise |
+| `search.global_search.evidence_tokens` | 4000 (was null, no cap) | -41% cost per global query ($0.1016 -> $0.0597); no criterion consistently different (position consistency 0.43-0.57: the judges could not tell the answers apart; only Opus empowerment 0.41 [0.33, 0.48] left 0.5, not replicated); sources kept. `0`: -49%, also no difference, but no sources |
+| `models.roles.evaluation` | Opus 5.5 on Bedrock (was the default tier, the answer model) | Opus vs Sonnet answers to the same retrieval: the Sonnet judge's directness win rate for Opus answers was 0.27 [0.16, 0.38] lower than GPT-5.5's (self-preference); Sonnet vs Opus judge -0.16 [-0.26, -0.06] |
+| `processing.gleaning.max_rounds` | 3 (kept) | vs 1: intermediate answers found as graph entities 72.0% -> 81.7%, +9.8 points [+3.7, +17.1] (8 of 82 gained, none lost); ingestion +38% ($9.51 -> $13.08 for 109 documents); answers n.s. (local `answer_contains` +13.3 points [-3.3, +33.3]) |
+| `search.lightrag_search.kg_chunk_pick_method` | `weight` (kept) | `vector`: mix `answer_contains` -1.5 points [-4.5, +1.25], hybrid -1.25 [-4.5, +2.0], n.s.; +1.5 s latency |
+| `search.fusion.diversity_lambda` | 0.5 (kept) | 0.7: mix `answer_contains` -1.0 [-3.75, +1.5]; 1.0: -2.25 [-5.25, +0.5], n.s. (MRR +0.9 points [+0.05, +2.15] at 1.0, small) |
+
+Pairwise LLM judges favour the longer answer, so the comprehensive-answer
+win rates measure coverage more than quality for every reader; the
+directness loss is the cost, and `{global: concise}` keeps the earlier
+answers. The evidence cap and the judge are pure cost and reliability
+changes.
 
 ---
 

@@ -1049,12 +1049,29 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     assert comparison["pairwise_vs_baseline"] == {"mix": judged}
 
 
+def test_eval_runner_logs_the_judge_it_falls_back_to(config, caplog, tmp_path) -> None:
+    import logging
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.RAGAS]
+    config.models.roles.answer_generation = "anthropic.claude-opus-5-5"
+    data = tmp_path / "eval.json"
+    data.write_text('[{"question": "Who ships?", "answer": "Vendor"}]')
+    args = _eval_parser().parse_args(["--data-path", str(data)])
+    with caplog.at_level(logging.INFO):
+        run_evaluation.EvaluationRunner(args, object(), config)
+    (line,) = [r.getMessage() for r in caplog.records if "LLM judge" in r.getMessage()]
+    assert line.startswith(f"LLM judge: {config.tier_model_id('default')} (")
+    assert "is the answer model" in line
+
+
 async def test_eval_runner_json_reports_judge_reliability_and_categories(
     config, mocker, tmp_path, capsys
 ) -> None:
     import json
 
     config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    # The judge of earlier versions: the answer model's tier.
+    config.models.roles.evaluation = "default"
     mocker.patch.object(run_evaluation, "display_ascii_art")
     judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
     judged = {
@@ -1103,7 +1120,7 @@ async def test_eval_runner_json_reports_judge_reliability_and_categories(
     comparison = payload["comparison"]
     assert set(comparison["deltas_by_category"]["mix"]) == {"1hop", "2hop"}
     warnings = " ".join(comparison["warnings"])
-    # The default judge is the answer model, and this one decides by position.
+    # This judge is the answer model, and it decides by position.
     assert "pairwise judge is the answer model" in warnings
     assert "agreed on 0% of the verdicts" in warnings
     assert comparison["run_manifest"]["models"]["judge_is_answer_model"] is True

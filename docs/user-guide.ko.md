@@ -75,7 +75,8 @@ AWS 모드에만 해당합니다. [로컬 모드](#로컬-모드-aws-없이)에�
 
 | 역할 | 기본 모델 ID | 설정 키 |
 |---|---|---|
-| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변, 판정 모델) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| `run-eval` LLM 판정 모델(LLM 판정을 실행할 때만) | `anthropic.claude-opus-5-5` | `models.roles.evaluation` |
 | 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `models.fast` |
 | 임베딩(인덱싱, 질의, 평가) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
 | 재순위화 | `cohere.rerank-v3-5:0` | `models.rerank` |
@@ -399,7 +400,7 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 
 | 계층 | 역할 |
 | --- | --- |
-| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` |
+| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation`(Bedrock이 아닌 공급자일 때. 아래 참고) |
 | `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
 
 ```yaml
@@ -410,6 +411,20 @@ models:
     query_rewrite: default                          # moved to the other tier
 ```
 
+- **판정 모델은 따로 둡니다.** Bedrock에서 `models.roles.evaluation`을 비워 두면 기본
+  계층이 아니라 `anthropic.claude-opus-5-5`를 씁니다. LLM 판정 모델은 자기 답변을 선호하기
+  때문입니다. global 질문 50개로 측정했을 때, Sonnet 5.5가 자기 답변과 Opus 5.5 답변을
+  판정하면 GPT-5.5 판정 모델보다 directness 승률이 -0.27 [-0.38, -0.16] 달라졌습니다.
+  Opus 5.5는 토큰당 Sonnet 5.5의 약 두 배입니다(온디맨드, us-west-2, 2026년 11월 기준 입력 /
+  출력 100만 토큰당 $4 / $20, Sonnet 5.5는 $2 / $10). 이 모델은 `run-eval`의 LLM 판정만
+  호출합니다. 답변 모델이 Opus 5.5이면 비워 둔 판정 모델은 기본 계층의 모델로, 그것도 답변
+  모델이면 Sonnet 5.5로 바뀌며, `run-eval`이 고른 판정 모델과 이유를 INFO로 기록합니다. 이전
+  판정 모델(답변 모델)을 쓰려면 `models.roles.evaluation: default`로 두세요(`run-eval`이 자기
+  답변을 판정한다고 경고하며, 답변 모델과 같은 판정 모델을 직접 지정하면 언제나 경고합니다).
+  계정이나 리전에서 Opus 5.5를 쓸 수 없으면 다른 모델을 지정하세요. 다른 공급자에서는 판정
+  모델이 `default` 계층에 그대로 남습니다(자기 답변을 판정하면 경고함). CDK 스택은 기본으로
+  모든 Bedrock 모델을 허용하며, `bedrock_model_arns`로 범위를 좁혔다면 판정 모델도 목록에
+  넣어야 합니다.
 - 임베딩 모델(`models.embedding.model_id`)은 인덱스, 질의, RAGAS에 함께
   쓰이며, 이 모델이나 `dimension`을 바꾸면 다시 인덱싱해야 합니다. Bedrock에서는 임베딩과
   재순위화 모델 ID를 정해진 목록에서만 고르고([모델 카탈로그](./models.md#model-ids-and-capability-records)),
@@ -587,7 +602,9 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
 모델 사용량은 추적을 켜든 끄든 셉니다. 팩터리가 만드는 모든 채팅 모델이 호출마다
 응답이 알려 준 토큰 수를 그 호출을 한 질의나 수집 단계에 기록합니다.
 `RAGOutput.metadata["usage"]`(`SearchOutput.metadata["usage"]`도 같음)에는 질의의
-`llm_calls`, `input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`와 같은 값을 `by_role`(모델 용도:
+`llm_calls`, `input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`,
+`cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`, `failed_calls`와
+같은 값을 `by_role`(모델 용도:
 `query`, `ingestion`, `evaluation`)과 `by_model`(팩터리가 확정한 모델 ID)별로 나눈 값이
 있습니다. `run-ingestion --output-format json`은 `token_usage`(이번 실행이 수행한 단계의 합계와
 `stages.<stage>`)를 보고하고, `--metrics-sink cloudwatch`는 단계별로 내보내며
@@ -595,7 +612,15 @@ extra(`uv sync --extra otel`)가 필요합니다. extra 없이 추적을 켜면 
 실행별(`summary.usage`)로 기록합니다. 수집 응답 캐시가 돌려준 응답, 추출 저장소가 돌려준 청크
 경계 응답, 체인의 추출 캐시
 (`search.query_extraction_cache_size`)가 돌려준 질의 엔터티·키워드 추출은 호출이 아니라 캐시
-적중으로 세고, 실패한 호출은 세지 않으며 재시도는 셉니다. 사용량을 읽을 때 아직 응답하지 않은
+적중으로 세고, 실패한 호출은 `llm_calls`가 아니라 `failed_calls`에 세며 재시도는 호출로
+셉니다. `input_tokens`에는 프롬프트 캐시 읽기·쓰기 토큰이 들어 있으며, 과금 단가가 다르므로
+따로도 셉니다(`cache_read_input_tokens`, `cache_write_input_tokens`. Bedrock의
+`cacheReadInputTokens` / `cacheWriteInputTokens`). `request_retries`는 botocore가 호출
+하나 안에서 다시 보낸 요청 수(`RetryAttempts`)입니다. 이 호출은 `llm_calls`에 한 번만
+들어가지만, 읽기 시간 초과나 서버 오류 뒤에 다시 보낸 요청은 그 자체로 Bedrock 호출(invocation)
+입니다(스로틀링 뒤에 다시 보낸 요청은 아님). 그래서 CloudWatch의 `Invocations`는
+`llm_calls`보다 최대 `request_retries + failed_calls`만큼, 그리고 사용량 범위 밖에서 한
+호출(`run-eval` 예열 질의)만큼 많을 수 있습니다. 사용량을 읽을 때 아직 응답하지 않은
 호출(백그라운드에서 실행 중인 `auto` 질의의 미사용 추출)이나 `search.query_timeout_seconds`
 등으로 실행 중에 취소된 호출은 요청이 이미 전송되어 과금되므로 `llm_calls`와
 `estimated_calls`에 세고, 입력 토큰은 프롬프트로 추정하며 출력 토큰은 0으로 둡니다. 나중에
@@ -822,31 +847,52 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 `search.lightrag_search.kg_chunk_pick_method`는 항목마다 어떤 청크를 고를지 정합니다.
 `weight`(기본값)는 찾은 항목마다 감소하는 비율로 `related_chunk_number`개씩 배정하고,
 `vector`는 upstream LightRAG의 기본값처럼 인용된 청크 중 질의와 가장 잘 맞는 청크를
-엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 평가로 두 방식을 비교하기 전까지
-기본값은 `weight`입니다.
+엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 기본값은 `weight` 그대로입니다. MuSiQue
+질문 200개(반복 2회)에서 `vector`는 유의한 차이가 없었고(mix `answer_contains` -1.5점
+[-4.5, +1.25], hybrid -1.25점 [-4.5, +2.0]) 질의당 지연 시간만 약 1.5초 늘었습니다. MMR의
+`search.fusion.diversity_lambda`도 같은 이유로 0.5를 유지합니다. mix에서 0.7과 1.0은 유의한
+차이가 없었습니다(`answer_contains` -1.0점 [-3.75, +1.5], -2.25점 [-5.25, +0.5]. 유일하게
+유의한 차이인 1.0의 MRR +0.9점 [+0.05, +2.15]도 작습니다).
 
 ### 답변 형식
 
-모든 전략은 기본으로 간결한 답변 프롬프트를 씁니다. 한 문장으로 바로 답한 뒤 근거를
-짧게 붙입니다(`custom_prompts.answer_generation_*`). `search.answer_prompt_style`로
-전략별로 포괄적(comprehensive) 프롬프트를 고를 수 있습니다. MS GraphRAG의 global reduce
+`global`은 기본으로 포괄적(comprehensive) 답변 프롬프트를, 나머지 전략은 간결한 프롬프트를
+씁니다. 간결한 프롬프트는 한 문장으로 바로 답한 뒤 근거를 짧게 붙입니다
+(`custom_prompts.answer_generation_*`). 포괄적 프롬프트는 MS GraphRAG의 global reduce
 프롬프트를 본뜬 것으로, 핵심 내용을 모두 설명하는 여러 문단의 마크다운 답변을
-씁니다(`custom_prompts.comprehensive_answer_*`).
+씁니다(`custom_prompts.comprehensive_answer_*`). `search.answer_prompt_style`은 이 기본값
+위에 합쳐지므로 한 전략만 지정해도 나머지는 그대로입니다.
 
 ```yaml
 search:
-  answer_prompt_style: {global: comprehensive, drift: comprehensive}
+  answer_prompt_style: {drift: comprehensive}   # global stays comprehensive
+  query_timeout_seconds: 300                    # see below
+# answer_prompt_style: {global: concise}        # the default before
 ```
 
-`auto`는 분기한 전략의 형식을 따릅니다. 평가로 두 형식을 비교하기 전까지 간결한 형식이
-기본값입니다. `answer_match` 점수는 제목이 아닌 첫 줄을 읽으므로(`evaluation.answer_span`)
+근거. MuSiQue 문서 3,318개로 만든 코퍼스에서 의미 파악(sensemaking) 질문 50개로 측정했을 때,
+포괄적 global 답변은 간결한 답변보다 포괄성, 다양성, 역량 강화(empowerment)에서 맞비교 판정
+모델 세 개(Opus 5.5, Sonnet 5.5, GPT-5.5) 모두 0.95-0.99의 승률을 보였고, 비용은 질의당
++$0.016(답변 3.2천 자 -> 7.6천 자)이었습니다. 대신 직접성(directness)에서는 졌고(승률
+0.00-0.39), 맞비교 LLM 판정은 긴 답변을 선호하는 경향이 있으므로 이 승률은 "더 많이 다룬다"는
+뜻이지 모든 독자에게 낫다는 뜻은 아닙니다. 짧은 답을 원하면 `{global: concise}`를 유지하세요.
+`drift`도 같은 결과였지만(포괄성 1.00, 직접성 0.03-0.04) 기본값은 간결한 형식입니다. p95 지연
+시간이 147초에서 168초로, 최대 178초로 늘어 기본 `search.query_timeout_seconds` 180초에
+가까웠기 때문입니다. `{drift: comprehensive}`를 쓰면 이 마감 시간을 늘리세요(300초면
+여유가 있습니다. [운영 런북](./operations.md#query-deadlines-and-model-timeouts)).
+
+`auto`는 분기한 전략의 형식을 따릅니다. `answer_match` 점수는 제목이 아닌 첫 줄을 읽으므로(`evaluation.answer_span`)
 포괄적 답변은 품질과 관계없이 정확 일치(exact match) 점수가 낮게 나옵니다.
 
 global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 리포트를 붙여 답변 모델에
 넘깁니다. `search.global_search.evidence_tokens`는 이 리포트 본문의 토큰 수를 제한합니다
-(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). null(기본값)은 컨텍스트 예산이
-허용하는 만큼 넣으며, 단면이 크면 global 질의 입력 토큰의 대부분을 차지합니다. `0`은 MS
-GraphRAG의 reduce 단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
+(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). 기본값은 4000입니다. 같은 질문
+50개에서 제한이 없을 때보다 global 질의 비용이 41% 줄었고($0.1016 -> $0.0597), 판정 모델 세
+개 모두 답변을 구별하지 못했으며(위치 일관성 0.43-0.57. Opus 5.5의 역량 강화 0.41 [0.33,
+0.48]만 0.5를 벗어났고 다른 두 판정 모델에서는 재현되지 않음) 답변은 출처를 유지합니다.
+`null`(이전 기본값)은 컨텍스트 예산이 허용하는 만큼 넣으며, 단면이 크면 global 질의 입력
+토큰의 대부분을 차지합니다. `0`(비용 -49%, 역시 측정된 차이 없음)은 MS GraphRAG의 reduce
+단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
 내용은 모델 출력이기 때문입니다). 그래서 `retrieval` 평가기는 global 질의의 순위 지표를 0점
 처리하지 않고 건너뜁니다(`no_sources_by_config`).
 
@@ -1446,8 +1492,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 - `run_manifest`: 무엇을 측정했는지 기록하므로 두 실행을 비교할 수 있습니다.
   - CLI 인자(URL은 자격 정보를 뺌), 버전, `git_sha` / `git_dirty`, 데이터셋(경로, 해시,
     질의 수), UTC 타임스탬프, `dropped_evaluators`
-  - 모델 ID와 `judge_is_answer_model`(심사 모델이 답변 모델이면, 즉 기본값이면 심사
-    점수가 부풀려지므로 시스템을 비교할 때는 `models.roles.evaluation`을 다른 모델로 두세요).
+  - 모델 ID와 `judge_is_answer_model`(심사 모델이 답변 모델이면 심사 점수가 부풀려집니다.
+    Bedrock의 기본 심사 모델인 Opus 5.5는 기본 답변 모델과 다르고, 답변 모델이 Opus 5.5이면
+    다른 모델로 바뀝니다. 답변 모델과 같은 `models.roles.evaluation`을 직접 지정하면(`default`
+    등) 그대로 쓰고 경고합니다).
     비교의 `--pairwise-judge`도 심사 모델로 세며, `pairwise_judge`에 그 설정이 기록됩니다.
   - `answer_scoring`: exact match와 token F1에 쓴 `answer_span`과
     `answer_normalization`(`answer_match` 사용 시), `models.answer_span`은 구간을 추출한
@@ -1536,7 +1584,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `run-eval`은 전략마다 첫 실행 전에 그 전략으로 합성 질의 하나에 답하며, 이 질의는 시간을
   재지 않고 채점하지 않으며 사용량에도 넣지 않습니다(`evaluation.warm_up_query`, 기본값
   `true`). 그래서 첫 전략의 지연 시간에 저장소 연결을 열고 모델을 처음 호출하는 시간이 들어가지
-  않습니다. 전략마다 질의 하나(그 모델 호출)만큼 비용이 더 들며, `false`로 끌 수 있습니다.
+  않습니다. 실행마다 전략당 질의 하나(그 모델 호출)만큼 비용이 더 들며, 이 비용은 실행의
+사용량에도 USD 추정치에도 들어가지 않습니다(Bedrock 청구에는 들어감). `false`로 끌 수 있습니다.
 - 첫 실행의 `run_manifest`. `--pairwise-judge`를 쓰면 `pairwise_judge_model`과 판정 모델의
   `pairwise_usage`도 있습니다.
 
@@ -1548,14 +1597,25 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 [Amazon Bedrock 가격](https://aws.amazon.com/bedrock/pricing/)을 100만 토큰 단위로,
 사용량 기록이 쓰는 모델 ID(`usage.by_model`. 팩터리가 추론 프로필을 확정했으면
 `global.<model>` 같은 프로필 ID)를 키로 채우세요. 가격이 없는 모델을 쓴 답변은 추정치가
-없고 비교가 경고합니다.
+없고 비교가 경고합니다. `input_tokens`에는 프롬프트 캐시 읽기·쓰기 토큰이 들어 있습니다.
+그 단가(`cache_read_per_million_tokens`, `cache_write_per_million_tokens`)를 주면 따로
+계산하고, 없으면 입력 단가로 계산합니다(Claude에서 캐시 읽기는 입력의 10분의 1이므로 상한값).
 
 ```yaml
 evaluation:
   prices:
-    "global.<answer-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "global.<answer-model-id>":
+      input_per_million_tokens: 0.0
+      output_per_million_tokens: 0.0
+      cache_read_per_million_tokens: 0.0
+      cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
 ```
+
+추정치는 사용량에 기록된 호출만 다룹니다. botocore가 다시 보낸 요청(`request_retries`), 실패한
+호출(`failed_calls`), 예열 질의는 가격에 들어가지 않으므로 CloudWatch 호출 수와 청구액이 조금
+더 많을 수 있습니다(패키지의 2026년 11월 벤치마크 실행에서 Sonnet 5.5는 기록된 호출보다
+호출 수가 13% 많았고 입력 토큰은 4.6%, 출력 토큰은 0.9% 이내였으며, Haiku 5.5는 0.2% 이내).
 
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준은 모든 실행에 적용됩니다.
 
@@ -2852,6 +2912,13 @@ JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'e
 `max_rounds`회), 커뮤니티 리포트, 주장(텍스트 단위당 1회, 기본은 꺼짐), 질의마다의 답변
 생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
 gleaning 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
+
+이 중 가장 큰 것은 gleaning입니다. `processing.gleaning.max_rounds`는 3을 유지합니다. MuSiQue
+문서 109개 일부에서 1회 대비 3회는 질문의 중간(bridge) 답이 그래프 엔터티로 들어간 비율을
+72.0%에서 81.7%로 높였고(+9.8점 [+3.7, +17.1]) 수집 비용은 38% 늘었습니다($13.08 대
+$9.51. gleaning만 $5.74 대 $2.49). 답변은 유의한 차이가 없었습니다(질문 30개에서 local
+`answer_contains` +13.3점 [-3.3, +33.3]). 그래프 재현율보다 수집 비용이 중요하면
+`max_rounds: 1`(MS GraphRAG 기본값)로 두세요.
 
 ---
 

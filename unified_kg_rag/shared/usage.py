@@ -21,14 +21,20 @@ served, is a cache hit, not a call: it spends no tokens.
 A call counts from the moment it starts (:func:`start_llm_call`), at an
 estimate of its input tokens, and is settled when it ends: a returned call
 by the tokens its response reports, a failed one (it returned no usage) is
-taken back out. A call that has not ended when a scope is read (one still
-running in the background, as an auto query's unread speculative
+taken back out of ``llm_calls`` and counted in ``failed_calls``. A call
+that has not ended when a scope is read (one still running in the
+background, as an auto query's unread speculative
 extraction, or one cancelled in flight by a query deadline) counts with its
 estimated input tokens and no output tokens, in ``estimated_calls`` as well
 as ``llm_calls``: its request was sent (a cancelled task does not stop a
 Bedrock call running on a worker thread), so it is billed. One that ends
 later settles in the scopes still open (a ``run-eval`` run's); a snapshot
-already taken keeps the estimate. Retries are calls too.
+already taken keeps the estimate. Retries are calls too, but the requests
+the SDK resends inside one call (botocore's own retries) are not: they are
+counted apart, in ``request_retries``. ``input_tokens`` includes the prompt
+cache reads and writes, also counted apart
+(``cache_read_input_tokens`` / ``cache_write_input_tokens``) since they are
+billed at other rates.
 
 The scope is a ``contextvars`` value, so it follows the code into the tasks
 and threads it hands its context to (``asyncio`` tasks, ``to_thread``, the
@@ -65,6 +71,10 @@ COUNT_FIELDS: tuple[str, ...] = (
     "output_tokens",
     "cache_hits",
     "estimated_calls",
+    "cache_read_input_tokens",
+    "cache_write_input_tokens",
+    "request_retries",
+    "failed_calls",
 )
 
 # Set in the ``generation_info`` of a response the LLM response cache served,
@@ -81,6 +91,10 @@ class _Counts:
     output_tokens: int = 0
     cache_hits: int = 0
     estimated_calls: int = 0
+    cache_read_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+    request_retries: int = 0
+    failed_calls: int = 0
 
     def add(self, other: _Counts) -> None:
         for name in COUNT_FIELDS:
@@ -182,19 +196,37 @@ class LLMCall:
         )
         _add_to(self._meter, self._role, self._model, delta)
 
-    def finish(self, *, input_tokens: int, output_tokens: int) -> None:
-        """The call returned, reporting these tokens."""
+    def finish(
+        self,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_input_tokens: int = 0,
+        cache_write_input_tokens: int = 0,
+        request_retries: int = 0,
+    ) -> None:
+        """The call returned, reporting these tokens (``input_tokens``
+        includes the cache reads and writes) after ``request_retries``
+        resent requests."""
         self._settle(
-            _Counts(llm_calls=1, input_tokens=input_tokens, output_tokens=output_tokens)
+            _Counts(
+                llm_calls=1,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_write_input_tokens=cache_write_input_tokens,
+                request_retries=request_retries,
+            )
         )
 
     def served_from_cache(self) -> None:
         """The LLM response cache answered: a cache hit, not a call."""
         self._settle(_Counts(cache_hits=1))
 
-    def fail(self) -> None:
-        """The call failed and returned no usage: not a call."""
-        self._settle(_Counts())
+    def fail(self, *, request_retries: int = 0) -> None:
+        """The call failed and returned no usage: not a call, but a failed
+        one (``failed_calls``), after ``request_retries`` resent requests."""
+        self._settle(_Counts(failed_calls=1, request_retries=request_retries))
 
 
 def start_llm_call(role: str, model: str, *, estimated_input_tokens: int) -> LLMCall:
@@ -204,13 +236,27 @@ def start_llm_call(role: str, model: str, *, estimated_input_tokens: int) -> LLM
 
 
 def record_llm_call(
-    role: str, model: str, *, input_tokens: int, output_tokens: int
+    role: str,
+    model: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int = 0,
+    cache_write_input_tokens: int = 0,
+    request_retries: int = 0,
 ) -> None:
     """Record one finished model call that was not counted at its start."""
     _record(
         role,
         model,
-        _Counts(llm_calls=1, input_tokens=input_tokens, output_tokens=output_tokens),
+        _Counts(
+            llm_calls=1,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
+            request_retries=request_retries,
+        ),
     )
 
 

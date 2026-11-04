@@ -322,9 +322,13 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.auto_speculative_extraction` | (fixed: after the router) | `true`: `auto` extracts alongside the router call (#525) |
 | `search.query_extraction_cache_size` | (none: no cache) | 1024; 0 turns it off (#525) |
 | `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
+| `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#PR) |
+| `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#PR) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | also `answer_match`, `retrieval`, `graph_aware` (#121) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
+| `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
+| `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#PR) |
 | `logging.log_to_file` | `true` | `false` (#520) |
 
 Behaviour.
@@ -1205,6 +1209,40 @@ From 0.2.3 (or a `main` checkout since):
   change once, not on every run): a no-op incremental run writes nothing
   but its lease, with 29 store calls instead of 56, and a one-chunk edit
   looks up 6 aliases instead of 61 (#527, #531).
+- Defaults from a real-model evaluation (MuSiQue, 200 questions over 3,318
+  documents, a 50-question sensemaking set, two repeats, three pairwise
+  judges; design §9.1). `global` answers with the comprehensive prompt: it
+  won comprehensiveness, diversity and empowerment at 0.95-0.99 with every
+  judge for +$0.016 per query, and lost directness (0.00-0.39); pairwise
+  judges favour longer answers. `drift` stays concise (comprehensive p95
+  168 s, max 178 s, against the 180 s deadline): with `{drift:
+  comprehensive}` raise `search.query_timeout_seconds` (300 s). A
+  configured `search.answer_prompt_style` is merged over the default.
+  `search.global_search.evidence_tokens` is 4000: -41% cost per global
+  query ($0.1016 -> $0.0597), no consistent quality difference, sources
+  kept. The `run-eval` judge (`models.roles.evaluation`) is Opus 5.5 on
+  Bedrock, not the answer model: a judge judging its own answers shifted
+  directness by -0.27 [-0.38, -0.16]. When the answer model is Opus 5.5
+  the unset judge falls back to the default tier's model or Sonnet 5.5
+  (logged at INFO); a configured judge that is the answer model is kept and
+  warned about. The CDK stack's default Bedrock grant is unscoped, so it
+  covers the judge. Kept, with the measurement documented: gleaning `max_rounds` 3
+  (+9.8 points [+3.7, +17.1] of the questions' intermediate answers in the
+  graph, +38% ingestion cost; `1` is the cost lever), `kg_chunk_pick_method:
+  weight` and `diversity_lambda` 0.5 (no significant difference) (#PR).
+- Usage records count prompt-cache reads and writes apart
+  (`cache_read_input_tokens`, `cache_write_input_tokens`; still part of
+  `input_tokens`), the requests botocore resent inside a call
+  (`request_retries`) and calls that failed (`failed_calls`, not in
+  `llm_calls`). `evaluation.prices` takes `cache_read_per_million_tokens`
+  and `cache_write_per_million_tokens`, so a cached run's USD estimate is no
+  longer priced at the input rate. Bedrock's `Invocations` counted 13% more
+  Sonnet calls than the meter in the evaluation above (tokens within 4.6%),
+  most likely resends and failed requests (counted now) and unscoped calls
+  such as the warm-up queries; the runbook's model usage metrics explain how
+  to reconcile them. A per-TTL cache write
+  (`ephemeral_5m/1h_input_tokens`) is no longer lost from the traces'
+  `gen_ai.usage.cache_creation.input_tokens` (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

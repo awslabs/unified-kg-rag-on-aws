@@ -329,6 +329,49 @@ class TokenUsage(NamedTuple):
     reasoning: int = 0
 
 
+def _cache_write_tokens(input_details: Mapping[str, Any]) -> int:
+    """The prompt-cache write tokens of a usage's ``input_token_details``.
+
+    ``cache_creation`` is the total, except that langchain-aws's Converse
+    parser zeroes it when Bedrock reports a per-TTL ``cacheDetails``
+    breakdown and reports the writes as ``ephemeral_5m_input_tokens`` /
+    ``ephemeral_1h_input_tokens`` instead (langchain-anthropic reports both,
+    the breakdown being part of the total)."""
+    total = int(input_details.get("cache_creation") or 0)
+    if total:
+        return total
+    return int(input_details.get("ephemeral_5m_input_tokens") or 0) + int(
+        input_details.get("ephemeral_1h_input_tokens") or 0
+    )
+
+
+def _retry_attempts(metadata: Any) -> int:
+    """botocore's ``ResponseMetadata.RetryAttempts`` in ``metadata`` (a
+    response's metadata or a ``ClientError.response``), else 0."""
+    if not isinstance(metadata, Mapping):
+        return 0
+    attempts = (metadata.get("ResponseMetadata") or {}).get("RetryAttempts")
+    return attempts if isinstance(attempts, int) and attempts > 0 else 0
+
+
+def response_retry_attempts(response: LLMResult) -> int:
+    """The requests the SDK resent before ``response`` came back (botocore's
+    retries inside one call), summed over its generations; 0 when the
+    provider does not report them."""
+    return sum(
+        _retry_attempts(getattr(generation.message, "response_metadata", None))
+        for generations in response.generations
+        for generation in generations
+        if isinstance(generation, ChatGeneration)
+    )
+
+
+def error_retry_attempts(error: BaseException) -> int:
+    """The requests botocore resent before giving up with ``error`` (a
+    ``ClientError`` carries its response metadata), else 0."""
+    return _retry_attempts(getattr(error, "response", None))
+
+
 def response_token_usage(response: LLMResult) -> TokenUsage | None:
     """The token usage ``response`` reports, summed over its generations;
     ``None`` when it reports none.
@@ -349,7 +392,7 @@ def response_token_usage(response: LLMResult) -> TokenUsage | None:
                 output_tokens += int(usage.get("output_tokens") or 0)
                 input_details = usage.get("input_token_details") or {}
                 cache_read += int(input_details.get("cache_read") or 0)
-                cache_creation += int(input_details.get("cache_creation") or 0)
+                cache_creation += _cache_write_tokens(input_details)
                 output_details = usage.get("output_token_details") or {}
                 reasoning += int(output_details.get("reasoning") or 0)
     if has_usage:

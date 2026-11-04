@@ -13,13 +13,46 @@ class LLMUsageCounts(BaseModel):
     input_tokens: int = Field(
         default=0,
         description=(
-            "Input tokens the calls reported; a cancelled call's are estimated "
-            "from its prompt."
+            "Input tokens the calls reported, prompt-cache reads and writes "
+            "included; a cancelled call's are estimated from its prompt."
         ),
     )
     output_tokens: int = Field(
         default=0,
         description="Output tokens they reported (none for a cancelled call).",
+    )
+    cache_read_input_tokens: int = Field(
+        default=0,
+        description=(
+            "Of input_tokens, those read from the provider's prompt cache "
+            "(Bedrock cacheReadInputTokens), billed at a lower rate."
+        ),
+    )
+    cache_write_input_tokens: int = Field(
+        default=0,
+        description=(
+            "Of input_tokens, those written to the provider's prompt cache "
+            "(Bedrock cacheWriteInputTokens), billed at a higher rate."
+        ),
+    )
+    request_retries: int = Field(
+        default=0,
+        description=(
+            "Requests the SDK resent within the calls (botocore's "
+            "ResponseMetadata.RetryAttempts, failed calls included): each "
+            "call counts once in llm_calls however many requests it took. A "
+            "resent throttled request is not a Bedrock invocation; one "
+            "resent after a read timeout or a server error is, and may be "
+            "billed."
+        ),
+    )
+    failed_calls: int = Field(
+        default=0,
+        description=(
+            "Calls that ended in an error and reported no usage; not in "
+            "llm_calls. A request Bedrock accepted and then failed still "
+            "counts as an invocation in CloudWatch."
+        ),
     )
     cache_hits: int = Field(
         default=0,

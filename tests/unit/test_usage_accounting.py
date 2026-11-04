@@ -139,6 +139,10 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "output_tokens": 0,
             "cache_hits": 1,
             "estimated_calls": 0,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "request_retries": 0,
+            "failed_calls": 0,
         }
     }
 
@@ -188,6 +192,72 @@ def test_the_handler_reads_both_usage_shapes_and_early_stream_ends() -> None:
     assert snapshot["output_tokens"] == 6
     assert list(snapshot["by_model"]) == ["vendor.model-v1"]
     assert list(snapshot["by_role"]) == ["evaluation"]
+
+
+def _converse_result(
+    details: dict[str, int], *, input_tokens: int, retries: int = 0
+) -> LLMResult:
+    # The shape langchain-aws's Converse parser gives: input_tokens includes
+    # the cache reads and writes, and the boto response's metadata rides along.
+    return _result(
+        content="x",
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": 7,
+            "total_tokens": input_tokens + 7,
+            "input_token_details": details,
+        },
+        response_metadata={"ResponseMetadata": {"RetryAttempts": retries}},
+    )
+
+
+def test_the_handler_counts_cache_tokens_retries_and_failed_calls() -> None:
+    # Cache reads were counted as plain input (priced at the input rate) and
+    # botocore's retries and failed calls not at all, so the meter fell
+    # short of Bedrock's invocation count.
+    from botocore.exceptions import ClientError
+
+    handler = UsageCallbackHandler("vendor.model-v1", role="ingestion")
+    with usage.usage_scope() as meter:
+        handler.on_llm_end(
+            _converse_result(
+                {"cache_read": 800, "cache_creation": 50}, input_tokens=1000, retries=2
+            ),
+            run_id=uuid4(),
+        )
+        # With a per-TTL cacheDetails breakdown the parser zeroes
+        # cache_creation and reports the writes per TTL.
+        handler.on_llm_end(
+            _converse_result(
+                {
+                    "cache_read": 0,
+                    "cache_creation": 0,
+                    "ephemeral_5m_input_tokens": 30,
+                    "ephemeral_1h_input_tokens": 20,
+                },
+                input_tokens=100,
+            ),
+            run_id=uuid4(),
+        )
+        failed = uuid4()
+        handler.on_chat_model_start({}, [[HumanMessage(content="q")]], run_id=failed)
+        error = ClientError(
+            {
+                "Error": {"Code": "ServiceUnavailableException", "Message": "busy"},
+                "ResponseMetadata": {"RetryAttempts": 5},
+            },
+            "Converse",
+        )
+        handler.on_llm_error(error, run_id=failed)
+    snapshot = meter.snapshot()
+    assert (snapshot["llm_calls"], snapshot["input_tokens"]) == (2, 1100)
+    assert snapshot["cache_read_input_tokens"] == 800
+    assert snapshot["cache_write_input_tokens"] == 100
+    assert snapshot["request_retries"] == 7
+    assert snapshot["failed_calls"] == 1
+    assert snapshot["estimated_calls"] == 0
+    model = LLMUsage.model_validate(snapshot).by_model["vendor.model-v1"]
+    assert (model.cache_read_input_tokens, model.failed_calls) == (800, 1)
 
 
 def test_bedrock_models_get_the_usage_handler_with_tracing_off(mocker) -> None:
