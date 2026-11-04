@@ -955,7 +955,7 @@ From 0.2.3 (or a `main` checkout since):
   timer), so a strategy is not cheaper or faster for failing; repeat counts
   or cache hits per answer that differ from the baseline's are warned
   about. It is also written as per-query CSV and Markdown, with the
-  pairwise judge's win rates (#526, #PR).
+  pairwise judge's win rates (#526, #529).
 - `run-eval --from-results` rebuilds a comparison from saved runs without an
   answer call (finishing an interrupted comparison by running only the
   missing strategies with the same `--repeats`), and re-judges them with
@@ -969,11 +969,11 @@ From 0.2.3 (or a `main` checkout since):
   configuration hash, the commit, the index or the answer model, saved runs
   without a summary, extracted answer spans that fell back to the first
   line, an output directory that is the baseline's and a `--judge-model`
-  that judges nothing are warned about (#526, #PR).
+  that judges nothing are warned about (#526, #529).
 - `evaluation.warm_up_query` (default `true`): `run-eval` answers one
   untimed, unscored synthetic query per strategy before its first timed
   run, so the first strategy's latency does not include warming the stores
-  and models; it costs one extra query per strategy (#PR).
+  and models; it costs one extra query per strategy (#529).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
