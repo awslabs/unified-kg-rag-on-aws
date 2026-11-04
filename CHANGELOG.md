@@ -1346,7 +1346,7 @@ From 0.2.3 (or a `main` checkout since):
   warnings ("Cannot calculate statistics for an empty graph", "Community
   detection skipped…", "No communities provided for report generation"). A
   full build, or a delta whose documents state no entity, still warns
-  (#PR).
+  (#545).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1754,7 +1754,7 @@ Deployment (CDK).
   re-extracts nothing. A unit record stored before keeps its key under the
   default summary settings; one stored under others is found under the key
   it was stored under and stored under the current one, so the first reset
-  re-extracts nothing either (#541, #PR).
+  re-extracts nothing either (#541, #545).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
