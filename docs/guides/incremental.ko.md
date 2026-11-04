@@ -135,9 +135,9 @@ against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
 어느 신호든, 전역 검색이 덧붙인 커뮤니티의 리포트를 원래 리포트 옆에 함께 매핑하고 있고
 그 리포트에는 이후 실행이 더한 내용이 빠져 있다는 뜻입니다(`outdated_reports`라면 제거된
 내용을 아직 서술할 수 있습니다). `indexing.reset: true`로 한 번 실행하세요
-([재구축](#재구축-indexingreset)). 주로 다르게 군집화한 커뮤니티만 모델에 묻고(비용 측정
-하네스에서 증분 실행 23번 뒤 17-20번 호출, 첫 빌드는 197번), 카운터는 그 빌드부터 다시
-셉니다. [작업 흐름](#작업-흐름)에서 증분 실행을 멈추게 하는 설정 변경 뒤에도 재구축이
+([재구축](#재구축-indexingreset)). 주로 다르게 군집화한 커뮤니티만 모델에 묻고
+([측정 결과](../concepts/defaults-and-evidence.md#reset-cost-after-incremental-runs)(영문)),
+카운터는 그 빌드부터 다시 셉니다. [작업 흐름](#작업-흐름)에서 증분 실행을 멈추게 하는 설정 변경 뒤에도 재구축이
 필요합니다. CDK 대시보드는 `community_rebuild_recommended`, `community_growth_ratio`,
 `runs_since_clustering`을 그래프로 보여 주지만 이를 감시하는 경보는 없습니다
 ([운영 런북: 경보](../operations.md#alarms)(영문)).

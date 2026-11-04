@@ -56,7 +56,7 @@ attempt count includes the first attempt; `1` disables the retry.
 | `providers.doc_status.enabled` | `false` | [Incremental indexing](../guides/incremental.md) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | Other models ([notes](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | Lower on `ThrottlingException` retries, raise if quota allows |
-| `processing.graph_extraction.entity_types` | 7 generic types | [Domain adaptation](../user-guide.md#9-domain-adaptation) |
+| `processing.graph_extraction.entity_types` | 7 generic types | [Domain adaptation](./domain-adaptation.md#entity-types) |
 | `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](./multilingual.md)) |
 | `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
 | `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) |
