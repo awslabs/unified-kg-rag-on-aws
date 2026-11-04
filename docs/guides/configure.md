@@ -53,7 +53,7 @@ attempt count includes the first attempt; `1` disables the retry.
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | Stores in another region (Bedrock follows unless `aws.bedrock.region_name` is set) |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | Always on AWS (the CDK stack injects them) |
-| `providers.doc_status.enabled` | `false` | [Incremental indexing](../user-guide.md#5-incremental-indexing) |
+| `providers.doc_status.enabled` | `false` | [Incremental indexing](../guides/incremental.md) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | Other models ([notes](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | Lower on `ThrottlingException` retries, raise if quota allows |
 | `processing.graph_extraction.entity_types` | 7 generic types | [Domain adaptation](../user-guide.md#9-domain-adaptation) |

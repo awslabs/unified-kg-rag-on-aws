@@ -439,7 +439,8 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   mode the gateway endpoints allow only this deployment's buckets, table and
   the ECR layer bucket. The 30-day expiry applies only to `pipeline-runs/`:
   do not put the corpus under it, since an expired source file looks deleted
-  to the next incremental run.
+  to the next incremental run
+  ([Keep the corpus in place](../docs/guides/incremental.md#keep-the-corpus-in-place)).
 - **One run at a time.** The state machine does not stop a second execution;
   the doc-status registry's write lease stops the second run with
   `NamespaceLeaseError` once it has synced the corpus, before it downloads its

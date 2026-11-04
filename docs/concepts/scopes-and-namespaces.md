@@ -19,7 +19,7 @@ and in Python `RAGInput.suffix` selects it (the chain does not read
 `index_value`). All default to `default`. Use one index suffix, and one config file, per
 tenant or corpus version, with the same `indexing.additional_suffix` on both
 sides; incremental indexing and deletion are scoped to it
-([Incremental indexing](../user-guide.md#5-incremental-indexing)).
+([Incremental indexing](../guides/incremental.md)).
 
 ## Source scope
 
@@ -41,8 +41,7 @@ reproducible across paths and machines (the same corpus indexed from another
 directory or host otherwise gets other ids).
 
 Keeping a corpus at one source, moving it, and what a mass deletion asks:
-[Deletion scope](../user-guide.md#deletion-scope) and
-[Operator Runbook: Incremental runs](../operations.md#incremental-runs).
+[Incremental indexing: Deletion scope](../guides/incremental.md#deletion-scope).
 
 ## Namespace
 

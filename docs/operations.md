@@ -11,7 +11,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Check a deployment before the first run | [Before a run](#before-a-run) |
 | Size the ingestion task and estimate a run's time | [Capacity sizing](#capacity-sizing) |
 | Resume, recompute or rebuild an ingestion | [Re-ingest](#re-ingest) |
-| Keep a corpus up to date | [Incremental runs](#incremental-runs) |
+| Keep a corpus up to date | [Incremental indexing](./guides/incremental.md) (the rules), [Incremental runs](#incremental-runs) |
 | Recover a run that stopped | [Interrupted runs](#interrupted-runs) |
 | Find out why a document is `FAILED` or `QUARANTINED` | [Failed documents](#failed-documents), [Quarantined documents](#quarantined-documents) |
 | Run two ingestions, or understand `NamespaceLeaseError` | [Concurrent runs](#concurrent-runs) |
@@ -100,11 +100,13 @@ its time.
 Use `indexing.reset: true` (plus `--force-rebuild` if stage outputs must
 change too) after changing what is baked into the stored data: the embedding
 model or `models.embedding.dimension`, `processing.translation.source_language`
-or the language analyzers, or a built-in prompt template (code). Reset also
-refreshes the communities incremental runs append to and gives entities their
-current names' ids. Other extraction settings need no reset: the next
-incremental run re-extracts the affected documents and logs how many
-([User Guide §5](./user-guide.md#workflows)).
+or the language analyzers, or a built-in prompt template (code), and when a
+[rebuild signal](./guides/incremental.md#rebuild-signals) recommends one.
+Other extraction settings need no reset: the next incremental run re-extracts
+the affected documents and logs how many
+([Incremental indexing: Workflows](./guides/incremental.md#workflows)). What a
+reset reuses and refreshes:
+[Incremental indexing: Rebuild](./guides/incremental.md#rebuild-indexingreset).
 
 During a reset, vector queries read the previous indices until each new one
 swaps in; graph queries see previous and rebuilt items mixed until the final
@@ -129,92 +131,25 @@ the reset did.
 
 With `providers.doc_status.enabled: true` (the container image sets it), each
 run indexes only new and changed documents and removes what only a missing
-file stated. The diff is scoped to the run's index suffix and source scope
-([Scopes and namespaces](./concepts/scopes-and-namespaces.md#source-scope)). So:
+file stated. The rules a user needs are in
+[Incremental indexing](./guides/incremental.md): keeping the corpus in place,
+moving it, mass deletions, the rebuild signals and when to reset. On a
+deployed stack:
 
-- **Keep a corpus at one source** (or a fixed `source_scope`). A moved corpus
-  with the default scope leaves the old scope's content indexed: set
-  `source_scope` before moving, or run once with
-  `--retire-source-scope <old source directory>`
-  ([Deletion scope](./user-guide.md#deletion-scope)). A run with new documents
-  logs a WARNING naming the suffix's other local source directories (a
-  document only a refused or failed run recorded counts as new).
-- **Never let corpus files expire or disappear**: the next run removes their
-  content. A file the run cannot read keeps it: one that fails to parse or
-  load, and one skipped because no loader reads its type (an optional extra
-  such as `unstructured` dropped from the image, a loader plugin not
-  imported; `Skipping N file(s) ... of a type no loader reads ...`,
-  `total_files_skipped`).
-- **One index suffix and config file per tenant or corpus version.**
-
-**Mass deletions ask first.** A run that would delete more than
-`indexing.max_deletion_share` (default `0.5`) of the documents the registry
-holds for its source scope stops at `document_loading`, before it writes
-(`This run deletes N of the M documents ... ; continue?`, exit 1), unless
-the deletion is confirmed: `run-ingestion` asks on a terminal, and
-`--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1` or `--yes` answers yes. A
-partial S3 sync, an expired prefix and a volume not mounted look the same
-as files removed on purpose. Only scopes of at least 10 documents are
-checked; a retired scope's records (`--retire-source-scope`) do not count,
-nor do seed graph shards, in either count (`N` and `M` are documents: the
-configuration adds and removes shards, and a large seed graph's many shard
-records would otherwise hide a partial sync); a reset, and a run with the registry off, are not checked (without the
-registry every run is a full build of what it reads, so keep the registry
-on for a corpus that may arrive partial; an empty corpus with seeds asks as
-in [Seeds with the registry off](#seed-graphs-in-the-image-or-s3)). When the files are really gone, re-run once with
-`UKR_CONFIRM_DELETIONS=1` as an environment override, as for the reset in
-[Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3); set the
-share to `1.0` or `null` to turn the check off. `total_documents_deleted`
-counts what a run removed.
-
-**Rebuild periodically.** Delta runs append communities instead of
-re-clustering, and stored communities and reports keep an entity's old id
-after it took its current name's id; `indexing.reset: true` refreshes both.
-Watch the indexing stage's `community_drift` metrics: `delta_communities`,
-`clustered_entities`, `overlapping_entities`, `stale_communities`,
-`added_roots` (each adds a report to every global-search cut) and
-`overlap_share`. At `indexing.community_drift_threshold` (default `0.5`) the
-run logs a WARNING and reports `community_rebuild_recommended: 1`, which an
-alarm can watch (the counts are an upper bound). A run that removes text units
-also reports `outdated_reports`, stored reports that still cite a removed
-unit and may state what was removed: any such report recommends a rebuild
-too. `unclustered_entities` counts stored entities without a community that
-a small delta component the run clustered links to: a full build clusters
-them, a delta run clusters only its delta.
-
-**When to reset.** Each suffix's build record (the `build` entry of its
-vector indices' `_meta`, which `run-eval` manifests copy) keeps community
-counters: `clustered_at` and `communities_at_clustering` from the last full
-build, then `communities_now` (each incremental commit adds the communities
-it appended and subtracts those its removals deleted) and `runs_since`
-(incremental commits since). A commit is counted once: a resumed run that
-writes the record again does not count it twice. After a commit that
-reaches `indexing.community_compaction.max_runs_since_clustering` (default
-`20`) or `max_community_growth` (default `1.5` times the clustered
-communities), the run logs a WARNING:
-
-```
-Communities of 'default' are due for re-clustering: 24 incremental runs since
-the last full clustering (max_runs_since_clustering: 20); 163 communities
-against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
-```
-
-It means global search now maps the appended communities' reports next to
-the original ones, and their reports miss what later runs added. Run once
-with `indexing.reset: true`: it re-clusters the whole graph and reuses the
-stored summaries and reports whose input is unchanged, so it asks the
-model mostly for the communities it clusters differently (on the cost
-harness, 17-20 calls after 23 incremental runs against 197 for the first
-build). The counters start again at that build. Alarm on the
-`community_growth_ratio` or `runs_since_clustering` metric (the largest
-over the run's suffixes; `0` for a run that recorded no counters).
-Nothing is reset automatically. `null` turns a threshold off;
-`on_drift_recommendation: true` also gives the recommendation when the
-run's `community_rebuild_recommended` is 1. `communities_now` is an upper
-bound (a delta community written under a stored community's id counts
-again, and a run killed after its removal deleted communities does not
-subtract them). A suffix whose build record holds no counters gets none,
-and no recommendation, until its next full build.
+- **A run stopped for a mass deletion** (`This run deletes N of the M
+  documents ...`, exit 1, before any write;
+  [Mass deletions](./guides/incremental.md#mass-deletions)): check the
+  corpus sync, its S3 prefix and the volume. When the files are really gone,
+  re-run once with `UKR_CONFIRM_DELETIONS=1` as an environment override, as
+  for the reset in
+  [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3).
+- **Rebuild signals** (`community_rebuild_recommended`,
+  `community_growth_ratio`, `runs_since_clustering`) are on the dashboard; no
+  [alarm](#alarms) watches them. The state machine passes only the source
+  directory and pipeline id, so run the reset they recommend
+  ([When to reset](./guides/incremental.md#when-to-reset)) as a one-off task
+  with `UKR__INDEXING__RESET=true` as an environment override (the task
+  override is in [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
 
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and
@@ -720,8 +655,8 @@ another scope holds seeds or the corpus is seeds alone, and for an
 empty-corpus seed build with the registry off (**Seeds with the registry
 off**, below). `UKR_CONFIRM_DELETIONS=1` is for an
 incremental run, without the reset, that deletes more than
-`indexing.max_deletion_share` of its scope's documents ([Mass deletions
-ask first](#incremental-runs)): for that re-run drop the two reset lines.
+`indexing.max_deletion_share` of its scope's documents ([Mass
+deletions](./guides/incremental.md#mass-deletions)): for that re-run drop the two reset lines.
 A reset is never checked for mass deletions, so with the reset on
 `UKR_CONFIRM_DELETIONS` changes nothing; neither answers a resume's
 integrity check (`--yes` does).
@@ -756,6 +691,9 @@ instead of a seed-only scope, so the reset re-imports it and asks nothing.
 
 ### Interrupted runs
 
+The user-level rules for incremental runs:
+[Incremental indexing](./guides/incremental.md).
+
 An incremental run that stops inside indexing (killed task, unreachable store
 or registry, tripped failure gate) needs no repair: re-run. Indexing first
 records every new and changed document `PENDING` with its old and new text
@@ -781,6 +719,8 @@ restored meanwhile included, and removes what was written for one that is gone
 
 ### Failed documents
 
+The user-level rule (when a document is `FAILED` and when it stops being
+retried): [Incremental indexing: Failed documents](./guides/incremental.md#failed-documents).
 A document is recorded `FAILED` in five cases:
 
 - translation, graph extraction, gleaning or claim extraction failed on one
@@ -917,6 +857,7 @@ is a setting and counts for none.
 
 ### Quarantined documents
 
+The user-level rule: [Incremental indexing: Quarantined documents](./guides/incremental.md#quarantined-documents).
 A document that kills the task each time (out of memory, a crashing parser)
 would stop every later run, so runs count deaths and isolate the culprit.
 
@@ -979,6 +920,7 @@ would stop every later run, so runs count deaths and isolate the culprit.
 
 ### Concurrent runs
 
+The user-level rule: [Incremental indexing: Concurrent runs](./guides/incremental.md#concurrent-runs).
 With the registry, one run writes an index namespace at a time: it takes the
 namespace's write lease before its first stage and renews it every sixth of
 `indexing.lease_seconds` (default 600 s). A second run stops before it reads
@@ -1378,7 +1320,7 @@ model or credential error fails a query rather than answering from no context.
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
-| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
+| `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental indexing: Enable it](./guides/incremental.md#enable-it)) |
 | `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | The index has no recorded embedding settings (`_meta`), which every index this version builds carries | Run once with `indexing.reset: true` |
 | `ConfigurationError: The OpenSearch index '...' maps 'attributes.seed_properties' field by field ...` (exit 2, before any model call) | The live entities index maps seed graph properties (`attributes.seed_properties`), which this version stores unmapped | Run once with `indexing.reset: true` |
 | `ConfigurationError: The OpenSearch index '...' stores the vectors of '...' as ...` (exit 2, before any model call) | `indexing.opensearch.vector_mode` / `compression_level` changed since the live index was built | Run once with `indexing.reset: true`, or restore the previous values ([On-disk vector storage](#on-disk-vector-storage)) |

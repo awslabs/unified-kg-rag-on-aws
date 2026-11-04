@@ -11,7 +11,7 @@
 | 독자 | 목표 | 읽는 순서 | 완료 기준 |
 |---|---|---|---|
 | **처음 써 보는 평가자** | AWS 없이 동작 확인 | [로컬에서 시작하기](./getting-started/local.ko.md) → [개요](./concepts/overview.ko.md) → [검색 전략 선택](./concepts/retrieval.ko.md#검색-전략-선택) → [평가기](./user-guide.ko.md#평가기) | 예제 코퍼스에서 두 방법론의 답변을 받고, 판정 모델 없이 `run-eval` 실행 |
-| **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [AWS에서 시작하기](./getting-started/aws.ko.md)(기존 저장소, [필수 모델](./getting-started/aws.ko.md#필수-모델)) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./guides/configure.ko.md) → [수집](./guides/ingest.ko.md) → [질의](./guides/query.ko.md) → [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) → [도메인 적응](./user-guide.ko.md#9-도메인-적응) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
+| **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [AWS에서 시작하기](./getting-started/aws.ko.md)(기존 저장소, [필수 모델](./getting-started/aws.ko.md#필수-모델)) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./guides/configure.ko.md) → [수집](./guides/ingest.ko.md) → [질의](./guides/query.ko.md) → [증분 인덱싱](./guides/incremental.ko.md) → [도메인 적응](./user-guide.ko.md#9-도메인-적응) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
 | **운영자** | 실행, 모니터링, 복구, 업그레이드 | [`iac/README.md`](../iac/README.md)(영문) → [운영 런북](./operations.md)(영문: [실행 전](./operations.md#before-a-run), [실행이 실패하면](./operations.md#when-a-run-fails), [경보](./operations.md#alarms), [자주 보는 오류](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | 모든 경보와 오류에서 대응 절차를 찾을 수 있음 |
 | **평가자·연구자** | 품질과 비용 측정, 기본값 재현, 논문과 비교 | [평가](./user-guide.ko.md#6-평가-run-eval) → [전략 비교](./user-guide.ko.md#전략-비교) → [벤치마크](./user-guide.ko.md#벤치마크-musique) → [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) → [원 논문을 넘어서](./concepts/overview.ko.md#원-논문을-넘어서) | MuSiQue나 자체 데이터로 신뢰 구간과 게이트가 있는 짝지은 비교 실행 |
 | **확장 개발자** | 백엔드, 전략, 파서, 스키마, 시드 소스 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [추출 스키마](./user-guide.ko.md#c-추출-스키마) / [시드 그래프](./user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기) | 등록한 플러그인이 가짜 포트(fake port) 적합성 테스트를 통과 |
@@ -27,10 +27,11 @@
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
 | 설명 | [설계 문서](./design.md)(영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
 | 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 인덱스 접미사, 소스 범위, 네임스페이스, 접미사와 필터가 접근 제어가 아닌 이유 |
-| 사용 방법 | [사용자 가이드](./user-guide.ko.md) | 아직 분리하지 않은 작업: 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응, 종료 코드, 라이브러리 사용법 |
+| 사용 방법 | [사용자 가이드](./user-guide.ko.md) | 아직 분리하지 않은 작업: 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응, 종료 코드, 라이브러리 사용법 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
 | 사용 방법 | [수집](./guides/ingest.ko.md), [다국어 코퍼스](./guides/multilingual.ko.md), [질의](./guides/query.ko.md) | 12개 단계, 재개와 강제 재구축, S3 동기화, 응답 캐시, 대규모 코퍼스와 비용 조절 수단. 번역, 분석기, CJK 텍스트의 청크 크기. 질의 실행, 필터, 재순위화 상태, 질의 제한 시간, 대화형 모드와 메모리 |
+| 사용 방법 | [증분 인덱싱](./guides/incremental.ko.md) | 레지스트리 켜기, 코퍼스나 설정을 바꿀 때 일어나는 일, 재구축과 두 가지 재구축 신호, 삭제 범위와 대량 삭제, 코퍼스 옮기기, 실패한 문서와 격리된 문서, 동시 실행 |
 | 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
 | 사용 방법 | 나머지 작업별 가이드(작성 예정) | 사용자 가이드에서 작업마다 한 페이지로 분리 |
 | 레퍼런스 | [CLI 레퍼런스](./reference/cli.md)(영문) | 모든 CLI의 모든 플래그(파서에서 생성) |
@@ -55,7 +56,7 @@
 | 한국어나 여러 언어가 섞인 코퍼스 인덱싱 | [다국어 코퍼스](./guides/multilingual.ko.md) |
 | 검색 전략 고르기 | [검색 전략 선택](./concepts/retrieval.ko.md#검색-전략-선택) |
 | 문서나 속성으로 결과 필터링 | [질의: 필터](./guides/query.ko.md#필터), [필터 레퍼런스](./reference/filters.md)(영문) |
-| 문서가 바뀌거나 지워질 때 인덱스 갱신 | [증분 인덱싱](./user-guide.ko.md#5-증분-인덱싱) |
+| 문서가 바뀌거나 지워질 때 인덱스 갱신 | [증분 인덱싱](./guides/incremental.ko.md) |
 | 추출을 도메인에 맞추기 | [도메인 적응](./user-guide.ko.md#9-도메인-적응), [프롬프트 튜닝](./user-guide.ko.md#8-프롬프트-튜닝-run-prompt-tuning) |
 | 온톨로지나 기존 지식 그래프 가져오기 | [OWL/RDFS 온톨로지에서 읽기](./user-guide.ko.md#owlrdfs-온톨로지에서-읽기), [시드 그래프](./user-guide.ko.md#d-시드-그래프가지고-있는-지식-그래프-가져오기) |
 | 전략 비교, CI에서 변경 검증 | [전략 비교](./user-guide.ko.md#전략-비교), [비교 다시 만들기, 다시 판정하기, 게이트](./user-guide.ko.md#저장한-결과로-비교-다시-만들기-다시-판정하기-게이트) |

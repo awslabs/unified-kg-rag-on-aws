@@ -35,7 +35,7 @@ Every CLI's `--help` ends with an example invocation and a link to its guide; ev
 2. Configuration: moved to [Configuration](./guides/configure.md) (every key: [Configuration Reference](./reference/configuration.md))
 3. Ingestion: moved to [Ingestion](./guides/ingest.md) and [Multilingual corpora](./guides/multilingual.md)
 4. Querying: moved to [Querying](./guides/query.md), [Retrieval](./concepts/retrieval.md) and the [Filters reference](./reference/filters.md)
-5. [Incremental indexing](#5-incremental-indexing)
+5. Incremental indexing: moved to [Incremental indexing](./guides/incremental.md)
 6. [Evaluation (`run-eval`)](#6-evaluation-run-eval)
 7. [Visualization (`run-visualization`)](#7-visualization-run-visualization)
 8. [Prompt tuning (`run-prompt-tuning`)](#8-prompt-tuning-run-prompt-tuning)
@@ -46,227 +46,6 @@ Every CLI's `--help` ends with an example invocation and a link to its guide; ev
 
 Related pages: [CLI Reference](./reference/cli.md) · [Configuration Reference](./reference/configuration.md) · [Model Catalog](./reference/models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
-
----
-
-## 5. Incremental indexing
-
-Incremental (delta) indexing re-indexes only documents that are **new or
-changed** since the last run, and merges them into the live graph — instead of
-rebuilding everything.
-
-### Enable it
-
-```yaml
-providers:
-  doc_status:
-    enabled: true          # kind: dynamodb (the default) or sqlite
-aws:
-  dynamodb:
-    table_name: "unified-kg-rag-on-aws-doc-status-v2"
-    create_table_if_missing: true
-```
-
-With this on, each `run-ingestion` diffs the corpus against the DynamoDB
-document-status registry by **content hash**. In local mode the registry is a
-SQLite file instead (`providers.doc_status.kind: sqlite`; see
-[Local mode](./guides/local-mode.md)).
-
-### Workflows
-
-- **Add a document:** drop it into the source directory and re-run
-  `run-ingestion`. Only the new file is parsed, extracted and indexed; its
-  entities and relationships merge into the existing graph.
-- **Modify a document:** edit it and re-run. Its old artifacts are removed and
-  the new version is indexed. Only its changed chunks go to the model: the
-  extraction store (`indexing.opensearch.extraction_records_index_prefix`)
-  serves every chunk whose text and extraction settings it already holds a
-  record for, in any document (`--force-rebuild` re-extracts them all).
-- **Delete a document:** remove it and re-run. What only its chunks stated
-  (entities, relationships, claims) is deleted; shared artifacts are kept
-  without its chunks, and a community or report goes once none of its chunks
-  is left.
-- **Change the extraction settings** (a tuned `custom_prompts` set,
-  `entity_types`, an extraction, gleaning or chunking model, chunk sizes,
-  translation, resolution): the next run re-extracts the unchanged documents
-  extracted with other settings and logs a WARNING with their count and the
-  settings that changed. Settings are compared field by field, so a setting a
-  newer release adds is no change while it holds its default. A re-extracted
-  chunk still takes its stored record when the settings that shape a record
-  (models, extraction, gleaning and claim settings, the target language, the
-  prompt templates) are unchanged, e.g. after a resolution or chunking change.
-  Edits to the built-in prompt templates (code) are not seen: reset after
-  editing one. A description summary setting (`description_summarization`,
-  its `custom_prompts` or `models.roles.description_summary`) is not an
-  extraction setting: changing it re-extracts nothing. The descriptions a
-  run merges are summarized the new way, and `indexing.reset: true`
-  summarizes every one again (a stored summary records the settings it was
-  made with and is reused only under the same ones).
-- **Change the embedding model or its dimension**
-  (`models.embedding.model_id` / `dimension`): each OpenSearch index records
-  the model and dimension it was built with, and an incremental run stops
-  before its first model call (exit 2) when they differ from the run's (an
-  index that records none is refused too). Re-run once with
-  `indexing.reset: true`. `run-rag` and
-  `run-eval` with another model or dimension fail with a `ConfigurationError`
-  instead of answering from empty search results.
-- **Change the corpus or translation languages** (`processing.translation`
-  languages, `indexing.opensearch.language_analyzers`): live text fields keep
-  their analyzers, so an incremental run stops before its first model call
-  (exit 2); re-run once with `indexing.reset: true`. Dropping a language does
-  not stop it.
-- **Index a suffix with the registry off** (as the `backend: local` preset
-  does): a later incremental run on that suffix stops before its first model
-  call.
-  Re-run once with `indexing.reset: true` and the registry on, or keep it off
-  for that suffix.
-- **Rebuild** with `indexing.reset: true`: the whole corpus is indexed again
-  without taking the suffix offline, except quarantined documents, which are
-  skipped and keep their records; a failed reset drops nothing, so it
-  is safe to re-run (how it works:
-  [Operator Runbook: Re-ingest](./operations.md#re-ingest)). The stored
-  chunk boundaries, extraction records and vectors of unchanged text are
-  reused, and so are the stored description summaries and community report
-  answers whose input is unchanged, so a rebuild with the same models and
-  settings asks the model only for what the corpus changed. A rebuild after
-  incremental runs still asks for the reports of the communities it
-  clusters differently (an incremental run clusters only its delta); after
-  a summarization or report setting change it asks again for every summary
-  or report, and after an embedding model or dimension change every text
-  is embedded again. Add `--force-rebuild` to ask and embed everything
-  again.
-- **When to rebuild:** an incremental run clusters only its delta and
-  appends its communities. After 20 incremental runs since the last full
-  build, or once the suffix holds 1.5 times the communities that build
-  clustered, the run logs a WARNING (`Communities of '<suffix>' are due for
-  re-clustering: ...`) that recommends `indexing.reset: true`; nothing is
-  reset automatically. Set the thresholds in
-  `indexing.community_compaction` (`null` turns one off); the counters are
-  in the build record, and the `community_growth_ratio` and
-  `runs_since_clustering` metrics
-  ([Operator Runbook: Incremental runs](./operations.md#incremental-runs)).
-  A suffix whose build record holds no counters starts counting at its next
-  full build.
-
-### Deletion scope
-
-A run only diffs, and treats as deleted, the documents of its own scope:
-its index suffix and its corpus source
-([Scopes and namespaces: Source scope](./concepts/scopes-and-namespaces.md#source-scope)).
-A file that fails to
-parse or load, or that the run skips because no loader reads its type (an
-optional extra such as `unstructured` not installed), is reported as
-`failed` and keeps its indexed content until a run reads it again.
-
-**Mass deletions.** A run that would delete more than
-`indexing.max_deletion_share` (default `0.5`) of the documents its scope
-holds stops before it writes and asks (`This run deletes N of the M
-documents ...; continue?`): a partial sync or a missing volume looks like
-files removed on purpose. `run-ingestion` asks on a terminal;
-`--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`) answers yes to this
-question only, `--yes` to every question, and a no, or no terminal, stops
-the run (exit 1). The share counts documents only: seed graph shards
-follow `processing.seed_graphs`, so removing or resharding a seed graph
-never asks, and its shards do not dilute the share. Scopes of fewer than 10
-documents, a retired scope's records, a reset and a run with the registry
-off are not checked; `1.0` or `null` turns the check off. From Python, pass
-`DataIngestionPipeline(..., confirm_deletions=callable)`; without it, or on
-a no, `run` raises `ConfirmationDeclinedError`.
-
-**Moving a corpus** with the default scope changes its scope, and no run
-deletes another scope's documents (a directory missing here may be another
-host's corpus), so the old content stays indexed. Either:
-
-- set `document_parsing.source_scope` to a stable name before moving it; or
-- run once from the new location with
-  `--retire-source-scope <old source directory>` (or
-  `indexing.retire_source_scopes`). That run treats every record of the old
-  scope in its suffix as deleted and indexes the new location as new
-  documents. Give the scope as the registry stores it: the absolute
-  directory (trailing and repeated slashes ignored) or the former
-  `source_scope`, `s3://` URIs included; a non-URI value is also tried as a
-  path resolved like `--source-directory`. A bare value (`old`) is a name or a
-  relative path: the reading that has records is retired, and when both do
-  the run stops before any write (give `./old` or an absolute path). Naming
-  the run's own scope fails before the registry is read, a bare value one of
-  whose readings is the run's own included: when the own scope is its name,
-  give the directory as `./<value>`; when it is the run's own directory, the
-  name could be another corpus's `source_scope`, so retire that name from a
-  working directory where the value is not the run's directory, with the
-  same configuration (the same stores and registry, e.g. the same
-  `--config-path`). A scope without records logs a WARNING.
-
-A local run with the default scope and new documents logs a WARNING naming the
-other local source directories with records in its suffix; it deletes
-nothing. Set `source_scope` per corpus to silence it when they are separate
-corpora.
-
-The registry is partitioned by index namespace (the `<namespace>#` prefix of
-each document key), so a run reads only its own namespace's records. A table
-of the earlier `doc_id`-only key schema is rejected at first use: switch to a
-new table and run once with `indexing.reset: true`
-([Operator Runbook: Incremental runs](./operations.md#incremental-runs)).
-
-### Failed documents
-
-A document is recorded `FAILED` when one of its text units failed in
-translation, extraction, gleaning or claim extraction, when a base-level
-community covering it got no report, when an artifact stage crashed in a
-`--continue-on-error` run, when writing one of its artifacts failed, or when
-the extraction record of one of its text units could not be stored. The next
-run processes it again, even if the file did not change, until
-`indexing.max_document_failures` (default `3`) consecutive failures of the
-same content; editing the file or raising the limit retries it after that.
-Claims are optional: when only claim extraction failed, for an error of the
-unit's own, the document is indexed without those claims, counted for none,
-and the next run extracts them once more.
-See [Operator Runbook: Failed documents](./operations.md#failed-documents).
-
-### Quarantined documents
-
-A document whose processing kills the task (out of memory, a crashing parser)
-would stop every later run the same way. After
-`indexing.max_document_attempts` (default `3`) runs in a row died processing
-its unchanged content, the last of them with the document alone, the next run
-removes what the attempts wrote, records it `QUARANTINED`, logs a WARNING
-naming the file and indexes the rest; it is skipped, by a reset too, until its
-file changes or the limit is raised.
-
-- Only deaths count: a run that finishes, fails or is stopped (SIGTERM,
-  Ctrl-C) clears its in-progress mark, and a full rebuild counts no attempt.
-- When runs died processing several documents, the next runs halve the
-  suspects until the culprit is alone, deferring the other new and changed
-  documents meanwhile (`total_documents_deferred`).
-
-See [Operator Runbook: Quarantined documents](./operations.md#quarantined-documents).
-
-### Concurrent runs
-
-With the registry, a run holds its index namespace's write lease from its
-first stage to its end; a second run on the same namespace stops with
-`NamespaceLeaseError` before it reads the stores or writes anything. See
-[Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
-
-### Document size limit
-
-The DynamoDB registry stores a document's text-unit (chunk) ids in one item,
-limited to 400 KB (roughly 10,000 ids, about half that for a document you
-edit, whose in-progress record holds old and new ids). A document over it
-fails the indexing stage, naming the file, before anything is written: split
-it. The SQLite registry of local mode has no such limit.
-
-### Cross-run merge
-
-A delta run reads the entities, relationships and claims it touches back from
-the stores and merges the delta into them, so an entity shared with unchanged
-documents keeps their descriptions and chunk lineage (which `mix` follows);
-merged descriptions over the summarization budget are re-summarized. When a
-document changes or goes, what it shared loses its chunks and is derived again
-from the chunks left, and an entity takes the id of its current winning name,
-as a full build would give it (stored communities and reports keep the old id
-until a rebuild). The merge is always on: the removed `indexing.cross_run_merge`
-key logs a WARNING and is ignored. The rules are in
-[Design §5.4](./design.md#54-identity-derived-content-and-merge-rules).
 
 ---
 
@@ -528,7 +307,8 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   - `index`: per queried suffix, the ingestion run that last wrote its vector
     indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
     settings, for an incremental run the `full_build` it was applied on,
-    and the `communities` counters, see §5); best-effort, `null` without
+    and the `communities` counters, see
+    [Community growth](./guides/incremental.md#community-growth-across-runs)); best-effort, `null` without
     index metadata.
 
   `EvaluationManager.evaluate_dataset` builds it for library callers too
@@ -2053,7 +1833,8 @@ items.
   one per text unit, about 2 × nodes + edges + (nodes + edges) / 50 at the
   defaults. The 100,000-node, 500,000-edge caps are about 712,000
   embeddings. The whole seed is held in memory and in the stage cache.
-- **Delta runs cluster the delta** (§5): a seed added by an incremental run
+- **Delta runs cluster the delta**
+  ([Rebuild signals](./guides/incremental.md#rebuild-signals)): a seed added by an incremental run
   is clustered on its own shards' entities until a reset re-clusters the
   graph. Those communities are reported when a stored member is
   document-backed, from the stored members' descriptions followed by the
@@ -2285,17 +2066,18 @@ closes it.
   `hybrid` lose high-level keywords, `local` its relationship section, and
   graph expansion under a document filter keeps entities on the
   entities-index check alone, not on the relationships that reach them.
-- **Incremental indexing approximates** (§5): delta runs append communities
+- **Incremental indexing approximates**
+  ([Rebuild signals](./guides/incremental.md#rebuild-signals)): delta runs append communities
   instead of re-clustering, and stored communities and reports keep an
   entity's old id after it took its current name's; a full rebuild
   (`indexing.reset: true`) refreshes both. With DynamoDB one document's chunk
-  ids must fit one 400 KB item ([*Document size limit*](#document-size-limit)).
+  ids must fit one 400 KB item ([*Document size limit*](./guides/incremental.md#document-size-limit)).
 - **Concurrent runs need the registry**, whose write lease stops a second run
   on a namespace; without it (or through the direct `IncrementalIndexer` API)
   nothing locks, and two ingestions on one suffix can delete each other's
   index ([Concurrent runs](./operations.md#concurrent-runs)).
 - **Isolating a document that kills the task takes runs**
-  ([*Quarantined documents*](#quarantined-documents)): about `log2(n) + 1` for one culprit among `n` documents that
+  ([*Quarantined documents*](./guides/incremental.md#quarantined-documents)): about `log2(n) + 1` for one culprit among `n` documents that
   died together, while the deferred ones wait.
 - **Markdown and HTML** need the `unstructured` extra, which
   the container image leaves out by default.
@@ -2306,7 +2088,7 @@ closes it.
   and nothing is inferred.
 - **Changing the embedding model** or dimension needs `indexing.reset: true`;
   an incremental run refuses to write into another model's indices
-  ([Workflows](#workflows)).
+  ([Workflows](./guides/incremental.md#workflows)).
 
 ---
 
@@ -2315,7 +2097,7 @@ closes it.
 
 ## Moved sections
 
-Sections 1 to 4 of this guide, and parts of section 10, moved to their own pages. The headings
+Sections 1 to 5 of this guide, and parts of section 10, moved to their own pages. The headings
 below keep older links, including the `--help` output of earlier
 versions, working.
 
@@ -2461,6 +2243,44 @@ typing, per-strategy applicability).
 ### Interactive mode & conversation memory
 
 Moved to [Querying: Interactive mode & conversation memory](./guides/query.md#interactive-mode--conversation-memory).
+
+### 5. Incremental indexing
+
+Moved to [Incremental indexing](./guides/incremental.md).
+
+### Enable it
+
+Moved to [Incremental indexing: Enable it](./guides/incremental.md#enable-it).
+
+### Workflows
+
+Moved to [Incremental indexing: Workflows](./guides/incremental.md#workflows)
+(rebuilding: [Rebuild](./guides/incremental.md#rebuild-indexingreset) and
+[Rebuild signals](./guides/incremental.md#rebuild-signals)).
+
+### Deletion scope
+
+Moved to [Incremental indexing: Deletion scope](./guides/incremental.md#deletion-scope).
+
+### Failed documents
+
+Moved to [Incremental indexing: Failed documents](./guides/incremental.md#failed-documents).
+
+### Quarantined documents
+
+Moved to [Incremental indexing: Quarantined documents](./guides/incremental.md#quarantined-documents).
+
+### Concurrent runs
+
+Moved to [Incremental indexing: Concurrent runs](./guides/incremental.md#concurrent-runs).
+
+### Document size limit
+
+Moved to [Incremental indexing: Document size limit](./guides/incremental.md#document-size-limit).
+
+### Cross-run merge
+
+Moved to [Incremental indexing: Cross-run merge](./guides/incremental.md#cross-run-merge).
 
 ### Large / multilingual / heterogeneous corpora
 

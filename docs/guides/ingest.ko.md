@@ -6,7 +6,7 @@
 `run-ingestion --source-directory <dir>`이 12개 단계([설계 §4](../design.md#4-ingestion-pipeline)(영문)에
 그림이 있음)를 실행하며 단계마다 체크포인트를 남기고, 같은 `--pipeline-id`로 다시
 실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
-증분으로 동작합니다([증분 인덱싱](../user-guide.ko.md#5-증분-인덱싱)).
+증분으로 동작합니다([증분 인덱싱](./incremental.ko.md)).
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-ingestion)(영문)에 있습니다.
 실행이 어떤 인덱스에 쓰고 어떤 문서를 삭제할 수 있는지는 인덱스 접미사와 소스 범위로
