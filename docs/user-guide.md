@@ -24,12 +24,12 @@ through `application.cli.launch`, which then loads the module below:
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | Generate domain-adapted prompts |
 | `prepare-benchmark` | `application.cli.prepare_benchmark` | Turn a public benchmark (MuSiQue) into a corpus + `run-eval` dataset |
 
-Every CLI's `--help` ends with an example invocation and a link to its section here; every flag is in the [CLI Reference](./cli.md).
+Every CLI's `--help` ends with an example invocation and a link to its section here; every flag is in the [CLI Reference](./reference/cli.md).
 
 ## Contents
 
 1. [Prerequisites & Installation](#1-prerequisites--installation) (including [Required models](#required-models))
-2. [Configuration](#2-configuration) (every key: [Configuration Reference](./configuration.md))
+2. [Configuration](#2-configuration) (every key: [Configuration Reference](./reference/configuration.md))
 3. [Ingestion (`run-ingestion`)](#3-ingestion-run-ingestion)
 4. [Querying (`run-rag`)](#4-querying-run-rag)
 5. [Incremental indexing](#5-incremental-indexing)
@@ -41,7 +41,7 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 11. [Using the library from Python](#11-using-the-library-from-python)
 12. [Limitations](#12-limitations)
 
-Related pages: [CLI Reference](./cli.md) · [Configuration Reference](./configuration.md) · [Model Catalog](./models.md) · [Operator Runbook](./operations.md) ·
+Related pages: [CLI Reference](./reference/cli.md) · [Configuration Reference](./reference/configuration.md) · [Model Catalog](./reference/models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
 
 ---
@@ -92,7 +92,7 @@ configure replaces the one in its row) before the first run:
 - **Permissions.** See [IAM permissions](#iam-permissions); reranking needs a
   statement of its own.
 
-The [Model Catalog](./models.md) lists every curated model and its limits.
+The [Model Catalog](./reference/models.md) lists every curated model and its limits.
 
 The framework connects to services that **already exist** and never creates
 them. Run it in [local mode](#local-mode-no-aws), against your own services
@@ -300,7 +300,7 @@ a local disk, not NFS, SMB or Amazon EFS
 overrides its key of the loaded config, a key the file sets included; an
 omitted flag leaves the config as it is (`run-visualization` calls no model
 or store and only accepts them). The keys each flag sets are in the
-[CLI Reference](./cli.md#provider-flags).
+[CLI Reference](./reference/cli.md#provider-flags).
 
 #### Local stores in containers
 
@@ -371,7 +371,7 @@ cp config-template.yaml config.yaml
 
 A config file holds only the keys you change; the others keep their
 defaults. Every key, its type, default and description is in the generated
-[Configuration Reference](./configuration.md); this section covers what needs
+[Configuration Reference](./reference/configuration.md); this section covers what needs
 more than a table row.
 
 ### How configuration is loaded
@@ -397,7 +397,7 @@ are usage errors (exit 2). Unknown keys are refused because a misspelled key
 silently keeps its default; `--allow-unknown-keys`
 (`allow_unknown_keys=True` for `get_config`) logs a WARNING per key instead.
 A moved key fails naming its replacement
-([Moved keys](./configuration.md#moved-keys)).
+([Moved keys](./reference/configuration.md#moved-keys)).
 
 Retries are configured in one section, `retry`: `max_attempts` for model
 calls (ingestion items, Bedrock embeddings and query-time calls) with its
@@ -469,7 +469,7 @@ models:
 - The embedding model (`models.embedding.model_id`) serves the indices, the
   queries and RAGAS; changing it or its
   `dimension` needs a re-index. On Bedrock, embedding and rerank ids are a
-  closed list ([Model Catalog](./models.md#model-ids-and-capability-records));
+  closed list ([Model Catalog](./reference/models.md#model-ids-and-capability-records));
   other providers take any model name.
 - Settings of an unselected provider (`providers.llm.temperature` with
   Bedrock models) are ignored with a WARNING.
@@ -486,7 +486,7 @@ models:
   effort of low budgets 2048, high 8192), so an `auto` query reserves about
   29k output tokens instead of 49k.
 - Curated models, request shapes, prompt caching and
-  `aws.bedrock.model_overrides` are in the [Model Catalog](./models.md).
+  `aws.bedrock.model_overrides` are in the [Model Catalog](./reference/models.md).
 
 ### Context budget
 
@@ -494,7 +494,7 @@ models:
 budget) is the retrieved context the answer prompt gets, clamped with a
 warning to what `models.roles.answer_generation` accepts beside its output
 reservation; `null` derives it from that model's window. Per-type shares and
-`local` slot quotas: [reference](./configuration.md#searchtoken_manager).
+`local` slot quotas: [reference](./reference/configuration.md#searchtoken_manager).
 
 ### Guardrail
 
@@ -624,7 +624,7 @@ into a WARNING.
   `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read.
 - `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID` (one underscore: not config
   keys) and `UKR_METRICS_ENVIRONMENT` are read by `run-ingestion`
-  ([CLI Reference](./cli.md#run-ingestion)). The variables the CDK tasks get
+  ([CLI Reference](./reference/cli.md#run-ingestion)). The variables the CDK tasks get
   are listed in [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image).
 - The CLIs load `./.env` from the current working directory (python-dotenv),
   never one from a parent directory (a `~/.env` setting `AWS_PROFILE` would
@@ -652,7 +652,7 @@ with tracing off nothing OpenTelemetry-related is imported.
   OTLP exporter the package installs), or `langfuse` / `phoenix` (that
   exporter pointed at the vendor). The other keys (`capture_content`,
   `redact_patterns`, `sample_rate`, `service_name`, `export_timeout_seconds`)
-  are in the [reference](./configuration.md#observability).
+  are in the [reference](./reference/configuration.md#observability).
 - The exporter is configured by the standard OpenTelemetry environment
   variables, never by the config file, so a collector key never lands in it:
   `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`),
@@ -716,7 +716,7 @@ checkpoints each one, and resumes after the last valid stage when re-run with
 the same `--pipeline-id`. With the doc-status registry on it is incremental
 ([§5](#5-incremental-indexing)).
 
-Every flag with its default: [CLI Reference](./cli.md#run-ingestion).
+Every flag with its default: [CLI Reference](./reference/cli.md#run-ingestion).
 
 ### The 12 pipeline stages
 
@@ -914,7 +914,7 @@ router); every answer returns the sources the answer model actually saw.
 [Design §6](./design.md#6-retrieval-two-methodologies) shows how each
 strategy retrieves.
 
-Every flag with its default: [CLI Reference](./cli.md#run-rag).
+Every flag with its default: [CLI Reference](./reference/cli.md#run-rag).
 
 ### Search strategies — when to use which
 
@@ -1503,7 +1503,7 @@ scores the answers and their sources. Three evaluators need no LLM and cost
 nothing; two use an LLM judge. Several strategies (or `--repeats`) turn the run
 into a paired comparison.
 
-Every flag with its default: [CLI Reference](./cli.md#run-eval).
+Every flag with its default: [CLI Reference](./reference/cli.md#run-eval).
 
 ### Evaluators
 
@@ -2035,7 +2035,7 @@ the paper when you publish results.
 
 A **standalone** renderer that draws from an exported visualization-data
 JSON; it does **not** re-run ingestion or touch AWS. Every flag with its
-default: [CLI Reference](./cli.md#run-visualization).
+default: [CLI Reference](./reference/cli.md#run-visualization).
 
 ```bash
 # Render all renderers
@@ -2078,7 +2078,7 @@ Samples documents from a directory, profiles the corpus (domain, language,
 persona, entity types) with `models.roles.graph_extraction`, and writes a
 domain-adapted `custom_prompts` YAML fragment to review and merge into
 `config.yaml`. Every flag with its default:
-[CLI Reference](./cli.md#run-prompt-tuning).
+[CLI Reference](./reference/cli.md#run-prompt-tuning).
 
 ```bash
 run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml

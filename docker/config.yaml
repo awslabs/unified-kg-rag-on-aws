@@ -11,8 +11,8 @@
 # UKR_PIPELINE_ID.
 #
 # Every key not listed here uses the default documented in
-# docs/configuration.md. Only settings where the deployed stack differs from
-# those defaults belong in this file.
+# docs/reference/configuration.md. Only settings where the deployed stack
+# differs from those defaults belong in this file.
 
 aws:
   opensearch:

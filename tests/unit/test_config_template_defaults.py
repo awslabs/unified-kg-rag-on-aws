@@ -3,7 +3,7 @@
 """config-template.yaml must load as-is and show the real defaults.
 
 The template is a short starting file with the keys most deployments set;
-``docs/configuration.md`` (generated) documents every key. Operators copy the
+``docs/reference/configuration.md`` (generated) documents every key. Operators copy the
 template and edit a few keys, so (a) it must validate as a ``Config`` without
 edits, (b) every value it shows must be the value the code uses when the key
 is omitted, and (c) every key it shows must be documented in the reference. A template value that silently differs from
@@ -50,7 +50,7 @@ _INTENTIONAL: dict[str, str] = {}
 # Commented-out keys that show an example rather than the default, and why.
 _COMMENTED_EXAMPLES: dict[str, str] = {}
 
-_REFERENCE = TEMPLATE_PATH.parent / "docs" / "configuration.md"
+_REFERENCE = TEMPLATE_PATH.parent / "docs" / "reference" / "configuration.md"
 
 _MISSING = object()
 
@@ -140,7 +140,7 @@ def test_template_values_equal_model_defaults(
 
 
 def _documented_keys() -> set[str]:
-    """Dotted paths of the keys docs/configuration.md has a row for."""
+    """Dotted paths of the keys docs/reference/configuration.md has a row for."""
     keys: set[str] = set()
     section = ""
     for line in _REFERENCE.read_text(encoding="utf-8").splitlines():
@@ -157,7 +157,7 @@ def _documented_keys() -> set[str]:
 
 def test_the_template_points_to_the_reference() -> None:
     header = TEMPLATE_PATH.read_text(encoding="utf-8").split("\n\n", 1)[0]
-    assert "docs/configuration.md" in header
+    assert "docs/reference/configuration.md" in header
 
 
 def test_every_template_key_is_documented_in_the_reference(

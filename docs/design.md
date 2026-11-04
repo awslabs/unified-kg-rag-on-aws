@@ -2,7 +2,7 @@
 
 This is the **design reference for contributors and advanced users**: how the
 library is built and why. Usage is in the [User Guide](user-guide.md), every
-configuration key in the [Configuration Reference](./configuration.md), the
+configuration key in the [Configuration Reference](./reference/configuration.md), the
 contribution workflow in [CONTRIBUTING.md](../CONTRIBUTING.md), and extension
 recipes in [§15](#15-extension-guide).
 
@@ -1833,12 +1833,12 @@ fails the run (`BaseRenderer.check_dependencies`) before anything renders.
 
 The configuration is one nested Pydantic tree (`domain/models/config.py`,
 root `Config`) loaded by `application/config.py` (`get_config`).
-[docs/configuration.md](./configuration.md) is generated from it by
+[docs/reference/configuration.md](./reference/configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
 fails when it is stale; `config-template.yaml` is a short starting file with
 the keys most deployments set (`tests/unit/test_config_template_defaults.py`
 checks that its values are the defaults and each key is in the reference).
-[docs/cli.md](./cli.md) is generated the same way from the CLI parsers
+[docs/reference/cli.md](./reference/cli.md) is generated the same way from the CLI parsers
 (`scripts/gen_cli_reference.py`, `tests/unit/test_cli_reference.py`).
 
 - **Loading** (`Config.as_input`). The config is validated once from its
@@ -2321,7 +2321,7 @@ This section is the single reference for extending the framework. Strategies, re
   be in neither Leiden nor the vectors, so global search would not see
   them, and the `source_kinds` vocabulary can name them. The registry,
   `Entity.iri` and `source_kinds` are the seams either way.
-- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
+- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → describe every field and regenerate `docs/reference/configuration.md`; add a key to `config-template.yaml` only when most deployments set it (see §12).
 
 
 ### Custom backends (run without AWS)

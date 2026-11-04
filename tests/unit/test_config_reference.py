@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""docs/configuration.md is generated from the configuration models.
+"""docs/reference/configuration.md is generated from the configuration models.
 
 The reference lists every key with its type, default and description; this test
 fails when a config field changed without the file being regenerated.
@@ -31,7 +31,7 @@ def test_configuration_reference_is_up_to_date() -> None:
     generator = _generator()
     committed = generator.OUTPUT.read_text(encoding="utf-8")
     assert committed == generator.render(), (
-        "docs/configuration.md is out of date: run "
+        "docs/reference/configuration.md is out of date: run "
         "`uv run python scripts/gen_config_reference.py`"
     )
 

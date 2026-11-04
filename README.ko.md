@@ -95,7 +95,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 플래그는 [CLI 레퍼런스](./docs/cli.md)(영문)에, 모든 설정 키는 [설정 레퍼런스](./docs/configuration.md)(영문)에 있습니다.
+모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 플래그는 [CLI 레퍼런스](./docs/reference/cli.md)(영문)에, 모든 설정 키는 [설정 레퍼런스](./docs/reference/configuration.md)(영문)에 있습니다.
 
 ## AWS에 배포(선택)
 
@@ -112,9 +112,9 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 | 문서 | 내용 |
 |---|---|
 | [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설치와 로컬 모드, 설정, 수집, 질의와 필터, 증분 인덱싱, 평가와 벤치마크, 시각화, 프롬프트 튜닝, 도메인 적응(사용자 정의 프롬프트, 추출 스키마, 온톨로지 가져오기, 시드 그래프), 종료 코드, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
-| [CLI 레퍼런스](./docs/cli.md) (영문) | 모든 CLI 플래그의 기본값과 설명(파서에서 생성) |
-| [설정 레퍼런스](./docs/configuration.md) (영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
-| [모델 카탈로그](./docs/models.md) (영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
+| [CLI 레퍼런스](./docs/reference/cli.md) (영문) | 모든 CLI 플래그의 기본값과 설명(파서에서 생성) |
+| [설정 레퍼런스](./docs/reference/configuration.md) (영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
+| [모델 카탈로그](./docs/reference/models.md) (영문) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
 | [운영 런북](./docs/operations.md) (영문) | 용량 산정, 재수집, 증분 실행, 캐시, 백업과 복원, OpenSearch·Neptune 업그레이드, 스키마와 시드 그래프 배포, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리, 관측성, 자주 보는 오류 |
 | [설계 문서](./docs/design.md) (영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
 | [`iac/README.md`](./iac/README.md) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |

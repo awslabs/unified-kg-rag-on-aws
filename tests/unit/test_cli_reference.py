@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""docs/cli.md is generated from the CLI parsers.
+"""docs/reference/cli.md is generated from the CLI parsers.
 
 The reference lists every flag with its default and help text; this test fails
 when a flag changed without the file being regenerated.
@@ -33,7 +33,7 @@ def test_cli_reference_is_up_to_date() -> None:
     committed = generator.OUTPUT.read_text(encoding="utf-8")
     assert (
         committed == generator.render()
-    ), "docs/cli.md is out of date: run `uv run python scripts/gen_cli_reference.py`"
+    ), "docs/reference/cli.md is out of date: run `uv run python scripts/gen_cli_reference.py`"
 
 
 def test_reference_covers_every_script() -> None:

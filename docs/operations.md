@@ -2,7 +2,7 @@
 
 Tasks an operator runs against an existing deployment, and what to do when a
 run or a query fails. Every configuration key is in the
-[Configuration Reference](./configuration.md) (how the configuration loads:
+[Configuration Reference](./reference/configuration.md) (how the configuration loads:
 [User Guide §2](./user-guide.md#2-configuration)); the deployed stack and its
 commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 
@@ -1528,8 +1528,8 @@ model or credential error fails a query rather than answering from no context.
 | Message (abridged) | Meaning | Action |
 |---|---|---|
 | `Missing endpoint configuration for ...` / `Configuration validation error: ...` | An endpoint the run needs is unset, or a value has the wrong type | Set or fix the named key |
-| `ConfigurationError: Unknown config keys: '<path>' ...` (exit 2) | A typo, or a key dropped without a replacement (a renamed key fails with `settings moved; replace <old> -> <new>`; a removed one, for example `indexing.cross_run_merge` or `aws.bedrock.guardrail.apply_to`, only logs `Config key ... is removed and ignored`; the configuration reference lists the [moved](./configuration.md#moved-keys) and [removed](./configuration.md#removed-keys) keys) | Fix or delete the key; `--allow-unknown-keys` loads anyway with a WARNING per key |
-| Usage errors (exit 2): `--source-directory is required for pipeline execution`, `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name`, `--pipeline-id is required for --resume-from-stage`, `--enabled-stages: invalid stage names ...`, `argument --resume-from-stage: Unknown pipeline stage ...` | A required flag is missing, or a stage name is unknown | Pass the flag, or a stage name from the message ([CLI Reference](./cli.md#run-ingestion)) |
+| `ConfigurationError: Unknown config keys: '<path>' ...` (exit 2) | A typo, or a key dropped without a replacement (a renamed key fails with `settings moved; replace <old> -> <new>`; a removed one, for example `indexing.cross_run_merge` or `aws.bedrock.guardrail.apply_to`, only logs `Config key ... is removed and ignored`; the configuration reference lists the [moved](./reference/configuration.md#moved-keys) and [removed](./reference/configuration.md#removed-keys) keys) | Fix or delete the key; `--allow-unknown-keys` loads anyway with a WARNING per key |
+| Usage errors (exit 2): `--source-directory is required for pipeline execution`, `--s3-sync needs --s3-bucket-name or aws.s3.bucket_name`, `--pipeline-id is required for --resume-from-stage`, `--enabled-stages: invalid stage names ...`, `argument --resume-from-stage: Unknown pipeline stage ...` | A required flag is missing, or a stage name is unknown | Pass the flag, or a stage name from the message ([CLI Reference](./reference/cli.md#run-ingestion)) |
 | `... needs confirmation, but stdin is not a terminal` | Completed stages' outputs are no longer cached under the current inputs | `--yes` (recomputes them), or a new `--pipeline-id` |
 | `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An earlier stage failed or lost its output | Run the earlier stages first |
 | `observability.enabled is true but OpenTelemetry is not installed` | The `otel` extra is missing | `uv sync --extra otel`, or turn tracing off |
