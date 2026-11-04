@@ -3,7 +3,7 @@
 Tasks an operator runs against an existing deployment, and what to do when a
 run or a query fails. Every configuration key is in the
 [Configuration Reference](./reference/configuration.md) (how the configuration loads:
-[User Guide §2](./user-guide.md#2-configuration)); the deployed stack and its
+[Configuration](./guides/configure.md#how-configuration-is-loaded)); the deployed stack and its
 commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 
 | I want to | Go to |
@@ -27,7 +27,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Ship a seed graph (a knowledge graph to merge), or reset a namespace that holds one | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
 | Tune how long a query may take, or act on `QueryTimeoutError` | [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
-| Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](#observability) |
+| Turn on tracing (Jaeger, Langfuse, Phoenix, CloudWatch) | [Observability](./guides/observability.md) |
 | Look up an error message | [Common errors](#common-errors) |
 
 ## Before a run
@@ -37,7 +37,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
    `UKR__AWS__REGION_NAME` overrides it (Bedrock follows it while
    `aws.bedrock.region_name` is unset). Check with
    `env | grep -E '^(AWS_REGION|UKR__AWS__)'` and `aws sts get-caller-identity`.
-2. **Models.** The [required models](./user-guide.md#required-models) are
+2. **Models.** The [required models](./getting-started/aws.md#required-models) are
    enabled in the Bedrock region.
 3. **Endpoints** are set ([Start-up endpoint check](#start-up-endpoint-check)).
 4. **No other ingestion runs** against the same stores
@@ -1311,205 +1311,10 @@ never from a request field. To isolate tenants in the infrastructure:
 
 ## Observability
 
-Tracing is off by default; the settings are in the
-[User Guide](./user-guide.md#observability). To send traces to a local
-Jaeger, which accepts OTLP on port 4318:
-
-```bash
-docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 \
-  jaegertracing/all-in-one:latest
-uv sync --extra otel
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-```
-
-```yaml
-observability:
-  enabled: true
-  backend: "otlp"
-```
-
-Run a query and open <http://localhost:16686>: the service `unified-kg-rag`
-shows one `kg_rag.query` trace per query and one `kg_rag.ingestion.run` trace
-per ingestion run. For a collector or a vendor endpoint, point
-`OTEL_EXPORTER_OTLP_ENDPOINT` at it, pass credentials in
-`OTEL_EXPORTER_OTLP_HEADERS` from Secrets Manager or task secrets, and set
-`OTEL_EXPORTER_OTLP_PROTOCOL=grpc` for a gRPC endpoint (port 4317).
-
-To check it works: the start-up log has
-`Observability enabled (backend: 'otlp', ...)`; log records written inside a
-span carry its `trace_id` and `span_id`; a query trace has `kg_rag.retrieve`,
-`kg_rag.fusion`, `kg_rag.context_build` and `chat <model>` children, whose
-`gen_ai.usage.input_tokens` is the run's token usage.
-
-### Langfuse
-
-Langfuse and Phoenix ingest OTLP, so they need only the `otel` extra, no
-vendor SDK; their settings come from the environment only, and a standard
-`OTEL_EXPORTER_OTLP_*` variable wins over the vendor one. A local Langfuse
-runs from its Docker Compose file (Langfuse v4; v3 works the same way):
-
-```bash
-git clone --depth 1 https://github.com/langfuse/langfuse.git
-cd langfuse && docker compose up -d     # UI on http://localhost:3000
-```
-
-Create a project and an API key pair in the UI, then:
-
-```bash
-uv sync --extra otel
-export LANGFUSE_HOST=http://localhost:3000
-export LANGFUSE_PUBLIC_KEY=pk-lf-...   # deployments: from Secrets Manager
-export LANGFUSE_SECRET_KEY=sk-lf-...   # as task secrets, never in a file
-```
-
-```yaml
-observability:
-  enabled: true
-  backend: "langfuse"
-```
-
-- `LANGFUSE_HOST` is required (there is no default host); for Langfuse Cloud
-  use the region's URL, for example `https://cloud.langfuse.com`. The
-  exporter posts to `<host>/api/public/otel/v1/traces` over HTTP only (gRPC
-  fails at start-up); with `OTEL_EXPORTER_OTLP_ENDPOINT` instead, give
-  `<host>/api/public/otel` (the host root returns 404).
-- Both keys are required and sent as a Basic `Authorization` header with
-  `x-langfuse-ingestion-version: 4`. If you set `OTEL_EXPORTER_OTLP_HEADERS`
-  yourself, include that version header, or Langfuse Cloud can take minutes
-  to show traces.
-- Traces group in Sessions by `RAGInput.conversation_id` and in Users by
-  `RAGInput.user_id`. Langfuse v4's default `events_only` mode disables
-  `/api/public/traces`, `/observations` and `/sessions`: read spans through
-  `/api/public/v2/observations` or the UI.
-
-### Arize Phoenix
-
-```bash
-docker run --rm -d --name phoenix -p 6006:6006 -p 4317:4317 \
-  arizephoenix/phoenix:latest            # UI on http://localhost:6006
-uv sync --extra otel
-```
-
-```yaml
-observability:
-  enabled: true
-  backend: "phoenix"
-```
-
-With nothing else set, spans go to `http://localhost:6006/v1/traces` (`:4317`
-with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`) and land in the project named by
-`service_name` (`PHOENIX_PROJECT_NAME` wins). For a remote Phoenix set
-`PHOENIX_COLLECTOR_ENDPOINT` to the server root and, when it needs one,
-`PHOENIX_API_KEY` (sent as a Bearer `authorization` header). Spans carry
-OpenInference kinds (`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`), and
-the Sessions view groups a conversation's queries.
-
-### CloudWatch through the ADOT collector sidecar
-
-CloudWatch accepts OTLP traces signed with SigV4, so a collector next to the
-app signs and forwards them. On the CDK stacks, `-c enable_cloudwatch_tracing=true`
-adds an AWS Distro for OpenTelemetry (ADOT) collector sidecar and points the
-app at it. The whole recipe (turning on Transaction Search, the image, the
-first collector pull, where traces appear, cost, the collector configuration
-without the CDK stacks, and Bedrock model invocation logging as an
-account-level backstop) is in
-[iac/README.md: CloudWatch tracing](../iac/README.md#cloudwatch-tracing-optional).
-
-### Trace shape
-
-| Span | Parent | Attributes |
-|---|---|---|
-| `kg_rag.ingestion.run` | root | Status `ERROR` when the run failed |
-| `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
-| `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
-| `kg_rag.query` | root, or the `run-eval` batch | `session.id`, `user.id`, `kg_rag.blocked`; with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value` |
-| `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
-| `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
-| `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |
-| `kg_rag.rerank` | fusion | `kg_rag.rerank.status` (`ok`, `empty`, `error`), document counts |
-| `kg_rag.context_build` | query (`drift`: the round's actions span) | Tokens used vs the token budget |
-| `kg_rag.global.select`, `kg_rag.global.map` | strategy (`global`) | Select, once per query: `kg_rag.depth` (configured), `kg_rag.cut` (the cut mapped after falling back to a shallower one), `kg_rag.reports`, `kg_rag.dynamic`. Map: `kg_rag.reports`, `kg_rag.map_calls`, `kg_rag.report_tokens` |
-| `kg_rag.drift.primer`, `kg_rag.drift.actions` | strategy (`drift`) | Primer: `kg_rag.reports`, `kg_rag.answers`. One actions span per round (`kg_rag.depth`, `kg_rag.actions`), with the round's local searches under it |
-| `kg_rag.guardrail` | query | One per screened query or answer: `aws.bedrock.guardrail.id`, `.source` (`input`, `output`), `.action` (`none`, `masked`, `blocked`), `.intervened`, `.policies`; with the contextual grounding check, `aws.bedrock.guardrail.grounding.checked`, `.grounding.failed`, `.grounding.score`, `aws.bedrock.guardrail.relevance.score` |
-| `kg_rag.evaluate` | root | One per evaluator: `kg_rag.evaluator`, `kg_rag.items`, `kg_rag.eval.strategy`, `kg_rag.eval.repeat`; the judge's model spans under it |
-| `chat <model>`, `embeddings <model>` | the calling span | OpenTelemetry GenAI conventions, kind `CLIENT` (as Bedrock rerank spans): `gen_ai.request.model`, `.max_tokens`, `.temperature`, `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when Bedrock reports prompt-cache use, finish reasons, `error.type`. No cost |
-
-With `capture_content`, the answer model's `chat <model>` span keeps the
-answer as generated, even when the guardrail then blocks or masks it, and
-the `kg_rag.guardrail` span comes from the Bedrock guardrail adapter only (a
-custom `ContentGuardPort` emits none).
-
-`kg_rag.rerank.status` is the outcome of one Rerank call (`error`: the query
-fell back to the fused order; `empty`: nothing usable came back), while
-`kg_rag.rerank_status` is what reranking did, set even without a call:
-`applied`, `disabled`, `unavailable` (no rerank model), `skipped` (nothing to
-rerank) or `failed`; on the strategy span it is the worst step, as in
-[`metadata.rerank.status`](./user-guide.md#rerank-status).
-
-On export, spans keep their `gen_ai.*` and `kg_rag.*` attributes and gain the
-vendor's names: Langfuse `langfuse.observation.type` (`generation` for model
-calls, `embedding`, `retriever` for retrieval and rerank, `span` otherwise)
-and, with `capture_content`, `langfuse.observation.input` / `output`; Phoenix
-`openinference.span.kind`, `llm.model_name`, `llm.provider`,
-`llm.token_count.*` and, with `capture_content`, `input.value` /
-`output.value`.
-
-Known limits:
-
-- A streamed answer (`stream` / `astream`) is its own trace; its model span
-  takes `session.id` / `user.id` from the answer step's run metadata, so it
-  still groups with its session.
-- The async batch path records one span per batch, not per chunk.
-- A model call cancelled during `ainvoke` (its task cancelled, or the call cut
-  off by `asyncio.wait_for` / `asyncio.timeout`, as RAGAS's `ragas_timeout`
-  does) gets no LangChain callback; its model span is ended as `ERROR`
-  (`error.type: CancelledError`) when the task that started it ends. A stream
-  the caller stops reading early ends its span normally.
-- With `otlp`, `langfuse` or `phoenix` the first backend the process installs
-  also becomes OpenTelemetry's global tracer provider, which can be set only
-  once: after a later configuration with other settings, the package's spans
-  use the new exporter, but spans other libraries emit through the global API
-  are dropped.
-
-### Export limits, private VPCs and privacy
-
-- **Export never blocks a run.** Spans leave from a background thread; each
-  request is bounded by `observability.export_timeout_seconds` (10 s;
-  `OTEL_EXPORTER_OTLP_TIMEOUT` wins), a full queue drops spans, and failures
-  are logged at `ERROR`. Against an unreachable collector the flush at exit
-  takes about one timeout per remaining batch of 512 spans, at most about
-  30 s, then drops the rest.
-- **Private VPCs.** The endpoint must be reachable from the tasks: a
-  collector sidecar on `localhost`, a Langfuse or Phoenix inside the VPC, or
-  the X-Ray interface endpoint for the collector; hosted Langfuse or Phoenix
-  needs internet egress, which `private` mode does not have. Build the image
-  with `--build-arg UV_EXTRAS="--extra otel"`.
-- **Credentials** (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`,
-  `PHOENIX_API_KEY`, `OTEL_EXPORTER_OTLP_HEADERS`) come from the environment
-  only: inject them as ECS task secrets. On the CDK stacks, store them as
-  JSON keys of one Secrets Manager secret and deploy with
-  `-c observability_secret_arn=<complete secret ARN>` and, for keys other
-  than the two Langfuse ones,
-  `-c observability_secret_keys=OTEL_EXPORTER_OTLP_HEADERS,...` (in
-  `private` mode the stacks then add a Secrets Manager interface endpoint,
-  which a reused VPC must provide, or the tasks fail to start; it reaches
-  the deploy region only, so synth refuses a secret of another region); the
-  non-secret settings (`LANGFUSE_HOST`, `UKR__OBSERVABILITY__*`) go in the
-  image config or the run's container overrides. The start-up line
-  `Observability exporter for backend '...'` shows the endpoint and header
-  names, never values.
-
-Spans carry counts, ids, model names and token usage only.
-`capture_content: true` adds prompt and completion text to model spans, and
-the query and answer to the `kg_rag.query` span (after `redact_patterns`):
-enable it only where the trace backend may hold corpus data. With `otlp`,
-`langfuse` or `phoenix`, `redact_patterns` also applies at export to every
-string attribute, event attribute (an exception message can quote a query)
-and status message, `session.id` and `user.id` included; with `none` the
-host's pipeline exports spans as recorded, so redact in its collector.
-`RAGInput.user_id` is exported as given: pass an opaque id, not an e-mail
-address. With LangSmith tracing on (`LANGSMITH_TRACING=true`), LangChain
-uploads content to LangSmith independently of these settings.
+Moved to [Observability](./guides/observability.md) (enable tracing; the
+Jaeger, Langfuse, Phoenix and CloudWatch recipes; export limits, private
+VPCs and privacy) and the [Telemetry reference](./reference/telemetry.md)
+(trace shape, span attributes, usage counters).
 
 ## Common errors
 

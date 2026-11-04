@@ -20,7 +20,7 @@ measured most of the defaults below:
   the default tier (extraction, reports, answers), Claude Haiku 5.5 for the
   fast tier, Titan Text Embeddings V2 and Cohere Rerank 3.5. The graph and
   vector stores were the embedded SQLite stores
-  ([local stores with Bedrock models](../user-guide.md#local-stores-with-bedrock-models)),
+  ([local stores with Bedrock models](../guides/local-mode.md#local-stores-with-bedrock-models)),
   so latencies include no network hop to Neptune or
   OpenSearch.
 - **Index.** `prepare-benchmark musique --limit 200 --seed 0`: 200 MuSiQue
@@ -132,7 +132,7 @@ the pairs:
 So the unset judge on Bedrock is Opus 5.5, a model other than the default
 answer model. At the list prices above it costs twice Sonnet 5.5 per token,
 and only `run-eval`'s LLM judges call it
-([Model selection notes](../user-guide.md#model-selection-notes)).
+([Model selection notes](../reference/models.md#model-selection-notes)).
 
 ## Gleaning rounds
 

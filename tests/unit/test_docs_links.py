@@ -135,3 +135,12 @@ def test_the_script_exits_non_zero_on_a_failure(
     monkeypatch.setattr(module, "TRANSLATED_PAGES", [])
     assert module.main(tmp_path) == 1
     assert "FAIL README.md:1: missing target: missing.md" in capsys.readouterr().out
+
+
+def test_a_link_to_a_file_git_does_not_track_fails(tmp_path: Path) -> None:
+    """A target that exists only on disk (untracked or ignored) is broken in CI."""
+    root = git_tree(tmp_path, {"README.md": "[t](docs/t.md)\n"})
+    (root / "docs").mkdir()
+    (root / "docs" / "t.md").write_text("# T\n", encoding="utf-8")
+    report = check_docs().check_links(root)
+    assert report.failures == ["README.md:1: target not tracked by Git: docs/t.md"]

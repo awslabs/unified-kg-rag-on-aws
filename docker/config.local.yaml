@@ -2,7 +2,7 @@
 # machine, no AWS account needed.
 #
 # backend: local fills in the local providers for every key this file leaves
-# unset (see the user guide's "Local mode" for the full list and the expected
+# unset (see docs/guides/local-mode.md for the full list and the expected
 # differences from AWS mode):
 #   - language models and embeddings: Ollama at localhost:11434
 #   - reranking: a sentence-transformers cross-encoder ([local] extra; without

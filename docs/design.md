@@ -1774,7 +1774,7 @@ fails the run (`BaseRenderer.check_dependencies`) before anything renders.
 - **Prompts** (`domain/prompts/`) are `BasePrompt` classes whose templates and
   variables are class attributes, version-controlled as code. All but five
   can be overridden from config (`custom_prompts`); the
-  [User Guide](./user-guide.md#custom-prompts) lists the five.
+  [User Guide](./user-guide.md#b-custom_prompts-overrides) lists the five.
 - **Prompt tuning** (`application/prompts/tuner.py`, after MS GraphRAG
   `prompt_tune`) profiles a corpus sample (domain, language, persona, entity
   types) and writes a domain-adapted `custom_prompts` fragment to review and

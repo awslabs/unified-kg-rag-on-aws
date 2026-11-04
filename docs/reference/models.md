@@ -2,10 +2,10 @@
 
 Which Bedrock models the framework knows, how it shapes requests for each
 provider, and how to describe a model it does not know. For which models to
-enable before a first run, see the
-[User Guide §1 Required models](../user-guide.md#required-models); for the two
+enable before a first run, see
+[Required models](../getting-started/aws.md#required-models); for the two
 model tiers and per-role overrides, see
-[§2 Model selection notes](../user-guide.md#model-selection-notes).
+[Model selection notes](#model-selection-notes) below.
 
 ## Model ids and capability records
 
@@ -31,8 +31,8 @@ aws:
 Embedding and rerank model ids work differently: with the Bedrock providers
 (the default `providers.embedding.kind` / `providers.rerank.kind`) they are a
 closed list, and `model_overrides` does not apply to them. With a local
-provider any model name is accepted (see the user guide's
-[Local mode](../user-guide.md#local-mode-no-aws)). `models.embedding.model_id` accepts
+provider any model name is accepted (see
+[Local mode](../guides/local-mode.md)). `models.embedding.model_id` accepts
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3` or
 `cohere.embed-multilingual-v3`; `models.rerank` accepts
@@ -152,3 +152,64 @@ The 1-hour TTL is sent only on Converse requests to Claude 4.5 and later
 (`supports_1h_cache_ttl` in the capability record); an InvokeModel request
 keeps the 5-minute checkpoint, because langchain-aws rewrites its
 `cache_control` to `{"type": "ephemeral"}` and drops the TTL.
+
+## Model selection notes
+
+The `models` section names the model of each role; ids are checked against
+the family's provider (`providers.llm.kind`, `providers.embedding.kind`,
+`providers.rerank.kind`). Every LLM role runs on one of two tiers, so one line
+switches the pipeline; a `models.roles` entry (a model id, or `default` /
+`fast` for the other tier) wins over its tier:
+
+| Tier | Roles |
+| --- | --- |
+| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` (with a provider other than Bedrock; see below) |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
+
+```yaml
+models:
+  default: "openai.gpt-6-sol"          # every default-tier role
+  roles:
+    answer_generation: "anthropic.claude-opus-5-5"   # one role pinned
+    query_rewrite: default                          # moved to the other tier
+```
+
+- **The judge is its own model.** On Bedrock an unset
+  `models.roles.evaluation` is `anthropic.claude-opus-5-5`, not the
+  default tier: an LLM judge favours its own answers
+  ([measurement and dated list prices](../concepts/defaults-and-evidence.md#the-evaluation-judge)).
+  Opus 5.5 costs more per token than Sonnet 5.5, and only `run-eval`'s LLM
+  judges call it. When the
+  answer model is Opus 5.5 itself, the unset judge falls back to the default
+  tier's model, or to Sonnet 5.5 if that is the answer model too; `run-eval`
+  logs the judge it chose, and why, at INFO. With `--from-results` or
+  `--baseline-results` the saved runs' answer models (their manifests'
+  `models.answer_generation`) count as answer models too. Set
+  `models.roles.evaluation: default` for the earlier judge (the answer
+  model; `run-eval` then warns that it judges its own answers, as it does
+  for any configured judge that is the answer model), or another model when
+  Opus 5.5 is not enabled in your account or region. With another provider
+  the judge stays on the `default` tier (and is warned about when it judges
+  its own answers). The CDK stack grants every Bedrock model by default; a
+  scoped `bedrock_model_arns` must list the judge model too.
+- The embedding model (`models.embedding.model_id`) serves the indices, the
+  queries and RAGAS; changing it or its
+  `dimension` needs a re-index. On Bedrock, embedding and rerank ids are a
+  closed list ([above](#model-ids-and-capability-records));
+  other providers take any model name.
+- Settings of an unselected provider (`providers.llm.temperature` with
+  Bedrock models) are ignored with a WARNING.
+- **Output cap.** `aws.bedrock.default_max_output_tokens` is 16384 because
+  Bedrock reserves input + `max_tokens` against the tokens-per-minute quota
+  when a request starts; asking for the model maximum throttles concurrent
+  ingestion. Long-output prompts derive a higher floor that wins (by default
+  23192 for graph extraction and gleaning, 18992 for document translation,
+  29792 for claims), rising with their per-chunk limits. The short-answer
+  query calls ask for less (`search.output_ceilings`, 4096 each: the
+  router, the query entity and keyword extractions, the dynamic-selection
+  report ratings; `evaluation.answer_span_output_ceiling` for the answer-span
+  extractor), never less than the call's thinking budget plus 1024 (an
+  effort of low budgets 2048, high 8192), so an `auto` query reserves about
+  29k output tokens instead of 49k.
+- Curated models, request shapes, prompt caching and
+  `aws.bedrock.model_overrides` are described above.

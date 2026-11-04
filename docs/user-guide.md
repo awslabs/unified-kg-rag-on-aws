@@ -31,8 +31,8 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 
 ## Contents
 
-1. [Prerequisites & Installation](#1-prerequisites--installation) (including [Required models](#required-models))
-2. [Configuration](#2-configuration) (every key: [Configuration Reference](./reference/configuration.md))
+1. Prerequisites & Installation: moved to [Getting started on AWS](./getting-started/aws.md) (including [Required models](./getting-started/aws.md#required-models)), [Getting started locally](./getting-started/local.md) and [Local mode](./guides/local-mode.md)
+2. Configuration: moved to [Configuration](./guides/configure.md) (every key: [Configuration Reference](./reference/configuration.md))
 3. [Ingestion (`run-ingestion`)](#3-ingestion-run-ingestion)
 4. [Querying (`run-rag`)](#4-querying-run-rag)
 5. [Incremental indexing](#5-incremental-indexing)
@@ -46,666 +46,6 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 
 Related pages: [CLI Reference](./reference/cli.md) · [Configuration Reference](./reference/configuration.md) · [Model Catalog](./reference/models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
-
----
-
-## 1. Prerequisites & Installation
-
-### Runtime
-
-- **Python 3.11 – 3.12**
-- **[uv](https://docs.astral.sh/uv/)** (recommended package manager; `pip` works too)
-
-### AWS services
-
-AWS mode only: [Local mode](#local-mode-no-aws) replaces each of them with a
-local component.
-
-| Service | Required? | Used for |
-|---|---|---|
-| **Amazon Bedrock** | Yes | Every LLM call, embeddings and reranking (enable model access for the model ids you configure) |
-| **Amazon Neptune** | Yes | The knowledge graph and multi-hop traversal at query time |
-| **Amazon OpenSearch** | Yes | Vector and BM25 lexical indices (text units, entities, community reports, relationships, claims) |
-| **Amazon S3** | Only for `--s3-sync` or `s3://` paths | Stage-cache sync, `s3://` datasets and the CDK corpus |
-| **Amazon DynamoDB** | Only for incremental indexing | The document-status registry that diffs the corpus by content hash |
-
-### Required models
-
-Enable access to these Bedrock models (the code defaults; a model you
-configure replaces the one in its row) before the first run:
-
-| Role | Default model id | Config key |
-|---|---|---|
-| Default tier (extraction, gleaning, community reports, answers) | `anthropic.claude-sonnet-5-5` | `models.default` |
-| `run-eval` LLM judges (only when an LLM judge runs) | `anthropic.claude-opus-5-5` | `models.roles.evaluation` |
-| Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `models.fast` |
-| Embeddings (indexing, queries and evaluation) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
-| Reranking | `cohere.rerank-v3-5:0` | `models.rerank` |
-
-- **Region.** Every Bedrock call goes to `aws.bedrock.region_name`
-  (default: `aws.region_name`, `us-west-2`, which offers all four). Where
-  rerank models are missing (for example `ap-northeast-2`), point it at a
-  region that has them or set `search.reranking.enabled: false`; a private
-  VPC whose only Bedrock route is its VPC endpoint must keep its own region.
-- **Inference profiles.** Claude Sonnet 5.5 and Haiku 5.5 are invocable only
-  through a cross-region inference profile: keep
-  `aws.bedrock.enable_global_profile: true` and grant
-  `bedrock:ListInferenceProfiles` (if no profile resolves, model creation
-  fails with a message naming this remedy).
-- **Permissions.** See [IAM permissions](#iam-permissions); reranking needs a
-  statement of its own.
-
-The [Model Catalog](./reference/models.md) lists every curated model and its limits.
-
-The framework connects to services that **already exist** and never creates
-them. Run it in [local mode](#local-mode-no-aws), against your own services
-(record their endpoints in `config.yaml`, [§2](#2-configuration)), or on the
-bundled CDK app in [`iac/`](../iac/README.md), which provisions the whole
-stack ([Quick start](../iac/README.md#quick-start)); its stores are VPC-only,
-so the CLIs run there as tasks that receive the endpoints as environment
-variables ([After deploy](../iac/README.md#after-deploy)).
-
-### Install
-
-```bash
-git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
-cd unified-kg-rag-on-aws
-uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
-```
-
-`uv sync` alone installs ingestion and queries. Two extras add the rest;
-without one, the command that needs it stops with exit `2`, naming it:
-
-- **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
-  pandas, langchain-openai), both enabled by default ([§6](#evaluators)).
-  The LLM-free evaluators need no extra.
-- **`viz`**: pyvis and Bokeh for `run-visualization` ([§7](#7-visualization-run-visualization)).
-
-**Markdown and HTML** need the `unstructured` extra
-(`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
-fixes URL-partitioning SSRF and unescaped markup). Without it, only `.pdf`,
-`.txt`, `.csv` and `.json` are parsed and ingestion skips `.md` / `.html` files with one warning
-per extension.
-
-The extra tokenizes with a spaCy model (`en_core_web_sm`) that it downloads
-from GitHub at the first Markdown or HTML file. Without network access,
-install it beforehand, once, where the network is reachable:
-`python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
-Otherwise the first such file waits up to 120 s and fails, and every later
-one of the run fails at once with the same error.
-
-The deployed image (`docker/Dockerfile`) leaves the extra out (it adds about
-200 MB), so a Step Functions ingest of `.md` / `.html` files fails with "No
-supported files found": convert the files, or build with
-`--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the spaCy
-model in the image (a task in the private VPC cannot download it). The image's
-`docker/config.yaml` holds no endpoints; the CDK compute stack injects them.
-
-**OWL/RDFS ontologies** as the extraction schema need the `ontology` extra
-(`uv sync --extra ontology`; [From an OWL/RDFS ontology](#from-an-owlrdfs-ontology)).
-
-### Authentication
-
-1. **AWS credentials** come from the standard credential chain:
-   `aws.profile_name` names a profile, `null` uses the default chain (env
-   vars, instance role, ...). Neptune signs with SigV4 when
-   `aws.neptune.use_iam: true`.
-2. **OpenSearch** uses IAM (`aws.opensearch.use_iam: true`) or, with
-   `use_iam: false`, a username and password in a `.env` file (copy
-   `.env-template`), which the `run-*` CLIs load:
-
-   ```bash
-   UKR__AWS__OPENSEARCH__USERNAME=your_opensearch_username
-   UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
-   ```
-
-### IAM permissions
-
-The principal running the CLIs needs Bedrock (`InvokeModel`,
-`InvokeModelWithResponseStream` and `CountTokens` for your model ids and
-embeddings; without `CountTokens` token counts are estimated), Neptune
-(connect / SigV4 with `use_iam: true`), OpenSearch (read and write the
-configured indices), S3 (the configured bucket) and DynamoDB (with incremental
-indexing). Three Bedrock actions need statements of their own:
-
-- **`bedrock:Rerank` on `Resource: "*"`.** The Rerank API authorizes against
-  another resource shape than `InvokeModel`, so a statement scoped to model or
-  inference-profile ARNs denies it (the CDK task role grants it separately).
-  Without it every query logs `Reranking failed: ...` at ERROR and returns
-  the fused results unreranked (`metadata.rerank.status: failed`); if you
-  cannot grant it, set `search.reranking.enabled: false`.
-- **`bedrock:ListInferenceProfiles` on `Resource: "*"`**, an account-level
-  read the model resolver makes.
-- **`bedrock:ApplyGuardrail`** on the guardrail's ARN
-  (`arn:aws:bedrock:<bedrock region>:<account>:guardrail/<id>`), when a
-  guardrail is set.
-
-### Local mode (no AWS)
-
-Local mode runs ingestion, querying and evaluation on one host without an AWS
-account, for development and evaluation (AWS stays the default). By default
-the graph store, the vector/lexical store and the registry are SQLite files, so
-the only service to run is [Ollama](https://ollama.com) at
-`http://localhost:11434`:
-
-```bash
-uv sync --extra local
-ollama pull qwen2.5:7b-instruct
-ollama pull bge-m3
-uv run run-ingestion --backend local --source-directory ./docs-in
-uv run run-rag --backend local --query "..."
-```
-
-- **Files.** Without a config file the three stores live in
-  `.unified-kg-rag/` of the working directory, so run every command from the
-  same directory, or use a config file with `backend: local` (relative paths
-  resolve against it). To start over, delete the three files together or run
-  once with `indexing.reset: true`.
-- **Incremental indexing** is off in the preset; turn it on with
-  `providers.doc_status.enabled: true` (the run logs the registry's absolute
-  path).
-- **CPU-only PyTorch.** On Linux `uv sync --extra local` installs the locked
-  CUDA build (several GB). For the CPU build run `uv sync` then
-  `uv pip install --torch-backend cpu -e '.[local]'` (a later plain `uv sync`
-  removes it).
-
-`backend: local` (in the file, or `--backend local`) fills in these providers
-for every key the config leaves unset; a key the file sets always wins
-(`providers.<role>.kind`, an `aws.neptune` / `aws.opensearch` connection key,
-an embedding or rerank model id). `config-template.yaml` leaves them
-commented out, so a copy switches with `backend: local` alone. Roles can be
-mixed, for example local stores with Bedrock models:
-
-| Role | `providers.<role>.kind` | Local default |
-|---|---|---|
-| Language models | `llm`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `qwen2.5:7b-instruct` at `http://localhost:11434` |
-| Embeddings | `embedding`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `bge-m3` (1024 dimensions) |
-| Reranking | `rerank`: `bedrock` \| `cross_encoder` \| `none` | `cross_encoder`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
-| Graph store | `graph`: `neptune` \| `gremlin` \| `sqlite` | `sqlite` at `providers.graph.sqlite_path` (default `.unified-kg-rag/graph.sqlite3`) |
-| Vector/lexical store | `vector`: `opensearch` \| `sqlite` | `sqlite` at `providers.vector.sqlite_path` (default `.unified-kg-rag/vector.sqlite3`) |
-| Doc-status registry | `doc_status`: `dynamodb` \| `sqlite` | `sqlite` at `providers.doc_status.sqlite_path` (default `.unified-kg-rag/doc-status.sqlite3`) |
-
-`gremlin` (a TinkerPop Gremlin Server) and `opensearch` (a local OpenSearch)
-are reached through the `aws.neptune` and `aws.opensearch` keys, which the
-preset points at `localhost` ([containers](#local-stores-in-containers)).
-
-- **Models.** With a non-Bedrock LLM, `models.default` is required (the
-  preset sets it) and `models.fast` defaults to it.
-  `providers.llm.context_window_size` and `max_output_tokens` describe the
-  model (the window goes to Ollama as `num_ctx`); the preset fits
-  `search.token_manager.max_context_tokens` (22000) to the default
-  32,768-token window, only for a non-Bedrock LLM left at that window (a
-  Bedrock LLM or an explicit `context_window_size` keeps `30000`). An
-  OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
-  `base_url` (its `/v1` root) and, if needed, `api_key`.
-- **Embeddings.** A non-Bedrock provider needs `models.embedding.model_id`
-  and `dimension`. The dimension is fixed into the vector mappings, so
-  changing either needs a full re-index; another model than `bge-m3` needs its
-  own dimension. The local providers trust the configured dimension (it is
-  not checked against the model at start): a wrong value fails at the first
-  vector write or search.
-- **Reranking.** The cross-encoder downloads its model from Hugging Face on
-  the first query. Without the `[local]` extra (or with `kind: none`) queries
-  keep the fused order, logged once and reported as
-  `metadata.rerank.status` `unavailable` (`disabled` for `kind: none`).
-- **Embedded stores.** Each `sqlite` store is one file created on first use
-  (a relative `sqlite_path` resolves like the other paths); the
-  `indexing.neptune` and `indexing.opensearch` settings apply to them.
-- **Token counting** uses the script-aware estimate
-  (`providers.llm.tokenizer: tiktoken` for a BPE encoding).
-- **Custom kinds** register a builder with
-  `adapters.provider_registry.register_provider`
-  ([design §15](./design.md#15-extension-guide)).
-
-#### Differences from AWS mode
-
-- **Quality.** Small local models extract noticeably worse (more failed
-  chunks, weaker resolution and reports): use the largest model the hardware
-  runs. The `langchain` / `ragas` judges score less reliably.
-- **Model behaviour.** No prompt caching or reasoning effort; a response cut
-  at the output limit is not detected (keep `max_output_tokens` at what the
-  model can generate); token counts and so context budgets are estimates. A
-  server that refuses a call (HTTP 4xx) or stays unreachable fails the query
-  with the client's error instead of answering "could not find".
-- **Guardrail.** With `aws.bedrock.guardrail.identifier` set, the query
-  chain still screens queries and answers through Bedrock `ApplyGuardrail`
-  (AWS credentials needed).
-
-**The embedded vector store** differs from OpenSearch:
-
-- Text mapped to `nori`, `kuromoji` or `smartcn` is split into overlapping
-  CJK character bigrams instead of morphological analysis: a name still
-  matches inside a longer word (홍길동 in 홍길동으로부터), but ranking differs.
-- `english` stems only with `snowballstemmer` from the `[local]` extra (else
-  one warning); emoji are not indexed. There is no fuzzy matching, so a typo,
-  and under `standard` an inflected form ("vendors"), matches only through
-  the vector side.
-- kNN is exact (every filtered document is scored), so cost grows linearly.
-- Each searched index is held in memory (about documents x dimension x 4
-  bytes per vector field), sized for about 100,000 documents (a larger one
-  logs a warning: use OpenSearch). The first query after a write reloads the
-  index, and the first lexical one re-analyzes the searched field: about 10 s
-  for 50,000 documents of 120 words, about three times slower under
-  `english` above about 65,000 distinct words.
-
-**SQLite files** allow one writer at a time: run one ingestion per store file
-(queries can read alongside); a writer waiting longer than
-`search.store_timeout_seconds` fails with "stayed locked". Keep the files on
-a local disk, not NFS, SMB or Amazon EFS
-([Common errors](./operations.md#local-mode)).
-
-#### Provider flags
-
-`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning` and
-`run-visualization` take the provider flags (`--backend`, `--llm-provider`,
-`--llm-model`, `--embedding-provider`, `--embedding-model`,
-`--embedding-dimension`, `--rerank-provider`, `--model-base-url`). Each
-overrides its key of the loaded config, a key the file sets included; an
-omitted flag leaves the config as it is (`run-visualization` calls no model
-or store and only accepts them). The keys each flag sets are in the
-[CLI Reference](./reference/cli.md#provider-flags).
-
-#### Local stores in containers
-
-[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs the stores
-as servers: a Gremlin Server (in-memory TinkerGraph), a single-node
-OpenSearch 2.13 with `analysis-nori` (security plugin off) and, under the
-`models` profile, Ollama. OpenSearch is the engine of Amazon OpenSearch
-Service, so use it to check ranking before an AWS deployment
-([Multilingual ingestion](#multilingual-ingestion) covers `nori` on AWS).
-[`docker/config.local.yaml`](../docker/config.local.yaml) selects
-`providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` and
-turns on incremental indexing. It needs Docker Compose 2.23.1 or later.
-
-```bash
-uv sync --extra local
-docker compose -f docker/compose.local.yaml --profile models up -d --wait
-docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
-docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
-uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
-uv run run-rag --config-path docker/config.local.yaml --query "..."
-docker compose -f docker/compose.local.yaml down -v
-```
-
-- **`down -v`** deletes the stores' data but not the SQLite registry
-  (`.unified-kg-rag/doc-status.sqlite3` at the repository root): delete it or
-  set `indexing.reset: true` before ingesting into fresh stores, or the
-  incremental run stops before writing anything.
-- No model is pulled automatically; the preset connects with plain `ws://`
-  and `http://`, without SigV4 or authentication.
-- Smoke test without models:
-  `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
-
-Differences from Neptune:
-
-- TinkerGraph is in memory: after a Gremlin Server restart the next
-  incremental run stops before writing and asks for `indexing.reset: true`
-  (or deleting the registry).
-- A list property written at vertex creation keeps duplicate values.
-- TinkerGraph has no transactions: keep `indexing.neptune.index_concurrency`
-  at 1 (the default). With concurrent writers a retried edge rewrite can
-  leave a duplicate edge.
-- Writes look elements up by their `id` property, which the compose file's
-  server indexes (without the index it slows down as the graph grows), or
-  with `indexing.neptune.vertex_ids: custom` vertices by their vertex id,
-  which the compose file's graph accepts as a string. Use it for
-  development-sized corpora.
-- The stores have no authentication or TLS; the compose file binds them to
-  `127.0.0.1` and drops all Linux capabilities.
-
-#### Local stores with Bedrock models
-
-Set `providers.llm.kind`, `providers.embedding.kind` and
-`providers.rerank.kind` to `bedrock` in a config with `backend: local`
-(Bedrock model ids then validate against the catalog) and use AWS credentials
-with Bedrock access. For the containers, start only the stores
-(`docker compose -f docker/compose.local.yaml up -d --wait`) and edit a copy
-of `docker/config.local.yaml`.
-
----
-
-## 2. Configuration
-
-Copy the template and point every CLI at it with `--config-path config.yaml`:
-
-```bash
-cp config-template.yaml config.yaml
-```
-
-A config file holds only the keys you change; the others keep their
-defaults. Every key, its type, default and description is in the generated
-[Configuration Reference](./reference/configuration.md); this section covers what needs
-more than a table row.
-
-### How configuration is loaded
-
-Each layer overrides the one before:
-
-1. **Built-in defaults** (`unified_kg_rag/domain/models/config.py`). Without
-   `--config-path`, a CLI runs on these plus the environment.
-2. **The `backend` preset**: `backend: local` (or `--backend local`) fills in
-   the local providers and stores for every key the file and the environment
-   leave unset ([Local mode](#local-mode-no-aws)).
-3. **Your YAML file**. A dict-valued key (such as `logging.library_levels`)
-   replaces the whole default dict, it does not merge.
-4. **Environment variables** ([below](#environment-variable-overrides)).
-5. **Provider flags** (`--backend`, `--llm-provider`, ...), applied last. The
-   config is rebuilt from what the file and the environment set, so switching
-   `--backend` drops only what the old preset filled in, never a value you set.
-
-The file is validated when it loads. A wrong type or value
-(`Configuration validation error: ...`), invalid YAML, a missing
-`--config-path` file and an unknown key (in the file or as a `UKR__` variable)
-are usage errors (exit 2). Unknown keys are refused because a misspelled key
-silently keeps its default; `--allow-unknown-keys`
-(`allow_unknown_keys=True` for `get_config`) logs a WARNING per key instead.
-A moved key fails naming its replacement
-([Moved keys](./reference/configuration.md#moved-keys)).
-
-Retries are configured in one section, `retry`: `max_attempts` for model
-calls (ingestion items, Bedrock embeddings and query-time calls) with its
-backoff, and an attempt count for the callers whose defaults differ (model
-servers, the graph-store indexer, OpenSearch queries, RAGAS judges). Every
-attempt count includes the first attempt; `1` disables the retry.
-
-### Settings most runs change
-
-| Key | Default | Change it when |
-|---|---|---|
-| `aws.region_name` | `"us-west-2"` | Stores in another region (Bedrock follows unless `aws.bedrock.region_name` is set) |
-| `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | Always on AWS (the CDK stack injects them) |
-| `providers.doc_status.enabled` | `false` | Incremental indexing ([§5](#5-incremental-indexing)) |
-| `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | Other models ([notes](#model-selection-notes)) |
-| `processing.max_concurrency` | `40` | Lower on `ThrottlingException` retries, raise if quota allows |
-| `processing.graph_extraction.entity_types` | 7 generic types | Domain adaptation ([§9](#9-domain-adaptation)) |
-| `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](#multilingual-ingestion)) |
-| `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
-| `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](#index-suffix)) |
-| `graph.community_detection.enabled` | `true` | LightRAG-only, lighter ingestion (`global` and `drift` need it) |
-| `search.reranking.enabled` | `true` | No rerank model in the region, or no reranking wanted |
-| `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](#context-budget)) |
-| `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus (quarantined documents skipped) |
-| `aws.bedrock.guardrail.identifier` | `null` | Screen queries and answers ([Guardrail](#guardrail)) |
-| `observability.enabled` | `false` | OpenTelemetry traces ([Observability](#observability)) |
-
-### Model selection notes
-
-The `models` section names the model of each role; ids are checked against
-the family's provider (`providers.llm.kind`, `providers.embedding.kind`,
-`providers.rerank.kind`). Every LLM role runs on one of two tiers, so one line
-switches the pipeline; a `models.roles` entry (a model id, or `default` /
-`fast` for the other tier) wins over its tier:
-
-| Tier | Roles |
-| --- | --- |
-| `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` (with a provider other than Bedrock; see below) |
-| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
-
-```yaml
-models:
-  default: "openai.gpt-6-sol"          # every default-tier role
-  roles:
-    answer_generation: "anthropic.claude-opus-5-5"   # one role pinned
-    query_rewrite: default                          # moved to the other tier
-```
-
-- **The judge is its own model.** On Bedrock an unset
-  `models.roles.evaluation` is `anthropic.claude-opus-5-5`, not the
-  default tier: an LLM judge favours its own answers
-  ([measurement and dated list prices](./concepts/defaults-and-evidence.md#the-evaluation-judge)).
-  Opus 5.5 costs more per token than Sonnet 5.5, and only `run-eval`'s LLM
-  judges call it. When the
-  answer model is Opus 5.5 itself, the unset judge falls back to the default
-  tier's model, or to Sonnet 5.5 if that is the answer model too; `run-eval`
-  logs the judge it chose, and why, at INFO. With `--from-results` or
-  `--baseline-results` the saved runs' answer models (their manifests'
-  `models.answer_generation`) count as answer models too. Set
-  `models.roles.evaluation: default` for the earlier judge (the answer
-  model; `run-eval` then warns that it judges its own answers, as it does
-  for any configured judge that is the answer model), or another model when
-  Opus 5.5 is not enabled in your account or region. With another provider
-  the judge stays on the `default` tier (and is warned about when it judges
-  its own answers). The CDK stack grants every Bedrock model by default; a
-  scoped `bedrock_model_arns` must list the judge model too.
-- The embedding model (`models.embedding.model_id`) serves the indices, the
-  queries and RAGAS; changing it or its
-  `dimension` needs a re-index. On Bedrock, embedding and rerank ids are a
-  closed list ([Model Catalog](./reference/models.md#model-ids-and-capability-records));
-  other providers take any model name.
-- Settings of an unselected provider (`providers.llm.temperature` with
-  Bedrock models) are ignored with a WARNING.
-- **Output cap.** `aws.bedrock.default_max_output_tokens` is 16384 because
-  Bedrock reserves input + `max_tokens` against the tokens-per-minute quota
-  when a request starts; asking for the model maximum throttles concurrent
-  ingestion. Long-output prompts derive a higher floor that wins (by default
-  23192 for graph extraction and gleaning, 18992 for document translation,
-  29792 for claims), rising with their per-chunk limits. The short-answer
-  query calls ask for less (`search.output_ceilings`, 4096 each: the
-  router, the query entity and keyword extractions, the dynamic-selection
-  report ratings; `evaluation.answer_span_output_ceiling` for the answer-span
-  extractor), never less than the call's thinking budget plus 1024 (an
-  effort of low budgets 2048, high 8192), so an `auto` query reserves about
-  29k output tokens instead of 49k.
-- Curated models, request shapes, prompt caching and
-  `aws.bedrock.model_overrides` are in the [Model Catalog](./reference/models.md).
-
-### Context budget
-
-`search.token_manager.max_context_tokens` (`30000`, upstream LightRAG's
-budget) is the retrieved context the answer prompt gets, clamped with a
-warning to what `models.roles.answer_generation` accepts beside its output
-reservation; `null` derives it from that model's window. Per-type shares and
-`local` slot quotas: [reference](./reference/configuration.md#searchtoken_manager).
-
-### Guardrail
-
-Setting `aws.bedrock.guardrail.identifier` screens two texts of every query
-with the `ApplyGuardrail` API; the guardrail must exist in
-`aws.bedrock.region_name`.
-
-- **What is screened.** The raw user query, once, before memory, rewriting,
-  routing and retrieval (`check_input`), and the final answer (`check_output`;
-  a streamed answer then arrives as one chunk). Only these are billed.
-- **What happens.**
-  - A blocked query gets the guardrail's message, retrieves nothing, writes
-    no memory and sets `RAGOutput.metadata.blocked`. A masked query continues
-    with the masked text only.
-  - A blocked or masked answer is replaced by the guardrail's text (blocked:
-    no `sources` either). Masking covers the answer, not its sources (corpus
-    text as retrieved): keep text a caller must not see out of the corpus.
-  - Interventions are in `RAGOutput.metadata.guardrail`, the WARNING log and
-    the trace. A guardrail API error fails the query, or with
-    `processing.ignore_errors` gives the degraded answer with
-    `metadata.error`: never unscreened.
-- **Not on model calls.** Model calls inside a query run unguarded: attached
-  to a call, a guardrail evaluates the whole prompt, so a `PROMPT_ATTACK`
-  filter judges retrieved text as user input (false blocks, cost growing
-  with context)
-  ([prompt attacks](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html)).
-  The contextual grounding check is opt-in and runs on the answer's check
-  only (below).
-- **Ingestion and the evaluation judges run unguarded** (`run-eval`'s answers
-  come from the screened query path). A PII guardrail that anonymizes
-  `NAME` would rewrite entity names to `{NAME}` (merging distinct people), and
-  a `PROMPT_ATTACK` filter can block instruction-like corpus text. On the
-  query path, `NAME` anonymization also strips the name a question retrieves
-  by, so the baseline guardrail `iac/` creates anonymizes email, phone and
-  card numbers but not `NAME` ([iac/README.md](../iac/README.md#guardrail)).
-- **Contextual grounding check (opt-in; English, French and Spanish
-  only).** `aws.bedrock.guardrail.contextual_grounding.enabled: true` sends
-  the context the answer model was given (`grounding_source`) and the
-  question it answered (`query`) with the answer's check, so the guardrail's
-  [contextual grounding policy](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)
-  scores whether the answer is grounded in that context and relevant to the
-  question, and blocks it below its threshold (`iac/`:
-  `-c guardrail_contextual_grounding=true`, `guardrail_grounding_threshold`,
-  default 0.7). Needs `check_output`.
-  - **Language.** The Classic tier (the default, and the one `iac/` creates)
-    scores English, French and Spanish only: answers in other languages,
-    Korean included, score low and are blocked. The Standard tier covers
-    more languages but needs a cross-Region guardrail profile and is offered
-    in fewer regions. Measure the threshold on your own questions first.
-  - A blocked answer takes the refusal path above, with
-    `reason: contextual_grounding` in its `metadata.guardrail` record. Each
-    checked answer carries `metadata.grounding` (`checked`, `scores`,
-    `failed`, `blocked`) and the `kg_rag.guardrail` span its scores. An answer that
-    fails without being blocked (a detect-only policy), and a guardrail that
-    returns no scores (no grounding policy), are logged at WARNING.
-  - **Limits.** Bedrock takes 100,000 characters of reference, 1,000 of
-    question and 5,000 of answer. A longer context keeps its highest-ranked
-    sections and a longer question its head. A longer answer is screened by
-    the other policies only: `metadata.grounding.skipped_reason` is
-    `answer_too_long`, with a WARNING.
-  - **Cost.** Billed per text unit (1,000 characters) of reference, question
-    and answer, on top of the other policies: a full context is about 100
-    text units per answer
-    ([pricing](https://aws.amazon.com/bedrock/pricing/)). `ApplyGuardrail`'s
-    per-second text-unit quota (Service Quotas, guardrail region) throttles
-    concurrent queries with long contexts first.
-- **Custom code** calling `setup_chain` or `get_model` for non-query work
-  passes `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`;
-  `from unified_kg_rag import ModelPurpose`). Unmarked
-  calls default to `QUERY`: the query-time transient-error retry, and neither
-  the response cache nor the ingestion effort.
-
-### S3 cache encryption
-
-`aws.s3.encryption.encryption_type: BUCKET_DEFAULT` sends no encryption
-header, so the bucket default applies (the CMK with the CDK stack's
-`use_cmk=true`; forcing `AES256` bypasses it). On a reused SSE-KMS bucket the
-writer needs `kms:GenerateDataKey` and `kms:Decrypt` on its key.
-
-### What the logs contain
-
-At `INFO` and above, user and corpus text is logged only as lengths, counts,
-ids and a stable short hash (`query: len=42 sha=1a2b3c4d`). Query text,
-rewritten queries, entity names and raw model output are logged only at
-`DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
-(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `--verbose`), and
-libraries set to `DEBUG` in `logging.library_levels` (`botocore` logs request
-bodies), as containing user and corpus data.
-
-With `logging.log_to_file: true` the CLIs also write `logging.log_file_path`
-(`logs/log.txt`, dated `log_YYYYMMDD.txt`, relative to the working directory,
-which must be writable); it is off by default. As a library the
-package configures no handler: the host's logging applies, with the
-structured fields (`pipeline_id`, `trace_id`, ...) as record attributes.
-
-### Custom prompts
-
-Every prompt has a `custom_prompts.*_system` / `*_human` override (default
-`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`) except
-the prompts of the intelligent chunker (`TextChunkingPrompt`), document
-translation (`TextTranslationPrompt`), query translation
-(`TranslationPrompt`), global search's community rating
-(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`), which
-are not overridable. Override what you need and leave the rest `null`
-([§9](#9-domain-adaptation)). Overrides are validated at load: unknown
-`{variables}` and missing data variables (such as `{input_text}`) are errors,
-and a literal brace is written `{{` / `}}`.
-
-### Environment variable overrides
-
-Any config key can be set from the environment as `UKR__` followed by its
-path, with double underscores between the segments, in any case:
-`UKR__AWS__NEPTUNE__ENDPOINT` sets `aws.neptune.endpoint`, and a segment past
-a free-form mapping names one of its keys
-(`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). A variable wins over the
-config file and the defaults. Values are converted and validated as the same
-value in the file would be (`true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`,
-in any case, for booleans; JSON for a list or mapping, e.g. `UKR__SEARCH__AUTO_ROUTABLE_STRATEGIES='["local", "mix"]'`).
-An invalid value, or a `UKR__` variable that names no key, is a usage error
-(exit 2) naming the variable; `--allow-unknown-keys` turns the unknown name
-into a WARNING.
-
-- `AWS_PROFILE` and `AWS_REGION` fill `aws.profile_name` and
-  `aws.region_name` only when the file leaves them unset, so a shell that
-  exports `AWS_REGION` (SSO helpers and CloudShell do) does not move a file's
-  region; `AWS_REGION` then also moves Bedrock calls while
-  `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read.
-- `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID` (one underscore: not config
-  keys) and `UKR_METRICS_ENVIRONMENT` are read by `run-ingestion`
-  ([CLI Reference](./reference/cli.md#run-ingestion)). The variables the CDK tasks get
-  are listed in [`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image).
-- The CLIs load `./.env` from the current working directory (python-dotenv),
-  never one from a parent directory (a `~/.env` setting `AWS_PROFILE` would
-  otherwise switch accounts unnoticed); a variable already set wins. Importing
-  the package loads no `.env` and never changes `os.environ`: a Python
-  caller loads one itself (`dotenv.load_dotenv()` before `get_config()`).
-
-> **LangSmith tracing uploads content.** With `LANGSMITH_TRACING=true` (or
-> `LANGCHAIN_TRACING_V2=true`), LangChain sends every traced run to
-> LangSmith, prompts, retrieved text and model outputs included. The CLIs log
-> a WARNING at startup (from `setup_logging`) but leave it on; unset the
-> variable before running on a confidential corpus.
-
-### Observability
-
-Tracing is off by default. With `observability.enabled: true`, every ingestion
-run and every query becomes an OpenTelemetry trace that any OTLP-capable
-backend (Jaeger, Grafana Tempo, an OpenTelemetry Collector, Langfuse, Phoenix)
-can show. It needs the `otel` extra (`uv sync --extra otel`); enabling tracing
-without it fails at start-up with a `ConfigurationError` naming the extra, and
-with tracing off nothing OpenTelemetry-related is imported.
-
-- `observability.backend`: `none` (the process's global tracer provider,
-  which a host application or `opentelemetry-instrument` sets up), `otlp` (an
-  OTLP exporter the package installs), or `langfuse` / `phoenix` (that
-  exporter pointed at the vendor). The other keys (`capture_content`,
-  `redact_patterns`, `sample_rate`, `service_name`, `export_timeout_seconds`)
-  are in the [reference](./reference/configuration.md#observability).
-- The exporter is configured by the standard OpenTelemetry environment
-  variables, never by the config file, so a collector key never lands in it:
-  `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`),
-  `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT` and
-  `OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf`, or `grpc` for port 4317).
-- Every span of a query carries `session.id` (`RAGInput.conversation_id`)
-  and, when set, `user.id` (`RAGInput.user_id`), which Langfuse and Phoenix
-  group traces by; pass an opaque user id, not an e-mail address. Log records
-  written inside a span carry its `trace_id` and `span_id`.
-- Spans carry no query text, passages or model output unless
-  `capture_content: true`.
-
-Model usage is counted with tracing on or off: every chat model the factories
-build records each call (the tokens its response reports) for the query or
-ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
-`SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
-`input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`,
-`cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`
-and `failed_calls`, and the same counts
-`by_role` (the model's purpose: `query`, `ingestion`, `evaluation`) and
-`by_model` (the model id the factory resolved). `run-ingestion
---output-format json` reports `token_usage` (the stages this run executed,
-with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage
-([runbook](./operations.md#alarms)), and `run-eval` records it per answer
-(`EvaluationResult.usage`) and per run (`summary.usage`). A response the
-ingestion response cache served, a chunk-boundary or community report
-answer the extraction store served, a description summary a full build took
-from its stored copy, or a query entity or keyword extraction the chain's
-extraction cache served (`search.query_extraction_cache_size`), counts as
-a cache hit, not a call; a failed
-call is not in `llm_calls` but in `failed_calls`; retries are calls.
-`input_tokens` includes the prompt-cache reads and writes, which are also
-counted apart (`cache_read_input_tokens`, `cache_write_input_tokens`, from
-Bedrock's `cacheReadInputTokens` / `cacheWriteInputTokens`) since they are
-billed at other rates. `request_retries` counts the requests botocore resent
-inside one call (its `RetryAttempts`): the call counts once in `llm_calls`,
-but a request resent after a read timeout or a server error is a Bedrock
-invocation of its own (a resent throttled one is not). So Bedrock's
-CloudWatch `Invocations` can exceed `llm_calls` by up to `request_retries +
-failed_calls`, plus any calls made outside a usage scope (the `run-eval`
-warm-up queries). A call that has not answered when the
-usage is read (an `auto` query's unread extraction, still running in the
-background) or was cancelled in flight (by `search.query_timeout_seconds`,
-say) was sent and is billed, so it counts in `llm_calls` and in
-`estimated_calls`, at an estimate of its input tokens and no output tokens;
-one that answers later is settled in `run-eval`'s run usage. `stream` / `astream` yield text only and report no usage.
-
-The [runbook](./operations.md#observability) has the Jaeger, Langfuse and
-Phoenix recipes, the [trace shape](./operations.md#trace-shape) (every span
-and attribute, the vendor attribute names and the known limits) and the
-export limits; CloudWatch tracing on the CDK stacks is in
-[iac/README.md](../iac/README.md#cloudwatch-tracing-optional).
 
 ---
 
@@ -893,7 +233,7 @@ translation stage is skipped at no cost, even with `enabled: true`.
 - **The analyzer must exist on the cluster**, or the indexing stage fails
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the
-  [local OpenSearch container](#local-stores-in-containers) has it, an Amazon
+  [local OpenSearch container](./guides/local-mode.md#local-stores-in-containers) has it, an Amazon
   OpenSearch Service domain only once its Nori package is associated (a
   blue/green deployment). The
   [CDK deployment](../iac/README.md) therefore maps `ko` to the built-in `cjk`
@@ -1000,6 +340,14 @@ tokens; `0` (cheaper still) sends the key points only, as MS GraphRAG's reduce s
 them, and the answer then reports no sources (the key points are model
 output), so the `retrieval` evaluator skips its rank metrics for a global
 query (`no_sources_by_config`) instead of scoring a miss.
+
+### Context budget
+
+`search.token_manager.max_context_tokens` (`30000`, upstream LightRAG's
+budget) is the retrieved context the answer prompt gets, clamped with a
+warning to what `models.roles.answer_generation` accepts beside its output
+reservation; `null` derives it from that model's window. Per-type shares and
+`local` slot quotas: [reference](./reference/configuration.md#searchtoken_manager).
 
 ### Examples
 
@@ -1275,7 +623,7 @@ aws:
 With this on, each `run-ingestion` diffs the corpus against the DynamoDB
 document-status registry by **content hash**. In local mode the registry is a
 SQLite file instead (`providers.doc_status.kind: sqlite`; see
-[Local mode](#local-mode-no-aws)).
+[Local mode](./guides/local-mode.md)).
 
 ### Workflows
 
@@ -1508,7 +856,7 @@ judge-free run set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 | `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 
-The two judges need the `eval` extra (`uv sync --extra eval`, [§1](#install));
+The two judges need the `eval` extra (`uv sync --extra eval`, [Install](./getting-started/aws.md#install));
 without it `run-eval` stops before the first query with exit `2`, naming the
 extra, even with `processing.ignore_errors: true`. The judge-free run above
 needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
@@ -2034,7 +1382,7 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-It needs the `viz` extra (`uv sync --extra viz`, [§1](#install)). The two
+It needs the `viz` extra (`uv sync --extra viz`, [Install](./getting-started/aws.md#install)). The two
 renderers are **`interactive`** (pyvis) and **`static`** (Bokeh), configured
 under `graph.visualization` (`interactive.*`, `static.*`, `centrality.*`).
 Ingestion itself renders nothing.
@@ -2135,7 +1483,7 @@ processing:
 ### B. `custom_prompts` overrides
 
 Override a prompt's `*_system` / `*_human` text (`null` keeps the built-in
-prompt; five prompts have no override, see [Custom prompts](#custom-prompts)).
+prompt; five prompts have no override, listed at the end of this section).
 Keep the `{braces}` variables, which the framework fills:
 
 ```yaml
@@ -2188,6 +1536,17 @@ that drops a tag the parser reads (`<entities>`, `<relationships>`,
 
 **Recommended flow:** `run-prompt-tuning` → review → merge the useful prompts
 and tune `entity_types` → re-ingest.
+
+Every prompt has a `custom_prompts.*_system` / `*_human` override (default
+`null` = the built-in prompt in `unified_kg_rag/domain/prompts/`) except
+the prompts of the intelligent chunker (`TextChunkingPrompt`), document
+translation (`TextTranslationPrompt`), query translation
+(`TranslationPrompt`), global search's community rating
+(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`), which
+are not overridable. Override what you need and leave the rest `null`.
+Overrides are validated at load: unknown
+`{variables}` and missing data variables (such as `{input_text}`) are errors,
+and a literal brace is written `{{` / `}}`.
 
 ### C. Extraction schema
 
@@ -2244,7 +1603,7 @@ processing:
 - From the environment the lists are JSON, e.g.
   `UKR__PROCESSING__GRAPH_EXTRACTION__RELATIONSHIP_TYPES='["WORKS_FOR: Employment"]'`
   and `UKR__PROCESSING__GRAPH_EXTRACTION__SCHEMA_MODE=strict`
-  ([Environment variable overrides](#environment-variable-overrides)).
+  ([Environment variable overrides](./guides/configure.md#environment-variable-overrides)).
 - Or keep the schema in a file: `schema_source: {kind: file, path:
   schema.yaml}` reads `relationship_types`, `relationship_patterns` and,
   optionally, `entity_types` from a YAML or JSON file of the same shape (a
@@ -3292,7 +2651,7 @@ For the JSONL example this prints `procure {'nodes_read': 2, 'edges_read':
 
 ## 10. Operations & troubleshooting
 
-[IAM permissions](#iam-permissions) are in §1; error messages and their fix
+[IAM permissions](./getting-started/aws.md#iam-permissions) are in Getting started on AWS; error messages and their fix
 are in [Operator Runbook: Common errors](./operations.md#common-errors).
 
 ### CLI exit codes and JSON output
@@ -3402,7 +2761,7 @@ default) when ingestion cost matters more than graph recall.
 The CLIs wrap two public classes. Import them, and everything else, from the
 package root: the names in `unified_kg_rag.__all__` are the public API, other
 module paths are internal and may change. `get_config` applies the same file
-and environment layers as the CLIs (§2).
+and environment layers as the CLIs ([Configuration](./guides/configure.md#how-configuration-is-loaded)).
 
 ```python
 from unified_kg_rag import (
@@ -3512,12 +2871,12 @@ closes it.
   another directory gets other ids. Set
   `processing.document_parsing.source_scope` for ids that do not depend on
   where the corpus sits.
-- **Reranking is regional** ([Required models](#required-models)); without it
+- **Reranking is regional** ([Required models](./getting-started/aws.md#required-models)); without it
   results keep the fusion order, as `metadata.rerank` shows
   ([Rerank status](#rerank-status)).
 - **Shipped backends.** Models: Bedrock (default), Ollama or
   OpenAI-compatible servers; reranking: Bedrock or a sentence-transformers
-  cross-encoder ([Local mode](#local-mode-no-aws)). Stores: Neptune (or a
+  cross-encoder ([Local mode](./guides/local-mode.md)). Stores: Neptune (or a
   Gremlin Server) with OpenSearch, or the embedded SQLite stores (one host,
   about 100,000 documents per index). Others need a `register_provider`
   builder or custom adapters ([Design Doc §15](./design.md#15-extension-guide)).
@@ -3557,3 +2916,102 @@ closes it.
 
 *See also: [README.md](../README.md) for the overview and quickstart, and
 [docs/design.md](./design.md) for architecture and internals.*
+
+## Moved sections
+
+Sections 1 and 2 of this guide moved to their own pages. The headings
+below keep older links, including the `--help` output of earlier
+versions, working.
+
+### 1. Prerequisites & Installation
+
+Moved to [Getting started on AWS](./getting-started/aws.md) and
+[Getting started locally](./getting-started/local.md).
+
+### Runtime
+
+Moved to [Getting started on AWS: Runtime](./getting-started/aws.md#runtime).
+
+### AWS services
+
+Moved to [Getting started on AWS: AWS services](./getting-started/aws.md#aws-services).
+
+### Required models
+
+Moved to [Getting started on AWS: Required models](./getting-started/aws.md#required-models).
+
+### Install
+
+Moved to [Getting started on AWS: Install](./getting-started/aws.md#install).
+
+### Authentication
+
+Moved to [Getting started on AWS: Authentication](./getting-started/aws.md#authentication).
+
+### IAM permissions
+
+Moved to [Getting started on AWS: IAM permissions](./getting-started/aws.md#iam-permissions).
+
+### Local mode (no AWS)
+
+Moved to [Getting started locally](./getting-started/local.md) (a first
+run) and [Local mode](./guides/local-mode.md) (providers, differences from
+AWS mode, containers).
+
+### Differences from AWS mode
+
+Moved to [Local mode: Differences from AWS mode](./guides/local-mode.md#differences-from-aws-mode).
+
+### Provider flags
+
+Moved to [Local mode: Provider flags](./guides/local-mode.md#provider-flags).
+
+### Local stores in containers
+
+Moved to [Local mode: Local stores in containers](./guides/local-mode.md#local-stores-in-containers).
+
+### Local stores with Bedrock models
+
+Moved to [Local mode: Local stores with Bedrock models](./guides/local-mode.md#local-stores-with-bedrock-models).
+
+### 2. Configuration
+
+Moved to [Configuration](./guides/configure.md).
+
+### How configuration is loaded
+
+Moved to [Configuration: How configuration is loaded](./guides/configure.md#how-configuration-is-loaded).
+
+### Settings most runs change
+
+Moved to [Configuration: Settings most runs change](./guides/configure.md#settings-most-runs-change).
+
+### Model selection notes
+
+Moved to [Model Catalog: Model selection notes](./reference/models.md#model-selection-notes).
+
+### Guardrail
+
+Moved to [Guardrail](./guides/guardrail.md).
+
+### S3 cache encryption
+
+Moved to [Configuration: S3 cache encryption](./guides/configure.md#s3-cache-encryption).
+
+### What the logs contain
+
+Moved to [Configuration: What the logs contain](./guides/configure.md#what-the-logs-contain).
+
+### Custom prompts
+
+Moved to [B. `custom_prompts` overrides](#b-custom_prompts-overrides).
+
+### Environment variable overrides
+
+Moved to [Configuration: Environment variable overrides](./guides/configure.md#environment-variable-overrides).
+
+### Observability
+
+Moved to [Observability](./guides/observability.md) (settings and
+recipes) and the [Telemetry reference](./reference/telemetry.md) (trace
+shape, usage counters).

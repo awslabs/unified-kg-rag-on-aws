@@ -23,8 +23,7 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the provider flags to ``parser`` (one argument group)."""
     group = parser.add_argument_group(
         "providers",
-        "Override the config's provider selection (see the user guide's "
-        "'Local mode').",
+        "Override the config's provider selection (see docs/guides/local-mode.md).",
     )
     group.add_argument(
         "--backend",
