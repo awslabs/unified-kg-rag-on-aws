@@ -463,3 +463,28 @@ def test_each_widget_holds_at_most_one_metrics_insights_query() -> None:
     }
     assert any(queries.values())
     assert {title: len(q) for title, q in queries.items() if len(q) > 1} == {}
+
+
+def test_the_runbook_lists_the_incremental_health_widget_exactly() -> None:
+    # The runbook names the incremental degradations the dashboard plots (and
+    # no alarm watches); each one must be a series of that widget.
+    runbook = (_PACKAGE.parent / "docs" / "operations.md").read_text(encoding="utf-8")
+    (listed,) = re.findall(
+        r"the incremental degradations no alarm watches\s*\(([^)]*)\)", runbook
+    )
+    documented = set(re.findall(r"`(\w+)`", listed))
+    (dashboard,) = _template().find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    body = json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+    (widget,) = [
+        w
+        for w in body["widgets"]
+        if w["properties"].get("title") == "Incremental run health (EMF)"
+    ]
+    plotted = {
+        item
+        for metric in widget["properties"]["metrics"]
+        for item in metric[:2]
+        if item != EMF_NAMESPACE
+    }
+    assert documented and plotted == documented

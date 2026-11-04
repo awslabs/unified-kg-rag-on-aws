@@ -313,7 +313,9 @@ class ObservabilityStack(Stack):
         )
         # Degradations of an incremental run that succeeded: documents left
         # for a later run, a recommended community rebuild, extraction records
-        # not stored and stored items whose derived attributes are stale.
+        # not stored and stored items whose derived attributes are stale. On
+        # the right, the rebuild signals that grow run by run (a ratio and a
+        # run count, one value per run: their Maximum, not a Sum).
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Incremental run health (EMF)",
@@ -325,6 +327,10 @@ class ObservabilityStack(Stack):
                         "total_records_not_stored",
                         "underived_items",
                     )
+                ],
+                right=[
+                    self._emf(name, statistic="Maximum")
+                    for name in ("community_growth_ratio", "runs_since_clustering")
                 ],
             ),
             cw.GraphWidget(
