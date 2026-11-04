@@ -30,8 +30,9 @@ best match under its id and every other one as an entity of its own
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections import ChainMap, defaultdict
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -183,6 +184,58 @@ def _correspondence(
     return matched, parts, derives_to
 
 
+@dataclass(frozen=True)
+class _EntityDerivation:
+    """What deriving the given entities decided, which their edges and
+    claims follow (see :func:`_derive_entities`)."""
+
+    # The derived entities, in the given entities' order.
+    entities: list[Entity]
+    # Given entity id -> the resolved ids it derives to (its match first).
+    derives_to: dict[str, list[str]]
+    # Resolved entity id -> its derived id.
+    derived_of: dict[str, str]
+    # Resolved entity id -> every id a given claim may name it by.
+    aliases: dict[str, set[str]]
+    # Derived id -> the given entity, of an entity no given one matched.
+    created: dict[str, str]
+    # Given entity id -> whether all of its text units have a record.
+    complete: dict[str, bool]
+    # Derived id -> derived name.
+    names: dict[str, str]
+    # See ``Derived.split_from``.
+    parted_from: dict[str, str]
+    # The given entities a part split off.
+    split_members: set[str]
+    # The derived ids of the resolved entities.
+    derived_ids: set[str]
+    # The given entities one of whose text units has no record.
+    incomplete: set[str]
+
+
+@dataclass(frozen=True)
+class _ClaimDerivation:
+    """The derived claims, and what deriving them adds to ``Derived``."""
+
+    claims: list[Claim] = field(default_factory=list)
+    earlier_claim_ids: dict[str, str] = field(default_factory=dict)
+    underived: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    id_remap: dict[str, str] = field(default_factory=dict)
+
+
+def _entity_ids(
+    id_remap: Mapping[str, str], rekeyed: Mapping[str, str]
+) -> Callable[[str], str]:
+    """The id a stored entity has now: its re-key by this derivation (as
+    ``id_remap`` holds it when asked), else by an earlier one of this run."""
+
+    def entity_id(stored_id: str) -> str:
+        return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
+
+    return entity_id
+
+
 def derive(
     config: Config,
     entities: Sequence[Entity],
@@ -240,8 +293,83 @@ def derive(
     resolved, _ = resolver.resolve_graph(contributions, edges)
 
     rekeyed = rekeyed or {}
-    old_of = {new: old for old, new in rekeyed.items()} | dict(split_from or {})
     id_remap: dict[str, str] = {}
+    # Entities first (their edges and claims follow the ids they take), then
+    # edges, then claims: ``underived``, ``dropped`` and ``id_remap`` list
+    # each phase's items after the earlier phases'.
+    entity_derivation = _derive_entities(
+        entities, resolved["entities"], complete, id_remap, rekeyed, blocked, split_from
+    )
+    derived_relationships, dropped = _derive_relationships(
+        entity_derivation,
+        entities,
+        relationships,
+        resolved["relationships"],
+        complete,
+        id_remap,
+        rekeyed,
+        blocked,
+        stored_relationship_ids,
+    )
+    claim_derivation = _derive_claims(
+        config,
+        entity_derivation,
+        claims,
+        claim_records,
+        unit_ids,
+        resolved["entities"],
+        id_remap,
+        rekeyed,
+        blocked,
+    )
+    derived_entities = entity_derivation.entities
+    derived_claims = claim_derivation.claims
+    earlier = claim_derivation.earlier_claim_ids
+    parted_from = entity_derivation.parted_from
+    split_members = entity_derivation.split_members
+    underived.extend(claim_derivation.underived)
+    dropped.extend(claim_derivation.dropped)
+    id_remap.update(claim_derivation.id_remap)
+
+    if underived:
+        logger.warning(
+            "%d stored items cite a text unit without an extraction record; "
+            "they keep their stored content until a full rebuild",
+            len(underived),
+        )
+    return Derived(
+        entities=derived_entities,
+        relationships=derived_relationships,
+        claims=derived_claims,
+        underived=underived,
+        id_remap=id_remap,
+        split_from=parted_from,
+        dropped=dropped,
+        earlier_claim_ids=earlier,
+        rewired=sorted(
+            {
+                *split_members,
+                *(e.id for e in entities if e.id in id_remap),
+                # The entities another one merged into: their stored edges
+                # may now equal one the merge drew.
+                *(id_remap[e.id] for e in entities if e.id in id_remap),
+            }
+        ),
+    )
+
+
+def _derive_entities(
+    entities: Sequence[Entity],
+    resolved_entity_list: list[Entity],
+    complete: Callable[[Entity], bool],
+    id_remap: dict[str, str],
+    rekeyed: Mapping[str, str],
+    blocked: Collection[str],
+    split_from: Mapping[str, str] | None,
+) -> _EntityDerivation:
+    """Derive the given stored entities from the resolved ones (see
+    :func:`derive`); adds their re-keys to ``id_remap``."""
+    old_of = {new: old for old, new in rekeyed.items()} | dict(split_from or {})
     created: dict[str, str] = {}
 
     # Each stored entity derives to the resolved entities sharing one of its
@@ -251,10 +379,10 @@ def derive(
     # one, under the resolved entity's id unless another given entity holds
     # it or it is ``blocked``.
     by_key: dict[str, list[Entity]] = defaultdict(list)
-    for r in resolved["entities"]:
+    for r in resolved_entity_list:
         for key in entity_keys(r):
             by_key[key].append(r)
-    resolved_entities = {r.id: r for r in resolved["entities"]}
+    resolved_entities = {r.id: r for r in resolved_entity_list}
     entity_candidates: dict[str, list[Entity | Relationship]] = {}
     for entity in entities:
         found = {r.id: r for key in entity_keys(entity) for r in by_key.get(key, ())}
@@ -366,9 +494,47 @@ def derive(
         for resolved_id, members in split_parts.items()
     }
     split_members = {m.id for members in split_parts.values() for m in members}
+    derived_ids = set(derived_of.values())
+    incomplete = {e.id for e in entities if not entity_complete[e.id]}
+    return _EntityDerivation(
+        entities=derived_entities,
+        derives_to=derives_to,
+        derived_of=derived_of,
+        aliases=aliases,
+        created=created,
+        complete=entity_complete,
+        names=names,
+        parted_from=parted_from,
+        split_members=split_members,
+        derived_ids=derived_ids,
+        incomplete=incomplete,
+    )
 
-    def entity_id(stored_id: str) -> str:
-        return id_remap.get(stored_id) or rekeyed.get(stored_id, stored_id)
+
+def _derive_relationships(
+    entity_derivation: _EntityDerivation,
+    entities: Sequence[Entity],
+    relationships: Sequence[Relationship],
+    resolved_relationships: list[Relationship],
+    complete: Callable[[Relationship], bool],
+    id_remap: dict[str, str],
+    rekeyed: Mapping[str, str],
+    blocked: Collection[str],
+    stored_relationship_ids: Collection[str] | None,
+) -> tuple[list[Relationship], list[str]]:
+    """Derive the given stored edges, and those a full build draws that no
+    stored edge is, between the derived entities (see :func:`derive`).
+
+    Returns them and the ids of the given edges that go; adds the edges'
+    re-keys to ``id_remap``.
+    """
+    derived_entities = entity_derivation.entities
+    derives_to = entity_derivation.derives_to
+    derived_of = entity_derivation.derived_of
+    created = entity_derivation.created
+    names = entity_derivation.names
+    derived_ids = entity_derivation.derived_ids
+    entity_id = _entity_ids(id_remap, rekeyed)
 
     # A stored endpoint may also be another spelling of its name stated in
     # the edge's text units: a run that split the two and died before their
@@ -398,7 +564,7 @@ def derive(
         return list(dict.fromkeys([*targets, *spelled]))
 
     resolved_edges: dict[tuple[str, str, str], Relationship] = {}
-    for rel in resolved["relationships"]:
+    for rel in resolved_relationships:
         source = derived_of.get(rel.source_id, rel.source_id)
         target = derived_of.get(rel.target_id, rel.target_id)
         resolved_edges.setdefault((source, target, _type_key(rel.type)), rel)
@@ -503,8 +669,6 @@ def derive(
     # stored edge is (a part an entity split into has none; an earlier merge
     # of the endpoints dropped their edge as a self-loop). Their text units
     # are all here: an edge cites only units its endpoints cite.
-    derived_ids = set(derived_of.values())
-    incomplete = {e.id for e in entities if not entity_complete[e.id]}
     for (source, target, _), rel in resolved_edges.items():
         unstored = (
             source in created
@@ -532,232 +696,243 @@ def derive(
                     },
                 )
             )
+    return derived_relationships, dropped
 
+
+def _derive_claims(
+    config: Config,
+    entity_derivation: _EntityDerivation,
+    claims: Sequence[Claim],
+    claim_records: Mapping[str, list[Claim]] | None,
+    unit_ids: Collection[str],
+    resolved_entity_list: list[Entity],
+    prior_id_remap: Mapping[str, str],
+    rekeyed: Mapping[str, str],
+    blocked: Collection[str],
+) -> _ClaimDerivation:
+    """Derive the given stored claims from their text units' statements,
+    resolved against ``resolved_entity_list`` (see :func:`derive`).
+
+    ``prior_id_remap`` holds the re-keys of the entities and edges; the
+    claims' own come back in the result, which nothing given is changed for.
+    """
+    if not claims:
+        return _ClaimDerivation()
+    derived_of = entity_derivation.derived_of
+    aliases = entity_derivation.aliases
+    names = entity_derivation.names
+    derived_ids = entity_derivation.derived_ids
+    incomplete = entity_derivation.incomplete
+    # Reads see the earlier phases' re-keys and the claims' own; writes go
+    # to the claims' own only.
+    claim_remap: dict[str, str] = {}
+    id_remap = ChainMap(claim_remap, dict(prior_id_remap))
+    entity_id = _entity_ids(id_remap, rekeyed)
+    underived: list[str] = []
+    dropped: list[str] = []
     derived_claims: list[Claim] = []
     earlier: dict[str, str] = {}
-    if claims:
-        claim_records = claim_records or {}
-        statements = [
-            claim.model_copy(deep=True)
-            for unit_id in sorted(unit_ids)
-            for claim in claim_records.get(unit_id, [])
+
+    claim_records = claim_records or {}
+    statements = [
+        claim.model_copy(deep=True)
+        for unit_id in sorted(unit_ids)
+        for claim in claim_records.get(unit_id, [])
+    ]
+    resolved_claims, _ = ClaimResolver(
+        config, max_workers=1, use_process_pool=False
+    ).resolve(statements, resolved_entity_list)
+    # Matched to the given claims by the id they have under the stored
+    # entity ids or under the derived ones (a claim the caller already
+    # re-pointed); each takes the id it has under the derived ones.
+    by_id: dict[str, Claim] = {}
+    for claim in resolved_claims:
+        exact = with_entity_ids(claim, derived_of)
+        by_id.setdefault(resolved_claim_id(exact), claim)
+    for claim in resolved_claims:
+        for subject in sorted(aliases.get(claim.subject_id, {claim.subject_id})):
+            objects = (
+                aliases.get(claim.object_id, {claim.object_id})
+                if claim.object_id
+                else {None}
+            )
+            for obj in sorted(objects, key=str):
+                stated = claim.model_copy(
+                    update={"subject_id": subject, "object_id": obj}
+                )
+                by_id.setdefault(resolved_claim_id(stated), claim)
+    # And by the ids an earlier reading of their dates gave them: a
+    # claim stored before it changed is the claim its dates read as now.
+    # Only a unit with a statement whose dates an earlier build keyed
+    # otherwise gives one; a claim stated in none is skipped.
+    reread = {
+        unit_id
+        for unit_id, unit_claims in claim_records.items()
+        if any(has_earlier_date_reading(s) for s in unit_claims)
+    }
+    for claim in resolved_claims:
+        if reread.isdisjoint(claim.text_unit_ids or ()):
+            continue
+        stated_by = [
+            statement
+            for unit_id in dict.fromkeys(claim.text_unit_ids or [])
+            for statement in claim_records.get(unit_id, [])
         ]
-        resolved_claims, _ = ClaimResolver(
-            config, max_workers=1, use_process_pool=False
-        ).resolve(statements, resolved["entities"])
-        # Matched to the given claims by the id they have under the stored
-        # entity ids or under the derived ones (a claim the caller already
-        # re-pointed); each takes the id it has under the derived ones.
-        by_id: dict[str, Claim] = {}
-        for claim in resolved_claims:
-            exact = with_entity_ids(claim, derived_of)
-            by_id.setdefault(resolved_claim_id(exact), claim)
-        for claim in resolved_claims:
-            for subject in sorted(aliases.get(claim.subject_id, {claim.subject_id})):
-                objects = (
-                    aliases.get(claim.object_id, {claim.object_id})
-                    if claim.object_id
-                    else {None}
-                )
-                for obj in sorted(objects, key=str):
-                    stated = claim.model_copy(
-                        update={"subject_id": subject, "object_id": obj}
-                    )
-                    by_id.setdefault(resolved_claim_id(stated), claim)
-        # And by the ids an earlier reading of their dates gave them: a
-        # claim stored before it changed is the claim its dates read as now.
-        # Only a unit with a statement whose dates an earlier build keyed
-        # otherwise gives one; a claim stated in none is skipped.
-        reread = {
-            unit_id
-            for unit_id, unit_claims in claim_records.items()
-            if any(has_earlier_date_reading(s) for s in unit_claims)
+        exact = with_entity_ids(claim, derived_of)
+        current_id = resolved_claim_id(exact)
+        # Under the stored entity ids too, as above.
+        for stale_id in sorted(
+            earlier_claim_ids(exact, stated_by) | earlier_claim_ids(claim, stated_by)
+        ):
+            if stale_id not in by_id:
+                by_id[stale_id] = claim
+                earlier[stale_id] = current_id
+    # The derived claim of each given one (None: dropped), in order.
+    kept_for: list[Claim | None] = []
+    for claim in claims:
+        match_claim = by_id.get(claim.id)
+        endpoints = {
+            "subject_id": entity_id(claim.subject_id),
+            "object_id": entity_id(claim.object_id) if claim.object_id else None,
         }
-        for claim in resolved_claims:
-            if reread.isdisjoint(claim.text_unit_ids or ()):
+        units = set(claim.text_unit_ids or [])
+        if not all(u in claim_records for u in units):
+            underived.append(claim.id)
+            match_claim = None
+        elif match_claim is None and units:
+            # No resolved claim has its id under any spelling (its subject
+            # or object resolves to an entity of a third spelling): it is
+            # the resolved claim stated in most of its text units, else a
+            # full build has no such claim.
+            sharing = [r for r in resolved_claims if units & set(r.text_unit_ids or [])]
+            if not sharing:
+                dropped.append(claim.id)
+                kept_for.append(None)
                 continue
-            stated_by = [
-                statement
-                for unit_id in dict.fromkeys(claim.text_unit_ids or [])
-                for statement in claim_records.get(unit_id, [])
-            ]
-            exact = with_entity_ids(claim, derived_of)
-            current_id = resolved_claim_id(exact)
-            # Under the stored entity ids too, as above.
-            for stale_id in sorted(
-                earlier_claim_ids(exact, stated_by)
-                | earlier_claim_ids(claim, stated_by)
-            ):
-                if stale_id not in by_id:
-                    by_id[stale_id] = claim
-                    earlier[stale_id] = current_id
-        # The derived claim of each given one (None: dropped), in order.
-        kept_for: list[Claim | None] = []
-        for claim in claims:
-            match_claim = by_id.get(claim.id)
-            endpoints = {
-                "subject_id": entity_id(claim.subject_id),
-                "object_id": entity_id(claim.object_id) if claim.object_id else None,
-            }
-            units = set(claim.text_unit_ids or [])
-            if not all(u in claim_records for u in units):
-                underived.append(claim.id)
-                match_claim = None
-            elif match_claim is None and units:
-                # No resolved claim has its id under any spelling (its subject
-                # or object resolves to an entity of a third spelling): it is
-                # the resolved claim stated in most of its text units, else a
-                # full build has no such claim.
-                sharing = [
-                    r for r in resolved_claims if units & set(r.text_unit_ids or [])
-                ]
-                if not sharing:
-                    dropped.append(claim.id)
-                    kept_for.append(None)
-                    continue
-                match_claim = max(
-                    sharing,
-                    key=lambda r: (
-                        len(units & set(r.text_unit_ids or [])),
-                        resolved_claim_id(with_entity_ids(r, derived_of)),
-                    ),
-                )
-            if match_claim is None:
-                derived_claims.append(claim.model_copy(deep=True, update=endpoints))
-                kept_for.append(derived_claims[-1])
-                continue
-            match_claim = with_entity_ids(match_claim, derived_of)
-            # An endpoint whose stored entity could not be derived (one of its
-            # text units has no record) resolved from the claim's units alone
-            # to an entity no derived or stored item is: keep the stored one.
-            kept = {
-                key: endpoints[key]
-                for key in ("subject_id", "object_id")
-                if getattr(match_claim, key)
-                and getattr(match_claim, key) not in derived_ids
-                and endpoints[key] in incomplete
-            }
-            if kept:
-                match_claim = match_claim.model_copy(update=kept)
-            new_claim_id = resolved_claim_id(match_claim)
-            if new_claim_id in blocked:
-                new_claim_id = claim.id
-            if new_claim_id != claim.id:
-                id_remap[claim.id] = new_claim_id
-            derived_claims.append(
-                claim.model_copy(
-                    deep=True,
-                    update={
-                        "id": new_claim_id,
-                        "subject_id": match_claim.subject_id,
-                        "object_id": match_claim.object_id,
-                        "type": match_claim.type,
-                        "status": match_claim.status,
-                        # Part of its new id (resolved_claim_id): a given
-                        # claim of other dates kept them under the matched
-                        # claim's id.
-                        "start_date": match_claim.start_date,
-                        "end_date": match_claim.end_date,
-                        "description": match_claim.description,
-                        "source_text": match_claim.source_text,
-                        # The units its statements are in now: a given claim
-                        # may hold another spelling's statement merged in.
-                        "text_unit_ids": _ordered_units(
-                            claim.text_unit_ids or [], match_claim.text_unit_ids or []
-                        ),
-                        # Its text units' placement and document filters, as
-                        # a relationship's: a stored claim's are a superset
-                        # after a removal (or none, read back without them).
-                        "attributes": dict(match_claim.attributes or {}),
-                        "subject_name": names.get(
-                            match_claim.subject_id, match_claim.subject_name
-                        ),
-                        "object_name": (
-                            names.get(match_claim.object_id, match_claim.object_name)
-                            if match_claim.object_id
-                            else match_claim.object_name
-                        ),
-                    },
-                )
+            match_claim = max(
+                sharing,
+                key=lambda r: (
+                    len(units & set(r.text_unit_ids or [])),
+                    resolved_claim_id(with_entity_ids(r, derived_of)),
+                ),
             )
+        if match_claim is None:
+            derived_claims.append(claim.model_copy(deep=True, update=endpoints))
             kept_for.append(derived_claims[-1])
-
-        # Claims a full build keeps apart that a given claim merged (its
-        # subject merged with another spelling): derived as claims of their own.
-        given_units = {u for c in claims for u in c.text_unit_ids or []}
-        emitted_ids = {c.id for c in derived_claims}
-        # Units stating a claim kept apart about an entity not derived (a
-        # spelling an underived stored entity holds): no claim of its own
-        # can be emitted yet, so the given claim keeps them.
-        unemitted: set[str] = set()
-        for claim in resolved_claims:
-            split = with_entity_ids(claim, derived_of)
-            split_id = resolved_claim_id(split)
-            if (
-                split_id in emitted_ids
-                or split_id in blocked
-                or not given_units & set(claim.text_unit_ids or [])
-            ):
-                continue
-            if split.subject_id not in derived_ids or (
-                split.object_id and split.object_id not in derived_ids
-            ):
-                unemitted |= given_units & set(claim.text_unit_ids or [])
-                continue
-            emitted_ids.add(split_id)
-            derived_claims.append(
-                split.model_copy(
-                    deep=True,
-                    update={
-                        "id": split_id,
-                        "subject_name": names.get(split.subject_id, split.subject_name),
-                        "object_name": (
-                            names.get(split.object_id, split.object_name)
-                            if split.object_id
-                            else split.object_name
-                        ),
-                    },
-                )
+            continue
+        match_claim = with_entity_ids(match_claim, derived_of)
+        # An endpoint whose stored entity could not be derived (one of its
+        # text units has no record) resolved from the claim's units alone
+        # to an entity no derived or stored item is: keep the stored one.
+        kept = {
+            key: endpoints[key]
+            for key in ("subject_id", "object_id")
+            if getattr(match_claim, key)
+            and getattr(match_claim, key) not in derived_ids
+            and endpoints[key] in incomplete
+        }
+        if kept:
+            match_claim = match_claim.model_copy(update=kept)
+        new_claim_id = resolved_claim_id(match_claim)
+        if new_claim_id in blocked:
+            new_claim_id = claim.id
+        if new_claim_id != claim.id:
+            id_remap[claim.id] = new_claim_id
+        derived_claims.append(
+            claim.model_copy(
+                deep=True,
+                update={
+                    "id": new_claim_id,
+                    "subject_id": match_claim.subject_id,
+                    "object_id": match_claim.object_id,
+                    "type": match_claim.type,
+                    "status": match_claim.status,
+                    # Part of its new id (resolved_claim_id): a given
+                    # claim of other dates kept them under the matched
+                    # claim's id.
+                    "start_date": match_claim.start_date,
+                    "end_date": match_claim.end_date,
+                    "description": match_claim.description,
+                    "source_text": match_claim.source_text,
+                    # The units its statements are in now: a given claim
+                    # may hold another spelling's statement merged in.
+                    "text_unit_ids": _ordered_units(
+                        claim.text_unit_ids or [], match_claim.text_unit_ids or []
+                    ),
+                    # Its text units' placement and document filters, as
+                    # a relationship's: a stored claim's are a superset
+                    # after a removal (or none, read back without them).
+                    "attributes": dict(match_claim.attributes or {}),
+                    "subject_name": names.get(
+                        match_claim.subject_id, match_claim.subject_name
+                    ),
+                    "object_name": (
+                        names.get(match_claim.object_id, match_claim.object_name)
+                        if match_claim.object_id
+                        else match_claim.object_name
+                    ),
+                },
             )
-        if unemitted:
-            cited = {u for c in derived_claims for u in c.text_unit_ids or []}
-            for given, derived_claim in zip(claims, kept_for, strict=True):
-                if derived_claim is None:
-                    continue
-                if extra := [
-                    u
-                    for u in given.text_unit_ids or []
-                    if u in unemitted and u not in cited
-                ]:
-                    derived_claim.text_unit_ids = [
-                        *(derived_claim.text_unit_ids or []),
-                        *extra,
-                    ]
-                    cited.update(extra)
-        derived_claims = _merge_same_claims(derived_claims)
-
-    if underived:
-        logger.warning(
-            "%d stored items cite a text unit without an extraction record; "
-            "they keep their stored content until a full rebuild",
-            len(underived),
         )
-    return Derived(
-        entities=derived_entities,
-        relationships=derived_relationships,
+        kept_for.append(derived_claims[-1])
+
+    # Claims a full build keeps apart that a given claim merged (its
+    # subject merged with another spelling): derived as claims of their own.
+    given_units = {u for c in claims for u in c.text_unit_ids or []}
+    emitted_ids = {c.id for c in derived_claims}
+    # Units stating a claim kept apart about an entity not derived (a
+    # spelling an underived stored entity holds): no claim of its own
+    # can be emitted yet, so the given claim keeps them.
+    unemitted: set[str] = set()
+    for claim in resolved_claims:
+        split = with_entity_ids(claim, derived_of)
+        split_id = resolved_claim_id(split)
+        if (
+            split_id in emitted_ids
+            or split_id in blocked
+            or not given_units & set(claim.text_unit_ids or [])
+        ):
+            continue
+        if split.subject_id not in derived_ids or (
+            split.object_id and split.object_id not in derived_ids
+        ):
+            unemitted |= given_units & set(claim.text_unit_ids or [])
+            continue
+        emitted_ids.add(split_id)
+        derived_claims.append(
+            split.model_copy(
+                deep=True,
+                update={
+                    "id": split_id,
+                    "subject_name": names.get(split.subject_id, split.subject_name),
+                    "object_name": (
+                        names.get(split.object_id, split.object_name)
+                        if split.object_id
+                        else split.object_name
+                    ),
+                },
+            )
+        )
+    if unemitted:
+        cited = {u for c in derived_claims for u in c.text_unit_ids or []}
+        for given, derived_claim in zip(claims, kept_for, strict=True):
+            if derived_claim is None:
+                continue
+            if extra := [
+                u
+                for u in given.text_unit_ids or []
+                if u in unemitted and u not in cited
+            ]:
+                derived_claim.text_unit_ids = [
+                    *(derived_claim.text_unit_ids or []),
+                    *extra,
+                ]
+                cited.update(extra)
+    derived_claims = _merge_same_claims(derived_claims)
+    return _ClaimDerivation(
         claims=derived_claims,
-        underived=underived,
-        id_remap=id_remap,
-        split_from=parted_from,
-        dropped=dropped,
         earlier_claim_ids=earlier,
-        rewired=sorted(
-            {
-                *split_members,
-                *(e.id for e in entities if e.id in id_remap),
-                # The entities another one merged into: their stored edges
-                # may now equal one the merge drew.
-                *(id_remap[e.id] for e in entities if e.id in id_remap),
-            }
-        ),
+        underived=underived,
+        dropped=dropped,
+        id_remap=claim_remap,
     )
