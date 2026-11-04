@@ -2025,7 +2025,7 @@ class SeedGraphConfig(BaseModel):
             "'property_columns' (the only extra columns kept as properties). "
             "'rdf' takes 'prefixes', 'name_properties', "
             "'description_properties', 'languages', 'labels', 'properties', "
-            "'exclude_properties' and 'format' (user guide section 9 D). "
+            "'exclude_properties' and 'format' (docs/guides/seed-graphs.md). "
             "An unknown option fails the import. Not keyed: the converted "
             "content is."
         ),

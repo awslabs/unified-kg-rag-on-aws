@@ -32,9 +32,9 @@ Entity and claim `type` and claim `status` are stored lowercase and `term`
 matches exactly: filter `type:person`, not `type:PERSON`. Relationships
 take no `type` filter (their type is not stored on the relationships
 index). `in_schema`, `type_iri` and `predicate_iri` are the
-[extraction schema](../user-guide.md#c-extraction-schema) annotations; `iri` and
+[extraction schema](../guides/extraction-schema.md#what-is-stored) annotations; `iri` and
 `source_kinds` (`document`, `seed_graph`) come from
-[seed graphs](../user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph). Prefer keyword or
+[seed graphs](../guides/seed-graphs.md#retrieval). Prefer keyword or
 numeric fields; a `term` on an analyzed field such as `description` matches
 single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
 through the Python API.

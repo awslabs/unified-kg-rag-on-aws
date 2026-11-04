@@ -96,7 +96,7 @@ Functions로 `.md` / `.html` 파일을 수집하면 "No supported files found"�
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK compute 스택이 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다
-(`uv sync --extra ontology`, [OWL/RDFS 온톨로지에서 읽기](../user-guide.ko.md#owlrdfs-온톨로지에서-읽기)).
+(`uv sync --extra ontology`, [Ontology](../guides/ontology.md#install), 영문).
 
 ## 인증
 

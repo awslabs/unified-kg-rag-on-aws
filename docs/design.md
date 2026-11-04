@@ -648,7 +648,7 @@ gets its models and stores from the run's `Providers` bundle.
 ### 4.5 Seed graphs as virtual documents
 
 A seed graph (`processing.seed_graphs`,
-[User Guide §9 D](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph))
+[Seed graphs](./guides/seed-graphs.md))
 is a knowledge graph the user brings. It is imported as virtual documents
 of the run's own corpus rather than through a second write path, so
 lineage, removal, derivation, the extraction store and the write-ahead
@@ -2029,7 +2029,9 @@ This section is the single reference for extending the framework. Strategies, re
   live in `adapters/schema_sources/`, imported by the package `__init__`,
   and read an `s3://` path through `adapters/source_files/locations.py`:
   HeadObject size check, paged prefix listing, S3 errors as
-  `SchemaSourceError`, or the error type a `SourceTerms` names).
+  `SchemaSourceError`, or the error type a `SourceTerms` names; what the
+  built-in sources read: [Extraction schema](./guides/extraction-schema.md),
+  [Ontology mapping](./reference/ontology-mapping.md)).
   A loader that imports an optional package declares it:
   `@register_schema_source("kind", requires=("module", "how to install
   it"))`, and the CLIs check that the module is importable before any model
@@ -2216,7 +2218,8 @@ This section is the single reference for extending the framework. Strategies, re
   `@register_seed_source("kind")` (exported from `unified_kg_rag` with
   `SeedSourceContext`, `SeedSourceOptions`, `SeedGraph`, `SeedNode`,
   `SeedEdge` and `SeedGraphError`; the built-in `jsonl`, `csv` and `rdf` loaders live in
-  `adapters/seed_sources/`, imported by the package `__init__`). A loader
+  `adapters/seed_sources/`, imported by the package `__init__`; their
+  formats: [Seed graph formats](./reference/seed-graph-formats.md)). A loader
   that imports an optional package declares it, `requires=("module", "how
   to install it")`, and the CLIs check it before any model call, as for
   schema sources (`rdf` declares rdflib). The loader receives a

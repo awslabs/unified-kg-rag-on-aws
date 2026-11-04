@@ -4,8 +4,8 @@
 
 Four levers specialize the pipeline for a domain (medical, legal, finance,
 ...): the entity types and the prompts, on this page, and the extraction
-schema and seed graphs, in the
-[User Guide](../user-guide.md#9-domain-adaptation). `run-prompt-tuning`
+schema and seed graphs, on their own pages
+([below](#extraction-schema-and-seed-graphs)). `run-prompt-tuning`
 drafts the first two from a corpus sample. A change to the entity types or
 to an extraction prompt re-extracts the documents extracted with other
 settings on the next incremental run
@@ -62,7 +62,7 @@ domain and entity types. **Review it**, then copy the prompts you want under
   instead: the examples, and the entity types the tuned prompt names, are
   the configured ones.
 - `--schema-out schema.yaml` also writes an
-  [extraction schema](../user-guide.md#c-extraction-schema) draft: the
+  [extraction schema](./extraction-schema.md) draft: the
   entity types the examples were extracted with (above), the relationship
   types the tuning examples state most often (at most 12, with their counts
   in a comment) and a pattern only where every pair of endpoint types of a
@@ -76,8 +76,7 @@ domain and entity types. **Review it**, then copy the prompts you want under
   schema file the config loads (with `--schema-out` or `--output-path`)
   exits 2, even with `--force`, and so does naming an existing file with
   either unless you add `--force`. Reviewing and loading the draft:
-  [Extraction schema](../user-guide.md#c-extraction-schema), *Drafting a
-  schema with prompt tuning*.
+  [Extraction schema: Drafting a schema with prompt tuning](./extraction-schema.md#drafting-a-schema-with-prompt-tuning).
 - Non-text formats go through the ingestion loaders (custom
   `ParserFactory.register_loader` ones included); unparsable files are skipped
   with a warning.
@@ -158,8 +157,14 @@ which are not overridable.
 
 ## Extraction schema and seed graphs
 
-The relationship types and patterns extraction follows, declared or read
-from an OWL/RDFS ontology, are in
-[User Guide: Extraction schema](../user-guide.md#c-extraction-schema). A
-knowledge graph you already have joins the extracted one as a seed graph:
-[User Guide: Seed graphs](../user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph).
+- [Extraction schema](./extraction-schema.md): the relationship types and
+  patterns extraction follows, `schema_mode` (`off`, `align`, `strict`),
+  the `in_schema`, `type_iri` and `predicate_iri` fields and their
+  filters, and what a schema change re-runs.
+- [Ontology](./ontology.md): the schema read from an OWL/RDFS ontology
+  (`schema_source: {kind: owl}`); every option and mapping rule is in the
+  [Ontology mapping reference](../reference/ontology-mapping.md).
+- [Seed graphs](./seed-graphs.md): a knowledge graph you already have,
+  merged into the extracted one as virtual documents; the JSONL, CSV and
+  RDF formats are in the
+  [Seed graph formats reference](../reference/seed-graph-formats.md).
