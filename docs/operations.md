@@ -167,7 +167,7 @@ Coming from 0.2.3 or an earlier `main` checkout: see
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default `pipeline-runs`) | With `--s3-sync`: uploaded after every stage and on SIGTERM, so a fresh task resumes from it. A failed download or final upload fails the run with `CacheSyncError`; a failed per-stage or on-stop upload only warns (the next upload retries it), and a stop after a lost lease skips the upload. Expired by the bucket lifecycle, not `cache.ttl_seconds` |
 | LLM response cache | `<stage checkpoint dir>/llm-cache/` | Reused by a re-run with the same pipeline id; `cache.llm_responses.enabled: false` turns it off, `--force-rebuild` ignores it |
 | Extraction store | `graphrag-extraction-records-<suffix>` (`indexing.opensearch.extraction_records_index_prefix`) | Per-chunk extraction results and the intelligent chunker's per-pre-chunk boundary answers, reused by later runs while a stored text unit names them, the community report answers of full builds, kept while a stored report names them (a full build drops the others), and the notes a removal (`pending-strip`) or a commit (`pending-commit`) keeps until it finished, which a resumed run needs. `clear` and `--force-rebuild` keep it; to drop it, delete the index only after a run that succeeded, or run `indexing.reset: true` next |
-| Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
+| Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only); rendered by [`run-visualization`](./guides/visualize.md) |
 
 The CDK bucket expires `pipeline-runs/` after 30 days: keep the corpus under another prefix (`corpus/`), since an expired file
 looks deleted. The bucket is versioned: an overwritten or deleted object
@@ -1135,8 +1135,8 @@ later failed included, and not throttled ones, while `llm_calls` counts
 each returned call once: a call botocore resent after a read timeout or a
 server error is one call but several invocations (`request_retries` in
 `token_usage`), a call that failed in the end is in `failed_calls` only,
-and calls made outside a usage scope (the `run-eval` warm-up queries,
-scripts) are not counted. In the package's November 2026 benchmark runs
+and calls made outside a usage scope (the `run-eval`
+[warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. In the package's November 2026 benchmark runs
 Bedrock counted 13% more Sonnet 5.5 invocations than recorded calls while
 the tokens agreed within 4.6% (input, cache included) and 0.9% (output),
 which points to resent and failed requests that spent few tokens; those

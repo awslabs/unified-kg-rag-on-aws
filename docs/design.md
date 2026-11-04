@@ -1686,7 +1686,8 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 `EvaluationManager` (`evaluation/`) builds the evaluators through
 `_resolve_evaluator_class` (one lazy-import branch per `EvaluatorType`) and
 scores every result after all answers are generated. What each evaluator
-measures is in the [User Guide §6](./user-guide.md#evaluators); the design
+measures is in [Evaluation: Evaluators](./guides/evaluate.md#evaluators) (how it
+scores: [Evaluation output](./reference/evaluation-output.md#evaluator-details)); the design
 choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
@@ -1789,6 +1790,7 @@ computing a seeded spring layout and the configured centrality first. The
 renderers are the `viz` extra: the adapters import them on use, so the
 registry and `BaseRenderer` work on a core install, and a missing extra
 fails the run (`BaseRenderer.check_dependencies`) before anything renders.
+Using it: [Visualization](./guides/visualize.md).
 
 ---
 

@@ -83,7 +83,7 @@ explains when to use which.
 
 Write a small dataset. `answer` feeds `answer_match`, `reference_sources`
 feeds `retrieval` and `expected_entities` feeds `graph_aware`
-([Eval data format](../user-guide.md#eval-data-format)):
+([Eval data format](../guides/evaluate.md#eval-data-format)):
 
 ```bash
 cat > sample-eval.json <<'EOF'
@@ -119,8 +119,8 @@ UKR__EVALUATION__ENABLED_EVALUATORS='["answer_match", "retrieval", "graph_aware"
 Each strategy's results, reports and summary, and
 `evaluation_comparison_<timestamp>.json` (each metric of `mix` paired against
 `local`), are written to `outputs/evaluation/`.
-[Evaluators](../user-guide.md#evaluators) and
-[Comparing strategies](../user-guide.md#comparing-strategies) explain the
+[Evaluators](../guides/evaluate.md#evaluators) and
+[Comparing strategies](../guides/evaluate.md#comparing-strategies) explain the
 metrics; two questions show the mechanics only, so measure on a few hundred
 before you trust a difference.
 

@@ -69,4 +69,4 @@ processing:
 
 `answer_match` 평가기는 한국어 조사와 단위를 허용하고, CJK 문자 옆의 띄어쓰기를 무시하며,
 한국어·중국어·일본어의 예/아니요 답을 읽습니다. 이 언어들에서는 token F1이 낮게 나옵니다.
-규칙은 [`answer_match`](../user-guide.ko.md#answer_match)에 있습니다.
+규칙은 [`answer_match`](../reference/evaluation-output.md#answer_match)(영문)에 있습니다.

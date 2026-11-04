@@ -77,9 +77,9 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 without one, the command that needs it stops with exit `2`, naming it:
 
 - **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
-  pandas, langchain-openai), both enabled by default ([Evaluators](../user-guide.md#evaluators)).
+  pandas, langchain-openai), both enabled by default ([Evaluators](../guides/evaluate.md#evaluators)).
   The LLM-free evaluators need no extra.
-- **`viz`**: pyvis and Bokeh for `run-visualization` ([Visualization](../user-guide.md#7-visualization-run-visualization)).
+- **`viz`**: pyvis and Bokeh for `run-visualization` ([Visualization](../guides/visualize.md)).
 
 **Markdown and HTML** need the `unstructured` extra
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which

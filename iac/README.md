@@ -483,7 +483,8 @@ serving layer must set it from the authenticated caller
 
 ### 5. Evaluate from inside the VPC
 
-`run-eval` runs the same way. The task's disk is discarded on exit, so pass
+`run-eval` runs the same way (the dataset format, comparisons and gates:
+[Evaluation](../docs/guides/evaluate.md)). The task's disk is discarded on exit, so pass
 `s3://` paths for the dataset and the results, under the cache bucket's
 `eval/` prefix (the only prefix the query role reads and writes). Reuse the
 variables from step 4:
@@ -512,7 +513,8 @@ The container's exit code is `run-eval`'s: `1` when the failure budget is
 exceeded, the dataset cannot be downloaded or a result fails to upload; `2`
 for a usage or configuration error; `143` when the task is stopped (the
 finished runs' results are still uploaded). See
-[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output).
+[exit codes](../docs/user-guide.md#cli-exit-codes-and-json-output); what
+the result files hold: [Evaluation output](../docs/reference/evaluation-output.md).
 
 ## CloudWatch tracing (optional)
 

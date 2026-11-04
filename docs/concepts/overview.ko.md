@@ -26,7 +26,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 - **검색**(`run-rag` 또는 Python 체인)은 같은 저장소와 같은 하이브리드 점수 계산기 위에서
   전략 8개 중 하나를 실행하고, 결과를 답변 모델의 토큰 예산에 맞춰 컨텍스트로 담습니다.
 - **평가**(`run-eval`)는 LLM 없이 계산하는 지표와 LLM 판정 모델로 답변을 채점하고, 전략이나
-  실행을 짝지어 비교하며, 질의마다 토큰, 비용, 지연 시간을 측정합니다.
+  실행을 짝지어 비교하며, 질의마다 토큰, 비용, 지연 시간을 측정합니다([평가](../guides/evaluate.ko.md)).
 
 코드는 헥사고날(포트와 어댑터) 구조입니다. 알고리즘은 인터페이스에만 의존하고 AWS와 로컬
 백엔드는 그 뒤에 있으므로, 저장소, 모델 공급자, 전략, 파서, 렌더러를 분기 코드를 고치지
@@ -85,7 +85,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 | 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design.md#5-incremental-indexing)(영문) |
 | 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 두 방법론 모두에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design.md#83-multilingual-processing)(영문) |
 | 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
-| 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [사용자 가이드 §6](../user-guide.ko.md#6-평가-run-eval), [기본값과 근거](./defaults-and-evidence.md)(영문) |
+| 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [평가](../guides/evaluate.ko.md), [기본값과 근거](./defaults-and-evidence.md)(영문) |
 
 소스 코드로 확인한 범위에서는 두 라이브러리 모두 OWL이나 RDF를 읽지 않고, 인덱싱
 파이프라인에 문서 번역 단계가 없습니다.

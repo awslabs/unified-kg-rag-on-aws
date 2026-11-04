@@ -36,12 +36,8 @@ ENV_DEFAULTS = ("UKR_SOURCE_DIRECTORY", "UKR_PIPELINE_ID")
 COMMANDS: list[tuple[str, tuple[str, str], str]] = [
     ("run-ingestion", ("Ingestion", "guides/ingest.md"), "ingestion"),
     ("run-rag", ("Querying", "guides/query.md"), "rag"),
-    ("run-eval", ("User Guide", "user-guide.md#6-evaluation-run-eval"), "eval"),
-    (
-        "run-visualization",
-        ("User Guide", "user-guide.md#7-visualization-run-visualization"),
-        "visualization",
-    ),
+    ("run-eval", ("Evaluation", "guides/evaluate.md"), "eval"),
+    ("run-visualization", ("Visualization", "guides/visualize.md"), "visualization"),
     (
         "run-prompt-tuning",
         (
@@ -52,7 +48,7 @@ COMMANDS: list[tuple[str, tuple[str, str], str]] = [
     ),
     (
         "prepare-benchmark",
-        ("User Guide", "user-guide.md#benchmarks-musique"),
+        ("Benchmarks", "guides/benchmarks.md"),
         "benchmark",
     ),
 ]

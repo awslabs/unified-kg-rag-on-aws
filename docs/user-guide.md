@@ -36,8 +36,8 @@ Every CLI's `--help` ends with an example invocation and a link to its guide; ev
 3. Ingestion: moved to [Ingestion](./guides/ingest.md) and [Multilingual corpora](./guides/multilingual.md)
 4. Querying: moved to [Querying](./guides/query.md), [Retrieval](./concepts/retrieval.md) and the [Filters reference](./reference/filters.md)
 5. Incremental indexing: moved to [Incremental indexing](./guides/incremental.md)
-6. [Evaluation (`run-eval`)](#6-evaluation-run-eval)
-7. [Visualization (`run-visualization`)](#7-visualization-run-visualization)
+6. Evaluation: moved to [Evaluation](./guides/evaluate.md), the [Evaluation output reference](./reference/evaluation-output.md) and [Benchmarks](./guides/benchmarks.md)
+7. Visualization: moved to [Visualization](./guides/visualize.md)
 8. Prompt tuning: moved to [Domain adaptation: Prompt tuning](./guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning)
 9. Domain adaptation: moved to [Domain adaptation](./guides/domain-adaptation.md), [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md) and [Seed graphs](./guides/seed-graphs.md)
 10. [Operations & troubleshooting](#10-operations--troubleshooting)
@@ -46,583 +46,6 @@ Every CLI's `--help` ends with an example invocation and a link to its guide; ev
 
 Related pages: [CLI Reference](./reference/cli.md) · [Configuration Reference](./reference/configuration.md) · [Model Catalog](./reference/models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
-
----
-
-## 6. Evaluation (`run-eval`)
-
-`run-eval --data-path <dataset.json>` answers every question of a dataset and
-scores the answers and their sources. Three evaluators need no LLM and cost
-nothing; two use an LLM judge. Several strategies (or `--repeats`) turn the run
-into a paired comparison.
-
-Every flag with its default: [CLI Reference](./reference/cli.md#run-eval).
-
-### Evaluators
-
-`evaluation.enabled_evaluators` selects them; all five are on by default. The
-deterministic ones skip a query that lacks their dataset fields; for a
-judge-free run set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
-
-| Evaluator | LLM | Needs in the dataset | Main metrics |
-|---|---|---|---|
-| `answer_match` | no | `answer` (+ `answer_aliases`) | `answer_contains` (headline), `exact_match`, `token_f1` |
-| `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5) |
-| `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
-| `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
-| `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
-
-The two judges need the `eval` extra (`uv sync --extra eval`, [Install](./getting-started/aws.md#install));
-without it `run-eval` stops before the first query with exit `2`, naming the
-extra, even with `processing.ignore_errors: true`. The judge-free run above
-needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
-access for the judge, say) or rejects its configuration stops the run; with
-`processing.ignore_errors: true` it is dropped and listed in
-`run_manifest.dropped_evaluators`. Scoring starts after every answer is
-generated, so an evaluator error never discards the run: the metric is
-recorded as failed for that query (as is a judge reply without a usable
-score, never 0), and `--max-failure-rate` decides the exit code.
-
-#### `ragas` contexts
-
-- `context_precision` makes one judge call per context, so it scores at most
-  `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
-  sources (`context_precision@N`); without the cap, strategies that report
-  100+ sources hit `ragas_timeout`.
-- `faithfulness` and `context_recall` see every source within
-  `max_context_tokens`. By default (`evaluation.max_context_tokens: null`)
-  that is the answer model's budget (`search.token_manager.max_context_tokens`),
-  so the answer is graded against the context it was given; a smaller value
-  logs a warning.
-- Each report records what the judge saw (`judge_contexts`,
-  `judge_context_tokens`, ...); none of this changes what the answer model
-  saw.
-- ragas usage telemetry is off (`RAGAS_DO_NOT_TRACK=true` by default); set
-  `RAGAS_DO_NOT_TRACK=false` in the environment to opt back in.
-
-#### `graph_aware`
-
-The share of the expected graph artifacts that appear in the generated answer
-(coverage = recall), with the phrase matcher of `answer_contains`. A
-relationship given as `{"source": "A", "target": "B"}` or `"A -> B"` counts
-when the answer mentions both endpoints; any other string must appear as a
-phrase. Precision and F1 are not emitted: the entities of a free-text answer
-cannot be enumerated reliably.
-
-Answer-text coverage rises with answer length, so compare strategies on
-`retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
-expectations matched against the entities and relationship endpoints of the
-sources the answer model was given) and read `answer_length` next to the
-answer coverage. Retrieved coverage is skipped, not 0, when the context had
-no source of that type (`global` by design), so check the metric's `pairs` /
-`unpaired` in a comparison and `metric_outcomes`' skipped count in one run.
-
-#### `retrieval`
-
-Did the sources the answer model saw include the gold documents?
-
-- **Attribution.** Text-unit sources name their file; entity, relationship
-  and community-report sources are attributed to the files of the text units
-  they cite, the file holding most of them first.
-- **k counts files, not sources**: the sources are flattened into one list of
-  distinct files in rank order, so a community report attributed to many
-  files cannot inflate hit@k.
-- **Per source type.** `by_source_type` (aggregated in
-  `grouped_statistics.source_type`) has the same metrics per section type; its
-  `text` row, the text units the answer model read verbatim, is the fairest
-  cross-strategy comparison. `attributable_fraction` (attributable / reported
-  sources) shows how much of the context the metrics cover.
-- **Matching.** NFKC-normalized and case-insensitive on the file name, a
-  reference's directories ignored: `docs/Terms.pdf`, `terms.pdf` and `terms`
-  match the source `Terms.pdf`, `terms.docx` does not, and a version suffix
-  is no extension (`notes.v1` does not match `notes.v2`). A title such as
-  `AC/DC` is compared whole.
-- **Skips.** Skipped when a query has no `reference_sources` or none of its
-  sources is attributable; a query that retrieved no sources scores 0.
-
-#### `answer_match`
-
-Scores against `answer` and the optional `answer_aliases` (a string or a
-list, top level or under `metadata`, which wins), taking the maximum.
-
-- **`answer_contains`** is the headline: 1.0 when the gold answer or an alias
-  appears in the generated answer as a whole-word phrase. Long RAG answers
-  rarely equal a short gold span, so it tracks correctness far better than
-  exact match. A possessive is read as its word (`Depot` matches `Depot's`;
-  `Depots` is another word); `graph_aware` matches the same way.
-- **Korean and CJK.** Korean particles are tolerated after a word (`AWS`
-  matches `AWS는`); a bare number may carry a Korean unit (`2024` matches
-  `2024년에`) but not a magnitude numeral (`3` does not match `3억`); spacing
-  next to CJK letters is ignored (`3억 원` = `3억원`); a single-word CJK gold
-  is matched as a substring, but not inside a longer number or Latin word
-  (`2년` does not match `12년`).
-- **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
-  `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
-  scored by the polarity of the first yes/no word that answers the question,
-  as in HotpotQA (`there is no clause`, `네 가지`, `(예: …)` and `No. 5` are
-  not answers, so `네, 맞습니다` answers yes but `네 맞습니다` does not).
-- **`exact_match` and `token_f1`** score the part of the answer
-  `evaluation.answer_span` names. SQuAD, HotpotQA and MuSiQue score a short
-  predicted answer (a span such as `Depot`) against the gold answer, while
-  the answer prompt writes a one-sentence answer and then its support, so
-  the whole answer would score its length as much as its correctness:
-  - `first_line` (default, free): the first line that is neither empty nor a
-    Markdown heading, the one-sentence answer (`Depot stores widgets for
-    Vendor.` scores token F1 1/3 against `Depot`; EM still under-counts).
-  - `extracted`: the `models.roles.answer_span` model (fast tier; prompt
-    `custom_prompts.answer_span_extraction_*`) copies the short span out of
-    the answer, one call per distinct question and answer, reused across
-    repeats and strategies. A failed call, an empty reply or a span that is
-    not in the answer is scored on the first line instead and counted in
-    `answer_span_statistics.fallbacks`. This is the setting for numbers
-    close to the papers'.
-  - `full`: the whole answer.
-
-  Each report records `answer_span` and the `scored_span`. The normalization
-  is SQuAD v1.1's (NFKC, lowercase, punctuation and English articles
-  removed, whitespace collapsed), keeping punctuation that changes meaning
-  (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
-  the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
-  HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1
-  only when the two are equal. Token F1 splits on whitespace, so for Chinese
-  and Japanese it degrades to exact match, and Korean particles make both
-  under-count.
-
-### Eval data format
-
-A JSON array of objects. Only `question` is required; `expected_entities` /
-`expected_relationships` are needed only by `graph_aware`.
-
-```json
-[
-  {
-    "id": "q1",
-    "question": "What are the main themes discussed in the documents?",
-    "answer": "The main themes include AI, machine learning, and data processing.",
-    "category": "general",
-    "difficulty": "easy",
-    "reference_sources": ["doc1.pdf", "doc2.txt"],
-    "expected_entities": ["AI", "machine learning", "data processing"],
-    "expected_relationships": [
-      { "source": "AI", "target": "machine learning" },
-      "machine learning -> data processing"
-    ],
-    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
-  },
-  {
-    "id": "q2",
-    "question": "How do entities X and Y relate to each other?"
-  }
-]
-```
-
-- Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for
-  that question. `id` may also be given as `query_id`.
-- Mark a question the corpus cannot answer with
-  `"metadata": {"answerable": false}`: no evaluator grades it; it counts only
-  in `abstention_statistics` (below).
-- The file is validated before any query runs. A file that cannot be read,
-  an empty or non-array dataset, a missing `question`, a duplicate id, a field
-  of the wrong type (a non-list `expected_entities`, an `answer_aliases` that
-  is not a string or a list of strings) or `metadata` the RAG chain rejects
-  (an unknown `search_strategy`, or `filters` it refuses: a malformed value
-  such as an empty list, or a key the item's strategy refuses, checked under
-  every compared strategy in a comparison) stops the run with
-  `Error: invalid evaluation dataset:`, the item index and id, and exit code 2.
-
-### Examples
-
-```bash
-run-eval --data-path my_eval_data.json --config-path config.yaml
-
-run-eval --data-path my_eval_data.json \
-  --search-strategy global --search-type vector --config-path config.yaml
-
-run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
-  --output-directory s3://my-bucket/eval/results/ --config-path config.yaml
-```
-
-Either path can be an `s3://` URI, so `run-eval` also runs as a one-off task on
-the CDK stack ([After deploy](../iac/README.md#5-evaluate-from-inside-the-vpc)).
-Results are uploaded at the end with the `aws.s3.encryption` settings; a
-failed upload exits non-zero and keeps the local files (path printed). S3 is
-reached with the config's `aws.profile_name` / `aws.region_name`; the shell's
-`AWS_PROFILE` / `AWS_REGION` fill them only when the config leaves them unset.
-The principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
-prefix.
-
-Results are written as `evaluation_{results,reports,summary}_<timestamp>.json`
-(`..._<strategy>_<timestamp>.json` when every query asked for, or used, one
-strategy; an `auto` run is `..._auto_...`). `<timestamp>` is
-`YYYYMMDD_HHMMSS_<8 hex characters>` (runs started in the same second do not
-collide): find the latest run by sorting the names, not by building one.
-The summary holds per-metric statistics (`metric_statistics`) and
-scored/failed/skipped counts (`metric_outcomes`), plus:
-
-- `grouped_statistics`: the same split by `search_strategy` (the strategy
-  actually used, which varies under `auto`), `category`, `difficulty` and
-  `source_type` (the retrieval metrics per source section type).
-- `abstention_statistics`: how often the chain returned its fixed no-context
-  reply ("I could not find relevant information…"): `abstained`, `answered`,
-  `abstention_rate`, `per_strategy`, and an `unanswerable` block for
-  `answerable: false` items. The chain returns that reply only when retrieval
-  finds nothing, and a model declining in its own words is not detected, so
-  on a populated index the `unanswerable` rate is a lower bound on correct
-  declines. Each result carries `abstained`.
-- `answer_span_statistics`: the `answer_span` exact match and token F1
-  read, the reports `scored` and the extracted spans that fell back to the
-  first line (`fallbacks`).
-- `rerank_status_counts`: queries per [rerank status](./guides/query.md#rerank-status); each
-  result carries `rerank_status` (`null` when answer generation failed
-  first).
-- `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
-  blocked item is scored on the blocked message; a blocked answer drops its
-  sources, so its retrieval metrics and the RAGAS context metrics
-  (`context_precision`, `context_recall`, `faithfulness`) are skipped as
-  `guardrail_blocked`. A query blocked on input retrieved nothing, so it is a
-  retrieval miss and scores 0 on context precision and recall, while
-  `faithfulness` is skipped, as for any answer without context:
-  `no_contexts`); each result carries `guardrail_blocked`.
-- `run_manifest`: what was measured, so two runs can be compared:
-  - the CLI arguments (URLs without credentials), versions, `git_sha` /
-    `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and
-    `dropped_evaluators`;
-  - the model ids and `judge_is_answer_model` (a judge that is the answer
-    model inflates judge scores; the default Bedrock judge, Opus 5.5, is not
-    the default answer model, and falls back to another when the answer
-    model is Opus 5.5; a configured `models.roles.evaluation` that is the
-    answer model, `default` say, is kept and warned about). The `--pairwise-judge` of a
-    comparison counts as a judge, and `pairwise_judge` records its settings;
-  - `answer_scoring`: the `answer_span` and `answer_normalization` exact
-    match and token F1 used (with `answer_match`), and `models.answer_span`
-    the extracting model; runs scored differently are not comparable on
-    those two metrics;
-  - `retrieval_config_sha256`, a hash of every configuration setting that
-    can change an answer or a score (model ids and ingestion settings
-    included; regions, endpoints, credentials, paths, timeouts and other
-    operational knobs left out), so the same evaluation hashes the same in
-    every environment. The `run-eval` query flags (`--suffix`, `--top-k`,
-    `--search-type`, `--retrieval-multiplier`, `--enable-thinking`) are not
-    configuration: they are in the CLI arguments, not in the hash;
-  - `index`: per queried suffix, the ingestion run that last wrote its vector
-    indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
-    settings, for an incremental run the `full_build` it was applied on,
-    and the `communities` counters, see
-    [Community growth](./guides/incremental.md#community-growth-across-runs)); best-effort, `null` without
-    index metadata.
-
-  `EvaluationManager.evaluate_dataset` builds it for library callers too
-  (pass `dataset_path=` / `cli_args=`).
-
-Per-query reports list each evaluator's `metrics` (no overall score: an
-average of unrelated metrics means nothing) and record, per reported source in
-rank order, `retrieved_source_ids` (the files it is attributed to, `[]` when
-unattributable), `retrieved_source_types`, `retrieved_entities` and
-`retrieved_relationships`.
-
-### Comparing strategies
-
-`run-eval --search-strategy local,mix,global --repeats 3` answers and scores
-the same queries with each strategy, `--repeats` times each (the listed
-strategy overrides a per-item `search_strategy`; list them in one flag, as a
-second `--search-strategy` is a usage error), saves every run's files and
-adds `evaluation_comparison_<timestamp>.json`:
-
-- `strategies.<s>.metrics.<evaluator>/<metric>`: the mean over queries of the
-  per-query mean over repeats, and `repeat_stdev` (run-to-run noise);
-  `routed_strategies` shows how `auto` routed. The chain extracts each
-  question's entities and keywords once (`search.query_extraction_cache_size`,
-  1024 questions), so the repeats and the strategies that read them (`mix`
-  and `hybrid` the keywords, `local` the entities) search with the same
-  ones, and the run-to-run noise is the retrieval's and the answer's.
-- `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy over
-  the queries both scored: `mean_delta`, a 95% paired bootstrap interval
-  (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
-  per-query deltas and `unpaired`. A query whose answer generation failed
-  scores 0 on every metric the other run scored (`answer_length` excepted)
-  that its own strategy scores on some query, so failing cannot help a
-  strategy, and a metric it never produces (`global` reports no entities,
-  so no `retrieved_entity_coverage`) is not invented as a loss; a strategy
-  that scored nothing is filled on every metric. The rule reads the data, so
-  a metric that only the failed query could score (one item with
-  `expected_relationships`, say) is not filled either
-  (`failed_answers` / `failed_queries`;
-  `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
-  failed, or had blocked, different numbers, runs whose exact match and
-  token F1 read different `answer_span`s, and, with `answer_span:
-  extracted`, each strategy whose extracted spans fell back to the first
-  line (`answer_span_fallbacks`) and fallback rates that differ). A
-  difference is
-  supported when its interval excludes 0; a 10-point difference on binary
-  metrics is detected in 15% of runs with 50 queries and 59% with 200, so
-  compare on a few hundred queries.
-- `deltas_by_category.<s>.<category>.<metric>`: the same deltas over each
-  dataset `category` (MuSiQue's hop count, say). Each interval is per
-  category and not corrected for the number of categories and metrics read,
-  so treat a lone excluded 0 among many as exploratory.
-- `pairwise_vs_baseline.<s>` (with `--pairwise-judge`): the GraphRAG /
-  LightRAG head-to-head LLM judge on comprehensiveness, diversity,
-  empowerment and directness (plus LightRAG's `overall` with
-  `evaluation.pairwise_overall: true`), using `models.roles.evaluation`
-  (prompt: `custom_prompts.pairwise_comparison_*`) on the first repeat's
-  answers. Each pair is judged in both orders and a criterion counts as a
-  win only when both agree; `position_consistency` (overall and per
-  criterion) is the share of judged pairs whose two orders agreed, and a
-  value under 0.5 is warned about: such a judge decides by position, and its
-  ties say nothing about the answers. `candidate_win_rate` scores each
-  decided pair 1, a tie 0.5 and a loss 0, with a bootstrap interval
-  (`ci_low`/`ci_high`) over those per-query scores; it is `null` when the
-  judge decided no pair. A pair where one answer failed is not judged: the
-  other side wins (`candidate_errors`, `baseline_errors`; both failed:
-  `both_errors`). `answerable: false` items are not judged
-  (`unanswerable_skipped`). `failed` counts pairs the judge could not decide
-  (a failed call, or a verdict other than `1`, `2` or `tie`), and
-  `--max-failure-rate` applies to them. A judge that is the answer model is
-  warned about.
-- `cost.strategies.<s>`: the answers' model use per query, as `mean` /
-  `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
-  `input_tokens_per_query`, `output_tokens_per_query`,
-  `total_tokens_per_query`, `latency_seconds`, the `totals` and
-  `cache_hits`, and with `evaluation.prices` set `usd_per_query` and
-  `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them against the
-  baseline like the metrics (`usage/llm_calls`, `usage/input_tokens`,
-  `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,
-  `latency/response_time_seconds`, each query's mean over its repeats, with
-  the bootstrap interval). A failed or timed-out answer counts with what it
-  spent before failing: each answer runs in its own usage scope and timer,
-  so its result keeps the calls and tokens of its attempts and the time from
-  its first attempt's start to its last one's end (`failed_answers` counts
-  them; a warning says so). A strategy is then not cheaper or faster for
-  failing, though a fast failure does cost less: read the cost next to
-  `failed_answers` and the failure warning. Saved answers without a usage
-  record or a latency are counted in `answers_without_usage` /
-  `answers_without_latency` and warned about,
-  and a `--fail-if` on a `usage/*` or `latency/*` measure fails for them.
-  The arms and repeats of one run share the chain's query extraction cache,
-  so a later one that reuses an extraction pays no call for it (counted in
-  `cache_hits`): its cost depends on what ran before it, and a strategy whose
-  repeat count or cache hits per answer differ from its baseline's is warned
-  about. To compare cold-cache cost, set `search.query_extraction_cache_size:
-  0`; the quality deltas do not depend on it. Before each strategy's first
-  run, `run-eval` answers one synthetic query with it, untimed, unscored and
-  not counted (`evaluation.warm_up_query`, default `true`), so the first
-  strategy's latency does not include opening the store connections and the
-  models' first calls; it costs one extra query (its model calls) per
-  strategy and run, which is in neither the run's usage nor its USD
-  estimate (Bedrock bills it all the same), and `false` turns it off.
-- `run_manifest` of the first run; with `--pairwise-judge`,
-  `pairwise_judge_model` and the judge's `pairwise_usage`.
-
-The comparison is also written as `evaluation_comparison_<timestamp>.csv`
-(one row per non-baseline strategy, measure and query: `baseline`,
-`baseline_value`, `value`, `delta`, `category`) and `.md` (the metric and
-cost tables, the pairwise judge's win rates, the gates and the warnings, for
-a pull request or a CI job summary).
-
-No model prices ship with the package. For a USD estimate, fill in the
-current [Amazon Bedrock prices](https://aws.amazon.com/bedrock/pricing/) of
-your region, per million tokens, keyed by the model id the usage records
-name (`usage.by_model`; an inference profile id such as `global.<model>` when
-the factory resolved one). Answers that used a model without a price get no
-estimate, and the comparison warns. `input_tokens` includes the prompt-cache
-reads and writes; give their rates (`cache_read_per_million_tokens`,
-`cache_write_per_million_tokens`) and they are priced apart, otherwise at
-the input rate (an upper bound for reads, which cost a tenth of input on
-Claude):
-
-```yaml
-evaluation:
-  prices:
-    "global.<answer-model-id>":
-      input_per_million_tokens: 0.0
-      output_per_million_tokens: 0.0
-      cache_read_per_million_tokens: 0.0
-      cache_write_per_million_tokens: 0.0
-    "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
-```
-
-The estimate covers the calls the usage records: botocore's resent requests
-(`request_retries`), failed calls (`failed_calls`) and the warm-up queries
-are not priced, so CloudWatch's invocation count and the bill can run a
-little higher (in the package's November 2026 benchmark runs: Sonnet 5.5
-13% more invocations than recorded calls, input tokens within 4.6%, output
-within 0.9%; Haiku 5.5 within 0.2%).
-
-The console prints the same summary; the failure budget applies to every run.
-
-### Rebuilding, re-judging and gating a comparison
-
-`run-eval --from-results <dir|files>` rebuilds the comparison from the files
-earlier runs saved (`evaluation_results_*` with the `evaluation_reports_*`
-and `evaluation_summary_*` next to them; `evaluation.save_detailed_results:
-true`, the default) without answering a query or opening a store. The runs
-are grouped by strategy and compared in the order the oldest run listed them
-(`--search-strategy` picks and orders them instead), so a comparison that was
-stopped part-way is finished by running only the missing strategies into the
-same directory, with the same `--repeats`, and rebuilding: its deltas are
-those of an uninterrupted run. A strategy whose runs were all lost runs again
-with `--repeats N`; one with some repeats saved runs only the missing ones
-(`--repeats` of the difference), or delete its partial files and run all N.
-
-```bash
-# Stopped during naive (run with --repeats 3): run it alone into the same
-# directory with the same --repeats, then rebuild.
-run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
-run-eval --from-results out/ --output-directory out/
-
-# Re-judge the saved answers with another judge model (no answer call).
-run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
-
-# CI: compare this run with an earlier one and fail on a supported regression.
-run-eval --data-path eval.json --search-strategy local \
-  --baseline-results ci/previous/ --output-directory ci/current/ \
-  --fail-if "answer_match/token_f1:ci_high<-0.02" \
-  --fail-if "usage/total_tokens:mean_delta>500"
-```
-
-- The saved runs of one strategy are pooled as its repeats. The rebuild
-  warns when they differ in a query flag (`suffix`, `top_k`, `search_type`,
-  `retrieval_multiplier`, `enable_thinking`), `retrieval_config_sha256`,
-  `git_sha`, the `index` build or the answer model (keep runs of other
-  settings in another directory, or list the result files), when the
-  strategies ran different numbers of repeats, and when a run has no
-  `evaluation_summary_*` file (its manifest, so none of these checks, nor
-  the answer-scoring and self-preference ones, can read it).
-- `--pairwise-judge` with `--from-results` judges the saved answers again
-  (`--judge-model` sets `models.roles.evaluation` for the run, here and in a
-  normal run; without `--pairwise-judge` and an LLM-judge evaluator it
-  judges nothing, which is warned about); the self-preference warning
-  compares that judge with the saved runs' answer model.
-- `--baseline-results` makes an earlier run the baseline: each of its
-  strategies is labelled `baseline:<strategy>`, and each strategy of this
-  run, or of `--from-results`, is compared with the baseline of the same
-  strategy (`deltas_vs_baseline.<s>` and `cost.deltas_vs_baseline.<s>`
-  against `baseline:<s>`; `baselines` maps each strategy to its baseline).
-  A strategy the earlier run did not run is compared with its first
-  strategy, with a warning. Run the baseline with the same `--repeats` as
-  the runs compared with it: repeats reuse the query extraction cache, so
-  different counts shift the usage deltas (warned about). Save each run in
-  a directory of its own: an `--output-directory` that is the
-  `--baseline-results` directory is warned about, since the next run that
-  reads it as its baseline pools this run in as repeats. Runs whose exact
-  match and token F1 read the answer differently (`answer_scoring` in the
-  run manifest: `evaluation.answer_span`, `answer_normalization`) are
-  refused (exit 2), checked before any answer is generated; runs of different
-  datasets are warned about (only their shared query ids pair).
-- `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
-  compared strategy's paired delta meets the condition: `<measure>` is a key
-  of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of
-  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low` or `ci_high`.
-  `ci_high<-0.02` fails only when the whole interval is below -0.02, a
-  regression the query sample supports. A strategy with no delta of the
-  measure fails the gate too, and so does a cost measure (`usage/*`,
-  `latency/*`) that some answers of the strategy or of its baseline have no
-  value of, or when the strategy and its baseline failed different numbers
-  of answers (each counts with what it spent before failing, so the delta
-  compares the failures too). The result is in `comparison.gates` and the
-  JSON `gate_failures`. It needs a comparison: two strategies, or
-  `--baseline-results`.
-
-### Benchmarks (MuSiQue)
-
-`prepare-benchmark musique` turns
-[MuSiQue](https://github.com/StonyBrookNLP/musique) (answerable, multi-hop,
-CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
-Nothing of it is in this repository: by default it downloads the answerable
-dev split (2,417 questions) from a pinned revision of a public mirror and
-checks its SHA-256; `--data-path` reads a local `musique_ans_v1.0_*.jsonl`
-instead. A full file (`musique_full_v1.0_*.jsonl`) is read too, but its
-answerable half is not MuSiQue-Ans (other paragraphs and answer aliases):
-its rows are labelled `metadata.benchmark: musique-full-answerable` instead
-of `musique`, with a WARNING that the scores are not comparable to MuSiQue-Ans
-results. The label is in its output (console and `--output-format json`),
-and `run-eval` counts it in the summary (`benchmarks`, also printed under a
-comparison of several strategies or repeats) and the run manifest
-(`dataset.benchmarks`). It writes `corpus/` (one text file per distinct paragraph; each
-question brings 2-4 supporting paragraphs and up to 18 distractors) and
-`eval_data.json` (`answer`, `answer_aliases`, the supporting paragraphs as
-`reference_sources`, the hop count as `category`). A `corpus/` that is not
-empty is a usage error (exit 2), reported before anything is downloaded.
-
-```bash
-# 1. 100 questions (about 1,900 paragraphs), sampled with seed 0.
-prepare-benchmark musique --output-directory bench/musique --limit 100
-
-# 2. Ingest the paragraphs under their own suffix.
-run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
-
-# 3. Paired comparison of both methodologies, EM / F1 on the short answer span.
-run-eval --data-path bench/musique/eval_data.json --suffix musique \
-  --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
-```
-
-with `musique.yaml` holding your usual config plus:
-
-```yaml
-processing:
-  document_parsing:
-    index_value: musique          # keep the benchmark out of your own index
-evaluation:
-  answer_span: extracted                 # EM / F1 on the short span the answer gives
-  answer_normalization: official_squad   # MuSiQue's evaluation script normalization
-  enabled_evaluators: [answer_match, retrieval]   # judge-free; add langchain / ragas if wanted
-```
-
-MuSiQue (like HotpotQA and SQuAD) scores the short answer a reader model
-predicts against the gold answer and its aliases, with EM and token F1 under
-the official normalization. A RAG answer is a sentence and its support, so
-`answer_span: extracted` (one fast-model call per answer) has a model copy
-the span out of it first; the numbers are then close to, but not the same
-as, a paper's, whose readers were trained to output spans. The default
-`first_line` costs nothing but scores the one-sentence answer, so its EM is
-far below a paper's. The GraphRAG and LightRAG papers report no EM / F1;
-they use the pairwise LLM judge (`--pairwise-judge`).
-
-Read `answer_contains` / `token_f1` and `retrieval` (per `category`, and
-`deltas_by_category` in a comparison).
-Ingestion cost grows with the paragraph count (about 19 per question). Cite
-the paper when you publish results.
-
----
-
-## 7. Visualization (`run-visualization`)
-
-A **standalone** renderer that draws from an exported visualization-data
-JSON; it does **not** re-run ingestion or touch AWS. Every flag with its
-default: [CLI Reference](./reference/cli.md#run-visualization).
-
-```bash
-# Render all renderers
-run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
-
-# Only the interactive renderer
-run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
-```
-
-It needs the `viz` extra (`uv sync --extra viz`, [Install](./getting-started/aws.md#install)). The two
-renderers are **`interactive`** (pyvis) and **`static`** (Bokeh), configured
-under `graph.visualization` (`interactive.*`, `static.*`, `centrality.*`).
-Ingestion itself renders nothing.
-
-- **The input.** The community-detection stage of `run-ingestion` writes
-  `visualization_data.json` on every run whose graph covers the whole corpus:
-  a full build, a reset, or an incremental run in which every document is new
-  or changed. An incremental run that skips unchanged documents writes
-  nothing (it logs an INFO line) and leaves an earlier file in place; run one
-  full build (`indexing.reset: true`) to visualize the whole graph.
-- **Where.** `graph.visualization.outputs_directory`, by default
-  `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
-  `.json` only; re-render the HTML locally.
-- **What.** Nodes (colored by their level-0 `community_id`), edges and the
-  community hierarchy, without vectors. Writing it calls no model;
-  `run-visualization` computes a seeded spring layout from the graph
-  topology and the `centrality` metrics when it renders.
-- **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
-  by degree (default 2000) and lays out only those.
-- Edge width and opacity are log-scaled to the graph's own weight range.
-- Only files a renderer wrote are reported (an earlier file of the same name
-  is removed first); when nothing is rendered (an empty graph) the command
-  exits `1`.
 
 ---
 
@@ -856,7 +279,7 @@ closes it.
 
 ## Moved sections
 
-Sections 1 to 5, 8 and 9 of this guide, and part of section 10, moved to their own pages. The headings
+Sections 1 to 9 of this guide, and part of section 10, moved to their own pages. The headings
 below keep older links, including the `--help` output of earlier
 versions, working.
 
@@ -1048,6 +471,60 @@ Moved to [Ingestion: Large and heterogeneous corpora](./guides/ingest.md#large-a
 ### Cost notes
 
 Moved to [Ingestion: Cost levers](./guides/ingest.md#cost-levers).
+
+### 6. Evaluation (`run-eval`)
+
+Moved to [Evaluation](./guides/evaluate.md) (evaluators, dataset format,
+comparisons, rebuilding and gating), the
+[Evaluation output reference](./reference/evaluation-output.md) (result
+files, summary, run manifest, comparison fields, evaluator details) and
+[Benchmarks](./guides/benchmarks.md).
+
+### Evaluators
+
+Moved to [Evaluation: Evaluators](./guides/evaluate.md#evaluators).
+
+### `ragas` contexts
+
+Moved to [Evaluation output: `ragas` contexts](./reference/evaluation-output.md#ragas-contexts).
+
+### `graph_aware`
+
+Moved to [Evaluation output: `graph_aware`](./reference/evaluation-output.md#graph_aware).
+
+### `retrieval`
+
+Moved to [Evaluation output: `retrieval`](./reference/evaluation-output.md#retrieval).
+
+### `answer_match`
+
+Moved to [Evaluation output: `answer_match`](./reference/evaluation-output.md#answer_match).
+
+### Eval data format
+
+Moved to [Evaluation: Eval data format](./guides/evaluate.md#eval-data-format).
+
+### Examples
+
+Moved to [Evaluation: Examples](./guides/evaluate.md#examples) (what the
+result files hold: [Evaluation output](./reference/evaluation-output.md)).
+
+### Comparing strategies
+
+Moved to [Evaluation: Comparing strategies](./guides/evaluate.md#comparing-strategies)
+(every field: [Evaluation output: Comparison](./reference/evaluation-output.md#comparison)).
+
+### Rebuilding, re-judging and gating a comparison
+
+Moved to [Evaluation: Rebuilding, re-judging and gating a comparison](./guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison).
+
+### Benchmarks (MuSiQue)
+
+Moved to [Benchmarks](./guides/benchmarks.md).
+
+### 7. Visualization (`run-visualization`)
+
+Moved to [Visualization](./guides/visualize.md).
 
 ### 8. Prompt tuning (`run-prompt-tuning`)
 

@@ -240,7 +240,7 @@ class CommandLineInterface:
             description="GraphRAG Evaluation System - Assess retrieval and generation performance",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
-                "user-guide.md#6-evaluation-run-eval",
+                "guides/evaluate.md#examples",
                 "run-eval --data-path eval_data.json --config-path config.yaml",
             ),
         )
