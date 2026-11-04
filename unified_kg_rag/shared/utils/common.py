@@ -211,13 +211,25 @@ def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
     """Parse a JSON object from a noisy LLM response.
 
     LLMs wrap JSON in markdown fences or surround it with prose; every call
-    site that reads LLM JSON uses this one forgiving extraction. Strips a
-    leading ```/```json fence, isolates the outermost ``{...}``, and parses it.
+    site that reads LLM JSON uses this one forgiving extraction. The span
+    from the first ``{`` to the last ``}`` is parsed. When it does not parse
+    because it holds several objects, as a model that corrects itself writes
+    (an answer, "Correction: ... final output:", the answer again), the last
+    top-level object that parses is the answer: the one the model ends on.
     Non-object JSON yields ``{}``. Unparseable text yields ``{}`` so callers
     degrade gracefully, or raises ``json.JSONDecodeError`` when ``strict`` is
     set, for callers that must surface a broken response.
     """
     text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except ValueError:
+            if objects := _top_level_json_objects(text):
+                return objects[-1]
+        else:
+            return parsed if isinstance(parsed, dict) else {}
     # Strip a leading/trailing markdown code fence if present.
     if text.startswith("```"):
         text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
@@ -234,6 +246,46 @@ def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
             raise
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _top_level_json_objects(text: str) -> list[dict[str, Any]]:
+    """The top-level ``{...}`` spans of ``text`` that parse as JSON objects,
+    in order. Braces inside JSON strings do not count; an object nested in
+    one that does not parse is not top-level, so it is never taken for the
+    answer, nor is one inside an object left unclosed."""
+    objects: list[dict[str, Any]] = []
+    position = 0
+    while (start := text.find("{", position)) != -1:
+        depth, in_string, escaped, end = 0, False, False, -1
+        for index in range(start, len(text)):
+            char = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        if end == -1:
+            # Unclosed (cut off): what follows is inside it, not top-level.
+            break
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            objects.append(parsed)
+        position = end + 1
+    return objects
 
 
 # Every vector field the indexers write ends in this suffix (``text_embedding``,

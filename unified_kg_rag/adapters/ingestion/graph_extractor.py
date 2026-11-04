@@ -12,7 +12,12 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.langchain import (
+    BATCH_ITEM_FAILED,
+    BatchProcessor,
+    RobustXMLOutputParser,
+    output_excerpt,
+)
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
@@ -192,6 +197,7 @@ class GraphExtractor(BaseProcessor):
             factory=self.factory,
             min_output_tokens=GraphExtractionPrompt.output_floor(self.config),
             output_tags=["entities", "relationships"],
+            parser_class=GraphExtractionOutputParser,
         )
         self.graph_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -749,6 +755,26 @@ class GraphExtractor(BaseProcessor):
             )
 
 
+# Set by GraphExtractionOutputParser on its result: whether the answer's
+# sections were all closed, and the response (for a DEBUG log of a failure).
+_CLOSED_KEY = "#sections_closed"
+_RAW_KEY = "#raw_output"
+
+
+class GraphExtractionOutputParser(RobustXMLOutputParser):
+    """The graph extraction parser: its result also says whether the answer
+    parsed was complete (:meth:`sections_closed`) and keeps the response,
+    for :func:`_checked` to tell output cut off from malformed output and
+    to log what failed."""
+
+    def parse(self, text: str) -> dict[str, Any]:
+        result = super().parse(text)
+        if isinstance(result, dict):
+            result[_CLOSED_KEY] = self.sections_closed(text)
+            result[_RAW_KEY] = text
+        return result
+
+
 def _checked(result: Any) -> dict[str, Any]:
     """``result`` if it is an extraction output, else raise
     ``OutputParserException``, as for output that does not parse (retried,
@@ -762,7 +788,10 @@ def _checked(result: Any) -> dict[str, Any]:
     PROCESSED with nothing extracted. That raises ``LLMOutputTruncatedError``
     instead, as output cut at the token limit does: counted the same way,
     not retried. Output cut later keeps the entities before the cut; the
-    parser warns of the unclosed section.
+    parser warns of the unclosed section. An answer whose sections were all
+    closed was not cut off: entities without a name there are malformed
+    output (``OutputParserException``), retried, then counted alike. The
+    response of a failed check is logged at DEBUG.
     """
     if not isinstance(result, dict):
         raise OutputParserException(
@@ -773,9 +802,10 @@ def _checked(result: Any) -> dict[str, Any]:
     if not isinstance(raw_entities, dict | list) or not isinstance(
         raw_relationships, dict | list
     ):
+        _log_failed_output(result)
         raise OutputParserException(
             "extraction output lacks well-formed entities/relationships "
-            f"sections (keys: {sorted(result)})"
+            f"sections (keys: {sorted(k for k in result if not k.startswith('#'))})"
         )
     listed = ensure_list(raw_entities, inner_key="entity")
     if listed and not any(
@@ -783,6 +813,12 @@ def _checked(result: Any) -> dict[str, Any]:
         and clean_display_name(coerce_llm_text(entity.get("name")))
         for entity in listed
     ):
+        _log_failed_output(result)
+        if result.get(_CLOSED_KEY):
+            raise OutputParserException(
+                f"none of the {len(listed)} entities of the extraction output "
+                "has a name (its sections are closed: malformed output)"
+            )
         # Cut off, as at the output-token limit: not retried (the same
         # input hits the same cap again).
         raise LLMOutputTruncatedError(
@@ -790,3 +826,10 @@ def _checked(result: Any) -> dict[str, Any]:
             "a name (output cut off?)"
         )
     return result
+
+
+def _log_failed_output(result: dict[str, Any]) -> None:
+    """Log the response behind a failed extraction check at DEBUG (model
+    output can echo corpus text)."""
+    if isinstance(raw := result.get(_RAW_KEY), str):
+        logger.debug("Extraction output that failed: '%s'", output_excerpt(raw))

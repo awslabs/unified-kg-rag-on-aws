@@ -8,15 +8,15 @@ import math
 import re
 import threading
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 import tenacity
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
-from langchain_core.output_parsers import XMLOutputParser
+from langchain_core.output_parsers import BaseOutputParser, XMLOutputParser
 from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 from tenacity import RetryCallState
@@ -25,7 +25,7 @@ from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.common import text_digest
+from unified_kg_rag.shared.utils.common import parse_llm_json, text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
     cancel_on_exit,
@@ -615,6 +615,35 @@ def _escape_markup(tag: str) -> str:
     return tag.replace("<", "&lt;")
 
 
+class _Section(NamedTuple):
+    """One top-level occurrence of an expected section in a response."""
+
+    tag: str
+    start: int
+    end: int
+    closed: bool
+
+
+def _starts_line(text: str, index: int) -> bool:
+    """Whether only whitespace precedes ``index`` on its line: a section tag
+    a model writes, not one prose names ("the <relationships> above")."""
+    return not text[text.rfind("\n", 0, index) + 1 : index].strip()
+
+
+# Per side of a long model answer in a DEBUG excerpt (output_excerpt).
+_EXCERPT_CHARS = 2000
+
+
+def output_excerpt(text: str) -> str:
+    """``text`` for a DEBUG log of output that failed a check: whole up to
+    twice ``_EXCERPT_CHARS``, else its start and end (where a correction or
+    a cut shows). Model output can echo corpus text, so it is logged at
+    DEBUG only."""
+    if len(text) <= 2 * _EXCERPT_CHARS:
+        return text
+    return f"{text[:_EXCERPT_CHARS]}\n[...]\n{text[-_EXCERPT_CHARS:]}"
+
+
 class RobustXMLOutputParser(XMLOutputParser):
     """Parse LLM XML into nested dicts, recovering from malformed output.
 
@@ -643,6 +672,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             # Nothing to recover (e.g. a thinking-only answer); the output
             # fixer skips it too, since it could only invent the structure.
             raise OutputParserException("The model returned no output", llm_output=text)
+        text = self.final_answer(text)
         original_sections = self._detect_xml_sections(text)
         if unclosed := sorted(
             tag
@@ -719,6 +749,104 @@ class RobustXMLOutputParser(XMLOutputParser):
             f"(content {text_digest(text)})",
             llm_output=text,
         )
+
+    def final_answer(self, text: str) -> str:
+        """``text`` with each expected section (``tags``) written more than
+        once reduced to its last complete occurrence.
+
+        A model can correct itself: a whole answer, a line such as
+        "Correction: ... the corrected, final output:", then the answer
+        again. Parsed as one response, every section of it is a list of two,
+        which no extractor reads. The answer the model ends on is the one it
+        means, so each repeated section keeps its last occurrence that is
+        closed, or its last one when none is. A section written once is kept
+        as it is, as is a response that repeats none (returned unchanged): a
+        single answer cut off is still parsed, and flagged, as before. Only
+        sections opened at the start of a line count, so prose naming a tag
+        ("the <relationships> above") does not, and only top-level ones, so
+        a ``<summary>`` inside ``<findings>`` is not a second ``<summary>``.
+        """
+        sections = self._top_level_sections(text)
+        counts = Counter(section.tag for section in sections)
+        repeated = ", ".join(
+            f"<{tag}>" for tag, count in sorted(counts.items()) if count > 1
+        )
+        if not repeated:
+            return text
+        kept: dict[str, _Section] = {}
+        for section in sections:
+            earlier = kept.get(section.tag)
+            if section.closed or earlier is None or not earlier.closed:
+                kept[section.tag] = section
+        last = {section.tag: section for section in sections}
+        if cut := sorted(
+            tag for tag, section in kept.items() if section is not last[tag]
+        ):
+            logger.warning(
+                "XML output repeats %s and its last %s is unclosed (cut off?): "
+                "the last complete one is parsed",
+                repeated,
+                ", ".join(f"<{tag}>" for tag in cut),
+            )
+        else:
+            logger.info(
+                "XML output repeats %s (the model corrected its answer): the "
+                "last complete one is parsed",
+                repeated,
+            )
+        return "\n".join(
+            text[section.start : section.end]
+            for section in sorted(kept.values(), key=lambda s: s.start)
+        )
+
+    def sections_closed(self, text: str) -> bool:
+        """Whether every expected section (``tags``) ``text`` opens has a
+        closed top-level occurrence: the answer parsed is complete, not cut
+        off (as by a server-side output cap reported as a normal stop)."""
+        sections = self._top_level_sections(text)
+        closed = {section.tag for section in sections if section.closed}
+        return bool(sections) and all(section.tag in closed for section in sections)
+
+    def _top_level_sections(self, text: str) -> list[_Section]:
+        """The top-level occurrences of the expected sections (``tags``) in
+        ``text``, in order: where each starts and ends, and whether it was
+        closed. An end tag closes the innermost open section of its name and
+        any opened inside it; an opening tag of the open top-level section's
+        name starts a new occurrence (the open one was cut short), as
+        sections never nest in one of their own name."""
+        expected = set(self.tags or ())
+        if not expected:
+            return []
+        sections: list[_Section] = []
+        stack: list[str] = []
+        start = 0
+        for match in _TAG.finditer(text):
+            is_close, name, rest = match.group(1), match.group(2), match.group(3)
+            if name not in expected:
+                continue
+            if is_close:
+                if name in stack:
+                    del stack[len(stack) - 1 - stack[::-1].index(name) :]
+                    if not stack:
+                        sections.append(_Section(name, start, match.end(), True))
+                continue
+            self_closing = rest.rstrip().endswith("/")
+            if stack and not (name == stack[0] and _starts_line(text, match.start())):
+                if not self_closing:
+                    stack.append(name)
+                continue
+            if not stack and not _starts_line(text, match.start()):
+                continue
+            if stack:
+                sections.append(_Section(stack[0], start, match.start(), False))
+                stack = []
+            if self_closing:
+                sections.append(_Section(name, match.start(), match.end(), True))
+            else:
+                stack, start = [name], match.start()
+        if stack:
+            sections.append(_Section(stack[0], start, len(text), False))
+        return sections
 
     def _detect_xml_sections(self, text: str) -> set[str]:
         """The sections of ``text`` a parse result must keep to be accepted.
@@ -1087,6 +1215,30 @@ class RobustXMLOutputParser(XMLOutputParser):
                     return {"items": stripped_items}
 
         return None
+
+
+class LLMJsonOutputParser(BaseOutputParser[dict[str, Any]]):
+    """Parse a JSON object answer with :func:`parse_llm_json` (strict).
+
+    LangChain's ``JsonOutputParser`` reads the first object of a response
+    that holds several, so a model that corrects itself ("Correction: ...
+    final output:" and the object again) was read by its superseded answer.
+    This one reads the last object that parses, and raises
+    ``OutputParserException`` when none does; non-object JSON is ``{}``.
+    """
+
+    def parse(self, text: str) -> dict[str, Any]:
+        try:
+            return parse_llm_json(text, strict=True)
+        except ValueError as e:
+            raise OutputParserException(
+                f"The answer is not a JSON object (content {text_digest(text)}): {e}",
+                llm_output=text,
+            ) from e
+
+    @property
+    def _type(self) -> str:
+        return "llm_json"
 
 
 # NOTE: the Bedrock-coupled chain builders (`setup_chain`,

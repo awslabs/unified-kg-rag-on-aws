@@ -20,6 +20,7 @@ from unified_kg_rag.adapters.ingestion.length_units import (
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
+    usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
@@ -962,7 +963,10 @@ class IntelligentTextChunker(BaseChunker):
                 len(requests),
             )
             # Model calls the run did not make (shared.usage).
-            model = model_id_value(self.config.model_id(ModelRole.CHUNKING))
+            # Under the id the calls are recorded by (the resolved profile).
+            model = usage_model_id(
+                self.factory, model_id_value(self.config.model_id(ModelRole.CHUNKING))
+            )
             for _ in stored:
                 record_cache_hit(ModelPurpose.INGESTION.value, model)
             requests = [request for request in requests if request not in stored]

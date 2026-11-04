@@ -701,6 +701,9 @@ class IngestionPipelineRunner:
             **({"error": error, "exit_code": EXIT_FAILURE} if error else {}),
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
+            # Text units a stage failed on: counted in a full build too,
+            # which records no document FAILED.
+            "units_failed": len(context.failed_unit_ids()),
             "documents_retrying": len(context.retrying_doc_ids),
             "documents_without_claims": len(context.claims_missing_doc_ids),
             "documents_excluded": (

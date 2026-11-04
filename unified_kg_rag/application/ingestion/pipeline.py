@@ -2337,6 +2337,7 @@ class DataIngestionPipeline:
         else:
             context.status = PipelineStageStatus.COMPLETED
             logger.info("Pipeline completed successfully with all stages passed")
+        self._warn_failed_units(context)
 
         with self._checkpoint_write():
             self.state_manager.save_pipeline_metadata(context)
@@ -2358,6 +2359,51 @@ class DataIngestionPipeline:
                 raise
 
         self._log_pipeline_summary(context)
+
+    def _warn_failed_units(self, context: PipelineContext) -> None:
+        """Warn, at the end of a run, of the text units its stages failed on:
+        how many, by stage and cause, and what retries them.
+
+        A run that completes with failed units is a partial graph. Its
+        ``failed_documents`` counts the documents the doc-status registry
+        recorded FAILED, so it reads 0 in a full build (no registry) however
+        many units failed; the per-unit errors were each logged once, in the
+        middle of the run.
+        """
+        failed = context.failed_unit_ids()
+        if not failed:
+            return
+        stages = []
+        for name, unit_ids in context.failed_text_unit_ids.items():
+            if not unit_ids:
+                continue
+            own = len(
+                set(unit_ids) & set(context.item_failed_text_unit_ids.get(name, []))
+            )
+            stages.append(
+                f"{name} {len(unit_ids)} ({own} for an error of their own, such "
+                f"as output cut off or unparseable; {len(unit_ids) - own} for "
+                "another, such as throttling or an outage)"
+            )
+        if self._doc_status is not None:
+            retry = (
+                f"{len(context.recorded_failed_doc_ids)} documents recorded "
+                "FAILED (failed_documents), processed again by the next run"
+            )
+        else:
+            retry = (
+                "no document is recorded FAILED without the doc-status registry "
+                "(providers.doc_status.enabled), so failed_documents is 0: a "
+                "re-run extracts those units again, reusing the stored "
+                "extraction records of the others"
+            )
+        logger.warning(
+            "%d text units failed and are indexed without that stage's output "
+            "(units_failed): %s; %s",
+            len(failed),
+            "; ".join(stages),
+            retry,
+        )
 
     def _create_pipeline_metrics(self, context: PipelineContext) -> PipelineMetrics:
         cache_stats = self.cache_manager.get_cache_stats(context.pipeline_id)
@@ -2465,6 +2511,7 @@ class DataIngestionPipeline:
             # documents_without_claims): recorded by the indexing commit or
             # a stage that stopped the run, so emitted when the run ends.
             "total_documents_failed": len(context.recorded_failed_doc_ids),
+            "total_units_failed": len(context.failed_unit_ids()),
             "total_documents_retrying": len(context.retrying_doc_ids),
             "total_documents_without_claims": len(context.claims_missing_doc_ids),
             "total_records_not_stored": sum(
@@ -2636,6 +2683,8 @@ class DataIngestionPipeline:
             f"{total_entities} entities, {total_relationships} relationships, "
             f"{total_claims} claims -> {total_communities} communities"
         )
+        if failed_units := context.failed_unit_ids():
+            summary += f"\nText units failed: {len(failed_units)}"
         if context.claims_missing_doc_ids:
             summary += (
                 f"\nIndexed without some of their claims: "
