@@ -615,7 +615,7 @@ From 0.2.3 (or a `main` checkout since):
     stack back with nothing changed. The ingestion task's family is renamed
     (`<stack prefix>OrchestrationIngestionTask...`), so its Container
     Insights series start again under the new name; the alarms and the
-    dashboard follow it (#PR).
+    dashboard follow it (#558).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1784,10 +1784,10 @@ Deployment (CDK).
   --all` replaces both and the state machine runs the new revision; its
   role, the cluster, the image repository and the log group stay in the
   compute stack. Upgrading a deployed stack takes one extra deploy
-  (*Upgrading* above) (#PR).
+  (*Upgrading* above) (#558).
 - The *Incremental run health* dashboard widget plots
   `community_growth_ratio` and `runs_since_clustering` as well, as the
-  runbook said it did (#PR).
+  runbook said it did (#558).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter
