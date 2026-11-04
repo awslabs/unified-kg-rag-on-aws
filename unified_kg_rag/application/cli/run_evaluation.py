@@ -76,18 +76,26 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.comparison import (
     Run,
+    baseline_comparison,
     paired_comparison,
     per_query_rows,
 )
 from unified_kg_rag.evaluation.gates import Gate, gate_breaches, parse_gate
 from unified_kg_rag.evaluation.pairwise import PairwiseJudge
-from unified_kg_rag.evaluation.report import comparison_csv, comparison_markdown
+from unified_kg_rag.evaluation.report import (
+    baseline_metric_keys,
+    compared_pairs,
+    comparison_csv,
+    comparison_markdown,
+)
 from unified_kg_rag.evaluation.saved_results import (
     SavedRun,
     check_answer_scoring,
     dataset_warnings,
     group_runs,
     load_saved_runs,
+    pooling_warnings,
+    summary_warnings,
 )
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -269,11 +277,13 @@ class CommandLineInterface:
             metavar="PATH",
             help=(
                 "Compare against an earlier run: its saved results (directories "
-                "or evaluation_results_*.json files) become the baseline, as "
-                "'baseline:<strategy>' (the first strategy of those runs), and "
-                "every strategy of this run, or of --from-results, is compared "
-                "with it. Refused when the runs scored exact_match and token_f1 "
-                "with different answer_scoring settings"
+                "or evaluation_results_*.json files) become the baselines, as "
+                "'baseline:<strategy>', and each strategy of this run, or of "
+                "--from-results, is compared with the baseline of the same "
+                "strategy (with the earlier run's first strategy, and a "
+                "warning, when it has none). Refused when the runs scored "
+                "exact_match and token_f1 with different answer_scoring "
+                "settings"
             ),
         )
         parser.add_argument(
@@ -402,7 +412,40 @@ class EvaluationRunner:
         default = CommandLineInterface().parser.get_default("search_strategy")
         return list(self.args.search_strategy) != list(default)
 
+    def _judge_model_warnings(self) -> list[str]:
+        """A warning when --judge-model judges nothing: no --pairwise-judge,
+        and no LLM-judge evaluator scores this run (none re-scores saved
+        runs)."""
+        if not getattr(self.args, "judge_model", None) or getattr(
+            self.args, "pairwise_judge", False
+        ):
+            return []
+        judges = {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
+        if self._from_results is None and judges & set(
+            self.config.evaluation.enabled_evaluators
+        ):
+            return []
+        return [
+            "--judge-model is given without --pairwise-judge and no LLM-judge "
+            "evaluator (langchain, ragas) scores this run, so it judges "
+            "nothing."
+        ]
+
+    def _output_is_baseline(self) -> bool:
+        """Whether this run saves its results where --baseline-results reads
+        the baseline from (the next run reading it pools them in)."""
+        target = self._output_directory()
+        if self._from_results is not None or is_s3_uri(target):
+            return False
+        out = Path(target).resolve()
+        return any(
+            (path if path.is_dir() else path.parent).resolve() == out
+            for path in self._baseline_results or []
+        )
+
     def _validate_args(self) -> None:
+        for warning in self._judge_model_warnings():
+            logger.warning("%s", warning)
         if self._from_results is not None:
             if self.args.repeats != 1:
                 usage_error(
@@ -535,28 +578,32 @@ class EvaluationRunner:
 
     @staticmethod
     def _print_comparison(comparison: dict[str, Any], total_time: float) -> None:
-        """Mean per strategy and the paired delta (95% CI) against the baseline."""
+        """Mean per strategy and the paired delta (95% CI) against each
+        strategy's baseline."""
         baseline = comparison["baseline"]
         strategies = comparison["strategies"]
+        pairs = compared_pairs(comparison)
+        title = (
+            f"vs '{baseline}'"
+            if len(set(pairs.values())) == 1
+            else "vs each strategy's baseline"
+        )
         table = Table(
-            title=(
-                f"[bold]Paired comparison vs '{baseline}' "
-                f"({total_time:.0f}s)[/bold]"
-            ),
+            title=f"[bold]Paired comparison {title} ({total_time:.0f}s)[/bold]",
             show_header=True,
             header_style="bold magenta",
         )
         table.add_column("Metric")
         for strategy in strategies:
             table.add_column(strategy, style="green")
-        for strategy in list(strategies)[1:]:
-            table.add_column(f"{strategy} - {baseline} [CI]", style="cyan")
-        for key in strategies[baseline]["metrics"]:
+        for strategy, label in pairs.items():
+            table.add_column(f"{strategy} - {label} [CI]", style="cyan")
+        for key in baseline_metric_keys(comparison):
             row = [markup_safe(key)]
             for strategy in strategies:
                 stats = strategies[strategy]["metrics"].get(key)
                 row.append(f"{stats['mean']:.3f}" if stats else "-")
-            for strategy in list(strategies)[1:]:
+            for strategy in pairs:
                 delta = comparison["deltas_vs_baseline"][strategy].get(key)
                 row.append(
                     f"{delta['mean_delta']:+.3f} "
@@ -589,7 +636,8 @@ class EvaluationRunner:
                 f", orders agreed {consistency:.0%}" if consistency is not None else ""
             )
             console.print(
-                f"[cyan]Pairwise judge, {strategy} win rate vs {baseline} "
+                f"[cyan]Pairwise judge, {strategy} win rate vs "
+                f"{pairs.get(strategy, baseline)} "
                 f"({judged['judged']} judged, {errors} decided by a failed "
                 f"answer, {judged['failed']} judge failures{agreed}): "
                 f"{rates or 'none'}[/cyan]"
@@ -735,26 +783,26 @@ class EvaluationRunner:
             )
         return exit_code, upload_error is not None
 
-    def _load_baseline(self) -> tuple[str, list[SavedRun]] | None:
-        """The ``--baseline-results`` runs of their first strategy, labelled
-        ``baseline:<strategy>``; checked against this run's answer scoring
-        before any answer is generated."""
+    def _load_baseline(self) -> dict[str, list[SavedRun]] | None:
+        """The ``--baseline-results`` runs by strategy (in the order the
+        earlier run listed them), labelled ``baseline:<strategy>``; checked
+        against this run's answer scoring before any answer is generated."""
         if not self._baseline_results:
             return None
         try:
             saved = load_saved_runs(self._baseline_results)
-            strategy, runs = next(iter(group_runs(saved).items()))
+            grouped = group_runs(saved)
             if self._from_results is None:
                 # Refused now rather than after paying for the answers.
                 check_answer_scoring(
                     [
-                        ("baseline", runs[0].manifest),
+                        *(("baseline", run.manifest) for run in saved),
                         ("this run", {"answer_scoring": self._answer_scoring()}),
                     ]
                 )
         except EvaluationException as e:
             raise InvalidDatasetError(f"--baseline-results: {e}") from e
-        return f"baseline:{strategy}", runs
+        return {f"baseline:{strategy}": runs for strategy, runs in grouped.items()}
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
@@ -776,6 +824,10 @@ class EvaluationRunner:
             )
         except EvaluationException as e:
             raise InvalidDatasetError(f"--from-results: {e}") from e
+        warnings = [
+            *summary_warnings(saved, "--from-results"),
+            *pooling_warnings(grouped),
+        ]
         console.rule(
             f"[bold]Rebuilding the comparison from {len(saved)} saved run(s)[/bold]",
             style="blue",
@@ -812,6 +864,7 @@ class EvaluationRunner:
             summaries=summaries,
             breaches=[],
             comparing=True,
+            warnings=warnings,
         )
 
     async def _answer_and_score(
@@ -819,7 +872,7 @@ class EvaluationRunner:
         s3_client: Any,
         work_dir: Path,
         local_outputs: Path,
-        baseline: tuple[str, list[SavedRun]] | None,
+        baseline: dict[str, list[SavedRun]] | None,
     ) -> "_Measured":
         """Answer and score the dataset once per strategy and repeat."""
         assert self.rag_chain is not None
@@ -907,6 +960,10 @@ class EvaluationRunner:
                     f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
                     style="blue",
                 )
+                if repeat == 1 and self.config.evaluation.warm_up_query and queries:
+                    # Untimed: the first strategy must not pay for warming
+                    # the connections and models the others then reuse.
+                    await self.evaluation_manager.warm_up(run_queries[0])
                 run_start = time.time()
                 # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
                 # the runs of a comparison tell apart.
@@ -961,10 +1018,34 @@ class EvaluationRunner:
             comparing=comparing,
         )
 
+    def _baseline_pairs(
+        self, measured: "_Measured", baseline: dict[str, list[SavedRun]]
+    ) -> tuple[dict[str, str], list[str]]:
+        """Each strategy's baseline label: ``baseline:<s>``, else the
+        baseline's first strategy (warned about)."""
+        first = next(iter(baseline))
+        pairs: dict[str, str] = {}
+        unmatched: list[str] = []
+        for strategy in measured.runs:
+            label = f"baseline:{strategy}"
+            if label not in baseline:
+                label = first
+                unmatched.append(strategy)
+            pairs[strategy] = label
+        warnings = []
+        if unmatched:
+            warnings.append(
+                f"--baseline-results has no run of {', '.join(unmatched)} "
+                f"(it holds {', '.join(s.split(':', 1)[1] for s in baseline)}): "
+                f"compared with {first}, the earlier run's first strategy, so "
+                "those deltas compare two strategies, not two runs of one."
+            )
+        return pairs, warnings
+
     async def _compare(
         self,
         measured: "_Measured",
-        baseline: tuple[str, list[SavedRun]] | None,
+        baseline: dict[str, list[SavedRun]] | None,
         local_outputs: Path,
         elapsed: float,
     ) -> tuple[dict[str, Any], list[str]]:
@@ -972,12 +1053,34 @@ class EvaluationRunner:
         it and the gate failures."""
         runs = dict(measured.runs)
         manifests = list(measured.manifests)
+        warnings = list(measured.warnings)
+        pairs: dict[str, str] = {}
         if baseline is not None:
-            label, saved = baseline
-            runs = {label: [run.run for run in saved], **runs}
-            manifests = [(label, run.manifest) for run in saved] + manifests
+            pairs, unmatched = self._baseline_pairs(measured, baseline)
+            used = {label: baseline[label] for label in dict.fromkeys(pairs.values())}
+            runs = {
+                **{label: [run.run for run in saved] for label, saved in used.items()},
+                **runs,
+            }
+            manifests = [
+                (label, run.manifest) for label, saved in used.items() for run in saved
+            ] + manifests
+            warnings += [
+                *unmatched,
+                *summary_warnings(
+                    [run for saved in used.values() for run in saved],
+                    "--baseline-results",
+                ),
+                *pooling_warnings(used),
+            ]
+            if self._output_is_baseline():
+                warnings.append(
+                    "--output-directory is a --baseline-results directory: this "
+                    "run's results are saved next to the baseline's, and a later "
+                    "run reading it as its baseline pools them in as repeats."
+                )
         try:
-            warnings = [
+            warnings += [
                 *check_answer_scoring(manifests),
                 *dataset_warnings(manifests),
             ]
@@ -991,11 +1094,36 @@ class EvaluationRunner:
                 f"{', '.join(runs) or 'none'}"
             )
         prices = self.config.evaluation.prices
-        comparison = paired_comparison(
-            runs, categories=measured.categories, prices=prices
-        )
-        comparison["warnings"] = [*warnings, *comparison["warnings"]]
         names = list(runs)
+        if pairs:
+            comparison = baseline_comparison(
+                {label: runs[label] for label in dict.fromkeys(pairs.values())},
+                measured.runs,
+                pairs,
+                categories=measured.categories,
+                prices=prices,
+            )
+            rows = [
+                row
+                for strategy, label in pairs.items()
+                for row in per_query_rows(
+                    {label: runs[label], strategy: runs[strategy]},
+                    measured.categories,
+                    prices,
+                )
+            ]
+        else:
+            comparison = paired_comparison(
+                runs, categories=measured.categories, prices=prices
+            )
+            rows = per_query_rows(runs, measured.categories, prices)
+            pairs = dict.fromkeys(names[1:], names[0])
+        # The --judge-model warning was logged when the arguments were read.
+        comparison["warnings"] = [
+            *self._judge_model_warnings(),
+            *warnings,
+            *comparison["warnings"],
+        ]
         if self.args.pairwise_judge and len(names) > 1:
             judge = PairwiseJudge(
                 self.config,
@@ -1005,13 +1133,12 @@ class EvaluationRunner:
                     else self.providers
                 ),
             )
-            baseline_results = runs[names[0]][0][1]
             with usage_scope() as judging:
                 comparison["pairwise_vs_baseline"] = {
                     strategy: await judge.acompare(
-                        baseline_results, runs[strategy][0][1]
+                        runs[label][0][1], runs[strategy][0][1]
                     )
-                    for strategy in names[1:]
+                    for strategy, label in pairs.items()
                 }
             comparison["pairwise_judge_model"] = self.config.model_id(
                 ModelRole.EVALUATION
@@ -1042,10 +1169,7 @@ class EvaluationRunner:
                 "breaches": gate_failures,
             }
         path = self._save_comparison(comparison, local_outputs)
-        path.with_suffix(".csv").write_text(
-            comparison_csv(per_query_rows(runs, measured.categories, prices)),
-            encoding="utf-8",
-        )
+        path.with_suffix(".csv").write_text(comparison_csv(rows), encoding="utf-8")
         path.with_suffix(".md").write_text(
             comparison_markdown(comparison), encoding="utf-8"
         )
@@ -1097,6 +1221,8 @@ class _Measured(BaseModel):
     summaries: list[dict[str, Any]]
     breaches: list[str] = Field(default_factory=list)
     comparing: bool = False
+    # Read back from saved runs: their comparability warnings.
+    warnings: list[str] = Field(default_factory=list)
 
 
 @exits_on_sigterm

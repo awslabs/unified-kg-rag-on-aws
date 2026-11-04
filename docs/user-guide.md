@@ -1638,10 +1638,13 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
     match and token F1 used (with `answer_match`), and `models.answer_span`
     the extracting model; runs scored differently are not comparable on
     those two metrics;
-  - `retrieval_config_sha256`, a hash of every setting that can change an
-    answer or a score (model ids and ingestion settings included; regions,
-    endpoints, credentials, paths, timeouts and other operational knobs left
-    out), so the same evaluation hashes the same in every environment;
+  - `retrieval_config_sha256`, a hash of every configuration setting that
+    can change an answer or a score (model ids and ingestion settings
+    included; regions, endpoints, credentials, paths, timeouts and other
+    operational knobs left out), so the same evaluation hashes the same in
+    every environment. The `run-eval` query flags (`--suffix`, `--top-k`,
+    `--search-type`, `--retrieval-multiplier`, `--enable-thinking`) are not
+    configuration: they are in the CLI arguments, not in the hash;
   - `index`: per queried suffix, the ingestion run that last wrote its vector
     indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
     settings and, for an incremental run, the `full_build` it was applied
@@ -1684,8 +1687,11 @@ adds `evaluation_comparison_<timestamp>.json`:
   `expected_relationships`, say) is not filled either
   (`failed_answers` / `failed_queries`;
   `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
-  failed, or had blocked, different numbers, and runs whose exact match and
-  token F1 read different `answer_span`s). A difference is
+  failed, or had blocked, different numbers, runs whose exact match and
+  token F1 read different `answer_span`s, and, with `answer_span:
+  extracted`, each strategy whose extracted spans fell back to the first
+  line (`answer_span_fallbacks`) and fallback rates that differ). A
+  difference is
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.
@@ -1715,26 +1721,41 @@ adds `evaluation_comparison_<timestamp>.json`:
 - `cost.strategies.<s>`: the answers' model use per query, as `mean` /
   `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
   `input_tokens_per_query`, `output_tokens_per_query`,
-  `total_tokens_per_query`, `latency_seconds` (answered queries only), the
-  `totals` and `cache_hits`, and with `evaluation.prices` set
-  `usd_per_query` and `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them
-  against the first strategy like the metrics (`usage/llm_calls`,
-  `usage/input_tokens`, `usage/output_tokens`, `usage/total_tokens`,
-  `usage/cost_usd`, `latency/response_time_seconds`, each query's mean over
-  its repeats, with the bootstrap interval). An answer whose generation
-  raised has no usage; results saved before usage accounting have latency
-  only (warned about). The arms and repeats of one run share the chain's
-  query extraction cache, so a later one that reuses an extraction pays no
-  call for it (counted in `cache_hits`): its cost depends on what ran before
-  it. To compare cold-cache cost, set `search.query_extraction_cache_size:
-  0`; the quality deltas do not depend on it.
+  `total_tokens_per_query`, `latency_seconds`, the `totals` and
+  `cache_hits`, and with `evaluation.prices` set `usd_per_query` and
+  `usd_total`. `cost.deltas_vs_baseline.<s>` pairs them against the
+  baseline like the metrics (`usage/llm_calls`, `usage/input_tokens`,
+  `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,
+  `latency/response_time_seconds`, each query's mean over its repeats, with
+  the bootstrap interval). A failed or timed-out answer counts with what it
+  spent before failing: each answer runs in its own usage scope and timer,
+  so its result keeps the calls and tokens of its attempts and the time from
+  its first attempt's start to its last one's end (`failed_answers` counts
+  them; a warning says so). A strategy is then not cheaper or faster for
+  failing, though a fast failure does cost less: read the cost next to
+  `failed_answers` and the failure warning. Results saved without a usage
+  record or a latency for some answers (by an earlier version) are counted
+  in `answers_without_usage` / `answers_without_latency` and warned about,
+  and a `--fail-if` on a `usage/*` or `latency/*` measure fails for them.
+  The arms and repeats of one run share the chain's query extraction cache,
+  so a later one that reuses an extraction pays no call for it (counted in
+  `cache_hits`): its cost depends on what ran before it, and a strategy whose
+  repeat count or cache hits per answer differ from its baseline's is warned
+  about. To compare cold-cache cost, set `search.query_extraction_cache_size:
+  0`; the quality deltas do not depend on it. Before each strategy's first
+  run, `run-eval` answers one synthetic query with it, untimed, unscored and
+  not counted (`evaluation.warm_up_query`, default `true`), so the first
+  strategy's latency does not include opening the store connections and the
+  models' first calls; it costs one extra query (its model calls) per
+  strategy, and `false` turns it off.
 - `run_manifest` of the first run; with `--pairwise-judge`,
   `pairwise_judge_model` and the judge's `pairwise_usage`.
 
 The comparison is also written as `evaluation_comparison_<timestamp>.csv`
-(one row per non-baseline strategy, measure and query: `baseline_value`,
-`value`, `delta`, `category`) and `.md` (the metric and cost tables, the
-gates and the warnings, for a pull request or a CI job summary).
+(one row per non-baseline strategy, measure and query: `baseline`,
+`baseline_value`, `value`, `delta`, `category`) and `.md` (the metric and
+cost tables, the pairwise judge's win rates, the gates and the warnings, for
+a pull request or a CI job summary).
 
 No model prices ship with the package. For a USD estimate, fill in the
 current [Amazon Bedrock prices](https://aws.amazon.com/bedrock/pricing/) of
@@ -1761,11 +1782,15 @@ true`, the default) without answering a query or opening a store. The runs
 are grouped by strategy and compared in the order the oldest run listed them
 (`--search-strategy` picks and orders them instead), so a comparison that was
 stopped part-way is finished by running only the missing strategies into the
-same directory and rebuilding: its deltas are those of an uninterrupted run.
+same directory, with the same `--repeats`, and rebuilding: its deltas are
+those of an uninterrupted run. A strategy whose runs were all lost runs again
+with `--repeats N`; one with some repeats saved runs only the missing ones
+(`--repeats` of the difference), or delete its partial files and run all N.
 
 ```bash
-# Stopped during naive: run it alone into the same directory, then rebuild.
-run-eval --data-path eval.json --search-strategy naive --output-directory out/
+# Stopped during naive (run with --repeats 3): run it alone into the same
+# directory with the same --repeats, then rebuild.
+run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
 # Re-judge the saved answers with another judge model (no answer call).
@@ -1773,18 +1798,36 @@ run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
 
 # CI: compare this run with an earlier one and fail on a supported regression.
 run-eval --data-path eval.json --search-strategy local \
-  --baseline-results ci/previous/ \
+  --baseline-results ci/previous/ --output-directory ci/current/ \
   --fail-if "answer_match/token_f1:ci_high<-0.02" \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
+- The saved runs of one strategy are pooled as its repeats. The rebuild
+  warns when they differ in a query flag (`suffix`, `top_k`, `search_type`,
+  `retrieval_multiplier`, `enable_thinking`), `retrieval_config_sha256`,
+  `git_sha`, the `index` build or the answer model (keep runs of other
+  settings in another directory, or list the result files), when the
+  strategies ran different numbers of repeats, and when a run has no
+  `evaluation_summary_*` file (its manifest, so none of these checks, nor
+  the answer-scoring and self-preference ones, can read it).
 - `--pairwise-judge` with `--from-results` judges the saved answers again
   (`--judge-model` sets `models.roles.evaluation` for the run, here and in a
-  normal run); the self-preference warning compares that judge with the
-  saved runs' answer model.
-- `--baseline-results` makes an earlier run the baseline, labelled
-  `baseline:<strategy>` (the first strategy of those runs), and compares every
-  strategy of this run, or of `--from-results`, with it. Runs whose exact
+  normal run; without `--pairwise-judge` and an LLM-judge evaluator it
+  judges nothing, which is warned about); the self-preference warning
+  compares that judge with the saved runs' answer model.
+- `--baseline-results` makes an earlier run the baseline: each of its
+  strategies is labelled `baseline:<strategy>`, and each strategy of this
+  run, or of `--from-results`, is compared with the baseline of the same
+  strategy (`deltas_vs_baseline.<s>` and `cost.deltas_vs_baseline.<s>`
+  against `baseline:<s>`; `baselines` maps each strategy to its baseline).
+  A strategy the earlier run did not run is compared with its first
+  strategy, with a warning. Run the baseline with the same `--repeats` as
+  the runs compared with it: repeats reuse the query extraction cache, so
+  different counts shift the usage deltas (warned about). Save each run in
+  a directory of its own: an `--output-directory` that is the
+  `--baseline-results` directory is warned about, since the next run that
+  reads it as its baseline pools this run in as repeats. Runs whose exact
   match and token F1 read the answer differently (`answer_scoring` in the
   run manifest: `evaluation.answer_span`, `answer_normalization`) are
   refused (exit 2), checked before any answer is generated; runs of different
@@ -1795,7 +1838,9 @@ run-eval --data-path eval.json --search-strategy local \
   `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low` or `ci_high`.
   `ci_high<-0.02` fails only when the whole interval is below -0.02, a
   regression the query sample supports. A strategy with no delta of the
-  measure fails the gate too. The result is in `comparison.gates` and the
+  measure fails the gate too, and so does a cost measure (`usage/*`,
+  `latency/*`) that some answers of the strategy or of its baseline have no
+  value of. The result is in `comparison.gates` and the
   JSON `gate_failures`. It needs a comparison: two strategies, or
   `--baseline-results`.
 

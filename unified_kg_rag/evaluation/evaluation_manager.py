@@ -6,6 +6,7 @@ import json
 import shutil
 import statistics
 import subprocess
+import time
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
@@ -60,7 +61,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
-from unified_kg_rag.shared.usage import usage_scope
+from unified_kg_rag.shared.usage import merge_usage, usage_scope
 
 from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
@@ -110,6 +111,64 @@ def _require_eval_extra(evaluator_type: EvaluatorType) -> None:
             f"{'is' if len(missing) == 1 else 'are'} not installed: "
             f"{EVAL_EXTRA_HINT}"
         )
+
+
+# The warm-up query (EvaluationManager.warm_up): no dataset question, and the
+# query settings of the run it warms up.
+_WARM_UP_QUESTION = "What does the indexed collection cover?"
+_WARM_UP_KEYS = (
+    "suffix",
+    "enable_thinking",
+    "search_strategy",
+    "search_type",
+    "top_k",
+    "retrieval_multiplier",
+)
+
+
+class _AnswerSpend:
+    """What answering one query spent over its attempts: the usage of those
+    that raised, and its first attempt's start and last attempt's end."""
+
+    __slots__ = ("end", "failed_usage", "start")
+
+    def __init__(self) -> None:
+        self.start = time.monotonic()
+        self.end: float | None = None
+        self.failed_usage: list[dict[str, Any]] = []
+
+
+def _elapsed(record: _AnswerSpend | None) -> float | None:
+    if record is None or record.end is None:
+        return None
+    return record.end - record.start
+
+
+def _response_time(
+    processing_time: float | None, record: _AnswerSpend | None
+) -> float | None:
+    """The answer's latency: the chain's ``processing_time`` of an answer it
+    returned at the first attempt, else the time over every attempt (an
+    answer that raised, or was retried, backoff included)."""
+    if processing_time is not None and not (record and record.failed_usage):
+        return float(processing_time)
+    return _elapsed(record)
+
+
+def _answer_usage(chain_usage: Any, record: _AnswerSpend | None) -> LLMUsage | None:
+    """The answer's usage: the chain's for the attempt that returned, plus
+    that of the attempts that raised before it (``None`` with neither)."""
+    if isinstance(chain_usage, LLMUsage):
+        chain_usage = chain_usage.model_dump()
+    snapshots = [
+        *(record.failed_usage if record else []),
+        *([chain_usage] if chain_usage else []),
+    ]
+    if not snapshots:
+        return None
+    return LLMUsage.model_validate(
+        snapshots[0] if len(snapshots) == 1 else merge_usage(snapshots)
+    )
 
 
 class EvaluationManager:
@@ -456,25 +515,68 @@ class EvaluationManager:
             logger.error("Dataset evaluation failed: %s", e)
             raise EvaluationException(f"Dataset evaluation failed: {e}") from e
 
+    async def warm_up(self, query: EvaluationQuery) -> None:
+        """Answer one synthetic query the way ``query`` is answered (its
+        strategy, suffix, top_k, search type), outside any timing, score and
+        usage scope, so the next timed answer does not pay for opening the
+        store connections and the models' first calls. Its question is no
+        dataset question, so it fills no extraction cache entry they read;
+        it uses no conversation memory. A failure is logged, not raised."""
+        inputs = {
+            key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
+        }
+        try:
+            await self.rag_chain.ainvoke(
+                {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
+            )
+        except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
+            logger.warning(
+                "The warm-up query failed (%s); the first timed answers may "
+                "include the warm-up time",
+                e,
+            )
+
     async def _generate_answers(
         self, queries: list[EvaluationQuery], show_progress: bool
     ) -> list[EvaluationResult]:
+        # Per answer (keyed by its input, which every attempt receives), the
+        # usage of the attempts that raised and the time from its first
+        # attempt's start to its last one's end: a failed or timed-out answer
+        # keeps what it spent, so a strategy that fails is not cheaper.
+        spent: dict[int, _AnswerSpend] = {}
+        inputs: list[dict[str, Any]] = []
+
         def prepare_inputs(query_batch: list[EvaluationQuery]) -> list[dict[str, Any]]:
             # The question wins over a ``query`` metadata key, as in load_data.
-            return [{**q.metadata, "query": q.question} for q in query_batch]
+            inputs.extend({**q.metadata, "query": q.question} for q in query_batch)
+            return inputs
+
+        async def answer_one(single_input: dict[str, Any]) -> Any:
+            record = spent.setdefault(id(single_input), _AnswerSpend())
+            with usage_scope() as meter:
+                try:
+                    return await self.rag_chain.ainvoke(single_input)
+                except BaseException:
+                    record.failed_usage.append(meter.snapshot())
+                    raise
+                finally:
+                    record.end = time.monotonic()
 
         raw_results = await self.batch_processor.aexecute_with_fallback(
             items_to_process=queries,
             prepare_inputs_func=prepare_inputs,
-            sequential_func=self.rag_chain.ainvoke,
+            sequential_func=answer_one,
             task_name="Answer Generation",
             show_progress=show_progress,
         )
 
         results = []
         provenance: list[SourceProvenance] = []
-        for query, raw_result in zip(queries, raw_results, strict=True):
+        for index, (query, raw_result) in enumerate(
+            zip(queries, raw_results, strict=True)
+        ):
             provenance.append(self._extract_source_provenance(raw_result))
+            record = spent.get(id(inputs[index])) if index < len(inputs) else None
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
                 error_message = self._detect_generation_error(raw_result, rag_metadata)
@@ -491,7 +593,9 @@ class EvaluationManager:
                         **self._extract_source_details(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
-                        response_time=rag_metadata.get("processing_time"),
+                        response_time=_response_time(
+                            rag_metadata.get("processing_time"), record
+                        ),
                         search_type=query.metadata.get("search_type"),
                         top_k=query.metadata.get("top_k"),
                         retrieval_multiplier=query.metadata.get("retrieval_multiplier"),
@@ -503,7 +607,7 @@ class EvaluationManager:
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
-                        usage=rag_metadata.get("usage"),
+                        usage=_answer_usage(rag_metadata.get("usage"), record),
                     )
                 )
             except Exception as e:
@@ -519,6 +623,8 @@ class EvaluationManager:
                         metadata={"error": str(e)},
                         error=True,
                         error_message=str(e),
+                        response_time=_elapsed(record),
+                        usage=_answer_usage(None, record),
                     )
                 )
         await self._attribute_sources(queries, results, provenance)
@@ -1048,9 +1154,11 @@ class EvaluationManager:
         """
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
         args = cli_args or {}
-        # run-eval judges pairs only when it compares two or more strategies.
+        # run-eval judges pairs only when it compares two or more strategies,
+        # or a strategy with --baseline-results.
         pairwise_judge = bool(args.get("pairwise_judge")) and (
             len(args.get("search_strategy") or ()) > 1
+            or bool(args.get("baseline_results"))
         )
         uses_judge = pairwise_judge or bool(
             enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}

@@ -11,6 +11,7 @@ never constructed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import sys
@@ -42,8 +43,12 @@ from unified_kg_rag.domain.models import (
     SearchResult,
 )
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
+from unified_kg_rag.evaluation.evaluation_manager import (
+    _WARM_UP_QUESTION,
+    GraphAwareEvaluator,
+)
 from unified_kg_rag.shared import ConfigurationError, EvaluationException
+from unified_kg_rag.shared.usage import record_llm_call
 
 pytestmark = pytest.mark.unit
 
@@ -623,6 +628,112 @@ class TestAnswerGenerationInputs:
         assert seen[0]["search_strategy"] == "local"
 
 
+class TestAnswerSpend:
+    """A failed or retried answer keeps the usage and time it spent."""
+
+    @staticmethod
+    def _chain(fail_attempts: int, sleep: float = 0.0) -> Any:
+        class _Chain:
+            attempts = 0
+
+            async def ainvoke(self, inputs, config=None):
+                # One model call per attempt, as the RAG chain's would record.
+                record_llm_call("query", "m-a", input_tokens=100, output_tokens=5)
+                await asyncio.sleep(sleep)
+                type(self).attempts += 1
+                if type(self).attempts <= fail_attempts:
+                    raise TimeoutError("query timed out")
+                usage = {"llm_calls": 1, "input_tokens": 100, "output_tokens": 5}
+                return _rag_output(
+                    "Vendor ships.", {"processing_time": 0.001, "usage": usage}
+                )
+
+        return _Chain()
+
+    async def _answer(self, config: Config, chain: Any) -> EvaluationResult:
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=chain)
+        results, _, summary = await manager.evaluate_dataset(
+            [EvaluationQuery(query_id="q1", question="Who ships?")],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        assert summary.usage["answer_generation"].llm_calls == (
+            results[0].usage.llm_calls if results[0].usage else 0
+        )
+        return results[0]
+
+    async def test_a_failed_answer_keeps_its_partial_usage_and_time(
+        self, config: Config
+    ) -> None:
+        # Before, it had usage None and response_time None, so a strategy
+        # that timed out looked cheaper and faster.
+        result = await self._answer(config, self._chain(fail_attempts=1, sleep=0.05))
+        assert result.error is True
+        assert result.usage is not None
+        assert (result.usage.llm_calls, result.usage.input_tokens) == (1, 100)
+        assert result.response_time is not None and result.response_time >= 0.05
+
+    async def test_a_retried_answer_counts_every_attempt(self, config: Config) -> None:
+        chain = self._chain(fail_attempts=1, sleep=0.02)
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=chain)
+        manager.batch_processor.max_attempts = 2
+        manager.batch_processor.retry_multiplier = 0
+        results, _, _ = await manager.evaluate_dataset(
+            [EvaluationQuery(query_id="q1", question="Who ships?")],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        (result,) = results
+        assert result.error is False
+        # The chain's usage of the answering attempt plus the one that raised.
+        assert result.usage is not None and result.usage.llm_calls == 2
+        # Not the answering attempt's processing_time alone.
+        assert result.response_time is not None and result.response_time >= 0.04
+
+    async def test_an_answer_at_the_first_attempt_is_the_chains(
+        self, config: Config
+    ) -> None:
+        result = await self._answer(config, self._chain(fail_attempts=0))
+        assert result.response_time == 0.001
+        assert result.usage is not None and result.usage.llm_calls == 1
+
+
+class TestWarmUp:
+    async def test_warm_up_answers_a_synthetic_query_with_the_run_settings(
+        self, config: Config, caplog
+    ) -> None:
+        seen: list[dict] = []
+
+        class _Chain:
+            async def ainvoke(self, inputs, config=None):
+                seen.append(inputs)
+                raise RuntimeError("store unreachable")
+
+        # Judge-free: the core install has no LLM-judge evaluator.
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=_Chain())
+        query = EvaluationQuery(
+            query_id="q1",
+            question="Who ships?",
+            metadata={
+                "search_strategy": "mix",
+                "top_k": 3,
+                "conversation_id": "c1",
+                "answerable": False,
+            },
+        )
+        await manager.warm_up(query)  # a failure is logged, not raised
+        (inputs,) = seen
+        assert inputs["query"] == _WARM_UP_QUESTION != query.question
+        assert (inputs["search_strategy"], inputs["top_k"]) == ("mix", 3)
+        # No conversation turn and no dataset field.
+        assert "conversation_id" not in inputs and "answerable" not in inputs
+        assert inputs["use_memory"] is False
+        assert "warm-up query failed" in caplog.text
+
+
 class TestErroredQueries:
     async def test_failed_query_is_called_once(self, config: Config) -> None:
         # max_attempts=1 is one call in total: the chain retries transient
@@ -973,6 +1084,11 @@ class TestComparability:
             manager.build_run_manifest(cli_args=one)["models"]["judge_is_answer_model"]
             is None
         )
+        # One strategy against --baseline-results is judged too.
+        against = {**one, "baseline_results": ["ci/previous"]}
+        assert manager.build_run_manifest(cli_args=against)["pairwise_judge"] == {
+            "overall": False
+        }
         manifest = manager.build_run_manifest(cli_args=two)
         assert manifest["models"]["judge_is_answer_model"] is True
         assert manifest["models"]["evaluation_judge"] == config.model_id(

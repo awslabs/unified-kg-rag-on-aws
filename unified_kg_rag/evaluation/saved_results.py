@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -269,4 +269,74 @@ def dataset_warnings(
     return [
         f"The runs answered different datasets ({listed}); only the query ids "
         "they share are paired."
+    ]
+
+
+# The run settings the saved runs of one strategy must share to be pooled as
+# its repeats: the query flags of run-eval, then manifest entries. The CLI
+# query flags are not in retrieval_config_sha256 (a hash of the
+# configuration), so they are compared here.
+_POOLED_CLI_ARGS = (
+    "suffix",
+    "top_k",
+    "search_type",
+    "retrieval_multiplier",
+    "enable_thinking",
+)
+
+
+def _pooled_settings(manifest: dict[str, Any]) -> dict[str, Any]:
+    args = manifest.get("cli_args") or {}
+    return {
+        **{name: args.get(name) for name in _POOLED_CLI_ARGS},
+        "retrieval_config_sha256": manifest.get("retrieval_config_sha256"),
+        "git_sha": manifest.get("git_sha"),
+        "index": manifest.get("index"),
+        "answer model": (manifest.get("models") or {}).get("answer_generation"),
+    }
+
+
+def _shown(value: Any) -> str:
+    text = json.dumps(value, sort_keys=True, default=str)
+    return text if len(text) <= 24 else f"{text[:21]}..."
+
+
+def pooling_warnings(grouped: Mapping[str, Sequence[SavedRun]]) -> list[str]:
+    """A warning per strategy whose saved runs, pooled as its repeats,
+    differ in a setting that changes its answers (a query flag, the
+    configuration hash, the commit, the index, the answer model). Runs
+    without a summary are not compared (``summary_warnings``)."""
+    warnings = []
+    for strategy, runs in grouped.items():
+        settings = [_pooled_settings(r.manifest) for r in runs if r.manifest]
+        if len(settings) < 2:
+            continue
+        differing = [
+            f"{name} ({', '.join(dict.fromkeys(_shown(s[name]) for s in settings))})"
+            for name in settings[0]
+            if len({json.dumps(s[name], sort_keys=True, default=str) for s in settings})
+            > 1
+        ]
+        if differing:
+            warnings.append(
+                f"The {len(runs)} saved runs of {strategy} are pooled as its "
+                f"repeats but differ in {'; '.join(differing)}: its means mix "
+                "those settings. Keep runs of other settings in another "
+                "directory, or list the result files to compare."
+            )
+    return warnings
+
+
+def summary_warnings(saved: Sequence[SavedRun], label: str) -> list[str]:
+    """A warning naming the saved runs without an ``evaluation_summary_*``
+    file: their manifest is unknown, so their answer scoring, dataset and
+    settings, and the judge's self-preference, are not checked."""
+    missing = [run.path.name for run in saved if run.summary is None]
+    if not missing:
+        return []
+    return [
+        f"{label}: {len(missing)} saved run(s) have no evaluation_summary file "
+        f"next to them ({', '.join(missing[:3])}{', ...' if len(missing) > 3 else ''}): "
+        "their answer scoring, dataset, run settings and the pairwise judge's "
+        "self-preference are not checked."
     ]

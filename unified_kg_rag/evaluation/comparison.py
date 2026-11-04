@@ -25,7 +25,8 @@ Each strategy reports its failed answers; ``warnings`` names the strategies
 whose failure counts differ. Likewise each strategy reports its
 guardrail-blocked answers (by blocked text), and different counts are warned
 about too, as are runs whose exact match and token F1 read different answer
-spans (``evaluation.answer_span``).
+spans (``evaluation.answer_span``), and extracted spans that fell back to
+the first line (``answer_span_fallbacks``).
 
 Given each query's category, ``deltas_by_category`` repeats the deltas per
 category. Its intervals are per category and uncorrected for the number of
@@ -34,11 +35,16 @@ categories and metrics compared: read them as exploratory.
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
 
+``baseline_comparison`` compares each strategy with a baseline of its own
+(``run-eval --baseline-results``: ``baseline:<s>`` against ``s``), one
+paired comparison per pair, merged into one result of the same shape;
+``baselines`` names each compared strategy's baseline.
+
 ``cost`` (``cost_comparison``) puts the answers' model use next to the
 scores: per strategy the calls, tokens and latency per query (mean, p50,
-p95 over every answer) and, against the baseline, their paired per-query
-deltas with the same bootstrap interval; with ``evaluation.prices`` a USD
-estimate. The comparison is a function of the saved results and reports
+p95 over every answer, a failed one with what it spent before it failed)
+and, against the baseline, their paired per-query deltas with the same
+bootstrap interval; with ``evaluation.prices`` a USD estimate. The comparison is a function of the saved results and reports
 alone, so ``run-eval --from-results`` rebuilds it without a model call.
 """
 
@@ -60,15 +66,21 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
 
-from .answer_match_evaluator import ANSWER_SPAN_KEY
+from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
 
 logger = get_logger(__name__)
 
 # One run: the reports and results of one strategy and repeat.
 Run = tuple[list[EvaluationReport], list[EvaluationResult]]
 
-# Not a score: a failed answer gets no value for it.
-_DIAGNOSTICS = frozenset({EvaluationMetricType.ANSWER_LENGTH.value})
+# Not a score: a failed answer gets no value for it (an answer that failed
+# reported no source, so it has no share of attributable ones either).
+_DIAGNOSTICS = frozenset(
+    {
+        EvaluationMetricType.ANSWER_LENGTH.value,
+        EvaluationMetricType.ATTRIBUTABLE_FRACTION.value,
+    }
+)
 
 
 def _strategy_failed_scores(
@@ -189,6 +201,94 @@ def paired_comparison(
     ``categories`` (query id to category) adds ``deltas_by_category``;
     ``prices`` (model id to price) adds a USD estimate to ``cost``.
     """
+    comparison = _paired_comparison(
+        runs,
+        resamples=resamples,
+        confidence=confidence,
+        seed=seed,
+        categories=categories,
+        prices=prices,
+    )
+    for warning in comparison["warnings"]:
+        logger.warning("%s", warning)
+    return comparison
+
+
+def baseline_comparison(
+    baselines: Mapping[str, Sequence[Run]],
+    runs: Mapping[str, Sequence[Run]],
+    pairs: Mapping[str, str],
+    *,
+    resamples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 0,
+    categories: Mapping[str, str] | None = None,
+    prices: Mapping[str, ModelPrice] | None = None,
+) -> dict[str, Any]:
+    """Compare each strategy of ``runs`` with its own baseline.
+
+    ``pairs`` maps each strategy to the label of its baseline in
+    ``baselines``. Each pair is one ``paired_comparison``; the result has
+    its shape, with every pair's baseline and strategy in ``strategies``,
+    each strategy's deltas against its baseline, and ``baselines``
+    (strategy to baseline label). ``baseline`` is the first pair's.
+    """
+    parts = {
+        strategy: _paired_comparison(
+            {pairs[strategy]: baselines[pairs[strategy]], strategy: strategy_runs},
+            resamples=resamples,
+            confidence=confidence,
+            seed=seed,
+            categories=categories,
+            prices=prices,
+        )
+        for strategy, strategy_runs in runs.items()
+    }
+    first = next(iter(parts.values()))
+    summary: dict[str, Any] = {}
+    cost_strategies: dict[str, Any] = {}
+    for strategy, part in parts.items():
+        for name in (pairs[strategy], strategy):
+            summary.setdefault(name, part["strategies"][name])
+            cost_strategies.setdefault(name, part["cost"]["strategies"][name])
+    comparison: dict[str, Any] = {
+        "baseline": first["baseline"],
+        "baselines": dict(pairs),
+        "strategies": summary,
+        "deltas_vs_baseline": {
+            s: part["deltas_vs_baseline"][s] for s, part in parts.items()
+        },
+        "cost": {
+            "strategies": cost_strategies,
+            "deltas_vs_baseline": {
+                s: part["cost"]["deltas_vs_baseline"][s] for s, part in parts.items()
+            },
+            "prices": first["cost"]["prices"],
+        },
+        "warnings": list(
+            dict.fromkeys(w for part in parts.values() for w in part["warnings"])
+        ),
+        "bootstrap": first["bootstrap"],
+    }
+    if categories:
+        comparison["deltas_by_category"] = {
+            s: part["deltas_by_category"][s] for s, part in parts.items()
+        }
+    for warning in comparison["warnings"]:
+        logger.warning("%s", warning)
+    return comparison
+
+
+def _paired_comparison(
+    runs: Mapping[str, Sequence[Run]],
+    *,
+    resamples: int,
+    confidence: float,
+    seed: int,
+    categories: Mapping[str, str] | None,
+    prices: Mapping[str, ModelPrice] | None,
+) -> dict[str, Any]:
+    """``paired_comparison`` without logging its warnings."""
     strategies = list(runs)
     baseline = strategies[0]
     failed_scores = _strategy_failed_scores(runs, _scored_metrics(runs))
@@ -247,6 +347,10 @@ def paired_comparison(
             ),
             "metrics": metrics,
         }
+        fallbacks = _span_fallbacks(runs[strategy])
+        if fallbacks is not None:
+            # Extracted spans that fell back to the answer's first line.
+            summary[strategy]["answer_span_fallbacks"] = fallbacks
 
     stats: dict[str, Any] = {
         "resamples": resamples,
@@ -265,12 +369,12 @@ def paired_comparison(
     warnings = [
         *_failure_warnings(summary),
         *_span_warnings(runs),
+        *_span_fallback_warnings(summary),
         *cost.pop("warnings"),
     ]
-    for warning in warnings:
-        logger.warning("%s", warning)
     comparison: dict[str, Any] = {
         "baseline": baseline,
+        "baselines": dict.fromkeys(strategies[1:], baseline),
         "strategies": summary,
         "deltas_vs_baseline": deltas,
         "cost": cost,
@@ -334,6 +438,52 @@ def _span_warnings(runs: Mapping[str, Sequence[Run]]) -> list[str]:
         f"The runs scored exact_match and token_f1 on different answer spans "
         f"({listed}); those deltas compare the spans, not the strategies."
     ]
+
+
+def _span_fallbacks(strategy_runs: Sequence[Run]) -> dict[str, int] | None:
+    """The answer_match reports scored on an extracted span and those of them
+    that fell back to the first line; ``None`` without extracted spans."""
+    scored = [
+        report
+        for reports, _ in strategy_runs
+        for report in reports
+        if report.evaluator_type is EvaluatorType.ANSWER_MATCH
+        and report.metrics
+        and report.metadata.get(ANSWER_SPAN_KEY) == "extracted"
+    ]
+    if not scored:
+        return None
+    return {
+        "scored": len(scored),
+        "fallbacks": sum(SPAN_FALLBACK_KEY in r.metadata for r in scored),
+    }
+
+
+def _span_fallback_warnings(summary: Mapping[str, Any]) -> list[str]:
+    """Warnings on extracted spans that fell back to the first line: per
+    strategy that had any, and when the strategies' fallback rates differ."""
+    rates = {
+        s: stats["answer_span_fallbacks"]
+        for s, stats in summary.items()
+        if "answer_span_fallbacks" in stats
+    }
+    warnings = [
+        f"{s}: {f['fallbacks']}/{f['scored']} extracted answer spans fell back "
+        "to the answer's first line (the span model failed or gave no span "
+        "found in the answer), so exact_match and token_f1 read the first "
+        "line there."
+        for s, f in rates.items()
+        if f["fallbacks"]
+    ]
+    shares = {s: f["fallbacks"] / f["scored"] for s, f in rates.items()}
+    if len(set(shares.values())) > 1:
+        listed = ", ".join(f"{s} {share:.0%}" for s, share in shares.items())
+        warnings.append(
+            f"The strategies' extracted-span fallback rates differ ({listed}): "
+            "their exact_match and token_f1 deltas compare the fallbacks as "
+            "well as the strategies."
+        )
+    return warnings
 
 
 def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
@@ -417,9 +567,13 @@ def _answer_measures(
             usd, unpriced = answer_cost_usd(result.usage, prices)
             if usd is not None:
                 measures[USD_MEASURE] = usd
-    if result.response_time is not None and not result.error:
+    if result.response_time is not None:
         measures[LATENCY_MEASURE] = float(result.response_time)
     return measures, unpriced
+
+
+# A difference in cache hits per answer above this is warned about.
+_CACHE_HIT_TOLERANCE = 0.05
 
 
 def cost_comparison(
@@ -436,10 +590,16 @@ def cost_comparison(
     paired per-query deltas (each query's mean over its repeats) with a
     bootstrap interval, as for the metrics. Also ``warnings`` (popped by
     ``paired_comparison``): strategies without usage records next to some
-    with them, unpriced models.
+    with them or with some answers unmeasured, failed answers in the
+    measures, repeat counts or cache hits per answer that differ from the
+    baseline's, unpriced models.
 
-    An answer without usage (generation raised, or results saved before
-    usage accounting) has no usage measures; a failed answer has no latency.
+    A failed answer counts with the usage and time it spent before it failed
+    (``failed_answers``; ``EvaluationManager`` records both per answer). An
+    answer without a usage record or a latency (results saved before usage
+    accounting, or before failed answers kept theirs) has none of those
+    measures: ``answers_without_usage`` / ``answers_without_latency``, and a
+    ``--fail-if`` on such a measure fails (``gates``).
     """
     stats: dict[str, Any] = {
         "resamples": resamples,
@@ -455,11 +615,12 @@ def cost_comparison(
         by_query: dict[str, dict[str, list[float]]] = defaultdict(
             lambda: defaultdict(list)
         )
-        cache_hits = answers = 0
+        cache_hits = answers = failed = 0
         strategy_unpriced: set[str] = set()
         for _, results in strategy_runs:
             for result in results:
                 answers += 1
+                failed += result.error
                 measures, missing = _answer_measures(result, prices)
                 strategy_unpriced |= missing
                 if result.usage is not None:
@@ -469,6 +630,7 @@ def cost_comparison(
                     by_query[key][result.query_id].append(value)
         unpriced |= strategy_unpriced
         with_usage = len(observed.get("usage/llm_calls", []))
+        with_latency = len(observed.get(LATENCY_MEASURE, []))
         if not with_usage:
             without_usage.append(strategy)
         per_query[strategy] = {
@@ -482,6 +644,11 @@ def cost_comparison(
         strategies[strategy] = {
             "answers": answers,
             "answers_with_usage": with_usage,
+            "answers_without_usage": answers - with_usage,
+            "answers_without_latency": answers - with_latency,
+            # Counted in every measure with what they spent before failing.
+            "failed_answers": failed,
+            "repeats": len(strategy_runs),
             "cache_hits": cache_hits,
             "llm_calls_per_query": _distribution(observed.get("usage/llm_calls", [])),
             "input_tokens_per_query": _distribution(
@@ -522,6 +689,8 @@ def cost_comparison(
             "(saved before usage accounting, or every answer failed): their "
             "usage is not compared."
         )
+    warnings.extend(_measure_warnings(strategies))
+    warnings.extend(_cache_warnings(strategies, names))
     if unpriced:
         warnings.append(
             "evaluation.prices has no price for "
@@ -538,6 +707,83 @@ def cost_comparison(
         ),
         "warnings": warnings,
     }
+
+
+def _measure_warnings(strategies: Mapping[str, Any]) -> list[str]:
+    """Warnings on the answers a strategy's cost measures leave out, or
+    count although they failed."""
+    warnings = []
+    for strategy, stats in strategies.items():
+        # Some answers measured and some not (none at all is no measure of
+        # that kind, and with usage the warning above).
+        missing = [
+            f"{stats[key]} without {what}"
+            for key, what in (
+                ("answers_without_usage", "a usage record"),
+                ("answers_without_latency", "a latency"),
+            )
+            if 0 < stats[key] < stats["answers"]
+        ]
+        if missing:
+            warnings.append(
+                f"{strategy}: {' and '.join(missing)} of {stats['answers']} "
+                "answers (results saved before failed answers kept their "
+                "usage and time): its cost measures leave them out, and a "
+                "--fail-if on usage/* or latency/* fails."
+            )
+    failed = {s: stats["failed_answers"] for s, stats in strategies.items()}
+    if any(failed.values()):
+        counts = ", ".join(
+            f"{s} {n}/{strategies[s]['answers']}" for s, n in failed.items()
+        )
+        warnings.append(
+            f"Failed answers count in the cost measures with the calls, "
+            f"tokens and time they spent before failing ({counts}): a fast "
+            "failure lowers a strategy's cost, a timeout raises its latency."
+        )
+    return warnings
+
+
+def _cache_warnings(strategies: Mapping[str, Any], names: Sequence[str]) -> list[str]:
+    """Warnings when a strategy ran a different number of repeats than the
+    baseline, or hit the query extraction cache at another rate per answer:
+    a later repeat reuses the earlier ones' extractions, so either makes the
+    usage deltas measure the cache as well as the strategy."""
+    if len(names) < 2:
+        return []
+    baseline = strategies[names[0]]
+    warnings = []
+    repeats = {s: strategies[s]["repeats"] for s in names}
+    if len(set(repeats.values())) > 1:
+        listed = ", ".join(f"{s} {n}" for s, n in repeats.items())
+        warnings.append(
+            f"The compared strategies ran different numbers of repeats "
+            f"({listed}): their means average different numbers of runs, and "
+            "a later repeat reuses the query extractions of the earlier ones "
+            "(cache_hits), so the usage deltas reflect the repeat counts too. "
+            "Compare runs made with the same --repeats."
+        )
+
+    def rate(stats: Mapping[str, Any]) -> float:
+        return stats["cache_hits"] / stats["answers"] if stats["answers"] else 0.0
+
+    differing = [
+        s
+        for s in names[1:]
+        if abs(rate(strategies[s]) - rate(baseline)) > _CACHE_HIT_TOLERANCE
+    ]
+    if differing:
+        listed = ", ".join(
+            f"{s} {rate(strategies[s]):.2f}" for s in [names[0], *differing]
+        )
+        warnings.append(
+            f"Cache hits per answer differ ({listed}): a cache hit spends no "
+            "call or token, so the usage deltas reflect the query extraction "
+            "cache (repeats, earlier runs in the process, or a strategy that "
+            "extracts nothing) as well as the strategy. For cold-cache cost, "
+            "set search.query_extraction_cache_size: 0."
+        )
+    return warnings
 
 
 def per_query_rows(

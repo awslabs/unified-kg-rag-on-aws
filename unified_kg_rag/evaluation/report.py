@@ -5,8 +5,8 @@
 ``run-eval`` writes both next to ``evaluation_comparison_<stamp>.json``:
 the CSV has one row per non-baseline strategy, measure and query
 (``comparison.per_query_rows``), for a spreadsheet or a notebook; the
-Markdown has the metric and cost tables, the gates and the warnings, for a
-pull request or a CI job summary.
+Markdown has the metric, cost and pairwise-judge tables, the gates and the
+warnings, for a pull request or a CI job summary.
 """
 
 from __future__ import annotations
@@ -56,6 +56,15 @@ def _delta(delta: Mapping[str, Any] | None) -> str:
     )
 
 
+def _win_rate(stats: Mapping[str, Any] | None) -> str:
+    if not stats or stats.get("candidate_win_rate") is None:
+        return "-"
+    rate = f"{stats['candidate_win_rate']:.2f}"
+    if stats.get("ci_low") is None:
+        return rate
+    return f"{rate} [{stats['ci_low']:.2f}, {stats['ci_high']:.2f}]"
+
+
 def _dist(stats: Mapping[str, float] | None, digits: int = 1) -> str:
     if not stats:
         return "-"
@@ -70,16 +79,47 @@ def _table(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> list[str]:
     ]
 
 
+def compared_pairs(comparison: Mapping[str, Any]) -> dict[str, str]:
+    """Each compared strategy and its baseline (``baselines``; a comparison
+    saved before it was recorded: the one ``baseline``)."""
+    baselines = comparison.get("baselines") or {}
+    return {
+        strategy: baselines.get(strategy, comparison["baseline"])
+        for strategy in comparison.get("deltas_vs_baseline") or {}
+    }
+
+
+def baseline_metric_keys(comparison: Mapping[str, Any]) -> list[str]:
+    """The metrics the baselines scored, in their order."""
+    strategies = comparison["strategies"]
+    labels = dict.fromkeys(
+        [comparison["baseline"], *compared_pairs(comparison).values()]
+    )
+    return list(
+        dict.fromkeys(
+            key
+            for label in labels
+            for key in strategies.get(label, {}).get("metrics", {})
+        )
+    )
+
+
 def comparison_markdown(comparison: Mapping[str, Any]) -> str:
-    """The comparison's metric means and deltas, its cost block, the gates
-    and the warnings, as Markdown."""
+    """The comparison's metric means and deltas, its cost block, the
+    pairwise judge's win rates, the gates and the warnings, as Markdown."""
     baseline = comparison["baseline"]
     strategies = comparison["strategies"]
-    others = list(strategies)[1:]
+    pairs = compared_pairs(comparison)
+    others = list(pairs)
     confidence = comparison.get("bootstrap", {}).get("confidence", 0.95)
-    lines = [f"# Paired comparison vs `{baseline}`", ""]
+    title = (
+        f"vs `{baseline}`"
+        if len(set(pairs.values())) <= 1
+        else "vs each strategy's baseline"
+    )
+    lines = [f"# Paired comparison {title}", ""]
     rows = []
-    for key in strategies[baseline]["metrics"]:
+    for key in baseline_metric_keys(comparison):
         row: list[Any] = [f"`{key}`"]
         for strategy in strategies:
             stats = strategies[strategy]["metrics"].get(key)
@@ -90,7 +130,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
     header = [
         "Metric",
         *strategies,
-        *(f"{s} - {baseline} [{confidence:.0%} CI]" for s in others),
+        *(f"{s} - {pairs[s]} [{confidence:.0%} CI]" for s in others),
     ]
     lines += _table(header, rows)
 
@@ -111,6 +151,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                     _dist(stats.get("output_tokens_per_query"), 0),
                     _dist(stats.get("latency_seconds"), 2),
                     _dist(stats.get("usd_per_query"), 5),
+                    stats.get("failed_answers", "-"),
                 ]
             )
         lines += _table(
@@ -121,6 +162,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                 "Output tokens",
                 "Latency (s)",
                 "USD",
+                "Failed answers (included)",
             ],
             cost_rows,
         )
@@ -128,9 +170,9 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
             {m for d in cost.get("deltas_vs_baseline", {}).values() for m in d}
         )
         if measures and others:
-            lines += ["", f"Paired cost deltas vs `{baseline}`:", ""]
+            lines += ["", f"Paired cost deltas {title}:", ""]
             lines += _table(
-                ["Measure", *others],
+                ["Measure", *(f"{s} - {pairs[s]}" for s in others)],
                 [
                     [
                         f"`{measure}`",
@@ -142,6 +184,40 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                     for measure in measures
                 ],
             )
+
+    pairwise = comparison.get("pairwise_vs_baseline") or {}
+    if pairwise:
+        criteria = list(
+            dict.fromkeys(c for judged in pairwise.values() for c in judged["criteria"])
+        )
+        lines += [
+            "",
+            "## Pairwise judge (candidate win rate, ties 0.5)",
+            "",
+        ]
+        lines += _table(
+            [
+                "Strategy",
+                "Judged",
+                "Judge failures",
+                "Orders agreed",
+                *criteria,
+            ],
+            [
+                [
+                    f"{strategy} vs {pairs.get(strategy, baseline)}",
+                    judged.get("judged", "-"),
+                    judged.get("failed", "-"),
+                    (
+                        f"{judged['position_consistency']:.0%}"
+                        if judged.get("position_consistency") is not None
+                        else "-"
+                    ),
+                    *(_win_rate((judged["criteria"] or {}).get(c)) for c in criteria),
+                ]
+                for strategy, judged in pairwise.items()
+            ],
+        )
 
     gates = comparison.get("gates") or {}
     if gates.get("conditions"):

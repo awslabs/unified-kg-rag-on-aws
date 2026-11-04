@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.evaluation.evaluation_manager import _WARM_UP_QUESTION
 
 pytestmark = pytest.mark.unit
 
@@ -934,10 +935,12 @@ class _StrategyChain:
 
     def __init__(self) -> None:
         self.strategies: list[str] = []
+        self.questions: list[str] = []
 
     async def ainvoke(self, inputs, config=None):
         requested = inputs.get("search_strategy", "auto")
         self.strategies.append(requested)
+        self.questions.append(inputs["query"])
         used = "local" if requested == "auto" else requested
         answer = "Vendor" if used == "local" else "Buyer"
         meta = {"search_strategy": used, "processing_time": 0.1}
@@ -981,7 +984,10 @@ async def test_eval_runner_compares_strategies_pairwise(
     chain = _StrategyChain()
     runner = run_evaluation.EvaluationRunner(args, chain, config)
     assert await runner.run() == 0
-    assert chain.strategies == ["local"] * 8 + ["mix"] * 8 + ["auto"] * 8
+    # One untimed warm-up query per strategy, then 4 queries x 2 repeats.
+    assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
+    assert chain.questions.count(_WARM_UP_QUESTION) == 3
+    assert chain.questions[0] == _WARM_UP_QUESTION
     assert len(list(out.glob("evaluation_summary_*.json"))) == 6
     comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
     assert comparison["baseline"] == "local"
