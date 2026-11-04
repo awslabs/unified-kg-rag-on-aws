@@ -14,6 +14,7 @@
 - [ ] `uv run pre-commit run --all-files` passes
 - [ ] `CHANGELOG.md` updated for user-visible changes (breaking changes marked)
 - [ ] Docs and `config-template.yaml` updated if behaviour or configuration changed
+- [ ] Tier-1 KO twin updated or lag note added (optional: when a Tier-1 page changed; CONTRIBUTING.md, Documentation)
 - [ ] Tests, fixtures and examples use synthetic data only (no customer data)
 
 ## Breaking changes

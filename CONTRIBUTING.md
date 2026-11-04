@@ -70,7 +70,7 @@ Without uv: create a virtual environment, activate it, and run `pip install -e '
 - Fill in the [pull request template](./.github/PULL_REQUEST_TEMPLATE.md).
 - Pull requests are squash-merged after CI passes and a maintainer approves, so `main` keeps one commit per change.
 - Add an entry under `## [Unreleased]` in [CHANGELOG.md](./CHANGELOG.md) for any user-visible change. Release history
-  belongs in the changelog only, not in the user guide or design doc.
+  belongs in the changelog only, not in `docs/` ([Documentation](#documentation)).
 - A **Breaking changes** entry covers what users depend on: the names exported from `unified_kg_rag` (pinned in
   `tests/unit/test_public_api.py`; changing that list is a deliberate API change), configuration keys, CLI flags and
   exit codes, index and registry formats, and the CDK stack's inputs and outputs. Moving or renaming an internal module
@@ -141,32 +141,70 @@ than an edit to dispatch code.
 
 ### Documentation
 
-- [docs/index.md](./docs/index.md) maps every documentation page; add a new page to it.
-- User-facing documentation is in English. The pages listed in `TRANSLATED_PAGES` (`scripts/check_docs.py`) have a
-  Korean twin `<page>.ko.md`: `README.md`, `docs/index.md`, `docs/concepts/overview.md`,
-  `docs/concepts/retrieval.md`, `docs/concepts/scopes-and-namespaces.md`, `docs/getting-started/local.md`,
-  `docs/getting-started/aws.md`, `docs/guides/configure.md`, `docs/guides/ingest.md`, `docs/guides/multilingual.md`,
-  `docs/guides/query.md`, `docs/guides/incremental.md`, `docs/guides/domain-adaptation.md`,
-  `docs/guides/evaluate.md` and `docs/user-guide.md` (the index of the former user guide's moved sections).
-  The other documents are English-only. A new `.ko.md` file must be added to that list, with the same structure as
-  its English page.
-- **EN/KO sync rule:** a change to a page in `TRANSLATED_PAGES` updates its `.ko.md` twin in the same pull
-  request. If you cannot write the Korean text, say so in the pull request description and add this note at the top
-  of the `.ko.md` file so readers know it lags: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.`
-  A maintainer then updates the translation and removes the note.
-- Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative link, `#fragment`
-  (heading id) and image, the `docs/*.md` paths cited in code, and that each translated page in its `TRANSLATED_PAGES`
-  list keeps the same headings, code blocks, table rows and link targets as its English page; it exits 1 and lists
-  each failure. `tests/unit/test_docs_links.py` and `tests/unit/test_docs_translations.py` run the same checks in CI.
-- Describe current behavior only. Do not write "previously", "now" or "(old behaviour)" in the guides; put release
-  history in [CHANGELOG.md](./CHANGELOG.md).
-- Every configuration key has a user-facing `Field(description=...)`. After changing a config field, run
-  `uv run python scripts/gen_config_reference.py` to regenerate
-  [docs/reference/configuration.md](./docs/reference/configuration.md) (a unit test fails when it is stale). Add a key
-  to `config-template.yaml`, the short starting file, only when most deployments set it.
-- Every CLI flag has a user-facing `help=`. After adding or changing a flag, run
-  `uv run python scripts/gen_cli_reference.py` to regenerate [docs/reference/cli.md](./docs/reference/cli.md) (a unit
-  test fails when it is stale).
+[docs/index.md](./docs/index.md) is the documentation hub: it maps every page by reader and by type. Add a new page
+to its page map, and link it from the pages around it.
+
+**Where a page goes.** The documentation follows [Diátaxis](https://diataxis.fr/), one folder per type:
+
+| Folder or page | Type | What goes there |
+|---|---|---|
+| `docs/getting-started/` | Tutorial | Step-by-step first runs (locally, on AWS) that end with a working result |
+| `docs/concepts/` | Explanation | How and why it works: the overview and "beyond the papers", retrieval, scopes and namespaces, and the measured evidence |
+| `docs/guides/` | How-to | One page per task (configure, ingest, query, incremental indexing, evaluate, ...): the steps and the settings that matter, linking the reference for every option |
+| `docs/reference/` | Reference | Complete lists to look up: CLI flags, configuration keys, models, filters, output files, exit codes, formats, telemetry |
+| `docs/operations.md` | Runbook | Procedures an operator runs against a deployment, and what to do when a run, an alarm or a query fails. `iac/README.md`, code and error messages link its section headings: keep them |
+| `docs/troubleshooting.md` | Reference | Frequent questions and every error message with its meaning and action |
+| `docs/design.md` | Explanation, for contributors | Architecture, algorithms and design decisions. Code cites its section numbers (`design §6.1.1`): never renumber a section |
+| `docs/user-guide.md` | Redirect | The permanent index of the former user guide's sections, so older links (the `--help` output of earlier versions included) still land. Add no content to it |
+| [`iac/README.md`](./iac/README.md) | How-to | The CDK stacks, their options and the after-deploy commands |
+
+- **Current behaviour only.** A page describes what the code does. Do not write "previously", "now", "no longer" or
+  "(old behaviour)", and do not cite pull request numbers. Release history and upgrade notes go in
+  [CHANGELOG.md](./CHANGELOG.md) (*Upgrading* for what a user must do), which the runbook's
+  [Upgrading the library](./docs/operations.md#upgrading-the-library) links.
+- **Measured evidence** (benchmark numbers, measured costs and latencies, dated prices, how a default was chosen) goes
+  in [docs/concepts/defaults-and-evidence.md](./docs/concepts/defaults-and-evidence.md), with the method and how to
+  reproduce it. Other pages state the rule and link the evidence.
+- **Extension recipes** (new strategies, backends, evaluators, renderers, parsers, config sections) live in
+  [docs/design.md §15 Extension Guide](./docs/design.md#15-extension-guide). Update the recipe there when the way to
+  extend changes.
+
+**Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
+a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
+[`scripts/check_docs.py`](./scripts/check_docs.py): `README.md`, `docs/index.md`, the two `getting-started/` pages,
+`concepts/overview.md`, `concepts/retrieval.md` and `concepts/scopes-and-namespaces.md`, and `guides/configure.md`,
+`ingest.md`, `multilingual.md`, `query.md`, `incremental.md`, `domain-adaptation.md` and `evaluate.md`, plus the
+`docs/user-guide.md` redirect. Every other page is English-only, and a Korean page that links one adds "(영문)" after
+the link.
+
+1. **Same pull request.** A change to a Tier-1 English page updates its `.ko.md` twin in the same pull request.
+2. **Lag note.** If you cannot write the Korean text, say so in the pull request description and add this note at
+   the top of the `.ko.md` page: `> 이 번역은 영문판보다 늦을 수 있습니다. 최신 내용은 영문판을 확인하세요.` A
+   maintainer then updates the translation and removes the note.
+3. **Structure check.** Each Tier-1 pair keeps the same number of headings per level, fenced code blocks and table
+   rows, and the same set of link targets (a link to a Tier-1 page maps to its `.ko.md` twin). A mismatch fails CI
+   unless the Korean page carries the lag note; that page is reported as lagging instead.
+4. **New Korean pages.** A `.ko.md` file that `TRANSLATED_PAGES` does not list fails the check. Add a page to the list
+   only with a full translation of the same structure.
+5. **Korean style.** Korean headings keep their Korean heading ids, and links between Korean pages use them. Use
+   Korean terms with the English term in parentheses at first use, following the glossary in
+   [docs/index.ko.md](./docs/index.ko.md#용어집).
+
+**The docs checker.** Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative
+link, `#fragment` (heading id) and image in the tracked Markdown files, the `docs/*.md` paths and this repository's
+`blob/main/docs/...#fragment` URLs cited in `unified_kg_rag/`, `scripts/` and `iac/`, and the Korean structure rules
+above. It exits 1 and lists each failure. `tests/unit/test_docs_links.py` and `tests/unit/test_docs_translations.py`
+run the same checks in CI as part of the default test suite. Keep a heading's text when other pages link its
+fragment, or update every link to it in the same pull request.
+
+**Generated docs.** Two reference pages are generated from the code. Edit the source, regenerate, and commit both (a
+unit test fails when a page is stale):
+
+- [docs/reference/configuration.md](./docs/reference/configuration.md): every configuration key has a user-facing
+  `Field(description=...)`. After changing a config field, run `uv run python scripts/gen_config_reference.py`. Add
+  a key to `config-template.yaml`, the short starting file, only when most deployments set it.
+- [docs/reference/cli.md](./docs/reference/cli.md): every CLI flag has a user-facing `help=`. After adding or
+  changing a flag, run `uv run python scripts/gen_cli_reference.py`.
 
 
 ## Finding contributions to work on

@@ -214,6 +214,41 @@ after 23 incremental runs, a reset made 17-20 model calls, against 197 for
 the first build. These are call counts, not tokens or dollars: they show
 how much a reset reuses, not what it costs with your models and corpus.
 
+## Ingestion memory and run time
+
+The runbook's [capacity sizing](../operations.md#capacity-sizing) scales
+these figures. A full local build of 5,000 to 60,000 short text units
+(about 200 characters, two or three entities each) with fake models and
+the embedded stores measured:
+
+- **Memory.** About 42 KiB of resident memory per text unit on top of about
+  0.2 GiB, growing linearly with the units of the run.
+- **Stage cache.** About 11 KiB per text unit.
+- **Time outside the model calls.** About 8 ms per text unit for parsing,
+  resolution, community detection and indexing.
+
+Real units are longer (`fallback_chunk_size` 4,800 characters) and name more
+entities and relationships, so the runbook plans for 2-3 times the memory
+per unit. That factor is an estimate, not a measurement. The time excludes
+model latency and network writes to Neptune and OpenSearch.
+
+## On-disk vector recall
+
+[On-disk vector storage](../operations.md#on-disk-vector-storage) trades
+recall for data-node memory. On a synthetic 50,000-vector set (256
+dimensions, OpenSearch 2.19.3,
+`tests/integration/test_opensearch_vector_storage.py`):
+
+| Engine and level | recall@10 | faiss native memory |
+|---|---|---|
+| Unquantized (faiss) | 1.0 | 61 MB |
+| faiss 8x | 0.95 | 17 MB |
+| lucene 4x | 0.93 | — |
+| faiss 32x (`on_disk`'s default) | 0.78 | 12 MB |
+
+A synthetic set is not a corpus's embeddings, so measure
+recall on your own corpus before choosing a level.
+
 ## Ontology and RDF parse cost
 
 An `owl` [schema source](../guides/ontology.md#load-cost) and an `rdf`

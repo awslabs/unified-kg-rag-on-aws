@@ -47,6 +47,13 @@ DynamoDB). Its design principles:
   providers register through registries, with no change to dispatch code;
   evaluators map from `EvaluatorType` in one method (§2.4).
 
+Where the framework extends the GraphRAG and LightRAG papers (triple-hybrid
+retrieval, both methodologies on one index, incremental indexing, multilingual
+ingestion, bring-your-own graphs and schemas, measured defaults) and where it
+deliberately departs from them is summarized in
+[Overview: Beyond the papers](./concepts/overview.md#beyond-the-papers); the
+sections below give the design behind each.
+
 ![Architecture at a glance](../assets/architecture-overview.drawio.png)
 
 ---
@@ -521,7 +528,7 @@ gets its models and stores from the run's `Providers` bundle.
   `None` otherwise. `None` is never written: models drop it from their dumps
   (`SchemaAnnotated`), extraction records never hold annotations, the
   Neptune codec and the OpenSearch documents omit it. A default config (no
-  `iri` anywhere) therefore stores exactly what it stored before the fields; only the index mappings gain
+  `iri` anywhere) therefore writes no annotation field on its items; only the index mappings gain
   `in_schema` (boolean) and the IRI keyword fields, added to live indices
   by the incremental preflight (`check_index_settings` →
   `_add_missing_fields`). Ids are unchanged; the IRIs are the seam for
@@ -1065,7 +1072,7 @@ whose processing kills the task would stop every later run the same way.
 - **Resume check** (`delta_still_applies`). A resumed run whose restored
   delta names a document whose record is gone, holds other content, reached
   the limit or was written by another pipeline id since (`written_by`; a
-  record written before the field has none and counts as another pipeline
+  record without the field counts as another pipeline
   id's unless it is `PROCESSED` at the delta's content without an open
   attempt, and even then when
   it was committed under other extraction settings for a document the delta
@@ -1081,9 +1088,9 @@ whose processing kills the task would stop every later run the same way.
 - **Unread files and mass deletions.** The diff never deletes a file the
   run could not read: `failed_doc_ids` holds the files that failed to
   parse or load and those the parsing stage skipped because no loader
-  reads their type (`PipelineContext.skipped_source_files`; an optional
-  extra dropped from an image used to read as the deletion of every such
-  file). Skipped files are kept apart from failed ones only for the empty
+  reads their type (`PipelineContext.skipped_source_files`; otherwise an
+  optional extra dropped from an image would read as the deletion of every
+  such file). Skipped files are kept apart from failed ones only for the empty
   corpus rule: a seed-only scope with a stray unsupported file is still a
   seed-only run. Before its first write (`open_attempts`),
   `incremental._confirm_mass_deletion` asks the pipeline's
@@ -1170,10 +1177,10 @@ appends rather than re-clusters. Community ids are therefore content-derived
 (a hash of the level and the sorted member ids), so a delta's communities and
 reports are appended next to the corpus's instead of overwriting them. The
 display name (`Level {level} Community {id[:8]}`, short id `L{level}_C{id[:8]}`)
-derives from that id too: a positional `C{i}` renamed every community sorted
-after an added one, and the name is part of a report's record key and of its
-parent's roll-up text, so a reset re-asked the model for unchanged
-communities. A corpus community goes once none of
+derives from that id too: a positional `C{i}` would rename every community
+sorted after an added one, and the name is part of a report's record key and
+of its parent's roll-up text, so a reset would re-ask the model for
+unchanged communities. A corpus community goes once none of
 its text units is stored; shared ones keep their report until a full rebuild,
 the only path that re-partitions the whole graph
 (`indexing.community_drift_threshold` reports when one is due). Each delta's
@@ -1809,10 +1816,10 @@ Using it: [Visualization](./guides/visualize.md).
   verbatim `source_text` grounding), so the parser and grounding guard keep
   working. The rules carry the `{entity_types}` and `{relationship_types}`
   variables, rendered from config at call time
-  (`GraphExtractionPrompt.config_variables`). A variable that replaced fixed
-  rule text declares it (`inlined_slots`): the extraction-record
-  fingerprint hashes the template with it filled in, so the change re-keys
-  no record.
+  (`GraphExtractionPrompt.config_variables`). A variable that stands for
+  rule text the template would otherwise spell out declares it
+  (`inlined_slots`): the extraction-record fingerprint hashes the template
+  with it filled in, so moving rule text into a variable re-keys no record.
 - **Schema drafts** (`run-prompt-tuning --schema-out`, `SchemaDraft` in
   `application/prompts/tuner.py`): the profile's entity types (the
   configured specs when the config declares them), the configured

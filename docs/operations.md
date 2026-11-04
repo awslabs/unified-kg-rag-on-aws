@@ -18,12 +18,13 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Act on a CloudWatch alarm | [Alarms](#alarms) |
 | Restore the stores | [Backup and restore](#backup-and-restore) |
 | Upgrade the OpenSearch engine version | [Upgrading OpenSearch](#upgrading-opensearch) |
+| Upgrade the library and the deployed image | [Upgrading the library](#upgrading-the-library) |
 | Upgrade Neptune to a new major version, or move the maintenance windows | [Upgrading Neptune](#upgrading-neptune), [Maintenance windows](#maintenance-windows) |
 | Analyze Korean with Nori instead of `cjk` | [Korean with Nori](#korean-with-nori) |
 | Switch Neptune to I/O-Optimized storage | [Neptune I/O-Optimized storage](#neptune-io-optimized-storage) |
 | Look Neptune vertices up by custom vertex ids | [Custom Neptune vertex ids](#custom-neptune-vertex-ids) |
 | Cut the vector memory of a large corpus | [On-disk vector storage](#on-disk-vector-storage) |
-| Ship an OWL/RDFS ontology schema in the image | [Ontology schema in the image](#ontology-schema-in-the-image) |
+| Ship an OWL/RDFS ontology schema in the image, or a schema in S3 | [Ontology schema in the image](#ontology-schema-in-the-image), [Schema sources in S3](#schema-sources-in-s3) |
 | Ship a seed graph (a knowledge graph to merge), or reset a namespace that holds one | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
 | Tune how long a query may take, or act on `QueryTimeoutError` | [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts) |
 | Give a serving layer query access, or isolate tenants | [Query access and tenant isolation](#query-access-and-tenant-isolation) |
@@ -47,13 +48,10 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 ### Capacity sizing
 
 Peak memory of the ingestion task grows linearly with the text units of a
-run. A full local build of 5,000 to 60,000 short units (about 200
-characters, two or three entities each) with fake models and the embedded
-stores measured about 42 KiB of resident memory per text unit on top of
-about 0.2 GiB, and about 11 KiB of stage cache per unit. Real units are
-longer (`fallback_chunk_size` 4,800 characters) and name more entities and
-relationships, so plan for 2-3 times that per unit (an estimate, not
-measured):
+run. Plan for about 85-125 KiB of task memory per text unit on top of about
+0.2 GiB, and about 11 KiB of stage cache per unit: an estimate for real
+units (`fallback_chunk_size` 4,800 characters), scaled from short units
+([Defaults and evidence: Ingestion memory and run time](./concepts/defaults-and-evidence.md#ingestion-memory-and-run-time)):
 
 | `fargate_memory` | Text units per run (estimate) |
 |---|---|
@@ -78,8 +76,9 @@ calls ~ units x (1 extraction + gleaning rounds that add something + 1 claim
 ```
 
 The 8 ms per unit is the rest of the pipeline (parsing, resolution,
-community detection, indexing) measured with fake models and the embedded
-stores; Neptune and OpenSearch writes over the network add to it. With a
+community detection, indexing) on the embedded stores
+([evidence](./concepts/defaults-and-evidence.md#ingestion-memory-and-run-time));
+Neptune and OpenSearch writes over the network add to it. With a
 call latency of 10 s and 40 calls in flight, 50,000 units with one
 gleaning round and no claims take about 50,000 x 2 x 10 / 40 s, roughly 7
 hours: above the default `sfn_timeout_hours` (6), so raise it or split the
@@ -156,9 +155,6 @@ deployed stack:
 cause, rather than reindexing everything. Fix the registry and re-run with the
 same `--pipeline-id`, or set `providers.doc_status.enabled: false`.
 
-Coming from 0.2.3 or an earlier `main` checkout: see
-[CHANGELOG: Upgrading](../CHANGELOG.md#upgrading).
-
 ### Caches and prefixes
 
 | Cache | Location | Notes |
@@ -175,35 +171,6 @@ keeps its earlier version for 30 days (under `pipeline-runs/`, which every
 stage overwrites, for 1 day). A `--s3-prefix` other than `pipeline-runs`
 gets neither the expiry nor the 1-day rule. Check a reused bucket's own
 lifecycle rules and versioning.
-
-### Schema sources in S3
-
-A `schema_source` of kind `file` or `owl` may name an `s3://` object (or,
-for `owl`, an `s3://bucket/prefix/` directory). Every entry point that loads
-the schema reads it with the task's role: ingestion, prompt tuning and
-evaluation at start-up, and `run-rag` on the first query with a schema
-filter key (`in_schema`, `type_iri`, `predicate_iri`), which it checks
-against the schema. When `run-rag` cannot load the source it skips that
-check with one WARNING and does not retry on later queries.
-The loader needs `s3:GetObject` on the objects and, for a prefix,
-`s3:ListBucket` on the bucket (without `s3:ListBucket` a missing object is
-reported as access denied too), plus `kms:Decrypt` on the key of a
-KMS-encrypted object (the stacks grant it for the deployment's own key).
-
-The CDK stacks grant no schema-specific permission; place the schema where
-the roles already read:
-
-| Location | Ingestion task role | Query task role (`run-rag`, `run-eval`) |
-|---|---|---|
-| The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`, whose files are ingested as documents) | Read | Read |
-| The cache bucket, outside `pipeline-runs/` (which expires after 30 days) | Read | No |
-| The cache bucket under `eval/` | Read | Read |
-
-In private mode the S3 gateway endpoint also reaches only these two
-buckets, so a schema in any other bucket fails with access denied even
-after you grant the role `s3:GetObject` on it. To keep it elsewhere, grant
-both roles read on it and add the bucket to the endpoint policy in your own
-stack.
 
 ### OpenSearch replicas
 
@@ -494,12 +461,10 @@ indexing:
   keeps compressed vectors in memory and rescores each search's candidates
   with the full-precision ones read from disk: less memory, slightly more
   latency and a little recall, and no disk saved. faiss takes 2x, 8x, 16x and
-  32x (`on_disk`'s default), lucene 4x. On a synthetic 50,000-vector set
-  (256 dimensions, OpenSearch 2.19.3,
-  `tests/integration/test_opensearch_vector_storage.py`) recall@10 was 0.95
-  for faiss 8x, 0.93 for lucene 4x and 0.78 for faiss 32x (1.0
-  unquantized), and faiss's native memory fell from 61 MB to 17 MB (8x) or
-  12 MB (32x). Measure recall on your own corpus before choosing a level.
+  32x (`on_disk`'s default), lucene 4x. A higher level saves more memory
+  and loses more recall
+  ([Defaults and evidence: On-disk vector recall](./concepts/defaults-and-evidence.md#on-disk-vector-recall)):
+  measure recall on your own corpus before choosing a level.
 - **Version.** The keys need OpenSearch 2.17 or later, and faiss with the
   default `cosinesimil` space 2.19. The CDK domain runs 2.13 until upgraded
   ([Upgrading OpenSearch](#upgrading-opensearch)); there the probe before the
@@ -512,6 +477,25 @@ indexing:
   vectors of '...' as ...`); run once with `indexing.reset: true`.
 - **Local mode.** The embedded engine ignores both (one warning per process)
   and keeps searching exactly at full precision.
+
+## Shipping configuration to the deployed tasks
+
+The data-plane image bakes in `docker/config.yaml` as `/app/config.yaml`,
+and each task adds the deployed values as `UKR__...` environment variables
+([`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)). A
+file the config names, such as a schema or a seed graph, goes either into
+the image next to the config (a relative path resolves against
+`/app/config.yaml`) or into S3 where the task roles already read. Which
+tasks read it, and the extras the image needs:
+
+| Configuration | Read by | Extra in the image | Procedure |
+|---|---|---|---|
+| `schema_source` of kind `owl` | Ingestion, query and evaluation tasks | `ontology` | [Ontology schema in the image](#ontology-schema-in-the-image) |
+| `schema_source` of kind `file` or `owl` in S3 | Ingestion, query and evaluation tasks | `ontology` for `owl` | [Schema sources in S3](#schema-sources-in-s3) |
+| `processing.seed_graphs` | Ingestion task only | `ontology` for kind `rdf` | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
+
+A changed file in the image takes effect once the new image is pushed and
+deployed; a changed S3 object, at the next task start.
 
 ### Ontology schema in the image
 
@@ -570,12 +554,40 @@ settle the options: a label or description change re-extracts the
 corpus. With `on_collision: qualify`, bind the colliding namespaces in
 `options.prefixes`, so a re-serialised ontology keeps its suffixes.
 
-Every task that loads the schema parses the ontology into memory: about
-3 s and 85 MB per MB of Turtle (a 14 MB file took 45 s and 1.2 GB), so at
-the default `max_bytes` of 64 MiB a load can take about 5 GB of the task's
-memory before ingestion starts. Lower `options.max_bytes` to the size you
-ship, or raise `fargate_memory`, when the ontology is large
-([Ontology: Load cost](./guides/ontology.md#load-cost)).
+Every task that loads the schema parses the ontology into memory before
+ingestion starts, at many times the file's size
+([Defaults and evidence: Ontology and RDF parse cost](./concepts/defaults-and-evidence.md#ontology-and-rdf-parse-cost)).
+Lower `options.max_bytes` to the size you ship, or raise `fargate_memory`,
+when the ontology is large ([Ontology: Load cost](./guides/ontology.md#load-cost)).
+
+### Schema sources in S3
+
+A `schema_source` of kind `file` or `owl` may name an `s3://` object (or,
+for `owl`, an `s3://bucket/prefix/` directory). Every entry point that loads
+the schema reads it with the task's role: ingestion, prompt tuning and
+evaluation at start-up, and `run-rag` on the first query with a schema
+filter key (`in_schema`, `type_iri`, `predicate_iri`), which it checks
+against the schema. When `run-rag` cannot load the source it skips that
+check with one WARNING and does not retry on later queries.
+The loader needs `s3:GetObject` on the objects and, for a prefix,
+`s3:ListBucket` on the bucket (without `s3:ListBucket` a missing object is
+reported as access denied too), plus `kms:Decrypt` on the key of a
+KMS-encrypted object (the stacks grant it for the deployment's own key).
+
+The CDK stacks grant no schema-specific permission; place the schema where
+the roles already read:
+
+| Location | Ingestion task role | Query task role (`run-rag`, `run-eval`) |
+|---|---|---|
+| The `corpus_bucket_name` bucket, outside the ingestion source prefix (`UKR_SOURCE_DIRECTORY`, whose files are ingested as documents) | Read | Read |
+| The cache bucket, outside `pipeline-runs/` (which expires after 30 days) | Read | No |
+| The cache bucket under `eval/` | Read | Read |
+
+In private mode the S3 gateway endpoint also reaches only these two
+buckets, so a schema in any other bucket fails with access denied even
+after you grant the role `s3:GetObject` on it. To keep it elsewhere, grant
+both roles read on it and add the bucket to the endpoint policy in your own
+stack.
 
 ### Seed graphs in the image or S3
 
@@ -686,6 +698,42 @@ arrive empty: it tells a seed-only scope from a missing corpus.
 
 Or avoid the question: configure the seed on the corpus's own scope
 instead of a seed-only scope, so the reset re-imports it and asks nothing.
+
+## Upgrading the library
+
+Each release's upgrade notes are in
+[CHANGELOG: Upgrading](../CHANGELOG.md#upgrading): what to change in the
+configuration, the image and the stacks, and whether the stores need one
+rebuild. The same release's *Breaking changes* list the configuration keys,
+CLI flags, exit codes and stored formats that changed. To upgrade a
+deployed stack:
+
+1. Read the *Upgrading* and *Breaking changes* entries of every release
+   after the deployed one. On a `main` checkout, read the `[Unreleased]`
+   section too, including its items that start "From a `main` checkout".
+2. Stop ingestion (no `RUNNING` execution; [Before a run](#before-a-run)).
+3. Load the image's config with the new package before you build:
+   `uv run python -c "from unified_kg_rag import get_config; get_config('docker/config.yaml')"`.
+   It fails on an unknown or invalid key and names the replacement of a
+   moved one, and a removed key logs a WARNING naming its replacement
+   ([Configuration](./guides/configure.md#how-configuration-is-loaded)).
+   Run it with the `UKR__...` overrides your tasks set exported to check
+   them too. Update
+   scripts that call the CLIs for renamed flags and exit codes
+   ([CLI Reference](./reference/cli.md)).
+4. Build and push the image under a new tag, with the extras the
+   configuration needs ([Shipping configuration to the deployed
+   tasks](#shipping-configuration-to-the-deployed-tasks)), then run
+   `cd iac && uv sync` and deploy every stack together with
+   `-c image_tag=<tag>` ([`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)).
+   A role with a custom IAM policy needs the permissions the notes list.
+5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))
+   as a one-off task with `UKR__INDEXING__RESET=true` as an environment
+   override (the task override is in
+   [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), and
+   start it with a new pipeline id rather than resume one an older package
+   ran.
+6. Run a query and one incremental ingestion before the next large run.
 
 ## When a run fails
 
@@ -1136,12 +1184,9 @@ each returned call once: a call botocore resent after a read timeout or a
 server error is one call but several invocations (`request_retries` in
 `token_usage`), a call that failed in the end is in `failed_calls` only,
 and calls made outside a usage scope (the `run-eval`
-[warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. In the package's November 2026 benchmark runs
-Bedrock counted 13% more Sonnet 5.5 invocations than recorded calls while
-the tokens agreed within 4.6% (input, cache included) and 0.9% (output),
-which points to resent and failed requests that spent few tokens; those
-runs predate `request_retries` and `failed_calls`, so the split was not
-measured. Haiku 5.5 agreed within 0.2%.
+[warm-up queries](./reference/evaluation-output.md#comparison), scripts) are not counted. How far
+the two counts were apart on real runs:
+[Defaults and evidence: Usage records against the bill](./concepts/defaults-and-evidence.md#usage-records-against-the-bill).
 
 ## Query deadlines and model timeouts
 
@@ -1174,16 +1219,17 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
 | `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
 
-**Why these defaults.** 90 s covers the slowest measured whole query in
-one request, and 180 s (`model_max_attempts x model_timeout_seconds`) lets a
+**Why these defaults.** A non-streamed answer can spend most of a query in
+one read, so 90 s gives one request room for the slowest whole query, and 180 s (`model_max_attempts x model_timeout_seconds`) lets a
 call that stalls once be answered by its second attempt; a third attempt
-would start only after the deadline. The measured query times:
+would start only after the deadline. The query times behind them:
 [Defaults and evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts).
 
 <a id="drift-near-the-deadline"></a>**DRIFT near the deadline.** The
-comprehensive DRIFT answer measured close to the 180 s deadline, and past
-it under a concurrent load ([evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts)). So DRIFT keeps the concise
-answer by default, and a deployment that routes to DRIFT
+comprehensive DRIFT answer runs close to the 180 s deadline, and past it
+under a concurrent load
+([evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts)).
+So DRIFT keeps the concise answer by default, and a deployment that routes to DRIFT
 (`search.auto_routable_strategies`), serves it under load or gives it the
 comprehensive answer should set `search.query_timeout_seconds: 300` (with
 `model_timeout_seconds` 90 s and two attempts, a stalled call still fits).
@@ -1249,15 +1295,15 @@ never from a request field. To isolate tenants in the infrastructure:
 
 ## Observability
 
-Moved to [Observability](./guides/observability.md) (enable tracing; the
-Jaeger, Langfuse, Phoenix and CloudWatch recipes; export limits, private
-VPCs and privacy) and the [Telemetry reference](./reference/telemetry.md)
+Tracing is set up in [Observability](./guides/observability.md) (enable
+tracing; the Jaeger, Langfuse, Phoenix and CloudWatch recipes; export
+limits, private VPCs and privacy) and the [Telemetry reference](./reference/telemetry.md)
 (trace shape, span attributes, usage counters).
 
 ## Common errors
 
-Moved to [Troubleshooting](./troubleshooting.md): a short FAQ and every
-error message with its meaning and action, in the same groups as before
+Error messages are in [Troubleshooting](./troubleshooting.md): a short FAQ
+and every error message with its meaning and action, grouped by area
 ([Configuration and start-up](./troubleshooting.md#configuration-and-start-up),
 [Credentials and models](./troubleshooting.md#credentials-and-models),
 [Stores](./troubleshooting.md#stores-connection-permissions-requests),
@@ -1266,4 +1312,4 @@ error message with its meaning and action, in the same groups as before
 
 ### Local mode
 
-Moved to [Troubleshooting: Local mode](./troubleshooting.md#local-mode).
+Local-mode errors are in [Troubleshooting: Local mode](./troubleshooting.md#local-mode).
