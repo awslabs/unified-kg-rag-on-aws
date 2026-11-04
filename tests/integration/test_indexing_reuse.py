@@ -314,6 +314,56 @@ def test_a_reset_of_an_unchanged_corpus_asks_no_summary_or_report(
     assert server.summaries == 2 * summaries
 
 
+def test_a_reset_after_a_disjoint_document_asks_only_its_report(
+    tmp_path: Path, no_aws
+) -> None:
+    """A document whose entities join no stored community adds one community;
+    the others keep their names (content-derived, not their rank in the
+    sorted partition), so their report keys match and only the new
+    community's report is asked for."""
+    from tests.integration import test_ingestion_stages as stages
+
+    def group(tag: str) -> tuple[str, ...]:
+        return tuple(f"{word}{tag}" for word in ("Alpha", "Bravo", "Charlie"))
+
+    # The added group sorts first, ahead of every stored community.
+    groups, added = [group(tag) for tag in "KLMN"], group("A")
+    names = tuple(name for g in (*groups, added) for name in g)
+
+    class Server(_CountingServer):
+        def _answer(self, system: str, human: str) -> str:
+            if "knowledge graph extraction expert" in system:
+                return stages._extraction(stages._source_text(human), names)
+            return super()._answer(system, human)
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.graph.community_detection.min_community_size = 2
+    server = Server()
+    providers = e2e._providers(config, server, e2e.FakeCrossEncoder("rerank"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+
+    def write(name: str, g: tuple[str, ...]) -> None:
+        (source / f"{name}.txt").write_text(f"{g[0]} works with {g[1]} and {g[2]}.")
+
+    def run(name: str) -> dict[str, str]:
+        context = e2e._ingest(config, providers, source, tmp_path / name)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        return {c.id: c.name for c in context.communities}
+
+    for i, g in enumerate(groups):
+        write(f"g{i}", g)
+    first = run("run-1")
+    assert server.reports == len(first) == len(groups)
+
+    write("added", added)
+    config.indexing.reset = True
+    second = run("run-2")
+    assert len(second) == len(first) + 1
+    assert {cid: second[cid] for cid in first} == first
+    assert server.reports == len(first) + 1
+
+
 @pytest.mark.parametrize("force_rebuild", [False, True])
 def test_force_rebuild_asks_and_embeds_everything_again(
     tmp_path: Path, no_aws, force_rebuild: bool

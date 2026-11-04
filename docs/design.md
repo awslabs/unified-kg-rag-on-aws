@@ -1141,9 +1141,13 @@ every write and check that the next run converges to a fresh full build.
 
 A delta run clusters only the delta subgraph, as MS GraphRAG's update path
 appends rather than re-clusters. Community ids are therefore content-derived
-(a hash of the level and the sorted member ids; `L{level}_C{i}` survives only
-as a display name), so a delta's communities and reports are appended next to
-the corpus's instead of overwriting them. A corpus community goes once none of
+(a hash of the level and the sorted member ids), so a delta's communities and
+reports are appended next to the corpus's instead of overwriting them. The
+display name (`Level {level} Community {id[:8]}`, short id `L{level}_C{id[:8]}`)
+derives from that id too: a positional `C{i}` renamed every community sorted
+after an added one, and the name is part of a report's record key and of its
+parent's roll-up text, so a reset re-asked the model for unchanged
+communities. A corpus community goes once none of
 its text units is stored; shared ones keep their report until a full rebuild,
 the only path that re-partitions the whole graph
 (`indexing.community_drift_threshold` reports when one is due). Each delta's

@@ -803,7 +803,9 @@ summarization settings keeps that summary, and a community whose report
 input (its members, descriptions, edges and claims as packed, its roll-up
 text and name) and report settings are unchanged takes the stored answer
 (the extraction store keeps it, and the report names it in
-`attributes.report_record`).
+`attributes.report_record`). A community's name (`Level 0 Community
+1a2b3c4d`) derives from its members, so a document that adds a community
+leaves the others' names, and their stored answers, as they were.
 
 **LLM response cache** (`cache.llm_responses`, on by default). Every
 ingestion model response is kept under `llm-cache/` in the run's cache
@@ -1370,7 +1372,10 @@ another tenant's run (another `index_value`) never deletes this tenant's
 documents, a subfolder run as its own source directory never deletes the rest
 of the corpus (its files register as separate documents: do not index the
 same files from two roots into one suffix), and two sources indexed into one
-suffix stay separate even for the same relative path. A file that fails to
+suffix stay separate even for the same relative path. Document and text-unit
+ids derive from the scope too, so set `source_scope` for ids that are
+reproducible across paths and machines (the same corpus indexed from another
+directory or host otherwise gets other ids). A file that fails to
 parse or load, or that the run skips because no loader reads its type (an
 optional extra such as `unstructured` not installed), is reported as
 `failed` and keeps its indexed content until a run reads it again.

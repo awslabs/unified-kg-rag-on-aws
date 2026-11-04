@@ -13,8 +13,14 @@ only on the prompt, and compares everything they produced: the stored
 graph and vector documents, the exported visualization data, every prompt
 the model received and every strategy's answer and ranked results.
 
+With the doc-status registry on, document and text-unit ids derive from the
+source scope, by default the absolute source directory; a fixed
+``source_scope`` makes them, and so every output but the stored file paths,
+the same from any directory: a second test runs the build in two work
+directories.
+
 Run as a module (``python -m tests.integration.test_hash_seed_determinism
-WORK OUT``), it is that subprocess.
+WORK OUT [SOURCE_SCOPE]``), it is that subprocess.
 """
 
 from __future__ import annotations
@@ -139,8 +145,18 @@ def _stores(stores: Path) -> dict[str, Any]:
         vector.close()
 
 
-def run(work: Path) -> dict[str, Any]:
-    """Build, update and query the corpus under ``work``; what it produced."""
+def _without_paths(value: Any) -> Any:
+    """``value`` without its ``file_path`` fields (where the corpus sits)."""
+    if isinstance(value, dict):
+        return {k: _without_paths(v) for k, v in value.items() if k != "file_path"}
+    if isinstance(value, list):
+        return [_without_paths(v) for v in value]
+    return value
+
+
+def run(work: Path, source_scope: str | None = None) -> dict[str, Any]:
+    """Build, update and query the corpus under ``work`` (in ``source_scope``,
+    the source directory when None); what it produced."""
     from tests.fixtures.fakes.model_servers import FakeOllama
     from tests.integration import test_embedded_e2e as e2e
     from tests.integration import test_ingestion_stages as stages
@@ -165,6 +181,7 @@ def run(work: Path) -> dict[str, Any]:
         (source / name).write_text(text, encoding="utf-8")
     config = e2e._config(stores, viz)
     processing = config.processing
+    processing.document_parsing.source_scope = source_scope
     processing.gleaning.enabled = True
     processing.gleaning.max_rounds = 1
     processing.claim_extraction.enabled = True
@@ -225,21 +242,26 @@ def run(work: Path) -> dict[str, Any]:
 
 
 @pytest.mark.timeout(600)
+def _run_subprocess(work: Path, out: Path, seed: str, *scope: str) -> dict[str, Any]:
+    subprocess.run(
+        [sys.executable, "-m", MODULE, str(work), str(out), *scope],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONHASHSEED": seed},
+        check=True,
+        timeout=500,
+    )
+    return json.loads(out.read_text("utf-8"))
+
+
 def test_outputs_do_not_depend_on_the_hash_seed(tmp_path: Path) -> None:
-    # One work directory for both runs: document ids derive from file paths.
+    # One work directory for both runs: by default document ids derive from
+    # the source directory.
     work = tmp_path / "work"
     outputs = []
     for seed in ("1", "2"):
         shutil.rmtree(work, ignore_errors=True)
         out = tmp_path / f"seed-{seed}.json"
-        subprocess.run(
-            [sys.executable, "-m", MODULE, str(work), str(out)],
-            cwd=ROOT,
-            env={**os.environ, "PYTHONHASHSEED": seed},
-            check=True,
-            timeout=500,
-        )
-        outputs.append(json.loads(out.read_text("utf-8")))
+        outputs.append(_run_subprocess(work, out, seed))
     first, second = outputs
     assert first["full"]["edges"], "the build stored no relationships"
     assert any(
@@ -250,9 +272,26 @@ def test_outputs_do_not_depend_on_the_hash_seed(tmp_path: Path) -> None:
         assert first[key] == second[key], key
 
 
+@pytest.mark.timeout(600)
+def test_a_fixed_source_scope_gives_the_same_outputs_from_any_directory(
+    tmp_path: Path,
+) -> None:
+    works = (tmp_path / "a" / "work", tmp_path / "b" / "nested" / "work")
+    first, second = (
+        _without_paths(
+            _run_subprocess(work, tmp_path / f"{i}.json", "0", "synthetic-corpus")
+        )
+        for i, work in enumerate(works)
+    )
+    assert first["full"]["vertices"], "the build stored nothing"
+    for key in ("full", "incremental", "ingestion_prompts", "query_prompts"):
+        assert first[key] == second[key], key
+    assert str(works[0]) not in json.dumps(first["full"])
+
+
 if __name__ == "__main__":
     import logging
 
     logging.disable(logging.WARNING)
-    result = run(Path(sys.argv[1]))
+    result = run(Path(sys.argv[1]), *sys.argv[3:])
     Path(sys.argv[2]).write_text(json.dumps(result, sort_keys=True), "utf-8")

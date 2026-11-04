@@ -88,6 +88,17 @@ def community_content_id(level: int, nodes: Any) -> str:
     return generate_stable_id(f"community:{level}:{members}")
 
 
+def community_label(level: int, community_id: str) -> str:
+    """Display label of a community: its level and the head of its content id.
+
+    A positional label (``L0_C3``, the community's rank in the sorted
+    partition) renamed every unchanged community behind an added one, and the
+    name reaches the report's record key and every parent's roll-up text, so
+    a reset re-asked the report model for communities that had not changed.
+    """
+    return f"L{level}_C{community_id[:8]}"
+
+
 def _stored_time(record: Mapping[str, Any], default: datetime) -> datetime:
     """When a stored report answer was generated (``default`` when its
     record does not say)."""
@@ -862,7 +873,7 @@ class CommunityDetector:
                 level=0,
                 nodes=nodes,
                 parent_id=None,
-                label=f"L0_C{i}",
+                label=community_label(0, comm_id),
             )
             self.all_communities[comm_id] = community
             level_0_communities[i] = comm_id
@@ -906,7 +917,7 @@ class CommunityDetector:
                         nodes=parent_nodes,
                         parent_id=None,
                         children_ids=[c.community_id for c in children],
-                        label=f"L{level}_C{i}",
+                        label=community_label(level, parent_comm_id),
                     )
                     self.all_communities[parent_comm_id] = parent_community
                     current_level_map[i] = parent_comm_id
@@ -1240,7 +1251,9 @@ class CommunityDetector:
         """The record key of a community's report answer: its prompt input
         (members, descriptions, edges and claims as packed, roll-up text,
         length) and the community's name (the report's title starts with
-        it), under the report settings (``community_report_fingerprint``)."""
+        it), under the report settings (``community_report_fingerprint``).
+        The name derives from the content id (``community_label``), so an
+        unchanged community keeps its key when others are added."""
         if self._report_fingerprint is None:
             self._report_fingerprint = community_report_fingerprint(self.config)
         text = json.dumps(

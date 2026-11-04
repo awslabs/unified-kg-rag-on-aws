@@ -73,8 +73,9 @@ class HierarchicalCommunity(BaseModel):
     )
     label: str = Field(
         default="",
-        description="Human-readable positional label (e.g. 'L0_C3') for display; "
-        "unlike community_id it is not stable across runs",
+        description="Short display label: the level and the head of the "
+        "content-derived community_id (e.g. 'L0_C1a2b3c4d'), so it is stable "
+        "across runs as long as the membership is",
     )
 
     def __hash__(self) -> int:

@@ -676,8 +676,8 @@ class TestHierarchyProcessing:
         second = community_content_id(0, {"n3", "n4", "n5"})
         assert set(cd.all_communities) == {first, second}
         assert all(c.level == 0 for c in cd.all_communities.values())
-        # The positional label survives for display only.
-        assert cd.all_communities[first].label == "L0_C0"
+        # The display label is the head of the content id, not a position.
+        assert cd.all_communities[first].label == f"L0_C{first[:8]}"
         # node_to_community_l0 maps every node to its L0 community.
         assert cd.node_to_community_l0["n0"] == first
         assert cd.node_to_community_l0["n3"] == second
@@ -697,7 +697,7 @@ class TestHierarchyProcessing:
         assert parent_id in cd.all_communities
         parent = cd.all_communities[parent_id]
         assert parent.level == 1
-        assert parent.label == "L1_C0"
+        assert parent.label == f"L1_C{parent_id[:8]}"
         assert set(parent.children_ids) == {first, second}
         # Parent's node set is the union of children.
         assert parent.nodes == {"n0", "n1", "n2", "n3", "n4", "n5"}
@@ -1867,12 +1867,11 @@ class TestStableCommunityIds:
         corpus_communities, corpus_reports = _detect_with_reports(_triangles("n", 3))
         delta_communities, delta_reports = _detect_with_reports(_triangles("d", 1))
         assert corpus_reports and delta_reports
-        assert {c.short_id for c in delta_communities} & {
-            c.short_id for c in corpus_communities
-        }, "positional labels overlap, which is what used to collide"
-        assert not {c.id for c in delta_communities} & {
-            c.id for c in corpus_communities
-        }
+        # Neither the ids nor the names (positional ones did) collide.
+        for field in ("id", "short_id", "name"):
+            assert not {getattr(c, field) for c in delta_communities} & {
+                getattr(c, field) for c in corpus_communities
+            }, field
 
         config = Config()
         graph_store = FakeGraphStore()
