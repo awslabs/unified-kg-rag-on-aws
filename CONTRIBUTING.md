@@ -190,12 +190,12 @@ the link.
    Korean terms with the English term in parentheses at first use, following the glossary in
    [docs/index.ko.md](./docs/index.ko.md#용어집).
 
-**The docs checker.** Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative
-link, `#fragment` (heading id) and image in the tracked Markdown files, the `docs/*.md` paths and this repository's
-`blob/main/docs/...#fragment` URLs cited in `unified_kg_rag/`, `scripts/` and `iac/`, and the Korean structure rules
-above. It exits 1 and lists each failure. `tests/unit/test_docs_links.py` and `tests/unit/test_docs_translations.py`
-run the same checks in CI as part of the default test suite. Keep a heading's text when other pages link its
-fragment, or update every link to it in the same pull request.
+**The docs checker.** Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative link,
+`#fragment` (heading id) and image in the tracked Markdown files (each target must exist and be tracked by Git), the
+`docs/*.md` paths and this repository's `blob/main/docs/...#fragment` URLs cited in `unified_kg_rag/`, `scripts/` and
+`iac/`, and the Korean structure rules above. It exits 1 and lists each failure. `tests/unit/test_docs_links.py` and
+`tests/unit/test_docs_translations.py` run the same checks in CI as part of the default test suite. Keep a heading's
+text when other pages link its fragment, or update every link to it in the same pull request.
 
 **Generated docs.** Two reference pages are generated from the code. Edit the source, regenerate, and commit both (a
 unit test fails when a page is stale):

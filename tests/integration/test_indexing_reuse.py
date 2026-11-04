@@ -394,6 +394,60 @@ def test_a_reset_reuses_records_stored_under_the_earlier_summary_keying(
         ), name
 
 
+def test_a_reset_reuses_records_whatever_tier_the_summary_model_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+) -> None:
+    # Records the previous release stored, its keys holding the summary
+    # settings at their defaults, the model resolved through the run's tier
+    # (none holding the run's own threshold), are found by the next reset;
+    # a reset after a change of that tier, which nothing else this corpus's
+    # extraction reads (the simple chunker, no translation), extracted every
+    # unit again: it reuses them all.
+    from unified_kg_rag.domain.ingestion import cache_keys
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    summarization = config.processing.graph_extraction.description_summarization
+    summarization.force_summary_threshold_tokens = 40
+    providers = e2e._providers(config, _Server(), e2e.FakeCrossEncoder("rerank"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name in ("a", "b", "c"):
+        (source / f"{name}.txt").write_text(f"{_DOCUMENT}\n{name.upper()} closes.")
+
+    def extraction(name: str) -> dict:
+        context = e2e._ingest(config, providers, source, tmp_path / name)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        (result,) = [
+            r
+            for r in context.stage_results
+            if r.stage_name == PipelineStageType.GRAPH_EXTRACTION.value
+        ]
+        return result.metrics
+
+    with monkeypatch.context() as previous:
+        previous.setattr(
+            cache_keys,
+            "_summary_key",
+            lambda: cache_keys._summary_settings_as_keyed_before(config),
+        )
+        first = extraction("run-1")
+    units = first["text_units_processed"]
+    assert units > 0 and first["text_units_reused"] == 0
+
+    config.indexing.reset = True
+    metrics = extraction("run-2")
+    assert (metrics["text_units_reused"], metrics["llm_usage"]["llm_calls"]) == (
+        units,
+        0,
+    )
+    config.models.fast = "synthetic-fast-v2"
+    metrics = extraction("run-3")
+    assert (metrics["text_units_reused"], metrics["llm_usage"]["llm_calls"]) == (
+        units,
+        0,
+    )
+
+
 def test_a_reset_after_a_disjoint_document_asks_only_its_report(
     tmp_path: Path, no_aws
 ) -> None:

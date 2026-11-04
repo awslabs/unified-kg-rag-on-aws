@@ -1152,9 +1152,10 @@ From 0.2.3 (or a `main` checkout since):
   `scripts/check_docs.py` run by `tests/unit/test_docs_links.py` and
   `tests/unit/test_docs_translations.py` in the default suite, fail on a
   broken relative link, fragment or image, a broken doc path or URL cited
-  in code, an unlisted Korean page, or a Tier-1 pair whose structure
-  differs without the lag note (#337-#342, #351, #469, #542-#544, #546,
-  #547, #549-#554, #555).
+  in code, a target of either Git does not track (an untracked file, a
+  tracked symlink to one, a directory holding no tracked file), an unlisted
+  Korean page, or a Tier-1 pair whose structure differs without the lag note (#337-#342, #351, #469, #542-#544, #546,
+  #547, #549-#554, #555, #556).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
@@ -1777,7 +1778,20 @@ Deployment (CDK).
   re-extracts nothing. A unit record stored before keeps its key under the
   default summary settings; one stored under others is found under the key
   it was stored under and stored under the current one, so the first reset
-  re-extracts nothing either (#541, #545).
+  re-extracts nothing either (#541, #545). That earlier key is computed
+  from the run's summary settings and tiers: to keep records stored under
+  other summary settings, run once after upgrading with the settings (and
+  `models` tiers) they were stored under, then change them.
+- A unit record's key held the default summary settings resolved through
+  the run's `models` tiers, so with `models.roles.description_summary`
+  unset a change of the tier the summary model reads (`models.fast`) re-keyed
+  every record: where nothing else a document's extraction reads goes
+  through that tier (the `simple` chunker, translation off), no "settings
+  changed" warning told the user and the next reset extracted every unit
+  again. The key holds the default configuration's summary settings now, the
+  same whatever the tiers; a record stored under the earlier forms (the
+  run's summary settings, or their defaults through the run's tiers) is
+  found under the key it was stored under (#556).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

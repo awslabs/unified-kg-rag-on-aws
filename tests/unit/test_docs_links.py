@@ -8,6 +8,7 @@ of failures. The synthetic trees below pin the GitHub slug rules it relies on.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -144,3 +145,46 @@ def test_a_link_to_a_file_git_does_not_track_fails(tmp_path: Path) -> None:
     (root / "docs" / "t.md").write_text("# T\n", encoding="utf-8")
     report = check_docs().check_links(root)
     assert report.failures == ["README.md:1: target not tracked by Git: docs/t.md"]
+
+
+def test_a_code_citation_of_a_file_git_does_not_track_fails(tmp_path: Path) -> None:
+    root = git_tree(
+        tmp_path,
+        {"unified_kg_rag/m.py": '"""See docs/t.md#t for it."""\n', "a.md": "# A"},
+    )
+    (root / "docs").mkdir()
+    (root / "docs" / "t.md").write_text("# T\n", encoding="utf-8")
+    report = check_docs().check_links(root)
+    assert report.counts["code citations"] == 1
+    assert report.failures == [
+        "unified_kg_rag/m.py:1: target not tracked by Git: docs/t.md#t"
+    ]
+
+
+def test_a_tracked_symlink_to_an_untracked_file_fails(tmp_path: Path) -> None:
+    # The checkout holds the link, not what it points to.
+    root = git_tree(tmp_path, {"README.md": "[o](alias.md)\n"})
+    (root / "outputs").mkdir()
+    (root / "outputs" / "o.md").write_text("# O\n", encoding="utf-8")
+    (root / "alias.md").symlink_to("outputs/o.md")
+    subprocess.run(["git", "add", "alias.md"], cwd=root, check=True)
+    report = check_docs().check_links(root)
+    assert report.failures == ["README.md:1: target not tracked by Git: alias.md"]
+
+
+def test_a_tracked_symlink_to_a_tracked_file_passes(tmp_path: Path) -> None:
+    root = git_tree(tmp_path, {"README.md": "[o](alias.md)\n", "docs/o.md": "# O"})
+    (root / "alias.md").symlink_to("docs/o.md")
+    subprocess.run(["git", "add", "alias.md"], cwd=root, check=True)
+    assert check_docs().check_links(root).failures == []
+
+
+def test_a_link_to_a_directory_git_tracks_nothing_in_fails(tmp_path: Path) -> None:
+    root = git_tree(
+        tmp_path, {"README.md": "[o](outputs/) [d](docs/)\n", "docs/a.md": "# A"}
+    )
+    (root / "outputs").mkdir()
+    (root / "outputs" / "x.txt").write_text("x", encoding="utf-8")
+    assert check_docs().check_links(root).failures == [
+        "README.md:1: target not tracked by Git: outputs/"
+    ]
