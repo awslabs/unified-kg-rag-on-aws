@@ -11,7 +11,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 |---|---|---|---|
 | **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) → [Evaluators](./guides/evaluate.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
 | **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./guides/ingest.md) → [Querying](./guides/query.md) → [Incremental indexing](./guides/incremental.md) → [Domain adaptation](./guides/domain-adaptation.md) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
-| **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [common errors](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
+| **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [troubleshooting](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./guides/evaluate.md) → [Comparing strategies](./guides/evaluate.md#comparing-strategies) → [Evaluation output](./reference/evaluation-output.md) → [Benchmarks](./guides/benchmarks.md) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
 | **Extender** | Add a backend, strategy, parser, schema or seed source | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md) | A registered plugin that passes the fake-port conformance tests |
 | **Contributor** | Change code and docs without breaking the gate | [CONTRIBUTING.md](../CONTRIBUTING.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) and [§13](./design.md#13-testing-strategy) → [Documentation rules](../CONTRIBUTING.md#documentation) | The pull request passes CI, including the docs checks |
@@ -26,7 +26,6 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
 | Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
 | Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; index suffix, source scope, namespace, and why neither the suffix nor filters are access control |
-| How-to | [User Guide](./user-guide.md) | The tasks not yet split out: exit codes, library use |
 | How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
 | How-to | [Local mode](./guides/local-mode.md), [Configuration](./guides/configure.md) | Local providers, differences from AWS mode, stores in containers; how configuration loads, the settings most runs change, environment variables, what the logs contain |
 | How-to | [Ingestion](./guides/ingest.md), [Multilingual corpora](./guides/multilingual.md), [Querying](./guides/query.md) | The 12 stages, resume and force-rebuild, S3 sync, the response cache, large corpora and cost levers; translation, analyzers and chunk sizes for CJK text; running queries, filters, rerank status, the query deadline, interactive mode and memory |
@@ -35,15 +34,18 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | How-to | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md) | Schema modes, declaring types and patterns, the stored schema fields and their filters, what a schema change re-runs; reading the schema from an OWL/RDFS ontology; merging a knowledge graph you already have, how seeds meet the schema and the documents, their lifecycle and cost |
 | How-to | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md), [Visualization](./guides/visualize.md) | Evaluators and what they need, the dataset format, paired comparisons of strategies, cost and prices, rebuilding, re-judging and CI gates; MuSiQue as a corpus and a dataset; rendering the exported graph |
 | How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
-| How-to | More task guides (planned) | One page per task, split out of the User Guide |
+| How-to | [Using the library from Python](./guides/python-library.md) | Ingesting and querying from Python, results and errors to tell apart, async code, closing, logging, injected backends |
 | Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
+| Reference | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md) | What each exit code means, what a signal does, the `--output-format json` document |
 | Reference | [Configuration Reference](./reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
 | Reference | [Model Catalog](./reference/models.md) | Supported Bedrock models, per-provider request differences, model selection notes (tiers, roles, the judge, output caps) |
 | Reference | [Filters reference](./reference/filters.md) | Every filterable field per store, value typing and dates, per-strategy applicability, OpenSearch strictness, filtered graph expansion |
 | Reference | [Ontology mapping reference](./reference/ontology-mapping.md), [Seed graph formats](./reference/seed-graph-formats.md) | The `owl` source's options, what it reads and its mapping rules, with a worked example; the JSONL, CSV and RDF seed formats and their options |
 | Reference | [Evaluation output reference](./reference/evaluation-output.md) | The result files, run summary and run manifest, every comparison field, the rebuilding and gating rules, how each evaluator scores |
 | Reference | [Telemetry reference](./reference/telemetry.md) | Every span and attribute, vendor attribute names, known limits, model-usage counters |
-| Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation, common errors |
+| Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation |
+| Troubleshooting | [Troubleshooting](./troubleshooting.md) | Frequent questions (Markdown files, regions, rerank, Nori, inference profiles, leases, confirmations, timeouts) and every error message with its meaning and action |
+| Legacy | [User Guide](./user-guide.md) | Where each section of the former user guide went |
 | Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
 
 ## I want to
@@ -66,8 +68,9 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Evaluate answers and retrieval | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md) |
 | Compare strategies or gate a change in CI | [Comparing strategies](./guides/evaluate.md#comparing-strategies), [Rebuilding, re-judging and gating](./guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison) |
 | Know why a default is what it is | [Defaults and evidence](./concepts/defaults-and-evidence.md) |
-| Use it from Python | [Using the library from Python](./user-guide.md#11-using-the-library-from-python) |
-| Fix an error or a failed run | [Common errors](./operations.md#common-errors), [When a run fails](./operations.md#when-a-run-fails) |
+| Use it from Python | [Using the library from Python](./guides/python-library.md) |
+| Script a CLI or read its JSON result | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md) |
+| Fix an error or a failed run | [Troubleshooting](./troubleshooting.md), [When a run fails](./operations.md#when-a-run-fails) |
 | Add a backend, strategy or parser | [Design Doc §15](./design.md#15-extension-guide) |
 
 ## Glossary

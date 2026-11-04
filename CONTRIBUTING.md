@@ -147,7 +147,7 @@ than an edit to dispatch code.
   `docs/concepts/retrieval.md`, `docs/concepts/scopes-and-namespaces.md`, `docs/getting-started/local.md`,
   `docs/getting-started/aws.md`, `docs/guides/configure.md`, `docs/guides/ingest.md`, `docs/guides/multilingual.md`,
   `docs/guides/query.md`, `docs/guides/incremental.md`, `docs/guides/domain-adaptation.md`,
-  `docs/guides/evaluate.md` and `docs/user-guide.md`.
+  `docs/guides/evaluate.md` and `docs/user-guide.md` (the index of the former user guide's moved sections).
   The other documents are English-only. A new `.ko.md` file must be added to that list, with the same structure as
   its English page.
 - **EN/KO sync rule:** a change to a page in `TRANSLATED_PAGES` updates its `.ko.md` twin in the same pull

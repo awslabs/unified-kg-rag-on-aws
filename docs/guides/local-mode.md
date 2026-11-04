@@ -92,7 +92,7 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 (queries can read alongside); a writer waiting longer than
 `search.store_timeout_seconds` fails with "stayed locked". Keep the files on
 a local disk, not NFS, SMB or Amazon EFS
-([Common errors](../operations.md#local-mode)).
+([Troubleshooting: Local mode](../troubleshooting.md#local-mode)).
 
 ## Provider flags
 
