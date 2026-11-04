@@ -213,9 +213,9 @@ running ([Resume](#3-upload-the-corpus-and-start-an-ingestion-run)).
 - **What is re-run.** Only a task whose stopped-task record names the Spot
   interruption (stop code `SpotInterruption`, reason `Your Spot Task was
   interrupted.`), at most `spot_interruption_retries` times per execution.
-  Every other failure, and an interruption past the last re-run, publishes
-  the failure notification as before. An empty `pipeline_id` is not re-run:
-  the CLI would start a new pipeline.
+  Every other failure, and an interruption past the last re-run, is not
+  re-run and publishes the failure notification. An empty `pipeline_id` is
+  not re-run: the CLI would start a new pipeline.
 - **The wait.** Each re-run starts `spot_retry_wait_seconds` after the
   interruption. A task killed before it gave its lease up holds it until
   the lease expires, up to `indexing.lease_seconds` later, and a re-run

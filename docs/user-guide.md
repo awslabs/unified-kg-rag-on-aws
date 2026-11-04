@@ -888,9 +888,7 @@ translation stage is skipped at no cost, even with `enabled: true`.
   ```
 
   Switching the unit re-chunks the corpus and re-extracts its documents (an
-  incremental run re-extracts every document of the scope); the default
-  `chars` keeps the chunks, and so the ids, of releases before
-  `length_unit`.
+  incremental run re-extracts every document of the scope).
 - **The analyzer must exist on the cluster**, or the indexing stage fails
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the
@@ -979,7 +977,7 @@ are:
 search:
   answer_prompt_style: {drift: comprehensive}   # global stays comprehensive
   query_timeout_seconds: 300                    # see below
-# answer_prompt_style: {global: concise}        # the default before
+# answer_prompt_style: {global: concise}        # concise global answers
 ```
 
 Why. On 50 sensemaking questions over a 3,318-document MuSiQue corpus,
@@ -1007,7 +1005,7 @@ same 50 questions the cap cut the cost of a global query by 41% ($0.1016 ->
 $0.0597) against no cap, and the three judges could not tell the answers
 apart (position consistency 0.43-0.57; only Opus 5.5's empowerment, 0.41
 [0.33, 0.48], left 0.5, and the other two judges did not replicate it); the
-answer keeps its sources. `null` (the default before) keeps as much as the
+answer keeps its sources. `null` (no cap) keeps as much as the
 context budget holds, which on a large cut is most of a global query's input
 tokens; `0` (-49% cost, also no measured difference) sends the key points only, as MS GraphRAG's reduce step reads
 them, and the answer then reports no sources (the key points are model
@@ -1125,9 +1123,7 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
   through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
   claim dates are keywords, a date-like value too, so a range on them
-  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly (on an
-  index built before #446, an `attr_*` field already mapped as a date stays
-  one until a rebuild with `indexing.reset: true`). A claim
+  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly. A claim
   date that reads as a calendar date (`2024-01-15`, `2024-1-5`,
   `January 15th, 2024`, `Sept. 3, 2024`) is stored as `YYYY-MM-DD`, and a
   coarser period as its first day in `start_date` and as its last day in
@@ -1188,19 +1184,10 @@ steps on Neptune. Each store accepts the fields its indexer writes:
   claims and community reports carry the filter values of their text units'
   documents, so each matches when one of them does. A vector or hybrid search
   skips an index none of whose documents carry the attribute (OpenSearch 2.13
-  rejects a kNN filter on a field the index does not map). An index built
-  before relationships and claims carried their documents' filters returns
-  none of them under an attribute filter until it is rebuilt
-  (`indexing.reset: true`).
+  rejects a kNN filter on a field the index does not map).
 - A document's removal clears its filter values from the entities,
   relationships and claims that outlive it: a key no remaining document
-  gives is stored as null, which matches no filter. An index that saw
-  removals before this was fixed (#370) keeps the removed documents' values
-  on items not rewritten since, so its filters still match them, until it
-  is rebuilt (`indexing.reset: true`). An index an incremental run wrote
-  after that fix but before #376, with a removal that pruned a community,
-  lost the document filters of the text units it kept, which then match no
-  filter: rebuild it too.
+  gives is stored as null, which matches no filter.
 - `attr_<key>` and `attributes.filters.<key>` name document attributes. A
   graph store holds none, so graph expansion keeps an expanded entity (the
   seeds aside) only when its entities-index document, which carries the
@@ -1374,8 +1361,8 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
   in the build record, and the `community_growth_ratio` and
   `runs_since_clustering` metrics
   ([Operator Runbook: Incremental runs](./operations.md#incremental-runs)).
-  An index built by an earlier version starts counting at its next full
-  build.
+  A suffix whose build record holds no counters starts counting at its next
+  full build.
 
 ### Deletion scope
 
@@ -1465,13 +1452,14 @@ See [Operator Runbook: Failed documents](./operations.md#failed-documents).
 
 A document whose processing kills the task (out of memory, a crashing parser)
 would stop every later run the same way. After
-`indexing.max_document_attempts` (default `3`) runs in a row that died
-processing it alone, the next run removes what the attempts wrote, records it
-`QUARANTINED`, logs a WARNING naming the file and indexes the rest; it is
-skipped until its file changes or the limit is raised.
+`indexing.max_document_attempts` (default `3`) runs in a row died processing
+its unchanged content, the last of them with the document alone, the next run
+removes what the attempts wrote, records it `QUARANTINED`, logs a WARNING
+naming the file and indexes the rest; it is skipped, by a reset too, until its
+file changes or the limit is raised.
 
-- Only deaths count: a run that finishes, fails or is stopped by SIGTERM
-  clears its in-progress mark, and a full rebuild counts no attempt.
+- Only deaths count: a run that finishes, fails or is stopped (SIGTERM,
+  Ctrl-C) clears its in-progress mark, and a full rebuild counts no attempt.
 - When runs died processing several documents, the next runs halve the
   suspects until the culprit is alone, deferring the other new and changed
   documents meanwhile (`total_documents_deferred`).
@@ -1852,9 +1840,9 @@ adds `evaluation_comparison_<timestamp>.json`:
   its first attempt's start to its last one's end (`failed_answers` counts
   them; a warning says so). A strategy is then not cheaper or faster for
   failing, though a fast failure does cost less: read the cost next to
-  `failed_answers` and the failure warning. Results saved without a usage
-  record or a latency for some answers (by an earlier version) are counted
-  in `answers_without_usage` / `answers_without_latency` and warned about,
+  `failed_answers` and the failure warning. Saved answers without a usage
+  record or a latency are counted in `answers_without_usage` /
+  `answers_without_latency` and warned about,
   and a `--fail-if` on a `usage/*` or `latency/*` measure fails for them.
   The arms and repeats of one run share the chain's query extraction cache,
   so a later one that reuses an extraction pays no call for it (counted in
@@ -2362,8 +2350,8 @@ relationships, in the graph and the vector stores:
 - An entity named only as a relationship endpoint has no type and is off
   schema when entity types are declared, under `strict` too.
 - A field that does not apply is not written at all, so a config without
-  relationship types or IRIs (the default included) stores exactly what it
-  stored before these fields existed. Ids never change because of them.
+  relationship types or IRIs (the default included) stores its items
+  without these fields. Ids never change because of them.
 
 **Filters.** The fields are filter keys on the entities and relationships
 indices and on Neptune entity vertices (graph expansion), like any other
@@ -2378,8 +2366,8 @@ RAGInput(query="...", search_strategy="mix",
 The first returns only off-schema entities (and, with `mix`, `hybrid`,
 `local` or `drift`, off-schema relationships): the review list of what
 `align` kept outside the schema. An item stored without the field matches
-no value of it, and so does an index built before the field existed (until
-an ingestion run maps it; no query fails for it).
+no value of it, and so does an index that does not map the field yet (the
+next ingestion run maps it; no query fails for it).
 
 A filter on a field the configured schema writes on no item is refused
 before any model call (`InvalidFilterError`), as it could only empty the
@@ -2410,7 +2398,7 @@ whether the model sees the change:
   rewrite runs once per namespace, whichever scope's run finds the
   schema changed (a schema reverted on one scope after another scope's run
   is rewritten too), and a new scope of an annotated namespace reads
-  nothing. A namespace recorded before this record existed is read once.
+  nothing. A namespace without this record is read once.
   The stores are read in bounded pages. A rewrite that does not finish (a
   killed run, a failed write, a store that cannot be read) warns, leaves
   the run going, and is made again by the next run, under any schema. A
@@ -2517,7 +2505,7 @@ the load, so a typo does not silently select nothing.
 | `label_case` | `upper_snake` | `upper_snake` (`supplyChain` → `SUPPLY_CHAIN`, `공급 업체` → `공급_업체`) or `preserve` (as written, punctuation made spaces) |
 | `languages` | `[en, ""]` | Preferred language tags of labels and descriptions, in order (`""`: untagged; `en` also matches `en-US`, after an exact `en`); any other tag comes after them |
 | `labels` | `{}` | IRI or CURIE → the label to use, as written |
-| `on_collision` | `error` | Two terms of one kind with one label: fail, or `qualify`: suffix each with its namespace's prefix (`BANK_EX`, `BANK_GEO`): one `prefixes` binds, else a well-known one, else one the files bind, else a short hash of the namespace. Pin the colliding namespaces in `prefixes` (see *What a change re-runs*) |
+| `on_collision` | `error` | Two terms of one kind with one label: fail, or `qualify`: suffix each with its namespace's prefix (`BANK_EX`, `BANK_GEO`): one `prefixes` binds, else a well-known one, else one the files bind, else a short hash of the namespace. Pin the colliding namespaces in `prefixes` (see [*What a change re-runs*](#ontology-what-a-change-re-runs)) |
 | `description_properties` | `[skos:definition, rdfs:comment]` | Annotation properties a description is read from, the first in the preferred language. Another property named here must be a property of the ontology or a literal annotation of one of its terms, or the load fails |
 | `max_description_chars` | `300` | Longer descriptions are cut at a word boundary with "…" (`0`: no description from the ontology) |
 | `hierarchy_hints` | `true` | Append "Kind of X.", "Narrower than P." and "Inverse of Q." to the descriptions |
@@ -2526,7 +2514,7 @@ the load, so a typo does not silently select nothing.
 | `max_relationship_types` | `64` | Fail when more properties are mapped |
 | `max_patterns` | `256` | Fail when more patterns result |
 | `format` | `auto` | `auto` (by suffix), `turtle`, `xml`, `json-ld`, `nt`, `nquads` or `trig` |
-| `max_bytes` | `67108864` (64 MiB) | Fail when the files hold more bytes together (see *Load cost*) |
+| `max_bytes` | `67108864` (64 MiB) | Fail when the files hold more bytes together (see [*Load cost*](#ontology-load-cost)) |
 
 **What is read.** Only named terms of the files' statements:
 
@@ -2688,7 +2676,7 @@ Narrow with `namespaces`, `classes`, `max_depth` and the `exclude_*`
 options, set `patterns: none` (types only; `strict` then checks types but
 no pattern), or raise the cap knowing the prompt grows.
 
-**Load cost.** The files are parsed into memory once per process, at
+<a id="ontology-load-cost"></a>**Load cost.** The files are parsed into memory once per process, at
 start-up (`run-rag`: at the first filtered query), and the mapping then
 runs in time and memory about linear in the ontology's size, however deep
 its hierarchy. Parsing dominates: a 14 MB Turtle file of 110,000 classes
@@ -2728,7 +2716,7 @@ maps the example to `사람`, `조직`, `공급업체`, `구매자` and `거래�
 - Descriptions follow `languages` too (here the English comment, the only
   one). The hierarchy hints are always English: "Kind of 조직."
 
-**What a change re-runs.** The mapped schema is keyed, not the files, so
+<a id="ontology-what-a-change-re-runs"></a>**What a change re-runs.** The mapped schema is keyed, not the files, so
 an incremental run reacts to what the mapping yields
 ([Changing the schema](#c-extraction-schema)):
 
@@ -2793,7 +2781,7 @@ load warns `N terms have IRIs relative to their file`.
   fail the load too. A parse error names the line and what is wrong,
   never the file's text.
 
-**Preview.** What extraction will use, with no model call:
+<a id="ontology-preview"></a>**Preview.** What extraction will use, with no model call:
 
 ```python
 import yaml
@@ -2852,7 +2840,7 @@ Use one when the documents name entities a curated source already
 describes and answers should use its descriptions, properties and IRIs,
 or when the graph needs edges the text does not state (an org chart, who
 supplies whom) for local search and graph expansion to walk. It does not
-override the documents (*Precedence*, below), and it brings instances, not
+override the documents ([*Precedence*](#seed-precedence), below), and it brings instances, not
 types: the vocabulary of types is the extraction schema (C).
 
 **Configure.** Seeds are declared under `processing.seed_graphs`, a list:
@@ -2884,7 +2872,7 @@ processing:
 | `options` | `{}` | Settings of the kind (below). An unknown option fails the import |
 | `secret_arn` | `null` | A Secrets Manager secret a registered service source reads; `jsonl`, `csv` and `rdf` refuse one |
 | `filters` | `{}` | Document filters of the seed's items, as a document's metadata filters (string, number or boolean values). `seed_graph: <name>` is always added, so the key `seed_graph` is reserved |
-| `on_name_collision` | `error` | Two nodes of the seed that are one entity by name: `error`, `merge` or `qualify` (*Precedence*) |
+| `on_name_collision` | `error` | Two nodes of the seed that are one entity by name: `error`, `merge` or `qualify` ([*Precedence*](#seed-precedence)) |
 | `description_properties` | `[]` | Property keys written as `key: value` lines after the description, so answers can use them |
 | `confidence` | `1.0` | Confidence of the seed's statements; a node's own `confidence` wins |
 | `shards` | `16` (1 to 1,024) | Virtual documents the seed is split into, by a stable hash of each node's id |
@@ -2919,7 +2907,7 @@ processing:
   need no seed kind's extra: a query image answers over an index an `rdf`
   seed was imported into without the `ontology` extra.
 - The corpus may be empty when seeds are configured: an empty
-  `--source-directory` is a seed-only run (*Lifecycle*) for a source scope
+  `--source-directory` is a seed-only run ([*Lifecycle*](#seed-lifecycle)) for a source scope
   the registry holds no documents of (a new one, or a seed-only scope).
   For a scope with documents (under any spelling of it: `s3://bkt/corpus`
   and `s3://bkt/corpus/` are one scope) an empty corpus is far likelier a
@@ -2927,7 +2915,7 @@ processing:
   fails at `document_loading` before it writes (`No source document
   reached this run, only its seed graphs, but the doc-status registry
   holds 2 documents of source scope ...`, exit 1) rather than delete them.
-  With the registry off, see *Lifecycle*.
+  With the registry off, see [*Lifecycle*](#seed-lifecycle).
 - **On AWS** the seed files must be in the image next to the config, or in
   S3 where the ingestion task role reads
   ([Operator Runbook: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3)).
@@ -3111,7 +3099,7 @@ its own type; under `merge`, as the one entity, as a full build sees it:
   counter names extraction uses. Seed items get `in_schema`, `type_iri`
   and `predicate_iri` like extracted ones; `iri` is the node's own IRI.
 
-**Precedence: documents decide.** A seed node and a document mention whose
+<a id="seed-precedence"></a>**Precedence: documents decide.** A seed node and a document mention whose
 names are one entity (equal after normalization, or a legal-form variant,
 as extraction merges names) become one entity:
 
@@ -3166,7 +3154,7 @@ reach those strategies through the communities documents also state.
    "iri": "https://example.org/procure#acme"}
   ```
 
-  A source no seed states is reported as before, with no `provenance` key.
+  A source no seed states has no `provenance` key.
   `local` (and `drift` and `auto`, which run it) reports the graph's copy
   of an entity the entities index matched, which takes that hit's document
   filters and so names its seed graphs; an entity reached only by a graph
@@ -3215,7 +3203,7 @@ RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procur
 A resumed run whose seed changed since the crash recomputes its stages:
 the seeds' content is part of every stage's cache key.
 
-**Lifecycle.** Seeds need the doc-status registry
+<a id="seed-lifecycle"></a>**Lifecycle.** Seeds need the doc-status registry
 (`providers.doc_status.enabled`) for these; without it every run is a full
 build of the corpus and the configured seeds, and nothing tells an empty
 corpus from a missing one. So with the registry off, an empty corpus
@@ -3262,7 +3250,7 @@ items.
   (`Seed graph 'procure' is already imported by source scope(s) ...`): a
   moved or mistyped source directory looks the same.
 
-**Cost and limits.**
+<a id="seed-cost-and-limits"></a>**Cost and limits.**
 
 - No extraction call (extraction, gleaning, claims, translation) reads
   a seed's text units, but seed descriptions do reach a model in three
@@ -3331,7 +3319,7 @@ Every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
-A run stopped with `130` or `143` ends its process at once: model calls in flight are abandoned rather than waited for, the logs, tracing and stdout are flushed first, and a process pool's workers are ended with it. A SIGTERM or Ctrl-C cancels a query CLI's work at its next await, so its cleanup (closing store connections, `run-eval`'s upload) runs (at the interactive prompt a SIGTERM ends the session at once and a Ctrl-C the conversation, as before); a query CLI stopped by a SIGTERM, or by a Ctrl-C while its event loop runs, that is still running 100 seconds later is ended then (inside the 120 s StopTimeout of the app container), with the status document if none was printed, and a second signal ends it at once. `run-ingestion` stops at a SIGTERM or Ctrl-C after the checkpoint or metadata write in progress instead, bounded by the StopTimeout. A CLI that finished ends its process with its exit code as soon as its exit handlers ran, so a signal while it exits cannot turn `0`, `1` or `2` into `-15` or `-2`.
+A run stopped with `130` or `143` ends its process at once: model calls in flight are abandoned rather than waited for, the logs, tracing and stdout are flushed first, and a process pool's workers are ended with it. A SIGTERM or Ctrl-C cancels a query CLI's work at its next await, so its cleanup (closing store connections, `run-eval`'s upload) runs (at the interactive prompt a SIGTERM ends the session at once and a Ctrl-C the conversation); a query CLI stopped by a SIGTERM, or by a Ctrl-C while its event loop runs, that is still running 100 seconds later is ended then (inside the 120 s StopTimeout of the app container), with the status document if none was printed, and a second signal ends it at once. `run-ingestion` stops at a SIGTERM or Ctrl-C after the checkpoint or metadata write in progress instead, bounded by the StopTimeout. A CLI that finished ends its process with its exit code as soon as its exit handlers ran, so a signal while it exits cannot turn `0`, `1` or `2` into `-15` or `-2`.
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
 
@@ -3560,17 +3548,17 @@ closes it.
   instead of re-clustering, and stored communities and reports keep an
   entity's old id after it took its current name's; a full rebuild
   (`indexing.reset: true`) refreshes both. With DynamoDB one document's chunk
-  ids must fit one 400 KB item (*Document size limit*).
+  ids must fit one 400 KB item ([*Document size limit*](#document-size-limit)).
 - **Concurrent runs need the registry**, whose write lease stops a second run
   on a namespace; without it (or through the direct `IncrementalIndexer` API)
   nothing locks, and two ingestions on one suffix can delete each other's
   index ([Concurrent runs](./operations.md#concurrent-runs)).
-- **Isolating a document that kills the task takes runs** (*Quarantined
-  documents*): about `log2(n) + 1` for one culprit among `n` documents that
+- **Isolating a document that kills the task takes runs**
+  ([*Quarantined documents*](#quarantined-documents)): about `log2(n) + 1` for one culprit among `n` documents that
   died together, while the deferred ones wait.
 - **Markdown and HTML** need the `unstructured` extra, which
   the container image leaves out by default.
-- **Seed graphs link by name only** (*Precedence*,
+- **Seed graphs link by name only** ([*Precedence*](#seed-precedence),
   [§9 D](#d-seed-graphs-bring-your-own-knowledge-graph)): a seed node and an
   unrelated document entity of the same name are one entity. IRIs are
   stored and filterable but are no identity, `owl:sameAs` is not followed,
