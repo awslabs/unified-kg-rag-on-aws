@@ -6,7 +6,7 @@ Ingestion turns a directory of documents into a knowledge graph in the graph
 and vector stores. `run-ingestion --source-directory <dir>` runs the 12 stages ([Design §4](../design.md#4-ingestion-pipeline) shows them),
 checkpoints each one, and resumes after the last valid stage when re-run with
 the same `--pipeline-id`. With the doc-status registry on it is incremental
-([Incremental indexing](../user-guide.md#5-incremental-indexing)).
+([Incremental indexing](./incremental.md)).
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-ingestion).
 Which indexes a run writes, and which documents it may delete, follow from its

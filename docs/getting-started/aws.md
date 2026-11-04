@@ -167,7 +167,7 @@ uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix -
 - [Ingestion](../guides/ingest.md) and [Querying](../guides/query.md):
   stages, resume and rebuild, filters; which strategy to use is in
   [Retrieval](../concepts/retrieval.md).
-- [Incremental indexing](../user-guide.md#5-incremental-indexing): re-index
+- [Incremental indexing](../guides/incremental.md): re-index
   only new and changed documents.
 - [`iac/README.md`](../../iac/README.md#quick-start): deploy the whole stack
   with AWS CDK instead.

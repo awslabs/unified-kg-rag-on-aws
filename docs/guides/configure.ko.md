@@ -47,7 +47,7 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 |---|---|---|
 | `aws.region_name` | `"us-west-2"` | 저장소가 다른 리전에 있을 때(`aws.bedrock.region_name`이 없으면 Bedrock도 따름) |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | AWS에서는 항상(CDK 스택이 주입함) |
-| `providers.doc_status.enabled` | `false` | [증분 인덱싱](../user-guide.ko.md#5-증분-인덱싱) |
+| `providers.doc_status.enabled` | `false` | [증분 인덱싱](../guides/incremental.ko.md) |
 | `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델([참고 사항](../reference/models.md#model-selection-notes)) |
 | `processing.max_concurrency` | `40` | `ThrottlingException` 재시도가 보이면 낮추고, 할당량이 허용하면 높임 |
 | `processing.graph_extraction.entity_types` | 일반 유형 7개 | [도메인 적응](../user-guide.ko.md#9-도메인-적응) |

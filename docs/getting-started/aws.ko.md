@@ -157,5 +157,5 @@ uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix -
   변수, 로그에 남는 내용.
 - [수집](../guides/ingest.ko.md)과 [질의](../guides/query.ko.md): 단계, 재개와 재구축,
   필터. 어떤 전략을 쓸지는 [검색](../concepts/retrieval.ko.md)에 있습니다.
-- [증분 인덱싱](../user-guide.ko.md#5-증분-인덱싱): 새 문서와 바뀐 문서만 다시 인덱싱.
+- [증분 인덱싱](../guides/incremental.ko.md): 새 문서와 바뀐 문서만 다시 인덱싱.
 - [`iac/README.md`](../../iac/README.md#quick-start)(영문): AWS CDK로 스택 전체를 배포.

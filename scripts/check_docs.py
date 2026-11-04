@@ -43,6 +43,7 @@ TRANSLATED_PAGES = [
     "docs/guides/ingest",
     "docs/guides/multilingual",
     "docs/guides/query",
+    "docs/guides/incremental",
     "docs/user-guide",
 ]
 

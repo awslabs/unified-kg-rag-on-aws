@@ -850,6 +850,7 @@ by content hash and processes only new, changed and failed documents. The
 registry lists each document's text units, and removal asks the stores what
 cites them. A write-ahead protocol lets the next run repair any
 interruption, and the result converges to a full build of the current corpus.
+How to use it: [Incremental indexing](./guides/incremental.md).
 
 ![Incremental indexing](../assets/incremental-indexing.drawio.png)
 
