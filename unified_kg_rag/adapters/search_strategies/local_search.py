@@ -59,25 +59,46 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
         # MS GraphRAG local search builds context from entities + the community
         # reports those entities belong to + in-network relationships + text
-        # units (+ claims). The community-report, relationship and claim
-        # sections are queried from the entity focus alone, so they run
-        # concurrently with the entity -> graph -> text-unit chain below
-        # instead of waiting for it; the first error cancels the others.
-        reports_task, relationships_task, claims_task = (
+        # units (+ claims). The relationship and claim sections (and the
+        # reports most similar to the query) are queried from the entity
+        # focus alone, so they run concurrently with the entity -> graph ->
+        # text-unit chain below instead of waiting for it; the first error
+        # cancels the others. The reports of the expanded entities'
+        # communities (``report_selection: membership``) come with the chain.
+        by_membership = self._reports_by_membership()
+        relationships_task, claims_task = (
             asyncio.ensure_future(section)
             for section in (
-                self._retrieve_community_reports(query),
                 self._retrieve_relationships(query),
                 self._retrieve_claims(query),
             )
         )
+        reports_task = (
+            None
+            if by_membership
+            else asyncio.ensure_future(self._retrieve_community_reports(query))
+        )
         chain_task = asyncio.ensure_future(self._retrieve_entity_chain(query))
-        tasks = [reports_task, relationships_task, claims_task, chain_task]
+        tasks: list[asyncio.Future[Any]] = [
+            relationships_task,
+            claims_task,
+            chain_task,
+        ]
+        if reports_task is not None:
+            tasks.append(reports_task)
         await gather_or_cancel(tasks)
         all_results, chain_stats = chain_task.result()
-        community_reports = reports_task.result()
         relationships = relationships_task.result()
         claims = claims_task.result()
+        member_reports = all_results.pop(self._MEMBER_REPORTS, None)
+        if reports_task is not None:
+            community_reports = reports_task.result()
+        elif member_reports is not None:
+            community_reports = member_reports
+        else:
+            # No expanded entity names a community: the similar reports.
+            by_membership = False
+            community_reports = await self._retrieve_community_reports(query)
 
         # The community-report and relationship sections give a local query the
         # higher-level community synthesis and the relationship descriptions,
@@ -126,6 +147,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 "candidate_entity_count": chain_stats["candidate_entity_count"],
                 "expanded_entity_count": chain_stats["expanded_entity_count"],
                 "text_unit_count": chain_stats["text_unit_count"],
+                "report_selection": "membership" if by_membership else "similarity",
                 "rerank": rerank.summary(),
             },
         )
@@ -196,14 +218,24 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 chosen, query.suffix, filters=query.filters
             )
 
-        # Both lookups depend only on the expansion, so they run together.
+        # The lookups depend only on the expansion, so they run together.
         text_units_task = asyncio.ensure_future(text_units_of_quota())
         bridges_task = asyncio.ensure_future(
             self._retrieve_bridge_relationships(
                 query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
             )
         )
-        await gather_or_cancel([text_units_task, bridges_task])
+        reports_task = (
+            asyncio.ensure_future(
+                self._retrieve_member_reports(query, filtered_entity_nodes)
+            )
+            if self._reports_by_membership()
+            else None
+        )
+        tasks: list[asyncio.Future[Any]] = [text_units_task, bridges_task]
+        if reports_task is not None:
+            tasks.append(reports_task)
+        await gather_or_cancel(tasks)
         text_units, bridge_relationships = (
             text_units_task.result(),
             bridges_task.result(),
@@ -211,6 +243,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         all_results = {"graph_entities": filtered_entity_nodes, **text_units}
         if bridge_relationships:
             all_results["bridge_relationships"] = bridge_relationships
+        if reports_task is not None and (member := reports_task.result()) is not None:
+            all_results[self._MEMBER_REPORTS] = member
         stats = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
@@ -463,6 +497,95 @@ class LocalSearchStrategy(BaseSearchStrategy):
         return await self._safe_aretrieve(
             self.document_retriever, search_query, "Community reports retrieval"
         )
+
+    # The entity chain's key for the member reports (``asearch`` pops it).
+    _MEMBER_REPORTS: ClassVar[str] = "member_community_reports"
+
+    def _reports_by_membership(self) -> bool:
+        return self.config.search.local_search.report_selection == "membership"
+
+    async def _retrieve_member_reports(
+        self, query: SearchQuery, entity_nodes: list[RetrievalResult]
+    ) -> list[RetrievalResult] | None:
+        """The reports of the communities ``entity_nodes`` belong to (MS
+        GraphRAG local, ``mixed_context._build_community_context``): most
+        matched entities first, then by report rank, cut to the report quota.
+
+        An entity names its level-0 communities (``community_ids``, which the
+        graph stores and the expansion projects). A community without a
+        report (a seed graph's alone has none) adds nothing. ``None`` when no
+        entity names a community (the entities index holds no
+        ``community_ids``, so a walk under a document filter or the entity
+        hits a failed expansion leaves behind have none), when a
+        ``source_kinds`` filter reads no report, or under a range on
+        ``community_id``: the caller reads the similar reports then.
+        """
+        if not self.document_retriever or self._source_kinds_skip_reports(query):
+            return None
+        matches = self.community_matches(entity_nodes)
+        if not matches or isinstance((query.filters or {}).get("community_id"), dict):
+            return None
+        reports = await self._fetch_by_ids(
+            self.document_retriever,
+            SearchQuery(
+                query="",
+                search_type=SearchType.LEXICAL,
+                top_k=len(matches),
+                index_prefixes=[
+                    self.config.indexing.opensearch.community_reports_index_prefix
+                ],
+                suffix=query.suffix,
+                filters=self._scoped_filters(query, community_id=list(matches)),
+            ),
+            "Member community reports",
+            key="community_id",
+        )
+        quota = self._per_type_quota(query.top_k)[SectionType.COMMUNITY.value]
+        return self.rank_member_reports(reports, matches)[:quota]
+
+    @staticmethod
+    def community_matches(entity_nodes: list[RetrievalResult]) -> dict[str, int]:
+        """Each community's count of ``entity_nodes`` that name it in their
+        ``community_ids`` (a graph store unwraps one id to a str)."""
+        matches: dict[str, int] = {}
+        for node in entity_nodes:
+            ids = (node.metadata or {}).get("community_ids") or []
+            if isinstance(ids, str):
+                ids = [ids]
+            if not isinstance(ids, list):
+                continue
+            for community_id in dict.fromkeys(str(i) for i in ids):
+                matches[community_id] = matches.get(community_id, 0) + 1
+        return matches
+
+    @staticmethod
+    def rank_member_reports(
+        reports: list[RetrievalResult], matches: dict[str, int]
+    ) -> list[RetrievalResult]:
+        """``reports`` of the ``matches`` communities, each once, by matched
+        entities, then rank (then community id, for a stable order), scored
+        in that order so fusion keeps it (a fetch by id scores nothing)."""
+
+        def community(report: RetrievalResult) -> str:
+            return str((report.metadata or {}).get("community_id") or "")
+
+        def rank(report: RetrievalResult) -> float:
+            value = (report.metadata or {}).get("rank")
+            return float(value) if isinstance(value, int | float) else 0.0
+
+        unique: dict[str, RetrievalResult] = {}
+        for report in reports:
+            if community(report) in matches:
+                unique.setdefault(community(report), report)
+        ordered = sorted(
+            unique.values(),
+            key=lambda r: (-matches[community(r)], -rank(r), community(r)),
+        )
+        total = len(ordered)
+        return [
+            report.model_copy(update={"score": (total - position) / total})
+            for position, report in enumerate(ordered)
+        ]
 
     async def _retrieve_relationships(
         self, query: SearchQuery

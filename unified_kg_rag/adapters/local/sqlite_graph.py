@@ -87,6 +87,7 @@ _NODE_KEYS = (
     "description",
     "rank",
     "text_unit_ids",
+    "community_ids",
     "iri",
     "source_kinds",
 )

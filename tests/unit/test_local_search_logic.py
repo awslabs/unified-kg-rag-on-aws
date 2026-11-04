@@ -55,7 +55,9 @@ def _bare_strategy(
         ),
         search=SimpleNamespace(
             local_search=SimpleNamespace(
-                entity_frequency_threshold=20, seed_score_ratio=0.6
+                entity_frequency_threshold=20,
+                seed_score_ratio=0.6,
+                report_selection="similarity",
             ),
             hybrid=SimpleNamespace(lexical_weight=0.5, vector_weight=0.5),
             max_concurrency=4,

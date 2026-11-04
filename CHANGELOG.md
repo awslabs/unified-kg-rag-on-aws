@@ -959,6 +959,16 @@ From 0.2.3 (or a `main` checkout since):
   the key points only; the `retrieval` evaluator then skips a global
   query's rank metrics, `no_sources_by_config`, instead of scoring a miss)
   (#525, #530).
+- `search.local_search.report_selection: membership` gives `local` (and
+  each DRIFT follow-up) MS GraphRAG local's community reports: those of
+  the level-0 communities the expanded entities belong to, most matched
+  entities first, then by report rank, read off the graph (graph expansion
+  now projects an entity's `community_ids`). When no expanded entity names
+  a community (under a document filter, or after a failed expansion) the
+  similar reports are used. `similarity`, the default, keeps the current
+  reports: offline the membership reports cost 5% fewer tokens, a
+  difference too small to change the default without a real-model run
+  (#535).
 - Always-on LLM usage accounting, tracing or not: model calls, input and
   output tokens and cache hits (the LLM response cache and the query
   extraction cache) per model role and model id, in
