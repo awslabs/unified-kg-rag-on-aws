@@ -1353,7 +1353,9 @@ class DocumentParsingConfig(BaseModel):
             "treats registry documents of its own index suffix AND source scope "
             "as deleted. None = the resolved source directory. Set it when the "
             "local directory is a staging copy, e.g. the S3 URI a container "
-            "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE)."
+            "syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). "
+            "Document and text-unit ids derive from it, so set it for ids that "
+            "are reproducible across paths and machines."
         ),
     )
 

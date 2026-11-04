@@ -568,6 +568,11 @@ From 0.2.3 (or a `main` checkout since):
     `lightrag_relation_chunks`, 1.0 unless set. Set it as well (usually to
     the same value) to keep weighting every LightRAG graph chunk: mix and
     hybrid recall is sensitive to it (#521, #530).
+11. From a `main` checkout: stored communities keep their positional names
+    (`Level 0 Community 3`) until the next reset, which renames them and,
+    as their report answers were stored under the old names, asks every
+    report once more. No setting changes; later resets reuse the answers
+    (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1235,6 +1240,15 @@ From 0.2.3 (or a `main` checkout since):
   runs clustered otherwise, and one description no run had summarized),
   and a reset with another community resolution 3 instead of 24. A reused
   answer counts as a cache hit. `--force-rebuild` asks again (#537).
+  Community names derive from the content id (`Level 0 Community
+  1a2b3c4d`, short id `L0_C1a2b3c4d`) instead of the rank in the sorted
+  partition (`Level 0 Community 3`): the name is part of the report's
+  record key and of its parent's roll-up text, so a document that added a
+  community renamed every community sorted after it and the next reset
+  asked their reports again. With 8 stored communities and one disjoint
+  document added, the reset asks 1 report instead of 3 or 4. Names no
+  longer collide between a delta run's communities and the stored ones
+  either (#PR).
 - Defaults from a real-model evaluation (MuSiQue, 200 questions over 3,318
   documents, a 50-question sensemaking set, two repeats, three pairwise
   judges; design §9.1). `global` answers with the comprehensive prompt: it
