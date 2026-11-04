@@ -223,13 +223,29 @@ run it with an operator role.
 3. Restore Neptune (`aws neptune restore-db-cluster-to-point-in-time`) and the
    table (`aws dynamodb restore-table-to-point-in-time`) to it. Both create
    new resources with default settings: add Neptune instances, re-enable PITR
-   and deletion protection.
+   and deletion protection. Restore the cluster into the stack's DB subnet
+   group and Neptune security group with IAM authentication on
+   (`--db-subnet-group-name`, `--vpc-security-group-ids`,
+   `--enable-iam-database-authentication`), or no task reaches it.
 4. Delete the domain's current indices, then restore the snapshot's indices
    and aliases (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
-5. Point the data plane at the restored cluster and table
-   (`UKR__AWS__NEPTUNE__ENDPOINT`, `UKR__AWS__DYNAMODB__TABLE_NAME`), and grant
-   the task role, the DynamoDB gateway-endpoint policy and the alarms on them
-   (they are scoped to the stack's own resources).
+5. Run against the restored cluster and table as one-off tasks. The stack
+   cannot be pointed at them: the task definitions take
+   `UKR__AWS__NEPTUNE__ENDPOINT` and `UKR__AWS__DYNAMODB__TABLE_NAME` from
+   the storage stack's own resources, the state machine overrides only the
+   source directory and the pipeline id, and setting `doc_status_table` to
+   the restored table's name makes CDK try to create a table of that name,
+   which fails. So start a task of the ingestion task definition
+   (`.States.Ingest.Parameters.TaskDefinition`) or the query task
+   definition with both variables as environment overrides (the task
+   override is in [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
+   The roles, the DynamoDB gateway-endpoint policy and the alarms are scoped
+   to the stack's resources, so first add, as policies of your own (a deploy
+   rewrites the stack's): Neptune data access on the restored cluster's
+   resource id and DynamoDB access on the restored table for the task role
+   (Neptune reads only for the query role), and the table in the endpoint
+   policy. The state machine and the alarms stay on the stack's resources;
+   to bring those back to the restore point, rebuild them as below.
 
 **Otherwise**, run one full rebuild with `indexing.reset: true`
 ([Re-ingest](#re-ingest)); restore the table first only if other namespaces
