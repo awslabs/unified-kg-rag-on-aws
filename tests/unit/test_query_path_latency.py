@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any
 
 import httpx
@@ -71,7 +71,9 @@ class _Chain(Runnable[dict[str, Any], Any]):
             if self.prompt_class is StrategySelectionPrompt and f.router_waits_for:
                 # Deadlocks (and times out) unless the extraction started
                 # before the router answered.
-                await asyncio.wait_for(f.started[f.router_waits_for].wait(), 2)
+                await asyncio.wait_for(f.started[f.router_waits_for].wait(), 30)
+            if (other := f.answers_after.get(self.prompt_class)) is not None:
+                await asyncio.wait_for(f.answered[other].wait(), 30)
             if self.prompt_class in f.hang:
                 await asyncio.Event().wait()
             await asyncio.sleep(f.latency.get(self.prompt_class, 0))
@@ -79,6 +81,7 @@ class _Chain(Runnable[dict[str, Any], Any]):
             f.cancelled.append(self.prompt_class)
             raise
         f.finished.append(self.prompt_class)
+        f.answered[self.prompt_class].set()
         output = f.outputs[self.prompt_class]
         if isinstance(output, Exception):
             raise output
@@ -104,6 +107,9 @@ class _Factory:
         self.cancelled: list[type] = []
         self.finished: list[type] = []
         self.router_waits_for: type | None = None
+        # A call that answers only once another has answered.
+        self.answers_after: dict[type, type] = {}
+        self.answered: defaultdict[type, asyncio.Event] = defaultdict(asyncio.Event)
 
     def get_chain(self, prompt_class: type, parser: Any, **kwargs: Any) -> _Chain:
         self.kwargs[prompt_class] = kwargs
@@ -202,7 +208,7 @@ async def test_an_unread_extraction_is_never_waited_for(
     leftovers: list[asyncio.Future[Any]] = []
     token = _LEFTOVER_EXTRACTIONS.set(leftovers)
     try:
-        state = await asyncio.wait_for(_route(_chain(_config(), factory)), 2)
+        state = await asyncio.wait_for(_route(_chain(_config(), factory)), 30)
     finally:
         _LEFTOVER_EXTRACTIONS.reset(token)
     assert state["resolved_strategy"] is SearchStrategy(route)
@@ -228,7 +234,7 @@ async def test_a_speculative_extraction_that_answers_fills_the_cache() -> None:
     # Routed to local, the keywords answer while the entities still run:
     # a later mix query on the question reuses them.
     factory = _Factory(route="local")
-    factory.latency[EntityExtractionPrompt] = 0.05
+    factory.answers_after[EntityExtractionPrompt] = KeywordsExtractionPrompt
     chain = _chain(_config(), factory)
     await _route(chain)
     assert factory.finished.count(KeywordsExtractionPrompt) == 1
@@ -244,7 +250,7 @@ async def test_a_router_failure_cancels_the_speculative_calls() -> None:
     chain = _chain(_config(), factory)
     chain.ignore_errors = False
     with pytest.raises(RuntimeError, match="router down"):
-        await asyncio.wait_for(_route(chain), 2)
+        await asyncio.wait_for(_route(chain), 30)
     assert set(factory.cancelled) == {EntityExtractionPrompt, KeywordsExtractionPrompt}
 
 
