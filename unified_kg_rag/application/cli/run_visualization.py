@@ -216,7 +216,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Render graph visualizations from exported data (no ingestion).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
-            "user-guide.md#7-visualization-run-visualization",
+            "guides/visualize.md#examples",
             "run-visualization --data-path visualization_data.json "
             "--output-directory ./viz",
         ),

@@ -79,7 +79,7 @@ uv run run-rag --backend local --search-strategy mix --query "How are Acme Robot
 
 작은 데이터셋을 만듭니다. `answer`는 `answer_match`가, `reference_sources`는
 `retrieval`이, `expected_entities`는 `graph_aware`가 씁니다
-([평가 데이터 형식](../user-guide.ko.md#평가-데이터-형식)).
+([평가 데이터 형식](../guides/evaluate.ko.md#평가-데이터-형식)).
 
 ```bash
 cat > sample-eval.json <<'EOF'
@@ -114,7 +114,7 @@ UKR__EVALUATION__ENABLED_EVALUATORS='["answer_match", "retrieval", "graph_aware"
 
 전략마다 결과, 보고서, 요약 파일과 `evaluation_comparison_<timestamp>.json`(`mix`의 지표를
 `local`과 짝지어 비교)이 `outputs/evaluation/`에 생깁니다. 지표의 뜻은
-[평가기](../user-guide.ko.md#평가기)와 [전략 비교](../user-guide.ko.md#전략-비교)에 있습니다.
+[평가기](../guides/evaluate.ko.md#평가기)와 [전략 비교](../guides/evaluate.ko.md#전략-비교)에 있습니다.
 질문 두 개로는 동작만 확인할 수 있으므로, 차이를 믿으려면 질문 수백 개로 측정하세요.
 
 ## 다음 단계

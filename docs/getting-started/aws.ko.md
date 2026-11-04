@@ -72,9 +72,9 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 extra가 없으면 해당 명령이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
 
 - **`eval`**: `run-eval`의 LangChain·RAGAS 심사 평가기(ragas, datasets, pandas,
-  langchain-openai). 둘 다 기본으로 켜져 있습니다([평가기](../user-guide.ko.md#평가기)). LLM을 쓰지 않는
+  langchain-openai). 둘 다 기본으로 켜져 있습니다([평가기](../guides/evaluate.ko.md#평가기)). LLM을 쓰지 않는
   평가기에는 extra가 필요 없습니다.
-- **`viz`**: `run-visualization`의 pyvis와 Bokeh([시각화](../user-guide.ko.md#7-시각화-run-visualization)).
+- **`viz`**: `run-visualization`의 pyvis와 Bokeh([Visualization](../guides/visualize.md), 영문).
 
 **Markdown과 HTML**을 파싱하려면 `unstructured` extra가 필요합니다
 (`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를

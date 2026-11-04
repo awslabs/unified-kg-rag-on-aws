@@ -40,7 +40,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
-            "user-guide.md#benchmarks-musique",
+            "guides/benchmarks.md#run-it",
             "prepare-benchmark musique --output-directory bench/musique --limit 100",
         ),
     )

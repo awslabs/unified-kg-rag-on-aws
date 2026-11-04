@@ -45,6 +45,7 @@ TRANSLATED_PAGES = [
     "docs/guides/query",
     "docs/guides/incremental",
     "docs/guides/domain-adaptation",
+    "docs/guides/evaluate",
     "docs/user-guide",
 ]
 

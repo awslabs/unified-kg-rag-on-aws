@@ -22,7 +22,7 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 - **Incremental indexing.** With the doc-status registry on (`providers.doc_status.enabled`), only new and changed documents are re-indexed and merged into the live graph; deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or an RDF A-Box) merge a graph you already have into the extracted one as virtual documents: documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
-- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges; `run-visualization` renders an exported graph.
+- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges ([Evaluation](./docs/guides/evaluate.md)); `run-visualization` renders an exported graph ([Visualization](./docs/guides/visualize.md)).
 - **Pluggable.** Storage and model backends sit behind ports, and strategies, renderers, parsers and providers register through registries ([extension guide](./docs/design.md#15-extension-guide)).
 
 ## Architecture
@@ -98,7 +98,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The [User Guide](./docs/user-guide.md) covers every CLI, the evaluation data format and the evaluators, the [CLI Reference](./docs/reference/cli.md) every flag, and the [Configuration Reference](./docs/reference/configuration.md) every configuration key.
+The [documentation hub](./docs/index.md) has a guide per CLI ([Evaluation](./docs/guides/evaluate.md) covers the evaluation data format and the evaluators), the [CLI Reference](./docs/reference/cli.md) every flag, and the [Configuration Reference](./docs/reference/configuration.md) every configuration key.
 
 ## Deploy on AWS (optional)
 
@@ -117,7 +117,7 @@ Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.m
 | **First-time evaluator** (no AWS) | [Getting started locally](./docs/getting-started/local.md), then the [Overview](./docs/concepts/overview.md) |
 | **Builder on AWS** | [Getting started on AWS](./docs/getting-started/aws.md) and the [User Guide](./docs/user-guide.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
 | **Operator** | The [Operator Runbook](./docs/operations.md) and [`iac/README.md`](./iac/README.md) |
-| **Evaluator or researcher** | [Evaluation](./docs/user-guide.md#6-evaluation-run-eval), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
+| **Evaluator or researcher** | [Evaluation](./docs/guides/evaluate.md), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
 | **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |
 | **Contributor** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 

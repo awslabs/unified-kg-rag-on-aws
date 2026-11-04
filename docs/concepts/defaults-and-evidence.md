@@ -4,7 +4,7 @@ Several defaults were set, or kept, from real-model measurements rather than
 by analogy with the papers. This page is the one place that holds those
 numbers: how they were measured, what each one showed, what it cost, and how
 to run the same comparison on your own corpus. The pages that explain a
-setting ([User Guide](../user-guide.md), [Operator Runbook](../operations.md),
+setting (the [guides](../index.md#page-map), [Operator Runbook](../operations.md),
 [Design Doc](../design.md)) link here for the evidence.
 
 Every interval below is a 95% paired bootstrap interval over questions, and
@@ -60,7 +60,7 @@ pricing before you reuse a dollar figure.
 
 An in-Region inference profile lists Sonnet 5.5 about 10% higher. To price
 your own runs, give `run-eval` your prices (`evaluation.prices`,
-[Comparing strategies](../user-guide.md#comparing-strategies)): the package
+[Evaluation: Comparing strategies](../guides/evaluate.md#comparing-strategies)): the package
 ships no price table, because one would go stale.
 
 ## Measured defaults at a glance
@@ -237,10 +237,23 @@ your own file with the
 [ontology preview](../guides/ontology.md#preview) or the
 [seed preview](../guides/seed-graphs.md#preview) before you size a task.
 
+## Usage records against the bill
+
+A `run-eval` USD estimate prices the calls the usage records count
+([Evaluation: Comparing strategies](../guides/evaluate.md#comparing-strategies)):
+botocore's resent requests, failed calls and the warm-up queries are not in
+it. In the package's November 2026 benchmark runs Bedrock counted 13% more
+Sonnet 5.5 invocations than recorded calls while the tokens agreed within
+4.6% (input, cache included) and 0.9% (output), which points to resent and
+failed requests that spent few tokens; Haiku 5.5 agreed within 0.2%. Those
+runs predate the `request_retries` and `failed_calls` counters, so the split
+between the two was not measured. Reconciling the counters with CloudWatch:
+[Operator Runbook: Alarms](../operations.md#alarms) (model usage metrics).
+
 ## Reproducing a measurement
 
 The same tooling runs any of these comparisons on your corpus or on
-MuSiQue ([Benchmarks](../user-guide.md#benchmarks-musique)):
+MuSiQue ([Benchmarks](../guides/benchmarks.md)):
 
 ```bash
 # The benchmark corpus and dataset (downloaded at run time, never committed).
@@ -262,7 +275,7 @@ run-eval --data-path my_questions.json --suffix musique --search-strategy global
 `--baseline-results` pairs each strategy with the earlier run of the same
 strategy, `--from-results` rebuilds or re-judges a comparison from saved
 answers without a model call, and `--fail-if` turns a delta into a CI gate
-([Rebuilding, re-judging and gating a comparison](../user-guide.md#rebuilding-re-judging-and-gating-a-comparison)).
+([Rebuilding, re-judging and gating a comparison](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
 Run at least two repeats, and read a difference only when its interval
 excludes zero.
 

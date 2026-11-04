@@ -88,7 +88,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 
 GraphRAG Evaluation System - Assess retrieval and generation performance
 
-Guide: [User Guide](../user-guide.md#6-evaluation-run-eval). Also takes the [provider flags](#provider-flags).
+Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -116,7 +116,7 @@ Guide: [User Guide](../user-guide.md#6-evaluation-run-eval). Also takes the [pro
 
 Render graph visualizations from exported data (no ingestion).
 
-Guide: [User Guide](../user-guide.md#7-visualization-run-visualization). Also takes the [provider flags](#provider-flags).
+Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -148,7 +148,7 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 
 Prepare a public benchmark (MuSiQue answerable) as a corpus directory and a run-eval dataset
 
-Guide: [User Guide](../user-guide.md#benchmarks-musique).
+Guide: [Benchmarks](../guides/benchmarks.md).
 
 | Flag | Default | Description |
 |---|---|---|

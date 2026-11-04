@@ -22,7 +22,7 @@
 - **증분 인덱싱.** 문서 상태 레지스트리(`providers.doc_status.enabled`)를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다([증분 인덱싱](./docs/guides/incremental.ko.md)).
 - **가지고 있는 지식 그래프 가져오기.** 시드 그래프(JSONL, CSV, RDF A-Box)로 이미 가진 그래프를 가상 문서로 추출 그래프에 합칩니다. 문서가 기준이 되고, 시드는 설명, 속성, IRI, 에지를 더합니다([Seed graphs](./docs/guides/seed-graphs.md), 영문).
 - **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 지원합니다.
-- **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고([도메인 적응](./docs/guides/domain-adaptation.ko.md)), `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며, `run-visualization`은 내보낸 그래프를 렌더링합니다.
+- **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고([도메인 적응](./docs/guides/domain-adaptation.ko.md)), `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며([평가](./docs/guides/evaluate.ko.md)), `run-visualization`은 내보낸 그래프를 렌더링합니다([Visualization](./docs/guides/visualize.md), 영문).
 - **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 전략·렌더러·파서·공급자는 레지스트리로 등록합니다([확장 가이드](./docs/design.md#15-extension-guide)).
 
 ## 아키텍처
@@ -97,7 +97,7 @@ uv run run-visualization --data-path visualization_data.json --output-directory 
 uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-모든 CLI, 평가 데이터 형식과 평가기는 [사용자 가이드](./docs/user-guide.ko.md)에, 모든 플래그는 [CLI 레퍼런스](./docs/reference/cli.md)(영문)에, 모든 설정 키는 [설정 레퍼런스](./docs/reference/configuration.md)(영문)에 있습니다.
+CLI마다의 가이드는 [문서 안내](./docs/index.ko.md)에(평가 데이터 형식과 평가기는 [평가](./docs/guides/evaluate.ko.md)), 모든 플래그는 [CLI 레퍼런스](./docs/reference/cli.md)(영문)에, 모든 설정 키는 [설정 레퍼런스](./docs/reference/configuration.md)(영문)에 있습니다.
 
 ## AWS에 배포(선택)
 
@@ -109,14 +109,14 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 문서 안내
 
-[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의·증분 인덱싱·도메인 적응 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
+[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의·증분 인덱싱·도메인 적응·평가 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
 
 | 독자 | 시작할 문서 |
 |---|---|
 | **처음 써 보는 평가자**(AWS 없이) | [로컬에서 시작하기](./docs/getting-started/local.ko.md), 다음으로 [개요](./docs/concepts/overview.ko.md) |
 | **AWS에서 구축하는 개발자** | [AWS에서 시작하기](./docs/getting-started/aws.ko.md)와 [사용자 가이드](./docs/user-guide.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
 | **운영자** | [운영 런북](./docs/operations.md)과 [`iac/README.md`](./iac/README.md)(영문) |
-| **평가자·연구자** | [평가](./docs/user-guide.ko.md#6-평가-run-eval), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
+| **평가자·연구자** | [평가](./docs/guides/evaluate.ko.md), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
 | **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/design.md#15-extension-guide)(영문) |
 | **기여자** | [CONTRIBUTING.md](./CONTRIBUTING.md)(영문) |
 
