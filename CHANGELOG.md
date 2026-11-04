@@ -1165,7 +1165,7 @@ From 0.2.3 (or a `main` checkout since):
   domains, what `--verbose` changes, the `comprehensive_answer` override,
   evaluation result names, the JSON each CLI prints on failure, and when
   `model_overrides` entries are checked. The "No indices found for suffix"
-  error no longer names OpenSearch on `backend: local` (#PR).
+  error no longer names OpenSearch on `backend: local` (#557).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
