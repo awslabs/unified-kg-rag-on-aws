@@ -2887,7 +2887,13 @@ finally:
   `unified_kg_rag.setup_logging(config)`로 켭니다. 호출하지 않으면 구조화 필드
   (`structlog.contextvars`로 바인딩한 값 포함)가 레코드 속성으로 호스트 핸들러에
   전달되며, `LogRecord` 속성과 이름이 같은 필드(`name`, `msg` 등)에는 끝에 `_`가
-  붙습니다.
+  붙습니다. `setup_logging`은 프로세스 전체 상태를 바꾸므로 패키지가 로깅을 맡는
+  곳에서만 호출하세요. structlog 설정을 교체하고, 루트 로거의 레벨을
+  `logging.level`로, `logging.library_levels`에 있는 로거의 레벨을 각 값으로 정하고,
+  루트 로거에 stdout 핸들러(`logging.log_to_file`이면 날짜가 붙은 파일 핸들러도)를
+  추가합니다. 루트 로거에 이미 있던 핸들러는 그대로 남아 모든 레코드를 함께 받습니다.
+  그중 하나가 콘솔에 쓰면 같은 줄이 두 번 나오며, 패키지 레코드에 대해서는 구조화 필드
+  없이 메시지와 예외만 받습니다. 다시 호출하면 이전 호출이 추가한 핸들러만 교체합니다.
 
 확장 코드도 패키지 최상위에서 import합니다. 포트(`LLMFactoryPort`, `GraphIndexer`,
 `DocStatusPort` 등), `Providers`, `register_provider`, `BaseSearchStrategy`와

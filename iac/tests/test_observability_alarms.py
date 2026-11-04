@@ -246,6 +246,12 @@ def test_documents_not_indexed_alarm_sums_the_not_indexed_outcomes() -> None:
     assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (1, 1)
     assert alarm["TreatMissingData"] == "notBreaching"
     assert set(NOT_INDEXED_METRICS) <= set(DOCUMENT_METRICS)
+    # Failures only: a corpus holding files no loader reads would alarm on
+    # every run, so skipped files are on the dashboard alone.
+    assert set(NOT_INDEXED_METRICS) == {
+        "total_files_failed",
+        "total_documents_failed",
+    }
     # Every document outcome is on the dashboard.
     assert set(DOCUMENT_METRICS) <= _emf_metric_names(_template())
 

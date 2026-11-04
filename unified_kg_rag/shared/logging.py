@@ -76,19 +76,39 @@ _RESERVED_RECORD_KEYS = (
 ) - set(structlog.stdlib.LOG_KWARG_NAMES)
 
 
+class _FormatterEvent(dict[str, Any]):
+    """The event dict a ``setup_logging`` record carries as its ``msg``.
+
+    The package's ``ProcessorFormatter`` handlers copy and render the whole
+    dict. Any other handler on the root logger (a host application's own,
+    pytest's caplog) formats ``str(record.msg)``: the plain message, not the
+    dict repr.
+    """
+
+    def __str__(self) -> str:
+        return str(self.get("event", ""))
+
+
 def _to_stdlib(logger: Any, method: str, event_dict: structlog.types.EventDict) -> Any:
     """Hand the event to stdlib logging, in the form its handlers expect.
 
     Under ``setup_logging`` the CLI's ``ProcessorFormatter`` handlers render
-    the whole event dict. Otherwise (library mode) the record carries the
-    message as ``msg`` and the fields as ``extra``, so a host handler's own
-    formatter prints the plain message, not a dict repr. Decided per call:
-    loggers cached before ``setup_logging`` switch too. A field named like a
-    ``LogRecord`` attribute (a host binding ``name`` or ``process`` with
-    structlog.contextvars) is passed with a trailing ``_``.
+    the whole event dict, and other root handlers get the plain message and
+    the exception (see ``_FormatterEvent``). Otherwise (library mode) the
+    record carries the message as ``msg`` and the fields as ``extra``, so a
+    host handler's own formatter prints the plain message, not a dict repr.
+    Decided per call: loggers cached before ``setup_logging`` switch too. A
+    field named like a ``LogRecord`` attribute (a host binding ``name`` or
+    ``process`` with structlog.contextvars) is passed with a trailing ``_``.
     """
     if LoggingSetup._handlers:
-        return ProcessorFormatter.wrap_for_formatter(logger, method, event_dict)
+        # As ProcessorFormatter.wrap_for_formatter, plus exc_info on the
+        # record: the package's formatters drop the record's copy and render
+        # the event's, a host formatter appends the traceback.
+        kwargs: dict[str, Any] = {"extra": {"_logger": logger, "_name": method}}
+        if exc_info := event_dict.get("exc_info"):
+            kwargs["exc_info"] = exc_info
+        return (_FormatterEvent(event_dict),), kwargs
     for key in _RESERVED_RECORD_KEYS & event_dict.keys():
         event_dict[f"{key}_"] = event_dict.pop(key)
     return structlog.stdlib.render_to_log_kwargs(logger, method, event_dict)

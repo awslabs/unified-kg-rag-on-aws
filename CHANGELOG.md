@@ -309,6 +309,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `processing.max_concurrency` | 20 | 40 (20 under `backend: local`) (#310) |
 | `processing.similarity_threshold` | 0.6 | 0.85; similarity matching is opt-in (`processing.fuzzy_entity_resolution`) (#214) |
 | `indexing.neptune.property_max_length` | 1000 | 4000 (#132) |
+| `indexing.max_deletion_share` | (none: no guard) | 0.5: an incremental run deleting more of its scope asks first; `null` or 1.0 turns it off (#518) |
 | `graph.community_detection.auto_resolution` | `true` | `false` (#141) |
 | `graph.visualization.outputs_directory` | `outputs/visualization` | `null` (`<cache directory>/<pipeline_id>/visualization`) |
 | `search.token_manager.max_context_tokens` | 200000 | 30000; 22000 under `backend: local` with a non-Bedrock LLM (#125, #224, #226) |
@@ -316,8 +317,15 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.global_search.relevance_threshold` | 0.5 | 0.2 (#318) |
 | `search.global_search.use_dynamic_selection` | `true` | `false` (#318) |
 | `search.auto_routable_strategies` | (fixed: `simple`, `local`, `global`, `drift`) | `local`, `mix`, `global`; add `drift` to route to it (#347) |
+| `search.query_timeout_seconds` | (none: no deadline) | 180 s; `null` turns it off (#522) |
+| `search.model_timeout_seconds` / `search.model_max_attempts` | (fixed: the ingestion client's 300 s read timeout, 6 requests) | 90 s / 2 for query-time model calls (#522) |
+| `search.auto_speculative_extraction` | (fixed: after the router) | `true`: `auto` extracts alongside the router call (#525) |
+| `search.query_extraction_cache_size` | (none: no cache) | 1024; 0 turns it off (#525) |
+| `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | also `answer_match`, `retrieval`, `graph_aware` (#121) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
+| `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
+| `logging.log_to_file` | `true` | `false` (#520) |
 
 Behaviour.
 - Entity resolution merges only names equal after normalization, legal-form
@@ -630,17 +638,19 @@ From 0.2.3 (or a `main` checkout since):
 - IaC: alarms on OpenSearch automated-snapshot failures, blocked index
   writes, write and search thread-pool rejections, a yellow multi-node
   cluster and (with `use_cmk`) an unusable KMS key; on the ingestion task's
-  ephemeral storage; `DocumentsNotIndexed` on the run's document outcomes,
-  with a dashboard widget; and `QueryLatencyHigh` on the p90 latency of
+  ephemeral storage; `DocumentsNotIndexed` on the run's parse failures and
+  failed documents, with a dashboard widget that also shows the skipped
+  files; and `QueryLatencyHigh` on the p90 latency of
   `run-rag` queries, which `run-rag --metrics-sink cloudwatch` now emits
   (`query_latency_ms`, per environment and strategy;
   `query_latency_alarm_seconds`). `neptune_maintenance_window`,
   `neptune_backup_window` and `opensearch_off_peak_start` set the stores'
   maintenance windows, and `observability_secret_arn` /
   `observability_secret_keys` inject Langfuse or OTLP credentials from
-  Secrets Manager as task secrets. The runbook has what to do for each
-  pipeline-run alarm, capacity sizing and the Neptune major-version
-  upgrade (#519).
+  Secrets Manager as task secrets (in `private` mode through a Secrets
+  Manager interface endpoint the stack adds). The runbook has what to do
+  for each pipeline-run alarm, capacity sizing and the Neptune
+  major-version upgrade (#519, #528).
 - Extraction schema settings under `processing.graph_extraction`:
   `entity_types` items may be `{label, description, iri}` mappings, and the
   new `relationship_types`, `relationship_patterns` (`"PERSON -WORKS_FOR->
@@ -1416,8 +1426,10 @@ CLIs, configuration and library.
 - `GraphIndexer.delete_by_id` without a suffix acts on the default suffix
   (#344); `GraphRAGChain(providers=..., boto_session=...)` raises (#218).
 - Used as a library, log records reach the host's handlers and no longer
-  raise on `structlog` context fields; importing the package configures no
-  logging and does not touch `sys.path` (#178, #245, #251, #255).
+  raise on `structlog` context fields, and after `setup_logging` a host's
+  own root handler gets the plain message and traceback, not the event
+  dict; importing the package configures no logging and does not touch
+  `sys.path` (#178, #245, #251, #255, #528).
 - `index_settings` keys all reach the indices, in either spelling (#260,
   #404).
 

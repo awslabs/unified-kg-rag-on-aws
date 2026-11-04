@@ -6,7 +6,8 @@ Two modes (config.network_mode):
   - "private" (default): isolated subnets with NO NAT gateway, and no public
     subnet or internet gateway. The data plane reaches AWS services only
     through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs, STS;
-    X-Ray too with enable_cloudwatch_tracing). No internet egress.
+    X-Ray too with enable_cloudwatch_tracing, Secrets Manager with
+    observability_secret_arn). No internet egress.
   - "public": private subnets WITH NAT egress (simpler; allows arbitrary
     outbound, e.g. pulling public packages at runtime).
 
@@ -35,10 +36,10 @@ GATEWAY_ENDPOINTS = {
 
 # Interface endpoints the private (no-NAT) data plane needs: only services the
 # app, its entrypoint (`aws s3 sync`, via the S3 gateway) or the Fargate agent
-# (image pull, awslogs driver) actually call. Nothing calls SSM, Secrets
-# Manager (the task defines no secrets), Step Functions (RUN_JOB tracks the task
-# service-side) or CloudWatch monitoring (metrics are EMF records in the logs),
-# so those endpoints are not created.
+# (image pull, awslogs driver) actually call. Nothing calls SSM, Step Functions
+# (RUN_JOB tracks the task service-side) or CloudWatch monitoring (metrics are
+# EMF records in the logs), so those endpoints are not created; Secrets Manager
+# is added only when the tasks define secrets (SECRETS_ENDPOINTS below).
 INTERFACE_ENDPOINTS = {
     "Bedrock": ec2.InterfaceVpcEndpointAwsService.BEDROCK,
     "BedrockRuntime": ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
@@ -58,6 +59,12 @@ INTERFACE_ENDPOINTS = {
 # Only with enable_cloudwatch_tracing: the collector sidecar's route to the
 # CloudWatch OTLP traces endpoint (xray.<region>.amazonaws.com).
 TRACING_ENDPOINTS = {"XRay": ec2.InterfaceVpcEndpointAwsService.XRAY}
+# Only with observability_secret_arn: the Fargate agent fetches the task
+# secrets (GetSecretValue) before the containers start, and fails the task with
+# ResourceInitializationError when it cannot reach Secrets Manager.
+SECRETS_ENDPOINTS = {
+    "SecretsManager": ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER
+}
 
 
 class NetworkingStack(Stack):
@@ -215,9 +222,12 @@ class NetworkingStack(Stack):
             )
 
     def _interface_endpoints(self) -> dict[str, ec2.InterfaceVpcEndpointAwsService]:
+        endpoints = dict(INTERFACE_ENDPOINTS)
         if self.config.enable_cloudwatch_tracing:
-            return {**INTERFACE_ENDPOINTS, **TRACING_ENDPOINTS}
-        return INTERFACE_ENDPOINTS
+            endpoints.update(TRACING_ENDPOINTS)
+        if self.config.observability_secret_arn:
+            endpoints.update(SECRETS_ENDPOINTS)
+        return endpoints
 
     def _restrict_gateway_endpoints(
         self, s3: ec2.GatewayVpcEndpoint, dynamodb: ec2.GatewayVpcEndpoint

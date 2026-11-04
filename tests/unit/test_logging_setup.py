@@ -276,6 +276,45 @@ def test_library_mode_renames_fields_named_like_record_attributes(
     assert record.msg_ == "m"  # type: ignore[attr-defined]
 
 
+class _ListHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(self.format(record))
+
+
+def test_host_root_handlers_get_plain_messages_after_setup_logging(
+    stream: io.StringIO,
+) -> None:
+    # A host handler on the root logger formats str(record.msg): it must see
+    # the message and the traceback, not the structlog event dict's repr,
+    # while the package's own handler still renders the structured fields.
+    host = _ListHandler()
+    logging.getLogger().addHandler(host)
+    setup_logging(_config(log_format="structured"), stream=stream)
+    log = get_logger("unified_kg_rag.test_host_handler")
+    with bound_contextvars(pipeline_id="p-1"):
+        log.warning("lib says %s", "hi", documents=3)
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            # error(exc_info=True): .exception() gets exc_info from stdlib.
+            log.error("failed", exc_info=True)
+    plain, failed = host.lines
+    assert plain == "WARNING lib says hi"
+    assert failed.startswith("ERROR failed\nTraceback")
+    assert "ValueError: boom" in failed
+    first, second = _records(stream)
+    assert first["event"] == "lib says hi"
+    assert (first["documents"], first["pipeline_id"]) == (3, "p-1")
+    assert "ValueError: boom" in second["exception"]
+    # The record's traceback is not printed twice by the package's formatter.
+    assert stream.getvalue().count("ValueError: boom") == 1
+
+
 def test_relative_log_file_path_resolves_against_cwd(
     stream: io.StringIO, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

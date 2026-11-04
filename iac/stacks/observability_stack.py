@@ -55,8 +55,10 @@ DOCUMENT_METRICS: tuple[str, ...] = (
     DOCUMENTS_WITHOUT_CLAIMS,
 )
 # The outcomes that leave a source document out of the stores although the
-# run SUCCEEDED: the DocumentsNotIndexed alarm sums them.
-NOT_INDEXED_METRICS: tuple[str, ...] = (FILES_FAILED, FILES_SKIPPED, DOCUMENTS_FAILED)
+# run SUCCEEDED: the DocumentsNotIndexed alarm sums them. Skipped files are
+# left out: a corpus that holds files no loader reads (images, archives) would
+# alarm on every run, so their count is on the dashboard only.
+NOT_INDEXED_METRICS: tuple[str, ...] = (FILES_FAILED, DOCUMENTS_FAILED)
 
 # The pipeline stages, in order: each emits duration_<stage>_seconds when it
 # finishes (pinned against PipelineStageType by the tests).
@@ -219,8 +221,8 @@ class ObservabilityStack(Stack):
         )
 
         # Alarm: source documents the run left out of the stores -> SNS. A
-        # file that failed to parse or that no loader reads, and a document
-        # recorded FAILED, are missing from the graph of a SUCCEEDED run.
+        # file that failed to parse and a document recorded FAILED are
+        # missing from the graph of a SUCCEEDED run.
         not_indexed = {
             f"m{i}": self._emf(name, period=Duration.minutes(5))
             for i, name in enumerate(NOT_INDEXED_METRICS)
@@ -239,8 +241,8 @@ class ObservabilityStack(Stack):
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description="unified-kg-rag-on-aws left source documents out of "
-            "the stores (parse failures, unsupported files, failed documents) "
-            "despite a SUCCEEDED run",
+            "the stores (parse failures, failed documents) despite a SUCCEEDED "
+            "run",
         )
         not_indexed_alarm.add_alarm_action(
             cw_actions.SnsAction(orchestration.alarm_topic)
