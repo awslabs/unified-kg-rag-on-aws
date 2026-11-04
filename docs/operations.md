@@ -216,8 +216,8 @@ Nothing is reset automatically. `null` turns a threshold off;
 run's `community_rebuild_recommended` is 1. `communities_now` is an upper
 bound (a delta community written under a stored community's id counts
 again, and a run killed after its removal deleted communities does not
-subtract them). A suffix whose record an earlier version wrote has no
-counters, and no recommendation, until its next full build.
+subtract them). A suffix whose build record holds no counters gets none,
+and no recommendation, until its next full build.
 
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and
@@ -632,7 +632,8 @@ installed: 'rdflib' (for processing.graph_extraction.schema_source.kind
 The ontology is read at start-up and keyed by the schema it maps to, so
 rebuilding the image with an unchanged ontology, or moving it to another
 path with absolute IRIs, re-extracts nothing. Before the first full
-ingest, preview the mapped schema locally (User Guide, *Preview*) and
+ingest, preview the mapped schema locally
+([User Guide: *Preview*](./user-guide.md#ontology-preview)) and
 settle the options: a label or description change re-extracts the
 corpus. With `on_collision: qualify`, bind the colliding namespaces in
 `options.prefixes`, so a re-serialised ontology keeps its suffixes.
@@ -641,8 +642,8 @@ Every task that loads the schema parses the ontology into memory: about
 3 s and 85 MB per MB of Turtle (a 14 MB file took 45 s and 1.2 GB), so at
 the default `max_bytes` of 64 MiB a load can take about 5 GB of the task's
 memory before ingestion starts. Lower `options.max_bytes` to the size you
-ship, or raise `fargate_memory`, when the ontology is large (User Guide,
-*Load cost*).
+ship, or raise `fargate_memory`, when the ontology is large
+([User Guide: *Load cost*](./user-guide.md#ontology-load-cost)).
 
 ### Seed graphs in the image or S3
 
@@ -674,7 +675,7 @@ In private mode the S3 gateway endpoint reaches only these two buckets
 the image and S3 re-indexes nothing: what it converts to is keyed, not
 where it is read from. Size the task for it: the whole seed is held in
 memory, and each node costs about two embeddings and each edge one
-(User Guide, *Cost and limits*).
+([User Guide: *Cost and limits*](./user-guide.md#seed-cost-and-limits)).
 
 A seed of kind `rdf` needs the `ontology` extra in the ingestion image:
 `run-ingestion` checks the extras a configured seed kind needs before
@@ -872,7 +873,7 @@ when long). An answer the model corrects
 again) is parsed by its last complete answer, each section repeated keeping
 its last closed occurrence (INFO `XML output repeats <entities>, ...`; a
 WARNING when the last one is unclosed), and a JSON answer by the last object
-that parses; a single answer cut off is flagged as before. An OpenAI-compatible server's
+that parses; a single answer cut off is handled as above. An OpenAI-compatible server's
 context-length rejection that counts the requested `max_tokens` ("you
 requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
 is a setting and counts for none.
@@ -1220,11 +1221,9 @@ A query has two bounds ([User Guide](./user-guide.md#query-deadline)):
   90 s) per request and `search.model_max_attempts` (default 2) botocore
   attempts, for query-time LLM calls, query embeddings and Bedrock rerank. A
   stalled call fails after about `model_max_attempts x model_timeout_seconds`.
-  Before these, queries used the ingestion client (330 s, 6 attempts): one
-  stalled call held a query for about 33 minutes. A stream must also send its
-  first chunk within `model_timeout_seconds`.
+  A stream must also send its first chunk within `model_timeout_seconds`.
 
-Ingestion is unchanged: its calls keep the 330 s read timeout and 6 botocore
+Ingestion calls use their own client: a 330 s read timeout and 6 botocore
 attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 
 **Tuning.**
@@ -1233,7 +1232,7 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 |---|---|
 | Answers that need long generation (high `aws.bedrock.default_effort`, long `default_max_output_tokens` answers) fail with a read timeout | Raise `search.model_timeout_seconds` above the longest answer call, and `search.query_timeout_seconds` to at least about twice it |
 | `drift`, or `global` over many reports, fails with `QueryTimeoutError` | Raise `search.query_timeout_seconds` (DRIFT makes up to 27 LLM calls); if those calls are throttled, lower `search.max_concurrency` instead |
-| `drift` runs with the comprehensive answer (`search.answer_prompt_style: {drift: comprehensive}`) | Raise `search.query_timeout_seconds` to about 300 s first (see *DRIFT near the deadline* below) |
+| `drift` runs with the comprehensive answer (`search.answer_prompt_style: {drift: comprehensive}`) | Raise `search.query_timeout_seconds` to about 300 s first (see [*DRIFT near the deadline*](#drift-near-the-deadline) below) |
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
 | `run-eval` reports queries failed with `QueryTimeoutError` | Throttling, usually: see below |
 
@@ -1247,7 +1246,7 @@ stalls once can still be answered by its second attempt; it is about 3x
 the slowest query and 3.8x the p99. Two attempts, not more: a third
 would start only after the deadline.
 
-**DRIFT near the deadline.** Those runs did not include DRIFT. On a
+<a id="drift-near-the-deadline"></a>**DRIFT near the deadline.** Those runs did not include DRIFT. On a
 3,318-document MuSiQue index (embedded SQLite stores, 50 sensemaking
 questions, two repeats, one run-eval at a time) DRIFT with the concise answer
 took 147 s at p95; with the comprehensive answer 168 s at p95 and 178 s at
@@ -1581,16 +1580,16 @@ model or credential error fails a query rather than answering from no context.
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |
 | `The reset of index namespace '...' drops the seed graph documents of source scope(s) ...` (or `rebuilds it from this run's seed graphs alone ...`, or, with the registry off, `No source document reached this run, ... rebuild the index '...' from the seed graphs alone, replacing what it holds`) `; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-reset does)` (exit 1, before any write) | A reset would drop another scope's seed graph documents, or, from seeds alone, another scope's documents; or, with the registry off, seeds alone would replace an index that holds items; and no one answered yes | Re-run with `--confirm-reset` or `UKR_CONFIRM_RESET=1` ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), or pass `confirm=` to `DataIngestionPipeline` (a no raises `ConfirmationDeclinedError`) |
 | `This run deletes N of the M documents the doc-status registry holds for source scope '...' (P%, over indexing.max_deletion_share S) ...; continue?` with `... needs confirmation, but stdin is not a terminal` or `No one can confirm it (run-ingestion --confirm-deletions does)` (exit 1, at `document_loading`, before any write) | More than `indexing.max_deletion_share` of the scope's indexed documents are missing from the corpus | Check the corpus (sync, prefix, mount) and re-run. If the files are really gone, re-run with `--confirm-deletions` (or `UKR_CONFIRM_DELETIONS=1`, or `--yes`) ([Incremental runs](#incremental-runs)) |
-| `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope (User Guide, *Lifecycle*) |
+| `No source document reached this run, only its seed graphs, but the doc-status registry holds N documents of source scope '...'` (exit 1, at `document_loading`, before any write) | The corpus is empty (a volume not mounted, an S3 sync that copied nothing) while seeds are configured and the scope has documents | Put the corpus in place and re-run. To delete the scope's documents, retire it from a run of another scope (`--retire-source-scope`); for seeds of their own, use a seed-only scope ([User Guide: *Lifecycle*](./user-guide.md#seed-lifecycle)) |
 | `Incremental indexing is enabled but no document delta was computed` | Indexing ran without a registry diff (loading failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `NamespaceLeaseError: Index namespace '...' is being written by ...` | Another run holds the write lease | Wait; a dead run's lease expires within `indexing.lease_seconds` ([Concurrent runs](#concurrent-runs)) |
 | `NamespaceLeaseError: This run lost the write lease ...` | Renewals failed until the lease expired, or another run took it | Re-run after the other run; check the registry is reachable |
 | `ConfigurationError: Doc-status registry: DynamoDB table '...' has the key schema ... of an earlier release` | A table keyed by `doc_id` alone | Point `aws.dynamodb.table_name` at a new table (or the stack's), and run once with `indexing.reset: true` ([Incremental runs](#incremental-runs)) |
-| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | An earlier release built the index | Run once with `indexing.reset: true` |
-| `ConfigurationError: The OpenSearch index '...' maps 'attributes.seed_properties' field by field ...` (exit 2, before any model call) | A build before seed properties were left unmapped wrote seed graph properties into the live entities index | Run once with `indexing.reset: true` |
+| `ConfigurationError: The OpenSearch index '...' records no embedding settings ...` | The index has no recorded embedding settings (`_meta`), which every index this version builds carries | Run once with `indexing.reset: true` |
+| `ConfigurationError: The OpenSearch index '...' maps 'attributes.seed_properties' field by field ...` (exit 2, before any model call) | The live entities index maps seed graph properties (`attributes.seed_properties`), which this version stores unmapped | Run once with `indexing.reset: true` |
 | `ConfigurationError: The OpenSearch index '...' stores the vectors of '...' as ...` (exit 2, before any model call) | `indexing.opensearch.vector_mode` / `compression_level` changed since the live index was built | Run once with `indexing.reset: true`, or restore the previous values ([On-disk vector storage](#on-disk-vector-storage)) |
 | `ConfigurationError: The OpenSearch index '...' holds embeddings of ...` / `... was built for other language settings ...` (exit 2, before any model call) | An incremental run's embedding model or dimension, translation languages or `language_analyzers` differ from those the live index was built with (also a run with nothing to extract: no change, or only deletions) | Run once with `indexing.reset: true` (it re-embeds or re-translates the whole corpus once), or restore the previous settings |
-| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`), or, in an index a pre-#383 build wrote, a deleted document was restored while its removal was unfinished, or a reset run by a build before #410 that dropped documents was interrupted after it swapped an index in | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one. For the restored document, deleting that one document's registry record is enough: the next run indexes it again |
+| `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` (or `whose text units the vector store does not hold`) | A store lost what the registry records (a restarted Gremlin Server, `down -v`, a restored graph, deleted indices, a moved `vector.sqlite3`) | Re-run with `indexing.reset: true`, or delete the namespace's records; locally delete the three store files together or restore the moved one |
 
 ### Queries
 

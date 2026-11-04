@@ -573,6 +573,36 @@ From 0.2.3 (or a `main` checkout since):
     as their report answers were stored under the old names, asks every
     report once more. No setting changes; later resets reuse the answers
     (#539).
+12. From a `main` checkout: an index built before one of these fixes needs
+    one run with `indexing.reset: true`:
+    - Relationships and claims carry their documents' filters (#360): an
+      older index returns none of them under an attribute filter.
+    - A removal clears its document's filter values (#370): an index that
+      saw removals before it keeps the removed documents' values on items
+      not rewritten since, so its filters still match them. An index an
+      incremental run wrote between #370 and #376, with a removal that
+      pruned a community, lost the filters of the text units it kept, which
+      then match no filter.
+    - `attr_*` values are keywords (#446): an `attr_*` field an older index
+      mapped as a date stays one.
+    - Seed properties are stored unmapped (#508): an entities index that
+      maps `attributes.seed_properties` field by field is refused (exit 2).
+    - Removals are written ahead (#383) and resumed resets converge (#410):
+      in an index an older build wrote, a deleted document restored while
+      its removal was unfinished, or a reset that dropped documents and was
+      interrupted after it swapped an index in, makes a run fail with `The
+      doc-status registry lists indexed documents of this namespace whose
+      entities the graph store does not hold`. For the restored document,
+      deleting that one document's registry record is enough: the next run
+      indexes it again.
+13. From a `main` checkout, without a rebuild: the default
+    `processing.chunking.length_unit: chars` keeps the chunks, and so the
+    ids, an index built before the setting holds; `tokens` re-chunks and
+    re-extracts the corpus (#460). `run-eval` results saved before usage
+    accounting have no usage record or latency: `--from-results` counts them
+    in `answers_without_usage` / `answers_without_latency`, and a `--fail-if`
+    on a `usage/*` or `latency/*` measure fails for them, so run them again
+    to compare cost (#526, #529).
 
 ### Added
 - Local mode: the `providers` section and provider registry
