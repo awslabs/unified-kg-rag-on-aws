@@ -549,12 +549,16 @@ class DataIngestionPipeline:
             },
             # --force-rebuild re-extracts every unit (and refreshes the
             # extraction store) instead of reusing the stored records, asks
-            # the model for every pre-chunk's boundaries again and embeds
-            # every text again.
+            # the model for every pre-chunk's boundaries, description
+            # summary and community report again and embeds every text
+            # again.
             PipelineStageType.TEXT_CHUNKING: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
             PipelineStageType.GRAPH_EXTRACTION: {
+                "reuse_stored": not self.pipeline_config.force_rebuild
+            },
+            PipelineStageType.GRAPH_RESOLUTION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
             PipelineStageType.CLAIM_EXTRACTION: {
@@ -563,6 +567,7 @@ class DataIngestionPipeline:
             PipelineStageType.COMMUNITY_DETECTION: {
                 "cache_directory": cache_directory,
                 "doc_status": doc_status,
+                "reuse_stored": not self.pipeline_config.force_rebuild,
             },
             PipelineStageType.INDEXING: {
                 "doc_status": doc_status,

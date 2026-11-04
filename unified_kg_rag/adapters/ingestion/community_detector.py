@@ -1,18 +1,21 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 import math
 import re
 import time
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Protocol
 
 import networkx as nx
 
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
+    usage_model_id,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.retry import transient_error_predicate
@@ -21,6 +24,11 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     edge_weight,
     merge_attributes,
+)
+from unified_kg_rag.domain.ingestion.cache_keys import community_report_fingerprint
+from unified_kg_rag.domain.ingestion.contributions import (
+    REPORT_RECORD_ATTRIBUTE,
+    record_key,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.ingestion.seed_graph import seed_only
@@ -35,12 +43,35 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     TextUnit,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
+from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
+
+
+class ReportRecords(Protocol):
+    """Where report answers are kept across runs (the extraction store), by
+    index suffix and record key (``chunker.BoundaryRecords``, alike).
+
+    Both are best-effort: a read that fails reads nothing (the model is
+    asked), a write that fails is logged."""
+
+    def read_records(
+        self, keys: Mapping[str, Collection[str]]
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """The stored records of ``keys`` (by suffix), by suffix and key."""
+        ...
+
+    def write_records(
+        self, records: Mapping[str, Mapping[str, dict[str, Any]]]
+    ) -> None:
+        """Store ``records`` (by suffix, then key)."""
+        ...
 
 
 def community_content_id(level: int, nodes: Any) -> str:
@@ -55,6 +86,15 @@ def community_content_id(level: int, nodes: Any) -> str:
     """
     members = "\x1f".join(sorted(str(node) for node in nodes))
     return generate_stable_id(f"community:{level}:{members}")
+
+
+def _stored_time(record: Mapping[str, Any], default: datetime) -> datetime:
+    """When a stored report answer was generated (``default`` when its
+    record does not say)."""
+    try:
+        return datetime.fromisoformat(str(record["generated_at"]))
+    except (KeyError, ValueError):
+        return default
 
 
 def _canonical_graph(graph: nx.Graph) -> nx.Graph:
@@ -189,6 +229,10 @@ class CommunityDetector:
         # Entity id -> the claims about it (it is their subject) a report
         # input packs with it, when claim extraction is on (``__call__``).
         self._report_claims: dict[Any, list[dict[str, Any]]] = {}
+        # Where report answers are kept, and the fingerprint they are keyed
+        # under (generate_reports' records).
+        self._report_records: ReportRecords | None = None
+        self._report_fingerprint: str | None = None
         self.all_communities: dict[str, HierarchicalCommunity] = {}
         self.node_to_community_l0: dict[str, str] = {}
         # Entities of the components too small to form a community.
@@ -1049,6 +1093,7 @@ class CommunityDetector:
         text_units: list[TextUnit] | None = None,
         descriptions: Mapping[str, str] | None = None,
         types: Mapping[str, str] | None = None,
+        records: ReportRecords | None = None,
     ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
@@ -1064,6 +1109,11 @@ class CommunityDetector:
             types: Entity id -> the type its report input reads instead of
                 the graph node's (a member an incremental run states
                 without one, read from the stores).
+            records: Where report answers are kept (a full build's): a
+                community whose input (``_report_key``) has a stored answer
+                takes it instead of a model call, a new answer is stored,
+                and each report names its answer's key
+                (``REPORT_RECORD_ATTRIBUTE``).
 
         Returns:
             One report per community that produced a non-empty LLM result, and
@@ -1082,6 +1132,7 @@ class CommunityDetector:
 
         self._report_descriptions = dict(descriptions or {})
         self._report_types = dict(types or {})
+        self._report_records = records
         try:
             logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
@@ -1185,28 +1236,116 @@ class CommunityDetector:
                 attributes[filters_key] = filters
             report.attributes = attributes
 
+    def _report_key(self, chain_input: dict[str, Any], community: Community) -> str:
+        """The record key of a community's report answer: its prompt input
+        (members, descriptions, edges and claims as packed, roll-up text,
+        length) and the community's name (the report's title starts with
+        it), under the report settings (``community_report_fingerprint``)."""
+        if self._report_fingerprint is None:
+            self._report_fingerprint = community_report_fingerprint(self.config)
+        text = json.dumps(
+            {"input": chain_input, "name": community.name},
+            sort_keys=True,
+            default=str,
+            ensure_ascii=False,
+        )
+        return record_key(self._report_fingerprint, text)
+
+    def _stored_answers(
+        self, keys: Mapping[int, str], suffix: str
+    ) -> dict[int, dict[str, Any]]:
+        """The stored records (``{"response", "generated_at"}``) of the
+        ``keys`` (by input index), read as a cache."""
+        if self._report_records is None or not keys:
+            return {}
+        stored = self._report_records.read_records(
+            {suffix: sorted(set(keys.values()))}
+        ).get(suffix, {})
+        found: dict[int, dict[str, Any]] = {}
+        for index, key in keys.items():
+            record = stored.get(key)
+            if isinstance(record, dict) and isinstance(record.get("response"), dict):
+                found[index] = record
+        if found:
+            logger.info(
+                "Reused %d of %d stored community report answers",
+                len(found),
+                len(keys),
+            )
+            # Model calls the run did not make (shared.usage), under the id
+            # the calls are recorded by (the resolved profile).
+            model = usage_model_id(
+                self.factory,
+                model_id_value(self.config.model_id(ModelRole.COMMUNITY_REPORT)),
+            )
+            for _ in found:
+                record_cache_hit(ModelPurpose.INGESTION.value, model)
+        return found
+
     def _run_report_batch(
         self,
         report_inputs: list[dict[str, Any]],
         communities: list[Community],
         graph_attributes: dict[str, Any],
     ) -> tuple[list[CommunityReport], list[str]]:
-        """Run one batch of report inputs; return the reports and failed ids."""
-        report_results = self.batch_processor.execute_with_fallback(
-            items_to_process=report_inputs,
-            prepare_inputs_func=self._create_report_chain_inputs,
-            sequential_func=self.report_generator.invoke,
-            task_name="Community report generation",
-            show_progress=self.show_progress,
-        )
+        """Run one batch of report inputs; return the reports and failed ids.
+
+        With report ``records``, an input with a stored answer takes it
+        (and its generation time) instead of a model call, and the others'
+        answers are stored (see ``generate_reports``).
+        """
+        keys: dict[int, str] = {}
+        suffix = BaseIndexer.get_suffix(SimpleNamespace(attributes=graph_attributes))
+        if self._report_records is not None:
+            keys = {
+                index: self._report_key(chain_input, community)
+                for index, (chain_input, community) in enumerate(
+                    zip(
+                        self._create_report_chain_inputs(report_inputs),
+                        communities,
+                        strict=True,
+                    )
+                )
+            }
+        stored = self._stored_answers(keys, suffix)
+        pending = [index for index in range(len(report_inputs)) if index not in stored]
+        results: dict[int, Any] = {
+            index: record["response"] for index, record in stored.items()
+        }
+        if pending:
+            answers = self.batch_processor.execute_with_fallback(
+                items_to_process=[report_inputs[index] for index in pending],
+                prepare_inputs_func=self._create_report_chain_inputs,
+                sequential_func=self.report_generator.invoke,
+                task_name="Community report generation",
+                show_progress=self.show_progress,
+            )
+            results.update(zip(pending, answers, strict=True))
+        generated_at = datetime.now()
+        new_records: dict[str, dict[str, Any]] = {}
 
         reports: list[CommunityReport] = []
         failed: list[str] = []
-        for community, result in zip(communities, report_results, strict=True):
+        for index, community in enumerate(communities):
+            result = results[index]
             if result and result is not BATCH_ITEM_FAILED:
-                reports.append(
-                    self._create_community_report(community, result, graph_attributes)
+                made_at = generated_at
+                if index in stored:
+                    made_at = _stored_time(stored[index], generated_at)
+                elif index in keys:
+                    new_records[keys[index]] = {
+                        "response": result,
+                        "generated_at": generated_at.isoformat(),
+                    }
+                report = self._create_community_report(
+                    community, result, graph_attributes, generated_at=made_at
                 )
+                if index in keys:
+                    report.attributes = {
+                        **(report.attributes or {}),
+                        REPORT_RECORD_ATTRIBUTE: keys[index],
+                    }
+                reports.append(report)
             else:
                 # Empty LLM result: report it so the caller retries the
                 # community's documents instead of silently storing fewer reports.
@@ -1215,6 +1354,8 @@ class CommunityDetector:
                     "No report generated for community '%s' (empty LLM result)",
                     community.id,
                 )
+        if new_records and self._report_records is not None:
+            self._report_records.write_records({suffix: new_records})
         return reports, failed
 
     def _generate_reports_flat(
@@ -1571,7 +1712,11 @@ class CommunityDetector:
         community: Community,
         result: dict[str, Any],
         graph_attributes: dict[str, Any],
+        *,
+        generated_at: datetime | None = None,
     ) -> CommunityReport:
+        """The report of ``community`` from the model's ``result``, made at
+        ``generated_at`` (now by default; a reused answer's own time)."""
         report_config = self.community_detection_config.report_generation
 
         name = self._extract_text_from_result(result.get("community_name", ""))
@@ -1587,7 +1732,7 @@ class CommunityDetector:
         )
 
         report_id = generate_stable_id(f"report:{community.id}")
-        current_time = datetime.now()
+        current_time = generated_at or datetime.now()
 
         attributes = {
             "generation_model": self.config.model_id(ModelRole.COMMUNITY_REPORT),

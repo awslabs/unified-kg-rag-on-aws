@@ -1219,6 +1219,22 @@ From 0.2.3 (or a `main` checkout since):
   change once, not on every run): a no-op incremental run writes nothing
   but its lease, with 29 store calls instead of 56, and a one-chunk edit
   looks up 6 aliases instead of 61 (#527, #531).
+- A full build (a reset, a first run, a run without the registry) reuses
+  the corpus-wide answers whose input is unchanged: a description over the
+  summarization threshold keeps the summary its stored copy made from the
+  same text with the same summarization settings (recorded as
+  `summarized_with` beside `summarized_from`), and a community report
+  answer is kept in the extraction store by the report's packed input,
+  name and settings and named by the report (`attributes.report_record`).
+  The LLM response cache never served them: its prompt keys are stable,
+  but it lives in one pipeline id's cache directory. On the cost
+  harness, a reset right after the first build, or after another reset,
+  asks 0 model calls instead of 29 and 28 (summaries and reports) and
+  leaves the stores as they were; the first reset after incremental runs
+  asks 8 instead of 28 (the reports of the communities the incremental
+  runs clustered otherwise, and one description no run had summarized),
+  and a reset with another community resolution 3 instead of 24. A reused
+  answer counts as a cache hit. `--force-rebuild` asks again (#PR).
 - Defaults from a real-model evaluation (MuSiQue, 200 questions over 3,318
   documents, a 50-question sensemaking set, two repeats, three pairwise
   judges; design §9.1). `global` answers with the comprehensive prompt: it

@@ -1256,11 +1256,21 @@ class GleaningStage(PipelineStage):
         return input_count, output_count, metrics
 
 
+def _graph_is_corpus(config: Config, context: PipelineContext) -> bool:
+    """Whether the run's graph is the whole corpus's, as a full build's:
+    without the registry, on a reset, or with no document left unchanged
+    (a first run). A reused summary or report answer is then the one a
+    full build of the corpus would ask for."""
+    delta = context.incremental_delta
+    return delta is None or config.indexing.reset or not delta.unchanged
+
+
 class GraphResolutionStage(PipelineStage):
     def __init__(
         self,
         config: Config,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.GRAPH_RESOLUTION, config, providers)
         self.resolver = GraphResolver(config)
@@ -1270,6 +1280,9 @@ class GraphResolutionStage(PipelineStage):
             config, providers=self.providers
         )
         self.store = ExtractionStore(self.config, self.providers.build_vector_indexer)
+        # A full build reuses the stored summaries of unchanged descriptions
+        # (_reuse_stored_summaries), unless it rebuilds everything.
+        self.reuse_stored = reuse_stored
 
     def close(self) -> None:
         self.store.close()
@@ -1329,14 +1342,19 @@ class GraphResolutionStage(PipelineStage):
         original_entities_count = len(entities)
         original_relationships_count = len(relationships)
 
-        context.resolved_entities = self.description_summarizer.summarize_entities(
-            resolution_result["entities"]
+        resolved_entities = resolution_result["entities"]
+        resolved_relationships = resolution_result["relationships"]
+        reused_entities, reused_relationships = self._reuse_stored_summaries(
+            context, resolved_entities, resolved_relationships
         )
-        context.resolved_relationships = (
-            self.description_summarizer.summarize_relationships(
-                resolution_result["relationships"]
-            )
+        self.description_summarizer.summarize_entities(
+            [e for e in resolved_entities if e.id not in reused_entities]
         )
+        self.description_summarizer.summarize_relationships(
+            [r for r in resolved_relationships if r.id not in reused_relationships]
+        )
+        context.resolved_entities = resolved_entities
+        context.resolved_relationships = resolved_relationships
 
         resolved_entities_count = len(context.resolved_entities)
         resolved_relationships_count = len(context.resolved_relationships)
@@ -1358,11 +1376,85 @@ class GraphResolutionStage(PipelineStage):
             ),
             "resolution_stats": stats.model_dump(),
             "records_not_stored": len(unsaved),
+            "summaries_reused": len(reused_entities) + len(reused_relationships),
         }
 
         input_count = original_entities_count + original_relationships_count
         output_count = resolved_entities_count + resolved_relationships_count
         return input_count, output_count, metrics
+
+    def _reuse_stored_summaries(
+        self,
+        context: PipelineContext,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> tuple[set[str], set[str]]:
+        """On a full build, give the items over the summarization threshold
+        the summaries their stored copies were made from the same
+        description with (``DescriptionSummarizer.reuse_stored``), in place,
+        so a reset of an unchanged corpus asks the model for none; returns
+        the ids of the entities and relationships given one.
+
+        An incremental run's items hold its delta's descriptions only (the
+        indexing derives the stored ones and reuses their summaries), unless
+        no document is left unchanged (``_graph_is_corpus``). One
+        read of the graph per suffix; a stored description the graph capped
+        (``indexing.neptune.property_max_length``) is not reused, and a
+        read that fails reuses nothing (the stores are a cache here).
+        """
+        if not self.reuse_stored or not _graph_is_corpus(self.config, context):
+            return set(), set()
+        wanted: dict[str, tuple[list[Entity], list[Relationship]]] = defaultdict(
+            lambda: ([], [])
+        )
+        for entity in entities:
+            if needs_summary(self.config, entity.description):
+                wanted[BaseIndexer.get_suffix(entity)][0].append(entity)
+        for rel in relationships:
+            if needs_summary(self.config, rel.description):
+                wanted[BaseIndexer.get_suffix(rel)][1].append(rel)
+        if not wanted:
+            return set(), set()
+        limit = self.config.indexing.neptune.property_max_length
+        reused_entities: set[str] = set()
+        reused_relationships: set[str] = set()
+        try:
+            graph = self.providers.build_graph_indexer()
+            try:
+                for suffix, (over_entities, over_rels) in sorted(wanted.items()):
+                    stored_entities = graph.read_entities(
+                        [e.id for e in over_entities], suffix=suffix
+                    )
+                    stored_rels = graph.read_relationships(
+                        [r.id for r in over_rels], suffix=suffix
+                    )
+                    reused_entities |= self.description_summarizer.reuse_stored(
+                        over_entities,
+                        [
+                            e
+                            for e in stored_entities
+                            if len(e.description or "") < limit
+                        ],
+                    )
+                    reused_relationships |= self.description_summarizer.reuse_stored(
+                        over_rels,
+                        [r for r in stored_rels if len(r.description or "") < limit],
+                    )
+            finally:
+                graph.close()
+        except Exception as e:  # noqa: BLE001 - the stored summaries are a cache
+            logger.warning(
+                "Reading the stored summaries failed; summarizing every "
+                "description over the threshold: %s",
+                e,
+            )
+        if reused_entities or reused_relationships:
+            logger.info(
+                "Reused the stored summaries of %d entities and %d relationships",
+                len(reused_entities),
+                len(reused_relationships),
+            )
+        return reused_entities, reused_relationships
 
 
 class ClaimExtractionStage(PipelineStage):
@@ -1785,12 +1877,22 @@ class CommunityDetectionStage(_RegistryStage):
         cache_directory: Path | None = None,
         providers: Providers | None = None,
         doc_status: "DocStatusPort | None" = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, providers)
         self.detector = CommunityDetector(config, providers=self.providers)
         self.cache_directory = Path(cache_directory) if cache_directory else None
         self._doc_status = doc_status
         self._description_summarizer: DescriptionSummarizer | None = None
+        # A full build keeps the report answers in the extraction store (by
+        # their input) and reuses an unchanged input's, unless it rebuilds
+        # everything (--force-rebuild: it asks again and refreshes them).
+        self.store = ExtractionStore(
+            self.config, self.providers.build_vector_indexer, reuse=reuse_stored
+        )
+
+    def close(self) -> None:
+        self.store.close()
 
     def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
         # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
@@ -2219,6 +2321,9 @@ class CommunityDetectionStage(_RegistryStage):
                 for entity_id, entity in stored.unattributed.items()
                 if entity.type
             },
+            # A full build's reports: an incremental run reports the delta's
+            # communities, which a later full build clusters otherwise.
+            records=self.store if _graph_is_corpus(self.config, context) else None,
         )
         metrics_obj = self.detector.get_community_metrics()
 

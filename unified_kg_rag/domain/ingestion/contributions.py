@@ -200,6 +200,11 @@ RECORD_KEYS_ATTRIBUTE = "extraction_records"
 CHUNKS_RECORD_KIND = "chunks"
 # Every record kind a text unit names.
 RECORD_KINDS = ("graph", "claims", CHUNKS_RECORD_KIND)
+# Community-report attribute naming the extraction-store key of the report's
+# answer (its settings and input, ``cache_keys.community_report_fingerprint``):
+# a full build reuses the answer of an unchanged input and keeps the records
+# its reports name.
+REPORT_RECORD_ATTRIBUTE = "report_record"
 
 
 def record_keys(unit: TextUnit) -> dict[str, str]:

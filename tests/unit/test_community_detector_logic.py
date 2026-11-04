@@ -17,6 +17,7 @@ import json
 import logging
 import random
 from typing import Any
+from unittest import mock
 
 import networkx as nx
 import pytest
@@ -1288,6 +1289,116 @@ def _chain_graph(n: int, description_words: int, edges=None) -> nx.Graph:
             description=f"Entity{a} works with Entity{b}",
         )
     return g
+
+
+class _Records:
+    """The extraction store's report records, in memory (``ReportRecords``)."""
+
+    def __init__(self) -> None:
+        self.stored: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def read_records(self, keys: Any) -> dict[str, dict[str, dict[str, Any]]]:
+        return {
+            suffix: {
+                key: json.loads(json.dumps(self.stored[suffix][key]))
+                for key in wanted
+                if key in self.stored.get(suffix, {})
+            }
+            for suffix, wanted in keys.items()
+        }
+
+    def write_records(self, records: Any) -> None:
+        for suffix, by_key in records.items():
+            self.stored.setdefault(suffix, {}).update(json.loads(json.dumps(by_key)))
+
+
+class _AskedBatch:
+    """A batch processor answering every report input alike, recording them."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def execute_with_fallback(self, *, items_to_process: list, **_: Any) -> list:
+        self.asked.extend(item["community_id"] for item in items_to_process)
+        return [
+            {
+                "community_name": f"About {item['community_id']}",
+                "summary": "s",
+                "rating": "4",
+                "findings": {"finding": {"summary": "f", "explanation": "e"}},
+            }
+            for item in items_to_process
+        ]
+
+
+class TestStoredReportAnswers:
+    """A full build reuses the report answer of an unchanged input."""
+
+    @staticmethod
+    def _detector(
+        descriptions: dict[str, str],
+    ) -> tuple[CommunityDetector, _AskedBatch]:
+        cd = _detector(report=False)
+        cd.community_detection_config.report_generation.enabled = True
+        graph = nx.Graph()
+        for node, description in descriptions.items():
+            graph.add_node(node, name=node.upper(), type="ORG", description=description)
+        cd.graph = graph
+        cd.report_generator = mock.Mock()
+        cd.batch_processor = batch = _AskedBatch()
+        return cd, batch
+
+    @staticmethod
+    def _communities() -> list[Community]:
+        return [
+            _community(["e1"]).model_copy(update={"id": "c1", "name": "C1"}),
+            _community(["e2"]).model_copy(update={"id": "c2", "name": "C2"}),
+        ]
+
+    def test_an_unchanged_input_takes_its_stored_answer(self) -> None:
+        from unified_kg_rag.domain.ingestion.contributions import (
+            REPORT_RECORD_ATTRIBUTE,
+        )
+
+        records = _Records()
+        cd, batch = self._detector({"e1": "one", "e2": "two"})
+        first, failed = cd.generate_reports(self._communities(), records=records)
+        assert batch.asked == ["c1", "c2"] and failed == []
+        keys = [r.attributes[REPORT_RECORD_ATTRIBUTE] for r in first]
+        assert set(records.stored["default"]) == set(keys) and len(set(keys)) == 2
+
+        # Another run of the same graph: no model call, the same reports
+        # (their generation time included).
+        cd, batch = self._detector({"e1": "one", "e2": "two"})
+        again, _ = cd.generate_reports(self._communities(), records=records)
+        assert batch.asked == []
+        assert [r.model_dump() for r in again] == [r.model_dump() for r in first]
+
+        # A member's description changed: only its community is asked again.
+        cd, batch = self._detector({"e1": "one", "e2": "two, revised"})
+        changed, _ = cd.generate_reports(self._communities(), records=records)
+        assert batch.asked == ["c2"]
+        assert changed[0].model_dump() == first[0].model_dump()
+        assert changed[1].attributes[REPORT_RECORD_ATTRIBUTE] not in keys
+
+        # The report settings key the answers too.
+        cd, batch = self._detector({"e1": "one", "e2": "two"})
+        cd.config.custom_prompts.community_report_human = (
+            "Report {community_id}: {entities}"
+        )
+        cd.generate_reports(self._communities(), records=records)
+        assert batch.asked == ["c1", "c2"]
+
+    def test_without_records_every_community_is_asked(self) -> None:
+        from unified_kg_rag.domain.ingestion.contributions import (
+            REPORT_RECORD_ATTRIBUTE,
+        )
+
+        cd, batch = self._detector({"e1": "one", "e2": "two"})
+        reports, _ = cd.generate_reports(self._communities())
+        cd.generate_reports(self._communities())
+        assert batch.asked == ["c1", "c2", "c1", "c2"]
+        assert all(REPORT_RECORD_ATTRIBUTE not in r.attributes for r in reports)
 
 
 class TestEdgeDrivenReportPacking:

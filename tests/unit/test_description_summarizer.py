@@ -431,6 +431,60 @@ class TestSummaryReuse:
         assert reuse_summaries([stale, unknown], [stored]) == set()
         assert stale.description == "other text"
 
+    def test_a_full_build_reuses_only_a_summary_made_with_its_settings(
+        self, summarizer, config: Config, mocker
+    ) -> None:
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            SUMMARIZED_FROM_ATTRIBUTE,
+            SUMMARIZED_WITH_ATTRIBUTE,
+            reuse_summaries,
+        )
+        from unified_kg_rag.domain.ingestion.cache_keys import (
+            description_summary_fingerprint,
+        )
+        from unified_kg_rag.shared.utils import compute_hash
+
+        summarizer.summarizer.invoke = mocker.Mock(return_value="A summary.")
+        (made,) = summarizer.summarize_entities(
+            [Entity(id="e", name="e", description=LONG_DESCRIPTION)]
+        )
+        settings = description_summary_fingerprint(config)
+        assert made.attributes == {
+            SUMMARIZED_FROM_ATTRIBUTE: compute_hash(LONG_DESCRIPTION),
+            SUMMARIZED_WITH_ATTRIBUTE: settings,
+        }
+
+        def item() -> Entity:
+            return Entity(id="e", name="e", description=LONG_DESCRIPTION)
+
+        same = item()
+        assert reuse_summaries([same], [made], settings=settings) == {"e"}
+        assert same.description == "A summary."
+        assert same.attributes == made.attributes
+        # Another summarization setting (or a copy written before the mark):
+        # a full build summarizes again.
+        config.processing.graph_extraction.description_summarization.max_summary_tokens = (
+            64
+        )
+        other = description_summary_fingerprint(config)
+        assert other != settings
+        assert reuse_summaries([item()], [made], settings=other) == set()
+        unmarked = made.model_copy(
+            update={
+                "attributes": {
+                    SUMMARIZED_FROM_ATTRIBUTE: compute_hash(LONG_DESCRIPTION)
+                }
+            }
+        )
+        assert reuse_summaries([item()], [unmarked], settings=settings) == set()
+        # An incremental run reuses either, keeping the copy's own mark.
+        kept = item()
+        assert reuse_summaries([kept], [made]) == {"e"}
+        assert kept.attributes == made.attributes
+        bare = item()
+        assert reuse_summaries([bare], [unmarked]) == {"e"}
+        assert bare.attributes == unmarked.attributes
+
     def test_a_grown_summary_is_extended_and_a_shrunk_one_is_not(self) -> None:
         from unified_kg_rag.adapters.ingestion.description_summarizer import (
             extend_summaries,
