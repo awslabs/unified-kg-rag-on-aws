@@ -12,7 +12,11 @@ more tokens per query on average. ``<measure>`` is a key of
 ``cost.deltas_vs_baseline`` (``usage/llm_calls``, ``usage/input_tokens``,
 ``usage/output_tokens``, ``usage/total_tokens``, ``usage/cost_usd``,
 ``latency/response_time_seconds``). A measure a strategy has no delta for
-fails the gate too: a regression check must not pass on missing data.
+fails the gate too: a regression check must not pass on missing data. So
+does a cost measure (``usage/*``, ``latency/*``) some answers of the
+strategy or of its baseline have no value of (``cost.strategies.<s>
+.answers_without_usage`` / ``answers_without_latency``): a delta over the
+answers that have one can hide what the others cost.
 """
 
 from __future__ import annotations
@@ -73,14 +77,49 @@ def parse_gate(text: str) -> Gate:
     )
 
 
+# The cost-block count of the answers without a value of a measure family.
+_UNMEASURED = {
+    "usage/": "answers_without_usage",
+    "latency/": "answers_without_latency",
+}
+
+
+def _unmeasured(
+    comparison: Mapping[str, Any], strategy: str, measure: str
+) -> dict[str, int]:
+    """Per side (the strategy and its baseline), the answers with no value
+    of ``measure``; empty for a metric or when every answer has one."""
+    key = next((k for p, k in _UNMEASURED.items() if measure.startswith(p)), None)
+    if key is None:
+        return {}
+    cost = (comparison.get("cost") or {}).get("strategies") or {}
+    baseline = (comparison.get("baselines") or {}).get(
+        strategy, comparison.get("baseline")
+    )
+    sides = dict.fromkeys([baseline, strategy])
+    return {
+        str(side): int((cost.get(side) or {}).get(key) or 0)
+        for side in sides
+        if (cost.get(side) or {}).get(key)
+    }
+
+
 def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]:
     """Why ``comparison`` fails ``gates``: one line per strategy and gate
-    that holds (or has no delta to read); empty when every gate passes."""
+    that holds (or has no delta, or answers without the cost measure, to
+    read); empty when every gate passes."""
     deltas = comparison.get("deltas_vs_baseline") or {}
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
     breaches = []
     for strategy in deltas:
         for gate in gates:
+            if unmeasured := _unmeasured(comparison, strategy, gate.measure):
+                listed = ", ".join(f"{s} {n}" for s, n in unmeasured.items())
+                breaches.append(
+                    f"{strategy}: --fail-if {gate}: answers without a value "
+                    f"of '{gate.measure}' ({listed}) to check"
+                )
+                continue
             delta = (deltas.get(strategy) or {}).get(gate.measure) or (
                 cost.get(strategy) or {}
             ).get(gate.measure)

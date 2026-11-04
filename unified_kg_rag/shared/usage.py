@@ -7,7 +7,8 @@ Always on, tracing or not. The model factories attach a callback
 it records each finished call here, into every :func:`usage_scope` open in
 the calling context. The ingestion pipeline opens one per stage, the RAG
 chain one per query (``RAGOutput.metadata["usage"]``), ``run-eval`` one per
-run; scopes nest, so a call counts in each enclosing one. A call made where
+run and one per answer attempt (so a failed answer keeps what it spent);
+scopes nest, so a call counts in each enclosing one. A call made where
 no scope is open is not recorded: the callback costs one context-variable
 read.
 

@@ -4635,6 +4635,18 @@ class EvaluationConfig(BaseModel):
             "(run-eval --from-results and --baseline-results read them)."
         ),
     )
+    warm_up_query: bool = Field(
+        default=True,
+        description=(
+            "Before each strategy's first timed run, run-eval answers one "
+            "synthetic query with that strategy, untimed, unscored and not "
+            "counted in the usage, so the first strategy's latency does not "
+            "include opening the store connections and the models' first "
+            "calls. Costs one extra query (its model calls) per strategy. "
+            "false: no warm-up; the first strategy's first answers then read "
+            "slower."
+        ),
+    )
     prices: dict[str, ModelPrice] = Field(
         default_factory=dict,
         description=(

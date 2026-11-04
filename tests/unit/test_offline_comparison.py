@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    LLMUsage,
 )
 from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.evaluation.comparison import (
@@ -507,3 +508,345 @@ def test_from_results_rejudges_with_another_model(tmp_path: Path, monkeypatch) -
     assert comparison["pairwise_vs_baseline"]["mix"]["judged"] == 4
     # The saved answers came from m-a: not the judge, so no self-preference.
     assert not any("judge is the answer model" in w for w in comparison["warnings"])
+
+
+# --- per-strategy baselines, failed answers in cost, pooling checks ---------
+
+
+def _saved_strategies(
+    directory: Path, runs: dict[str, dict[str, float]], day: int = 0, **manifest: Any
+) -> None:
+    """Save one run per strategy, listed in that order."""
+    order = list(runs)
+    before = set(directory.glob("evaluation_summary_*.json"))
+    for i, (strategy, scores) in enumerate(runs.items()):
+        _save(
+            directory,
+            strategy,
+            _run(scores, strategy),
+            stamp=f"2026010{day + 1}_09{i:02d}00_{'abcdef01'[i] * 8}",
+            order=order,
+            started=_T0 + timedelta(days=day, minutes=i),
+        )
+    if manifest:
+        for path in set(directory.glob("evaluation_summary_*.json")) - before:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["run_manifest"].update(manifest)
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_baseline_results_pair_each_strategy_with_its_own(tmp_path: Path) -> None:
+    # Before, every strategy was compared with the baseline's first one, so
+    # a regression of mix against the earlier mix passed the gate.
+    earlier, later = tmp_path / "earlier", tmp_path / "later"
+    _saved_strategies(earlier, {"local": _BASE, "mix": _BASE})
+    _saved_strategies(later, {"local": _BASE, "mix": _WORSE, "naive": _BASE}, day=1)
+    code, out = _cli(
+        [
+            "--from-results",
+            str(later),
+            "--baseline-results",
+            str(earlier),
+            "--fail-if",
+            "answer_match/token_f1:mean_delta<-0.1",
+            "--output-directory",
+            str(tmp_path / "o"),
+        ]
+    )
+    comparison = out["comparison"]
+    assert comparison["baselines"] == {
+        "local": "baseline:local",
+        "mix": "baseline:mix",
+        "naive": "baseline:local",
+    }
+    assert list(comparison["strategies"]) == [
+        "baseline:local",
+        "local",
+        "baseline:mix",
+        "mix",
+        "naive",
+    ]
+    f1 = "answer_match/token_f1"
+    assert comparison["deltas_vs_baseline"]["local"][f1]["mean_delta"] == 0.0
+    assert comparison["deltas_vs_baseline"]["mix"][f1]["mean_delta"] == (
+        pytest.approx(-0.35)
+    )
+    assert set(comparison["cost"]["deltas_vs_baseline"]) == {"local", "mix", "naive"}
+    assert (code, out["gate_failures"]) == (
+        1,
+        ["mix: answer_match/token_f1 mean_delta -0.35 < -0.1"],
+    )
+    # naive has no earlier run: the first strategy's, and a warning.
+    (warning,) = [w for w in comparison["warnings"] if "has no run of" in w]
+    assert "naive" in warning and "baseline:local" in warning
+    (md,) = (tmp_path / "o").glob("evaluation_comparison_*.md")
+    text = md.read_text(encoding="utf-8")
+    assert "vs each strategy's baseline" in text
+    assert "mix - baseline:mix [95% CI]" in text
+    rows = list(
+        csv.DictReader(next((tmp_path / "o").glob("*.csv")).open(encoding="utf-8"))
+    )
+    assert {(r["strategy"], r["baseline"]) for r in rows} == {
+        ("local", "baseline:local"),
+        ("mix", "baseline:mix"),
+        ("naive", "baseline:local"),
+    }
+
+
+def _failing_run(
+    scores: dict[str, float], strategy: str, failed: dict[str, tuple[Any, Any]]
+) -> tuple[list[EvaluationReport], list[EvaluationResult]]:
+    """``_run`` with the answers of ``failed`` failed: (usage, latency) each."""
+    reports, results = _run(scores, strategy)
+    reports = [r for r in reports if r.query_id not in failed]
+    for result in results:
+        if result.query_id in failed:
+            usage, latency = failed[result.query_id]
+            result.error = True
+            result.usage = LLMUsage.model_validate(usage) if usage else None
+            result.response_time = latency
+    return reports, results
+
+
+class TestFailedAnswersInCost:
+    def test_failed_answers_count_with_what_they_spent(self) -> None:
+        # Before, a timed-out answer (usage and time spent) was left out, so a
+        # strategy that timed out looked faster.
+        timed_out = _failing_run(_BASE, "mix", {"q1": (_usage(2, 100, 10), 30.0)})
+        cost = cost_comparison({"local": [_run(_BASE, "local")], "mix": [timed_out]})
+        mix = cost["strategies"]["mix"]
+        assert (mix["failed_answers"], mix["answers_without_latency"]) == (1, 0)
+        latency = cost["deltas_vs_baseline"]["mix"]["latency/response_time_seconds"]
+        assert latency["pairs"] == 4 and latency["mean_delta"] == pytest.approx(7.25)
+        (warning,) = [w for w in cost["warnings"] if w.startswith("Failed answers")]
+        assert "mix 1/4" in warning
+
+    def test_answers_without_measures_are_warned_and_fail_the_cost_gates(
+        self,
+    ) -> None:
+        # A failed answer saved before failed answers kept their measures.
+        unmeasured = _failing_run(_BASE, "mix", {"q1": (None, None)})
+        comparison = paired_comparison(
+            {"local": [_run(_BASE, "local")], "mix": [unmeasured]}
+        )
+        (warning,) = [w for w in comparison["warnings"] if w.startswith("mix: ")]
+        assert "1 without a usage record and 1 without a latency of 4" in warning
+        gates = [
+            parse_gate("usage/total_tokens:mean_delta>1000"),
+            parse_gate("latency/response_time_seconds:mean_delta>1000"),
+            parse_gate("answer_match/token_f1:mean_delta<-1"),
+        ]
+        breaches = gate_breaches(comparison, gates)
+        assert len(breaches) == 2
+        assert "answers without a value of 'usage/total_tokens' (mix 1)" in (
+            breaches[0]
+        )
+        assert "'latency/response_time_seconds'" in breaches[1]
+
+    def test_repeats_and_cache_hits_that_differ_are_warned(self) -> None:
+        def cached(run: Any, hits: int) -> Any:
+            for result in run[1]:
+                result.usage = result.usage.model_copy(update={"cache_hits": hits})
+            return run
+
+        cost = cost_comparison(
+            {
+                "baseline:local": [
+                    cached(_run(_BASE, "local", calls=2), 0),
+                    cached(_run(_BASE, "local", calls=1), 1),
+                ],
+                "local": [cached(_run(_BASE, "local", calls=2), 0)],
+            }
+        )
+        repeats, hits = cost["warnings"]
+        assert "different numbers of repeats (baseline:local 2, local 1)" in repeats
+        assert "same --repeats" in repeats
+        assert "Cache hits per answer differ (baseline:local 0.50, local 0.00)" in hits
+        same = cost_comparison(
+            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]}
+        )
+        assert same["warnings"] == []
+
+
+def test_extracted_span_fallbacks_are_warned_per_strategy() -> None:
+    def spans(run: Any, fallbacks: int) -> Any:
+        for i, report in enumerate(run[0]):
+            report.metadata["answer_span"] = "extracted"
+            if i < fallbacks:
+                report.metadata["answer_span_fallback"] = "span model down"
+        return run
+
+    comparison = paired_comparison(
+        {
+            "local": [spans(_run(_BASE, "local"), 0)],
+            "mix": [spans(_run(_BASE, "mix"), 4)],
+        }
+    )
+    assert comparison["strategies"]["mix"]["answer_span_fallbacks"] == {
+        "scored": 4,
+        "fallbacks": 4,
+    }
+    per_strategy, rates = comparison["warnings"]
+    assert per_strategy.startswith("mix: 4/4 extracted answer spans fell back")
+    assert "fallback rates differ (local 0%, mix 100%)" in rates
+    assert (
+        "answer_span_fallbacks"
+        not in paired_comparison(
+            {"local": [_run(_BASE, "local")], "mix": [_run(_BASE, "mix")]}
+        )["strategies"]["mix"]
+    )
+
+
+def test_a_failed_answer_is_not_filled_on_attributable_fraction() -> None:
+    def with_attribution(run: Any) -> Any:
+        reports, results = run
+        reports.extend(
+            EvaluationReport(
+                query_id=r.query_id,
+                evaluator_type=EvaluatorType.RETRIEVAL,
+                metrics=[
+                    EvaluationMetric(
+                        metric_type=EvaluationMetricType.ATTRIBUTABLE_FRACTION,
+                        value=1.0,
+                    )
+                ],
+                evaluation_time=datetime(2026, 1, 1),
+            )
+            for r in results
+            if not r.error
+        )
+        return reports, results
+
+    comparison = paired_comparison(
+        {
+            "local": [with_attribution(_run(_BASE, "local"))],
+            "mix": [
+                with_attribution(
+                    _failing_run(_BASE, "mix", {"q1": (_usage(1, 1, 1), 1.0)})
+                )
+            ],
+        }
+    )
+    # A share of attributable sources, not a score: no 0 for an answer that
+    # reported no source.
+    delta = comparison["deltas_vs_baseline"]["mix"]["retrieval/attributable_fraction"]
+    assert (delta["pairs"], delta["unpaired"], delta["mean_delta"]) == (3, 1, 0.0)
+
+
+def test_from_results_warns_on_pooled_runs_with_other_settings(
+    tmp_path: Path,
+) -> None:
+    saved = tmp_path / "runs"
+    _saved_strategies(saved, {"local": _BASE, "naive": _BASE})
+    # Later, local again with another --top-k into the same directory.
+    _saved_strategies(
+        saved,
+        {"local": _BASE},
+        day=1,
+        cli_args={"search_strategy": ["local"], "top_k": 1},
+    )
+    code, out = _cli(
+        ["--from-results", str(saved), "--output-directory", str(tmp_path / "o")]
+    )
+    warnings = out["comparison"]["warnings"]
+    assert code == 0
+    (pooled,) = [w for w in warnings if "pooled as its repeats" in w]
+    assert "The 2 saved runs of local" in pooled and "top_k (null, 1)" in pooled
+    assert any("different numbers of repeats (local 2, naive 1)" in w for w in warnings)
+
+
+def test_saved_runs_without_a_summary_are_warned(tmp_path: Path) -> None:
+    saved = tmp_path / "runs"
+    _saved_comparison(saved, _WORSE)
+    for path in saved.glob("evaluation_summary_*.json"):
+        path.unlink()
+    code, out = _cli(
+        ["--from-results", str(saved), "--output-directory", str(tmp_path / "o")]
+    )
+    (warning,) = [
+        w for w in out["comparison"]["warnings"] if "no evaluation_summary" in w
+    ]
+    assert warning.startswith("--from-results: 2 saved run(s)")
+
+
+def test_judge_model_without_the_pairwise_judge_is_warned(tmp_path: Path) -> None:
+    saved = tmp_path / "runs"
+    _saved_comparison(saved, _WORSE)
+    code, out = _cli(
+        [
+            "--from-results",
+            str(saved),
+            "--judge-model",
+            "vendor.judge-v2",
+            "--output-directory",
+            str(tmp_path / "o"),
+        ]
+    )
+    assert code == 0
+    assert any(
+        w.startswith("--judge-model is given without --pairwise-judge")
+        for w in out["comparison"]["warnings"]
+    )
+
+
+def test_output_directory_that_is_the_baseline_is_detected(tmp_path: Path) -> None:
+    # A run saving into its baseline's directory grows that baseline: the
+    # next run reading it pools this one in as a repeat.
+    (tmp_path / "eval.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "ci").mkdir()
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [
+            "--data-path",
+            str(tmp_path / "eval.json"),
+            "--baseline-results",
+            str(tmp_path / "ci"),
+            "--output-directory",
+            str(tmp_path / "ci"),
+        ]
+    )
+    runner = run_evaluation.EvaluationRunner(args, None, Config())
+    assert runner._output_is_baseline()
+    runner.args.output_directory = str(tmp_path / "elsewhere")
+    assert not runner._output_is_baseline()
+
+
+def test_markdown_lists_the_pairwise_judge(tmp_path: Path, monkeypatch) -> None:
+    saved = tmp_path / "runs"
+    _saved_comparison(saved, _WORSE)
+
+    class _Judge:
+        def __init__(self, config: Config, providers: Any = None) -> None:
+            pass
+
+        async def acompare(self, baseline: Any, candidate: Any) -> dict[str, Any]:
+            return {
+                "judged": 4,
+                "failed": 0,
+                "candidate_errors": 0,
+                "baseline_errors": 0,
+                "position_consistency": 0.75,
+                "criteria": {
+                    "directness": {
+                        "candidate_win_rate": 0.25,
+                        "ci_low": 0.0,
+                        "ci_high": 0.5,
+                    }
+                },
+            }
+
+    monkeypatch.setattr(run_evaluation, "PairwiseJudge", _Judge)
+    code, _ = _cli(
+        [
+            "--from-results",
+            str(saved),
+            "--pairwise-judge",
+            "--judge-model",
+            "vendor.judge-v2",
+            "--output-directory",
+            str(tmp_path / "o"),
+        ]
+    )
+    (md,) = (tmp_path / "o").glob("evaluation_comparison_*.md")
+    text = md.read_text(encoding="utf-8")
+    assert code == 0 and "## Pairwise judge" in text
+    assert "| mix vs local | 4 | 0 | 75% | 0.25 [0.00, 0.50] |" in text

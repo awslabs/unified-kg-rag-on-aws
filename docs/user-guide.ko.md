@@ -1443,9 +1443,11 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   - `answer_scoring`: exact match와 token F1에 쓴 `answer_span`과
     `answer_normalization`(`answer_match` 사용 시), `models.answer_span`은 구간을 추출한
     모델입니다. 채점 방식이 다른 실행은 이 두 지표로 비교할 수 없습니다.
-  - `retrieval_config_sha256`: 답변이나 점수를 바꿀 수 있는 모든 설정의 해시(모델 ID와
+  - `retrieval_config_sha256`: 답변이나 점수를 바꿀 수 있는 모든 구성 설정의 해시(모델 ID와
     수집 설정 포함, 리전·엔드포인트·자격 증명·경로·시간 제한 같은 운영 설정은 제외)이므로
-    같은 평가는 어느 환경에서든 같은 해시가 됩니다.
+    같은 평가는 어느 환경에서든 같은 해시가 됩니다. `run-eval`의 질의 플래그(`--suffix`,
+    `--top-k`, `--search-type`, `--retrieval-multiplier`, `--enable-thinking`)는 구성이
+    아니므로 해시에 들어가지 않고 CLI 인수에 기록됩니다.
   - `index`: 질의한 접미사마다 벡터 인덱스를 마지막으로 쓴 수집 실행(`pipeline_id`,
     `mode`, `built_at`, `documents`, 추출 설정, 증분 실행이면 그 실행이 올라선
     `full_build`)입니다. 최선 노력 방식이며 인덱스 메타데이터가 없으면 `null`입니다.
@@ -1481,8 +1483,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   데이터로 판단하므로 실패한 질의만 채점할 수 있던 지표(`expected_relationships`가 있는
   항목이 하나뿐인 경우 등)도 0점으로 채우지 않습니다(`failed_answers` / `failed_queries`.
   차단 수는 `guardrail_blocked_counts`. 전략마다 실패하거나 차단된 수가 다르거나, 실행마다
-  exact match와 token F1이 읽은 `answer_span`이 다르면 `warnings`에 나옴). 구간이 0을
-  포함하지 않으면 그 차이가 뒷받침됩니다.
+  exact match와 token F1이 읽은 `answer_span`이 다르거나, `answer_span: extracted`에서 추출한
+  구간이 첫 줄로 대체된 전략이 있거나(`answer_span_fallbacks`) 그 대체 비율이 전략마다 다르면
+  `warnings`에 나옴). 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다.
   이진 지표의 10%p 차이는 질의 50개에서 15%, 200개에서 59%의 실행에서만 찾아지므로 수백
   개 질의로 비교하세요.
 - `deltas_by_category.<s>.<category>.<metric>`: 같은 차이를 데이터셋 `category`(MuSiQue의
@@ -1505,22 +1508,32 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   모델과 같으면 경고합니다.
 - `cost.strategies.<s>`: 답변의 질의당 모델 사용량을 모든 반복의 모든 답변에 대한
   `mean` / `p50` / `p95`로 보여 줍니다. `llm_calls_per_query`, `input_tokens_per_query`,
-  `output_tokens_per_query`, `total_tokens_per_query`, `latency_seconds`(답한 질의만),
-  `totals`, `cache_hits`가 있고, `evaluation.prices`를 설정하면 `usd_per_query`와
-  `usd_total`도 있습니다. `cost.deltas_vs_baseline.<s>`는 지표처럼 첫 전략과 짝지어
-  비교합니다(`usage/llm_calls`, `usage/input_tokens`, `usage/output_tokens`,
-  `usage/total_tokens`, `usage/cost_usd`, `latency/response_time_seconds`. 질의별 반복
-  평균, 부트스트랩 구간 포함). 생성 중 예외가 난 답변에는 사용량이 없고, 사용량 집계 전에
-  저장된 결과에는 지연 시간만 있습니다(경고로 알림). 한 실행의 전략과 반복은 체인의 질의 추출
+  `output_tokens_per_query`, `total_tokens_per_query`, `latency_seconds`, `totals`,
+  `cache_hits`가 있고, `evaluation.prices`를 설정하면 `usd_per_query`와 `usd_total`도
+  있습니다. `cost.deltas_vs_baseline.<s>`는 지표처럼 기준과 짝지어 비교합니다
+  (`usage/llm_calls`, `usage/input_tokens`, `usage/output_tokens`, `usage/total_tokens`,
+  `usage/cost_usd`, `latency/response_time_seconds`. 질의별 반복 평균, 부트스트랩 구간
+  포함). 실패하거나 시간 초과된 답변은 실패하기 전까지 쓴 만큼 셉니다. 답변마다 사용량 범위와
+  타이머를 따로 두므로 그 결과에는 시도들의 호출·토큰과, 첫 시도 시작부터 마지막 시도 끝까지의
+  시간이 남습니다(`failed_answers`가 그 수이며 경고로도 알림). 그래서 실패했다고 더 싸거나
+  빨라 보이지 않지만, 빨리 실패한 답변은 실제로 비용이 적으므로 비용은 `failed_answers`와 실패
+  경고와 함께 읽으세요. 일부 답변에 사용량 기록이나 지연 시간이 없는 결과(이전 버전이 저장)는
+  `answers_without_usage` / `answers_without_latency`로 세고 경고하며, `usage/*`나
+  `latency/*` 측정값의 `--fail-if`는 실패합니다. 한 실행의 전략과 반복은 체인의 질의 추출
   캐시를 공유하므로, 앞선 실행의 추출을 재사용한 뒤쪽 실행은 그 호출 비용을 내지 않으며
-  (`cache_hits`에 셈) 비용이 앞서 실행된 것에 따라 달라집니다. 캐시 없는 비용을 비교하려면
+  (`cache_hits`에 셈) 비용이 앞서 실행된 것에 따라 달라집니다. 반복 횟수나 답변당 캐시 적중
+  수가 기준과 다른 전략은 경고합니다. 캐시 없는 비용을 비교하려면
   `search.query_extraction_cache_size: 0`으로 설정하세요. 품질 차이는 이 설정과 무관합니다.
+  `run-eval`은 전략마다 첫 실행 전에 그 전략으로 합성 질의 하나에 답하며, 이 질의는 시간을
+  재지 않고 채점하지 않으며 사용량에도 넣지 않습니다(`evaluation.warm_up_query`, 기본값
+  `true`). 그래서 첫 전략의 지연 시간에 저장소 연결을 열고 모델을 처음 호출하는 시간이 들어가지
+  않습니다. 전략마다 질의 하나(그 모델 호출)만큼 비용이 더 들며, `false`로 끌 수 있습니다.
 - 첫 실행의 `run_manifest`. `--pairwise-judge`를 쓰면 `pairwise_judge_model`과 판정 모델의
   `pairwise_usage`도 있습니다.
 
 비교는 `evaluation_comparison_<timestamp>.csv`(기준이 아닌 전략, 측정값, 질의마다 한 행.
-`baseline_value`, `value`, `delta`, `category`)와 `.md`(지표 표와 비용 표, 게이트, 경고.
-풀 리퀘스트나 CI 작업 요약용)로도 저장합니다.
+`baseline`, `baseline_value`, `value`, `delta`, `category`)와 `.md`(지표 표와 비용 표, 맞비교
+판정의 승률, 게이트, 경고. 풀 리퀘스트나 CI 작업 요약용)로도 저장합니다.
 
 패키지에는 모델 가격이 들어 있지 않습니다. USD 추정치가 필요하면 사용하는 리전의 현재
 [Amazon Bedrock 가격](https://aws.amazon.com/bedrock/pricing/)을 100만 토큰 단위로,
@@ -1543,12 +1556,15 @@ evaluation:
 `evaluation_reports_*`, `evaluation_summary_*`. 기본값인 `evaluation.save_detailed_results:
 true`일 때 저장됨)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
 묶어 가장 오래된 실행이 나열한 순서로 비교하므로(`--search-strategy`를 주면 그 전략을 그 순서로
-비교), 중간에 멈춘 비교는 빠진 전략만 같은 디렉터리에 실행한 뒤 다시 만들면 끝납니다. 이렇게 만든
-차이는 중단 없이 실행한 비교와 같습니다.
+비교), 중간에 멈춘 비교는 빠진 전략만 같은 디렉터리에 같은 `--repeats`로 실행한 뒤 다시 만들면
+끝납니다. 이렇게 만든 차이는 중단 없이 실행한 비교와 같습니다. 실행이 모두 사라진 전략은
+`--repeats N`으로 다시 실행하고, 반복 일부가 저장된 전략은 빠진 반복만 실행하거나(남은 횟수를
+`--repeats`로) 그 전략의 일부 파일을 지운 뒤 N번 모두 실행하세요.
 
 ```bash
-# naive 실행 중에 멈춤: naive만 같은 디렉터리에 실행하고 다시 만들기.
-run-eval --data-path eval.json --search-strategy naive --output-directory out/
+# naive 실행 중에 멈춤(--repeats 3으로 실행): naive만 같은 디렉터리에 같은 --repeats로
+# 실행하고 다시 만들기.
+run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
 # 저장한 답변을 다른 판정 모델로 다시 판정(답변 호출 없음).
@@ -1556,16 +1572,29 @@ run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
 
 # CI: 이전 실행과 비교해 뒷받침되는 성능 저하가 있으면 실패.
 run-eval --data-path eval.json --search-strategy local \
-  --baseline-results ci/previous/ \
+  --baseline-results ci/previous/ --output-directory ci/current/ \
   --fail-if "answer_match/token_f1:ci_high<-0.02" \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
+- 한 전략의 저장된 실행들은 그 전략의 반복으로 합칩니다. 이때 질의 플래그(`suffix`, `top_k`,
+  `search_type`, `retrieval_multiplier`, `enable_thinking`), `retrieval_config_sha256`,
+  `git_sha`, `index` 빌드나 답변 모델이 서로 다르면(설정이 다른 실행은 다른 디렉터리에 두거나
+  결과 파일을 직접 나열), 전략마다 반복 횟수가 다르면, `evaluation_summary_*` 파일이 없는
+  실행이 있으면(매니페스트가 없어 이 확인과 답변 채점·자기 선호 확인을 할 수 없음) 경고합니다.
 - `--from-results`와 `--pairwise-judge`를 함께 쓰면 저장한 답변을 다시 판정합니다
-  (`--judge-model`은 여기서나 일반 실행에서나 그 실행의 `models.roles.evaluation`을 정함).
+  (`--judge-model`은 여기서나 일반 실행에서나 그 실행의 `models.roles.evaluation`을 정함.
+  `--pairwise-judge`도 LLM 판정 평가기도 없으면 아무것도 판정하지 않으므로 경고함).
   자기 선호 경고는 그 판정 모델을 저장된 실행의 답변 모델과 비교합니다.
-- `--baseline-results`는 이전 실행을 `baseline:<strategy>`(그 실행의 첫 전략)라는 이름의
-  기준으로 삼고, 이번 실행이나 `--from-results`의 모든 전략을 그것과 비교합니다. exact match와
+- `--baseline-results`는 이전 실행을 기준으로 삼습니다. 그 실행의 전략마다
+  `baseline:<strategy>`라는 이름을 붙이고, 이번 실행이나 `--from-results`의 각 전략을 같은
+  전략의 기준과 비교합니다(`deltas_vs_baseline.<s>`와 `cost.deltas_vs_baseline.<s>`는
+  `baseline:<s>`와의 차이이며, `baselines`가 전략마다 기준을 알려 줌). 이전 실행에 없던 전략은
+  그 실행의 첫 전략과 비교하고 경고합니다. 기준 실행은 비교할 실행과 같은 `--repeats`로
+  만드세요. 반복 실행은 질의 추출 캐시를 재사용하므로 횟수가 다르면 사용량 차이가 달라집니다
+  (경고로 알림). 실행마다 디렉터리를 따로 두세요. `--output-directory`가 `--baseline-results`
+  디렉터리이면, 다음에 그 디렉터리를 기준으로 읽는 실행이 이번 결과를 반복으로 합치므로
+  경고합니다. exact match와
   token F1이 답변을 다르게 읽은 실행(실행 매니페스트의 `answer_scoring`:
   `evaluation.answer_span`, `answer_normalization`)은 거부하며(종료 코드 2), 답변을 생성하기
   전에 확인합니다. 데이터셋이 다른 실행은 경고합니다(공통 질의 ID만 짝지음).
@@ -1574,6 +1603,7 @@ run-eval --data-path eval.json --search-strategy local \
   (`<evaluator>/<metric>`)나 `cost.deltas_vs_baseline`의 키이고, `<stat>`은 `mean_delta`,
   `ci_low`, `ci_high` 가운데 하나입니다. `ci_high<-0.02`는 구간 전체가 -0.02 아래일 때, 즉
   질의 표본이 뒷받침하는 성능 저하일 때만 실패합니다. 그 측정값의 차이가 없는 전략도 게이트에서
+  실패하며, 전략이나 그 기준의 일부 답변에 값이 없는 비용 측정값(`usage/*`, `latency/*`)도
   실패합니다. 결과는 `comparison.gates`와 JSON의 `gate_failures`에 있습니다. 비교가 있어야
   하므로 전략 두 개 이상이나 `--baseline-results`가 필요합니다.
 

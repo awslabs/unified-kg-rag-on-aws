@@ -949,14 +949,31 @@ From 0.2.3 (or a `main` checkout since):
 - The `run-eval` comparison has a `cost` block: per strategy the answers'
   calls, tokens and latency per query (mean, p50, p95) and their paired
   deltas against the baseline with a bootstrap interval; an optional
-  `evaluation.prices` table (no prices ship) adds a USD estimate. It is also
-  written as per-query CSV and Markdown (#526).
+  `evaluation.prices` table (no prices ship) adds a USD estimate. A failed
+  or timed-out answer counts with the calls, tokens and time it spent
+  before failing (`failed_answers`; each answer has its own usage scope and
+  timer), so a strategy is not cheaper or faster for failing; repeat counts
+  or cache hits per answer that differ from the baseline's are warned
+  about. It is also written as per-query CSV and Markdown, with the
+  pairwise judge's win rates (#526, #PR).
 - `run-eval --from-results` rebuilds a comparison from saved runs without an
   answer call (finishing an interrupted comparison by running only the
-  missing strategies), and re-judges them with `--pairwise-judge` and the new
-  `--judge-model`; `--baseline-results` compares with an earlier run and is
-  refused when the runs' `answer_scoring` differs; `--fail-if
-  <measure>:<stat><op><value>` gates exit `1` on a regression (#526).
+  missing strategies with the same `--repeats`), and re-judges them with
+  `--pairwise-judge` and the new `--judge-model`; `--baseline-results`
+  compares each strategy with the earlier run of the same strategy
+  (`baseline:<s>` against `s`; the earlier run's first strategy, with a
+  warning, when it has none) and is refused when the runs' `answer_scoring`
+  differs; `--fail-if <measure>:<stat><op><value>` gates exit `1` on a
+  regression, and a cost gate also when some answers have no value of the
+  measure. Pooled runs of one strategy that differ in a query flag, the
+  configuration hash, the commit, the index or the answer model, saved runs
+  without a summary, extracted answer spans that fell back to the first
+  line, an output directory that is the baseline's and a `--judge-model`
+  that judges nothing are warned about (#526, #PR).
+- `evaluation.warm_up_query` (default `true`): `run-eval` answers one
+  untimed, unscored synthetic query per strategy before its first timed
+  run, so the first strategy's latency does not include warming the stores
+  and models; it costs one extra query per strategy (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy

@@ -102,6 +102,9 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
         EvaluatorType.ANSWER_MATCH,
         EvaluatorType.GRAPH_AWARE,
     ]
+    # The warm-up queries' calls are in no run's usage: off, the server's
+    # call count is the runs' usage exactly.
+    config.evaluation.warm_up_query = False
     dataset = tmp_path / "eval.json"
     dataset.write_text(json.dumps(_DATASET), encoding="utf-8")
     strategies = ["--search-strategy", "local,mix,naive", "--data-path", str(dataset)]

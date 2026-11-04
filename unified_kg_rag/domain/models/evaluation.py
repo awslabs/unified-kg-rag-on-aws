@@ -151,7 +151,12 @@ class EvaluationResult(BaseModel):
         ),
     )
     response_time: float | None = Field(
-        default=None, description="Time taken to generate the answer in seconds."
+        default=None,
+        description=(
+            "Time taken to generate the answer in seconds: the chain's "
+            "processing time, or for an answer that failed or was retried the "
+            "time from its first attempt's start to its last one's end."
+        ),
     )
     enable_thinking: bool = Field(
         default=False,
@@ -223,8 +228,9 @@ class EvaluationResult(BaseModel):
         default=None,
         description=(
             "The model calls and tokens of answering this query (the chain's "
-            "metadata.usage). None when answer generation raised, or for "
-            "results saved before usage accounting."
+            "metadata.usage), with those of attempts that raised before it; "
+            "for a failed answer, what its attempts spent before failing. "
+            "None for results saved before usage accounting."
         ),
     )
 

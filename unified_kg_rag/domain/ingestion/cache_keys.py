@@ -339,6 +339,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "evaluation": Unkeyed("read by run-eval only"),
     "evaluation.outputs_directory": _neutral("says where run-eval writes"),
     "evaluation.save_detailed_results": _neutral("says what run-eval writes"),
+    "evaluation.warm_up_query": _neutral("times run-eval's answers, changes none"),
     "logging": _neutral("telemetry"),
     "observability": _neutral("telemetry"),
     "custom_prompts.answer_generation_system": _QUERY_PROMPT,
