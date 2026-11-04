@@ -79,7 +79,7 @@ class PairwiseJudge:
             providers.llm_factory,
             config.model_id(ModelRole.EVALUATION),
             prompt,
-            LLMJsonOutputParser(),
+            LLMJsonOutputParser(answer_keys=self.criteria),
             custom_prompts=config.custom_prompts,
             model_purpose=ModelPurpose.EVALUATION,
             **judge_model_kwargs(config),

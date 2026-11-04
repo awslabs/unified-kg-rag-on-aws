@@ -204,6 +204,104 @@ class TestXMLSelfCorrection:
         assert result["findings"]["finding"]["summary"] == "Vendor Corp is central"
 
 
+# A report whose findings lack their <findings> wrapper: each <finding>
+# holds a <summary> of its own, which is not the report's.
+_REPORT_UNWRAPPED_FINDINGS = """<community_name>Vendor supply network</community_name>
+<summary>Vendor Corp supplies Buyer Ltd through Depot.</summary>
+<rating>6.5</rating>
+<rating_explanation>Central supply link.</rating_explanation>
+<finding>
+  <summary>Vendor ships via Depot</summary>
+  <explanation>Depot stores the gadgets.</explanation>
+</finding>
+<finding>
+  <summary>Buyer pays monthly</summary>
+  <explanation>Payments are monthly.</explanation>
+</finding>
+"""
+
+
+def _one_line_correction() -> str:
+    """The self-corrected extraction with its final answer on one line."""
+    first, final = outputs.EXTRACTION_SELF_CORRECTED.split(outputs.CORRECTION_LINE)
+    return f"{first}{outputs.CORRECTION_LINE}\n\n{final.strip().replace(chr(10), '')}"
+
+
+class TestXMLSectionDetection:
+    def test_a_summary_inside_an_unwrapped_finding_is_not_the_report_summary(
+        self,
+    ) -> None:
+        parser = RobustXMLOutputParser(tags=_REPORT_TAGS)
+        text = _REPORT_UNWRAPPED_FINDINGS
+        assert parser.final_answer(text) == text
+        result = parser.parse(text)
+        assert result["summary"] == "Vendor Corp supplies Buyer Ltd through Depot."
+        assert [f["summary"] for f in result["finding"]] == [
+            "Vendor ships via Depot",
+            "Buyer pays monthly",
+        ]
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            # A wrapper holding sections only.
+            "{first}{line}\n<output>\n{final}</output>\n",
+            # A tag never closed (prose naming one) holds nothing.
+            "{first}{line} <br>\n{final}",
+        ],
+        ids=["wrapper", "unclosed"],
+    )
+    def test_an_element_without_other_content_hides_no_section(
+        self, template: str
+    ) -> None:
+        first, final = outputs.EXTRACTION_SELF_CORRECTED.split(outputs.CORRECTION_LINE)
+        text = template.format(first=first, line=outputs.CORRECTION_LINE, final=final)
+        assert _extraction_parser().sections_closed(text)
+        assert _types(_checked(_extraction_parser().parse(text))) == (
+            outputs.FINAL_RELATIONSHIP_TYPES
+        )
+
+    def test_a_correction_on_one_line_keeps_every_final_section(self) -> None:
+        text = _one_line_correction()
+        final = _extraction_parser().final_answer(text)
+        assert final.startswith("<entities><entity>")
+        assert final.count("<relationships>") == 1 and "STORES_FOR" in final
+        result = _checked(_extraction_parser().parse(text))
+        assert _types(result) == outputs.FINAL_RELATIONSHIP_TYPES
+        assert len(ensure_list(result["entities"], inner_key="entity")) == 4
+
+    def test_a_section_tag_mid_line_in_its_own_section_is_content(self) -> None:
+        # Not a new <entities> occurrence that would cut the answer short.
+        text = (
+            "<entities>\n<entity><name>Vendor Corp</name><description>Listed "
+            "with <entities> of the text</description></entity>\n</entities>\n"
+            "<relationships>\n</relationships>\n"
+        )
+        assert _extraction_parser().final_answer(text) == text
+
+    def test_no_section_is_not_closed_sections(self) -> None:
+        parser = _extraction_parser()
+        assert not parser.sections_closed("No entities in this text.")
+        assert not parser.sections_closed("<entity><name>A</name></entity>")
+
+    def test_an_end_tag_closes_the_sections_opened_inside_it(self) -> None:
+        # The <summary> left open inside <findings> does not keep it open.
+        text = (
+            "<summary>Vendor Corp supplies Buyer Ltd.</summary>\n<findings>\n"
+            "<finding>\n<summary>Vendor Corp is central\n</finding>\n</findings>\n"
+        )
+        assert RobustXMLOutputParser(tags=_REPORT_TAGS).sections_closed(text)
+
+    @pytest.mark.parametrize("separator", ["\n", ""])
+    def test_a_self_closing_section_is_closed(self, separator: str) -> None:
+        first = outputs.EXTRACTION_SELF_CORRECTED.split(outputs.CORRECTION_LINE)[0]
+        entities = first[: first.index("<relationships>")].strip()
+        text = f"{entities}{separator}<relationships/>"
+        parser = _extraction_parser()
+        assert parser.sections_closed(text)
+        assert parser.final_answer(text) == text
+
+
 class TestJSONSelfCorrection:
     def test_the_last_object_is_the_answer(self) -> None:
         # Before: the span from the first { to the last } held both objects.
@@ -224,10 +322,36 @@ class TestJSONSelfCorrection:
         )
         assert parse_llm_json(raw, strict=True) == {"a": 2}
 
-    def test_the_only_object_that_parses_is_the_answer(self) -> None:
-        # The correction was cut off: the first answer is the only one.
-        raw = '{"a": 1}\n\nCorrection: final output:\n\n{"a": [2'
-        assert parse_llm_json(raw, strict=True) == {"a": 1}
+    @pytest.mark.parametrize(
+        "cut", ['{"a": [2', '{"a": {"b": 2}, "c": [', '{"a": "x } {']
+    )
+    def test_a_cut_off_last_object_raises_under_strict(self, cut: str) -> None:
+        # The correction was cut off: the earlier object (an answer or an
+        # example) is not the answer. A self-correction ends complete.
+        raw = f'{{"a": 1}}\n\nCorrection: final output:\n\n{cut}'
+        with pytest.raises(json.JSONDecodeError, match="unclosed"):
+            parse_llm_json(raw, strict=True)
+        assert parse_llm_json(raw) == {"a": 1}
+
+    def test_the_object_holding_the_answer_keys_is_the_answer(self) -> None:
+        keys = ("high_level_keywords", "low_level_keywords")
+        answer = json.dumps(outputs.FINAL_KEYWORDS)
+        for raw in (
+            f'{answer}\nFor example: {{"example": "an aside"}}',
+            f'Format: {{"format": "json"}}\n{answer}\nAs in: {{"x": 1}}',
+        ):
+            assert (
+                parse_llm_json(raw, strict=True, answer_keys=keys)
+                == outputs.FINAL_KEYWORDS
+            )
+        # Without keys, or when none holds them, the last object answers.
+        raw = f'{answer}\nFor example: {{"example": "an aside"}}'
+        assert parse_llm_json(raw, strict=True) == {"example": "an aside"}
+        assert parse_llm_json(raw, answer_keys=("other",)) == {"example": "an aside"}
+
+    def test_an_escaped_quote_does_not_end_a_string(self) -> None:
+        raw = '{"a": 1}\nCorrection:\n{"a": "say \\"}\\" ok"}'
+        assert parse_llm_json(raw, strict=True) == {"a": 'say "}" ok'}
 
     def test_a_single_truncated_object_still_raises(self) -> None:
         with pytest.raises(json.JSONDecodeError):

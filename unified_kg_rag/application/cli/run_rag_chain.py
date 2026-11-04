@@ -287,21 +287,16 @@ class RAGChainRunner:
         )
 
     def _get_suffix_display(self) -> str:
-        if self.args.suffix:
-            return f"[dim]Index/Label Suffix:[/dim] [orange3]{markup_safe(self.args.suffix)}[/orange3]"
-
-        try:
-            if suffix := query_suffix(self.args, self.config):
-                return f"[dim]Index/Label Suffix:[/dim] [orange3]{markup_safe(suffix)}[/orange3]"
-            default_suffix = Constants.DEFAULT_SUFFIX.value
-            if self.config.indexing.additional_suffix:
-                final_suffix = (
-                    f"{default_suffix}-{self.config.indexing.additional_suffix}"
-                )
-                return f"[dim]Index/Label Suffix:[/dim] [gray]{final_suffix}[/gray]"
-            return f"[dim]Index/Label Suffix:[/dim] [gray]{default_suffix}[/gray]"
-        except Exception:
-            return f"[dim]Index/Label Suffix:[/dim] [gray]{Constants.DEFAULT_SUFFIX.value}[/gray]"
+        """The suffix line: what the store names end in, the index suffix
+        queried plus ``indexing.additional_suffix`` (store_names)."""
+        chosen = query_suffix(self.args, self.config)
+        suffix = chosen or Constants.DEFAULT_SUFFIX.value
+        if additional := self.config.indexing.additional_suffix:
+            suffix = f"{suffix}-{additional}"
+        color = "orange3" if chosen else "gray"
+        return (
+            f"[dim]Index/Label Suffix:[/dim] [{color}]{markup_safe(suffix)}[/{color}]"
+        )
 
     async def run(self) -> None:
         # Only run-ingestion loads the seed graphs.

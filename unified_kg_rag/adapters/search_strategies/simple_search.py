@@ -85,12 +85,38 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return {}
 
+        search_query = self._apply_claim_gate(query)
+        if self._source_kinds_skip_reports(query):
+            without = self._without_reports(search_query)
+            if without is None:
+                return {}
+            search_query = without
         results = await self._safe_aretrieve(
-            self.document_retriever,
-            self._apply_claim_gate(query),
-            "Document retrieval",
+            self.document_retriever, search_query, "Document retrieval"
         )
         return {"opensearch_all": results} if results else {}
+
+    def _without_reports(self, query: SearchQuery) -> SearchQuery | None:
+        # A community report carries no source kind and summarizes seed-only
+        # members too, so a source_kinds filter that keeps one kind cannot
+        # be honoured on it (local and DRIFT read no report then either).
+        # None: the caller pinned the reports index alone.
+        reports = self.config.indexing.opensearch.community_reports_index_prefix
+        pinned = query.index_prefixes
+        if isinstance(pinned, str):
+            pinned = [pinned]
+        prefixes = [
+            prefix
+            for prefix in pinned or configured_index_prefixes(self.config)
+            if prefix != reports
+        ]
+        logger.info(
+            "Community reports skipped: the source_kinds filter keeps one "
+            "source kind and a report carries none"
+        )
+        if not prefixes:
+            return None
+        return query.model_copy(update={"index_prefixes": prefixes})
 
     def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
         # Simple search sweeps every index by default. When the caller hasn't

@@ -6,6 +6,7 @@ import os
 import re
 import unicodedata
 import uuid
+from collections.abc import Collection
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
@@ -207,7 +208,9 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
         return default_value
 
 
-def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
+def parse_llm_json(
+    raw: str, *, strict: bool = False, answer_keys: Collection[str] = ()
+) -> dict[str, Any]:
     """Parse a JSON object from a noisy LLM response.
 
     LLMs wrap JSON in markdown fences or surround it with prose; every call
@@ -216,9 +219,13 @@ def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
     because it holds several objects, as a model that corrects itself writes
     (an answer, "Correction: ... final output:", the answer again), the last
     top-level object that parses is the answer: the one the model ends on.
+    With ``answer_keys``, the last one holding any of them is, so an example
+    object the model writes before or after its answer is not taken for it.
     Non-object JSON yields ``{}``. Unparseable text yields ``{}`` so callers
     degrade gracefully, or raises ``json.JSONDecodeError`` when ``strict`` is
-    set, for callers that must surface a broken response.
+    set, for callers that must surface a broken response. Under ``strict`` a
+    response whose last object is unclosed (cut off) raises too, even when
+    an earlier object parses: a self-correction ends on a complete object.
     """
     text = (raw or "").strip()
     start, end = text.find("{"), text.rfind("}")
@@ -226,10 +233,21 @@ def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
         try:
             parsed = json.loads(text[start : end + 1])
         except ValueError:
-            if objects := _top_level_json_objects(text):
-                return objects[-1]
+            pass
         else:
-            return parsed if isinstance(parsed, dict) else {}
+            # A `{` after the last `}` opens an object left unclosed.
+            if not (strict and "{" in text[end + 1 :]):
+                return parsed if isinstance(parsed, dict) else {}
+        objects, cut_at = _top_level_json_objects(text)
+        if strict and cut_at is not None:
+            raise json.JSONDecodeError(
+                "The last JSON object is unclosed (cut off?)", text, cut_at
+            )
+        if objects:
+            return next(
+                (o for o in reversed(objects) if any(k in o for k in answer_keys)),
+                objects[-1],
+            )
     # Strip a leading/trailing markdown code fence if present.
     if text.startswith("```"):
         text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
@@ -248,9 +266,10 @@ def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _top_level_json_objects(text: str) -> list[dict[str, Any]]:
+def _top_level_json_objects(text: str) -> tuple[list[dict[str, Any]], int | None]:
     """The top-level ``{...}`` spans of ``text`` that parse as JSON objects,
-    in order. Braces inside JSON strings do not count; an object nested in
+    in order, and where an unclosed one starts (``None`` when every one is
+    closed). Braces inside JSON strings do not count; an object nested in
     one that does not parse is not top-level, so it is never taken for the
     answer, nor is one inside an object left unclosed."""
     objects: list[dict[str, Any]] = []
@@ -277,7 +296,7 @@ def _top_level_json_objects(text: str) -> list[dict[str, Any]]:
                     break
         if end == -1:
             # Unclosed (cut off): what follows is inside it, not top-level.
-            break
+            return objects, start
         try:
             parsed = json.loads(text[start : end + 1])
         except ValueError:
@@ -285,7 +304,7 @@ def _top_level_json_objects(text: str) -> list[dict[str, Any]]:
         if isinstance(parsed, dict):
             objects.append(parsed)
         position = end + 1
-    return objects
+    return objects, None
 
 
 # Every vector field the indexers write ends in this suffix (``text_embedding``,

@@ -1087,7 +1087,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             # Strict: with ignore_errors=False a broken keyword extraction
             # surfaces instead of silently yielding empty keyword lists.
-            payload = parse_llm_json(raw, strict=True)
+            payload = parse_llm_json(raw, strict=True, answer_keys=self._KEYWORD_LEVELS)
             hl_keywords, ll_keywords = self._keyword_lists(payload)
             self._cache_extraction(key, (tuple(hl_keywords), tuple(ll_keywords)))
             return hl_keywords, ll_keywords

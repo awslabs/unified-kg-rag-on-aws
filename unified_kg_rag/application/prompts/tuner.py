@@ -98,6 +98,10 @@ def _escape_braces(text: str) -> str:
     return text.replace("{", "{{").replace("}", "}}")
 
 
+# The keys a corpus profile answer holds (CorpusProfile.from_payload).
+_PROFILE_KEYS = ("domain", "language", "persona", "entity_types")
+
+
 @dataclass
 class CorpusProfile:
     """Structured corpus characterization produced during tuning."""
@@ -455,7 +459,7 @@ class PromptTuner:
         )
         raw = await chain.ainvoke({"corpus_sample": corpus_sample})
         try:
-            payload = parse_llm_json(raw, strict=True)
+            payload = parse_llm_json(raw, strict=True, answer_keys=_PROFILE_KEYS)
         except json.JSONDecodeError as e:
             # A default profile here would yield generic prompts presented as
             # tuned ones; fail so the user can retry or fix the model. The
