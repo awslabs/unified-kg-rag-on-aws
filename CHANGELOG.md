@@ -322,13 +322,13 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.auto_speculative_extraction` | (fixed: after the router) | `true`: `auto` extracts alongside the router call (#525) |
 | `search.query_extraction_cache_size` | (none: no cache) | 1024; 0 turns it off (#525) |
 | `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
-| `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#PR) |
-| `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#PR) |
+| `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#533) |
+| `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#533) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | also `answer_match`, `retrieval`, `graph_aware` (#121) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
 | `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
-| `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#PR) |
+| `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#533) |
 | `logging.log_to_file` | `true` | `false` (#520) |
 
 Behaviour.
@@ -1229,7 +1229,7 @@ From 0.2.3 (or a `main` checkout since):
   covers the judge. Kept, with the measurement documented: gleaning `max_rounds` 3
   (+9.8 points [+3.7, +17.1] of the questions' intermediate answers in the
   graph, +38% ingestion cost; `1` is the cost lever), `kg_chunk_pick_method:
-  weight` and `diversity_lambda` 0.5 (no significant difference) (#PR).
+  weight` and `diversity_lambda` 0.5 (no significant difference) (#533).
 - Usage records count prompt-cache reads and writes apart
   (`cache_read_input_tokens`, `cache_write_input_tokens`; still part of
   `input_tokens`), the requests botocore resent inside a call
@@ -1242,7 +1242,7 @@ From 0.2.3 (or a `main` checkout since):
   such as the warm-up queries; the runbook's model usage metrics explain how
   to reconcile them. A per-TTL cache write
   (`ephemeral_5m/1h_input_tokens`) is no longer lost from the traces'
-  `gen_ai.usage.cache_creation.input_tokens` (#PR).
+  `gen_ai.usage.cache_creation.input_tokens` (#533).
 
 ### Fixed
 Bugs present in 0.2.3.
