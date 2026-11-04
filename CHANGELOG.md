@@ -1299,18 +1299,18 @@ From 0.2.3 (or a `main` checkout since):
   it takes: the ones its upserts replace were read (up to 2,048 a write) and
   kept for a later write that never comes, 2,000 vector fields of 4,000 read
   on an upsert of 2,000 changed descriptions. The removal before it still
-  keeps the vectors it replaces for the commit to take (#PR).
+  keeps the vectors it replaces for the commit to take (#541).
 - A `run-eval --fail-if` on a cost measure (`usage/*`, `latency/*`) fails
   when the strategy and its baseline failed different numbers of answers:
   a failed answer counts with what it spent before failing, so the delta
-  compared the failures too (a warning only before) (#PR).
+  compared the failures too (a warning only before) (#541).
 - DRIFT search metadata counts its follow-up local searches by
-  `report_selection` (#PR).
+  `report_selection` (#541).
 - CI builds the image with the `unstructured` extra too and loads its spaCy
-  model with no network (#PR).
+  model with no network (#541).
 - The IaC synth refuses `network_mode=private` with an
   `observability_secret_arn` of another region: the Secrets Manager
-  endpoint reaches the deploy region only, so no task could start (#PR).
+  endpoint reaches the deploy region only, so no task could start (#541).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1693,16 +1693,16 @@ Deployment (CDK).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter
-  then (#PR).
+  then (#541).
 - A strict JSON parse (keyword extraction, prompt tuning, the extraction
   parser) no longer refuses an answer followed by prose holding a lone `{`:
   only a `{` that starts JSON (`{"`, or one the response ends on) reads as
-  a cut-off object (#PR).
+  a cut-off object (#541).
 - A cancelled model call (its task cancelled, so LangChain reports no end)
   is let go when its task ends instead of staying in the usage handler
-  until its cap; its estimate stays counted (#PR).
+  until its cap; its estimate stays counted (#541).
 - Simple search logged "Community reports skipped" under a `source_kinds`
-  filter even when its sweep never held the reports index (#PR).
+  filter even when its sweep never held the reports index (#541).
 - A description summary setting
   (`processing.graph_extraction.description_summarization`, its
   `custom_prompts` or `models.roles.description_summary`) re-extracted the
@@ -1713,7 +1713,7 @@ Deployment (CDK).
   documents. These settings now key graph resolution and are no extraction
   setting; a summary records the settings it was made with, so a stored one
   made otherwise is not reused, and a reset summarizes every description
-  again. Records and scopes stored before keep their keys (#PR).
+  again. Records and scopes stored before keep their keys (#541).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
