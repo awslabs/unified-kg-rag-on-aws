@@ -563,7 +563,7 @@ From 0.2.3 (or a `main` checkout since):
     matched relationships cite are their own stream at
     `lightrag_relation_chunks`, 1.0 unless set. Set it as well (usually to
     the same value) to keep weighting every LightRAG graph chunk: mix and
-    hybrid recall is sensitive to it (#521, #PR).
+    hybrid recall is sensitive to it (#521, #530).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -945,7 +945,7 @@ From 0.2.3 (or a `main` checkout since):
   the key points (null, the default, keeps the current behaviour; `0` sends
   the key points only; the `retrieval` evaluator then skips a global
   query's rank metrics, `no_sources_by_config`, instead of scoring a miss)
-  (#525, #PR).
+  (#525, #530).
 - Always-on LLM usage accounting, tracing or not: model calls, input and
   output tokens and cache hits (the LLM response cache and the query
   extraction cache) per model role and model id, in
@@ -961,7 +961,7 @@ From 0.2.3 (or a `main` checkout since):
   usage now matches the model requests made (offline: 12 of 20 calls to 20
   of 20 routed to global, 8 of 16 to 16 of 16 to naive). A query extraction cache hit is
   recorded under the resolved model id (the inference profile), like the
-  calls (#PR).
+  calls (#530).
 - The `run-eval` comparison has a `cost` block: per strategy the answers'
   calls, tokens and latency per query (mean, p50, p95) and their paired
   deltas against the baseline with a bootstrap interval; an optional
@@ -1156,7 +1156,7 @@ From 0.2.3 (or a `main` checkout since):
   for it and counts it from its start (cancelling it stopped no billed
   request, a Bedrock call runs on a worker thread to the end, and left it
   out of the query's usage). It still fills the extraction cache, and is
-  cancelled at the query's deadline or when the chain closes (#525, #PR).
+  cancelled at the query's deadline or when the chain closes (#525, #530).
 - Query entities and keywords are cached per question, target language,
   model and prompt text (`search.query_extraction_cache_size`, 1024; 0
   turns it off), so `run-eval --repeats` and the arms of a strategy
@@ -1208,7 +1208,7 @@ Queries and retrieval.
   search found never seeds beside a name match at any weights (at 0.2/0.8
   every query seeded two unrelated entities, now none); a vector search
   compares raw similarities, where the floor filters less, and
-  `lexical_weight` 0 logs that it filters nothing (#PR).
+  `lexical_weight` 0 logs that it filters nothing (#530).
 - Graph expansion returns every seed and its neighbourhood and ranks by
   distance first, so hub neighbours no longer push seeds out (#161, #218).
 - Graph expansion no longer depends on the order the graph store keeps a
@@ -1282,11 +1282,11 @@ Queries and retrieval.
   full build of one corpus pick the same chunks (#521). A
   `search.fusion.fusion_weights.lightrag_linked_chunks` weight now applies
   to the entity side's chunks only; the relationship side's take
-  `lightrag_relation_chunks` (default 1.0) (#PR).
+  `lightrag_relation_chunks` (default 1.0) (#530).
 - Bedrock CountTokens requests use the query model client's read timeout
   and attempts (`search.model_timeout_seconds`, `model_max_attempts`), not
   botocore's 60 s and 4 requests: a count sits on a query's critical path,
-  and a failed count falls back to the local estimate (#PR).
+  and a failed count falls back to the local estimate (#530).
 - Hybrid search on OpenSearch 2.13 no longer drops the `size`-th lexical hit
   or normalizes over a lower one (#295, #306); kNN on lucene uses
   `vector_search.ef_search` (#306).
