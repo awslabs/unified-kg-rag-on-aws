@@ -572,7 +572,7 @@ From 0.2.3 (or a `main` checkout since):
     (`Level 0 Community 3`) until the next reset, which renames them and,
     as their report answers were stored under the old names, asks every
     report once more. No setting changes; later resets reuse the answers
-    (#PR).
+    (#539).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1248,7 +1248,7 @@ From 0.2.3 (or a `main` checkout since):
   asked their reports again. With 8 stored communities and one disjoint
   document added, the reset asks 1 report instead of 3 or 4. Names no
   longer collide between a delta run's communities and the stored ones
-  either (#PR).
+  either (#539).
 - Defaults from a real-model evaluation (MuSiQue, 200 questions over 3,318
   documents, a 50-question sensemaking set, two repeats, three pairwise
   judges; design §9.1). `global` answers with the comprehensive prompt: it
