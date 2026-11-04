@@ -27,7 +27,11 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LLMUsage,
 )
-from unified_kg_rag.domain.models.config import ModelPrice
+from unified_kg_rag.domain.models.config import (
+    DEFAULT_MODEL_ID,
+    JUDGE_MODEL_ID,
+    ModelPrice,
+)
 from unified_kg_rag.evaluation.comparison import (
     answer_cost_usd,
     cost_comparison,
@@ -239,6 +243,7 @@ def _save(
     order: list[str],
     started: datetime,
     scoring: dict[str, Any] | None = None,
+    answer_model: str = "m-a",
 ) -> None:
     """Write a run's files as EvaluationManager.save_results names them."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -254,7 +259,7 @@ def _save(
             "cli_args": {"search_strategy": order},
             "answer_scoring": scoring or _SCORING,
             "dataset": {"content_sha256": "d" * 64},
-            "models": {"answer_generation": "m-a"},
+            "models": {"answer_generation": answer_model},
         },
     )
     for kind, data in (
@@ -270,7 +275,9 @@ def _save(
 _T0 = datetime(2026, 1, 1, 9, 0, 0)
 
 
-def _saved_comparison(directory: Path, candidate: dict[str, float]) -> None:
+def _saved_comparison(
+    directory: Path, candidate: dict[str, float], answer_model: str = "m-a"
+) -> None:
     order = ["local", "mix"]
     _save(
         directory,
@@ -279,6 +286,7 @@ def _saved_comparison(directory: Path, candidate: dict[str, float]) -> None:
         stamp="20260101_090000_aaaaaaaa",
         order=order,
         started=_T0,
+        answer_model=answer_model,
     )
     _save(
         directory,
@@ -287,6 +295,7 @@ def _saved_comparison(directory: Path, candidate: dict[str, float]) -> None:
         stamp="20260101_090100_bbbbbbbb",
         order=order,
         started=_T0 + timedelta(minutes=1),
+        answer_model=answer_model,
     )
 
 
@@ -535,6 +544,71 @@ def test_from_results_rejudges_with_another_model(tmp_path: Path, monkeypatch) -
     assert comparison["pairwise_vs_baseline"]["mix"]["judged"] == 4
     # The saved answers came from m-a: not the judge, so no self-preference.
     assert not any("judge is the answer model" in w for w in comparison["warnings"])
+
+
+class _RecordingJudge:
+    judged: list[str] = []
+
+    def __init__(self, config: Config, providers: Any = None) -> None:
+        type(self).judged.append(config.model_id(run_evaluation.ModelRole.EVALUATION))
+
+    async def acompare(self, baseline: Any, candidate: Any) -> dict[str, Any]:
+        return {
+            "judged": len(candidate),
+            "failed": 0,
+            "criteria": {},
+            "candidate_errors": 0,
+            "baseline_errors": 0,
+        }
+
+
+@pytest.mark.parametrize("judge_wrote", ["candidates", "baseline"])
+def test_the_default_judge_falls_back_from_the_saved_answer_model(
+    tmp_path: Path, monkeypatch, judge_wrote: str
+) -> None:
+    # Saved answers came from the default judge's model: judging them with it
+    # would favour them. A configured judge is kept (the test above).
+    judge_model = f"global.{JUDGE_MODEL_ID}"
+    saved, earlier = tmp_path / "runs", tmp_path / "earlier"
+    args = ["--from-results", str(saved), "--pairwise-judge"]
+    if judge_wrote == "candidates":
+        _saved_comparison(saved, _WORSE, answer_model=judge_model)
+    else:
+        _saved_comparison(saved, _WORSE)
+        _save(
+            earlier,
+            "local",
+            _run(_BASE, "local"),
+            stamp="20251231_090000_eeeeeeee",
+            order=["local"],
+            started=_T0 - timedelta(days=1),
+            answer_model=judge_model,
+        )
+        args += ["--baseline-results", str(earlier)]
+    monkeypatch.setattr(_RecordingJudge, "judged", [])
+    monkeypatch.setattr(run_evaluation, "PairwiseJudge", _RecordingJudge)
+    code, out = _cli([*args, "--output-directory", str(tmp_path / "o")])
+    assert code == 0 and _RecordingJudge.judged == [DEFAULT_MODEL_ID]
+    assert out["comparison"]["pairwise_judge_model"] == DEFAULT_MODEL_ID
+
+
+def test_a_re_judge_without_the_pairwise_judge_names_no_judge(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # --from-results answers nothing, so the langchain/ragas judges score
+    # nothing: no LLM judge is chosen or logged.
+    import logging
+
+    saved = tmp_path / "runs"
+    _saved_comparison(saved, _WORSE)
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.LANGCHAIN]
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        ["--from-results", str(saved)]
+    )
+    with caplog.at_level(logging.INFO):
+        run_evaluation.EvaluationRunner(args, None, config)
+    assert not any("LLM judge" in r.getMessage() for r in caplog.records)
 
 
 # --- per-strategy baselines, failed answers in cost, pooling checks ---------

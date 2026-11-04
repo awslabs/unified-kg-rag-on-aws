@@ -455,11 +455,49 @@ class EvaluationRunner:
             judges & set(self.config.evaluation.enabled_evaluators)
         )
 
+    def _judge_choice(self) -> tuple[str, str]:
+        """The LLM judge and why, as ``Config.judge_model_choice`` picks it,
+        from the models of every answer it judges: those of the saved runs
+        it reads (``--from-results``, ``--baseline-results``) too. A default
+        judge that wrote them falls back as for this run's answer model and
+        is pinned, so every judge this run builds uses it."""
+        saved = self._saved_answer_models()
+        if not saved:
+            return self.config.judge_model_choice()
+        answers = list(saved)
+        if self._from_results is None:  # this run answers too
+            answers.append(self.config.model_id(ModelRole.ANSWER_GENERATION))
+        judge, reason = self.config.judge_model_choice(answers)
+        if self.config.models.roles.evaluation is None:
+            self.config = with_judge_model(self.config, judge)
+        return judge, reason
+
+    def _saved_answer_models(self) -> list[str]:
+        """The answer models the saved runs this run reads recorded."""
+        paths = [*(self._from_results or []), *(self._baseline_results or [])]
+        if not paths:
+            return []
+        try:
+            saved = load_saved_runs(paths)
+        except EvaluationException:
+            return []  # reported where the runs are read
+        return sorted(
+            {
+                str(model)
+                for run in saved
+                if (
+                    model := ((run.manifest or {}).get("models") or {}).get(
+                        "answer_generation"
+                    )
+                )
+            }
+        )
+
     def _validate_args(self) -> None:
         for warning in self._judge_model_warnings():
             logger.warning("%s", warning)
         if self._uses_llm_judge():
-            judge, reason = self.config.judge_model_choice()
+            judge, reason = self._judge_choice()
             logger.info("LLM judge: %s (%s)", judge, reason)
         if self._from_results is not None:
             if self.args.repeats != 1:

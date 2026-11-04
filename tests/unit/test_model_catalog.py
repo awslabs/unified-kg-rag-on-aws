@@ -105,6 +105,11 @@ def test_the_judge_defaults_to_another_model_than_the_answer_model() -> None:
         ),
         # The default tier is the answer model too: Sonnet 5.5.
         ({"default": "anthropic.claude-opus-5-5"}, LanguageModelId.CLAUDE_V5_5_SONNET),
+        # Also when the tier names it through an inference profile.
+        (
+            {"default": "global.anthropic.claude-opus-5-5"},
+            LanguageModelId.CLAUDE_V5_5_SONNET,
+        ),
     ],
 )
 def test_the_default_judge_falls_back_when_it_is_the_answer_model(
@@ -115,6 +120,20 @@ def test_the_default_judge_falls_back_when_it_is_the_answer_model(
     assert chosen == judge == config.model_id(ModelRole.EVALUATION)
     assert "is the answer model" in reason
     assert chosen != config.model_id(ModelRole.ANSWER_GENERATION)
+
+
+def test_the_default_judge_falls_back_from_other_answer_models() -> None:
+    # A re-judge of saved runs: the models that wrote them are the answer
+    # models, not the configured one.
+    config = Config()
+    profiled = f"global.{JUDGE_MODEL_ID}"
+    chosen, reason = config.judge_model_choice([profiled])
+    assert chosen == DEFAULT_MODEL_ID and "is the answer model" in reason
+    assert config.judge_model_choice(["vendor.other"])[0] == JUDGE_MODEL_ID
+    assert config.judge_model_choice([profiled, DEFAULT_MODEL_ID]) == (
+        JUDGE_MODEL_ID,
+        "no other model to judge with",
+    )
 
 
 def test_a_configured_judge_is_kept_even_when_it_is_the_answer_model() -> None:

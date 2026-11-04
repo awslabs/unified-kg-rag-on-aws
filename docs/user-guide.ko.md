@@ -426,7 +426,9 @@ models:
   Opus 5.5는 토큰당 Sonnet 5.5의 약 두 배입니다(온디맨드, us-west-2, 2026년 11월 기준 입력 /
   출력 100만 토큰당 $4 / $20, Sonnet 5.5는 $2 / $10). 이 모델은 `run-eval`의 LLM 판정만
   호출합니다. 답변 모델이 Opus 5.5이면 비워 둔 판정 모델은 기본 계층의 모델로, 그것도 답변
-  모델이면 Sonnet 5.5로 바뀌며, `run-eval`이 고른 판정 모델과 이유를 INFO로 기록합니다. 이전
+  모델이면 Sonnet 5.5로 바뀌며, `run-eval`이 고른 판정 모델과 이유를 INFO로 기록합니다.
+  `--from-results`나 `--baseline-results`를 쓰면 저장된 실행의 답변 모델(매니페스트의
+  `models.answer_generation`)도 답변 모델로 봅니다. 이전
   판정 모델(답변 모델)을 쓰려면 `models.roles.evaluation: default`로 두세요(`run-eval`이 자기
   답변을 판정한다고 경고하며, 답변 모델과 같은 판정 모델을 직접 지정하면 언제나 경고합니다).
   계정이나 리전에서 Opus 5.5를 쓸 수 없으면 다른 모델을 지정하세요. 다른 공급자에서는 판정
@@ -2742,8 +2744,10 @@ ex:berlin rdfs:label "Berlin"@en .
     `document`는 문서가 진술한 것(둘 다 진술한 엔티티도 시드 설명 줄과 함께 포함)을
     남깁니다. 목록은 둘 중 하나와 일치합니다. 대소문자는 상관없습니다. 커뮤니티 보고서에는
     출처 종류가 없고 시드에만 있는 구성원까지 커뮤니티 전체를 요약하므로, 한 종류만 남기는
-    필터에서는 `local`과 `drift`가 보고서를 읽지 않습니다(DRIFT는 질문 자체로 local 검색을 한
-    번 실행). 보고서만 읽는 `global`은 이 키를 거부합니다.
+    필터에서는 `local`, `drift`, `simple`이 보고서를 읽지 않습니다(DRIFT는 질문 자체로 local
+    검색을 한 번 실행하고, `simple`은 나머지 인덱스를 모두 검색하며, `auto`는 이 중 하나로
+    보냄). 보고서만 읽는 `global`은 이 키를 거부합니다. `mix`와 `hybrid`는 보고서를 읽지 않고,
+    텍스트 청크만 읽는 `naive`도 이 키를 거부합니다.
   - `iri`(엔티티, Neptune 엔티티 정점): 정확한 IRI.
   - `attr_seed_graph: procure`는 모든 인덱스가 가진 문서 필터로 그 시드가 진술한 것을
     남깁니다. `attr_department: legal` 같은 테넌트 필터는 시드의 `filters`에 그 키가 없으면

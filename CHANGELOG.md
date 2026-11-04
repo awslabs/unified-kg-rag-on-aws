@@ -1388,6 +1388,15 @@ Queries and retrieval.
   kind and summarizes seed-only members too, so `source_kinds: document`
   still answered with seed-only facts. DRIFT then runs one local search on
   the question; `global` refuses the key as before (#534).
+- `simple` reads no community report under such a filter either: its sweep
+  of every index still read the reports index, so `source_kinds: document`
+  answered with reports that summarize seed-only members. Of every
+  strategy, `local`, `drift` and `simple` (and `auto`, which routes to
+  them) skip the reports, `global` and `naive` refuse the key, and `mix`
+  and `hybrid` read no report (#536).
+- The `run-rag` suffix line names `indexing.additional_suffix` also when
+  `--suffix` or `processing.document_parsing.index_value` gives the index
+  suffix (#536).
 - `run-rag` and `run-eval` query the config's
   `processing.document_parsing.index_value` when `--suffix` is not given,
   as ingestion writes it: they queried `default` and every query of a
@@ -1406,6 +1415,16 @@ Ingestion and incremental indexing.
   of a Sonnet 5.5 run), and a strict keyword parse failed the whole
   `mix`/`hybrid` query with "Extra data"; the pairwise judge read the first,
   superseded verdict. A single answer cut off is still flagged (#532).
+- A section that follows a closed one with only whitespace between them
+  starts a section, so a correction written on one line keeps its final
+  `<relationships>`: they were dropped for the superseded ones. An expected
+  tag inside another element is not a section, so a community report whose
+  `<finding>`s lack their `<findings>` keeps its own `<summary>`, not the
+  last finding's (#536).
+- Strict `parse_llm_json` (LightRAG keywords, prompt tuning, the pairwise
+  judge) raises when the last object is cut off instead of returning an
+  earlier one (the answer being corrected, or an example), and prefers the
+  last object holding the caller's answer keys over an example object (#536).
 - Graph extraction output whose entities have no name but whose sections
   are all closed is malformed, not cut off: it is retried
   (`retry.max_attempts`) and, failing every attempt, counted as the unit's
@@ -1527,6 +1546,11 @@ Ingestion and incremental indexing.
   message that names the fix (#534).
 
 Evaluation, visualization and tuning.
+- A re-judge (`--from-results`, `--baseline-results`) with no
+  `models.roles.evaluation` set also falls back from the default judge
+  when it is the model that wrote the saved answers (their manifests'
+  `models.answer_generation`), not only when it is this config's answer
+  model (#536).
 - Judge failures are recorded per query, failed scoring exits non-zero
   (#158, #210), and a failed RAGAS run marks only its own metrics (#219).
 - RAGAS skips `faithfulness` for an answer without context (#366), counts

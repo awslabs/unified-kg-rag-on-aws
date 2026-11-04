@@ -109,3 +109,59 @@ async def test_caller_pinned_prefixes_passed_through(config: Config) -> None:
     await strategy.asearch(SearchQuery(query="q", index_prefixes=pinned))
 
     assert os_r.calls[0].index_prefixes == pinned
+
+
+@pytest.mark.parametrize("kinds", ["document", ["seed_graph"]])
+async def test_reports_dropped_under_a_single_kind_filter(
+    config: Config, kinds: str | list[str]
+) -> None:
+    # A community report carries no source kind, so a filter that keeps one
+    # kind drops the reports index from the sweep (local and DRIFT read no
+    # report then either).
+    strategy, os_r = _make_strategy(config)
+    o = config.indexing.opensearch
+
+    await strategy.asearch(SearchQuery(query="q", filters={"source_kinds": kinds}))
+
+    prefixes = os_r.calls[0].index_prefixes
+    assert prefixes is not None
+    assert o.community_reports_index_prefix not in prefixes
+    assert o.text_units_index_prefix in prefixes
+    assert o.entities_index_prefix in prefixes
+
+
+async def test_reports_kept_when_the_filter_keeps_both_kinds(config: Config) -> None:
+    strategy, os_r = _make_strategy(config)
+    filters = {"source_kinds": ["document", "seed_graph"]}
+
+    await strategy.asearch(SearchQuery(query="q", filters=filters))
+
+    prefixes = os_r.calls[0].index_prefixes
+    reports = config.indexing.opensearch.community_reports_index_prefix
+    assert prefixes is None or reports in prefixes
+
+
+async def test_pinned_reports_dropped_under_a_single_kind_filter(
+    config: Config,
+) -> None:
+    strategy, os_r = _make_strategy(config)
+    o = config.indexing.opensearch
+    filters = {"source_kinds": "document"}
+
+    await strategy.asearch(
+        SearchQuery(
+            query="q",
+            index_prefixes=[o.entities_index_prefix, o.community_reports_index_prefix],
+            filters=filters,
+        )
+    )
+    assert os_r.calls[0].index_prefixes == [o.entities_index_prefix]
+
+    # Pinned to the reports alone: nothing to search, not every index.
+    out = await strategy.asearch(
+        SearchQuery(
+            query="q", index_prefixes=o.community_reports_index_prefix, filters=filters
+        )
+    )
+    assert len(os_r.calls) == 1
+    assert out.results == []

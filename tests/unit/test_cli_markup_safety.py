@@ -109,6 +109,7 @@ def test_run_rag_banner_prints_the_query_literally(
         conversation_id="[/c]",
         query=_QUERY,
     )
+    runner.config = Config()
 
     runner._display_run_info()
 

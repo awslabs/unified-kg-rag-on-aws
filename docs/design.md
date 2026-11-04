@@ -1272,8 +1272,9 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   carry no source kind (a report summarizes its members, seed-only ones
   included; deriving one from the members would go stale whenever a seed
   edit changes a member's kinds without regenerating the report), so a
-  `source_kinds` filter keeping one kind skips them in `local` and the DRIFT
-  primer (`BaseSearchStrategy._source_kinds_skip_reports`), and `global`
+  `source_kinds` filter keeping one kind skips them in `local`, the DRIFT
+  primer and `simple`'s sweep
+  (`BaseSearchStrategy._source_kinds_skip_reports`), and `global`
   refuses the key (no index it reads declares it). A reported source
   with seed evidence gets `provenance` (`rag_chain.seed_provenance`:
   kind, the seed graphs its document filters name, the entity IRI);
@@ -1669,7 +1670,9 @@ choices:
   to Opus 5.5 on Bedrock, a model other than the default answer model, since
   a judge favours its own answers (§9.1); when the answer model is Opus 5.5
   the unset judge falls back to the default tier's model, else Sonnet 5.5
-  (`Config.judge_model_choice`, logged at INFO). `judge_is_answer_model` in
+  (`Config.judge_model_choice`, logged at INFO); a re-judge
+  (`--from-results`, `--baseline-results`) also avoids the saved runs'
+  answer models. `judge_is_answer_model` in
   the run manifest and a warning still flag a configured judge that is the
   answer model.
 - **A comparison is a pure function of saved files.** `paired_comparison`

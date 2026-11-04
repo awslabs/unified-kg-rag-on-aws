@@ -245,6 +245,30 @@ async def test_rag_runner_queries_the_configs_index_value(
 
 
 @pytest.mark.parametrize(
+    ("flags", "index_value", "shown"),
+    [
+        ([], "corpus-a", "[orange3]corpus-a-v2[/orange3]"),
+        (["--suffix", "other"], "corpus-a", "[orange3]other-v2[/orange3]"),
+        ([], None, "[gray]default-v2[/gray]"),
+    ],
+    ids=["config-index-value", "flag", "neither"],
+)
+def test_rag_runner_suffix_line_names_the_additional_suffix(
+    store_config, mocker, flags: list[str], index_value: str | None, shown: str
+) -> None:
+    # The line shows what the store names end in: the additional suffix was
+    # left out whenever a suffix was given or configured.
+    config = store_config.model_copy(deep=True)
+    config.processing.document_parsing.index_value = index_value
+    config.indexing.additional_suffix = "v2"
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", *flags])
+    )
+    assert runner._get_suffix_display() == f"[dim]Index/Label Suffix:[/dim] {shown}"
+
+
+@pytest.mark.parametrize(
     "flags",
     [["--use-memory"], ["--conversation-id", "s1"]],
     ids=["use-memory", "conversation-id"],

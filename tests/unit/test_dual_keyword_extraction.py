@@ -114,6 +114,35 @@ class TestExtractDualKeywords:
             FINAL_KEYWORDS["low_level_keywords"],
         )
 
+    @pytest.mark.parametrize(
+        "suffix",
+        [
+            '\nAn object of this shape: {"format": "json"}',
+            '\n\n{"high_level_keywords": [',
+        ],
+        ids=["example-after", "cut-off-correction"],
+    )
+    async def test_an_example_or_cut_off_object_is_not_the_answer(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, suffix: str
+    ) -> None:
+        # An example after the answer does not replace it; a correction cut
+        # off fails the extraction rather than reading the superseded one.
+        chain.ignore_errors = False
+        answer = '{"high_level_keywords": ["theme"], "low_level_keywords": ["Alice"]}'
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain(answer + suffix),
+        )
+        if "format" in suffix:
+            assert await chain._extract_dual_keywords("q", "English") == (
+                ["theme"],
+                ["Alice"],
+            )
+        else:
+            with pytest.raises(ValueError, match="unclosed"):
+                await chain._extract_dual_keywords("q", "English")
+
     async def test_ignore_errors_returns_empty(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
     ) -> None:

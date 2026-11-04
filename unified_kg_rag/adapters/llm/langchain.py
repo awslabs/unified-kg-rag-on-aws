@@ -630,6 +630,36 @@ def _starts_line(text: str, index: int) -> bool:
     return not text[text.rfind("\n", 0, index) + 1 : index].strip()
 
 
+def _content_elements(text: str, expected: set[str]) -> set[int]:
+    """Where each element of ``text`` that is not an expected section but
+    holds one as content starts: it is closed and has a closed child that is
+    not an expected section either (a ``<finding>`` with its ``<summary>`` and
+    ``<explanation>``). An expected tag inside one is not top-level. An
+    element holding expected sections only (an ``<output>`` wrapper) or never
+    closed (prose naming a tag) hides nothing."""
+    open_elements: list[tuple[str, int, bool]] = []  # name, start, has content
+    containers: set[int] = set()
+    for match in _TAG.finditer(text):
+        is_close, name, rest = match.group(1), match.group(2), match.group(3)
+        if not is_close:
+            if not rest.rstrip().endswith("/"):
+                open_elements.append((name, match.start(), False))
+            continue
+        names = [element[0] for element in open_elements]
+        if name not in names:
+            continue
+        index = len(names) - 1 - names[::-1].index(name)
+        _, element_start, has_content = open_elements[index]
+        del open_elements[index:]
+        if name not in expected:
+            if has_content:
+                containers.add(element_start)
+            if open_elements:
+                parent, parent_start, _ = open_elements[-1]
+                open_elements[-1] = (parent, parent_start, True)
+    return containers
+
+
 # Per side of a long model answer in a DEBUG excerpt (output_excerpt).
 _EXCERPT_CHARS = 2000
 
@@ -813,35 +843,62 @@ class RobustXMLOutputParser(XMLOutputParser):
         closed. An end tag closes the innermost open section of its name and
         any opened inside it; an opening tag of the open top-level section's
         name starts a new occurrence (the open one was cut short), as
-        sections never nest in one of their own name."""
+        sections never nest in one of their own name.
+
+        A section starts at the start of a line or right after a closed one
+        (whitespace between them only, as a one-line answer writes them). An
+        expected tag inside another element (``<summary>`` in a ``<finding>``
+        written without its ``<findings>``) is not top-level; an element that
+        holds expected sections only (an ``<output>`` wrapper) does not hide
+        them."""
         expected = set(self.tags or ())
         if not expected:
             return []
+        containers = _content_elements(text, expected)
         sections: list[_Section] = []
         stack: list[str] = []
+        outer: list[str] = []  # open containers outside any section
         start = 0
+        after_section = -1  # where the last closed top-level section ended
         for match in _TAG.finditer(text):
             is_close, name, rest = match.group(1), match.group(2), match.group(3)
             if name not in expected:
+                if stack:
+                    continue
+                if is_close:
+                    if name in outer:
+                        del outer[len(outer) - 1 - outer[::-1].index(name) :]
+                elif match.start() in containers:
+                    outer.append(name)
+                continue
+            if outer:
                 continue
             if is_close:
                 if name in stack:
                     del stack[len(stack) - 1 - stack[::-1].index(name) :]
                     if not stack:
                         sections.append(_Section(name, start, match.end(), True))
+                        after_section = match.end()
                 continue
             self_closing = rest.rstrip().endswith("/")
             if stack and not (name == stack[0] and _starts_line(text, match.start())):
                 if not self_closing:
                     stack.append(name)
                 continue
-            if not stack and not _starts_line(text, match.start()):
+            if not stack and not (
+                _starts_line(text, match.start())
+                or (
+                    after_section >= 0
+                    and not text[after_section : match.start()].strip()
+                )
+            ):
                 continue
             if stack:
                 sections.append(_Section(stack[0], start, match.start(), False))
                 stack = []
             if self_closing:
                 sections.append(_Section(name, match.start(), match.end(), True))
+                after_section = match.end()
             else:
                 stack, start = [name], match.start()
         if stack:
@@ -1225,11 +1282,14 @@ class LLMJsonOutputParser(BaseOutputParser[dict[str, Any]]):
     final output:" and the object again) was read by its superseded answer.
     This one reads the last object that parses, and raises
     ``OutputParserException`` when none does; non-object JSON is ``{}``.
+    With ``answer_keys``, the last object holding any of them is read.
     """
+
+    answer_keys: tuple[str, ...] = ()
 
     def parse(self, text: str) -> dict[str, Any]:
         try:
-            return parse_llm_json(text, strict=True)
+            return parse_llm_json(text, strict=True, answer_keys=self.answer_keys)
         except ValueError as e:
             raise OutputParserException(
                 f"The answer is not a JSON object (content {text_digest(text)}): {e}",

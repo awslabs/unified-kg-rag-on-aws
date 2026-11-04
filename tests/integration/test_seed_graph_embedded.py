@@ -985,15 +985,23 @@ def test_seed_facts_are_retrieved_and_cited_but_never_as_text(
 
         # source_kinds: document keeps what documents state only. A community
         # report carries no source kind and may summarize seed-only members,
-        # so local and DRIFT read none under the filter.
-        unfiltered = chain.invoke(
-            RAGInput(
-                query="Who stores the gadgets for Vendor?",
-                search_strategy=SearchStrategy.LOCAL,
-            )
+        # so local, DRIFT and simple (and auto, which routes to one of them)
+        # read none under the filter; global refuses the key.
+        readers = (
+            SearchStrategy.LOCAL,
+            SearchStrategy.DRIFT,
+            SearchStrategy.SIMPLE,
+            SearchStrategy.AUTO,
         )
-        assert _reports(unfiltered)
-        for strategy in (SearchStrategy.LOCAL, SearchStrategy.DRIFT):
+        for strategy in readers:
+            unfiltered = chain.invoke(
+                RAGInput(
+                    query="Who stores the gadgets for Vendor?",
+                    search_strategy=strategy,
+                )
+            )
+            assert _reports(unfiltered), strategy
+        for strategy in readers:
             out = chain.invoke(
                 RAGInput(
                     query="Who stores the gadgets for Vendor?",

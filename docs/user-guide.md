@@ -456,7 +456,9 @@ models:
   output tokens), and only `run-eval`'s LLM judges call it. When the
   answer model is Opus 5.5 itself, the unset judge falls back to the default
   tier's model, or to Sonnet 5.5 if that is the answer model too; `run-eval`
-  logs the judge it chose, and why, at INFO. Set
+  logs the judge it chose, and why, at INFO. With `--from-results` or
+  `--baseline-results` the saved runs' answer models (their manifests'
+  `models.answer_generation`) count as answer models too. Set
   `models.roles.evaluation: default` for the earlier judge (the answer
   model; `run-eval` then warns that it judges its own answers, as it does
   for any configured judge that is the answer model), or another model when
@@ -3137,9 +3139,12 @@ reach those strategies through the communities documents also state.
     states (also an entity both state, with its seed description lines);
     a list matches either. Any case. A community report carries no source
     kind and summarizes every member of its community, seed-only ones
-    included, so under a filter that keeps one kind `local` and `drift` read
-    no report (DRIFT then runs one local search on the question itself) and
-    `global`, which reads reports only, refuses the key.
+    included, so under a filter that keeps one kind `local`, `drift` and
+    `simple` read no report (DRIFT then runs one local search on the
+    question itself; `simple` sweeps every other index; `auto` routes to one
+    of these) and `global`, which reads reports only, refuses the key.
+    `mix` and `hybrid` read no report, and `naive`, which reads text chunks
+    only, refuses the key too.
   - `iri` (entities, Neptune entity vertices): the exact IRI.
   - `attr_seed_graph: procure` keeps what that seed states, through the
     document filters every index carries. A tenant filter such as

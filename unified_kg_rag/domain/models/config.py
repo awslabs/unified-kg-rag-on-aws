@@ -5,7 +5,7 @@ import functools
 import logging
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from enum import Enum
 from pathlib import Path
 from string import Formatter
@@ -5021,7 +5021,9 @@ class Config(BaseModel):
             return self.tier_model_id("fast")
         return chosen
 
-    def judge_model_choice(self) -> tuple[str, str]:
+    def judge_model_choice(
+        self, answer_models: Collection[str] | None = None
+    ) -> tuple[str, str]:
         """The run-eval judge (``models.roles.evaluation``) and why it is the
         one.
 
@@ -5029,22 +5031,26 @@ class Config(BaseModel):
         model (run-eval then warns). Unset on Bedrock, it is
         ``JUDGE_MODEL_ID`` unless that is the answer model, then the first
         of the default tier's model and Claude Sonnet 5.5 that is not: a
-        judge favours its own answers. With another provider it is the
-        default tier's model, the only one the config names.
+        judge favours its own answers. ``answer_models`` are the models the
+        judged answers come from (saved runs a re-judge reads); ``None``:
+        the configured answer model. With another provider it is the default tier's model, the only one
+        the config names.
         """
         configured: str | None = self.models.roles.evaluation
         if configured is not None:
             return self.model_id_for_choice(configured), "configured"
         if self.providers.llm.kind != BEDROCK:
             return self.tier_model_id("default"), "the default tier (not Bedrock)"
-        answer = _bare_model_id(self.model_id(ModelRole.ANSWER_GENERATION))
-        if _bare_model_id(JUDGE_MODEL_ID) != answer:
+        if answer_models is None:
+            answer_models = [self.model_id(ModelRole.ANSWER_GENERATION)]
+        answers = {_bare_model_id(model) for model in answer_models}
+        if _bare_model_id(JUDGE_MODEL_ID) not in answers:
             return JUDGE_MODEL_ID, "the default judge, not the answer model"
         for candidate in (
             self.tier_model_id("default"),
             LanguageModelId.CLAUDE_V5_5_SONNET.value,
         ):
-            if _bare_model_id(candidate) != answer:
+            if _bare_model_id(candidate) not in answers:
                 return candidate, (
                     f"the default judge {JUDGE_MODEL_ID} is the answer model"
                 )
