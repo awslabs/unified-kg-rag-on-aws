@@ -1777,7 +1777,20 @@ Deployment (CDK).
   re-extracts nothing. A unit record stored before keeps its key under the
   default summary settings; one stored under others is found under the key
   it was stored under and stored under the current one, so the first reset
-  re-extracts nothing either (#541, #545).
+  re-extracts nothing either (#541, #545). That earlier key is computed
+  from the run's summary settings and tiers: to keep records stored under
+  other summary settings, run once after upgrading with the settings (and
+  `models` tiers) they were stored under, then change them.
+- A unit record's key held the default summary settings resolved through
+  the run's `models` tiers, so with `models.roles.description_summary`
+  unset a change of the tier the summary model reads (`models.fast`) re-keyed
+  every record: where nothing else a document's extraction reads goes
+  through that tier (the `simple` chunker, translation off), no "settings
+  changed" warning told the user and the next reset extracted every unit
+  again. The key holds the default configuration's summary settings now, the
+  same whatever the tiers; a record stored under the earlier forms (the
+  run's summary settings, or their defaults through the run's tiers) is
+  found under the key it was stored under (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

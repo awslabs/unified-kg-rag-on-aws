@@ -387,6 +387,28 @@ class TestExtractionStore:
         # Without the earlier key: not found.
         assert store.load([_unit("t7", "c")], "fp", _raw, ["old-fp"]) == {}
 
+    def test_records_under_several_earlier_keys_are_each_found(self) -> None:
+        # Two earlier releases keyed records otherwise: each unit is found
+        # under whichever key it was stored under, the first key listed
+        # winning when both hold it, and every one is stored under the
+        # current key.
+        vectors = FakeVectorStore()
+        store = ExtractionStore(Config(), lambda: vectors)
+        newer = TextUnit(id="t1", text="Vendor ships.", attributes={"index": "a"})
+        older = TextUnit(id="t2", text="Buyer pays.", attributes={"index": "a"})
+        store.save([(newer, {"p": 1}), (older, {"p": 0})], "newer-fp")
+        store.save([(older, {"p": 2})], "older-fp")
+
+        found = store.load([newer, older], "fp", _raw, ["older-fp", "newer-fp"])
+
+        assert found == {"t2": {"p": 2}, "t1": {"p": 1}}
+        assert vectors.extraction_records[("a", record_key("fp", older.text))] == {
+            "p": 2
+        }
+        assert vectors.extraction_records[("a", record_key("fp", newer.text))] == {
+            "p": 1
+        }
+
     @pytest.mark.parametrize("failure", ["raise", "rejected", "unattributed"])
     def test_an_earlier_record_not_stored_again_is_extracted(
         self, failure: str

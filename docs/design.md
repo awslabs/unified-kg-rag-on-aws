@@ -1890,12 +1890,14 @@ checks that its values are the defaults and each key is in the reference).
   record. The description summary settings key graph resolution and are
   no extraction setting (`per_document=False`: they summarize merged
   descriptions, in no unit's record, and a summary records them in
-  `summarized_with`). A unit record's key holds them at their defaults
-  (`_summary_settings_as_keyed_before`), and a unit without a record under
-  it is looked up under the key that holds them at the run's values too
-  (`legacy_unit_record_fingerprints`, the key of a record stored while they
-  keyed graph extraction): `ExtractionStore.load` stores a record found
-  there under the current key, the one its unit names. `changed_settings`
+  `summarized_with`). A unit record's key holds them as the default
+  configuration has them (`_summary_key`, the same whatever the run's
+  `models` tiers), and a unit without a record under it is looked up under
+  the keys earlier releases stored it under too
+  (`legacy_unit_record_fingerprints`: them at their defaults resolved
+  through the run's tiers, and at the run's values, the key of a record
+  stored while they keyed graph extraction): `ExtractionStore.load` stores
+  a record found there under the current key, the one its unit names. `changed_settings`
   ignores them in a scope's earlier record. So stored records are found,
   documents read as unchanged, and a summary change asks no unit again.
   The schema keys count as extraction sees them
