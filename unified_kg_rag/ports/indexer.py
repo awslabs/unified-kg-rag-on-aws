@@ -564,11 +564,15 @@ class VectorIndexer(BaseIndexer):
         ``--force-rebuild`` asks). Default does nothing."""
         return None
 
-    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+    def record_build(
+        self, record: IndexBuildRecord, suffix: str | None
+    ) -> IndexBuildRecord | None:
         """Record on ``suffix``'s indices which ingestion run last wrote them.
 
         Read back by ``run-eval`` (``VectorRetriever`` side) so a run
-        manifest names the index it was scored against. Best-effort: a
+        manifest names the index it was scored against. Returns the record
+        as written (``IndexBuildRecord.over`` the stored one, which carries
+        its community counters forward), None when none was. Best-effort: a
         failure is logged, not raised. Default does nothing (a backend that
         keeps no index metadata).
         """

@@ -15,13 +15,26 @@ A run that removes text units (a deleted or edited document) deletes the
 communities and reports citing only them, but keeps the ones citing other
 text units too: their reports were written from the removed text and may
 still state it. Only a rebuild writes them again.
+
+Across runs, the build record's community counters (``CommunityCounters``)
+count the incremental commits and the communities since the last full
+build; ``reset_reasons`` tells when ``indexing.community_compaction``
+recommends a rebuild.
 """
 
+import json
 from collections.abc import Collection, Iterable
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.models import Community, Entity
+from unified_kg_rag.domain.models import (
+    Community,
+    CommunityCounters,
+    DocumentDelta,
+    Entity,
+)
+from unified_kg_rag.domain.models.config import CommunityCompactionConfig
+from unified_kg_rag.shared.utils import compute_hash
 
 
 class CommunityDrift(BaseModel):
@@ -139,3 +152,56 @@ def measure_community_drift(
         rebuild_recommended=(bool(members) and share >= threshold)
         or bool(outdated_reports),
     )
+
+
+def commit_identity(
+    pipeline_id: str, delta: DocumentDelta, fingerprints: dict[str, str]
+) -> str:
+    """Identity of an incremental commit (``CommunityChange.commit``).
+
+    A resumed run commits its delta again under the same pipeline id; a
+    later run under that id commits another delta (other documents or
+    other content), so it is counted.
+    """
+    processed = sorted({*delta.new, *delta.changed})
+    return compute_hash(
+        json.dumps(
+            {
+                "pipeline_id": pipeline_id,
+                "new": sorted(delta.new),
+                "changed": sorted(delta.changed),
+                "deleted": sorted(delta.deleted),
+                "content": {d: fingerprints.get(d) for d in processed},
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def reset_reasons(
+    counters: CommunityCounters,
+    compaction: CommunityCompactionConfig,
+    drift_recommended: bool = False,
+) -> list[str]:
+    """Why ``counters`` call for re-clustering (``indexing.reset: true``),
+    one phrase per threshold crossed; empty when none is, or without
+    communities to compare."""
+    if not (counters.communities_at_clustering or counters.communities_now):
+        return []
+    reasons: list[str] = []
+    runs = compaction.max_runs_since_clustering
+    if runs is not None and counters.runs_since >= runs:
+        reasons.append(
+            f"{counters.runs_since} incremental runs since the last full "
+            f"clustering (max_runs_since_clustering: {runs})"
+        )
+    growth, ratio = compaction.max_community_growth, counters.growth_ratio
+    if growth is not None and ratio is not None and ratio >= growth:
+        reasons.append(
+            f"{counters.communities_now} communities against the "
+            f"{counters.communities_at_clustering} it clustered, {ratio:g}x "
+            f"(max_community_growth: {growth:g})"
+        )
+    if compaction.on_drift_recommendation and drift_recommended:
+        reasons.append("this run's community drift recommends a rebuild")
+    return reasons

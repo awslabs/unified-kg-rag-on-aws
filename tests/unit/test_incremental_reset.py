@@ -128,6 +128,10 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
     config = _reset_config()
 
     manager = mocker.MagicMock()
+
+    # Writes no build record (so no community counters).
+
+    manager.opensearch_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
@@ -167,6 +171,8 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     store = FakeDocStatusStore()
     config = _reset_config()
     manager = mocker.MagicMock()
+    # Writes no build record (so no community counters).
+    manager.opensearch_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, failed_items=1)
@@ -196,6 +202,10 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
 
     manager = mocker.MagicMock()
+
+    # Writes no build record (so no community counters).
+
+    manager.opensearch_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
@@ -232,6 +242,8 @@ def test_a_failed_reset_keeps_the_replaced_documents_records(mocker) -> None:
     store.put(stale)
     config = _reset_config()
     manager = mocker.MagicMock()
+    # Writes no build record (so no community counters).
+    manager.opensearch_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
         "neptune_entities": IndexingStats(total_items=1, failed_items=1)

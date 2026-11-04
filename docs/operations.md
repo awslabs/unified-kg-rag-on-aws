@@ -185,6 +185,40 @@ too. `unclustered_entities` counts stored entities without a community that
 a small delta component the run clustered links to: a full build clusters
 them, a delta run clusters only its delta.
 
+**When to reset.** Each suffix's build record (the `build` entry of its
+vector indices' `_meta`, which `run-eval` manifests copy) keeps community
+counters: `clustered_at` and `communities_at_clustering` from the last full
+build, then `communities_now` (each incremental commit adds the communities
+it appended and subtracts those its removals deleted) and `runs_since`
+(incremental commits since). A commit is counted once: a resumed run that
+writes the record again does not count it twice. After a commit that
+reaches `indexing.community_compaction.max_runs_since_clustering` (default
+`20`) or `max_community_growth` (default `1.5` times the clustered
+communities), the run logs a WARNING:
+
+```
+Communities of 'default' are due for re-clustering: 24 incremental runs since
+the last full clustering (max_runs_since_clustering: 20); 163 communities
+against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
+```
+
+It means global search now maps the appended communities' reports next to
+the original ones, and their reports miss what later runs added. Run once
+with `indexing.reset: true`: it re-clusters the whole graph and reuses the
+stored summaries and reports whose input is unchanged, so it asks the
+model mostly for the communities it clusters differently (on the cost
+harness, 17-20 calls after 23 incremental runs against 197 for the first
+build). The counters start again at that build. Alarm on the
+`community_growth_ratio` or `runs_since_clustering` metric (the largest
+over the run's suffixes; `0` for a run that recorded no counters).
+Nothing is reset automatically. `null` turns a threshold off;
+`on_drift_recommendation: true` also gives the recommendation when the
+run's `community_rebuild_recommended` is 1. `communities_now` is an upper
+bound (a delta community written under a stored community's id counts
+again, and a run killed after its removal deleted communities does not
+subtract them). A suffix whose record an earlier version wrote has no
+counters, and no recommendation, until its next full build.
+
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and
 cause, rather than reindexing everything. Fix the registry and re-run with the
@@ -1116,6 +1150,7 @@ calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),
 and the incremental degradations no alarm watches
 (`total_documents_deferred`, `community_rebuild_recommended`,
+`community_growth_ratio`, `runs_since_clustering`,
 `total_records_not_stored`, `underived_items`).
 
 Corpus coverage metrics, one value per run (Sum):

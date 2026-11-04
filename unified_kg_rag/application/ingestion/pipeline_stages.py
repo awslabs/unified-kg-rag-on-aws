@@ -72,6 +72,8 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.community_drift import (
     CommunityDrift,
+    commit_identity,
+    reset_reasons,
     with_level0_community_ids,
 )
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -107,6 +109,8 @@ from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Claim,
     Community,
+    CommunityChange,
+    CommunityCounters,
     CommunityReport,
     Config,
     Constants,
@@ -2596,6 +2600,7 @@ class IndexingStage(_RegistryStage):
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
         delta = context.incremental_delta
+        counters: dict[str, CommunityCounters] = {}
         if (
             delta is None
             or self.config.indexing.reset
@@ -2604,7 +2609,7 @@ class IndexingStage(_RegistryStage):
         ):
             # An incremental run that found nothing to index wrote no item:
             # the indices keep the record of the run that did.
-            self._record_build(context, text_units)
+            counters = self._record_build(context, text_units, communities)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2627,17 +2632,63 @@ class IndexingStage(_RegistryStage):
             metrics["community_drift"] = drift.model_dump()
             metrics["community_drift_overlap_share"] = drift.overlap_share
             metrics["community_rebuild_recommended"] = int(drift.rebuild_recommended)
+        if counters:
+            metrics.update(self._check_community_counters(counters, drift))
 
         return input_count, total_indexed, metrics
 
+    def _check_community_counters(
+        self, counters: dict[str, CommunityCounters], drift: CommunityDrift | None
+    ) -> dict[str, Any]:
+        """Recommend a rebuild (one WARNING per suffix) where the community
+        counters crossed an ``indexing.community_compaction`` threshold; the
+        counters' metrics (the largest over the suffixes)."""
+        compaction = self.config.indexing.community_compaction
+        for suffix, counted in sorted(counters.items()):
+            reasons = reset_reasons(
+                counted,
+                compaction,
+                drift_recommended=drift is not None and drift.rebuild_recommended,
+            )
+            if reasons:
+                logger.warning(
+                    "Communities of '%s' are due for re-clustering: %s. "
+                    "Incremental runs append their delta's communities "
+                    "instead of re-clustering the graph; run once with "
+                    "indexing.reset: true, which reuses the unchanged "
+                    "summaries and reports.",
+                    suffix,
+                    "; ".join(reasons),
+                )
+        return {
+            "community_counters": {
+                suffix: counted.model_dump(mode="json")
+                for suffix, counted in sorted(counters.items())
+            },
+            "community_growth_ratio": max(
+                (c.growth_ratio or 0.0 for c in counters.values()), default=0.0
+            ),
+            "runs_since_clustering": max(
+                (c.runs_since for c in counters.values()), default=0
+            ),
+        }
+
     def _record_build(
-        self, context: PipelineContext, text_units: list[TextUnit]
-    ) -> None:
+        self,
+        context: PipelineContext,
+        text_units: list[TextUnit],
+        communities: Sequence[Community] = (),
+    ) -> dict[str, CommunityCounters]:
         """Record on each written suffix's vector indices what built them.
 
         ``run-eval`` copies the record into its run manifest, so a score can be
         traced to the ingestion run, its extraction settings and its corpus
-        size. Written after the backends succeeded; best-effort.
+        size. Written after the backends succeeded; best-effort. A full
+        build starts each suffix's community counters with the
+        ``communities`` it wrote; an incremental record adds the ones it
+        appended and subtracts those its removals deleted, once per commit
+        (``IndexBuildRecord.over``). Returns the counters written, by suffix
+        (none where the stored record predates them).
         """
         delta = context.incremental_delta
         # A delta of new documents only (the registry knew none of the
@@ -2672,8 +2723,40 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=package_version,
         )
+        added = Counter(BaseIndexer.get_suffix(c) for c in communities)
+        deleted = self.indexing_manager.deleted_communities
+        # Written by a delta (an incremental run, or one whose scope the
+        # registry knew no document of): counted once per commit.
+        commit = (
+            commit_identity(
+                context.pipeline_id, delta, context.incremental_fingerprints
+            )
+            if delta is not None and not self.config.indexing.reset
+            else None
+        )
+        counters: dict[str, CommunityCounters] = {}
         for suffix in sorted(suffixes):
-            self.indexing_manager.opensearch_indexer.record_build(record, suffix)
+            update: dict[str, Any] = {}
+            if commit is not None:
+                update["community_change"] = CommunityChange(
+                    commit=commit,
+                    added=added[suffix],
+                    deleted=len(deleted.get(suffix, ())),
+                )
+            if not incremental:
+                update["communities"] = CommunityCounters(
+                    clustered_at=record.built_at,
+                    communities_at_clustering=added[suffix],
+                    communities_now=added[suffix],
+                    runs_since=0,
+                    last_commit=commit,
+                )
+            written = self.indexing_manager.opensearch_indexer.record_build(
+                record.model_copy(update=update), suffix
+            )
+            if written is not None and written.communities is not None:
+                counters[suffix] = written.communities
+        return counters
 
     def _index_incremental(
         self,

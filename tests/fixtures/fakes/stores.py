@@ -474,13 +474,16 @@ class FakeVectorStore(_Recorder):
     def set_embedding_reuse(self, reuse: bool) -> None:
         return None
 
-    def record_build(self, record: IndexBuildRecord, suffix: str | None) -> None:
+    def record_build(
+        self, record: IndexBuildRecord, suffix: str | None
+    ) -> IndexBuildRecord | None:
         # The latest build per suffix, as the indices' _meta would hold it.
         key = suffix or Constants.DEFAULT_SUFFIX.value
         previous = self.builds.get(key)
         self.builds[key] = record.over(
             previous.model_dump(mode="json") if previous else None
         )
+        return self.builds[key]
 
     def initialize(self) -> None:
         return None

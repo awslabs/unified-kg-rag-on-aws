@@ -1190,6 +1190,14 @@ aws:
   여전히 묻습니다(증분 실행은 델타만 군집화합니다). 요약이나 리포트 설정을 바꾼 뒤에는
   모든 요약이나 리포트를 다시 묻고, 임베딩 모델이나 차원을 바꾼 뒤에는 모든 텍스트를 다시
   임베딩합니다. 전부 다시 묻고 임베딩하려면 `--force-rebuild`를 함께 쓰세요.
+- **재구축 시점:** 증분 실행은 델타만 군집화하고 그 커뮤니티를 덧붙입니다. 마지막 전체
+  빌드 뒤 증분 실행이 20번 쌓이거나, 접미사의 커뮤니티가 그 빌드가 군집화한 수의 1.5배가
+  되면 실행이 `indexing.reset: true`를 권하는 WARNING(`Communities of '<suffix>' are
+  due for re-clustering: ...`)을 남깁니다. 자동으로 재구축하지는 않습니다. 임곗값은
+  `indexing.community_compaction`에서 정하고(`null`이면 그 검사를 끕니다), 카운터는 빌드
+  레코드와 `community_growth_ratio`, `runs_since_clustering` 지표에 있습니다
+  ([운영 런북: 증분 실행](./operations.md#incremental-runs)). 이전 버전이 만든
+  인덱스는 다음 전체 빌드부터 셉니다.
 
 ### 삭제 범위
 
@@ -1530,7 +1538,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
     아니므로 해시에 들어가지 않고 CLI 인수에 기록됩니다.
   - `index`: 질의한 접미사마다 벡터 인덱스를 마지막으로 쓴 수집 실행(`pipeline_id`,
     `mode`, `built_at`, `documents`, 추출 설정, 증분 실행이면 그 실행이 올라선
-    `full_build`)입니다. 최선 노력 방식이며 인덱스 메타데이터가 없으면 `null`입니다.
+    `full_build`, `communities` 카운터. §5 참고)입니다. 최선 노력 방식이며 인덱스 메타데이터가 없으면 `null`입니다.
 
   `EvaluationManager.evaluate_dataset`이 만들므로 라이브러리 호출자도 받습니다
   (`dataset_path=` / `cli_args=`를 넘김).

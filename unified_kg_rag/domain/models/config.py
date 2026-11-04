@@ -3069,6 +3069,43 @@ class OpenSearchIndexingConfig(BaseModel):
         return value
 
 
+class CommunityCompactionConfig(BaseModel):
+    """When an incremental run recommends re-clustering the communities.
+
+    Incremental runs append the communities of their delta instead of
+    re-clustering the graph; a full build (indexing.reset: true) clusters it
+    again. Nothing is reset automatically.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    max_runs_since_clustering: int | None = Field(
+        default=20,
+        ge=1,
+        description="Recommend indexing.reset: true (a WARNING after the "
+        "commit) once this many incremental commits ran since the last full "
+        "build clustered the graph. A suffix whose full build predates the "
+        "counters starts counting at its next full build. null turns this "
+        "check off.",
+    )
+    max_community_growth: float | None = Field(
+        default=1.5,
+        gt=1.0,
+        description="Recommend indexing.reset: true once the suffix holds "
+        "this many times the communities its last full build clustered "
+        "(each commit adds the communities it appended and subtracts those "
+        "its removals deleted; the community_growth_ratio metric). null "
+        "turns this check off.",
+    )
+    on_drift_recommendation: bool = Field(
+        default=False,
+        description="Also give this recommendation when the run's community "
+        "drift recommends a rebuild (indexing.community_drift_threshold, "
+        "or a kept report citing removed text), which logs its own WARNING "
+        "either way.",
+    )
+
+
 class IndexingConfig(BaseModel):
     # A suffix set in code (config.indexing.additional_suffix = ...) is
     # checked too: an index name the engine refuses read as a refused index
@@ -3112,6 +3149,12 @@ class IndexingConfig(BaseModel):
         "documents, so such an entity sits in two communities and the earlier "
         "community's report misses what the run added; indexing.reset: true "
         "re-clusters the whole graph.",
+    )
+    community_compaction: CommunityCompactionConfig = Field(
+        default_factory=CommunityCompactionConfig,
+        description="Incremental runs: when to recommend re-clustering the "
+        "communities with indexing.reset: true (a WARNING and the "
+        "community_growth_ratio and runs_since_clustering metrics).",
     )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,
