@@ -1234,7 +1234,7 @@ From 0.2.3 (or a `main` checkout since):
   asks 8 instead of 28 (the reports of the communities the incremental
   runs clustered otherwise, and one description no run had summarized),
   and a reset with another community resolution 3 instead of 24. A reused
-  answer counts as a cache hit. `--force-rebuild` asks again (#PR).
+  answer counts as a cache hit. `--force-rebuild` asks again (#537).
 - Defaults from a real-model evaluation (MuSiQue, 200 questions over 3,318
   documents, a 50-question sensemaking set, two repeats, three pairwise
   judges; design §9.1). `global` answers with the comprehensive prompt: it
