@@ -474,6 +474,9 @@ class FakeVectorStore(_Recorder):
     def set_embedding_reuse(self, reuse: bool) -> None:
         return None
 
+    def set_replaced_vector_keeping(self, keep: bool) -> None:
+        return None
+
     def record_build(
         self, record: IndexBuildRecord, suffix: str | None
     ) -> IndexBuildRecord | None:

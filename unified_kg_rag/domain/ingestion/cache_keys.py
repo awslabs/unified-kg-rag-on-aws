@@ -95,8 +95,9 @@ class Keyed:
 
     ``stage`` ``None``: it shapes every model call, so every stage's output.
     ``per_document`` ``False``: it says where a run reads or writes, or which
-    documents it runs, not what a document produces, so it keys the run's
-    stage caches but is not one of the extraction settings.
+    documents it runs, not what a document produces (or shapes only what the
+    merged graph does: a description summary), so it keys the run's stage
+    caches but is not one of the extraction settings.
     """
 
     stage: PipelineStageType | None
@@ -135,6 +136,14 @@ _QUERY_PROMPT = Unkeyed("a query-time prompt")
 def _keyed_at(stage: PipelineStageType, *paths: str, **kwargs: Any) -> dict:
     return dict.fromkeys(paths, Keyed(stage, **kwargs))
 
+
+# The description summary's settings: what summarizes a merged description.
+_SUMMARY_SETTINGS = (
+    "processing.graph_extraction.description_summarization",
+    "models.roles.description_summary",
+    "custom_prompts.description_summarization_system",
+    "custom_prompts.description_summarization_human",
+)
 
 # Path prefix -> how the settings under it key the stage caches. The longest
 # matching prefix wins. Subtree entries are for sections a stage reads as a
@@ -188,7 +197,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.roles.chunking": Keyed(_P.TEXT_CHUNKING),
     "models.roles.translation": Keyed(_P.TRANSLATION),
     "models.roles.graph_extraction": Keyed(_P.GRAPH_EXTRACTION),
-    "models.roles.description_summary": Keyed(_P.GRAPH_EXTRACTION),
+    "models.roles.description_summary": Keyed(_P.GRAPH_RESOLUTION, per_document=False),
     "models.roles.gleaning": Keyed(_P.GLEANING),
     "models.roles.claim_extraction": Keyed(_P.CLAIM_EXTRACTION),
     "models.roles.community_report": Keyed(_P.COMMUNITY_DETECTION),
@@ -252,8 +261,20 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "processing.graph_extraction",
         "custom_prompts.graph_extraction_system",
         "custom_prompts.graph_extraction_human",
+    ),
+    # Descriptions are summarized once merged: at resolution, for the report
+    # members and at indexing, never in a unit's record nor per document.
+    # Keyed with the extraction section once, they changed every record's
+    # key and every document's extraction settings, so a new summary
+    # threshold asked the model to extract every unit again. A summary
+    # records the settings it was made with (description_summary_fingerprint),
+    # so a stored one made otherwise is not reused.
+    **_keyed_at(
+        _P.GRAPH_RESOLUTION,
+        "processing.graph_extraction.description_summarization",
         "custom_prompts.description_summarization_system",
         "custom_prompts.description_summarization_human",
+        per_document=False,
     ),
     # Where the schema source reads: start-up loads the schema into the
     # inline keys of processing.graph_extraction, keyed with the section.
@@ -828,9 +849,21 @@ def changed_settings(old: ExtractionSettings, new: ExtractionSettings) -> list[s
         if before != value:
             changed.append(path)
     for path in old.values.keys() - new.values.keys():
-        if _default_value(path) is not _MISSING:
+        if _default_value(path) is not _MISSING and _is_extraction_setting(path):
             changed.append(path)
     return sorted(changed)
+
+
+def _is_extraction_setting(path: str) -> bool:
+    """Whether ``path`` is keyed as one of the extraction settings (an
+    earlier version's record may hold a field keyed otherwise since: the
+    description summary settings)."""
+    rule = classify(path) or _UNCLASSIFIED
+    return (
+        isinstance(rule, Keyed)
+        and rule.per_document
+        and _upstream_of(_P.CLAIM_EXTRACTION)(rule)
+    )
 
 
 # --- unit extraction records -------------------------------------------------
@@ -840,6 +873,31 @@ def changed_settings(old: ExtractionSettings, new: ExtractionSettings) -> list[s
 # not inputs of it; the language its descriptions are written in is. Bump the
 # version when the record format or its parsing rules change.
 _RECORD_FORMAT_VERSION = 1
+
+
+def _summary_settings_as_keyed_before(config: Config) -> dict[str, Any]:
+    """The summary settings (``_SUMMARY_SETTINGS``) as a unit record's
+    fingerprint held them when they were keyed at graph extraction, but at
+    their defaults: a record stored then keeps its key, and a summary
+    setting changed since asks no unit again. (A document's extraction
+    settings leave them out: ``changed_settings`` ignores them in an
+    earlier record.)"""
+    baseline = config.model_copy(deep=True)
+    default = _default_config()
+    for path in _SUMMARY_SETTINGS:
+        *parents, name = path.split(".")
+        target, source = baseline, default
+        for part in parents:
+            target, source = getattr(target, part), getattr(source, part)
+        value = getattr(source, name)
+        if isinstance(value, BaseModel):
+            value = value.model_copy(deep=True)
+        setattr(target, name, value)
+    return {
+        path: value
+        for path, value in _settings(baseline, lambda rule: True).items()
+        if any(path == s or path.startswith(f"{s}.") for s in _SUMMARY_SETTINGS)
+    }
 
 
 def unit_record_fingerprint(
@@ -876,6 +934,7 @@ def unit_record_fingerprint(
         config,
         lambda rule: rule.per_document and (rule.stage is None or rule.stage in stages),
     )
+    settings.update(_summary_settings_as_keyed_before(config))
     return _digest(
         {
             "settings": settings,

@@ -207,6 +207,38 @@ def test_unchanged_runs_ask_embed_and_write_nothing_again(
     assert set(server.embedded) <= report_texts
 
 
+def test_an_incremental_commit_keeps_no_vector_it_replaces(
+    tmp_path: Path, mocker, no_aws
+) -> None:
+    # The removal of an edited document rewrites what it shared, and the
+    # commit writes it back, taking the vectors the removal replaced. The
+    # commit is the run's last write: it reads only the vectors it takes.
+    from unified_kg_rag.adapters.storage import opensearch_indexer as osi
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    server = _Server()
+    providers = e2e._providers(config, server, e2e.FakeCrossEncoder("rerank"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name in ("a", "b", "c"):
+        (source / f"{name}.txt").write_text(_DOCUMENT.replace("Depot", name.upper()))
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    keeping = mocker.spy(osi.OpenSearchIndexer, "set_replaced_vector_keeping")
+    upserts = mocker.spy(osi.OpenSearchIndexer, "_reusable_vectors")
+    (source / "a.txt").write_text(_DOCUMENT.replace("Depot", "A") + "\nA is new.")
+    (source / "d.txt").write_text("Vendor ships gadgets to Buyer by sea.")
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    assert [call.args[1] for call in keeping.call_args_list] == [False, True]
+    # The removal's writes (if any) kept the vectors they replaced; the
+    # commit's, the last ones, kept none.
+    kept = [call.args[5] for call in upserts.call_args_list]
+    assert False in kept and kept == sorted(kept, reverse=True)
+
+
 class _CountingServer(_Server):
     """``_Server``, counting the summary and community report prompts."""
 

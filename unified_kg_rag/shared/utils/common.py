@@ -208,6 +208,11 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
         return default_value
 
 
+# A `{` that plausibly starts a JSON object: a key's quote, or the end of a
+# response cut right after it.
+_RE_OPENS_OBJECT = re.compile(r'\{\s*(?:"|\Z)')
+
+
 def parse_llm_json(
     raw: str, *, strict: bool = False, answer_keys: Collection[str] = ()
 ) -> dict[str, Any]:
@@ -226,6 +231,8 @@ def parse_llm_json(
     set, for callers that must surface a broken response. Under ``strict`` a
     response whose last object is unclosed (cut off) raises too, even when
     an earlier object parses: a self-correction ends on a complete object.
+    An unclosed ``{`` counts only when it starts JSON (``{"`` or a ``{`` the
+    response ends on): prose after the answer may hold a lone brace.
     """
     text = (raw or "").strip()
     start, end = text.find("{"), text.rfind("}")
@@ -235,10 +242,14 @@ def parse_llm_json(
         except ValueError:
             pass
         else:
-            # A `{` after the last `}` opens an object left unclosed.
-            if not (strict and "{" in text[end + 1 :]):
+            # A `{` after the last `}` that starts JSON (a key, or the cut)
+            # opens an object left unclosed; prose may hold a lone brace.
+            if not (strict and _RE_OPENS_OBJECT.search(text, end + 1)):
                 return parsed if isinstance(parsed, dict) else {}
         objects, cut_at = _top_level_json_objects(text)
+        if cut_at is not None and not _RE_OPENS_OBJECT.search(text, cut_at):
+            # Lone braces in prose after the answer, no cut-off object.
+            cut_at = None
         if strict and cut_at is not None:
             raise json.JSONDecodeError(
                 "The last JSON object is unclosed (cut off?)", text, cut_at

@@ -46,25 +46,12 @@ bedrock_env = cdk.Environment(
     account=account, region=config.bedrock_region or deploy_region
 )
 
-# Guard: in private (no-NAT) mode the VPC Bedrock interface endpoints are created
-# in the DEPLOY region only, but the runtime clients call config.bedrock_region.
-# If those differ, the data plane has no network route to Bedrock and every
-# InvokeModel/embeddings/rerank call hangs. Fail fast at synth with a clear
-# message instead of shipping a stack that silently cannot reach Bedrock.
-if (
-    config.is_private
-    and config.bedrock_region
-    and deploy_region
-    and config.bedrock_region != deploy_region
-):
-    raise ValueError(
-        f"network_mode=private but bedrock_region ('{config.bedrock_region}') "
-        f"differs from the deploy region ('{deploy_region}'). In private mode "
-        "there is no route to Bedrock in another region (VPC endpoints are "
-        "created in the deploy region only), so runtime Bedrock calls would "
-        "hang. Either set bedrock_region to the deploy region, or use "
-        "network_mode=public (NAT) for cross-region Bedrock."
-    )
+# Guard: in private (no-NAT) mode the VPC interface endpoints are created in
+# the DEPLOY region only, but the runtime clients call config.bedrock_region
+# and the tasks read the observability secret in its own region. If those
+# differ, the data plane has no network route: every Bedrock call hangs, or no
+# task starts. Fail fast at synth with a clear message instead.
+config.check_deploy_region(deploy_region)
 
 stack_prefix = config.stack_prefix
 

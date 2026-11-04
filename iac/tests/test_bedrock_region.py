@@ -86,3 +86,10 @@ def test_bedrock_region_sets_task_env_and_guardrail_region(
     env = {e["Name"]: e["Value"] for e in app["Environment"]}
     assert env["UKR__AWS__BEDROCK__REGION_NAME"] == bedrock_region
     assert env["AWS_REGION"] == _REGION
+
+
+def test_a_private_synth_rejects_a_secret_of_another_region(tmp_path: Path) -> None:
+    secret = "arn:aws:secretsmanager:us-east-1:111111111111:secret:obs/hdr-AbC123"
+    result = _synth({"observability_secret_arn": secret}, tmp_path)
+    assert result.returncode != 0
+    assert "observability_secret_arn is in 'us-east-1'" in result.stderr

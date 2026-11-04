@@ -228,3 +228,38 @@ async def test_similarity_is_the_default(config: Config) -> None:
     (similar,) = _report_calls(config, documents)
     assert similar.query == "Acme"
     assert result.metadata["report_selection"] == "similarity"
+
+
+@pytest.mark.parametrize(
+    ("filters", "selection"),
+    [
+        ({"community_id": ["c-other"]}, "similarity"),
+        ({"community_id": {"gte": "c-a"}}, "similarity"),
+        ({"community_id": "c-small"}, "membership"),
+        ({"level": 1}, "similarity"),
+        ({"level": [1, 2]}, "similarity"),
+        ({"level": {"gte": 1}}, "similarity"),
+        ({"level": 0}, "membership"),
+        ({"level": [0, 1]}, "membership"),
+        ({"level": {"gte": 0, "lt": 2}}, "membership"),
+    ],
+)
+async def test_a_caller_filter_without_the_member_communities_reads_similar_ones(
+    config: Config, filters: dict[str, Any], selection: str
+) -> None:
+    # Members are level-0 communities: a filter that admits none of them
+    # (it asks for others, or another level) would leave no report at all.
+    strategy, documents = _strategy(config, _MEMBERS)
+
+    result = await strategy.asearch(
+        SearchQuery(query="q", entity_focus=["Acme"], filters=filters)
+    )
+
+    assert result.metadata["report_selection"] == selection
+    calls = _report_calls(config, documents)
+    if selection == "similarity":
+        (similar,) = calls
+        assert similar.query == "Acme"
+        assert similar.filters == filters
+    else:
+        assert all(q.query == "" for q in calls)

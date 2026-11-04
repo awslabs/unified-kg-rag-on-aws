@@ -928,6 +928,18 @@ def _community(entity_ids: list[str]) -> Community:
     )
 
 
+def test_a_report_key_holds_the_community_name() -> None:
+    # The report's title starts with the name: one input under another name
+    # is another answer.
+    detector = _detector()
+    community = _community(["e1", "e2"])
+    renamed = community.model_copy(update={"name": "Level 0 Community 7"})
+    chain_input = {"input_text": "Vendor supplies Buyer.", "max_report_length": 500}
+    key = detector._report_key(chain_input, community)
+    assert key == detector._report_key(dict(chain_input), community)
+    assert detector._report_key(chain_input, renamed) != key
+
+
 class TestReportInputShaping:
     def test_prepare_report_input_uses_entity_names_for_relationships(self) -> None:
         # Relationships in the report input must reference entity NAMES, not raw

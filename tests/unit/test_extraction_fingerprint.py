@@ -119,11 +119,6 @@ def test_the_query_guardrail_does_not_move_it(
         ("processing.gleaning", "processing.gleaning.max_rounds", 1),
         ("processing.gleaning", "models.roles.gleaning", "amazon.nova-pro"),
         ("fixing", "models.roles.fixing", "amazon.nova-pro"),
-        (
-            "processing.graph_extraction.description_summarization",
-            "processing.graph_extraction.description_summarization.max_summary_tokens",
-            64,
-        ),
     ],
 )
 def test_settings_of_a_disabled_block_do_not_move_it(
@@ -356,3 +351,21 @@ class TestChangedSettings:
         ]
         assert isinstance(recorded, str) and recorded.startswith("sha256:")
         assert self._settings(config).fingerprint == extraction_fingerprint(config)
+
+
+def test_the_description_summary_settings_do_not_move_it() -> None:
+    # Summaries are made from merged descriptions and record the settings
+    # they were made with (test_cache_key_coverage): no document is
+    # extracted again for them, enabled or not.
+    for enabled in (True, False):
+        config = Config()
+        _set("processing.graph_extraction.description_summarization.enabled", enabled)(
+            config
+        )
+        before = extraction_fingerprint(config)
+        _set(
+            "processing.graph_extraction.description_summarization.max_summary_tokens",
+            64,
+        )(config)
+        _set("models.roles.description_summary", "amazon.nova-pro")(config)
+        assert extraction_fingerprint(config) == before

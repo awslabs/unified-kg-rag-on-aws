@@ -903,3 +903,90 @@ def test_earlier_readings_are_looked_up_only_for_dates_read_otherwise_before(
 
     assert len(derived.claims) == 1
     assert bool(calls) is looked_up
+
+
+def _claim(subject: str, obj: str, type_: str, units: list[str]) -> Claim:
+    return Claim(
+        id=f"{subject}-{type_}-{obj}",
+        subject_id="",
+        subject_name=subject,
+        object_name=obj,
+        type=type_,
+        description=f"{subject} {type_.lower()} {obj}",
+        text_unit_ids=units,
+    )
+
+
+@pytest.mark.parametrize("stated", ["PAYS", "OWES"])
+def test_a_claim_keyed_by_the_id_an_earlier_rekey_replaced_is_its_claim(
+    stated: str,
+) -> None:
+    # An earlier derivation of this run re-keyed "Acme" to "Acme Inc"; a
+    # stored claim still keyed by the old id is the claim it states (its
+    # unit states two), not the one sharing most units with the larger id.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Acme Inc", "u1"),
+            _entity("Depot", "u1"),
+            edges=[_edge("Acme Inc", "Depot", "u1")],
+        )
+    }
+    acme = _stored("Acme Inc", ["u1"], description="Acme Inc in u1")
+    depot = _stored("Depot", ["u1"], description="Depot in u1")
+    given = _claim("Acme", "Depot", stated, ["u1"]).model_copy(
+        update={"subject_id": _id("Acme"), "object_id": depot.id}
+    )
+    given.id = resolved_claim_id(given)
+
+    derived = derive(
+        Config(),
+        [acme, depot],
+        [],
+        [given],
+        records,
+        {"u1": [_claim("Acme Inc", "Depot", t, ["u1"]) for t in ("PAYS", "OWES")]},
+        rekeyed={_id("Acme"): acme.id},
+    )
+
+    # The unit's other claim is derived as its own claim beside it.
+    by_id = {c.id: c for c in derived.claims}
+    assert len(by_id) == 2
+    claim = by_id[derived.id_remap[given.id]]
+    assert (claim.type.upper(), claim.subject_id) == (stated, acme.id)
+
+
+def test_a_claim_endpoint_no_underived_entity_holds_follows_its_unit() -> None:
+    # Only the claim is given: its stored object, "Acme", is no entity that
+    # could not be derived, so the object its unit states ("Acme Corp")
+    # replaces it, and the claim takes the id it has under that one. Only
+    # an endpoint an underived entity holds is kept.
+    from unified_kg_rag.domain.ingestion.claim_resolver import resolved_claim_id
+
+    records = {
+        "u1": _record(
+            "u1",
+            _entity("Buyer", "u1"),
+            _entity("Acme Corp", "u1"),
+            edges=[_edge("Buyer", "Acme Corp", "u1")],
+        )
+    }
+    given = _pays("Buyer", "Acme", ["u1"]).model_copy(
+        update={"subject_id": _id("Buyer"), "object_id": _id("Acme")}
+    )
+    given.id = resolved_claim_id(given)
+
+    derived = derive(
+        Config(),
+        [],
+        [],
+        [given],
+        records,
+        {"u1": [_pays("Buyer", "Acme Corp", ["u1"])]},
+    )
+
+    (claim,) = derived.claims
+    assert (claim.object_id, claim.object_name) == (_id("Acme Corp"), "Acme Corp")
+    assert claim.id != given.id and derived.id_remap == {given.id: claim.id}

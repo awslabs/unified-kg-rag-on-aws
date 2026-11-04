@@ -16,7 +16,11 @@ fails the gate too: a regression check must not pass on missing data. So
 does a cost measure (``usage/*``, ``latency/*``) some answers of the
 strategy or of its baseline have no value of (``cost.strategies.<s>
 .answers_without_usage`` / ``answers_without_latency``): a delta over the
-answers that have one can hide what the others cost.
+answers that have one can hide what the others cost. And so does a cost
+measure when the strategy and its baseline failed different numbers of
+answers (``cost.strategies.<s>.failed_answers``): a failed answer counts
+with what it spent before failing, so the delta compares the failures too
+(a fast failure looks cheap, a timeout slow).
 """
 
 from __future__ import annotations
@@ -104,10 +108,29 @@ def _unmeasured(
     }
 
 
+def _failures_differ(
+    comparison: Mapping[str, Any], strategy: str, measure: str
+) -> dict[str, int]:
+    """Per side, the failed answers, when ``measure`` is a cost measure and
+    the strategy and its baseline failed different numbers; else empty."""
+    if not any(measure.startswith(prefix) for prefix in _UNMEASURED):
+        return {}
+    cost = (comparison.get("cost") or {}).get("strategies") or {}
+    baseline = (comparison.get("baselines") or {}).get(
+        strategy, comparison.get("baseline")
+    )
+    failed = {
+        str(side): int((cost.get(side) or {}).get("failed_answers") or 0)
+        for side in dict.fromkeys([baseline, strategy])
+    }
+    return failed if len(set(failed.values())) > 1 else {}
+
+
 def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]:
     """Why ``comparison`` fails ``gates``: one line per strategy and gate
     that holds (or has no delta, or answers without the cost measure, to
-    read); empty when every gate passes."""
+    read, or failed answers that differ under a cost measure); empty when
+    every gate passes."""
     deltas = comparison.get("deltas_vs_baseline") or {}
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
     breaches = []
@@ -118,6 +141,14 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
                 breaches.append(
                     f"{strategy}: --fail-if {gate}: answers without a value "
                     f"of '{gate.measure}' ({listed}) to check"
+                )
+                continue
+            if failed := _failures_differ(comparison, strategy, gate.measure):
+                listed = ", ".join(f"{s} {n}" for s, n in failed.items())
+                breaches.append(
+                    f"{strategy}: --fail-if {gate}: failed answers differ "
+                    f"({listed}), so the '{gate.measure}' delta compares the "
+                    "failures too"
                 )
                 continue
             delta = (deltas.get(strategy) or {}).get(gate.measure) or (

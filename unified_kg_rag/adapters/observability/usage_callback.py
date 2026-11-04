@@ -10,7 +10,9 @@ the tokens the response reports (parsed as the tracing handler parses them,
 requests botocore resent inside it (``request_retries``). A response the
 LLM response cache served counts as a cache hit instead, a failed call as
 ``failed_calls`` only; a call still running or
-cancelled in flight keeps its estimate (``estimated_calls``). Outside a scope a call costs one
+cancelled in flight keeps its estimate (``estimated_calls``). LangChain
+reports no end or error for a call whose task was cancelled, so such a call
+is let go when its task ends. Outside a scope a call costs one
 context-variable read.
 """
 
@@ -19,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
+from functools import partial
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -43,6 +47,14 @@ def _served_from_cache(response: LLMResult) -> bool:
     )
 
 
+def _current_task() -> asyncio.Future[Any] | None:
+    """The task running here, if any."""
+    try:
+        return asyncio.current_task()
+    except RuntimeError:  # no running loop in this thread
+        return None
+
+
 class UsageCallbackHandler(BaseCallbackHandler):
     """Record each finished call of one model (``model_id``, built for
     ``role``) in the caller's usage scopes."""
@@ -50,8 +62,9 @@ class UsageCallbackHandler(BaseCallbackHandler):
     # In the caller's context, where its usage scope is open.
     run_inline = True
 
-    # Calls kept unsettled per handler: a cancelled call never settles, so
-    # past this the oldest are let go (they stay counted as estimated).
+    # Calls kept unsettled per handler: a call whose task never ends, or
+    # one started outside a task, may never settle, so past this the oldest
+    # are let go (they stay counted as estimated).
     MAX_UNSETTLED: ClassVar[int] = 4096
 
     def __init__(self, model_id: str, *, role: str) -> None:
@@ -59,6 +72,9 @@ class UsageCallbackHandler(BaseCallbackHandler):
         self.role = role
         # The calls started and not yet settled, by run id, oldest first.
         self._calls: OrderedDict[UUID, usage.LLMCall] = OrderedDict()
+        # The task each call started in, and the callback that lets the call
+        # go when that task ends (removed when the call settles).
+        self._tasks: dict[UUID, tuple[asyncio.Future[Any], Callable[..., None]]] = {}
         self._lock = threading.Lock()
 
     def _start(self, run_id: UUID, texts: list[str]) -> None:
@@ -69,14 +85,37 @@ class UsageCallbackHandler(BaseCallbackHandler):
             self.model_id,
             estimated_input_tokens=sum(map(estimate_token_count, texts)),
         )
+        task = _current_task()
         with self._lock:
             self._calls[run_id] = call
             while len(self._calls) > self.MAX_UNSETTLED:
-                self._calls.popitem(last=False)
+                gone, _ = self._calls.popitem(last=False)
+                self._tasks.pop(gone, None)
+            if task is not None:
+                # A cancelled task's call gets no end or error from LangChain
+                # (its gather is cancelled): let it go when the task ends.
+                ended = partial(self._ended, run_id)
+                self._tasks[run_id] = (task, ended)
+        if task is not None:
+            task.add_done_callback(ended)
+
+    def _ended(self, run_id: UUID, task: asyncio.Future[Any]) -> None:
+        with self._lock:
+            self._tasks.pop(run_id, None)
+            self._calls.pop(run_id, None)
 
     def _take(self, run_id: UUID) -> usage.LLMCall | None:
         with self._lock:
-            return self._calls.pop(run_id, None)
+            call = self._calls.pop(run_id, None)
+            started = self._tasks.pop(run_id, None)
+        if started is not None:
+            task, ended = started
+            current = _current_task()
+            # A task's callbacks are its own loop's to change; elsewhere the
+            # callback stays and finds nothing to let go.
+            if current is not None and current.get_loop() is task.get_loop():
+                task.remove_done_callback(ended)
+        return call
 
     def _record(self, run_id: UUID, response: LLMResult) -> None:
         call = self._take(run_id)

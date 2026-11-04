@@ -29,6 +29,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.config import (
+    LanguageCode,
     NeptuneIndexingConfig,
     OpenSearchIndexingConfig,
 )
@@ -242,3 +243,114 @@ def test_the_neighbour_order_shapes_answers_but_keys_no_stage() -> None:
     # Its section's entry classifies it: no entry of its own.
     assert path not in CONFIG_KEYING
     assert classify(path) == CONFIG_KEYING["indexing.neptune"]
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        cache_keys.description_summary_fingerprint,
+        cache_keys.community_report_fingerprint,
+    ],
+)
+def test_a_stored_answer_is_keyed_by_the_target_language(fingerprint: Any) -> None:
+    # Summaries and reports are written in the target language, which no
+    # per-stage setting keys: another one asks the model again.
+    other = Config()
+    other.processing.translation.target_language = LanguageCode.FR
+    assert fingerprint(other) != fingerprint(Config())
+
+
+def _summarized_otherwise(kind: str) -> Config:
+    config = Config()
+    summarization = config.processing.graph_extraction.description_summarization
+    if kind == "prompt":
+        config.custom_prompts.description_summarization_system = "Summarize briefly."
+    elif kind == "threshold":
+        summarization.force_summary_threshold_tokens = 77
+    elif kind == "model":
+        config.models.roles.description_summary = "vendor.small-v1"
+    else:
+        summarization.enabled = False
+    return config
+
+
+@pytest.mark.parametrize("kind", ["prompt", "threshold", "model", "off"])
+def test_a_summary_setting_keys_the_summaries_not_the_extraction(kind: str) -> None:
+    # Descriptions are summarized once merged, never in a unit's record nor
+    # per document: keyed at graph extraction, a new summary threshold asked
+    # the model to extract every unit (and gleaning) again.
+    config, base = _summarized_otherwise(kind), Config()
+    for gleaned, claims in ((False, False), (True, True)):
+        assert cache_keys.unit_record_fingerprint(
+            config, gleaned=gleaned, claims=claims
+        ) == cache_keys.unit_record_fingerprint(base, gleaned=gleaned, claims=claims)
+    assert cache_keys.extraction_fingerprint(config) == (
+        cache_keys.extraction_fingerprint(base)
+    )
+    stage = cache_keys.stage_input_fingerprint
+    for upstream in (PipelineStageType.GRAPH_EXTRACTION, PipelineStageType.GLEANING):
+        assert stage(config, upstream) == stage(base, upstream)
+    assert stage(config, PipelineStageType.GRAPH_RESOLUTION) != stage(
+        base, PipelineStageType.GRAPH_RESOLUTION
+    )
+    # A summary records the settings it was made with: one made otherwise
+    # is not reused.
+    assert cache_keys.description_summary_fingerprint(config) != (
+        cache_keys.description_summary_fingerprint(base)
+    )
+
+
+def _keyed_as_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The keying of earlier releases: the summary settings at graph
+    extraction, per document."""
+    earlier = Keyed(PipelineStageType.GRAPH_EXTRACTION)
+    for path in cache_keys._SUMMARY_SETTINGS:
+        monkeypatch.setitem(cache_keys.CONFIG_KEYING, path, earlier)
+    monkeypatch.setattr(cache_keys, "_summary_settings_as_keyed_before", lambda c: {})
+
+
+@pytest.mark.parametrize("kind", [None, "threshold"])
+def test_a_scope_recorded_with_the_summary_settings_reads_unchanged(
+    kind: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A scope's settings recorded before list the summary settings: an
+    # upgrade that drops them re-extracts no document.
+    config = _summarized_otherwise(kind) if kind else Config()
+    with monkeypatch.context() as patched:
+        _keyed_as_before(patched)
+        recorded = cache_keys.extraction_settings(config)
+    assert any("description_summar" in path for path in recorded.values)
+    now = cache_keys.extraction_settings(config)
+    assert not any("description_summar" in path for path in now.values)
+    assert cache_keys.changed_settings(recorded, now) == []
+
+
+@pytest.mark.parametrize(
+    "configure",
+    [
+        lambda c: None,
+        lambda c: setattr(c.models, "default", "vendor.other-model-v2"),
+        lambda c: setattr(c.processing.claim_extraction, "enabled", True),
+    ],
+    ids=["default", "models-default", "claims"],
+)
+def test_a_record_stored_while_summaries_keyed_extraction_keeps_its_key(
+    configure: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = Config()
+    configure(config)
+    now = {
+        (gleaned, claims): cache_keys.unit_record_fingerprint(
+            config, gleaned=gleaned, claims=claims
+        )
+        for gleaned in (False, True)
+        for claims in (False, True)
+    }
+    _keyed_as_before(monkeypatch)
+    assert now == {
+        (gleaned, claims): cache_keys.unit_record_fingerprint(
+            config, gleaned=gleaned, claims=claims
+        )
+        for gleaned in (False, True)
+        for claims in (False, True)
+    }

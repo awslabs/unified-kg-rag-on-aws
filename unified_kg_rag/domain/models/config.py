@@ -3577,10 +3577,16 @@ class LocalSearchConfig(BaseModel):
             "level-0 communities the graph-expanded entities belong to, most "
             "matched entities first, then by report rank; when no expanded "
             "entity names a community (under a document filter, whose walk "
-            "reads the entities index, or when graph expansion failed), the "
-            "'similarity' reports instead. 'similarity': the reports most "
+            "reads the entities index, or when graph expansion failed), or "
+            "when a community_id or level filter admits none of those "
+            "communities, the 'similarity' reports instead. Search metadata "
+            "records which one ran (report_selection; DRIFT counts its "
+            "follow-ups by each). 'similarity': the reports most "
             "similar to the joined query entities, which always fill the "
-            "report slots."
+            "report slots. The default: on 200 MuSiQue questions (two "
+            "repeats), membership scored exact match 4.0 points (95% CI "
+            "-7.75 to -0.25) and token F1 4.1 points (-7.7 to -0.6) lower, "
+            "for about 0.5% fewer tokens."
         ),
     )
 

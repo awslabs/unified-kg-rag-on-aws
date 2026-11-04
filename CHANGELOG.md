@@ -1295,6 +1295,22 @@ From 0.2.3 (or a `main` checkout since):
   to reconcile them. A per-TTL cache write
   (`ephemeral_5m/1h_input_tokens`) is no longer lost from the traces'
   `gen_ai.usage.cache_creation.input_tokens` (#533).
+- An incremental commit, the run's last write, reads only the stored vectors
+  it takes: the ones its upserts replace were read (up to 2,048 a write) and
+  kept for a later write that never comes, 2,000 vector fields of 4,000 read
+  on an upsert of 2,000 changed descriptions. The removal before it still
+  keeps the vectors it replaces for the commit to take (#PR).
+- A `run-eval --fail-if` on a cost measure (`usage/*`, `latency/*`) fails
+  when the strategy and its baseline failed different numbers of answers:
+  a failed answer counts with what it spent before failing, so the delta
+  compared the failures too (a warning only before) (#PR).
+- DRIFT search metadata counts its follow-up local searches by
+  `report_selection` (#PR).
+- CI builds the image with the `unstructured` extra too and loads its spaCy
+  model with no network (#PR).
+- The IaC synth refuses `network_mode=private` with an
+  `observability_secret_arn` of another region: the Secrets Manager
+  endpoint reaches the deploy region only, so no task could start (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1674,6 +1690,30 @@ Deployment (CDK).
 - The dashboard plots Bedrock invocations and throttles in two widgets: with
   both Metrics Insights queries in one, `GetMetricWidgetImage` could not
   render it (#534).
+- Local search with `report_selection: membership` read no report when a
+  `community_id` or `level` filter admitted none of the level-0 communities
+  of the expanded entities; it reads the similar reports under the filter
+  then (#PR).
+- A strict JSON parse (keyword extraction, prompt tuning, the extraction
+  parser) no longer refuses an answer followed by prose holding a lone `{`:
+  only a `{` that starts JSON (`{"`, or one the response ends on) reads as
+  a cut-off object (#PR).
+- A cancelled model call (its task cancelled, so LangChain reports no end)
+  is let go when its task ends instead of staying in the usage handler
+  until its cap; its estimate stays counted (#PR).
+- Simple search logged "Community reports skipped" under a `source_kinds`
+  filter even when its sweep never held the reports index (#PR).
+- A description summary setting
+  (`processing.graph_extraction.description_summarization`, its
+  `custom_prompts` or `models.roles.description_summary`) re-extracted the
+  whole corpus: keyed with graph extraction, it changed every unit record's
+  key and every document's extraction settings, though summaries are made
+  from merged descriptions only. Changing the summary threshold alone re-ran
+  extraction, gleaning and reports: 822 model calls (USD 16.71) on 151
+  documents. These settings now key graph resolution and are no extraction
+  setting; a summary records the settings it was made with, so a stored one
+  made otherwise is not reused, and a reset summarizes every description
+  again. Records and scopes stored before keep their keys (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

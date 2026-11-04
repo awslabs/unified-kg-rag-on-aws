@@ -383,7 +383,8 @@ def test_a_cancelled_worker_thread_call_is_counted() -> None:
             )
             return ChatResult(generations=[ChatGeneration(message=message)])
 
-    model = _ThreadedChat(callbacks=[UsageCallbackHandler("m", role="query")])
+    handler = UsageCallbackHandler("m", role="query")
+    model = _ThreadedChat(callbacks=[handler])
 
     async def _run() -> None:
         task = asyncio.ensure_future(model.ainvoke("what does the Vendor ship"))
@@ -398,6 +399,32 @@ def test_a_cancelled_worker_thread_call_is_counted() -> None:
     snapshot = meter.snapshot()
     assert (snapshot["llm_calls"], snapshot["estimated_calls"]) == (1, 1)
     assert 0 < snapshot["input_tokens"] < 500 and snapshot["output_tokens"] == 0
+    # Never to settle, the call was let go when its task ended.
+    assert not handler._calls and not handler._tasks
+
+
+async def test_a_settled_call_leaves_its_task_and_settles_once() -> None:
+    handler = UsageCallbackHandler("m", role="query")
+    task = asyncio.current_task()
+    assert task is not None
+    run_id = uuid4()
+    with usage.usage_scope() as meter:
+        handler.on_chat_model_start({}, [[HumanMessage(content="hi")]], run_id=run_id)
+        call = handler._calls[run_id]
+        handler.on_llm_end(_result(content="x"), run_id=run_id)
+        # A second settle (a late end of the same call) changes nothing.
+        call.finish(input_tokens=900, output_tokens=90)
+        call.fail()
+    assert not handler._calls and not handler._tasks
+    assert handler._ended not in [getattr(cb, "func", None) for cb in _callbacks(task)]
+    snapshot = meter.snapshot()
+    assert (snapshot["llm_calls"], snapshot["failed_calls"]) == (1, 0)
+    assert snapshot["input_tokens"] < 900 and snapshot["output_tokens"] < 90
+
+
+def _callbacks(task: asyncio.Future[Any]) -> list[Any]:
+    """The done callbacks of ``task`` (CPython keeps them on the task)."""
+    return [callback for callback, _ in getattr(task, "_callbacks", None) or []]
 
 
 def test_an_extraction_cache_hit_is_recorded_under_the_resolved_model_id() -> None:

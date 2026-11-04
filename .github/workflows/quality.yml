@@ -366,3 +366,37 @@ jobs:
       - name: Check the image has the eval extra
         # The CDK query task runs run-eval, whose default judges need it.
         run: docker run --rm unified-kg-rag:ci python -c "import datasets, langchain_openai, pandas, ragas"
+
+  docker-unstructured:
+    # The image with the opt-in unstructured extra (Markdown and HTML), which
+    # also bakes in the spaCy model unstructured tokenizes with: a private
+    # VPC cannot download it at the first file. Built only (no push), with
+    # the same rate-limit fallback as the docker job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image with the unstructured extra
+        run: |
+          set -o pipefail
+          base=$(sed -n 's|^ARG BASE_IMAGE=public\.ecr\.aws/docker/library/\(.*@sha256:[0-9a-f]\{64\}\)$|\1|p' docker/Dockerfile)
+          [ -n "$base" ] || { echo "docker/Dockerfile: BASE_IMAGE is not a pinned public.ecr.aws/docker/library ref"; exit 1; }
+          base_arg=()
+          for attempt in 1 2 3 4 5; do
+            if docker build -f docker/Dockerfile "${base_arg[@]}" \
+                --build-arg "UV_EXTRAS=--extra unstructured" \
+                -t unified-kg-rag:ci-unstructured . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            grep -qiE 'toomanyrequests|429 Too Many Requests' "$RUNNER_TEMP/build.log" || exit 1
+            base_arg=(--build-arg "BASE_IMAGE=docker.io/library/$base")
+            if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
+          done
+          exit 1
+
+      - name: Check the image has the spaCy model
+        # Offline, as a private task runs: the model must load from the image.
+        run: >-
+          docker run --rm --network none unified-kg-rag:ci-unstructured
+          python -c "import en_core_web_sm; en_core_web_sm.load()"
