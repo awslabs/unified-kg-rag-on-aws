@@ -33,7 +33,7 @@ fell back to the fused order; `empty`: nothing usable came back), while
 `kg_rag.rerank_status` is what reranking did, set even without a call:
 `applied`, `disabled`, `unavailable` (no rerank model), `skipped` (nothing to
 rerank) or `failed`; on the strategy span it is the worst step, as in
-[`metadata.rerank.status`](../user-guide.md#rerank-status).
+[`metadata.rerank.status`](../guides/query.md#rerank-status).
 
 On export, spans keep their `gen_ai.*` and `kg_rag.*` attributes and gain the
 vendor's names: Langfuse `langfuse.observation.type` (`generation` for model

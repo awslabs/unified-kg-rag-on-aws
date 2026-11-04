@@ -37,7 +37,12 @@ TRANSLATED_PAGES = [
     "docs/concepts/overview",
     "docs/getting-started/local",
     "docs/getting-started/aws",
+    "docs/concepts/retrieval",
+    "docs/concepts/scopes-and-namespaces",
     "docs/guides/configure",
+    "docs/guides/ingest",
+    "docs/guides/multilingual",
+    "docs/guides/query",
     "docs/user-guide",
 ]
 

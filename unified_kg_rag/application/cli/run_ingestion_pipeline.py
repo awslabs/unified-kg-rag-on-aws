@@ -122,7 +122,7 @@ class CommandLineInterface:
             description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
-                "3-ingestion-run-ingestion",
+                "guides/ingest.md#examples",
                 "run-ingestion --source-directory ./source --config-path config.yaml",
             ),
         )

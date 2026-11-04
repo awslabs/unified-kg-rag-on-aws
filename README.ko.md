@@ -44,7 +44,7 @@
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 그래프 없이 청크만 검색하는(BM25 + 벡터) 빠른 기준선과 비교 실험 |
 
-전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-two-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
+전략별 동작은 [검색](./docs/concepts/retrieval.ko.md)을, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-two-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -109,7 +109,7 @@ uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts
 
 ## 문서 안내
 
-[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 시작하기 두 문서, 설정 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
+[문서 안내 페이지](./docs/index.ko.md)([English](./docs/index.md))에서 시작하세요. 역할별 읽는 순서, 문서 지도, 하려는 일별 안내가 있습니다. 한국어 문서는 이 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의 가이드, 사용자 가이드이며, 나머지 문서는 영문으로만 제공합니다.
 
 | 독자 | 시작할 문서 |
 |---|---|

@@ -27,14 +27,14 @@ through `application.cli.launch`, which then loads the module below:
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | Generate domain-adapted prompts |
 | `prepare-benchmark` | `application.cli.prepare_benchmark` | Turn a public benchmark (MuSiQue) into a corpus + `run-eval` dataset |
 
-Every CLI's `--help` ends with an example invocation and a link to its section here; every flag is in the [CLI Reference](./reference/cli.md).
+Every CLI's `--help` ends with an example invocation and a link to its guide; every flag is in the [CLI Reference](./reference/cli.md).
 
 ## Contents
 
 1. Prerequisites & Installation: moved to [Getting started on AWS](./getting-started/aws.md) (including [Required models](./getting-started/aws.md#required-models)), [Getting started locally](./getting-started/local.md) and [Local mode](./guides/local-mode.md)
 2. Configuration: moved to [Configuration](./guides/configure.md) (every key: [Configuration Reference](./reference/configuration.md))
-3. [Ingestion (`run-ingestion`)](#3-ingestion-run-ingestion)
-4. [Querying (`run-rag`)](#4-querying-run-rag)
+3. Ingestion: moved to [Ingestion](./guides/ingest.md) and [Multilingual corpora](./guides/multilingual.md)
+4. Querying: moved to [Querying](./guides/query.md), [Retrieval](./concepts/retrieval.md) and the [Filters reference](./reference/filters.md)
 5. [Incremental indexing](#5-incremental-indexing)
 6. [Evaluation (`run-eval`)](#6-evaluation-run-eval)
 7. [Visualization (`run-visualization`)](#7-visualization-run-visualization)
@@ -46,559 +46,6 @@ Every CLI's `--help` ends with an example invocation and a link to its section h
 
 Related pages: [CLI Reference](./reference/cli.md) · [Configuration Reference](./reference/configuration.md) · [Model Catalog](./reference/models.md) · [Operator Runbook](./operations.md) ·
 [Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
-
----
-
-## 3. Ingestion (`run-ingestion`)
-
-Ingestion turns a directory of documents into a knowledge graph in the graph
-and vector stores. `run-ingestion --source-directory <dir>` runs the 12 stages ([Design §4](./design.md#4-ingestion-pipeline) shows them),
-checkpoints each one, and resumes after the last valid stage when re-run with
-the same `--pipeline-id`. With the doc-status registry on it is incremental
-([§5](#5-incremental-indexing)).
-
-Every flag with its default: [CLI Reference](./reference/cli.md#run-ingestion).
-
-### The 12 pipeline stages
-
-In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
-(case-insensitive):
-
-1. **`document_parsing`**: text per format (`.pdf`, `.txt`, `.csv`, `.json`;
-   `.md`/`.html` with the `unstructured` extra).
-2. **`document_loading`**: the run's corpus (MinHash dedup, incremental
-   filter); without `document_parsing`, pre-parsed `Document` `.json` files.
-3. **`text_chunking`**: text units (`processing.chunking`).
-4. **`translation`** (optional): to `target_language`; a no-op when source
-   equals target and there are no extra targets.
-5. **`graph_extraction`**: entities and relationships per chunk (LLM).
-6. **`gleaning`** (optional): refinement passes (`processing.gleaning`).
-7. **`graph_resolution`**: merges duplicate entities and relationships (name
-   variants; similar names with `processing.fuzzy_entity_resolution`).
-8. **`claim_extraction`** (optional, off by default): factual claims.
-9. **`claim_resolution`** (optional): dedupes the claims.
-10. **`graph_analysis`**: builds the graph, logs `graph.analysis.statistics`.
-11. **`community_detection`**: Leiden clustering and LLM community reports.
-12. **`indexing`**: writes to OpenSearch and Neptune (and the registry when
-    enabled).
-
-### Examples
-
-```bash
-# Full build
-run-ingestion --source-directory ./documents --config-path config.yaml
-
-# Keep the stage cache in S3 so a fresh task can resume
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --s3-sync --s3-bucket-name your-bucket
-
-# Resume an interrupted run from a stage
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --pipeline-id <id> --resume-from-stage graph_extraction
-
-# Run only specific stages
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --enabled-stages DOCUMENT_PARSING,TEXT_CHUNKING,GRAPH_EXTRACTION
-```
-
-**Resume vs. force-rebuild.** Without `--force-rebuild`, completed stages are
-cached and skipped on a re-run:
-
-- `--pipeline-id <id>` resumes that run at the first failed or incomplete
-  stage (within `--enabled-stages`); a stage switched on since (gleaning,
-  claims) counts as incomplete. Without `--pipeline-id` a run gets a new id.
-- If the corpus or config changed, the CLI lists the completed stages whose
-  output is no longer cached and asks before recomputing them (`--yes`
-  without a terminal).
-- With incremental indexing, a resume whose extraction settings changed since
-  its delta was computed restarts at `document_loading`, so the delta follows
-  the new settings.
-- `--force-rebuild` recomputes every stage and rewrites the cache; it also
-  asks the model for every pre-chunk's boundaries, description summary and
-  community report again and embeds every text again (see below).
-
-**S3 sync** (`--s3-sync`) keeps the stage cache in
-`s3://<bucket>/<prefix>/...`, uploaded after every stage, so a fresh task
-resumes there. On SIGTERM (ECS `StopTask`, a Step Functions timeout) the run
-uploads the running stage's checkpoint and exits 143. A failed upload between
-stages is retried by the next one; a failed initial download or final upload
-fails the run with `CacheSyncError`. Expiry and the other caches:
-[Caches and prefixes](./operations.md#caches-and-prefixes). Across runs,
-the doc-status registry (`providers.doc_status.enabled`) keeps unchanged
-documents from being embedded again: an incremental run embeds only what its
-delta changes. Within what a run writes, a text embedded before with the same
-embedding provider, model and dimension keeps its stored vector (each vector
-stores a digest of its text), so a changed document re-embeds only the
-chunks, descriptions and reports whose text changed, and a reset of an
-unchanged corpus embeds again only what it regenerates. The intelligent
-chunker's boundary answers are kept per pre-chunk in the extraction store,
-so a reset or an edit asks the model only for pre-chunks whose text or
-chunking settings changed, and an unchanged pre-chunk keeps its boundaries
-even with a model that answers otherwise each time. Only an answer the
-chunker used is kept: a pre-chunk split by size instead (the answer named
-lines that do not exist) asks the model again on the next run. A full build
-(a reset, a first run, or a run without the registry) does the same for
-the corpus-wide answers: a description over the summarization threshold
-whose stored copy was summarized from the same text with the same
-summarization settings keeps that summary, and a community whose report
-input (its members, descriptions, edges and claims as packed, its roll-up
-text and name) and report settings are unchanged takes the stored answer
-(the extraction store keeps it, and the report names it in
-`attributes.report_record`). A community's name (`Level 0 Community
-1a2b3c4d`) derives from its members, so a document that adds a community
-leaves the others' names, and their stored answers, as they were.
-
-**LLM response cache** (`cache.llm_responses`, on by default). Every
-ingestion model response is kept under `llm-cache/` in the run's cache
-directory (synced with it), so a re-run with the same pipeline id repays only
-the calls a stopped or crashed stage had not made. The key is the rendered
-prompt plus the model id, max tokens, temperature and reasoning.
-
-- Only earlier runs' responses are served, each at most once per run; a
-  response cut off at the output-token limit is not kept. Above temperature 0
-  a re-run replays the earlier sample. The responses of a call that failed
-  every attempt (one that never parsed), or whose graph or claims record
-  failed to build, are dropped, so a re-run asks the model again for those
-  units only; the late answer of a call abandoned on its timeout is not kept
-  either.
-- `--force-rebuild` serves nothing; query and evaluation calls are never
-  cached.
-- The cache grows by a few KB per model call and is read into memory at
-  start; it is written in segments of `cache.llm_responses.flush_every`
-  responses, so a killed task loses at most one segment. A stop also ends
-  the retries of the model calls still running.
-
-### Index suffix
-
-Every index and graph label of a corpus is named `<prefix>-<suffix>`
-(plus `-<additional_suffix>` with `indexing.additional_suffix`); `<suffix>` is
-the **index suffix**. Ingestion takes it from
-`processing.document_parsing.index_value` (no flag); `run-rag` and `run-eval`
-query the same `index_value` of their config unless `--suffix` names another,
-and in Python `RAGInput.suffix` selects it (the chain does not read
-`index_value`). All default to `default`. Use one index suffix, and one config file, per
-tenant or corpus version, with the same `indexing.additional_suffix` on both
-sides; incremental indexing and deletion are scoped to it (§5).
-
-The suffix separates names, not access: whoever can query can name any
-suffix. A multi-tenant service must derive it from the authenticated caller
-on the server; see
-[Operator Runbook: Query access and tenant isolation](./operations.md#query-access-and-tenant-isolation).
-
-### Multilingual ingestion
-
-Set the corpus's predominant language and the target you want to index in:
-
-```yaml
-processing:
-  translation:
-    enabled: true
-    source_language: "ko"
-    target_language: "en"
-    additional_target_languages: ["ja"]   # index additional languages too
-```
-
-With `source_language == target_language` and no additional targets, the
-translation stage is skipped at no cost, even with `enabled: true`.
-
-- **Analyzers** come from `indexing.opensearch.language_analyzers` (e.g.
-  `ko: nori`; others use `default_analyzer`). Chunk `text` is analyzed for
-  `source_language`, so set it to the corpus language even without
-  translation: with `source_language: en` a Korean corpus keeps words with
-  their particles ("홍길동으로부터") as single tokens. Changing it changes the
-  mapping: re-index the text units.
-- **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
-  matches its composed form.
-- **Chunk sizes.** The chunk sizes count characters by default, and a
-  Hangul, Han or Kana character is about one token, so an 8,000-character
-  Korean chunk is ~6,000 tokens: over the 4,096-token document limit of Cohere
-  Rerank 3.5, which then never sees its tail. Halve the sizes, or count them
-  in tokens with `processing.chunking.length_unit: tokens` (a local estimate,
-  no model call) and give every size in tokens:
-
-  ```yaml
-  processing:
-    chunking:
-      length_unit: tokens
-      min_chunk_size: 250
-      max_chunk_size: 2000
-      chunk_overlap: 125
-      fallback_chunk_size: 1200
-      pre_chunk_size: 12500
-      pre_chunk_overlap: 125
-  ```
-
-  Switching the unit re-chunks the corpus and re-extracts its documents (an
-  incremental run re-extracts every document of the scope).
-- **The analyzer must exist on the cluster**, or the indexing stage fails
-  with `the cluster has no analyzer '<name>'`. `nori` comes from the
-  `analysis-nori` plugin: the
-  [local OpenSearch container](./guides/local-mode.md#local-stores-in-containers) has it, an Amazon
-  OpenSearch Service domain only once its Nori package is associated (a
-  blue/green deployment). The
-  [CDK deployment](../iac/README.md) therefore maps `ko` to the built-in `cjk`
-  analyzer (character bigrams); `-c opensearch_nori_package=true`
-  associates the package and maps `ko` to `nori`
-  ([Korean with Nori](./operations.md#korean-with-nori)).
-- **Failures.** A text unit whose translation fails is extracted in its
-  source language; a failed call for a whole target language fails the stage
-  unless `processing.ignore_errors: true`. An incremental run records the
-  documents of the `failed_units` as failed, so the next run retries them.
-
----
-
-## 4. Querying (`run-rag`)
-
-`run-rag --query "..."` answers one question, `--interactive` holds a
-conversation. Pick a strategy with `--search-strategy` (default `auto`, an LLM
-router); every answer returns the sources the answer model actually saw.
-[Design §6](./design.md#6-retrieval-two-methodologies) shows how each
-strategy retrieves.
-
-Every flag with its default: [CLI Reference](./reference/cli.md#run-rag).
-
-### Search strategies — when to use which
-
-GraphRAG strategies excel at *summarization and thematic synthesis* over a
-corpus; LightRAG strategies are faster and lean on *dual-level keyword*
-retrieval, good for keyword-driven lookups and as a low-cost baseline. Both
-share the hybrid scorer (BM25, vector, graph, RRF, rerank).
-
-**GraphRAG (community-summary):**
-
-| Strategy | Use when | How it works |
-|---|---|---|
-| `simple` | Fast factual lookups | OpenSearch vector + keyword retrieval, no graph traversal; the claims index too when claims are on. Fastest. |
-| `local` | Questions about specific entities | Query entities → graph traversal to neighbors and relationships, with vector/keyword hits; claims when enabled. Each query entity is looked up on its own: the entity of its name seeds the traversal, else its top hit if it scores at least `search.local_search.seed_score_ratio` (0.6) of the best one (on a hybrid search rescaled to the weights, so a hit only the vector search found never seeds beside a name match; a vector search's raw similarities are closer, so the floor filters less there). Community reports: the most similar to the query entities by default; `search.local_search.report_selection: membership` reads those of the communities the traversed entities belong to instead (MS GraphRAG local), usually fewer of them; it answered measurably worse, so similarity is the default ([evidence](./concepts/defaults-and-evidence.md#local-report-selection)). |
-| `global` | Broad, thematic questions ("what are the main themes") | Maps the community reports of one cut of the hierarchy (`search.global_search.community_depth`, default 2; a cut over `max_reports_per_level` falls back to the deepest shallower cut that fits, or under a report-key filter to its most similar reports) into scored key points on the fast model, one call per `map_context_tokens` of reports, and answers from the ranked points. Dynamic selection walks down from the roots instead. |
-| `drift` | Multi-part questions needing the broad picture and specific facts | Reports similar to a hypothetical answer (HyDE) draft intermediate answers and follow-ups; each follow-up runs a local search and raises more, for `n_depth` rounds; the answer model reduces the results. The most LLM calls (about `primer_folds + k_followups * n_depth`). |
-| `auto` | General use (the default) | An LLM router (`models.roles.strategy_selection`) picks among `search.auto_routable_strategies` (default local, mix, global; drift, at up to 27 LLM calls a query, only when added). The entity and keyword extractions the candidates read, and the query translation, run alongside the router (`search.auto_speculative_extraction`), so `auto` routed to local or mix takes as long as local or mix asked for directly; the extraction the route does not read keeps running in the background and is billed (one fast-model call a query with the defaults, two when routed to global): the query does not wait for it, counts it in its usage from its start (`estimated_calls` while it runs), and it fills the extraction cache; it is cancelled at `search.query_timeout_seconds` or when the chain closes. |
-
-**LightRAG (dual-level keyword):**
-
-| Strategy | Use when | How it works |
-|---|---|---|
-| `mix` | General LightRAG use | Low-level keywords → entity index, high-level keywords → relationship index, one-hop expansion to incident relationships and endpoint entities (Neptune multi-hop is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive chunk retrieval blended in. |
-| `hybrid` | Keyword-driven graph questions | `mix` without the naive chunk blend. |
-| `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` approximates upstream LightRAG's pure-vector baseline, and MS GraphRAG's `basic` search. |
-
-`mix` and `hybrid` read the relationships index ingestion builds; a short
-query that yields no keywords is used as a low-level keyword itself (up to
-`search.lightrag_search.raw_query_fallback_max_len`).
-
-Both add the source chunks the matched entities cite and, as a stream of its
-own, those the matched relationships cite (each up to
-`search.lightrag_search.chunk_stream_top_k`; fusion interleaves them and the
-merged chunks are cut to that width after the rerank).
-`search.lightrag_search.kg_chunk_pick_method` decides which of an item's
-chunks are taken: `weight` (the default) gives each matched item
-`related_chunk_number` chunks on a decreasing gradient; `vector` takes the
-cited chunks that best match the query, one search a side, as upstream
-LightRAG does by default. `weight` stays the default, and MMR's
-`search.fusion.diversity_lambda` keeps 0.5: the alternatives measured no
-significant difference ([evidence](./concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
-
-### Answer style
-
-`global` answers with the comprehensive prompt by default, every other
-strategy with the concise one. The concise prompt writes a one-sentence
-direct answer, then brief support (`custom_prompts.answer_generation_*`);
-the comprehensive one a multi-paragraph markdown answer that explains every
-key point, modelled on MS GraphRAG's global reduce prompt
-(`custom_prompts.comprehensive_answer_*`). `search.answer_prompt_style` is
-merged over that default, so naming one strategy leaves the others as they
-are:
-
-```yaml
-search:
-  answer_prompt_style: {drift: comprehensive}   # global stays comprehensive
-  query_timeout_seconds: 300                    # see below
-# answer_prompt_style: {global: concise}        # concise global answers
-```
-
-Why. Comprehensive global answers cover more than concise ones but are less
-direct, and pairwise LLM judges favour longer answers: a user who wants a
-short answer should keep `{global: concise}`. `drift` stays concise by
-default because the comprehensive answer brings its latency close to the
-180 s `search.query_timeout_seconds`. With `{drift: comprehensive}`, raise
-that deadline (300 s leaves room;
-[runbook](./operations.md#query-deadlines-and-model-timeouts)). The
-measurements: [Defaults and evidence](./concepts/defaults-and-evidence.md#answer-style).
-
-`auto` uses the style of the strategy it routes to. `answer_match` scores
-read the first line that is not a heading (`evaluation.answer_span`), so a
-comprehensive answer scores lower on exact match whatever its quality.
-
-Global search hands the answer model its ranked key points followed by the
-reports they cite. `search.global_search.evidence_tokens` caps that report
-text (whole reports, best point first) at 4000 tokens by default, which
-cut the cost of a global query by about 40% against no cap with no measured
-quality difference, and the answer keeps its sources
-([evidence](./concepts/defaults-and-evidence.md#global-evidence-cap)). `null` (no cap) keeps as much as the
-context budget holds, which on a large cut is most of a global query's input
-tokens; `0` (cheaper still) sends the key points only, as MS GraphRAG's reduce step reads
-them, and the answer then reports no sources (the key points are model
-output), so the `retrieval` evaluator skips its rank metrics for a global
-query (`no_sources_by_config`) instead of scoring a miss.
-
-### Context budget
-
-`search.token_manager.max_context_tokens` (`30000`, upstream LightRAG's
-budget) is the retrieved context the answer prompt gets, clamped with a
-warning to what `models.roles.answer_generation` accepts beside its output
-reservation; `null` derives it from that model's window. Per-type shares and
-`local` slot quotas: [reference](./reference/configuration.md#searchtoken_manager).
-
-### Examples
-
-```bash
-# Single query (auto strategy, hybrid search)
-run-rag --query "What are the main themes in the documents?" --config-path config.yaml
-
-# Pick a strategy and search type
-run-rag --query "How does entity X relate to Y?" \
-  --search-strategy local --search-type hybrid --config-path config.yaml
-
-# Retrieval only, JSON output
-run-rag --query "..." --mode search --output-format json --config-path config.yaml
-
-# Verbose (entities, top sources, metrics) with attribute filters
-run-rag --query "..." --verbose --filters attr_category:research type:person \
-  --config-path config.yaml
-```
-
-### Rerank status
-
-Every query reports what reranking did in `metadata.rerank` of the
-`SearchResult` and the RAG output (and `--output-format json`): `status`,
-`reason`, and `stages`, one entry per rerank step with its `status`, `scope`
-(`all`, or the reranked result types, e.g. `text` for `local`, `drift`, `mix`
-and `hybrid`) and `reason`.
-
-| Status | Meaning |
-|---|---|
-| `applied` | The rerank model reordered the candidates. |
-| `disabled` | `search.reranking.enabled: false` or `providers.rerank.kind: none`. |
-| `unavailable` | The rerank model could not be built (initialization failed, logged at ERROR, or the cross-encoder's `[local]` extra is missing). |
-| `skipped` | Nothing to rerank: no candidates, none of a rerank-eligible type, or no query text. |
-| `failed` | The call raised (denied `bedrock:Rerank`, a region without the model, an unreachable endpoint) or returned nothing usable; the fused order was kept. |
-
-- A `failed` or `unavailable` reason is the AWS error code or the exception
-  type, without the message.
-- Built-in strategies rerank once per query. A caller that fuses several
-  times into one trace gets one stage per fusion; the top-level `status` is
-  the worst, in the order `failed` > `unavailable` > `applied` > `skipped` >
-  `disabled`. `metadata.reranked` marks each reordered result.
-- A Bedrock permission or region problem shows as `failed` at the first
-  query, not `unavailable`. `search.reranking.required: true` fails such
-  queries with `RerankModelError` instead of answering from the fused order.
-
-### Query deadline
-
-A query (`run-rag`, `invoke`/`ainvoke`, `search`/`asearch`, a stream) may take
-`search.query_timeout_seconds` (default 180) in all. Past it the query fails
-with `QueryTimeoutError` (exported from `unified_kg_rag`; also a builtin
-`TimeoutError`) and its model and store calls in flight are cancelled:
-
-- `run-rag` prints the message and exits `1`; `run-eval` counts the query as
-  failed (`error_message` set, not scored) and goes on with the others.
-- With `processing.ignore_errors` the query returns the error answer instead,
-  with the message in `search_results.metadata.error`.
-- A streamed answer must also send its first chunk within
-  `search.model_timeout_seconds` of its model call; once chunks flow, the
-  overall deadline applies.
-- `null` turns both deadlines off.
-
-The query's model calls (answer generation and the other query-time LLM
-calls, query embeddings, Bedrock rerank) use their own clients:
-`search.model_timeout_seconds` (default 90) for each request's answer and
-`search.model_max_attempts` (default 2) botocore attempts, so a stalled
-Bedrock call gives up after about 3 minutes. Ingestion and evaluation-judge
-calls keep the 330 s read timeout and 6 attempts. On an OpenAI-compatible or
-Ollama server the query calls' request timeout is
-`providers.llm.timeout_seconds` / `providers.embedding.timeout_seconds`,
-capped at `search.model_timeout_seconds`; `backend: local` presets 300 s
-model and 900 s query timeouts, since a local server queues requests (a
-`null` there is replaced by the preset: set a large number instead).
-
-A non-streamed answer arrives in one piece, so `search.model_timeout_seconds`
-also caps how long the model may generate it. Raise it (and the query
-timeout) for long answers or high reasoning effort. The defaults come from
-measured query times on real AWS ([evidence](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts)):
-90 s covers the slowest whole query in one request with room to spare, and
-180 s lets a stalled first attempt be retried once. Tuning is in the
-[Operator Runbook](./operations.md#query-deadlines-and-model-timeouts).
-
-### Filters
-
-`--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
-a pair without a key, a `:` or a value, a key given twice and a key no index the
-strategy reads declares are usage errors (exit 2).
-Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
-steps on Neptune. Each store accepts the fields its indexer writes:
-
-| Store | Filterable fields |
-|---|---|
-| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>` (where present) |
-
-- On OpenSearch, `attr_<key>` is entry `<key>` of a document's `filters`
-  metadata (an item from several documents carries all their values); on
-  Neptune entity vertices it is the entity's own attribute (`attr_role`).
-- Entity and claim `type` and claim `status` are stored lowercase and `term`
-  matches exactly: filter `type:person`, not `type:PERSON`. Relationships
-  take no `type` filter (their type is not stored on the relationships
-  index). `in_schema`, `type_iri` and `predicate_iri` are the
-  [extraction schema](#c-extraction-schema) annotations; `iri` and
-  `source_kinds` (`document`, `seed_graph`) come from
-  [seed graphs](#d-seed-graphs-bring-your-own-knowledge-graph). Prefer keyword or
-  numeric fields; a `term` on an analyzed field such as `description` matches
-  single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
-  through the Python API. `attr_<key>`, `attributes.filters.<key>` and the
-  claim dates are keywords, a date-like value too, so a range on them
-  compares strings, which orders ISO dates (`YYYY-MM-DD`) correctly. A claim
-  date that reads as a calendar date (`2024-01-15`, `2024-1-5`,
-  `January 15th, 2024`, `Sept. 3, 2024`) is stored as `YYYY-MM-DD`, and a
-  coarser period as its first day in `start_date` and as its last day in
-  `end_date` (as the claim prompt asks: `YYYY-12-31` for the end of a
-  year): an ISO week (`2024-W03`) as its Monday or Sunday (an ISO week
-  with its weekday, `2024-W03-2`, as that day), a quarter (`Q3 2022`) as
-  2022-07-01 or 2022-09-30, a month (`March 2024`, `2024-03`) as
-  2024-03-01 or 2024-03-31 and a year (`2024`) as 2024-01-01 or
-  2024-12-31. So a `start_date` of `{"gte": "2022-07-01", "lte":
-  "2022-09-30"}` matches `Q3 2022` but `{"gte": "2022-08-01"}` does not,
-  and an `end_date` of `{"lte": "2024-06-30"}` does not match "until
-  2024". Any other value (`10/08/2024`, whose day and month order is
-  unknown, or `early 2024`) is stored as written and compares as text, so
-  only an exact filter matches it meaningfully: a range can match it
-  falsely (`10/08/2024` sorts before every ISO date, so `{"lte":
-  "2000-01-01"}` matches it). An unknown date (`UNKNOWN`, `TBD`,
-  `present`) is not stored, so it matches no filter, a range included.
-- Boolean and numeric fields take their type's values: `in_schema` a
-  boolean; `rank`, `confidence`, `weight` and `rating` a number; `n_tokens`,
-  `level`, `depth` and `max_cut_depth` an integer. A string for one of them
-  (every `--filters` and `set-filter` value is one, and a dataset or
-  `RAGInput.filters` may hold one) is converted before the search, in a list
-  and in range bounds too, so every store matches it as it matches the typed
-  value: `in_schema:false` is `False` (a boolean takes `true`/`false`,
-  `1`/`0` or `yes`/`no`, in any case) and `rank:2` is `2`. A string its
-  type cannot take (`in_schema:maybe`, `rank:high`, `level:1.5`) raises
-  `InvalidFilterError` (a usage error, exit 2, on the command line), and so
-  does a typed value of another type: a number for a boolean field
-  (`in_schema: 1`), a boolean for a numeric one (`rank: true`) or a
-  fractional number for an integer one (`level: 2.5`; `2.0` is `2`). The
-  values of every other field are matched as given, `attr_<key>` and
-  `attributes.<path>` included.
-- A filter applies only to the stores that declare its field
-  (`type:person` leaves text units unfiltered). A key no store the
-  selected strategy reads declares (e.g. `category`, or `type` with `naive`
-  or `global`) raises `InvalidFilterError`, listing the filterable keys
-  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
-  units; `hybrid` and `mix` entities, relationships and text units (and
-  Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
-  `drift` every index the pipeline builds and Neptune; `global` community
-  reports (and text units with `search.global_search.text_unit_slots`,
-  scoped to the selected reports' communities); `simple` every index the
-  pipeline builds. `global` refuses the keys it scopes its own searches by:
-  `depth` and `max_cut_depth` (with
-  `search.global_search.use_dynamic_selection`, `depth` and
-  `community_id`), and `community_ids` with `text_unit_slots`. `id`,
-  `source_id` and `target_id` narrow what `local`, `drift`, `mix` and
-  `hybrid` fetch by id or walk to (only artifacts with a listed value come
-  back); a range on them is refused with every strategy (`naive` and
-  `global` too, which do not scope them, so a filter is valid whatever the
-  strategy), as is an empty list of values on any key. `auto` routes
-  only among the strategies it may route to that apply every key (with the
-  default set, `type:person` leaves `local` and `mix`) and refuses the
-  filters, before routing, only when none does. Neptune filters entity
-  vertices only.
-- OpenSearch applies `attr_<key>` and `attributes.<path>` strictly
-  (fail-closed): an item without the attribute is excluded. Relationships,
-  claims and community reports carry the filter values of their text units'
-  documents, so each matches when one of them does. A vector or hybrid search
-  skips an index none of whose documents carry the attribute (OpenSearch 2.13
-  rejects a kNN filter on a field the index does not map).
-- A document's removal clears its filter values from the entities,
-  relationships and claims that outlive it: a key no remaining document
-  gives is stored as null, which matches no filter.
-- `attr_<key>` and `attributes.filters.<key>` name document attributes. A
-  graph store holds none, so graph expansion keeps an expanded entity (the
-  seeds aside) only when its entities-index document, which carries the
-  filters of every document the entity comes from, passes them; under two or
-  more keys, one of its text units (one document's) must also pass them all.
-  It must also be reached from a seed, within `max_hops`, over relationships
-  that pass the filter (an edge only excluded documents state is not
-  walked), and its `Path:` follows those relationships: the walk runs over
-  the relationships index, one hop at a time, so it is cut after these
-  checks and it passes through entities a vertex filter (`type`) leaves out
-  of the results. Without that index
-  (`indexing.opensearch.build_relationship_vector_index: false`, or the
-  index missing at query time, logged as a WARNING) the graph is walked and
-  the entities-index check alone decides.
-  Under a filter on text units, local and mix also fill their chunk quota
-  with the entity-linked chunks that pass, not the top-ranked ones only.
-  Other
-  `attributes.<path>` keys name an item's own attributes and apply to the
-  entities index only; a graph walk's entities, LightRAG's seeds included
-  (`local`'s and `drift`'s were found under the filters), are checked
-  against that index for them and for `name.keyword`, which entity
-  vertices do not store. The check sees what the walk kept after its own
-  per-hop and `top_k` cuts, so a passing neighbour ranked below them is
-  not reached. On Neptune, `attr_<key>` is also an entity vertex
-  property (`attr_role`), applied where present (a vertex without it passes),
-  but the entities-index check above still applies: `attr_role:buyer` selects
-  nothing unless documents carry a `role` filter. Every other key is strict
-  on both stores.
-
-**Filters are not an access-control boundary**: a store that does not declare
-a key returns its content unfiltered, and an entity, relationship or
-community report drawn from several documents passes when one of them
-matches, so it can carry excluded documents' content. An item from several
-documents also matches each key of a multi-key filter independently: the
-seeds, relationships, claims and community reports carry each key's values of
-all their documents, so `attr_category:x attr_grp:b` matches one whose
-documents are `{category: x, grp: a}` and `{category: y, grp: b}`, although
-no document is both. Separate tenants or users by
-[index suffix](#index-suffix), chosen server-side.
-
-### Interactive mode & conversation memory
-
-```bash
-run-rag --interactive --conversation-id my-session --config-path config.yaml
-```
-
-Interactive mode turns memory on. Commands: `help`, `new` (a fresh
-conversation id), `set-filter key:value`, `clear-filters`, `show-config`,
-`quit` / `exit`. A command is the whole line (only `set-filter` takes an
-argument): `help me find ...` is a question. `set-filter` refuses a key no
-index of the search strategy declares, as `--filters` does (with
-`--interactive`, before the first question: exit code 2). With `auto` it
-refuses a key only when, with the filters already set, no strategy `auto`
-may route to applies them all.
-
-Conversation memory lives in the process (`MemoryManager`, limits in the
-`memory` section):
-
-- It carries over between the turns of one session, or between calls of one
-  `GraphRAGChain` reusing a `conversation_id` with `use_memory=True` and the
-  same `suffix` and `user_id` (other tenants' or users' turns never reach
-  it). Chains share it only through one `MemoryManager(config)` passed as
-  `memory_manager=`.
-- Separate `run-rag --query` invocations start with no history, so
-  `--use-memory` and `--conversation-id` do nothing there (`run-rag` logs a
-  WARNING); use `--interactive` for multi-turn from the CLI.
-- A follow-up is rewritten from the history as a standalone question before
-  retrieval (one `models.roles.query_rewrite` call per turn with history;
-  prompt key `query_rewrite`), so "what about its suppliers?" names the
-  entity from the earlier turn. The rewrite reads the last
-  `memory.max_messages_per_conversation` messages, each earlier answer cut to
-  1,000 characters, and runs even with `enable_query_processing` off (that
-  flag covers translation and entity/keyword extraction). Memory adds no
-  other LLM call.
 
 ---
 
@@ -703,20 +150,10 @@ SQLite file instead (`providers.doc_status.kind: sqlite`; see
 
 ### Deletion scope
 
-A run's **scope** is its index suffix (`document_parsing.index_value`, plus
-`indexing.additional_suffix`) and its corpus source
-(`document_parsing.source_scope`, by default the resolved source directory;
-the container entrypoint sets it to the S3 URI it syncs from). A document's
-registry key is its scope and its path relative to the source directory, and a
-run only diffs, and treats as deleted, the documents of its own scope. So
-another tenant's run (another `index_value`) never deletes this tenant's
-documents, a subfolder run as its own source directory never deletes the rest
-of the corpus (its files register as separate documents: do not index the
-same files from two roots into one suffix), and two sources indexed into one
-suffix stay separate even for the same relative path. Document and text-unit
-ids derive from the scope too, so set `source_scope` for ids that are
-reproducible across paths and machines (the same corpus indexed from another
-directory or host otherwise gets other ids). A file that fails to
+A run only diffs, and treats as deleted, the documents of its own scope:
+its index suffix and its corpus source
+([Scopes and namespaces: Source scope](./concepts/scopes-and-namespaces.md#source-scope)).
+A file that fails to
 parse or load, or that the run skips because no loader reads its type (an
 optional extra such as `unstructured` not installed), is reported as
 `failed` and keeps its indexed content until a run reads it again.
@@ -1056,7 +493,7 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
 - `answer_span_statistics`: the `answer_span` exact match and token F1
   read, the reports `scored` and the extracted spans that fell back to the
   first line (`fallbacks`).
-- `rerank_status_counts`: queries per [rerank status](#rerank-status); each
+- `rerank_status_counts`: queries per [rerank status](./guides/query.md#rerank-status); each
   result carries `rerank_status` (`null` when answer generation failed
   first).
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
@@ -1571,7 +1008,7 @@ and with an entity go the unit's relationships naming it. Start with
 `align`, look at what falls outside the schema (`filters={"in_schema":
 False}`, below), widen the schema, and switch to `strict` only when little
 falls outside. To measure the cost on your questions, ingest the corpus
-under two index suffixes (one per mode, [Index suffix](#index-suffix)) and
+under two index suffixes (one per mode, [Index suffix](./concepts/scopes-and-namespaces.md#index-suffix)) and
 run the same `run-eval` dataset against each.
 
 **Declaring the schema.** Inline, in `processing.graph_extraction`:
@@ -1703,7 +1140,7 @@ relationships, in the graph and the vector stores:
 
 **Filters.** The fields are filter keys on the entities and relationships
 indices and on Neptune entity vertices (graph expansion), like any other
-field ([Filters](#filters)):
+field ([Filters](./reference/filters.md)):
 
 ```python
 RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
@@ -2508,7 +1945,7 @@ reach those strategies through the communities documents also state.
   filters and so names its seed graphs; an entity reached only by a graph
   walk has `"seed_graphs": []`, as graph vertices hold no document
   filters. Its metadata `source_kinds` is a list in every store.
-- **Filters** ([Filters](#filters)):
+- **Filters** ([Filters](./reference/filters.md)):
   - `source_kinds` (entities, relationships, Neptune entity vertices):
     `seed_graph` keeps what a seed states, `document` what a document
     states (also an entity both state, with its seed description lines);
@@ -2711,49 +2148,6 @@ run's next run on the namespace must wait for writes possibly still in
 flight (this run's, or those of the run whose expired lease it took over),
 `next_run_writes_from` (UTC, ISO 8601).
 
-### Large / multilingual / heterogeneous corpora
-
-- **Large:** raise `processing.max_concurrency` as far as the Bedrock quota
-  allows; keep `indexing.neptune.index_concurrency` at `1` unless you measured
-  a gain (concurrent write batches conflict on shared vertices and retry);
-  the doc-status registry
-  (`providers.doc_status.enabled`) makes later runs pay only for changed
-  documents. On Neptune, `indexing.neptune.vertex_ids: custom` looks vertices
-  up by vertex id rather than by the `id` property. Switching an existing
-  graph needs one full build ([Custom Neptune vertex ids](operations.md#custom-neptune-vertex-ids)).
-  Graph expansion takes a hub's neighbours in id order
-  (`indexing.neptune.deterministic_order: true`, the default), so a rebuild
-  returns the same results, at the cost of reading every neighbour of each
-  expanded hub (on Gremlin Server, 6.8 to 23.2 ms per query for
-  2,500-neighbour hubs; unmeasured on Neptune). If hub-heavy queries are
-  too slow, `false` takes the first neighbours Neptune returns instead.
-- **Community reports:** a report's prompt packs the community's
-  relationships edge by edge, each with its two entities (and their claims
-  with claim extraction on), into
-  `graph.community_detection.report_generation.max_report_context_tokens`
-  (4000). MS GraphRAG uses 8000 with `max_cluster_size` 10: if reports of
-  large communities cover too few relationships, raise the budget (more input
-  tokens per report call) or lower `max_cluster_size` (more, smaller
-  communities and report calls).
-- **Multilingual:** see [Multilingual ingestion](#multilingual-ingestion).
-- **Heterogeneous domains:** tune `entity_types` to the union of the domains,
-  or give each its own [index suffix](#index-suffix).
-
-### Cost notes
-
-LLM calls dominate cost: extraction (one or more calls per chunk), gleaning
-(up to `max_rounds` per chunk), community reports, claims (one call per text
-unit, off by default) and one answer per query. Levers: Haiku-class models for
-the mechanical roles (the default for chunking, translation, map-reduce and
-summarization), fewer gleaning rounds, claims off, the caches and incremental
-indexing.
-
-Gleaning is the largest of these levers. `processing.gleaning.max_rounds`
-stays 3 because 3 rounds found more of a corpus's graph than 1, for about
-38% more ingestion cost, with no significant difference in the answers
-([evidence](./concepts/defaults-and-evidence.md#gleaning-rounds)). Set `max_rounds: 1` (MS GraphRAG's
-default) when ingestion cost matters more than graph recall.
-
 ---
 
 ## 11. Using the library from Python
@@ -2816,7 +2210,7 @@ finally:
   model client's own transport error (`httpx.ConnectError` from a local
   model server, say) is raised as is.
 - `RAGInput` takes the `run-rag` options as fields (`search_strategy`,
-  `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)),
+  `search_type`, `top_k`, `suffix` ([index suffix](./concepts/scopes-and-namespaces.md#index-suffix)),
   `filters`, `conversation_id`, `use_memory`, `target_language`); a plain dict
   works too.
 - `chain.search(...)` (`await chain.asearch(...)`) retrieves without
@@ -2873,7 +2267,7 @@ closes it.
   where the corpus sits.
 - **Reranking is regional** ([Required models](./getting-started/aws.md#required-models)); without it
   results keep the fusion order, as `metadata.rerank` shows
-  ([Rerank status](#rerank-status)).
+  ([Rerank status](./guides/query.md#rerank-status)).
 - **Shipped backends.** Models: Bedrock (default), Ollama or
   OpenAI-compatible servers; reranking: Bedrock or a sentence-transformers
   cross-encoder ([Local mode](./guides/local-mode.md)). Stores: Neptune (or a
@@ -2881,7 +2275,9 @@ closes it.
   about 100,000 documents per index). Others need a `register_provider`
   builder or custom adapters ([Design Doc §15](./design.md#15-extension-guide)).
 - **No serving layer**: no HTTP API, end-user authentication or rate limiting.
-- **Filters are not access control** (§4): separate tenants by index suffix.
+- **Filters are not access control**
+  ([Scopes and namespaces](./concepts/scopes-and-namespaces.md#not-an-access-control-boundary)):
+  separate tenants by index suffix.
 - **A lighter ingestion limits the strategies.** Without community detection
   (`graph.community_detection.enabled: false`) `global` and `drift` have no
   reports; without the relationship vector index
@@ -2919,7 +2315,7 @@ closes it.
 
 ## Moved sections
 
-Sections 1 and 2 of this guide moved to their own pages. The headings
+Sections 1 to 4 of this guide, and parts of section 10, moved to their own pages. The headings
 below keep older links, including the `--help` output of earlier
 versions, working.
 
@@ -3015,3 +2411,61 @@ Moved to [Configuration: Environment variable overrides](./guides/configure.md#e
 Moved to [Observability](./guides/observability.md) (settings and
 recipes) and the [Telemetry reference](./reference/telemetry.md) (trace
 shape, usage counters).
+
+### 3. Ingestion (`run-ingestion`)
+
+Moved to [Ingestion](./guides/ingest.md).
+
+### The 12 pipeline stages
+
+Moved to [Ingestion: The 12 pipeline stages](./guides/ingest.md#the-12-pipeline-stages).
+
+### Index suffix
+
+Moved to [Scopes and namespaces: Index suffix](./concepts/scopes-and-namespaces.md#index-suffix).
+
+### Multilingual ingestion
+
+Moved to [Multilingual corpora](./guides/multilingual.md).
+
+### 4. Querying (`run-rag`)
+
+Moved to [Querying](./guides/query.md) and [Retrieval](./concepts/retrieval.md).
+
+### Search strategies — when to use which
+
+Moved to [Retrieval: Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which).
+
+### Answer style
+
+Moved to [Retrieval: Answer style](./concepts/retrieval.md#answer-style).
+
+### Context budget
+
+Moved to [Retrieval: Context budget](./concepts/retrieval.md#context-budget).
+
+### Rerank status
+
+Moved to [Querying: Rerank status](./guides/query.md#rerank-status).
+
+### Query deadline
+
+Moved to [Querying: Query deadline](./guides/query.md#query-deadline).
+
+### Filters
+
+Moved to [Querying: Filters](./guides/query.md#filters) (how to use them)
+and the [Filters reference](./reference/filters.md) (every field, value
+typing, per-strategy applicability).
+
+### Interactive mode & conversation memory
+
+Moved to [Querying: Interactive mode & conversation memory](./guides/query.md#interactive-mode--conversation-memory).
+
+### Large / multilingual / heterogeneous corpora
+
+Moved to [Ingestion: Large and heterogeneous corpora](./guides/ingest.md#large-and-heterogeneous-corpora).
+
+### Cost notes
+
+Moved to [Ingestion: Cost levers](./guides/ingest.md#cost-levers).

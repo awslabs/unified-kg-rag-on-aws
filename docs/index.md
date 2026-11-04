@@ -9,8 +9,8 @@ the project? Read the [Overview](./concepts/overview.md) first.
 
 | You are | Goal | Read, in order | Done when |
 |---|---|---|---|
-| **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./user-guide.md#search-strategies--when-to-use-which) → [Evaluators](./user-guide.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
-| **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./user-guide.md#3-ingestion-run-ingestion) → [Querying](./user-guide.md#4-querying-run-rag) → [Incremental indexing](./user-guide.md#5-incremental-indexing) → [Domain adaptation](./user-guide.md#9-domain-adaptation) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
+| **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) → [Evaluators](./user-guide.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
+| **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./guides/ingest.md) → [Querying](./guides/query.md) → [Incremental indexing](./user-guide.md#5-incremental-indexing) → [Domain adaptation](./user-guide.md#9-domain-adaptation) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
 | **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [common errors](./operations.md#common-errors)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./user-guide.md#6-evaluation-run-eval) → [Comparing strategies](./user-guide.md#comparing-strategies) → [Benchmarks](./user-guide.md#benchmarks-musique) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
 | **Extender** | Add a backend, strategy, parser, schema or seed source | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./user-guide.md#c-extraction-schema) / [Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph) | A registered plugin that passes the fake-port conformance tests |
@@ -25,15 +25,17 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the two methodologies, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
 | Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
-| Explanation | Retrieval, Scopes and namespaces (planned) | Strategy concepts and scoring; index suffix, namespace and source scope |
-| How-to | [User Guide](./user-guide.md) | The tasks not yet split out: ingestion, querying and filters, incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation, exit codes, library use |
+| Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; index suffix, source scope, namespace, and why neither the suffix nor filters are access control |
+| How-to | [User Guide](./user-guide.md) | The tasks not yet split out: incremental indexing, evaluation and benchmarks, visualization, prompt tuning, domain adaptation, exit codes, library use |
 | How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
 | How-to | [Local mode](./guides/local-mode.md), [Configuration](./guides/configure.md) | Local providers, differences from AWS mode, stores in containers; how configuration loads, the settings most runs change, environment variables, what the logs contain |
+| How-to | [Ingestion](./guides/ingest.md), [Multilingual corpora](./guides/multilingual.md), [Querying](./guides/query.md) | The 12 stages, resume and force-rebuild, S3 sync, the response cache, large corpora and cost levers; translation, analyzers and chunk sizes for CJK text; running queries, filters, rerank status, the query deadline, interactive mode and memory |
 | How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
 | How-to | More task guides (planned) | One page per task, split out of the User Guide |
 | Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
 | Reference | [Configuration Reference](./reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
 | Reference | [Model Catalog](./reference/models.md) | Supported Bedrock models, per-provider request differences, model selection notes (tiers, roles, the judge, output caps) |
+| Reference | [Filters reference](./reference/filters.md) | Every filterable field per store, value typing and dates, per-strategy applicability, OpenSearch strictness, filtered graph expansion |
 | Reference | [Telemetry reference](./reference/telemetry.md) | Every span and attribute, vendor attribute names, known limits, model-usage counters |
 | Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation, common errors |
 | Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
@@ -48,10 +50,10 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Change a model or a setting | [Configuration](./guides/configure.md), [Model selection notes](./reference/models.md#model-selection-notes), [Configuration Reference](./reference/configuration.md) |
 | Screen queries and answers | [Guardrail](./guides/guardrail.md) |
 | Trace queries and ingestion runs | [Observability](./guides/observability.md) |
-| Ingest a corpus, resume or rebuild | [Ingestion](./user-guide.md#3-ingestion-run-ingestion) |
-| Index a Korean or mixed-language corpus | [Multilingual ingestion](./user-guide.md#multilingual-ingestion) |
-| Pick a search strategy | [Search strategies](./user-guide.md#search-strategies--when-to-use-which) |
-| Filter results by document or attribute | [Filters](./user-guide.md#filters) |
+| Ingest a corpus, resume or rebuild | [Ingestion](./guides/ingest.md) |
+| Index a Korean or mixed-language corpus | [Multilingual corpora](./guides/multilingual.md) |
+| Pick a search strategy | [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) |
+| Filter results by document or attribute | [Querying: Filters](./guides/query.md#filters), [Filters reference](./reference/filters.md) |
 | Update the index as documents change or are deleted | [Incremental indexing](./user-guide.md#5-incremental-indexing) |
 | Adapt extraction to my domain | [Domain adaptation](./user-guide.md#9-domain-adaptation), [Prompt tuning](./user-guide.md#8-prompt-tuning-run-prompt-tuning) |
 | Import an ontology or an existing knowledge graph | [From an OWL/RDFS ontology](./user-guide.md#from-an-owlrdfs-ontology), [Seed graphs](./user-guide.md#d-seed-graphs-bring-your-own-knowledge-graph) |

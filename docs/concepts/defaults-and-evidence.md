@@ -96,7 +96,7 @@ concise: see [Query deadlines and model timeouts](#query-deadlines-and-model-tim
 Pairwise LLM judges favour the longer answer, so these win rates measure
 coverage more than quality for every reader. The directness loss is the
 cost, and `search.answer_prompt_style: {global: concise}` keeps the short
-answers ([Answer style](../user-guide.md#answer-style)).
+answers ([Answer style](./retrieval.md#answer-style)).
 
 ## Global evidence cap
 
@@ -153,7 +153,7 @@ and once with `1`:
 
 3 rounds stays the default, against MS GraphRAG's 1, for the graph recall.
 `max_rounds: 1` is the lever when ingestion cost matters more
-([Cost notes](../user-guide.md#cost-notes)).
+([Cost levers](../guides/ingest.md#cost-levers)).
 
 ## LightRAG chunk picking and MMR diversity
 
@@ -166,7 +166,7 @@ On the 200 MuSiQue questions:
 | `diversity_lambda: 1.0` instead of 0.5 | `answer_contains` -2.25 [-5.25, +0.5] n.s.; MRR +0.9 [+0.05, +2.15], significant but small | — | -$0.0009 per query |
 
 No change was significantly better on the answers, so both defaults stayed
-([Search strategies](../user-guide.md#search-strategies--when-to-use-which)).
+([Search strategies](./retrieval.md#search-strategies--when-to-use-which)).
 
 ## Local report selection
 

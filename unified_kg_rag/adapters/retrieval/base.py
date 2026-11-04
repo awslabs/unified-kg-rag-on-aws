@@ -733,11 +733,12 @@ class BaseSearchStrategy(ABC):
         documents that each pass one key would pass while none passes both:
         its survivors are then also checked by their text units, each of
         which belongs to one document. Seeds, relationships and reports
-        match each document key independently (see the user guide). The
-        seeds are checked for the entity keys: a seed need not have been
-        found under them (LightRAG seeds the walk with the endpoints of the
-        relationships it found, which hold no entity key), unless
-        ``seeds_pass`` says they were.
+        match each document key independently (see
+        docs/concepts/scopes-and-namespaces.md). The seeds are checked for
+        the entity keys: a seed need not have been found under them
+        (LightRAG seeds the walk with the endpoints of the relationships it
+        found, which hold no entity key), unless ``seeds_pass`` says they
+        were.
         """
         o = self.config.indexing.opensearch
         others = [r for r in results if r.source not in seeds]

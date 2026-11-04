@@ -2,7 +2,7 @@
 
 > 🇬🇧 English version: [docs/user-guide.md](./user-guide.md)
 
-한국어 문서는 README, 문서 안내, 개요, 시작하기 두 문서, 설정 가이드와 이 사용자 가이드입니다. 설계 문서, 운영 런북, 모델 카탈로그, CLI·설정 레퍼런스와 그 밖의 가이드는 영문으로만 제공합니다.
+한국어 문서는 README, 문서 안내, 개요, 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의 가이드와 이 사용자 가이드입니다. 설계 문서, 운영 런북, 모델 카탈로그, CLI·설정 레퍼런스와 그 밖의 가이드는 영문으로만 제공합니다.
 
 이 문서는 **unified-kg-rag-on-aws**를 실제로 사용하는 방법을 설명하는 가이드입니다.
 unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래프를 만들고 그 그래프를
@@ -28,14 +28,14 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | 도메인에 맞춘 프롬프트 생성 |
 | `prepare-benchmark` | `application.cli.prepare_benchmark` | 공개 벤치마크(MuSiQue)를 코퍼스와 `run-eval` 데이터셋으로 변환 |
 
-각 CLI의 `--help` 끝에는 실행 예시와 이 문서의 해당 절 링크가 있으며, 모든 플래그는 [CLI 레퍼런스](./reference/cli.md)(영문)에 있습니다.
+각 CLI의 `--help` 끝에는 실행 예시와 해당 가이드 링크가 있으며, 모든 플래그는 [CLI 레퍼런스](./reference/cli.md)(영문)에 있습니다.
 
 ## 목차
 
 1. 사전 요구사항과 설치: [AWS에서 시작하기](./getting-started/aws.ko.md)([필수 모델](./getting-started/aws.ko.md#필수-모델) 포함), [로컬에서 시작하기](./getting-started/local.ko.md), [Local mode](./guides/local-mode.md)(영문)로 옮김
 2. 설정: [설정](./guides/configure.ko.md)으로 옮김(모든 키: [설정 레퍼런스](./reference/configuration.md))
-3. [수집 (`run-ingestion`)](#3-수집-run-ingestion)
-4. [질의 (`run-rag`)](#4-질의-run-rag)
+3. 수집: [수집](./guides/ingest.ko.md)과 [다국어 코퍼스](./guides/multilingual.ko.md)로 옮김
+4. 질의: [질의](./guides/query.ko.md), [검색](./concepts/retrieval.ko.md), [필터 레퍼런스](./reference/filters.md)(영문)로 옮김
 5. [증분 인덱싱](#5-증분-인덱싱)
 6. [평가 (`run-eval`)](#6-평가-run-eval)
 7. [시각화 (`run-visualization`)](#7-시각화-run-visualization)
@@ -47,482 +47,6 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 
 관련 문서: [CLI 레퍼런스](./reference/cli.md)(영문) · [설정 레퍼런스](./reference/configuration.md)(영문) · [모델 카탈로그](./reference/models.md)(영문) · [운영 런북](./operations.md)(영문) ·
 [설계 문서](./design.md)(영문) · [`iac/README.md`](../iac/README.md)
-
----
-
-## 3. 수집 (`run-ingestion`)
-
-수집은 문서 디렉터리를 그래프 저장소와 벡터 저장소의 지식 그래프로 바꿉니다.
-`run-ingestion --source-directory <dir>`이 12개 단계([설계 §4](./design.md#4-ingestion-pipeline)에
-그림이 있음)를 실행하며 단계마다 체크포인트를 남기고, 같은 `--pipeline-id`로 다시
-실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
-증분으로 동작합니다([§5](#5-증분-인덱싱)).
-
-모든 플래그와 기본값은 [CLI 레퍼런스](./reference/cli.md#run-ingestion)(영문)에 있습니다.
-
-### 파이프라인 단계 12개
-
-실행 순서대로이며, `--enabled-stages` / `--resume-from-stage`에는 단계 **이름**(대소문자
-무관)을 씁니다.
-
-1. **`document_parsing`**: 형식별 텍스트 추출(`.pdf`, `.txt`, `.csv`, `.json`.
-   `unstructured` extra가 있으면 `.md`/`.html`도).
-2. **`document_loading`**: 이번 실행의 코퍼스 구성(MinHash 중복 제거, 증분 필터).
-   `document_parsing`을 끄면 미리 파싱된 `Document` `.json` 파일을 읽음.
-3. **`text_chunking`**: 텍스트 단위로 분할(`processing.chunking`).
-4. **`translation`**(선택): `target_language`로 번역. 원문 언어와 대상 언어가 같고
-   추가 대상 언어가 없으면 아무 일도 하지 않음.
-5. **`graph_extraction`**: 청크마다 엔티티와 관계 추출(LLM).
-6. **`gleaning`**(선택): 정제 패스(`processing.gleaning`).
-7. **`graph_resolution`**: 중복 엔티티와 관계 병합(이름 변형,
-   `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
-8. **`claim_extraction`**(선택, 기본은 꺼짐): 사실 주장 추출.
-9. **`claim_resolution`**(선택): 주장 중복 제거.
-10. **`graph_analysis`**: 그래프를 만들고 `graph.analysis.statistics`를 기록.
-11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트.
-12. **`indexing`**: OpenSearch와 Neptune에 씀(켜져 있으면 레지스트리에도).
-
-### 예시
-
-```bash
-# Full build
-run-ingestion --source-directory ./documents --config-path config.yaml
-
-# Keep the stage cache in S3 so a fresh task can resume
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --s3-sync --s3-bucket-name your-bucket
-
-# Resume an interrupted run from a stage
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --pipeline-id <id> --resume-from-stage graph_extraction
-
-# Run only specific stages
-run-ingestion --source-directory ./documents --config-path config.yaml \
-  --enabled-stages DOCUMENT_PARSING,TEXT_CHUNKING,GRAPH_EXTRACTION
-```
-
-**재개와 강제 재구축.** `--force-rebuild` 없이 다시 실행하면 완료된 단계는 캐시를
-쓰고 건너뜁니다.
-
-- `--pipeline-id <id>`는 그 실행을 처음으로 실패했거나 끝나지 않은 단계부터
-  재개합니다(`--enabled-stages`가 있으면 그 범위 안에서). 그 뒤에 켠 단계(gleaning,
-  주장)는 끝나지 않은 단계로 봅니다. `--pipeline-id`가 없는 실행은 새 ID를 받습니다.
-- 코퍼스나 설정이 바뀌면 CLI는 출력이 더는 캐시에 없는 완료 단계를 나열하고, 다시
-  계산하기 전에 묻습니다(터미널이 없으면 `--yes`).
-- 증분 인덱싱에서 델타를 계산한 뒤 추출 설정이 바뀐 재개는 `document_loading`부터 다시
-  시작하므로 델타가 새 설정을 따릅니다.
-- `--force-rebuild`는 모든 단계를 다시 계산하고 캐시를 새로 씁니다. 모든 사전 청크의
-  경계, 설명 요약, 커뮤니티 리포트도 모델에 다시 묻고 모든 텍스트를 다시 임베딩합니다(아래
-  참고).
-
-**S3 동기화**(`--s3-sync`)는 단계 캐시를 `s3://<bucket>/<prefix>/...`에 두고 단계가
-끝날 때마다 업로드하므로, 새 태스크가 거기서 재개합니다. SIGTERM(ECS `StopTask`, Step
-Functions 시간 초과)을 받으면 실행 중인 단계의 체크포인트를 업로드하고 143으로
-종료합니다. 단계 사이의 업로드 실패는 다음 단계에서 다시 시도하고, 처음 다운로드나
-마지막 업로드가 실패하면 `CacheSyncError`로 실행이 실패합니다. 만료와 다른 캐시는
-[캐시와 접두사](./operations.md#caches-and-prefixes)에 있습니다. 실행 사이에는 문서 상태
-레지스트리(`providers.doc_status.enabled`)가 바뀌지 않은 문서를 다시 임베딩하지 않게
-합니다. 증분 실행은 델타가 바꾼 것만 임베딩합니다. 실행이 쓰는 항목 중에서도 같은
-임베딩 제공자·모델·차원으로 이미 임베딩한 텍스트는 저장된 벡터를 그대로 씁니다(벡터마다
-텍스트의 다이제스트를 함께 저장). 그래서 문서를 고치면 텍스트가 바뀐 청크, 설명,
-리포트만 다시 임베딩하고, 바뀌지 않은 코퍼스를 reset하면 다시 생성한 것만 임베딩합니다.
-지능형 청커의 경계 응답은 사전 청크(pre-chunk)마다 추출 저장소에 남으므로, reset이나
-문서 수정은 본문이나 청킹 설정이 바뀐 사전 청크만 모델에 묻고, 매번 다르게 답하는
-모델이라도 바뀌지 않은 사전 청크의 경계는 그대로입니다. 청커가 실제로 쓴 응답만 남기므로,
-응답이 없는 줄 번호를 가리켜 크기 기준으로 나눈 사전 청크는 다음 실행에서 모델에 다시
-묻습니다. 전체 빌드(reset, 첫 실행, 레지스트리 없는 실행)는 코퍼스 전체에 걸친 응답도
-같은 방식으로 다시 씁니다. 요약 임계값을 넘는 설명은 저장된 사본이 같은 텍스트와 같은 요약
-설정으로 만든 요약이면 그 요약을 그대로 쓰고, 리포트 입력(묶어 넣은 구성원, 설명, 관계,
-주장, 하위 리포트 텍스트와 이름)과 리포트 설정이 바뀌지 않은 커뮤니티는 저장된 응답을
-씁니다(추출 저장소에 두고, 리포트의 `attributes.report_record`가 그 키를 가리킵니다).
-커뮤니티 이름(`Level 0 Community 1a2b3c4d`)은 구성원에서 만들어지므로, 문서가 커뮤니티를
-하나 더해도 다른 커뮤니티의 이름과 저장된 응답은 그대로입니다.
-
-**LLM 응답 캐시**(`cache.llm_responses`, 기본값 켜짐). 수집 단계의 모델 응답은 모두 실행의
-캐시 디렉터리 `llm-cache/`에 두고 함께 동기화하므로, 같은 pipeline id로 다시 실행하면
-중지되거나 비정상 종료된 단계가 하지 않은 호출만 다시 합니다. 키는 렌더링한 프롬프트와
-모델 ID, 최대 토큰, temperature, 추론 설정입니다.
-
-- 이전 실행의 응답만, 실행마다 한 번까지만 씁니다. 출력 토큰 한도에서 잘린 응답은
-  보관하지 않습니다. temperature가 0보다 크면 다시 실행할 때 이전 샘플을 재사용합니다.
-  모든 시도가 실패한 호출(끝내 파싱되지 않은 응답 등)이나 그래프·주장 레코드를 만들지 못한 호출의 응답은 버리므로,
-  다시 실행하면 그 단위만 모델에 다시 묻습니다.
-  시간 제한을 넘겨 버려진 호출이 늦게 받은 응답도 보관하지 않습니다.
-- `--force-rebuild`는 캐시에서 답하지 않으며, 질의와 평가 호출은 캐시하지 않습니다.
-- 캐시는 모델 호출마다 수 KB씩 커지고 실행을 시작할 때 메모리로 읽습니다.
-  `cache.llm_responses.flush_every`개 응답 단위의 세그먼트로 쓰므로, 예고 없이 종료된
-  태스크가 잃는 것은 세그먼트 하나 이하입니다. 중지하면 실행 중인 모델 호출의 재시도도
-  끝납니다.
-
-### 인덱스 접미사
-
-코퍼스의 인덱스와 그래프 레이블 이름은 모두 `<prefix>-<suffix>`이며
-`indexing.additional_suffix`를 지정하면 `-<additional_suffix>`가 붙습니다. 이
-`<suffix>`가 **인덱스 접미사**입니다. 수집은
-`processing.document_parsing.index_value`에서 가져오고(플래그 없음), `run-rag`와
-`run-eval`은 `--suffix`로 다른 값을 지정하지 않으면 설정 파일의 같은 `index_value`를
-질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(체인은 `index_value`를 읽지
-않음). 모두 기본값은 `default`입니다.
-테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 하나씩 두고,
-`indexing.additional_suffix`는 양쪽에서 같게 하세요. 증분 인덱싱과 삭제는 인덱스 접미사
-단위입니다(§5).
-
-접미사는 이름을 나눌 뿐 접근을 막지 않습니다. 질의할 수 있는 호출자는 어떤 접미사든
-지정할 수 있으므로, 멀티 테넌트 서비스는 인증된 호출자를 기준으로 서버에서 접미사를
-정해야 합니다. [운영 런북: 질의 권한과 테넌트 격리](./operations.md#query-access-and-tenant-isolation)를
-참고하세요.
-
-### 다국어 수집
-
-코퍼스의 주 언어와 인덱싱할 대상 언어를 지정하세요.
-
-```yaml
-processing:
-  translation:
-    enabled: true
-    source_language: "ko"
-    target_language: "en"
-    additional_target_languages: ["ja"]   # index additional languages too
-```
-
-`source_language == target_language`이고 추가 대상 언어가 없으면 `enabled: true`여도
-번역 단계를 비용 없이 건너뜁니다.
-
-- **분석기**는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)에서 정하며,
-  나머지 언어는 `default_analyzer`를 씁니다. 청크 `text`는 `source_language`로
-  분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
-  코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
-  바뀌므로 텍스트 단위를 다시 인덱싱하세요.
-- **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
-- **청크 크기.** 청크 크기는 기본값으로 문자 수를 셉니다. 한글·한자·가나 한 글자는
-  토큰 하나쯤이므로 8,000자짜리 한국어 청크는 약 6,000토큰이 되어 Cohere Rerank 3.5의
-  문서당 한도 4,096토큰을 넘고, 넘은 뒷부분은 재순위화(rerank)되지 않습니다. 크기를
-  절반으로 줄이거나, `processing.chunking.length_unit: tokens`로 토큰 수를 세게 하고
-  모든 크기를 토큰 단위로 지정하세요. 토큰 수는 로컬 추정치이며 모델을 호출하지 않습니다.
-
-  ```yaml
-  processing:
-    chunking:
-      length_unit: tokens
-      min_chunk_size: 250
-      max_chunk_size: 2000
-      chunk_overlap: 125
-      fallback_chunk_size: 1200
-      pre_chunk_size: 12500
-      pre_chunk_overlap: 125
-  ```
-
-  단위를 바꾸면 코퍼스를 다시 청크로 나누고 문서를 다시 추출합니다(증분 실행은 범위의
-  모든 문서를 다시 추출합니다).
-- **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
-  `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`
-  플러그인에서 오는데, [로컬 OpenSearch 컨테이너](./guides/local-mode.md#local-stores-in-containers)(영문)에는 있고
-  Amazon OpenSearch Service 도메인은 Nori 패키지를 연결해야 갖습니다(블루/그린 배포). 그래서
-  [CDK 배포](../iac/README.md)는 `ko`를 기본 제공 `cjk` 분석기(문자 바이그램)에
-  매핑합니다. `-c opensearch_nori_package=true`로 배포하면 패키지를 연결하고 `ko`를
-  `nori`에 매핑합니다([Nori로 한국어 분석하기](./operations.md#korean-with-nori)).
-- **실패.** 번역에 실패한 텍스트 단위는 원문 언어로 추출합니다. 대상 언어 하나의 호출
-  전체가 실패하면 `processing.ignore_errors: true`가 아닌 한 단계가 실패합니다. 증분
-  실행은 `failed_units`의 문서를 실패로 기록하므로 다음 실행이 다시 시도합니다.
-
----
-
-## 4. 질의 (`run-rag`)
-
-`run-rag --query "..."`는 질문 하나에 답하고, `--interactive`는 대화를 이어 갑니다.
-전략은 `--search-strategy`로 고르며(기본값 `auto`, LLM 라우터), 모든 답변은 답변 모델이
-실제로 본 출처를 함께 돌려줍니다. 전략별 검색 방식은
-[설계 §6](./design.md#6-retrieval-two-methodologies)의 그림에 있습니다.
-
-모든 플래그와 기본값은 [CLI 레퍼런스](./reference/cli.md#run-rag)(영문)에 있습니다.
-
-### 검색 전략 선택
-
-GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 데 강하고, LightRAG 전략은
-더 빠르며 *이중 레벨 키워드* 검색을 중심으로 동작하므로 키워드 중심 조회와 저비용
-기준선에 적합합니다. 두 방법론 모두 같은 하이브리드 스코어러(BM25, 벡터, 그래프, RRF,
-재순위화)를 씁니다.
-
-**GraphRAG(커뮤니티 요약):**
-
-| 전략 | 사용 시점 | 동작 방식 |
-|---|---|---|
-| `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
-| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티마다 따로 찾아, 이름이 같은 엔티티가 순회를 시작하고, 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`(0.6)배 이상일 때만 시작점이 됩니다. 하이브리드 검색에서는 이 비율을 가중치에 맞춰 환산하므로, 벡터 검색만 찾은 결과는 가중치와 상관없이 이름이 일치한 엔티티와 함께 시작점이 되지 않습니다. 벡터 검색은 원래 유사도 점수끼리 차이가 작아 이 필터가 덜 걸러 냅니다. 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다. `search.local_search.report_selection: membership`이면 순회한 엔티티가 속한 커뮤니티의 보고서를 넣으며(MS GraphRAG local 방식), 보통 그 수가 더 적습니다. 측정에서 답변이 유의하게 나빠졌으므로 기본값은 similarity입니다([근거](./concepts/defaults-and-evidence.md#local-report-selection), 영문). |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 들어맞는 가장 깊은 얕은 단면으로 내려가고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
-| `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
-| `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 후보 전략이 읽는 엔티티·키워드 추출과 질의 번역을 라우터와 동시에 실행하므로(`search.auto_speculative_extraction`), local이나 mix로 분기한 `auto`는 그 전략을 직접 고른 질의와 걸리는 시간이 같습니다. 분기한 전략이 읽지 않는 추출도 백그라운드에서 계속 실행되고 과금됩니다(기본 설정에서 질의마다 fast 모델 호출 1회, global로 분기하면 2회). 질의는 이 추출을 기다리지 않고 반환하며, 시작 시점부터 질의 사용량에 넣습니다(실행 중이면 `estimated_calls`). 추출 결과는 추출 캐시를 채우고, `search.query_timeout_seconds`가 지나거나 체인을 닫으면 취소합니다. |
-
-**LightRAG(이중 레벨 키워드):**
-
-| 전략 | 사용 시점 | 동작 방식 |
-|---|---|---|
-| `mix` | 일반적인 LightRAG 사용 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉은 `search.lightrag_search.enable_graph_expansion`으로 선택)에 **더해** naive 청크 검색 결과를 섞습니다. |
-| `hybrid` | 키워드 중심의 그래프 질문 | naive 청크 결과를 섞지 않는 `mix`입니다. |
-| `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, `--search-type vector`는 upstream LightRAG의 순수 벡터 기준선과 MS GraphRAG의 `basic` 검색에 가깝습니다. |
-
-`mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
-질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
-이하).
-
-두 전략은 찾은 엔티티가 인용하는 원문 청크와, 별도 스트림으로 찾은 관계가 인용하는
-청크를 더합니다(각각 최대 `search.lightrag_search.chunk_stream_top_k`개. 결과 융합(fusion)이
-두 스트림을 번갈아 섞고, 합친 청크는 재순위화(rerank) 뒤에 이 개수로 자릅니다).
-`search.lightrag_search.kg_chunk_pick_method`는 항목마다 어떤 청크를 고를지 정합니다.
-`weight`(기본값)는 찾은 항목마다 감소하는 비율로 `related_chunk_number`개씩 배정하고,
-`vector`는 upstream LightRAG의 기본값처럼 인용된 청크 중 질의와 가장 잘 맞는 청크를
-엔티티 쪽과 관계 쪽에서 한 번씩 검색해 고릅니다. 기본값은 `weight` 그대로이고 MMR의
-`search.fusion.diversity_lambda`도 0.5를 유지합니다. 다른 값은 측정에서 유의한 차이가
-없었습니다([근거](./concepts/defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
-
-### 답변 형식
-
-`global`은 기본으로 포괄적(comprehensive) 답변 프롬프트를, 나머지 전략은 간결한 프롬프트를
-씁니다. 간결한 프롬프트는 한 문장으로 바로 답한 뒤 근거를 짧게 붙입니다
-(`custom_prompts.answer_generation_*`). 포괄적 프롬프트는 MS GraphRAG의 global reduce
-프롬프트를 본뜬 것으로, 핵심 내용을 모두 설명하는 여러 문단의 마크다운 답변을
-씁니다(`custom_prompts.comprehensive_answer_*`). `search.answer_prompt_style`은 이 기본값
-위에 합쳐지므로 한 전략만 지정해도 나머지는 그대로입니다.
-
-```yaml
-search:
-  answer_prompt_style: {drift: comprehensive}   # global stays comprehensive
-  query_timeout_seconds: 300                    # see below
-# answer_prompt_style: {global: concise}        # concise global answers
-```
-
-근거. 포괄적 global 답변은 간결한 답변보다 더 많은 내용을 다루지만 덜 직접적이고, 맞비교
-LLM 판정은 긴 답변을 선호합니다. 짧은 답을 원하면 `{global: concise}`를 유지하세요. `drift`의
-기본값이 간결한 형식인 이유는 포괄적 답변을 쓰면 지연 시간이 기본
-`search.query_timeout_seconds` 180초에 가까워지기 때문입니다. `{drift: comprehensive}`를
-쓰면 이 마감 시간을 늘리세요(300초면 여유가 있습니다.
-[운영 런북](./operations.md#query-deadlines-and-model-timeouts)). 측정 결과는
-[기본값과 근거](./concepts/defaults-and-evidence.md#answer-style)(영문)에 있습니다.
-
-`auto`는 분기한 전략의 형식을 따릅니다. `answer_match` 점수는 제목이 아닌 첫 줄을 읽으므로(`evaluation.answer_span`)
-포괄적 답변은 품질과 관계없이 정확 일치(exact match) 점수가 낮게 나옵니다.
-
-global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 리포트를 붙여 답변 모델에
-넘깁니다. `search.global_search.evidence_tokens`는 이 리포트 본문의 토큰 수를 제한합니다
-(가장 점수가 높은 핵심 내용의 리포트부터 리포트 단위로). 기본값은 4000이며, 제한이 없을
-때보다 global 질의 비용이 약 40% 줄었고 측정된 품질 차이는 없었으며 답변은 출처를
-유지합니다([근거](./concepts/defaults-and-evidence.md#global-evidence-cap), 영문).
-`null`(제한 없음)은 컨텍스트 예산이 허용하는 만큼 넣으며, 단면이 크면 global 질의 입력
-토큰의 대부분을 차지합니다. `0`(비용이 더 적음)은 MS GraphRAG의 reduce
-단계처럼 핵심 내용만 보내며, 이때 답변은 출처를 보고하지 않습니다(핵심
-내용은 모델 출력이기 때문입니다). 그래서 `retrieval` 평가기는 global 질의의 순위 지표를 0점
-처리하지 않고 건너뜁니다(`no_sources_by_config`).
-
-### 컨텍스트 예산
-
-`search.token_manager.max_context_tokens`(`30000`, upstream LightRAG의 예산)는 답변
-프롬프트가 받는 검색 컨텍스트입니다. `models.roles.answer_generation`가 출력 예약분과
-함께 받을 수 있는 크기로 줄이며 줄일 때 경고를 남기고, `null`이면 그 모델의 컨텍스트
-창에서 도출합니다. 유형별 비율과 `local` 슬롯 할당은
-[레퍼런스](./reference/configuration.md#searchtoken_manager)(영문)에 있습니다.
-
-### 예시
-
-```bash
-# Single query (auto strategy, hybrid search)
-run-rag --query "What are the main themes in the documents?" --config-path config.yaml
-
-# Pick a strategy and search type
-run-rag --query "How does entity X relate to Y?" \
-  --search-strategy local --search-type hybrid --config-path config.yaml
-
-# Retrieval only, JSON output
-run-rag --query "..." --mode search --output-format json --config-path config.yaml
-
-# Verbose (entities, top sources, metrics) with attribute filters
-run-rag --query "..." --verbose --filters attr_category:research type:person \
-  --config-path config.yaml
-```
-
-### 재순위화 상태
-
-모든 질의는 재순위화 결과를 `SearchResult`와 RAG 출력의 `metadata.rerank`(따라서
-`--output-format json`에도)에 남깁니다. `status`, `reason`, `stages`로 구성되며,
-`stages`에는 재순위화 단계마다 `status`, `scope`(`all`, 또는 재순위화한 결과 유형. 예:
-`local`, `drift`, `mix`, `hybrid`의 `text`), `reason`이 있습니다.
-
-| 상태 | 의미 |
-|---|---|
-| `applied` | 재순위화 모델이 후보 순서를 바꿨습니다. |
-| `disabled` | `search.reranking.enabled: false` 또는 `providers.rerank.kind: none`. |
-| `unavailable` | 재순위화 모델을 만들 수 없습니다(초기화 실패는 ERROR로 기록, 또는 크로스 인코더의 `[local]` extra 미설치). |
-| `skipped` | 재순위화할 대상이 없습니다: 후보 없음, 재순위화 대상 유형의 결과 없음, 질의 텍스트 없음. |
-| `failed` | 호출이 예외를 냈거나(`bedrock:Rerank` 거부, 모델이 없는 리전, 연결할 수 없는 엔드포인트) 쓸 수 있는 결과를 돌려주지 않아 융합 순서를 유지했습니다. |
-
-- `failed`와 `unavailable`의 `reason`은 메시지 없이 AWS 오류 코드나 예외 유형만 밝힙니다.
-- 기본 제공 전략은 질의마다 한 번 재순위화합니다. 같은 기록에 여러 번 융합하는 호출자는
-  융합마다 단계가 생기고, 최상위 `status`는 `failed` > `unavailable` > `applied` >
-  `skipped` > `disabled` 순으로 가장 나쁜 단계의 값입니다. 모델이 순서를 바꾼 결과에는
-  `metadata.reranked`가 표시됩니다.
-- Bedrock 권한이나 리전 문제는 `unavailable`이 아니라 첫 질의의 `failed`로 나타납니다.
-  `search.reranking.required: true`이면 이런 질의를 융합 순서로 답하지 않고
-  `RerankModelError`로 실패시킵니다.
-
-### 질의 제한 시간
-
-질의 하나(`run-rag`, `invoke`/`ainvoke`, `search`/`asearch`, 스트리밍)는 전체
-`search.query_timeout_seconds`(기본 180초) 안에 끝나야 합니다. 이 시간을 넘기면
-`QueryTimeoutError`(`unified_kg_rag`에서 내보냄, 내장 `TimeoutError`이기도 함)로 실패하고,
-진행 중인 모델 호출과 저장소 요청은 취소됩니다.
-
-- `run-rag`는 메시지를 출력하고 `1`로 종료합니다. `run-eval`은 그 질의를 실패로 세고
-  (`error_message` 기록, 채점 제외) 나머지 질의를 계속 처리합니다.
-- `processing.ignore_errors`를 켜면 오류 답변을 대신 돌려주고, 메시지는
-  `search_results.metadata.error`에 남습니다.
-- 스트리밍 답변은 모델 호출 후 `search.model_timeout_seconds` 안에 첫 청크를 보내야 합니다.
-  청크가 오기 시작하면 전체 제한 시간이 적용됩니다.
-- `null`로 두면 두 제한을 모두 끕니다.
-
-질의의 모델 호출(답변 생성과 그 밖의 질의 시점 LLM 호출, 질의 임베딩, Bedrock 재순위화)은
-전용 클라이언트를 씁니다. 요청마다 응답을 `search.model_timeout_seconds`(기본 90초)까지
-기다리고 botocore 시도는 `search.model_max_attempts`(기본 2회)라서, 멈춘 Bedrock 호출은
-약 3분 뒤 포기합니다. 수집과 평가 판정 호출은 읽기 제한 시간 330초와 6회 시도를
-유지합니다. OpenAI 호환 서버나 Ollama 서버에서는 질의 호출의 요청 제한 시간이
-`providers.llm.timeout_seconds` / `providers.embedding.timeout_seconds`이되
-`search.model_timeout_seconds`를 넘지 않습니다. 로컬 서버는 요청을 대기열에 쌓으므로
-`backend: local`은 모델 제한 300초, 질의 제한 900초를 미리 채웁니다(여기서 `null`은
-미리 채운 값으로 바뀌므로 큰 숫자를 지정).
-
-스트리밍하지 않는 답변은 한 번에 도착하므로 `search.model_timeout_seconds`가 모델이 답변을
-생성하는 시간의 상한이기도 합니다. 긴 답변이나 높은 추론 강도(effort)에는 이 값과 질의
-제한 시간을 함께 올리세요. 기본값은 실제 AWS에서 측정한 질의 시간에서
-정했습니다([근거](./concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문). 90초는 가장 느린 질의 전체를 요청 하나로 받아도 여유가
-있고, 180초는 멈춘 첫 시도를 한 번 다시 시도할 수 있는 시간입니다. 조정 방법은
-[운영 런북](./operations.md#query-deadlines-and-model-timeouts)에 있습니다.
-
-### 필터
-
-`--filters key:value ...`(또는 `RAGInput.filters`)는 검색이 순위를 매길 대상을
-좁힙니다. 키·`:`·값 중 하나가 없는 쌍, 두 번 준 키, 전략이 읽는 어떤 인덱스도 선언하지
-않은 키는 사용법 오류(종료 코드 2)입니다. 필터는 OpenSearch에서는 `term`/`terms`/`range` 절로, Neptune에서는 `has` 단계로
-변환됩니다. 저장소마다 해당 인덱서가 쓰는 필드를 받습니다.
-
-| 저장소 | 필터 가능한 필드 |
-|---|---|
-| 텍스트 단위 | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| 엔티티 | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
-| 관계 | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
-| 주장 | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| 커뮤니티 리포트 | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune 엔티티 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`(있는 경우) |
-
-- OpenSearch에서 `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목입니다(여러
-  문서에서 나온 항목은 그 값을 모두 가짐). Neptune 엔티티 정점에서는 엔티티 자체의
-  속성입니다(`attr_role`).
-- 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 `term`은 정확히 일치해야
-  하므로 `type:PERSON`이 아니라 `type:person`으로 필터링하세요. 관계에는 `type` 필터가
-  없습니다(관계 인덱스에 유형을 저장하지 않음). `in_schema`, `type_iri`,
-  `predicate_iri`는 [추출 스키마](#c-추출-스키마) 표시이고, `iri`와
-  `source_kinds`(`document`, `seed_graph`)는
-  [시드 그래프](#d-시드-그래프가지고-있는-지식-그래프-가져오기)에서 옵니다. keyword나 숫자 필드를
-  쓰는 편이 좋습니다. `description`처럼 분석되는 필드에 `term`을 걸면 소문자 토큰 하나와만
-  일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로 넘깁니다.
-  `attr_<key>`, `attributes.filters.<key>`와 주장 날짜는 날짜 형태의 값도 keyword라서
-  범위 필터는 문자열로 비교하며, ISO 날짜(`YYYY-MM-DD`)는 이 비교로도 올바르게 정렬됩니다.
-  달력 날짜로 읽히는 주장 날짜(`2024-01-15`, `2024-1-5`, `January 15th, 2024`, `Sept. 3, 2024`)는 `YYYY-MM-DD`로 저장하고,
-  더 넓은 기간은 `start_date`에는 그 첫날로, `end_date`에는 그 마지막 날로 저장합니다(주장 프롬프트가 연말을
-  `YYYY-12-31`로 쓰라고 하는 것과 같습니다). ISO 주(`2024-W03`)는 그 주의 월요일 또는 일요일(요일까지 적은
-  `2024-W03-2`는 그날), 분기(`Q3 2022`)는 2022-07-01 또는 2022-09-30, 월(`March 2024`, `2024-03`)은
-  2024-03-01 또는 2024-03-31, 연도(`2024`)는 2024-01-01 또는 2024-12-31입니다. 따라서 `start_date`의
-  `{"gte": "2022-07-01", "lte": "2022-09-30"}`은 `Q3 2022`와 일치하지만 `{"gte": "2022-08-01"}`은 일치하지
-  않고, `end_date`의 `{"lte": "2024-06-30"}`은 "2024년까지"와 일치하지 않습니다. 그 밖의 값(일과 월 순서를 알 수
-  없는 `10/08/2024`, `early 2024` 등)은 적힌 그대로 저장해 문자열로 비교하므로 정확히 일치하는 필터만 의미가
-  있으며, 범위 필터가 잘못 일치할 수 있습니다(`10/08/2024`는 모든 ISO 날짜보다 앞에 정렬되므로
-  `{"lte": "2000-01-01"}`과도 일치합니다). 알 수 없는 날짜(`UNKNOWN`, `TBD`, `present`)는 저장하지 않으므로
-  범위 필터를 포함해 어떤 필터에도 일치하지 않습니다.
-- 불리언·숫자 필드는 그 유형의 값을 받습니다. `in_schema`는 불리언, `rank`·`confidence`·
-  `weight`·`rating`은 숫자, `n_tokens`·`level`·`depth`·`max_cut_depth`는 정수입니다. 이
-  필드에 문자열을 주면(`--filters`와 `set-filter`의 값은 모두 문자열이고, 데이터셋이나
-  `RAGInput.filters`에도 문자열이 들어갈 수 있음) 검색 전에 리스트와 범위 경계까지 그
-  유형으로 바꾸므로, 모든 저장소가 유형을 갖춘 값과 똑같이 일치시킵니다. `in_schema:false`는
-  `False`(불리언은 대소문자 구분 없이 `true`/`false`, `1`/`0`, `yes`/`no`를 받음),
-  `rank:2`는 `2`가 됩니다. 유형에 맞지 않는 문자열(`in_schema:maybe`, `rank:high`,
-  `level:1.5`)은 `InvalidFilterError`를 일으킵니다(명령줄에서는 사용법 오류, 종료 코드 2).
-  유형이 다른 값도 마찬가지입니다. 불리언 필드의 숫자(`in_schema: 1`), 숫자 필드의
-  불리언(`rank: true`), 정수 필드의 소수(`level: 2.5`. `2.0`은 `2`가 됨)는
-  `InvalidFilterError`를 일으킵니다.
-  그 밖의 필드 값은 `attr_<key>`와 `attributes.<path>`를 포함해 주어진 그대로 비교합니다.
-- 필터는 해당 필드를 선언한 저장소에만 적용됩니다(`type:person`은 텍스트 단위를
-  거르지 않음). 선택한 전략이 읽는 저장소 어디에도 선언되지 않은 키(예: `category`,
-  `naive`나 `global`의 `type`)는 필터 가능한 키 목록과 함께 `InvalidFilterError`를 일으킵니다
-  (`unified_kg_rag/adapters/storage/filter_schema.py`). `naive`는 텍스트 단위를, `hybrid`와
-  `mix`는 엔티티·관계·텍스트 단위(`search.lightrag_search.enable_graph_expansion`을 켜면
-  Neptune도)를, `local`과 `drift`는 파이프라인이 만드는 모든 인덱스와 Neptune을, `global`은
-  커뮤니티 리포트(`search.global_search.text_unit_slots`를 쓰면 선택한 리포트의 커뮤니티로
-  범위를 좁힌 텍스트 단위도)를, `simple`은 파이프라인이 만드는 모든 인덱스를 읽습니다. `global`은
-  자기 검색 범위를 정하는 키를 거부합니다. `depth`와 `max_cut_depth`(`search.global_search.use_dynamic_selection`을
-  켜면 `depth`와 `community_id`), `text_unit_slots`를 쓰면 `community_ids`도 해당합니다. `id`,
-  `source_id`, `target_id`는 `local`, `drift`, `mix`, `hybrid`가 id로 가져오거나 탐색으로 닿는
-  대상을 좁힙니다(값이 목록에 있는 항목만 돌아옴). 이 키에 범위를 주면 어느 전략에서나 거부되며(이 키로 범위를 좁히지 않는 `naive`와 `global`도 거부해, 필터의 유효 여부가 전략에 따라 달라지지 않음), 어느 키든 빈 값 목록도 거부됩니다. `auto`는 라우팅될 수 있는 전략 중 키를 모두
-  적용하는 전략 사이에서만 라우팅하고(기본 집합에서 `type:person`이면 `local`과 `mix`), 그런
-  전략이 없을 때만 라우팅 전에 필터를 거부합니다. Neptune은 엔티티 정점에만 필터를 적용합니다.
-- OpenSearch는 `attr_<key>`와 `attributes.<path>`를 엄격하게(fail-closed) 적용합니다.
-  속성이 없는 항목은 제외됩니다. 관계, 주장, 커뮤니티 리포트는 자기 텍스트 단위가 속한
-  문서들의 필터 값을 가지므로 그중 하나가 일치하면 일치합니다. 벡터나 하이브리드 검색은 그
-  속성을 가진 문서가 하나도 없는 인덱스를 건너뜁니다(OpenSearch 2.13은 인덱스가 매핑하지
-  않은 필드에 대한 kNN 필터를 거부함).
-- 문서를 제거하면 남은 엔티티, 관계, 주장에서 그 문서의 필터 값을 지웁니다. 남은 문서
-  어디에도 없는 키는 null로 저장되고 null은 어떤 필터와도 일치하지 않습니다.
-- `attr_<key>`와 `attributes.filters.<key>`는 문서 속성입니다. 그래프 저장소에는 이것이
-  없으므로 그래프 확장은 시드를 제외한 확장 엔티티를, 그 엔티티가 나온 모든 문서의 필터를
-  가진 엔티티 인덱스 문서가 이를 통과한 경우에만 남깁니다. 키가 둘 이상이면 그 엔티티의
-  텍스트 단위(한 문서의 것) 중 하나도 모든 키를 통과해야 합니다. 또한 필터를 통과한 관계만
-  따라 시드에서 `max_hops` 안에 닿아야 하며(제외된 문서만 진술한 관계는 따라가지 않음),
-  `Path:`도 그 관계를 따릅니다. 이때 걷기는 관계 인덱스에서 한 홉씩 진행하므로 이 확인을 마친
-  뒤에 자르며, 정점 필터(`type`)가 결과에서 뺀 엔티티도 거쳐 갑니다. 그 인덱스가
-  없으면(`indexing.opensearch.build_relationship_vector_index: false`, 또는 질의 시점에 인덱스가
-  없어 WARNING을 남김) 그래프를 걷고 엔티티 인덱스 확인만으로 정합니다. 텍스트 단위에 걸리는 필터가
-  있으면 local과 mix는 상위 순위 청크만이 아니라 엔티티와 연결된 청크 중 필터를 통과한 것으로
-  청크 할당량을 채웁니다. 그 밖의 `attributes.<path>` 키는 항목 자체의 속성이며 엔티티 인덱스에만
-  적용됩니다. 엔티티 정점에 없는 이 키와 `name.keyword`는 그래프 걷기가 닿은 엔티티를
-  LightRAG의 시드까지 포함해 엔티티 인덱스로 확인합니다(`local`과 `drift`의 시드는 필터로 찾은 것).
-  이 확인은 걷기가 홉별 상한과 `top_k`로 자른 뒤 남은 엔티티만 보므로, 필터를 통과하지만 그
-  아래 순위인 이웃에는 닿지 못합니다. Neptune에서 `attr_<key>`는 엔티티 정점 속성(`attr_role`)이기도 해서 "있는 경우"
-  기준으로 적용되지만(그 속성이 없는 정점은 통과) 위의 엔티티 인덱스 확인도 적용되므로, 문서에
-  `role` 필터가 없으면 `attr_role:buyer`는 아무것도 고르지 않습니다. 그 밖의 키는 두 저장소
-  모두 엄격하게 적용합니다.
-
-**필터는 접근 제어 경계가 아닙니다.** 키를 선언하지 않은 저장소는 내용을 거르지 않고
-돌려주며, 여러 문서에서 나온 엔티티, 관계, 커뮤니티 리포트는 그중 하나만 일치해도
-통과하므로 제외된 문서의 내용을 담을 수 있습니다. 여러 문서에서 나온 항목은 여러 키로 된
-필터의 키마다 따로 일치하기도 합니다. 시드, 관계, 주장, 커뮤니티 리포트는 키마다 모든 문서의
-값을 가지므로, 문서가 `{category: x, grp: a}`와 `{category: y, grp: b}`인 항목은 두 조건을
-모두 갖춘 문서가 없어도 `attr_category:x attr_grp:b`에 일치합니다.
-테넌트나 사용자는 서버에서 정한 [인덱스 접미사](#인덱스-접미사)로 나누세요.
-
-### 대화형 모드와 대화 메모리
-
-```bash
-run-rag --interactive --conversation-id my-session --config-path config.yaml
-```
-
-대화형 모드에서는 메모리가 켜집니다. 명령: `help`, `new`(새 대화 ID),
-`set-filter key:value`, `clear-filters`, `show-config`, `quit` / `exit`. 명령은 줄 전체여야
-하므로(인자를 받는 명령은 `set-filter`뿐) `help me find ...`는 질문으로 처리합니다.
-`set-filter`는 `--filters`처럼 검색 전략의 어느 인덱스에도 없는 키를 거부합니다(`--interactive`와
-함께 준 `--filters`는 첫 질문 전에 검사하며, 거부하면 종료 코드 2). `auto`에서는 이미 설정한
-필터와 함께, 라우팅될 수 있는 어떤 전략도 모두 적용하지 못할 때만 키를 거부합니다.
-
-대화 메모리는 프로세스 안에만 있습니다(`MemoryManager`, 한도는 `memory` 섹션).
-
-- 세션 하나의 턴 사이에서, 또는 `use_memory=True`와 같은 `suffix`, `user_id`로
-  `conversation_id`를 다시 쓰는 `GraphRAGChain` 하나의 호출 사이에서 이어집니다(다른
-  테넌트나 사용자의 턴은 섞이지 않음). 체인끼리는 같은 `MemoryManager(config)`를
-  `memory_manager=`로 넘겨야만 공유합니다.
-- `run-rag --query`를 따로 실행하면 매번 이력 없이 시작하므로 `--use-memory`와
-  `--conversation-id`가 효과가 없습니다(`run-rag`가 WARNING을 남김). CLI에서 여러 턴을
-  이어 가려면 `--interactive`를 쓰세요.
-- 검색 전에 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
-  `models.roles.query_rewrite` 호출 한 번, 프롬프트 키 `query_rewrite`). 그래서 "그 회사의
-  공급업체는?"도 앞선 턴의 엔티티 이름이 들어간 질문이 됩니다. 재작성은 최근
-  `memory.max_messages_per_conversation`개 메시지를 읽고 앞선 답변은 각각 1,000자까지만
-  쓰며, `enable_query_processing`을 꺼도 실행됩니다(이 플래그는 번역과 엔티티·키워드
-  추출을 끔). 메모리는 이 외에 LLM을 추가로 호출하지 않습니다.
 
 ---
 
@@ -603,17 +127,9 @@ aws:
 
 ### 삭제 범위
 
-실행의 **범위**는 인덱스 접미사(`document_parsing.index_value`와
-`indexing.additional_suffix`)와 코퍼스 소스(`document_parsing.source_scope`. 기본값은
-해석된 소스 디렉터리이며, 컨테이너 엔트리포인트는 동기화 원본인 S3 URI로 설정)입니다.
-문서의 레지스트리 키는 이 범위와 소스 디렉터리 기준 상대 경로이며, 실행은 자기 범위의
-문서만 비교하고 삭제 대상으로 봅니다. 따라서 다른 테넌트(다른 `index_value`)의 실행은 이
-테넌트의 문서를 삭제하지 않고, 하위 폴더를 소스 디렉터리로 따로 실행해도 코퍼스의
-나머지는 삭제되지 않으며(그 파일들은 별도 문서로 등록되므로 같은 파일을 두 루트에서 한
-접미사로 인덱싱하지 마세요), 소스가 다른 두 코퍼스는 한 접미사에서 상대 경로가 같아도
-서로 다른 문서입니다. 문서와 텍스트 단위 ID도 범위에서 만들어지므로, 경로와 머신이 달라도
-같은 ID가 나와야 하면 `source_scope`를 지정하세요(지정하지 않으면 같은 코퍼스라도 다른
-디렉터리나 호스트에서 인덱싱하면 ID가 달라집니다). 파싱이나 로딩에 실패한 파일과, 그
+실행은 자기 범위, 즉 인덱스 접미사와 코퍼스 소스에 속한 문서만 비교하고 삭제 대상으로
+봅니다([범위와 네임스페이스: 소스 범위](./concepts/scopes-and-namespaces.ko.md#소스-범위)).
+파싱이나 로딩에 실패한 파일과, 그
 형식을 읽는 로더가 없어(예: `unstructured` 같은 선택 extra 미설치) 건너뛴 파일은
 `failed`로 보고되며, 다음 실행에서 다시 읽을 때까지 인덱싱된 내용을 유지합니다.
 
@@ -915,7 +431,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   하한입니다. 각 결과에는 `abstained`가 기록됩니다.
 - `answer_span_statistics`: exact match와 token F1이 읽은 `answer_span`, 채점한 리포트
   수(`scored`), 추출에 실패해 첫 줄로 채점한 수(`fallbacks`)입니다.
-- `rerank_status_counts`: [재순위화 상태](#재순위화-상태)별 질의 수입니다. 각 결과에는
+- `rerank_status_counts`: [재순위화 상태](./guides/query.ko.md#재순위화-상태)별 질의 수입니다. 각 결과에는
   `rerank_status`가 기록됩니다(답변 생성이 먼저 실패했으면 `null`).
 - `guardrail_blocked_counts`: `input` / `output`별 차단된 질의 수입니다(차단된 항목은
   차단 메시지로 채점. 차단된 답변은 출처를 버리므로 검색 지표와 RAGAS 컨텍스트 지표
@@ -1343,7 +859,7 @@ custom_prompts:
 엔티티가 사라지면 그 단위에서 이 엔티티를 가리키는 관계도 함께 사라집니다. `align`으로
 시작해 스키마 밖으로 떨어지는 항목을 살펴보고(아래 `filters={"in_schema": False}`),
 스키마를 넓힌 다음, 밖으로 떨어지는 것이 적을 때만 `strict`로 바꾸세요. 내 질문에서
-비용이 얼마인지 재려면 코퍼스를 모드별로 다른 인덱스 접미사([인덱스 접미사](#인덱스-접미사))에
+비용이 얼마인지 재려면 코퍼스를 모드별로 다른 인덱스 접미사([인덱스 접미사](./concepts/scopes-and-namespaces.ko.md#인덱스-접미사))에
 수집하고 같은 `run-eval` 데이터셋을 각각에 실행하세요.
 
 **스키마 선언.** `processing.graph_extraction`에 직접 씁니다.
@@ -1461,7 +977,7 @@ processing:
   없습니다.
 
 **필터.** 이 필드는 다른 필드처럼 엔티티·관계 인덱스와 Neptune 엔티티 정점(그래프
-확장)의 필터 키입니다([필터](#필터) 참고).
+확장)의 필터 키입니다([필터](./reference/filters.md)(영문) 참고).
 
 ```python
 RAGInput(query="...", search_strategy="local", filters={"in_schema": False})
@@ -2171,7 +1687,7 @@ ex:berlin rdfs:label "Berlin"@en .
   이 사본은 그 검색 결과의 문서 필터를 받으므로 시드 그래프 이름이 나옵니다. 그래프
   탐색으로만 도달한 엔티티는 `"seed_graphs": []`입니다. 그래프 정점에는 문서 필터가 없기
   때문입니다. 메타데이터의 `source_kinds`는 모든 저장소에서 목록입니다.
-- **필터**([필터](#필터)):
+- **필터**([필터](./reference/filters.md), 영문):
   - `source_kinds`(엔티티, 관계, Neptune 엔티티 정점): `seed_graph`는 시드가 진술한 것,
     `document`는 문서가 진술한 것(둘 다 진술한 엔티티도 시드 설명 줄과 함께 포함)을
     남깁니다. 목록은 둘 중 하나와 일치합니다. 대소문자는 상관없습니다. 커뮤니티 보고서에는
@@ -2331,42 +1847,6 @@ JSONL 예시에서는 `procure {'nodes_read': 2, 'edges_read': 1, 'nodes': 2, 'e
 중일 수 있는 쓰기(이 실행의 쓰기, 또는 이 실행이 만료된 임대를 넘겨받은 실행의 쓰기)를
 기다려야 하면 `next_run_writes_from`(UTC, ISO 8601)도 덧붙입니다.
 
-### 대규모, 다국어, 이질적인 코퍼스
-
-- **대규모:** Bedrock 할당량이 허용하는 만큼 `processing.max_concurrency`를 올리고,
-  `indexing.neptune.index_concurrency`는 효과를 측정하기 전까지 `1`로 두세요(동시 쓰기
-  배치는 공유 정점에서 충돌해 재시도함). 문서 상태
-  레지스트리(`providers.doc_status.enabled`)를 켜면 다음 실행부터 바뀐 문서에만 비용이
-  듭니다. Neptune에서 `indexing.neptune.vertex_ids: custom`을 쓰면 정점을 `id` 속성
-  대신 정점 id로 찾습니다. 기존 그래프를 전환하려면 전체 빌드를 한 번 실행해야
-  합니다([운영 런북: 사용자 지정 Neptune 정점 id](operations.md#custom-neptune-vertex-ids)).
-  그래프 확장은 허브의 이웃을 id 순서로 가져오므로(`indexing.neptune.deterministic_order:
-  true`, 기본값) 다시 빌드해도 결과가 같습니다. 대신 확장하는 허브마다 이웃을 모두
-  읽습니다(Gremlin Server에서 이웃 2,500개 허브는 질의당 6.8 ms에서 23.2 ms로 늘었고,
-  Neptune에서는 측정하지 않음). 허브가 많은 질의가 너무 느리면 `false`로 두어 Neptune이
-  먼저 돌려주는 이웃을 쓰세요.
-- **커뮤니티 리포트:** 리포트 프롬프트는 커뮤니티의 관계를 하나씩, 양 끝 엔티티(주장 추출을
-  켰으면 그 주장까지)와 함께
-  `graph.community_detection.report_generation.max_report_context_tokens`(4000)에
-  채웁니다. MS GraphRAG는 8000과 `max_cluster_size` 10을 씁니다. 큰 커뮤니티의 리포트가
-  관계를 너무 적게 다루면 예산을 올리거나(리포트 호출당 입력 토큰 증가)
-  `max_cluster_size`를 낮추세요(더 작은 커뮤니티가 많아져 리포트 호출도 늘어남).
-- **다국어:** [다국어 수집](#다국어-수집)을 참고하세요.
-- **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
-  [인덱스 접미사](#인덱스-접미사)를 따로 두세요.
-
-### 비용 참고
-
-비용은 대부분 LLM 호출에서 나옵니다. 추출(청크당 1회 이상), gleaning(청크당 최대
-`max_rounds`회), 커뮤니티 리포트, 주장(텍스트 단위당 1회, 기본은 꺼짐), 질의마다의 답변
-생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
-gleaning 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
-
-이 중 가장 큰 것은 gleaning입니다. `processing.gleaning.max_rounds`는 3을 유지합니다. 3회는
-1회보다 그래프를 더 많이 찾았고 수집 비용은 약 38% 늘었으며, 답변에는 유의한 차이가
-없었습니다([근거](./concepts/defaults-and-evidence.md#gleaning-rounds), 영문). 그래프 재현율보다 수집 비용이 중요하면
-`max_rounds: 1`(MS GraphRAG 기본값)로 두세요.
-
 ---
 
 ## 11. Python 라이브러리로 사용하기
@@ -2426,7 +1906,7 @@ finally:
   재설정만 묻습니다. 넘기지 않으면 그런 실행은 실패합니다
   ([시드 그래프](#d-시드-그래프가지고-있는-지식-그래프-가져오기)).
 - `RAGInput`은 `run-rag` 옵션을 필드로 받습니다(`search_strategy`, `search_type`,
-  `top_k`, `suffix`([인덱스 접미사](#인덱스-접미사)), `filters`, `conversation_id`,
+  `top_k`, `suffix`([인덱스 접미사](./concepts/scopes-and-namespaces.ko.md#인덱스-접미사)), `filters`, `conversation_id`,
   `use_memory`, `target_language`). 일반 딕셔너리도 됩니다.
 - `chain.search(...)`(`await chain.asearch(...)`)는 답변 없이 검색만 해서
   `SearchOutput`(`search_results`, `processed_query`, `metadata`)을 반환합니다.
@@ -2473,14 +1953,16 @@ finally:
   코퍼스 위치와 관계없는 ID가 필요하면 `processing.document_parsing.source_scope`를
   설정하세요.
 - **재순위화는 리전에 따라 다릅니다**([필수 모델](./getting-started/aws.ko.md#필수-모델)). 없으면 융합 순서를 쓰며,
-  `metadata.rerank`에 나타납니다([재순위화 상태](#재순위화-상태)).
+  `metadata.rerank`에 나타납니다([재순위화 상태](./guides/query.ko.md#재순위화-상태)).
 - **기본 제공 백엔드.** 모델: Bedrock(기본값), Ollama, OpenAI 호환 서버. 재순위화:
   Bedrock이나 sentence-transformers 크로스 인코더([로컬 모드](./guides/local-mode.md), 영문).
   저장소: Neptune(또는 Gremlin Server)과 OpenSearch, 또는 내장 SQLite 저장소(호스트 한
   대, 인덱스당 문서 약 100,000개). 그 밖의 것은 `register_provider` 빌더나 사용자 정의
   어댑터가 필요합니다([설계 문서 §15](./design.md#15-extension-guide)).
 - **서빙 계층이 없습니다.** HTTP API, 최종 사용자 인증, 요청 속도 제한은 없습니다.
-- **필터는 접근 제어가 아닙니다**(§4). 테넌트는 인덱스 접미사로 분리하세요.
+- **필터는 접근 제어가 아닙니다**
+  ([범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md#접근-제어-경계가-아님)).
+  테넌트는 인덱스 접미사로 분리하세요.
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티 탐지를 끄면
   (`graph.community_detection.enabled: false`) `global`과 `drift`가 쓸 리포트가 없고,
   관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
@@ -2513,7 +1995,7 @@ finally:
 
 ## 옮긴 절
 
-이 가이드의 1절과 2절은 별도 문서로 옮겼습니다. 아래 제목은 이전 버전의 `--help`
+이 가이드의 1절부터 4절까지와 10절 일부는 별도 문서로 옮겼습니다. 아래 제목은 이전 버전의 `--help`
 출력을 비롯한 기존 링크가 계속 동작하도록 남겨 둔 것입니다.
 
 ### 1. 사전 요구사항과 설치
@@ -2606,3 +2088,60 @@ finally:
 
 [Observability](./guides/observability.md)(영문. 설정과 절차)와
 [Telemetry reference](./reference/telemetry.md)(영문. 트레이스 구조, 사용량 집계)로 옮겼습니다.
+
+### 3. 수집 (`run-ingestion`)
+
+[수집](./guides/ingest.ko.md)으로 옮겼습니다.
+
+### 파이프라인 단계 12개
+
+[수집: 파이프라인 단계 12개](./guides/ingest.ko.md#파이프라인-단계-12개)로 옮겼습니다.
+
+### 인덱스 접미사
+
+[범위와 네임스페이스: 인덱스 접미사](./concepts/scopes-and-namespaces.ko.md#인덱스-접미사)로 옮겼습니다.
+
+### 다국어 수집
+
+[다국어 코퍼스](./guides/multilingual.ko.md)로 옮겼습니다.
+
+### 4. 질의 (`run-rag`)
+
+[질의](./guides/query.ko.md)와 [검색](./concepts/retrieval.ko.md)으로 옮겼습니다.
+
+### 검색 전략 선택
+
+[검색: 검색 전략 선택](./concepts/retrieval.ko.md#검색-전략-선택)으로 옮겼습니다.
+
+### 답변 형식
+
+[검색: 답변 형식](./concepts/retrieval.ko.md#답변-형식)으로 옮겼습니다.
+
+### 컨텍스트 예산
+
+[검색: 컨텍스트 예산](./concepts/retrieval.ko.md#컨텍스트-예산)으로 옮겼습니다.
+
+### 재순위화 상태
+
+[질의: 재순위화 상태](./guides/query.ko.md#재순위화-상태)로 옮겼습니다.
+
+### 질의 제한 시간
+
+[질의: 질의 제한 시간](./guides/query.ko.md#질의-제한-시간)으로 옮겼습니다.
+
+### 필터
+
+[질의: 필터](./guides/query.ko.md#필터)(사용 방법)와
+[필터 레퍼런스](./reference/filters.md)(영문. 모든 필드, 값의 유형, 전략별 적용)로 옮겼습니다.
+
+### 대화형 모드와 대화 메모리
+
+[질의: 대화형 모드와 대화 메모리](./guides/query.ko.md#대화형-모드와-대화-메모리)로 옮겼습니다.
+
+### 대규모, 다국어, 이질적인 코퍼스
+
+[수집: 대규모, 이질적인 코퍼스](./guides/ingest.ko.md#대규모-이질적인-코퍼스)로 옮겼습니다.
+
+### 비용 참고
+
+[수집: 비용 조절 수단](./guides/ingest.ko.md#비용-조절-수단)으로 옮겼습니다.

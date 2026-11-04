@@ -129,11 +129,8 @@ the reset did.
 
 With `providers.doc_status.enabled: true` (the container image sets it), each
 run indexes only new and changed documents and removes what only a missing
-file stated. The diff is scoped to the run's
-[index suffix](./user-guide.md#index-suffix) and source scope
-(`processing.document_parsing.source_scope`: the resolved source directory, or
-the `s3://` URI in the container; with and without a trailing slash is one
-scope, and a WARNING names the spelling used). So:
+file stated. The diff is scoped to the run's index suffix and source scope
+([Scopes and namespaces](./concepts/scopes-and-namespaces.md#source-scope)). So:
 
 - **Keep a corpus at one source** (or a fixed `source_scope`). A moved corpus
   with the default scope leaves the old scope's content indexed: set
@@ -1039,10 +1036,9 @@ other run ended.
   after making sure its run is gone.
 - **Permissions.** A custom policy needs `dynamodb:PutItem`, `GetItem` and
   `DeleteItem` (and `UpdateTimeToLive` when the library creates the table).
-- **Namespace** = index suffix (`index_value`, `default` when unset) plus
-  `indexing.additional_suffix`, plus a tag of non-default
-  `indexing.opensearch.*_index_prefix` / `indexing.neptune.*_label_prefix`
-  values. Different namespaces can run side by side.
+- **Namespace**: what one index suffix and its index prefixes name
+  ([Scopes and namespaces](./concepts/scopes-and-namespaces.md#namespace)).
+  Different namespaces can run side by side.
 
 **Without the registry nothing locks** and concurrent runs on one index
 suffix are not supported: a full reindex swaps the alias and deletes the older
@@ -1207,7 +1203,7 @@ measured. Haiku 5.5 agreed within 0.2%.
 
 ## Query deadlines and model timeouts
 
-A query has two bounds ([User Guide](./user-guide.md#query-deadline)):
+A query has two bounds ([Querying](./guides/query.md#query-deadline)):
 
 - **The query deadline**, `search.query_timeout_seconds` (default 180 s):
   everything from the input guardrail to the saved answer. Past it the query

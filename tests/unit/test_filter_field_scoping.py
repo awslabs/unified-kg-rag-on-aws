@@ -870,7 +870,7 @@ async def test_auto_refuses_only_filters_no_routable_strategy_applies(
 
 async def test_auto_routes_the_documented_filter_example(config: Config) -> None:
     # Regression: auto refused a key any routable strategy rejected, so the
-    # user guide's `--filters attr_category:research type:person` exited 2
+    # querying guide's `--filters attr_category:research type:person` exited 2
     # under the default routable set (global has no `type`). auto now routes
     # among the strategies that apply every key.
     from unified_kg_rag.domain.models import SearchStrategy

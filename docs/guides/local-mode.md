@@ -112,7 +112,7 @@ as servers: a Gremlin Server (in-memory TinkerGraph), a single-node
 OpenSearch 2.13 with `analysis-nori` (security plugin off) and, under the
 `models` profile, Ollama. OpenSearch is the engine of Amazon OpenSearch
 Service, so use it to check ranking before an AWS deployment
-([Multilingual ingestion](../user-guide.md#multilingual-ingestion) covers `nori` on AWS).
+([Multilingual corpora](./multilingual.md#analyzers) covers `nori` on AWS).
 [`docker/config.local.yaml`](../../docker/config.local.yaml) selects
 `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` and
 turns on incremental indexing. It needs Docker Compose 2.23.1 or later.

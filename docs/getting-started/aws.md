@@ -164,9 +164,9 @@ uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix -
 
 - [Configuration](../guides/configure.md): how the configuration loads, the
   settings most runs change, environment variables and what the logs contain.
-- [Ingestion](../user-guide.md#3-ingestion-run-ingestion) and
-  [Querying](../user-guide.md#4-querying-run-rag) in the User Guide: stages,
-  resume and rebuild, search strategies and filters.
+- [Ingestion](../guides/ingest.md) and [Querying](../guides/query.md):
+  stages, resume and rebuild, filters; which strategy to use is in
+  [Retrieval](../concepts/retrieval.md).
 - [Incremental indexing](../user-guide.md#5-incremental-indexing): re-index
   only new and changed documents.
 - [`iac/README.md`](../../iac/README.md#quick-start): deploy the whole stack
