@@ -801,6 +801,8 @@ async def test_eval_runner_queries_the_configs_index_value(
     # and every query failed with "No indices found for suffix default".
     config = config.model_copy(deep=True)
     config.processing.document_parsing.index_value = "corpus-a"
+    # An LLM-free evaluator: the default judges need the eval extra.
+    config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
     data = tmp_path / "eval.json"
     data.write_text("[]", encoding="utf-8")
     args = _eval_parser().parse_args(["--data-path", str(data), *flags])
