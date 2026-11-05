@@ -584,7 +584,7 @@ Configuration settings for OpenSearch vector and text indexing
 | `claims_index_prefix` | string (min length 1) | `"graphrag-claims"` | Index name prefix for claim (covariate) documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
 | `extraction_records_index_prefix` | string (min length 1) | `"graphrag-extraction-records"` | Index name prefix for the extraction store: each text unit's extracted entities, relationships and claims, keyed by its text and the extraction settings, so an unchanged chunk is not extracted again (no embeddings). A full build or reset keeps only the records its text units name. It also holds the notes a removal (pending-strip) or a commit (pending-commit) keeps until it finished, which a resumed run needs: delete the index only after a run that succeeded, or run indexing.reset next. Lowercase letters, digits, '-' and '_', not starting with '-' or '_' |
 | `default_analyzer` | string (min length 1) | `"standard"` | OpenSearch text analyzer used when the language has no specific mapping |
-| `language_analyzers` | dict[string, string] | `{"en": "english", "ko": "nori"}` | Text analyzer per language code (en: english, ko: nori); languages without an entry use default_analyzer. nori needs the analysis-nori plugin, which an Amazon OpenSearch Service domain has only once its optional package is associated (the CDK stack maps ko to cjk). Setting the key replaces the whole map. |
+| `language_analyzers` | dict[string, string] | see [Long defaults](#long-defaults) | Text analyzer per language code: by default every processing.translation language has one (de: german, en: english, es: spanish, fr: french, it: italian, ja: cjk, ko: nori, pt: portuguese, ru: russian, zh: cjk); a language without an entry uses default_analyzer. All are built into OpenSearch but nori, which needs the analysis-nori plugin: an Amazon OpenSearch Service domain has it only once its optional package is associated (the CDK stack maps ko to cjk). An index keeps the analyzers it was created with, so a change needs indexing.reset. Setting the key replaces the whole map. |
 | `refresh_after_batch` | boolean | `true` | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
 | `max_query_size` | integer (≥ 1) | `100` | Maximum number of hits returned per OpenSearch query |
 | `index_settings` | dict[string, Any] | see [Long defaults](#long-defaults) | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. Setting the key replaces the whole map; a left-out shard, replica or refresh setting is 1, 0 or 1s. |
@@ -877,6 +877,22 @@ entity_types:
 - 'OBJECT: Documents, tools, products, systems, technologies'
 - 'EVENT: Meetings, projects, activities, processes, incidents'
 - 'TEMPORAL: Dates, time periods, schedules, deadlines'
+```
+
+### `indexing.opensearch.language_analyzers`
+
+```yaml
+language_analyzers:
+  de: german
+  en: english
+  es: spanish
+  fr: french
+  it: italian
+  ja: cjk
+  ko: nori
+  pt: portuguese
+  ru: russian
+  zh: cjk
 ```
 
 ### `indexing.opensearch.index_settings`

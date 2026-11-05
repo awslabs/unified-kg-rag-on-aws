@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
     TextUnit,
 )
+from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError
 from unified_kg_rag.shared.exceptions import (
     StoreConfigurationError,
@@ -1473,6 +1474,46 @@ def test_check_index_settings_reads_the_engine_meta(tmp_path: Path) -> None:
         indexer.check_index_settings()
     indexer.close()
     other.close()
+
+
+def test_an_embedded_index_built_with_the_old_default_analyzers_needs_no_reset(
+    tmp_path: Path,
+) -> None:
+    # ja had no default analyzer ('standard'); it is 'cjk' now, which the
+    # embedded engine analyzes alike, so its indices keep taking writes.
+    def config(language_analyzers: dict[str, str] | None) -> Config:
+        built = Config()
+        built.processing.translation.source_language = LanguageCode.JA
+        built.processing.translation.target_language = LanguageCode.JA
+        if language_analyzers is not None:
+            built.indexing.opensearch.language_analyzers = language_analyzers
+        return built
+
+    path = tmp_path / "vector.sqlite3"
+    old = OpenSearchIndexer(
+        config({"en": "english", "ko": "nori"}),
+        embedding_factory=_EMBEDDINGS,
+        opensearch_client=SQLiteSearchEngine(path),
+    )
+    old.set_doc_status_tracking(True)
+    _index_everything(old)
+    new = OpenSearchIndexer(
+        config(None),
+        embedding_factory=_EMBEDDINGS,
+        opensearch_client=SQLiteSearchEngine(path),
+    )
+    assert new._analyzer_for("ja") == "cjk"
+    new.check_index_settings()
+    # Another analyzer the engine tells apart is still refused.
+    english = OpenSearchIndexer(
+        config({"ja": "english"}),
+        embedding_factory=_EMBEDDINGS,
+        opensearch_client=SQLiteSearchEngine(path),
+    )
+    with pytest.raises(ConfigurationError, match="other language settings"):
+        english.check_index_settings()
+    for indexer in (old, new, english):
+        indexer.close()
 
 
 def test_read_back_through_the_indexer(tmp_path: Path) -> None:

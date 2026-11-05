@@ -69,11 +69,12 @@ by the variable, and `AWS_DEFAULT_REGION` is not read. Set `aws.region_name`
 ### Why does index creation fail with "the cluster has no analyzer 'nori'"?
 
 The library maps Korean to the `nori` analyzer by default
-(`indexing.opensearch.language_analyzers: {en: english, ko: nori}`), and an
+(`indexing.opensearch.language_analyzers`, `ko: nori`), and an
 Amazon OpenSearch Service domain has `nori` only once the `analysis-nori`
 package is associated with it. The CDK stacks map `ko` to `cjk` for this
-reason. Set `ko: cjk` (the key replaces the whole map, so keep `en: english`
-in it), or associate the package
+reason. Set `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk` (one
+entry; in a config file the key replaces the whole map, so list the other
+languages' analyzers too), or associate the package
 ([Operator Runbook: Korean with Nori](./operations.md#korean-with-nori)).
 Analyzers of a live index cannot change: a switch needs one run with
 `indexing.reset: true`

@@ -13,7 +13,10 @@ signatures in step with it.
 An engine may also have a ``store_identity`` attribute (a hashable naming
 the store, equal for two clients of it): the indexer then reads each alias
 and index mapping once per pipeline run (``shared.store_lookups``). An
-engine without one is asked every time.
+engine without one is asked every time. An ``analyzes_alike(first, second)``
+callable says whether two analyzer names tokenize alike on the engine: a live
+text field mapped with either then takes the other's text (an engine without
+one compares the names).
 """
 
 from typing import Any, Protocol

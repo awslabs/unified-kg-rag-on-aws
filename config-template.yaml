@@ -114,10 +114,19 @@ indexing:
   # (with the registry on) instead of applying a delta.
   reset: false
   opensearch:
-    # Text analyzer per language; nori needs the analysis-nori plugin.
+    # Text analyzer per language (setting the key replaces the whole map);
+    # nori needs the analysis-nori plugin, the others are built in.
     language_analyzers:
+      de: "german"
       en: "english"
+      es: "spanish"
+      fr: "french"
+      it: "italian"
+      ja: "cjk"
       ko: "nori"
+      pt: "portuguese"
+      ru: "russian"
+      zh: "cjk"
 
 search:
   # The strategies the "auto" router chooses from.

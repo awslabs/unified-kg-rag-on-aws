@@ -2768,6 +2768,24 @@ DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
     "refresh_interval": "1s",
 }
 
+# The text analyzer of each LanguageCode. All but nori (the analysis-nori
+# plugin) are built into OpenSearch; cjk indexes Han and Kana runs as
+# overlapping character bigrams, which needs no dictionary plugin (kuromoji,
+# smartcn). The embedded engine knows every name (adapters/local/
+# search_engine/analyzers.py).
+DEFAULT_LANGUAGE_ANALYZERS: dict[str, str] = {
+    LanguageCode.DE.value: "german",
+    LanguageCode.EN.value: "english",
+    LanguageCode.ES.value: "spanish",
+    LanguageCode.FR.value: "french",
+    LanguageCode.IT.value: "italian",
+    LanguageCode.JA.value: "cjk",
+    LanguageCode.KO.value: "nori",
+    LanguageCode.PT.value: "portuguese",
+    LanguageCode.RU.value: "russian",
+    LanguageCode.ZH.value: "cjk",
+}
+
 
 class OpenSearchIndexingConfig(BaseModel):
     # Settings set in code (config.indexing.opensearch.index_settings = ...)
@@ -2841,13 +2859,18 @@ class OpenSearchIndexingConfig(BaseModel):
         description="OpenSearch text analyzer used when the language has no specific mapping",
     )
     language_analyzers: dict[str, str] = Field(
-        default_factory=lambda: {"en": "english", "ko": "nori"},
+        default_factory=lambda: dict(DEFAULT_LANGUAGE_ANALYZERS),
         description=(
-            "Text analyzer per language code (en: english, ko: nori); "
-            "languages without an entry use default_analyzer. nori needs the "
-            "analysis-nori plugin, which an Amazon OpenSearch Service domain "
-            "has only once its optional package is associated (the CDK stack "
-            "maps ko to cjk). Setting the key replaces the whole map."
+            "Text analyzer per language code: by default every "
+            "processing.translation language has one (de: german, en: "
+            "english, es: spanish, fr: french, it: italian, ja: cjk, ko: "
+            "nori, pt: portuguese, ru: russian, zh: cjk); a language without "
+            "an entry uses default_analyzer. All are built into OpenSearch "
+            "but nori, which needs the analysis-nori plugin: an Amazon "
+            "OpenSearch Service domain has it only once its optional package "
+            "is associated (the CDK stack maps ko to cjk). An index keeps the "
+            "analyzers it was created with, so a change needs indexing.reset. "
+            "Setting the key replaces the whole map."
         ),
     )
     refresh_after_batch: bool = Field(

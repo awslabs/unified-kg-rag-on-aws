@@ -10,7 +10,10 @@ import pytest
 import yaml
 
 from unified_kg_rag.application.config import ConfigLoader
-from unified_kg_rag.domain.models.config import ObservabilityBackend
+from unified_kg_rag.domain.models.config import (
+    DEFAULT_LANGUAGE_ANALYZERS,
+    ObservabilityBackend,
+)
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -183,7 +186,7 @@ def test_korean_analyzer_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # has without the optional Nori plugin; the other languages are kept.
     monkeypatch.setenv("UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO", "cjk")
     analyzers = ConfigLoader().load_config().indexing.opensearch.language_analyzers
-    assert analyzers == {"en": "english", "ko": "cjk"}
+    assert analyzers == {**DEFAULT_LANGUAGE_ANALYZERS, "ko": "cjk"}
 
 
 def test_korean_analyzer_default_without_env() -> None:

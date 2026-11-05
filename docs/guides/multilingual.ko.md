@@ -28,8 +28,12 @@ processing:
 
 ## 분석기
 
-- **분석기**는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)에서 정하며,
-  나머지 언어는 `default_analyzer`를 씁니다. 청크 `text`는 `source_language`로
+- **분석기**는 `indexing.opensearch.language_analyzers`에서 정합니다. 지원하는 언어는
+  모두 기본값이 있습니다. `de: german`, `en: english`, `es: spanish`, `fr: french`,
+  `it: italian`, `pt: portuguese`, `ru: russian`은 OpenSearch 언어 분석기(불용어 제거와
+  어간 추출), `ja: cjk`와 `zh: cjk`는 겹치는 두 글자 단위(플러그인 불필요, "首都"가
+  "日本の首都は" 안에서 맞음), `ko: nori`입니다. 항목이 없는 언어는 `default_analyzer`를
+  씁니다. 청크 `text`는 `source_language`로
   분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
   바뀌므로 텍스트 단위를 다시 인덱싱하세요.
