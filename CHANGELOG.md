@@ -777,7 +777,7 @@ From 0.2.3 (or a `main` checkout since):
     logs and the `CacheAccessLogs` bucket is deleted with its logs (copy
     them first if you need them). If a late log blocks the deletion, re-run
     the deploy or empty and delete the bucket by hand. A retained
-    environment changes nothing (#PR).
+    environment changes nothing (#583).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1349,11 +1349,11 @@ From 0.2.3 (or a `main` checkout since):
 - Docs: the rerank error codes and their causes: a missing
   `bedrock:InvokeModel` grant on the rerank model fails as a
   `ValidationException`, a region without the model as an
-  `AccessDeniedException` (troubleshooting, `bedrock_model_arns`) (#PR).
+  `AccessDeniedException` (troubleshooting, `bedrock_model_arns`) (#583).
 - Docs: *Defaults and evidence* has the 2026-11-05 retrieval A/B
   (`entity_frequency_threshold`, three LightRAG chunk and embedding
   switches, the relationship context share), and the `report_selection`
-  description says `membership` reads leaf communities (#PR).
+  description says `membership` reads leaf communities (#583).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
@@ -2185,7 +2185,7 @@ Deployment (CDK).
   so a log of the teardown's own requests landed after the auto-delete
   emptied the bucket (`The bucket you tried to delete is not empty`). Only
   a retained environment writes the cache bucket's access logs now; the
-  teardown docs say what to do when an older stack hits it (#PR).
+  teardown docs say what to do when an older stack hits it (#583).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter
@@ -2300,7 +2300,7 @@ Deployment (CDK).
   entity names), so they matched nothing in an index that keeps the source
   text and names. They are extracted in `source_language` now, unless the
   caller asks for a language; an enabled stage still uses
-  `target_language` (#PR).
+  `target_language` (#583).
 - DRIFT's primer answers reached the answer model, but the community
   reports they were written from did not, so an answer resting on a primer
   answer cited no source for it. Each primer fold's reports are its
@@ -2314,7 +2314,7 @@ Deployment (CDK).
 - A Bedrock guardrail word-filter intervention was reported as
   `wordPolicy:unknown`: custom-word entries carry neither a name nor a
   type. They are named by their list now (`wordPolicy:customWords`), and
-  managed word lists by their type (`wordPolicy:PROFANITY`) (#PR).
+  managed word lists by their type (`wordPolicy:PROFANITY`) (#583).
 - MMR diversity (`search.fusion.diversity_lambda` below 1) measured
   redundancy over whitespace words, and an unspaced Japanese or Chinese
   passage is one: a near-duplicate differing by one appended word shared
