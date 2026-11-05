@@ -182,7 +182,8 @@ customer corpus, account ids, endpoints, and internal hostnames.
 ## Testing
 
 Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
-`integration`, `property`, `aws` (real AWS — skipped in CI), `slow`.
+`integration`, `property`, `aws` (real AWS — skipped in CI), `slow`, `perf`
+(timing assertions — weekly job only).
 
 - Tests run **AWS-free by default**. Use the port-based in-memory fakes in
   `tests/fixtures/fakes/` (e.g. `FakeDocStatusStore`) instead of mocking boto3

@@ -133,8 +133,8 @@ images in `docker/compose.local.yaml`. These pins it cannot read; bump them by h
 - Tests run without AWS. Use the port-based in-memory fakes in `tests/fixtures/fakes/` (for example
   `FakeDocStatusStore`) rather than ad-hoc boto3 mocks, and `moto` when an adapter must be exercised against a boto3
   surface.
-- Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI) and `slow` (over 5 s; CI still runs
-  them). `tests/conftest.py` applies `unit`, `integration` or `property` by the directory a test lives in. Each test
+- Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow` (over 5 s; CI still runs
+  them) and `perf` (timing assertions; deselected by default and run only by the weekly `hypothesis-explore` job). `tests/conftest.py` applies `unit`, `integration` or `property` by the directory a test lives in. Each test
   times out after 120 s.
 - `tests/integration/test_local_stores.py` runs against the local containers in `docker/compose.local.yaml` when
   `LOCAL_STORES=1` is set.

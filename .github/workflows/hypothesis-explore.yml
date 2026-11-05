@@ -1,6 +1,6 @@
 name: hypothesis-explore
 
-# Weekly property-test exploration. Pull requests and pushes run Hypothesis
+# Weekly property-test exploration and timing checks. Pull requests and pushes run Hypothesis
 # derandomized (the "ci" profile in quality.yml), so they meet the same
 # examples every time; this run draws from a fresh random seed with a larger
 # example budget ("explore" in tests/conftest.py) to find what those never
@@ -43,4 +43,10 @@ jobs:
           mapfile -t modules < <(git grep -l -E '^(from|import) hypothesis' -- \
             'tests/unit/test_*.py' 'tests/integration/test_*.py' 'tests/property/test_*.py')
           [ "${#modules[@]}" -gt 0 ] || { echo "no Hypothesis test modules found"; exit 1; }
-          uv run --frozen pytest -m "not aws" -n logical "${modules[@]}"
+          uv run --frozen pytest -m "not aws and not perf" -n logical "${modules[@]}"
+
+      - name: Timing checks
+        # The `perf` tests assert how run time grows with input size. Shared
+        # PR runners are too noisy for them; one serial run a week still
+        # catches a complexity regression the structural tests miss.
+        run: uv run --frozen pytest -m perf -p no:xdist

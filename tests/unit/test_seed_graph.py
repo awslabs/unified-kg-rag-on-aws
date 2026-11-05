@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from pydantic import ValidationError
@@ -27,6 +27,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedConversionSettings,
     SeedEdgeStatement,
     SeedNodeStatement,
+    _Converter,
     convert_seed,
     is_seed_document,
     is_seed_unit,
@@ -806,14 +807,36 @@ def _conversion_seconds(nodes: int, edges: int, runs: int, cap: float) -> float:
 
 
 # Four times the seed takes about four times as long (about 0.9 s, then
-# 3.5 s, also under the coverage tracer); the quadratic edge check (a set
-# difference against every node id per edge) takes more than ten times as
-# long. The bound sits between the two. The smaller seed stays large enough
-# (about a second of CPU) that timer noise on a shared runner does not
-# dominate it.
+# 3.5 s); the quadratic edge check (a set difference against every node id
+# per edge) takes more than ten times as long. Shared CI runners measured up
+# to 8.7 for the linear code, so this timing check is `perf`: it runs in the
+# weekly exploration job, and the lookup test above pins the known cause on
+# every PR.
 _SCALING_BOUND = 8.0
 
 
+class _LookupOnlyNodes(dict[str, SeedNode]):
+    """A node table that fails on a walk over its keys: an edge must look
+    its endpoints up, not scan every node (that made a large seed quadratic)."""
+
+    def _walked(self, *args: object) -> NoReturn:
+        raise AssertionError("edge resolution walked the node table")
+
+    keys = values = items = __iter__ = _walked
+
+
+def test_edges_look_their_endpoints_up_without_walking_the_nodes() -> None:
+    graph, settings = _random_seed(200, 1_000)
+    converter = _Converter(graph, settings, _schema("off"))
+    plain = converter.unique_nodes()
+
+    edges = converter.resolved_edges(_LookupOnlyNodes(plain))
+
+    assert edges == converter.resolved_edges(plain)
+    assert len(edges) > 900
+
+
+@pytest.mark.perf
 @pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_a_large_seed_converts_in_linear_time() -> None:
