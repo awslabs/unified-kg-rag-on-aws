@@ -623,12 +623,12 @@ From 0.2.3 (or a `main` checkout since):
     (`<stack prefix>OrchestrationIngestionTask...`), so its Container
     Insights series start again under the new name; the alarms and the
     dashboard follow it (#558).
-15. `run-eval` results saved before #PR scored `graph_aware`'s
+15. `run-eval` results saved before #563 scored `graph_aware`'s
     `entity_coverage` and `retrieved_*_coverage` by the earlier rule
     (phrase containment, duplicates counted twice), and `--from-results` /
     `--baseline-results` reuse saved scores. To compare those metrics with
     a new run, run the baseline again: one answer and score per query and
-    repeat (#PR).
+    repeat (#563).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1136,7 +1136,7 @@ From 0.2.3 (or a `main` checkout since):
 - `run-visualization` computes centrality only when a requested renderer
   reads it (`static`; a renderer declares it with
   `BaseRenderer.needs_centrality`): an `interactive`-only run of a
-  5,000-node graph took 71 s, now 22 s (#PR).
+  5,000-node graph took 71 s, now 22 s (#563).
 - The parser uses its own loaders on langchain-core (same text and
   metadata, so document ids are unchanged; a 4,000-page PDF loads in about
   1 s); `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471).
@@ -1417,7 +1417,7 @@ From 0.2.3 (or a `main` checkout since):
   `--fail-if` on such a metric fails: the query was only left out of the
   delta, so a judge that failed on the 4 queries a strategy lost showed
   +0.10 [+0.10, +0.10] over the other 6 and passed the gate. The Markdown
-  and console tables print each delta's pairs and unpaired queries (#PR).
+  and console tables print each delta's pairs and unpaired queries (#563).
 - `graph_aware`: `retrieved_entity_coverage` and the endpoints of
   `retrieved_relationship_coverage` match a retrieved entity by entity key
   (case, CJK spacing, quotes and legal forms ignored, as entity resolution
@@ -1425,11 +1425,11 @@ From 0.2.3 (or a `main` checkout since):
   University` covered an expected `Seoul`. Expected entities with the same
   key are one expectation (any spelling in the answer meets it), so a
   duplicate no longer counts twice in either coverage. Both metrics can
-  read lower than before on the same answers (*Upgrading*) (#PR).
+  read lower than before on the same answers (*Upgrading*) (#563).
 - A `run-eval --fail-if` fails on a delta over fewer than 10 paired queries
   (`gates.MIN_GATE_PAIRS`): one pair gave a zero-width interval, so
   `ci_high<-0.02` passed on one improved query. The evaluation guide says
-  how the false-breach chance grows with strategies × gates (#PR).
+  how the false-breach chance grows with strategies × gates (#563).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1748,7 +1748,7 @@ Evaluation, visualization and tuning.
   its files (it exited 0), and its JSON names each failed renderer and its
   error (`failed_renderers`). The centrality chart leaves out a metric that
   is off or failed to compute, and gives a node without a value no bar;
-  both were drawn as 0.0 (#PR).
+  both were drawn as 0.0 (#563).
 - `run-prompt-tuning` profiles with the `graph_extraction` model, writes
   types UPPERCASE in its examples, logs no model output at ERROR, and
   rejects `--max-docs` below 1 (#227, #292, #353).
@@ -1770,12 +1770,12 @@ Evaluation, visualization and tuning.
   `答案是AWS公司`, `Acme Corp` in `ベンダーはAcme Corpです`, `2024` in
   `2024年` all scored 0. A letter or digit next to it still ends the match
   (`AI` is not in `airport附近`, `2` not in `12年`), and Korean text is
-  matched as before (#PR).
+  matched as before (#563).
 - A model call whose response reports no token usage (a model or
   OpenAI-compatible server that returns none) keeps its estimated input
   tokens and counts in `estimated_calls`; it was settled at 0 tokens and
   read as a measured, free call in the usage records and the comparison's
-  cost (#PR).
+  cost (#563).
 
 CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage
