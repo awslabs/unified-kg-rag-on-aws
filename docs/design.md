@@ -1438,8 +1438,9 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   and follow-up queries. *Actions:* for `n_depth` rounds the best-scored open
   follow-ups each run the local search (without rerank) and are answered with
   a score and new follow-ups. *Reduce:* the intermediate answers (one
-  synthesized section, never a reported source) and the local evidence,
-  reranked once, go to the answer model. Without reports or primer follow-ups,
+  synthesized section, never a reported source) and the evidence (each
+  primer fold's reports, each action's local search results), reranked
+  once, go to the answer model. Without reports or primer follow-ups,
   the question itself is the one follow-up.
   - Defaults `k_followups` 10, `n_depth` 2: at most 27 LLM calls a query (MS
     GraphRAG's 20 and 3: 67). Primer calls and actions run

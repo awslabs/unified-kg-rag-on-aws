@@ -2136,6 +2136,11 @@ Deployment (CDK).
   model call a query, and lexical recall lost). The query is translated only
   when ingestion translates, or when the caller asks for a language
   (`RAGInput.target_language`) (#PR).
+- DRIFT's primer answers reached the answer model, but the community
+  reports they were written from did not, so an answer resting on a primer
+  answer cited no source for it. Each primer fold's reports are its
+  answer's evidence now, fused and reported with the actions' local search
+  results (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

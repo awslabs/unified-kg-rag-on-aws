@@ -489,6 +489,21 @@ async def test_one_failed_primer_fold_leaves_only_its_answer_out() -> None:
     assert result.metadata["degraded_error"] == "TimeoutError"
 
 
+async def test_the_primer_answers_cite_their_folds_reports() -> None:
+    # Regression: the primer's intermediate answers reached the answer model
+    # but the reports they were written from never did, so an answer
+    # resting on them cited nothing. A fold that failed cites nothing.
+    def primer(inputs: dict):
+        if inputs["community_reports"].startswith("report 2"):
+            return TimeoutError("throttled")
+        return _primer()(inputs)
+
+    strat = _strategy(primer=primer, n_depth=1)
+    result = await strat.asearch(SearchQuery(query="question"))
+    cited = {r.source for r in result.results if r.retriever_type == "community"}
+    assert cited == {"report 0", "report 1", "report 4", "report 5"}
+
+
 async def test_every_primer_fold_failing_raises_without_ignore_errors() -> None:
     strat = _strategy(primer=lambda _: TimeoutError("slow"))
     with pytest.raises(TimeoutError):
