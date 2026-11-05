@@ -1147,7 +1147,7 @@ From 0.2.3 (or a `main` checkout since):
   watch them. Nothing is reset automatically. A record written by an
   earlier version has no counters until the next full build (#540).
 - The package ships a `py.typed` marker (PEP 561), so type checkers read
-  its annotations instead of treating it as untyped (#PR).
+  its annotations instead of treating it as untyped (#568).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -1309,7 +1309,7 @@ From 0.2.3 (or a `main` checkout since):
   Neptune and OpenSearch adapters to the summary; a weekly
   `hypothesis-explore` workflow runs the property tests from random seeds
   with a larger budget; Dependabot also moves the local store images; the
-  ASH scan writes its findings table to the job summary (#PR).
+  ASH scan writes its findings table to the job summary (#568).
 - Settings set in code on `processing.chunking`, `indexing.neptune`,
   `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and
