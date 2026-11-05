@@ -24,6 +24,7 @@ from urllib.parse import unquote
 import pytest
 
 from tests.fixtures.docs_check import check_docs
+from tests.fixtures.run_rag import patch_chain
 from unified_kg_rag.application.cli import (
     prepare_benchmark,
     run_evaluation,
@@ -220,7 +221,7 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     chain = mocker.AsyncMock()
-    mocker.patch.object(run_rag_chain, "create_rag_chain", return_value=chain)
+    patch_chain(mocker, return_value=chain)
     runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
     run_query = mocker.patch.object(
         runner, "_run_query", return_value={"success": True}
@@ -251,9 +252,7 @@ async def test_rag_runner_queries_the_configs_index_value(
     config.processing.document_parsing.index_value = index_value
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
-    mocker.patch.object(
-        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
-    )
+    patch_chain(mocker, return_value=mocker.AsyncMock())
     runner = run_rag_chain.RAGChainRunner(
         _rag_parser().parse_args(["-q", "hi", *flags])
     )
@@ -304,9 +303,7 @@ async def test_rag_runner_warns_that_a_single_query_has_no_memory(
     # run's turns, whatever --conversation-id says.
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
-    mocker.patch.object(
-        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
-    )
+    patch_chain(mocker, return_value=mocker.AsyncMock())
     warning = mocker.patch.object(run_rag_chain.logger, "warning")
     runner = run_rag_chain.RAGChainRunner(
         _rag_parser().parse_args(["-q", "hi", *flags])
@@ -475,9 +472,7 @@ async def test_rag_runner_exits_non_zero_on_error_fallback(
 ) -> None:
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
-    mocker.patch.object(
-        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
-    )
+    patch_chain(mocker, return_value=mocker.AsyncMock())
     runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
     runner.rag_chain = None
     mocker.patch.object(

@@ -451,7 +451,7 @@ Library API (Python callers and custom backends).
   `model_factory=` and `retriever_builders=` cannot be combined with
   `providers=`. Only `Providers` and `build_providers` take `boto_session`
   (pass `providers=Providers(config, boto_session=...)` to
-  `DataIngestionPipeline`, `GraphRAGChain` and `create_rag_chain`, which no
+  `DataIngestionPipeline` and `GraphRAGChain`, which no
   longer take it) (#577); `GraphRAGChain` rejects unknown
   keyword arguments; `OpenSearchIndexer`, `OpenSearchRetriever` require
   `embedding_factory=` (#216, #218, #221).

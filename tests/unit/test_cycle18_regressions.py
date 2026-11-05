@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.fixtures.run_rag import patch_chain
 from unified_kg_rag.application.cli import run_rag_chain
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.evaluation.text_matching import normalize_answer, phrase_in_text
@@ -24,7 +25,7 @@ async def test_run_rag_passes_only_chain_keywords(mocker) -> None:
         captured.update(kwargs)
         return SimpleNamespace(aclose=None)
 
-    mocker.patch.object(run_rag_chain, "create_rag_chain", side_effect=fake_create)
+    patch_chain(mocker, side_effect=fake_create)
     cli = object.__new__(run_rag_chain.RAGChainRunner)
     cli.config = object()
     cli.args = SimpleNamespace(mode="rag", enable_thinking=True)

@@ -174,7 +174,7 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
     def fail(**kwargs: object) -> None:
         raise RuntimeError(f"boom on {_NAME}")
 
-    monkeypatch.setattr(run_rag_chain, "create_rag_chain", fail)
+    monkeypatch.setattr(run_rag_chain, "GraphRAGChain", fail)
     runner = object.__new__(run_rag_chain.RAGChainRunner)
     runner.config = Config()
     with pytest.raises(SystemExit):

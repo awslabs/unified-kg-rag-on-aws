@@ -56,7 +56,6 @@ from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
-    create_rag_chain,
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy
 from unified_kg_rag.shared import (
@@ -358,7 +357,7 @@ class RAGChainRunner:
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
-            self.rag_chain = create_rag_chain(config=self.config)
+            self.rag_chain = GraphRAGChain(config=self.config)
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
