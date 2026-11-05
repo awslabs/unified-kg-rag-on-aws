@@ -10,6 +10,7 @@ from typing import Any, NamedTuple, TypeVar
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
+    SUMMARIZED_FROM_ATTRIBUTE,
     DescriptionSummarizer,
     extend_summaries,
     needs_summary,
@@ -112,6 +113,12 @@ def _other_spellings_of_parts(
         for i, e in derived.items()
         if i not in split_from and compact_name_key(e.name) in keys
     )
+
+
+def _is_summary(item: Entity | Relationship) -> bool:
+    """Whether ``item``'s description is a summary (it carries the mark of
+    the description it was made from)."""
+    return SUMMARIZED_FROM_ATTRIBUTE in (item.attributes or {})
 
 
 def _reads_back(graph: GraphIndexer) -> bool:
@@ -483,6 +490,15 @@ class IndexingManager:
         # By suffix, the summaries this run made before indexing (see
         # offer_summaries): reused as the stored ones are.
         self._offered_summaries: dict[str, list[Entity]] = {}
+        # By suffix, the ids of the items this run's removals summarized: the
+        # summary was made from what the strip left, so the commit
+        # summarizes such an item from its records rather than extending
+        # that summary (see _merge_suffix). Not a summary a removal reused
+        # (community detection's, made for the report the run stores).
+        self._stripped_ids: dict[str, set[str]] = {}
+        # By suffix, the ids of the run's delta items (see expect_delta): a
+        # removal that derives one again leaves its summary to the commit.
+        self._delta_ids: dict[str, set[str]] = {}
 
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
@@ -1320,18 +1336,38 @@ class IndexingManager:
             return rekey.get(kept, kept)
 
         # A stored summary that only grew is summarized with what the delta
-        # added (see extend_summaries).
+        # added (see extend_summaries), and so is a stored description the
+        # delta added a summary to. Not one this run's removal summarized:
+        # that summary was made from what the strip left, and extending it
+        # would summarize a summary where a full build summarizes the lines.
         reuse_summaries(derived.entities, entities)
         reuse_summaries(derived.relationships, relationships)
+        stripped = self._stripped_ids.get(suffix, set())
         extend_summaries(
             derived.entities,
-            [e.model_copy(update={"id": rekey.get(e.id, e.id)}) for e in existing],
+            [
+                e.model_copy(update={"id": rekey.get(e.id, e.id)})
+                for e in existing
+                if e.id not in stripped
+            ],
             {final_id(e.id, entity_id_remap): e.description for e in entities},
+            summarized={
+                final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
+            },
         )
         extend_summaries(
             derived.relationships,
-            [r.model_copy(update={"id": rekey.get(r.id, r.id)}) for r in existing_rels],
+            [
+                r.model_copy(update={"id": rekey.get(r.id, r.id)})
+                for r in existing_rels
+                if r.id not in stripped
+            ],
             {final_id(r.id, relationship_remap): r.description for r in relationships},
+            summarized={
+                final_id(r.id, relationship_remap)
+                for r in relationships
+                if _is_summary(r)
+            },
         )
         merged_entities, merged_relationships = self._finish(
             suffix,
@@ -1685,11 +1721,16 @@ class IndexingManager:
         rewired: Collection[str] = (),
         dropped: Collection[str] = (),
         split_from: Mapping[str, str] | None = None,
+        unsummarized: Collection[str] = (),
+        made: set[str] | None = None,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Summarize, rank and complete derived items for writing.
 
         A description over the summarization threshold is summarized again
-        only when it differs from the one the stored summary was made from.
+        only when it differs from the one the stored summary was made from,
+        and not for the ``unsummarized`` ids (the commit summarizes them, see
+        :meth:`expect_delta`); the ids of the items it summarizes are added
+        to ``made``.
         Ranks are recomputed over the stored graph. The stored edges of the
         entities whose names or ranks now differ (an entity renamed, or its
         degree or a neighbour's changed) are returned with the items, with
@@ -1708,13 +1749,23 @@ class IndexingManager:
         reused = reuse_summaries(
             entities, [*stored_entities, *self._offered_summaries.get(suffix, ())]
         )
-        unsummarized = [e for e in entities if e.id not in reused]
-        if any(needs_summary(self.config, i.description) for i in unsummarized):
-            self.description_summarizer.summarize_entities(unsummarized)
+        later = set(unsummarized)
+        due = [e for e in entities if e.id not in reused and e.id not in later]
+        derived_descriptions = {e.id: e.description for e in due}
+        if any(needs_summary(self.config, i.description) for i in due):
+            self.description_summarizer.summarize_entities(due)
         reused = reuse_summaries(relationships, stored_relationships)
-        unsummarized_rels = [r for r in relationships if r.id not in reused]
-        if any(needs_summary(self.config, i.description) for i in unsummarized_rels):
-            self.description_summarizer.summarize_relationships(unsummarized_rels)
+        due_rels = [
+            r for r in relationships if r.id not in reused and r.id not in later
+        ]
+        derived_descriptions.update({r.id: r.description for r in due_rels})
+        if any(needs_summary(self.config, i.description) for i in due_rels):
+            self.description_summarizer.summarize_relationships(due_rels)
+        if made is not None:
+            summarized: list[Entity | Relationship] = [*due, *due_rels]
+            made.update(
+                i.id for i in summarized if i.description != derived_descriptions[i.id]
+            )
         # A dropped edge is still stored until the retired ids are deleted
         # (a resumed strip reads it back): its link does not count either.
         dropped_ids = set(dropped)
@@ -2136,14 +2187,28 @@ class IndexingManager:
         """Start a run with no state left from an earlier one: what its
         derivations decided (see :meth:`discard_retired_ids`), and what its
         removals found for after the commit, the community reports they kept
-        the communities they deleted and the extraction-record keys of
-        their text units (an earlier run that failed before its commit
-        measured, counted or collected them)."""
+        the communities they deleted, the extraction-record keys of their
+        text units and the items they derived again (an earlier run that
+        failed before its commit measured, counted or collected them)."""
         self.discard_retired_ids()
         self.outdated_reports.clear()
         self.deleted_communities.clear()
         self._removed_record_keys.clear()
         self._offered_summaries.clear()
+        self._stripped_ids.clear()
+        self._delta_ids.clear()
+
+    def expect_delta(
+        self, entities: Sequence[Entity], relationships: Sequence[Relationship]
+    ) -> None:
+        """The items the run's commit derives (its delta), told before the
+        removals: one a removal derives again under the same id is derived
+        once more by the commit, with the delta's lines, so the removal
+        writes its description unsummarized and the commit summarizes it
+        (one call, from every line its text units state, as a full build).
+        Grouped by their index suffix."""
+        for suffix, group in self._group_by_suffix([*entities, *relationships]).items():
+            self._delta_ids.setdefault(suffix, set()).update(i.id for i in group)
 
     def offer_summaries(self, entities: Sequence[Entity]) -> None:
         """Summaries this run made before indexing (community detection's
@@ -2381,6 +2446,7 @@ class IndexingManager:
             # removed text units while the vector copy still does.
             stripped = {item.id: item for item in stripped_entities}
             stripped_rels = {item.id: item for item in stripped_relationships}
+            made: set[str] = set()
             derived = self.derive(
                 suffix,
                 [stripped.get(e.id, e) for e in entities],
@@ -2397,6 +2463,8 @@ class IndexingManager:
                 rewired=set(derived.rewired),
                 dropped=derived.dropped,
                 split_from=derived.split_from,
+                unsummarized=self._delta_ids.get(suffix, set()),
+                made=made,
             )
             self._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
             # Not an absent id this strip writes (a part split off again
@@ -2413,6 +2481,7 @@ class IndexingManager:
             self._derived_entities.setdefault(suffix, {}).update(
                 {e.id: e for e in new_entities}
             )
+            self._stripped_ids.setdefault(suffix, set()).update(made)
             entity_ids_now = {e.id for e in derived.entities}
             edge_ids_now = {r.id for r in derived.relationships}
             claim_ids_now = {c.id for c in derived.claims}

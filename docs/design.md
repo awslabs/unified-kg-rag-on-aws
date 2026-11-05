@@ -1159,9 +1159,15 @@ every write and check that the next run converges to a fresh full build.
   writes the delta as graph resolution made it) and matches through a key
   index. A stored summary that only grew (the item still cites every text unit
   it did) is summarized from itself and the new description, as LightRAG
-  merges into the stored one; an item that lost a text unit is summarized from
-  its derived description, so removed text goes. A stored edge rewritten for
-  its rank only is updated in place, not embedded again.
+  merges into the stored one, and a stored description that is no summary is
+  extended with the delta's summary when graph resolution made one (which
+  would otherwise go unused). An item that lost a text unit is summarized from
+  its derived description, so removed text goes, and so is an item this
+  run's removal summarized; the removal leaves the summary of an item the
+  delta derives again under its id to the commit (`expect_delta`), so an
+  edited document's shared entity is summarized once, from its lines, as in a
+  full build. A stored edge rewritten for its rank only is updated in place,
+  not embedded again.
 - **Merge rules** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG
   `update/*`), all idempotent:
 

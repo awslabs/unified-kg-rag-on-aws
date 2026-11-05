@@ -507,3 +507,27 @@ class TestSummaryReuse:
         assert grown.description == "summary\nline 3"
         # It lost t1: only a summary of what its units state drops t1's text.
         assert shrunk.description == "line 2\nline 3"
+
+    def test_an_unsummarized_copy_is_extended_only_with_a_summary(self) -> None:
+        from unified_kg_rag.adapters.ingestion.description_summarizer import (
+            extend_summaries,
+        )
+
+        stored = Entity(id="e", name="e", description="line 1", text_unit_ids=["t1"])
+
+        def grown() -> Entity:
+            return Entity(
+                id="e",
+                name="e",
+                description="line 1\nline 2\nline 3",
+                text_unit_ids=["t1", "t2", "t3"],
+            )
+
+        lines, summary = grown(), grown()
+        extend_summaries([lines], [stored], {"e": "line 2\nline 3"})
+        extend_summaries([summary], [stored], {"e": "summary"}, summarized={"e"})
+
+        # The delta's lines: the description its records give, as before.
+        assert lines.description == "line 1\nline 2\nline 3"
+        # The delta's summary (graph resolution made it): used, not made again.
+        assert summary.description == "line 1\nsummary"

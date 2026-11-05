@@ -2714,6 +2714,8 @@ def index_delta(
     # that only concerns deleted docs keeps their registry rows for a
     # retry and need not hold back the delta, so it fails the stage only
     # after the commit.
+    # A shared item the delta derives again is summarized by the commit only.
+    indexing_manager.expect_delta(entities, relationships)
     removed = incremental.remove_changed_and_deleted(delta)
     if not removed and delta.changed:
         raise PipelineStageError(
