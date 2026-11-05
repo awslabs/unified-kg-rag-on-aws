@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from tests.fixtures.fakes.stores import FakeGraphStore
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore
 from unified_kg_rag.adapters.provider_registry import ProviderRole, provider_endpoint
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
     SQLiteGraphRetriever,
 )
@@ -29,7 +31,9 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     Relationship,
+    RetrieverRole,
     SearchQuery,
+    SearchResult,
 )
 from unified_kg_rag.shared.exceptions import (
     InvalidFilterError,
@@ -821,3 +825,60 @@ def test_a_failed_rebuild_keeps_the_previous_graph(indexer: Any) -> None:
     # A full build after it clears the label first again.
     indexer.index_entities([_entity("a")])
     assert [e.id for e in indexer.read_entities(["a", "old"])] == ["a"]
+
+
+class _OwnFilterStrategy(BaseSearchStrategy):
+    """A custom strategy that sends the graph a filter of its own."""
+
+    own_filters: dict[str, Any] = {}
+
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
+        assert self.graph_retriever is not None
+        asked = query.model_copy(update={"filters": {"id": ["s"], **self.own_filters}})
+        results = await self._safe_aretrieve(self.graph_retriever, asked, "own")
+        return SearchResult(
+            query=query,
+            results=results,
+            total_results=len(results),
+            search_strategy="own",
+            processing_time=0.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "own_filters",
+    [
+        # An operator no store takes: the walk dropped it and matched all.
+        {"rank": {"in": [1]}},
+        # eq/neq: OpenSearch refuses them, so the graph refuses them too.
+        {"rank": {"eq": 5}},
+        {"type": {"neq": "ORG"}},
+        # Values OpenSearch answers with a 400.
+        {"type": None},
+        {"type": ["ORG", None]},
+        {"rank": {}},
+        {"type": ("ORG",)},
+    ],
+)
+async def test_a_custom_strategy_cannot_pass_a_filter_the_stores_refuse(
+    config: Config, own_filters: dict[str, Any]
+) -> None:
+    indexer = SQLiteGraphIndexer(config)
+    indexer.upsert_entities(
+        [_entity("s", type="ORG", rank=5), _entity("a", type="PERSON", rank=1)]
+    )
+    indexer.upsert_relationships([_rel("sa", "s", "a")])
+    strategy = _OwnFilterStrategy(
+        config, {RetrieverRole.GRAPH.value: SQLiteGraphRetriever(config)}
+    )
+    strategy.own_filters = own_filters
+    with pytest.raises(InvalidFilterError, match="Filter '(rank|type)'"):
+        await strategy.asearch(SearchQuery(query="q"))
+    # A supported range still filters.
+    strategy.own_filters = {"rank": {"gte": 5}}
+    found = await strategy.asearch(SearchQuery(query="q"))
+    assert [r.source for r in found.results] == ["s"]
+    await strategy.graph_retriever.aclose()  # type: ignore[union-attr]
+    indexer.close()

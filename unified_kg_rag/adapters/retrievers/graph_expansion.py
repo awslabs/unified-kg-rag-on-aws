@@ -41,6 +41,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
     SOURCE_KINDS_FIELD,
     FilterFields,
+    check_filter_values,
     typed_filter_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -88,6 +89,11 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
             text_digest(query.query),
             query.search_type.value,
         )
+        # The filters a strategy sends are checked as the OpenSearch retriever
+        # checks them: a range operator the walk has no step for (``in``,
+        # ``eq``) was dropped, so the filter matched every vertex. A
+        # strategy's own scope may allow nothing (an empty list).
+        check_filter_values(query.filters, allow_empty_lists=True)
 
         try:
             seed_ids = self._seed_ids(query)

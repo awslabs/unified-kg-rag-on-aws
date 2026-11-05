@@ -140,7 +140,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
             return [
                 (key, getattr(P, op)(val))
                 for op, val in value.items()
-                if op in {"gte", "lte", "gt", "lt", "eq", "neq"}
+                # Range bounds only: ``aretrieve`` refuses any other key
+                # (``check_filter_values``), which this would drop.
+                if op in {"gte", "lte", "gt", "lt"}
             ]
         return [(key, value)]
 
