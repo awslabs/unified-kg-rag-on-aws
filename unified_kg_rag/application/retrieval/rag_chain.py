@@ -4,7 +4,6 @@ import asyncio
 import concurrent.futures
 import contextvars
 import functools
-import hashlib
 import json
 import re
 import threading
@@ -22,11 +21,10 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing
-from typing import Any, ClassVar, TypeVar
+from typing import Any, TypeVar
 
 from langchain_core.output_parsers import (
     BaseOutputParser,
-    CommaSeparatedListOutputParser,
     StrOutputParser,
 )
 from langchain_core.runnables import (
@@ -39,11 +37,10 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain, usage_model_id
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
-    SCOPED_FILTER_KEYS,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     query_scope,
@@ -55,7 +52,6 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
-    routable_strategies,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
@@ -76,18 +72,15 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
-    SCHEMA_ANNOTATION_FIELDS,
     check_filter_values,
     typed_filter_values,
-    union_filter_fields,
 )
 from unified_kg_rag.application.bootstrap import (
     build_providers,
     build_query_guard,
-    resolve_extraction_schema,
 )
 from unified_kg_rag.application.observability import configure_observability
-from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
+from unified_kg_rag.application.retrieval import filter_validation, query_processing
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_FILTER_KEY,
@@ -97,7 +90,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
-    ModelPurpose,
     ModelRole,
     RetrievalResult,
     RetrieverRole,
@@ -105,7 +97,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
-    language_name,
 )
 from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
@@ -129,19 +120,15 @@ from unified_kg_rag.ports.guardrail import (
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
     ConfigurationError,
-    InvalidFilterError,
-    LanguageModelError,
     QueryTimeoutError,
     StoreConnectionError,
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import SchemaSourceError
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
-from unified_kg_rag.shared.usage import record_cache_hit, usage_scope
+from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
-    parse_llm_json,
     strip_embedding_fields,
     text_digest,
 )
@@ -492,8 +479,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ] = {}
         self._cache_lock = threading.RLock()
         # The schema annotation fields the configured extraction schema
-        # writes (_schema_annotation_fields), loaded on the first filter on
-        # one of them; None until then, and for good once a load failed.
+        # writes (filter_validation._schema_annotation_fields), loaded on the
+        # first filter on one of them; None until then, and for good once a
+        # load failed.
         self._schema_fields: frozenset[str] | None = None
         self._schema_fields_unreadable = False
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
@@ -639,7 +627,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Before routing, as an interactive session does: the router picks
         # only among the strategies that apply every filter key, so whether
         # a key is refused never depends on the route a question takes.
-        routable = self._auto_candidates(state.get("filters"))
+        routable = filter_validation.auto_candidates(self, state.get("filters"))
         if len(routable) == 1:
             # Nothing to choose between: no router call.
             state["resolved_strategy"] = routable[0]
@@ -764,39 +752,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 )
             return cached
 
-    def _query_language(self, inputs: dict[str, Any]) -> tuple[str, bool]:
-        """The language the query is processed into, and whether its
-        translation is skipped.
-
-        Translation is skipped when no explicit target was requested AND
-        ingestion did not translate: the translation stage is disabled (the
-        corpus is indexed as written) or would be a no-op (a same-language
-        corpus, TranslationConfig.is_noop). This avoids paying an LLM
-        call per query for e.g. an English-only or Japanese-only corpus, and
-        — more importantly — avoids the failure mode where the translator
-        LLM returns a meta-response ("I notice the text you...") for a query
-        already in the target language, which would then be used verbatim as
-        the search query.
-
-        The language is the requested one, else the one the index was built
-        in: the source language when the stage is disabled (entity names and
-        text stay as written, so query entities and keywords extracted in
-        the target language would match nothing), the target language
-        otherwise (equal to the source for a no-op).
-        """
-        requested_language = inputs.get("target_language")
-        translation = self.config.processing.translation
-        skip_translation = requested_language is None and (
-            not translation.enabled or translation.is_noop
-        )
-        if requested_language:
-            language = requested_language
-        elif not translation.enabled:
-            language = translation.source_language
-        else:
-            language = translation.target_language
-        return language_name(language), skip_translation
-
     def _start_query_inputs(
         self,
         inputs: dict[str, Any],
@@ -806,43 +761,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         translation: bool = True,
         config: RunnableConfig | None,
     ) -> dict[str, asyncio.Future[Any]]:
-        """Start the query processing calls as tasks: the entity and keyword
-        extractions asked for, and the translation (``translation``) unless
-        the query needs none (:meth:`_query_language`).
-
-        Their errors surface when they are awaited (``_process_query_step``).
-        """
-        question = self._question(inputs)
-        target_language, skip_translation = self._query_language(inputs)
-        coroutines: dict[str, Awaitable[Any]] = {}
-        if entities:
-            coroutines["entities"] = self._extract_query_entities(
-                question, target_language, config
-            )
-        # The keyword prompt writes its keywords in the target language
-        # itself, so it reads the untranslated question and runs alongside
-        # the translation instead of after it.
-        if keywords:
-            coroutines["keywords"] = self._extract_dual_keywords(
-                question, target_language, config
-            )
-        if translation and not skip_translation:
-            coroutines["translation"] = self._translate_query(
-                question, target_language, config
-            )
-        return {
-            name: asyncio.ensure_future(coroutine)
-            for name, coroutine in coroutines.items()
-        }
+        """``query_processing.start_query_inputs``."""
+        return query_processing.start_query_inputs(
+            self,
+            inputs,
+            entities=entities,
+            keywords=keywords,
+            translation=translation,
+            config=config,
+        )
 
     async def _translate_query(
         self, query: str, target_language: str, config: RunnableConfig | None
     ) -> str:
-        translator = self._get_chain_for_prompt(TranslationPrompt, StrOutputParser())
-        return str(
-            await translator.ainvoke(
-                {"query": query, "target_language": target_language}, config
-            )
+        """``query_processing.translate_query``."""
+        return await query_processing.translate_query(
+            self, query, target_language, config
         )
 
     async def _process_query_step(
@@ -852,7 +786,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         prefetched: dict[str, asyncio.Future[Any]] | None = None,
     ) -> ProcessedQuery:
-        """Translate the query and extract what the resolved strategy reads.
+        """Translate the query and extract what the resolved strategy reads
+        (``query_processing.process_query``); under ``ignore_errors`` a
+        failure leaves the question as is.
 
         A call already started for this query (``prefetched``, auto's
         speculative extractions) is awaited instead of started again; it is
@@ -864,80 +800,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         prefetched = {} if prefetched is None else prefetched
 
         try:
-            # The strategy is resolved (AUTO routing included) before this step,
-            # so only pay for the LLM extractions the resolved strategy reads.
-            needs = {
-                "entities": self._needs_query_entities(inputs),
-                "keywords": self._needs_dual_keywords(inputs),
-            }
-            tasks: dict[str, Any] = {
-                name: prefetched.pop(name)
-                for name in ("entities", "keywords", "translation")
-                if name in prefetched and needs.get(name, True)
-            }
-            tasks.update(
-                self._start_query_inputs(
-                    inputs,
-                    entities=needs["entities"] and "entities" not in tasks,
-                    keywords=needs["keywords"] and "keywords" not in tasks,
-                    translation="translation" not in tasks,
-                    config=config,
-                )
-            )
-
-            results = (
-                await asyncio.gather(*tasks.values(), return_exceptions=True)
-                if tasks
-                else []
-            )
-            results_map = dict(zip(tasks.keys(), results, strict=True))
-            translated_query = results_map.get("translation")
-            if not isinstance(translated_query, str):
-                if isinstance(translated_query, Exception):
-                    if self.ignore_errors:
-                        logger.warning("Query translation failed: %s", translated_query)
-                    else:
-                        raise translated_query
-                translated_query = None
-            elif self._looks_like_translation_refusal(translated_query, question):
-                # The translator returned prose about the request instead of a
-                # translation (common when the query is already in the target
-                # language). Fall back to the original query rather than searching
-                # for the LLM's meta-response.
-                logger.warning(
-                    "Query translation looks like non-translation LLM output; "
-                    "falling back to the original query."
-                )
-                translated_query = None
-
-            entity_data = results_map.get("entities", [])
-            if not isinstance(entity_data, list):
-                if isinstance(entity_data, Exception):
-                    if self.ignore_errors:
-                        logger.warning("Entity extraction failed: %s", entity_data)
-                    else:
-                        raise entity_data
-                entity_data = []
-
-            final_query = translated_query or question
-            hl_keywords: list[str] = []
-            ll_keywords: list[str] = []
-            if "keywords" in results_map:
-                keyword_data = results_map["keywords"]
-                if isinstance(keyword_data, BaseException):
-                    # _extract_dual_keywords already degrades to ([], []) under
-                    # ignore_errors, so an exception here must propagate.
-                    raise keyword_data
-                hl_keywords, ll_keywords = keyword_data
-
             return ProcessedQuery(
                 original_query=original_query,
                 standalone_query=standalone_query,
-                translated_query=translated_query,
-                final_query=final_query,
-                entities=entity_data,
-                hl_keywords=hl_keywords,
-                ll_keywords=ll_keywords,
+                **await query_processing.process_query(
+                    self, inputs, question, config, prefetched
+                ),
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -951,131 +819,42 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     @staticmethod
     def _needs_query_entities(state: dict[str, Any]) -> bool:
-        # Without a resolved strategy (direct step invocation) stay conservative
-        # and extract, matching the pre-gating behavior.
-        strategy = state.get("resolved_strategy")
-        return (
-            strategy is None
-            or QueryInput.ENTITIES in get_strategy_spec(strategy).query_inputs
-        )
+        """``query_processing.needs_query_entities``."""
+        return query_processing.needs_query_entities(state)
 
     @staticmethod
     def _needs_dual_keywords(state: dict[str, Any]) -> bool:
-        strategy = state.get("resolved_strategy")
-        return (
-            strategy is not None
-            and QueryInput.DUAL_KEYWORDS in get_strategy_spec(strategy).query_inputs
-        )
-
-    # Openings of a model refusal or meta-reply rather than the requested text
-    # (a rewritten question, a translation). Matched case-insensitively.
-    _REFUSAL_OPENINGS: ClassVar[tuple[str, ...]] = (
-        "i'm sorry",
-        "i am sorry",
-        "sorry,",
-        "i cannot",
-        "i can't",
-        "i can not",
-        "i'm unable",
-        "i am unable",
-        "as an ai",
-    )
-    # A translation request also draws commentary about the input (seen when
-    # the query is already in the target language).
-    _TRANSLATION_REFUSAL_MARKERS: ClassVar[tuple[str, ...]] = _REFUSAL_OPENINGS + (
-        "i appreciate",
-        "i notice",
-        "it appears",
-        "the text you",
-        "there is no text",
-        "no text was provided",
-    )
+        """``query_processing.needs_dual_keywords``."""
+        return query_processing.needs_dual_keywords(state)
 
     @staticmethod
-    def _refusal_text(text: str) -> str:
-        """``text`` normalised for matching the refusal phrases: stripped,
-        lower-cased, a typographic apostrophe (``I\u2019m``) made ASCII."""
-        return text.strip().lower().replace("\u2019", "'")
-
-    @classmethod
-    def _looks_like_translation_refusal(cls, candidate: str, original: str) -> bool:
-        """Heuristic: does the 'translation' look like LLM meta-output, not a
-        translation? Only flags when the candidate differs from the original
-        (an identical passthrough is fine) and opens with a known refusal/notice
-        phrase, so genuine translations that merely contain such words mid-text
-        are not caught.
-
-        The phrases are English: a meta-reply written in another language
-        passes as a translation. No language-agnostic test separates the two
-        reliably (a script mismatch misses a reply in the target language,
-        which is the common case, and lengths differ legitimately across
-        scripts), so the miss is accepted; the reply then searches as the
-        query."""
-        text = cls._refusal_text(candidate)
-        if not text or text == cls._refusal_text(original):
-            return False
-        return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
+    def _looks_like_translation_refusal(candidate: str, original: str) -> bool:
+        """``query_processing.looks_like_translation_refusal``."""
+        return query_processing.looks_like_translation_refusal(candidate, original)
 
     async def _extract_query_entities(
         self, query: str, target_language: str, config: RunnableConfig | None
     ) -> list[str]:
-        """The entities the query names (entity extraction), from the
-        extraction cache when this question was extracted before."""
-        key = self._extraction_key(EntityExtractionPrompt, query, target_language)
-        if (cached := self._cached_extraction(key)) is not None:
-            return list(cached)
-        extractor = self._get_chain_for_prompt(
-            EntityExtractionPrompt,
-            CommaSeparatedListOutputParser(),
-            output_ceiling=self.config.search.output_ceilings.query_extraction,
+        """``query_processing.extract_query_entities``."""
+        return await query_processing.extract_query_entities(
+            self, query, target_language, config
         )
-        entities = await extractor.ainvoke(
-            {"query": query, "target_language": target_language}, config
-        )
-        if not isinstance(entities, list):
-            return []
-        self._cache_extraction(key, tuple(entities))
-        return entities
 
     def _extraction_key(
         self, prompt_class: type[BasePrompt], query: str, target_language: str
     ) -> tuple[str, ...]:
-        """The extraction cache key: the prompt, its model, a digest of its
-        templates (a custom_prompts override is another key), the question
-        and the target language."""
-        resolved = prompt_class.resolve(custom_prompts=self.config.custom_prompts)
-        templates = hashlib.sha256(
-            f"{resolved.system_prompt_template}\0{resolved.human_prompt_template}".encode()
-        ).hexdigest()
-        return (
-            prompt_class.__name__,
-            self.config.model_id(ModelRole.ENTITY_EXTRACTION),
-            templates,
-            query,
-            target_language,
+        """``query_processing.extraction_key``."""
+        return query_processing.extraction_key(
+            self, prompt_class, query, target_language
         )
 
     def _cached_extraction(self, key: tuple[str, ...]) -> Any:
-        cache: _ExtractionCache | None = getattr(self, "_extractions", None)
-        hit = cache.get(key) if cache is not None else None
-        if hit is not None:
-            logger.debug(
-                "Reused the cached %s for query %s", key[0], text_digest(key[3])
-            )
-            # A model call the query did not make (shared.usage), under the
-            # id the call's usage is recorded by.
-            record_cache_hit(ModelPurpose.QUERY.value, self._usage_model_id(key[1]))
-        return hit
-
-    def _usage_model_id(self, model_id: str) -> str:
-        """The id the LLM factory records ``model_id``'s usage under: the
-        Bedrock factory's resolved inference profile, else ``model_id``."""
-        return usage_model_id(getattr(self, "factory", None), model_id)
+        """``query_processing.cached_extraction``."""
+        return query_processing.cached_extraction(self, key)
 
     def _cache_extraction(self, key: tuple[str, ...], value: Any) -> None:
-        cache: _ExtractionCache | None = getattr(self, "_extractions", None)
-        if cache is not None:
-            cache.put(key, value)
+        """``query_processing.cache_extraction``."""
+        query_processing.cache_extraction(self, key, value)
 
     async def _extract_dual_keywords(
         self,
@@ -1083,72 +862,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         target_language: str,
         config: RunnableConfig | None = None,
     ) -> tuple[list[str], list[str]]:
-        """Extract LightRAG high/low-level keywords as two lists.
-
-        Robust to the LLM wrapping the JSON in prose or code fences. Returns
-        empty lists on failure when ``ignore_errors`` is set.
-        """
-        try:
-            key = self._extraction_key(KeywordsExtractionPrompt, query, target_language)
-            if (cached := self._cached_extraction(key)) is not None:
-                high, low = cached
-                return list(high), list(low)
-            extractor = self._get_chain_for_prompt(
-                KeywordsExtractionPrompt,
-                StrOutputParser(),
-                output_ceiling=self.config.search.output_ceilings.query_extraction,
-            )
-            raw = await extractor.ainvoke(
-                {"query": query, "target_language": target_language}, config
-            )
-            # Strict: with ignore_errors=False a broken keyword extraction
-            # surfaces instead of silently yielding empty keyword lists.
-            payload = parse_llm_json(raw, strict=True, answer_keys=self._KEYWORD_LEVELS)
-            hl_keywords, ll_keywords = self._keyword_lists(payload)
-            self._cache_extraction(key, (tuple(hl_keywords), tuple(ll_keywords)))
-            return hl_keywords, ll_keywords
-        except Exception as e:
-            if not self.ignore_errors:
-                raise
-            # The error text can quote the model's answer: DEBUG only.
-            logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
-            logger.debug("Dual-keyword extraction error: %s", e)
-            return [], []
-
-    _KEYWORD_LEVELS: ClassVar[tuple[str, str]] = (
-        "high_level_keywords",
-        "low_level_keywords",
-    )
-
-    @classmethod
-    def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
-        """Validate the keyword payload: an object whose keyword fields are
-        lists of strings or numbers (a missing level is empty).
-
-        Numbers are kept as text (a year or quantity is a real keyword). Anything
-        else raises: iterating a bare string would yield one-character keywords,
-        null/boolean/nested items are not keywords, and a non-object payload
-        parses to ``{}``, which must not pass for "no keywords".
-        """
-        if not any(level in payload for level in cls._KEYWORD_LEVELS):
-            raise LanguageModelError(
-                "Keyword extraction returned no high_level_keywords or "
-                "low_level_keywords object"
-            )
-        lists: list[list[str]] = []
-        for level in cls._KEYWORD_LEVELS:
-            value = payload.get(level, [])
-            if not isinstance(value, list) or not all(
-                isinstance(k, str | int | float) and not isinstance(k, bool)
-                for k in value
-            ):
-                raise LanguageModelError(
-                    f"Keyword extraction returned {level} that is not a list of "
-                    f"strings or numbers: {value!r}"
-                )
-            keywords = (str(k).strip() for k in value)
-            lists.append([k for k in keywords if k])
-        return lists[0], lists[1]
+        """``query_processing.extract_dual_keywords``."""
+        return await query_processing.extract_dual_keywords(
+            self, query, target_language, config
+        )
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):
@@ -1185,39 +902,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return None
         return self._usable_rewrite(str(rewritten))
 
-    # A request for clarification aimed back at the user: after a refusal
-    # opening it is a meta-reply even though it ends with a question mark.
-    _CLARIFICATION_REQUEST: ClassVar[re.Pattern[str]] = re.compile(
-        r"\b(?:could|can|would) you (?:please )?(?:clarify|specify|confirm)"
-        r"|\bplease (?:clarify|specify)"
-        r"|\b(?:what|which)\b[^?]*\b(?:do|did) you (?:mean|refer)"
-        r"|\bare you referring\b"
-    )
-
-    @classmethod
-    def _usable_rewrite(cls, rewritten: str) -> str | None:
-        """The rewrite, or None (keep the query as is) when it is unusable.
-
-        An empty reply or a refusal would replace the user's question for
-        routing, retrieval and the answer, so the original query is kept.
-        """
-        text = rewritten.strip()
-        prefix = "standalone question:"
-        if text.lower().startswith(prefix):
-            text = text[len(prefix) :].strip()
-        if not text:
-            return None
-        # A refusal opens with an apology or an inability and asks nothing; a
-        # rewritten question may start the same way ("I can't find …; where
-        # is it?") but ends with a question mark, unless the question asks
-        # the user to clarify ("I'm sorry, could you clarify which contract?").
-        opening = cls._refusal_text(text)
-        if opening.startswith(cls._REFUSAL_OPENINGS) and (
-            not text.endswith("?") or cls._CLARIFICATION_REQUEST.search(opening)
-        ):
-            logger.warning("Follow-up rewrite was a refusal; using the query as is")
-            return None
-        return text
+    @staticmethod
+    def _usable_rewrite(rewritten: str) -> str | None:
+        """``query_processing.usable_rewrite``."""
+        return query_processing.usable_rewrite(rewritten)
 
     @staticmethod
     def _question(state: dict[str, Any]) -> str:
@@ -1238,8 +926,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # routing) has checked these keys before any model call already; this
         # catches a caller driving the composed runnable directly.
         if state.get("filters"):
-            self._check_strategy_filter_keys(
-                state["filters"], state["resolved_strategy"]
+            filter_validation.check_strategy_filter_keys(
+                self, state["filters"], state["resolved_strategy"]
             )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
@@ -1322,155 +1010,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         routes only among those that do), or a value is malformed
         (``check_filter_values``). For callers that keep filters across
         queries (an interactive session)."""
-        check_filter_values(typed_filter_values(filters))
-        if strategy is SearchStrategy.AUTO:
-            self._auto_candidates(filters)
-        else:
-            self._check_strategy_filter_keys(filters, strategy)
-
-    def _check_strategy_filter_keys(
-        self, filters: dict[str, Any] | None, strategy: SearchStrategy
-    ) -> None:
-        self._check_schema_filter_keys(filters)
-        instance = self._get_strategy_instance(strategy)
-        reserved = sorted(set(filters or {}) & instance.reserved_filter_keys(strategy))
-        if reserved:
-            raise InvalidFilterError(
-                f"Filter key(s) {', '.join(reserved)}: {strategy.value} search "
-                "scopes what it reads by them itself, with values a filter "
-                "cannot be intersected with (a range, a browse from the "
-                "roots, a list on a multi-valued field), so it refuses them."
-            )
-        # Under every strategy, those that never scope these keys (naive,
-        # global) too: a filter is valid or not whatever the strategy, and
-        # auto routes it among the same candidates.
-        ranges = sorted(
-            key
-            for key in SCOPED_FILTER_KEYS
-            if isinstance((filters or {}).get(key), dict)
-        )
-        if ranges:
-            raise InvalidFilterError(
-                f"Filter key(s) {', '.join(ranges)}: a range cannot be "
-                "combined with the ids a search scopes these keys to; give a "
-                "value or a list of values."
-            )
-        self._validate_filter_keys(
-            filters,
-            instance.filtered_retrievers(strategy),
-            instance.filtered_index_prefixes(strategy),
-        )
-
-    def _auto_candidates(
-        self, filters: dict[str, Any] | None
-    ) -> tuple[SearchStrategy, ...]:
-        """The routable strategies that apply every key of ``filters``.
-
-        ``auto`` routes only among these, so a filter that one of them
-        applies never fails by route. Raises ``InvalidFilterError`` when
-        none applies them all.
-        """
-        routable = routable_strategies(self.config)
-        if not filters:
-            return routable
-        # Once, not per candidate: every strategy would refuse it alike.
-        self._check_schema_filter_keys(filters)
-        candidates: list[SearchStrategy] = []
-        refusals: list[str] = []
-        for routed in routable:
-            try:
-                self._check_strategy_filter_keys(filters, routed)
-            except InvalidFilterError as e:
-                refusals.append(f"{routed.value}: {e}")
-            else:
-                candidates.append(routed)
-        if not candidates:
-            raise InvalidFilterError(
-                "No strategy auto may route to applies every filter key. "
-                + " ".join(refusals)
-            )
-        if refusals:
-            logger.info(
-                "auto routes only among %s: the filters leave out %s",
-                ", ".join(s.value for s in candidates),
-                ", ".join(s.value for s in routable if s not in candidates),
-            )
-        return tuple(candidates)
-
-    def _check_schema_filter_keys(self, filters: dict[str, Any] | None) -> None:
-        """Refuse a filter on a schema annotation (``in_schema``,
-        ``type_iri``, ``predicate_iri``) the configured extraction schema
-        writes on no item.
-
-        Every index declares the field, so the filter would pass the key
-        check, match nothing on each index that declares it and empty those
-        streams of every strategy (all relationships under ``in_schema:
-        true`` with entity types alone): an empty answer, not an error.
-        ``in_schema`` is written where the schema applies (``strict``, or
-        ``align`` with relationship types), an IRI where a declared type of
-        its kind has one and the mode is not ``off``.
-        """
-        if not filters or not (wanted := SCHEMA_ANNOTATION_FIELDS & set(filters)):
-            return
-        written = self._schema_annotation_fields()
-        if written is None:
-            return
-        missing = sorted(wanted - written)
-        if not missing:
-            return
-        reasons = {
-            "in_schema": "in_schema is stored under schema_mode strict, or "
-            "align with relationship_types declared",
-            "type_iri": "type_iri is stored once an entity type declares an "
-            "iri and schema_mode is not off",
-            "predicate_iri": "predicate_iri is stored once a relationship type "
-            "declares an iri and schema_mode is not off",
-        }
-        mode = self.config.processing.graph_extraction.schema_mode
-        raise InvalidFilterError(
-            f"Filter key(s) {', '.join(missing)}: the configured extraction "
-            f"schema (schema_mode {mode}) stores no such field on any entity "
-            "or relationship, so the filter would match nothing ("
-            + "; ".join(reasons[key] for key in missing)
-            + "). Change processing.graph_extraction and re-run ingestion "
-            "first."
-        )
-
-    def _schema_annotation_fields(self) -> frozenset[str] | None:
-        """The annotation fields the configured extraction schema writes
-        (``SchemaAnnotator.fields``), or ``None`` when its schema source
-        cannot be loaded (the check is then skipped, logged once). The
-        source is loaded once, with the chain's session: a failed load is
-        not retried on each query."""
-        fields: frozenset[str] | None = getattr(self, "_schema_fields", None)
-        if fields is not None or getattr(self, "_schema_fields_unreadable", False):
-            return fields
-        try:
-            schema = resolve_extraction_schema(
-                self.config, providers=getattr(self, "providers", None)
-            ).processing.graph_extraction.extraction_schema()
-        except SchemaSourceError as e:
-            self._schema_fields_unreadable = True
-            logger.warning(
-                "Not checking schema filter keys against the extraction schema: %s",
-                e,
-            )
-            return None
-        # A loader that breaks its contract (raises something else) must not
-        # fail, and reload on, every filtered query: the check is advisory.
-        except Exception as e:  # noqa: BLE001 - the check is advisory
-            self._schema_fields_unreadable = True
-            logger.warning(
-                "Not checking schema filter keys against the extraction schema: "
-                "loading the schema source failed (%s: %s)",
-                type(e).__name__,
-                e,
-                exc_info=True,
-            )
-            return None
-        fields = SchemaAnnotator(schema).fields
-        self._schema_fields = fields
-        return fields
+        filter_validation.check_filter_keys(self, filters, strategy)
 
     @staticmethod
     def _validate_filter_keys(
@@ -1478,31 +1018,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         retrievers: list[BaseGraphRAGRetriever],
         prefixes: list[str] | None = None,
     ) -> None:
-        """Reject caller filter keys that no retriever of the strategy declares
-        (on a document retriever, on the indexes ``prefixes`` the strategy
-        reads with the caller's filters, when given).
-
-        Each retriever applies a key only to the indexes / labels that declare
-        it, so an undeclared key would be dropped everywhere and the query would
-        silently run unfiltered. A retriever without a declared schema accepts
-        every key.
-        """
-        if not filters:
-            return
-        schemas = [
-            r.filter_fields() if prefixes is None else r.filter_fields_for(prefixes)
-            for r in retrievers
-        ]
-        if any(schema is None for schema in schemas):
-            return
-        declared = union_filter_fields(s for s in schemas if s is not None)
-        unknown = sorted(key for key in filters if not declared.declares(key))
-        if unknown:
-            raise InvalidFilterError(
-                f"Unknown filter key(s): {', '.join(unknown)}. No index this "
-                "search strategy reads has these fields, so the filter would "
-                f"be ignored. Filterable keys: {', '.join(declared.describe())}."
-            )
+        """``filter_validation.validate_filter_keys``."""
+        filter_validation.validate_filter_keys(filters, retrievers, prefixes)
 
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
@@ -2018,7 +1535,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         search: bool,
     ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
-        self._check_requested_filter_keys(rag_input)
+        filter_validation.check_requested_filter_keys(self, rag_input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2343,21 +1860,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    def _check_requested_filter_keys(self, rag_input: RAGInput) -> None:
-        """Refuse filter keys an explicit strategy refuses, before any model
-        call (a follow-up rewrite, query processing); ``auto`` checks them
-        before routing (``_resolve_strategy``), but for the schema
-        annotation keys, which no strategy applies on a schema that writes
-        none (``_check_schema_filter_keys``)."""
-        if not rag_input.filters:
-            return
-        if rag_input.search_strategy is SearchStrategy.AUTO:
-            self._check_schema_filter_keys(rag_input.filters)
-        else:
-            self._check_strategy_filter_keys(
-                rag_input.filters, rag_input.search_strategy
-            )
-
     async def _save_memory(self, output: RAGOutput, rag_input: RAGInput) -> None:
         if not output.conversation_id:
             return
@@ -2448,7 +1950,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
         rag_input, input_dict = self._prepare_invoke(input)
-        self._check_requested_filter_keys(rag_input)
+        filter_validation.check_requested_filter_keys(self, rag_input)
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,

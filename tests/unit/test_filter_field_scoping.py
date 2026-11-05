@@ -938,11 +938,11 @@ def test_global_reserves_community_ids_only_with_text_unit_slots(
 
 
 def test_auto_logs_the_strategies_the_filters_leave_out(config: Config, mocker) -> None:
-    from unified_kg_rag.application.retrieval import rag_chain
+    from unified_kg_rag.application.retrieval import filter_validation
     from unified_kg_rag.domain.models import SearchStrategy
 
     chain = _strategy_chain(config)
-    info = mocker.spy(rag_chain.logger, "info")
+    info = mocker.spy(filter_validation.logger, "info")
     chain.check_filter_keys({"type": "person"}, SearchStrategy.AUTO)
     assert any(
         call.args[1:] == ("local, mix", "global") for call in info.call_args_list

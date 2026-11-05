@@ -13,7 +13,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     LightRAGSearchStrategy,
 )
-from unified_kg_rag.application.retrieval import rag_chain as rag_chain_module
+from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -257,7 +257,7 @@ class TestExtractDualKeywords:
 
         chain.ignore_errors = True
         monkeypatch.setattr(chain, "_get_chain_for_prompt", lambda *a, **k: _Failing())
-        logger = mocker.patch.object(rag_chain_module, "logger")
+        logger = mocker.patch.object(query_processing, "logger")
         assert await chain._extract_dual_keywords("q", "English") == ([], [])
         logger.warning.assert_called_once_with(
             "Dual-keyword extraction failed: %s", "LanguageModelError"

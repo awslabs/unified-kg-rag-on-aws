@@ -26,12 +26,12 @@ from unified_kg_rag.application.bootstrap import (
     load_seed_graphs,
     resolve_extraction_schema,
 )
+from unified_kg_rag.application.ingestion import pipeline_metrics, resume
 from unified_kg_rag.application.ingestion.cache_manager import (
     CacheManager,
 )
 from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
-    delta_still_applies,
     open_attempts,
     record_item_failures,
     retired_scope_readings,
@@ -44,6 +44,12 @@ from unified_kg_rag.application.ingestion.pipeline_manager import (
     STAGE_OUTPUTS,
     PipelineResumeManager,
     PipelineStateManager,
+)
+from unified_kg_rag.application.ingestion.pipeline_metrics import (
+    LLM_USAGE_METRIC,
+)
+from unified_kg_rag.application.ingestion.pipeline_metrics import (
+    run_token_usage as run_token_usage,
 )
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
@@ -59,24 +65,19 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     PipelineStage,
     TextChunkingStage,
     TranslationStage,
-    _with_record_keys,
 )
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.ingestion.cache_keys import (
-    changed_settings,
     corpus_manifest_fingerprint,
-    extraction_settings,
     seed_corpus_fingerprint,
     stage_cache_key,
 )
-from unified_kg_rag.domain.ingestion.contributions import record_keys
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
     CacheStrategy,
     Config,
-    ExtractionSettings,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
@@ -86,7 +87,6 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
-from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
@@ -94,8 +94,6 @@ from unified_kg_rag.shared import (
     NamespaceLeaseError,
     PipelineExecutionError,
     PipelineInterrupted,
-    PipelineResumeError,
-    PipelineStateError,
     get_logger,
     observability,
 )
@@ -105,7 +103,7 @@ from unified_kg_rag.shared.store_lookups import (
     install_lookup_cache,
     remove_lookup_cache,
 )
-from unified_kg_rag.shared.usage import merge_usage, usage_scope
+from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
@@ -115,33 +113,6 @@ from unified_kg_rag.shared.write_fence import (
 
 logger = get_logger(__name__)
 
-# The PipelineStageResult.metrics key of the stage's LLM usage
-# (shared.usage snapshot).
-LLM_USAGE_METRIC = "llm_usage"
-
-
-def run_token_usage(
-    context: PipelineContext, executed_stages: frozenset[str]
-) -> dict[str, Any]:
-    """The LLM usage of the stages a run executed (a resumed run's restored
-    stages spent nothing in it): the totals, ``by_role``, ``by_model`` and
-    ``stages`` (each executed stage's usage)."""
-    stages = {
-        r.stage_name: r.metrics[LLM_USAGE_METRIC]
-        for r in context.stage_results
-        if r.stage_name in executed_stages
-        and isinstance(r.metrics.get(LLM_USAGE_METRIC), dict)
-    }
-    return {**merge_usage(list(stages.values())), "stages": stages}
-
-
-_STALE_DELTA = (
-    "the doc-status registry changed since this pipeline computed its "
-    "incremental delta (another run committed some of its documents, a "
-    "commit of this pipeline did not finish, runs died processing it "
-    "often enough to isolate the document that kills them, or a document "
-    "failed indexing.max_document_failures times)"
-)
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -279,46 +250,9 @@ class DataIngestionPipeline:
         PipelineStageType.TEXT_CHUNKING,
     )
 
-    # Emitted metric -> the stages whose execution produces it. A metric is
-    # emitted once, right after the last of its stages this run has enabled
-    # executes (a resumed run restores the others from the cache and does not
-    # re-emit their counts, or Sum dashboards would over-count). The other
-    # metrics describe the whole run and are emitted when it ends.
-    METRIC_STAGES: dict[str, frozenset[str]] = {
-        "total_documents_processed": frozenset(
-            {"document_parsing", "document_loading"}
-        ),
-        "total_text_units_created": frozenset({"text_chunking"}),
-        "total_translated_units": frozenset({"translation"}),
-        "total_entities_extracted": frozenset({"graph_extraction", "gleaning"}),
-        "total_relationships_extracted": frozenset({"graph_extraction", "gleaning"}),
-        "total_claims_extracted": frozenset({"claim_extraction"}),
-        "total_communities_detected": frozenset({"community_detection"}),
-        "total_community_reports_generated": frozenset({"community_detection"}),
-        "gleaning_improvement_rate": frozenset({"gleaning"}),
-        "entity_resolution_merge_rate": frozenset({"graph_resolution"}),
-        "relationship_resolution_merge_rate": frozenset({"graph_resolution"}),
-        "claim_resolution_merge_rate": frozenset({"claim_resolution"}),
-        "community_modularity_score": frozenset({"community_detection"}),
-        "total_items_indexed": frozenset({"indexing"}),
-        "total_items_index_failed": frozenset({"indexing"}),
-        "relationships_indexed": frozenset({"indexing"}),
-        "community_drift_overlap_share": frozenset({"indexing"}),
-        "community_rebuild_recommended": frozenset({"indexing"}),
-        "community_growth_ratio": frozenset({"indexing"}),
-        "runs_since_clustering": frozenset({"indexing"}),
-        "total_extraction_failures": frozenset({"graph_extraction"}),
-        "total_documents_quarantined": frozenset({"document_loading"}),
-        "total_documents_deferred": frozenset({"document_loading"}),
-        "total_documents_excluded": frozenset({"document_loading"}),
-        "total_files_failed": frozenset({"document_parsing", "document_loading"}),
-        "total_files_skipped": frozenset({"document_parsing"}),
-        "total_documents_deleted": frozenset({"indexing"}),
-        "total_records_not_stored": frozenset({"graph_resolution", "claim_extraction"}),
-        "underived_items": frozenset({"indexing"}),
-        "total_gleaning_failures": frozenset({"gleaning"}),
-        "total_claim_extraction_failures": frozenset({"claim_extraction"}),
-    }
+    # Emitted metric -> the stages whose execution produces it
+    # (pipeline_metrics.METRIC_STAGES).
+    METRIC_STAGES: dict[str, frozenset[str]] = pipeline_metrics.METRIC_STAGES
 
     # Names of the stages the current run executed (not skipped as completed).
     _executed_stages: frozenset[str] = frozenset()
@@ -1316,148 +1250,15 @@ class DataIngestionPipeline:
     def _prepare_resume(
         self, pipeline_id: str, resume_from_stage: str | None
     ) -> tuple[PipelineContext, str | None]:
-        """Restore a pipeline id's context and the stage its resume starts at.
-
-        The recorded stages give the resume point (after the last completed
-        stage, or ``resume_from_stage``). These then move it back or refuse
-        it, in this order:
-
-        ================================  ================================  ==================
-        Step                              When                              Explicit point
-        ================================  ================================  ==================
-        ``_rewind_to_unrun_stage``        an enabled stage never completed  not applied
-        ``_rewind_on_extraction_change``  the extraction settings or the    not applied
-                                          registry changed since the delta
-                                          (to document_loading)
-        ``_check_upstream_complete``      the point is upstream of every    applied
-                                          enabled stage: refused
-        ``_rewind_to_failed_stage``       a completed, enabled stage        kept, with a
-                                          recorded failed units; a rerun    WARNING (for the
-                                          on a disabled stage's failures    refusal too); the
-                                          is refused                        failures count
-                                                                            again
-        ``_rewind_on_missing_records``    a reset's stored extraction       applied
-                                          records are gone
-        ``_delta_is_stale``               the registry no longer matches    applied
-                                          the restored delta (to
-                                          document_loading)
-        ================================  ================================  ==================
-
-        Each rewind restores the context again for the stages it keeps.
-        ``_drop_unrun_failures`` then forgets the failures of the stages the
-        run neither runs nor restores.
-        """
-        logger.info(
-            "Preparing pipeline resume for '%s' from stage: '%s'",
-            pipeline_id,
-            resume_from_stage or "auto-detect",
-        )
-
-        try:
-            start_stage_name, completed_stages = (
-                self.resume_manager.determine_resume_strategy(
-                    pipeline_id, resume_from_stage
-                )
-            )
-            if resume_from_stage is None:
-                start_stage_name, completed_stages = self._rewind_to_unrun_stage(
-                    start_stage_name, completed_stages
-                )
-                start_stage_name, completed_stages = self._rewind_on_extraction_change(
-                    pipeline_id, start_stage_name, completed_stages
-                )
-
-            self._check_upstream_complete(pipeline_id, start_stage_name)
-            context = self.resume_manager.restore_pipeline_context(
-                pipeline_id, completed_stages
-            )
-            rewound = self._rewind_to_failed_stage(
-                context,
-                start_stage_name,
-                completed_stages,
-                explicit=resume_from_stage is not None,
-                rerun=resume_from_stage is not None
-                and self._recorded_completed(pipeline_id, start_stage_name),
-            )
-            if rewound is not None:
-                start_stage_name, completed_stages = rewound
-                context = self.resume_manager.restore_pipeline_context(
-                    pipeline_id, completed_stages
-                )
-            rewound = self._rewind_on_missing_records(
-                context, start_stage_name, completed_stages
-            )
-            if rewound is not None:
-                start_stage_name, completed_stages = rewound
-                context = self.resume_manager.restore_pipeline_context(
-                    pipeline_id, completed_stages
-                )
-            if self._delta_is_stale(context, start_stage_name):
-                start_stage_name, completed_stages = self._rewind_to_loading(
-                    start_stage_name, completed_stages, _STALE_DELTA
-                )
-                context = self.resume_manager.restore_pipeline_context(
-                    pipeline_id, completed_stages
-                )
-
-            self._drop_unrun_failures(context, start_stage_name)
-            self._prepare_context_for_resume(context, start_stage_name)
-            # What an earlier run recorded is not this run's.
-            context.recorded_failed_doc_ids = []
-            context.retrying_doc_ids = []
-            context.claims_missing_doc_ids = []
-
-            logger.info(
-                "Pipeline resume prepared successfully - will start from stage: '%s'",
-                start_stage_name,
-            )
-            return context, start_stage_name
-        except (PipelineResumeError, PipelineStateError) as e:
-            logger.error(
-                "Failed to prepare resume for pipeline '%s': %s", pipeline_id, e
-            )
-            raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
-
-    def _recorded_completed(self, pipeline_id: str, stage_name: str) -> bool:
-        """Whether ``pipeline_id`` recorded ``stage_name`` completed."""
-        stage_results = self.state_manager.load_pipeline_metadata(pipeline_id).get(
-            "stage_results", []
-        )
-        return any(
-            result.get("stage_name") == stage_name
-            and result.get("status") == "completed"
-            for result in stage_results
-        )
+        """Restore a pipeline id's context and the stage its resume starts at
+        (``resume.prepare_resume``)."""
+        return resume.prepare_resume(self, pipeline_id, resume_from_stage)
 
     def _rewind_to_unrun_stage(
         self, start_stage_name: str, completed_stages: list[str]
     ) -> tuple[str, list[str]]:
-        """Move an auto resume back to an enabled stage that never completed.
-
-        A stage switched on since the pipeline last ran (gleaning or claim
-        extraction, say) has no recorded result, so the resume point the
-        recorded stages give lies past it and the stage would never run.
-        The resume starts at the first such stage instead, and only the
-        completed stages upstream of it are restored.
-        """
-        if start_stage_name not in self._ORDER:
-            return start_stage_name, completed_stages
-        start_position = self._ORDER.index(start_stage_name)
-        completed = set(completed_stages)
-        for stage in self.stages:
-            position = self._ORDER.index(stage.name)
-            if position >= start_position:
-                break
-            if stage.name not in completed:
-                logger.warning(
-                    "Stage '%s' is enabled but has not completed in this "
-                    "pipeline (it was off when the pipeline last ran); resuming "
-                    "from it instead of '%s'",
-                    stage.name,
-                    start_stage_name,
-                )
-                return stage.name, self._before(completed_stages, stage.name)
-        return start_stage_name, completed_stages
+        """``resume.rewind_to_unrun_stage``."""
+        return resume.rewind_to_unrun_stage(self, start_stage_name, completed_stages)
 
     def _rewind_to_failed_stage(
         self,
@@ -1468,65 +1269,15 @@ class DataIngestionPipeline:
         explicit: bool = False,
         rerun: bool = False,
     ) -> tuple[str, list[str]] | None:
-        """Move a resume back to the earliest completed, enabled stage that
-        recorded failed text units (``context.failed_text_unit_ids``), or
-        None to keep it.
-
-        Its restored output would make the indexing stage record their
-        documents FAILED once more without extracting them again, so every
-        re-run of the pipeline id would count one more failure. Run again,
-        the stage retries only the failed units (the extraction store keeps
-        what succeeded). A document that reached
-        ``indexing.max_document_failures`` meanwhile is not retried: the
-        delta no longer applies (``incremental.delta_still_applies``), and
-        the resume diffs again. An ``explicit`` resume point
-        (``--resume-from-stage``) is kept, with a warning, as the other
-        rewinds of an auto resume do.
-        """
-        if start_stage_name not in self._ORDER:
-            return None
-        enabled = {stage.name for stage in self.stages}
-        failed = self._before(
-            (
-                name
-                for name, unit_ids in context.failed_text_unit_ids.items()
-                if unit_ids and name in completed_stages and name in enabled
-            ),
-            start_stage_name,
-        )
-        first = min(failed, key=self._ORDER.index) if failed else None
-        # Also when the resume rewinds to ``first``: a stage not enabled
-        # that failed before it is not retried there either.
-        self._refuse_rerun_of_unrun_failures(
+        """``resume.rewind_to_failed_stage``."""
+        return resume.rewind_to_failed_stage(
+            self,
             context,
             start_stage_name,
             completed_stages,
             explicit=explicit,
-            resume_at=None if explicit else first,
             rerun=rerun,
         )
-        if first is None:
-            return None
-        if explicit:
-            logger.warning(
-                "Stage '%s' failed on %d text units; resuming from '%s' as "
-                "asked records their documents FAILED again without retrying "
-                "them, one more run toward indexing.max_document_failures "
-                "(resume from '%s' to retry them while they are under it: "
-                "past it they are excluded, not retried)",
-                first,
-                len(context.failed_text_unit_ids[first]),
-                start_stage_name,
-                first,
-            )
-            return None
-        logger.warning(
-            "Stage '%s' failed on %d text units; resuming from it instead of '%s'",
-            first,
-            len(context.failed_text_unit_ids[first]),
-            start_stage_name,
-        )
-        return first, self._before(completed_stages, first)
 
     def _rewind_on_missing_records(
         self,
@@ -1534,333 +1285,28 @@ class DataIngestionPipeline:
         start_stage_name: str | None,
         completed_stages: list[str],
     ) -> tuple[str, list[str]] | None:
-        """Move a reset resumed past the stages that store extraction records
-        back to the first of them whose records the store no longer holds, or
-        None to keep it.
-
-        The restored text units name the records this pipeline's stages
-        stored (graph records at graph_resolution, claim records at
-        claim_extraction). Another pipeline id may have deleted them since
-        (an incremental run deletes the records of the units it replaces, a
-        full build keeps only the ones its units name). Indexed anyway, the
-        units name records that are gone: the full build keeps none of them,
-        and the next incremental run cannot derive the items those units
-        cite. Run again, the stage extracts only the units whose records are
-        gone and stores them, and every later stage runs again: the LLM
-        response cache of the pipeline id answers their model calls, but with
-        ``cache.llm_responses.enabled`` off those units, every description
-        summary and every community report are generated (and billed) again. An
-        incremental resume needs no check: another pipeline id's write makes
-        its delta stale (``incremental.delta_still_applies``).
-
-        Raises:
-            PipelineResumeError: Records are missing and the stage that
-                stores them is not enabled in this run.
-        """
-        if not self.config.indexing.reset or start_stage_name not in self._ORDER:
-            return None
-        stores = {
-            "graph": PipelineStageType.GRAPH_RESOLUTION.value,
-            "claims": PipelineStageType.CLAIM_EXTRACTION.value,
-        }
-        restored = self._before(completed_stages, start_stage_name)
-        checked = {kind: stage for kind, stage in stores.items() if stage in restored}
-        if not checked:
-            return None
-        units = _with_record_keys(
-            self.config, context, context.translated_units or context.text_units
-        )
-        named: dict[str, dict[str, str]] = {}
-        for unit in units:
-            for kind, key in record_keys(unit).items():
-                if kind in checked:
-                    named.setdefault(BaseIndexer.get_suffix(unit), {})[key] = kind
-        if not named:
-            return None
-        missing: set[str] = set()
-        try:
-            indexer = self.providers.build_vector_indexer()
-            try:
-                read = indexer.read_extraction_records
-                if (
-                    getattr(read, "__func__", read)
-                    is VectorIndexer.read_extraction_records
-                ):
-                    return None  # the backend keeps no records
-                for suffix, kinds in named.items():
-                    stored = indexer.stored_extraction_record_keys(
-                        sorted(kinds), suffix=suffix
-                    )
-                    missing |= {kinds[key] for key in kinds.keys() - stored}
-            finally:
-                indexer.close()
-        except NamespaceLeaseError:
-            raise
-        except Exception as e:  # noqa: BLE001 - the indexing stage meets the store
-            logger.warning("Checking the stored extraction records failed: %s", e)
-            return None
-        if not missing:
-            return None
-        first = min(
-            (
-                (
-                    PipelineStageType.GRAPH_EXTRACTION.value
-                    if kind == "graph"
-                    else checked[kind]
-                )
-                for kind in missing
-            ),
-            key=self._ORDER.index,
-        )
-        if first not in {stage.name for stage in self.stages}:
-            raise PipelineResumeError(
-                f"Extraction records this pipeline stored are gone (another "
-                f"run replaced them), so '{first}' must run again. Re-run with "
-                f"'{first}' enabled (--resume-from-stage {first})."
-            )
-        logger.warning(
-            "Extraction records this pipeline stored are gone (another run "
-            "replaced them); resuming from '%s' instead of '%s'",
-            first,
-            start_stage_name,
-        )
-        return first, self._before(completed_stages, first)
-
-    def _refuse_rerun_of_unrun_failures(
-        self,
-        context: PipelineContext,
-        start_stage_name: str,
-        completed_stages: list[str],
-        *,
-        explicit: bool,
-        resume_at: str | None = None,
-        rerun: bool = False,
-    ) -> None:
-        """Refuse to run a completed stage again on the restored output of a
-        stage that failed on text units and is not enabled in this run (an
-        indexing-only phase run again, say), restored before ``resume_at``
-        (the stage the resume rewinds to; default ``start_stage_name``).
-
-        The completed run recorded those documents FAILED already; run
-        again, the indexing stage would record them FAILED once more
-        without retrying them, until ``indexing.max_document_failures``
-        excludes them. Only the failed stage can retry them. An ``explicit``
-        resume point is kept with a warning, like the rewind it replaces:
-        run as asked, the indexing stage counts those failures again.
-        ``rerun`` says the start stage completed in this pipeline id before
-        (an explicit resume's ``completed_stages`` stop before its start).
-
-        Raises:
-            PipelineResumeError: An auto resume would count those failures
-                again.
-        """
-        if self._doc_status is None or not (
-            rerun or start_stage_name in completed_stages
-        ):
-            return
-        enabled = {stage.name for stage in self.stages}
-        unrun = self._before(
-            (
-                name
-                for name, unit_ids in context.failed_text_unit_ids.items()
-                if unit_ids and name not in enabled
-            ),
-            resume_at or start_stage_name,
-        )
-        if not unrun:
-            return
-        first = min(unrun, key=self._ORDER.index)
-        message = (
-            f"Stage '{first}' failed on "
-            f"{len(context.failed_text_unit_ids[first])} text units and is not "
-            f"enabled in this run: running '{start_stage_name}' again would "
-            f"record their documents FAILED once more without retrying them"
-        )
-        if explicit:
-            logger.warning("%s", message)
-            return
-        raise PipelineResumeError(
-            f"{message}. Re-run with '{first}' enabled to retry them."
+        """``resume.rewind_on_missing_records``."""
+        return resume.rewind_on_missing_records(
+            self, context, start_stage_name, completed_stages
         )
 
     def _drop_unrun_failures(
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
-        """Forget the failed text units the restored context holds for the
-        stages this resumed run neither runs nor restores (not enabled, at or
-        after ``start_stage_name``; gleaning switched off since, say): the run
-        does not use their output, so the indexing stage must not record
-        their documents FAILED again. A stage before the start point keeps
-        them: its restored output is the run's (a phased run's earlier
-        window)."""
-        if start_stage_name not in self._ORDER:
-            return
-        start = self._ORDER.index(start_stage_name)
-        enabled = {stage.name for stage in self.stages}
-        for name in list(context.failed_text_unit_ids):
-            if (
-                name in self._ORDER
-                and name not in enabled
-                and self._ORDER.index(name) >= start
-            ):
-                logger.info(
-                    "Stage '%s' is not enabled in this run: its failed text "
-                    "units of an earlier run are not recorded",
-                    name,
-                )
-                del context.failed_text_unit_ids[name]
-                context.item_failed_text_unit_ids.pop(name, None)
-
-    def _rewind_on_extraction_change(
-        self, pipeline_id: str, start_stage_name: str, completed_stages: list[str]
-    ) -> tuple[str, list[str]]:
-        """Move an auto resume back to document_loading when the extraction
-        settings changed since its delta was computed.
-
-        document_loading's cache key does not cover the extraction settings,
-        so a resume past it keeps the previous run's delta and extraction
-        fingerprint: the stages that rerun (a newly enabled stage, or one
-        whose inputs changed) see only that delta's documents, and the
-        commit records the old fingerprint, so the next run re-extracts
-        every document. The same holds when the doc-status registry was
-        turned off since: the restored delta would write records to the
-        registry the user disabled. Rerunning document_loading diffs the
-        corpus with this run's settings (or skips the diff without a
-        registry); document_parsing stays cached.
-        """
-        loading = PipelineStageType.DOCUMENT_LOADING.value
-        if (
-            start_stage_name not in self._ORDER
-            or self._ORDER.index(start_stage_name) <= self._ORDER.index(loading)
-            or loading not in {stage.name for stage in self.stages}
-        ):
-            return start_stage_name, completed_stages
-        metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
-        recorded = metadata.get("incremental_extraction_settings")
-        if recorded is None:
-            return start_stage_name, completed_stages
-        changed = changed_settings(
-            ExtractionSettings.model_validate(recorded),
-            extraction_settings(self.config),
-        )
-        if not self.providers.doc_status_enabled:
-            reason = "the doc-status registry was disabled"
-        elif changed:
-            reason = f"the extraction settings changed ({', '.join(changed)})"
-        else:
-            return start_stage_name, completed_stages
-        return self._rewind_to_loading(
-            start_stage_name,
-            completed_stages,
-            f"{reason} since this pipeline computed its incremental delta",
-        )
-
-    def _rewind_to_loading(
-        self, start_stage_name: str, completed_stages: list[str], reason: str
-    ) -> tuple[str, list[str]]:
-        """Resume from document_loading instead (it diffs the corpus again;
-        document_parsing stays cached), logging ``reason``."""
-        loading = PipelineStageType.DOCUMENT_LOADING.value
-        logger.warning(
-            "%s; resuming from '%s' instead of '%s'",
-            reason[:1].upper() + reason[1:],
-            loading,
-            start_stage_name,
-        )
-        return loading, self._before(completed_stages, loading)
+        """``resume.drop_unrun_failures``."""
+        resume.drop_unrun_failures(self, context, start_stage_name)
 
     def _delta_is_stale(
         self, context: PipelineContext, start_stage_name: str | None
     ) -> bool:
-        """Whether a resume past document_loading would index a delta the
-        registry no longer matches (``incremental.delta_still_applies``).
-
-        Raises:
-            PipelineResumeError: It would, and document_loading is not
-                enabled in this run to compute the delta again.
-        """
-        if not self._incremental_delta(context) or not self._resumes_past_loading(
-            start_stage_name
-        ):
-            return False
-        assert context.incremental_delta is not None and self._doc_status is not None
-        if delta_still_applies(
-            self._doc_status,
-            context.incremental_delta,
-            context.incremental_fingerprints,
-            self.config.indexing.max_document_attempts,
-            context.incremental_extraction_fingerprint,
-            context.incremental_scope,
-            context.pipeline_id,
-            self.config.indexing.max_document_failures,
-            context.incremental_retired_scopes or (),
-        ):
-            return False
-        loading = PipelineStageType.DOCUMENT_LOADING.value
-        if loading not in {stage.name for stage in self.stages}:
-            raise PipelineResumeError(
-                f"{_STALE_DELTA}, so it must be computed again. Re-run with "
-                f"'{loading}' enabled (--resume-from-stage {loading})."
-            )
-        return True
-
-    def _check_upstream_complete(self, pipeline_id: str, start_stage_name: str) -> None:
-        """Fail when the resume point is a recorded stage upstream of every
-        enabled stage: an earlier stage failed or lost its cached output, so
-        this run's stages (a later phase, say) would run on missing inputs.
-        A resume point downstream of the enabled stages means they are all
-        done, and the run skips them."""
-        if not self.stages:
-            return
-        if start_stage_name not in self._ORDER or start_stage_name in {
-            stage.name for stage in self.stages
-        }:
-            return
-        first_enabled = self._ORDER.index(self.stages[0].name)
-        if self._ORDER.index(start_stage_name) > first_enabled:
-            return
-        metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
-        recorded = {r.get("stage_name") for r in metadata.get("stage_results", [])}
-        if start_stage_name in recorded:
-            raise PipelineResumeError(
-                f"Stage '{start_stage_name}', upstream of this run's enabled "
-                f"stages, has not completed (or its cached output is gone). "
-                f"Run it first, e.g. with --enabled-stages including "
-                f"'{start_stage_name}'."
-            )
+        """``resume.delta_is_stale``."""
+        return resume.delta_is_stale(self, context, start_stage_name)
 
     def _prepare_context_for_resume(
         self, context: PipelineContext, start_stage_name: str
     ) -> None:
-        # Order by the canonical pipeline sequence (STAGE_CLASSES), NOT the
-        # enabled-stage subset: phased execution narrows self.stages to one
-        # phase's window (e.g. just ["indexing"]), so judging "is this an
-        # upstream result?" against that subset would wrongly discard every
-        # earlier phase's results — silently dropping resolved_relationships /
-        # resolved_claims before indexing. The full order keeps them.
-        try:
-            kept = set(
-                self._before(
-                    (res.stage_name for res in context.stage_results),
-                    start_stage_name,
-                )
-            )
-        except ValueError:
-            logger.warning(
-                "Start stage '%s' not in canonical pipeline order; "
-                "keeping all %s previous stage results",
-                start_stage_name,
-                len(context.stage_results),
-            )
-            return
-
-        valid_results = [res for res in context.stage_results if res.stage_name in kept]
-        context.stage_results = valid_results
-        logger.info(
-            "Context prepared for resume from '%s' - keeping %s previous stage results",
-            start_stage_name,
-            len(valid_results),
-        )
+        """``resume.prepare_context_for_resume``."""
+        resume.prepare_context_for_resume(self, context, start_stage_name)
 
     def _prepare_new_run(
         self, source_directory: Path, pipeline_id: str, resume_from_stage: str | None
@@ -2346,10 +1792,10 @@ class DataIngestionPipeline:
                     "for '%s'; the summary below shows what this run processed",
                     context.pipeline_id,
                 )
-                self._log_pipeline_summary(context)
+                pipeline_metrics.log_pipeline_summary(context)
                 raise
 
-        self._log_pipeline_summary(context)
+        pipeline_metrics.log_pipeline_summary(context)
 
     def _warn_failed_units(self, context: PipelineContext) -> None:
         """Warn, at the end of a run, of the text units its stages failed on:
@@ -2397,133 +1843,8 @@ class DataIngestionPipeline:
         )
 
     def _create_pipeline_metrics(self, context: PipelineContext) -> PipelineMetrics:
-        cache_stats = self.cache_manager.get_cache_stats(context.pipeline_id)
-        stage_durations, stage_throughput = self._calculate_stage_performance(context)
-
-        metric_data: dict[str, Any] = {
-            "pipeline_id": context.pipeline_id,
-            # Not known until the run ends (a stage's metrics are built before).
-            "total_duration_seconds": context.duration_seconds or 0.0,
-            "total_documents_processed": len(context.documents or []),
-            "total_text_units_created": len(context.text_units or []),
-            "total_translated_units": len(context.translated_units or []),
-            "total_entities_extracted": len(
-                {e.id for r in context.unit_extractions for e in r.entities}
-            ),
-            "total_relationships_extracted": len(
-                {rel.id for r in context.unit_extractions for rel in r.relationships}
-            ),
-            "total_claims_extracted": len(context.claims or []),
-            "total_communities_detected": len(context.communities or []),
-            "total_community_reports_generated": len(context.community_reports or []),
-            "gleaning_improvement_rate": self._get_stage_metric(
-                context, "gleaning", "improvement_rate"
-            ),
-            "entity_resolution_merge_rate": self._get_stage_metric(
-                context, "graph_resolution", "entity_merge_rate"
-            ),
-            "relationship_resolution_merge_rate": self._get_stage_metric(
-                context, "graph_resolution", "relationship_merge_rate"
-            ),
-            "claim_resolution_merge_rate": self._get_stage_metric(
-                context, "claim_resolution", "claim_merge_rate"
-            ),
-            "community_modularity_score": self._get_stage_metric(
-                context, "community_detection", "modularity_score"
-            ),
-            "total_items_indexed": int(
-                self._get_stage_metric(context, "indexing", "total_indexed")
-            ),
-            # Include a hard-failure sentinel: when the indexing stage RAISES
-            # (e.g. clear/initialize/connection error), its result carries no
-            # metrics, so "total_failed" reads 0 and the IndexingFailures alarm
-            # (which watches this metric) can never fire on a total indexing
-            # failure. Emit >=1 in that case so the alarm surfaces the crash.
-            "total_items_index_failed": int(
-                self._get_stage_metric(context, "indexing", "total_failed")
-            )
-            or (1 if self._stage_failed(context, "indexing") else 0),
-            "relationships_indexed": int(
-                self._get_stage_metric(context, "indexing", "relationships_indexed")
-            ),
-            "community_drift_overlap_share": self._get_stage_metric(
-                context, "indexing", "community_drift_overlap_share"
-            ),
-            "community_rebuild_recommended": int(
-                self._get_stage_metric(
-                    context, "indexing", "community_rebuild_recommended"
-                )
-            ),
-            "community_growth_ratio": self._get_stage_metric(
-                context, "indexing", "community_growth_ratio"
-            ),
-            "runs_since_clustering": int(
-                self._get_stage_metric(context, "indexing", "runs_since_clustering")
-            ),
-            # Per-chunk LLM failures degrade a run without failing it; surface
-            # them so the ExtractionFailures alarm can catch a partial graph.
-            "total_extraction_failures": int(
-                self._get_stage_metric(context, "graph_extraction", "failed_units")
-            ),
-            "total_gleaning_failures": int(
-                self._get_stage_metric(context, "gleaning", "failed_units")
-            ),
-            "total_claim_extraction_failures": int(
-                self._get_stage_metric(context, "claim_extraction", "failed_units")
-            ),
-            # Documents an incremental run stopped retrying because their
-            # processing kept killing the run (the DocumentsQuarantined
-            # alarm), and those it deferred while isolating one.
-            "total_documents_quarantined": int(
-                self._get_stage_metric(
-                    context, "document_loading", "documents_quarantined"
-                )
-            ),
-            "total_documents_deferred": int(
-                self._get_stage_metric(
-                    context, "document_loading", "documents_deferred"
-                )
-            ),
-            # Documents an incremental run stopped retrying (each failed
-            # indexing.max_document_failures runs for an error of its own).
-            "total_documents_excluded": int(
-                self._get_stage_metric(
-                    context, "document_loading", "documents_excluded"
-                )
-            ),
-            # Corpus files the run could not read: their documents are
-            # neither processed nor deleted.
-            "total_files_failed": sum(
-                int(self._get_stage_metric(context, stage, "files_failed"))
-                for stage in ("document_parsing", "document_loading")
-            ),
-            "total_files_skipped": int(
-                self._get_stage_metric(context, "document_parsing", "files_skipped")
-            ),
-            "total_documents_deleted": int(
-                self._get_stage_metric(context, "indexing", "documents_deleted")
-            ),
-            # The run's document outcomes, as run-ingestion's JSON result
-            # reports them (failed_documents, documents_retrying,
-            # documents_without_claims): recorded by the indexing commit or
-            # a stage that stopped the run, so emitted when the run ends.
-            "total_documents_failed": len(context.recorded_failed_doc_ids),
-            "total_units_failed": len(context.failed_unit_ids()),
-            "total_documents_retrying": len(context.retrying_doc_ids),
-            "total_documents_without_claims": len(context.claims_missing_doc_ids),
-            "total_records_not_stored": sum(
-                int(self._get_stage_metric(context, stage, "records_not_stored"))
-                for stage in ("graph_resolution", "claim_extraction")
-            ),
-            "underived_items": int(
-                self._get_stage_metric(context, "indexing", "underived_items")
-            ),
-            "cache_hit_rate": cache_stats.hit_rate,
-            "cache_size_mb": cache_stats.total_size_mb,
-            "stage_durations": stage_durations,
-            "stage_throughput": stage_throughput,
-        }
-        return PipelineMetrics(**metric_data)
+        """``pipeline_metrics.create_pipeline_metrics``."""
+        return pipeline_metrics.create_pipeline_metrics(self, context)
 
     def _emit_metrics(
         self,
@@ -2532,165 +1853,28 @@ class DataIngestionPipeline:
         stage_name: str | None = None,
         extra: dict[str, float] | None = None,
     ) -> None:
-        """Forward scalar pipeline metrics to the configured sink (best-effort).
-
-        With ``stage_name`` (right after that stage ran): the metrics it
-        completes (``METRIC_STAGES``, emitted after the last of their stages
-        this run has enabled) and its duration, so a run that is stopped or
-        times out still reports the stages it finished. Without: the metrics
-        of the whole run, when it ends.
-        """
-        enabled = [stage.name for stage in getattr(self, "stages", [])]
-
-        def completes(stages: frozenset[str]) -> str | None:
-            # The last enabled stage of ``stages``, in pipeline order.
-            last = [name for name in enabled if name in stages]
-            return last[-1] if last else None
-
-        def emitted(name: str) -> bool:
-            stages = self.METRIC_STAGES.get(name)
-            if stage_name is None:
-                return stages is None
-            return stages is not None and completes(stages) == stage_name
-
-        try:
-            dumped = metrics.model_dump()
-            scalars = {
-                k: v
-                for k, v in dumped.items()
-                if isinstance(v, (int, float))
-                and not isinstance(v, bool)
-                and emitted(k)
-            }
-            # The per-stage duration map is flattened into scalar metrics (the
-            # dict member is otherwise dropped by the scalar filter).
-            duration = (metrics.stage_durations or {}).get(stage_name or "")
-            if isinstance(duration, (int, float)):
-                scalars[f"duration_{stage_name}_seconds"] = duration
-            scalars.update(extra or {})
-            self.metrics_sink.emit(
-                namespace="unified_kg_rag/ingestion",
-                metrics=scalars,
-                dimensions={"pipeline_id": pipeline_id},
-            )
-        except Exception as e:  # noqa: BLE001 - metrics never break a run
-            logger.warning("Metrics emission failed: %s", e)
+        """``pipeline_metrics.emit_metrics``."""
+        pipeline_metrics.emit_metrics(self, metrics, pipeline_id, stage_name, extra)
 
     def _emit_stage_metrics(self, context: PipelineContext, stage_name: str) -> None:
-        """Emit what ``stage_name`` completes, right after it ran."""
-        try:
-            metrics = self._create_pipeline_metrics(context)
-        except Exception as e:  # noqa: BLE001 - metrics never break a run
-            logger.warning("Metrics emission failed: %s", e)
-            return
-        self._emit_metrics(
-            metrics,
-            context.pipeline_id,
-            stage_name,
-            self._stage_usage_metrics(context, stage_name),
-        )
-
-    @staticmethod
-    def _stage_usage_metrics(
-        context: PipelineContext, stage_name: str
-    ) -> dict[str, float]:
-        """The flat LLM usage metrics of a stage that called a model or was
-        served from the response cache (none for a model-free stage, so no
-        custom-metric series is created for it): ``llm_calls_<stage>``,
-        ``llm_input_tokens_<stage>``, ``llm_output_tokens_<stage>`` and
-        ``llm_cache_hits`` (summed over the stages by a Sum statistic)."""
-        usage = next(
-            (
-                r.metrics.get(LLM_USAGE_METRIC)
-                for r in reversed(context.stage_results)
-                if r.stage_name == stage_name
-            ),
-            None,
-        )
-        if not usage or not (usage.get("llm_calls") or usage.get("cache_hits")):
-            return {}
-        return {
-            f"llm_calls_{stage_name}": usage.get("llm_calls", 0),
-            f"llm_input_tokens_{stage_name}": usage.get("input_tokens", 0),
-            f"llm_output_tokens_{stage_name}": usage.get("output_tokens", 0),
-            "llm_cache_hits": usage.get("cache_hits", 0),
-        }
+        """``pipeline_metrics.emit_stage_metrics``."""
+        pipeline_metrics.emit_stage_metrics(self, context, stage_name)
 
     @staticmethod
     def _calculate_stage_performance(
         context: PipelineContext,
     ) -> tuple[dict[str, float], dict[str, float]]:
-        durations = {}
-        throughput = {}
-
-        for result in context.stage_results:
-            if result.duration_seconds is not None and result.duration_seconds > 0:
-                durations[result.stage_name] = result.duration_seconds
-                if result.output_count > 0:
-                    throughput[result.stage_name] = (
-                        result.output_count / result.duration_seconds
-                    )
-
-        return durations, throughput
+        """``pipeline_metrics.calculate_stage_performance``."""
+        return pipeline_metrics.calculate_stage_performance(context)
 
     @staticmethod
     def _get_stage_metric(
         context: PipelineContext, stage_name_prefix: str, metric_name: str
     ) -> float:
-        for result in context.stage_results:
-            if result.stage_name.lower().startswith(stage_name_prefix):
-                return float(result.metrics.get(metric_name, 0.0))
-        return 0.0
-
-    @staticmethod
-    def _stage_failed(context: PipelineContext, stage_name_prefix: str) -> bool:
-        """True if the named stage ran and ended FAILED (crashed).
-
-        A crashed stage carries no metrics, so the metric-based failure counts
-        read 0; callers use this to still surface the failure (e.g. to the
-        IndexingFailures alarm).
-        """
-        for result in context.stage_results:
-            if result.stage_name.lower().startswith(stage_name_prefix):
-                return result.status == PipelineStageStatus.FAILED
-        return False
-
-    @staticmethod
-    def _log_pipeline_summary(context: PipelineContext) -> None:
-        status_counts = dict.fromkeys(PipelineStageStatus, 0)
-        for r in context.stage_results:
-            status_counts[r.status] += 1
-
-        completed = status_counts.get(PipelineStageStatus.COMPLETED, 0)
-        failed = status_counts.get(PipelineStageStatus.FAILED, 0)
-        running = status_counts.get(PipelineStageStatus.RUNNING, 0)
-
-        total_documents = len(context.documents or [])
-        total_entities = len(context.resolved_entities or [])
-        total_relationships = len(context.resolved_relationships or [])
-        total_claims = len(context.resolved_claims or [])
-        total_communities = len(context.communities or [])
-
-        summary = (
-            f"Pipeline ID: {context.pipeline_id}\n"
-            f"Status: {context.status.value}\n"
-            f"Duration: {context.duration_seconds:.2f}s\n"
-            f"Stages: {completed} completed, {failed} failed, {running} running\n"
-            f"Data processed: {total_documents} documents -> "
-            f"{total_entities} entities, {total_relationships} relationships, "
-            f"{total_claims} claims -> {total_communities} communities"
+        """``pipeline_metrics.get_stage_metric``."""
+        return pipeline_metrics.get_stage_metric(
+            context, stage_name_prefix, metric_name
         )
-        if failed_units := context.failed_unit_ids():
-            summary += f"\nText units failed: {len(failed_units)}"
-        if context.claims_missing_doc_ids:
-            summary += (
-                f"\nIndexed without some of their claims: "
-                f"{len(context.claims_missing_doc_ids)} documents"
-            )
-        logger.info("=" * 60)
-        logger.info("PIPELINE SUMMARY")
-        logger.info("=" * 60)
-        logger.info("%s", summary)
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         logger.info("Verifying pipeline metadata for: %s", pipeline_id)
