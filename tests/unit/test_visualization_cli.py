@@ -18,7 +18,8 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     register_renderer,
     registered_renderers,
-    render_all,
+    render_resolved,
+    resolve_renderers,
 )
 from unified_kg_rag.application.cli import run_visualization as cli_module
 from unified_kg_rag.application.cli.run_visualization import (
@@ -64,6 +65,13 @@ def export_json(tmp_path: Path) -> Path:
     path = tmp_path / "viz.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
+
+
+def _render(
+    context: RenderContext, output_dir: Path, names: list[str], viz_config: object
+) -> list[Path]:
+    # As run-visualization renders: every name resolved and checked first.
+    return render_resolved(context, output_dir, resolve_renderers(names), viz_config)
 
 
 class TestLoadRenderContext:
@@ -310,7 +318,7 @@ class TestRendererRegistry:
             get_renderer_class("does-not-exist")
 
     @pytest.mark.usefixtures("restore_renderer_registry")
-    def test_render_all_skips_a_failing_renderer_and_passes_each_its_block(
+    def test_render_skips_a_failing_renderer_and_passes_each_its_block(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         # The one render loop the manager and run-visualization share.
@@ -328,7 +336,7 @@ class TestRendererRegistry:
                 return [output_dir / "ok.txt"]
 
         viz_config = type("V", (), {"ok_for_test": {"size": 3}})()
-        written = render_all(
+        written = _render(
             RenderContext(graph=nx.Graph()),
             tmp_path,
             ["broken_for_test", "ok_for_test"],
@@ -338,7 +346,7 @@ class TestRendererRegistry:
         assert seen["config"] == {"size": 3}
         assert "Renderer 'broken_for_test' failed: cannot draw" in caplog.text
         with pytest.raises(ValueError, match="No renderer registered"):
-            render_all(RenderContext(graph=nx.Graph()), tmp_path, ["nope"], None)
+            _render(RenderContext(graph=nx.Graph()), tmp_path, ["nope"], None)
 
 
 def _write_empty_export(tmp_path: Path) -> Path:
@@ -438,10 +446,10 @@ class TestWithoutTheVizExtra:
         renderer_cls = get_renderer_class("static")
         renderer_cls.check_dependencies()
         graph = nx.Graph([("a", "b")])
-        written = render_all(RenderContext(graph=graph), tmp_path, ["static"], None)
+        written = _render(RenderContext(graph=graph), tmp_path, ["static"], None)
         assert [p.name for p in written] == ["degree_distribution.html"]
 
-    def test_render_all_fails_before_rendering_anything(
+    def test_render_fails_before_rendering_anything(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Not logged and skipped like a failing renderer: the static charts
@@ -451,7 +459,7 @@ class TestWithoutTheVizExtra:
         )
         graph = nx.Graph([("a", "b")])
         with pytest.raises(ConfigurationError, match="--extra viz"):
-            render_all(
+            _render(
                 RenderContext(graph=graph), tmp_path, ["static", "interactive"], None
             )
         assert list(tmp_path.iterdir()) == []

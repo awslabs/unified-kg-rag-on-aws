@@ -846,9 +846,6 @@ class DocumentParsingStage(PipelineStage):
 
         return input_count, output_count, metrics
 
-    def _discover_files(self) -> list[Path]:
-        return self._discover_source_files()[0]
-
     def _discover_source_files(self) -> tuple[list[Path], list[str]]:
         """The files to parse, and the files skipped for a file type no
         loader reads (one WARNING names them by extension)."""

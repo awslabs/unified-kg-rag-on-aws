@@ -503,28 +503,12 @@ class PromptTuner:
             ][: self.MAX_EXAMPLES]
         return [c for c in chunks if c.strip()]
 
-    async def generate_examples(self, profile: CorpusProfile, texts: list[str]) -> str:
-        """Generate corpus-grounded few-shot extraction examples.
-
-        MS GraphRAG's prompt-tune step grounds few-shots in the real corpus by
-        running actual entity/relationship extraction over sampled chunks and
-        embedding those genuine input→output pairs into the tuned prompt (rather
-        than asking the model to invent a representative example). We do the
-        same: run the real ``GraphExtractor`` over a few sampled chunks and
-        render each ``(chunk text → extracted entities/relationships)`` pair in
-        the exact XML shape the extraction prompt teaches. Returns an empty
-        string if the corpus is empty or extraction yields nothing (extraction
-        still works without examples, so this degrades gracefully).
-        """
-        return self.render_examples(
-            *self.extract_examples(texts, self.example_entity_types(profile))
-        )
-
     def extract_examples(
         self, texts: list[str], entity_types: list[str] | None = None
     ) -> tuple[list[TextUnit], list[TextUnitExtraction]]:
         """The sampled example chunks and the real ``GraphExtractor``'s
-        records of them, extracted with ``entity_types`` when given and the
+        records of them (MS GraphRAG's prompt tuning grounds its few-shots in
+        the corpus so too, rather than asking the model to invent one), extracted with ``entity_types`` when given and the
         config does not declare its own (:attr:`schema_configured`); no
         records if extraction fails (examples are best-effort)."""
         chunks = self._sample_chunks(texts)

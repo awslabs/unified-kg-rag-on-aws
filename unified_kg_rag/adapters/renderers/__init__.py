@@ -19,7 +19,6 @@ from .base import (
     get_renderer_class,
     register_renderer,
     registered_renderers,
-    render_all,
     render_resolved,
     resolve_renderers,
 )
@@ -35,7 +34,6 @@ __all__ = [
     "get_renderer_class",
     "register_renderer",
     "registered_renderers",
-    "render_all",
     "render_resolved",
     "resolve_renderers",
 ]

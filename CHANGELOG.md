@@ -91,7 +91,7 @@ Python and installation.
     container image installs `eval`.
   - `viz` holds `pyvis`, for the `interactive` renderer. Without it a
     `run-visualization` that requests `interactive` exits 2 naming the extra
-    and `render_all` raises `ConfigurationError`; the `static` renderer and
+    and `resolve_renderers` raises `ConfigurationError`; the `static` renderer and
     `from unified_kg_rag import BaseRenderer, register_renderer` work on a
     core install. `umap-learn` and `scikit-learn` are no longer
     dependencies, and neither are `bokeh` and what only it pulled in
@@ -242,7 +242,8 @@ Configuration keys.
   package (`GraphVisualizationManager`, `BedrockNodeEmbedder`,
   `DimensionalityReducer`, `HTMLExporter` and its
   `graph_analysis_report.html`) are gone; drive the renderers through
-  `unified_kg_rag.adapters.renderers` (`render_all`, `RenderContext`). The
+  `unified_kg_rag.adapters.renderers` (`resolve_renderers`,
+  `render_resolved`, `RenderContext`). The
   keys load with a WARNING and are ignored (#467):
 
   | Removed key | Replacement |

@@ -112,22 +112,6 @@ def resolve_renderers(
     return renderers
 
 
-def render_all(
-    context: RenderContext,
-    output_dir: Path,
-    renderer_names: Iterable[str],
-    viz_config: Any,
-) -> list[Path]:
-    """Run each named renderer over ``context``; return the files written.
-
-    The names are resolved and checked (:func:`resolve_renderers`) before
-    anything renders; see :func:`render_resolved` for the rest.
-    """
-    return render_resolved(
-        context, output_dir, resolve_renderers(renderer_names), viz_config
-    )
-
-
 def render_resolved(
     context: RenderContext,
     output_dir: Path,

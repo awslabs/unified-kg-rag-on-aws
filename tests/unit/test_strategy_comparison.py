@@ -195,7 +195,7 @@ class TestPairwiseJudge:
 
     def test_position_bias_is_a_tie_and_a_stable_verdict_wins(self, mocker) -> None:
         judge = self._judge(mocker)
-        outcome = asyncio.run(judge.ajudge("q?", "short", "detailed"))
+        outcome, _ = asyncio.run(judge._ajudge_both_orders("q?", "short", "detailed"))
         assert outcome == {
             "comprehensiveness": "candidate",
             "diversity": "tie",
