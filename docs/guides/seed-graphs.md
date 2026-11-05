@@ -200,7 +200,11 @@ reach those strategies through the communities documents also state.
     question itself; `simple` sweeps every other index; `auto` routes to one
     of these) and `global`, which reads reports only, refuses the key.
     `mix` and `hybrid` read no report, and `naive`, which reads text chunks
-    only, refuses the key too.
+    only, refuses the key too. The key filters entities and relationships
+    only: text units declare no `source_kinds`, and a filter applies only
+    to the stores that declare its field, so `local`, `mix` and `hybrid`
+    still return the documents' text chunks under `seed_graph` (a seed's
+    own units are never text chunks).
   - `iri` (entities, Neptune entity vertices): the exact IRI.
   - `attr_seed_graph: procure` keeps what that seed states, through the
     document filters every index carries. A tenant filter such as

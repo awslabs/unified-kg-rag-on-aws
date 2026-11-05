@@ -5,7 +5,7 @@ OpenSearch, a DynamoDB doc-status table and an S3 cache bucket in a VPC, an
 ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch
 alarms and a dashboard, and an optional Bedrock Guardrail.
 
-- [Quick start](#quick-start): synthesize and deploy.
+- [Quick start](#quick-start): synthesize and deploy; [Teardown](#teardown).
 - [After deploy](#after-deploy): push the image, ingest, query, evaluate.
 - [Configuration](#configuration-cdkjson-context---c-keyvalue): every
   `-c key=value` option.
@@ -47,8 +47,48 @@ variable corrupts context parsing (`vpc_id` is silently dropped and
 > **Cost and teardown.** Neptune, OpenSearch, interface endpoints and (in
 > `public` mode) NAT gateways bill while the stack exists, whether or not
 > anything runs ([Cost drivers](#cost-drivers)). In the default `dev`
-> environment `cdk destroy --all` removes everything; other environments
-> default to `removal_destroy=false` and `deletion_protection=true`.
+> environment `cdk destroy --all` removes every resource the stacks own
+> (see [Teardown](#teardown) for what AWS creates outside them); other
+> environments default to `removal_destroy=false` and
+> `deletion_protection=true`.
+
+### Teardown
+
+`cdk destroy --all` leaves what AWS services create on their own, outside
+the stacks. None of it bills by the hour (log groups bill for stored data
+only), but delete it for a clean account. `<prefix>` is `graphrag` in `dev`
+and `<env_name>-graphrag` otherwise; `<stack prefix>` is `GraphRag` in
+`dev` and `GraphRag<Env>` otherwise (e.g. `GraphRagProd`).
+
+- The Container Insights performance log group of the cluster,
+  `/aws/ecs/containerinsights/<prefix>-cluster/performance`, which
+  Container Insights creates for the performance log events.
+- The log groups of the storage stack's two CDK-provided Lambda
+  functions, which log to the default `/aws/lambda/<function name>`
+  group Lambda creates on their first invocation: the S3 auto-delete
+  handler (`dev` only) and the handler that sets the OpenSearch access
+  policy and log resource policy. Their names start with
+  `/aws/lambda/<stack prefix>Storage-`.
+- The task-definition revisions of the query and ingestion tasks
+  (families `<stack prefix>ComputeQueryTask...` and
+  `<stack prefix>OrchestrationIngestionTask...`): a stack deletion
+  deregisters them, which leaves each revision `INACTIVE`.
+
+```bash
+aws logs delete-log-group \
+  --log-group-name /aws/ecs/containerinsights/<prefix>-cluster/performance
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/<stack prefix>Storage- \
+  --query 'logGroups[].logGroupName' --output text   # delete each with delete-log-group
+aws ecs list-task-definitions --status INACTIVE --family-prefix <stack prefix>Compute \
+  --query taskDefinitionArns --output text
+aws ecs list-task-definitions --status INACTIVE --family-prefix <stack prefix>Orchestration \
+  --query taskDefinitionArns --output text
+aws ecs delete-task-definitions --task-definitions <arn> ...   # up to 10 per call
+```
+
+A retained environment (`removal_destroy=false`) also keeps the stores,
+keys, guardrail, ECR repository and fixed-name log groups
+([Configuration](#configuration-cdkjson-context---c-keyvalue), `removal_destroy`).
 
 ## Deployment topology
 

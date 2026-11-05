@@ -1854,6 +1854,14 @@ Deployment (CDK).
   filter key: a `type` filter still leaves relationships unfiltered. An
   incremental run maps the field on an existing index; a copy written
   before reads as before until it is rewritten (*Upgrading*) (#PR).
+- The seed-graph guide did not say that `source_kinds` filters entities
+  and relationships only: text units declare no such field, so `local`,
+  `mix` and `hybrid` still return the documents' text chunks under
+  `seed_graph`. The CDK README said `cdk destroy --all` removes everything
+  in `dev`; it lists what it leaves now (the Container Insights
+  performance log group, the storage stack's two Lambda log groups and the
+  `INACTIVE` task-definition revisions) and the commands that delete them
+  (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
