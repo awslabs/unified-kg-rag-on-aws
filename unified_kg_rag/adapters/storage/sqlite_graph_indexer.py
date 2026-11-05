@@ -281,7 +281,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.transaction("write schema annotations") as connection:
             for batch in batches(sorted(annotations)):
                 rows = connection.execute(
-                    f"SELECT id, props FROM {table} "
+                    f"SELECT id, props FROM {table} "  # nosec B608 - literal table, ? marks, values bound
                     f"WHERE label = ? AND id IN ({placeholders(batch)})",
                     [label, *batch],
                 ).fetchall()
@@ -297,7 +297,7 @@ class SQLiteGraphIndexer(GraphIndexer):
                             props[key] = [value] if table == "vertices" else value
                     updates.append((json.dumps(props), label, item_id))
                 connection.executemany(
-                    f"UPDATE {table} SET props = ? WHERE label = ? AND id = ?",
+                    f"UPDATE {table} SET props = ? WHERE label = ? AND id = ?",  # nosec B608 - literal table, values bound
                     updates,
                 )
         stats.add_success(len(annotations))
@@ -364,12 +364,15 @@ class SQLiteGraphIndexer(GraphIndexer):
     ) -> None:
         for batch in batches(list(dict.fromkeys(ids))):
             if label is None:
+                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - ? marks only, values bound
                 connection.execute(
-                    f"DELETE FROM edges WHERE id IN ({placeholders(batch)})", batch
+                    f"DELETE FROM edges WHERE id IN ({placeholders(batch)})",  # nosec B608 - ? marks only, values bound
+                    batch,
                 )
             else:
+                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - ? marks only, values bound
                 connection.execute(
-                    f"DELETE FROM edges WHERE label = ? AND id IN ({placeholders(batch)})",
+                    f"DELETE FROM edges WHERE label = ? AND id IN ({placeholders(batch)})",  # nosec B608 - ? marks only, values bound
                     [label, *batch],
                 )
 
@@ -454,7 +457,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.read("read relationships") as connection:
             for batch in batches(list(dict.fromkeys(ids))):
                 rows = connection.execute(
-                    "SELECT id, type, source_id, target_id, props FROM edges "
+                    "SELECT id, type, source_id, target_id, props FROM edges "  # nosec B608 - ? marks only, values bound
                     f"WHERE label = ? AND id IN ({placeholders(batch)})",
                     [label, *batch],
                 ).fetchall()
@@ -547,7 +550,7 @@ class SQLiteGraphIndexer(GraphIndexer):
                 # One indexed lookup per endpoint (an OR reads every edge of
                 # the label).
                 rows = connection.execute(
-                    "SELECT source_id, target_id FROM edges WHERE label = ? "
+                    "SELECT source_id, target_id FROM edges WHERE label = ? "  # nosec B608 - literal clause, ? marks, values bound
                     f"AND source_id IN ({marks}) {backed}"
                     "UNION ALL "
                     "SELECT source_id, target_id FROM edges WHERE label = ? "
@@ -581,7 +584,7 @@ class SQLiteGraphIndexer(GraphIndexer):
             for batch in batches(list(stored)):
                 marks = placeholders(batch)
                 rows = connection.execute(
-                    "SELECT node, COUNT(DISTINCT other) FROM ("
+                    "SELECT node, COUNT(DISTINCT other) FROM ("  # nosec B608 - ? marks only, values bound
                     "SELECT source_id AS node, target_id AS other FROM edges "
                     f"WHERE label = ? AND source_id IN ({marks}) "
                     "UNION ALL "
@@ -615,7 +618,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.read("find vertices citing text units") as connection:
             for batch in batches(list(dict.fromkeys(text_unit_ids))):
                 rows = connection.execute(
-                    "SELECT id, props FROM vertices WHERE label = ? AND EXISTS "
+                    "SELECT id, props FROM vertices WHERE label = ? AND EXISTS "  # nosec B608 - ? marks only, values bound
                     "(SELECT 1 FROM json_each(vertices.props, '$.text_unit_ids') "
                     f"WHERE value IN ({placeholders(batch)}))",
                     [label, *batch],
@@ -638,7 +641,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.read("find edges citing text units") as connection:
             for batch in batches(list(dict.fromkeys(text_unit_ids))):
                 rows = connection.execute(
-                    "SELECT id, json_extract(props, '$.text_unit_ids') FROM edges "
+                    "SELECT id, json_extract(props, '$.text_unit_ids') FROM edges "  # nosec B608 - ? marks only, values bound
                     "WHERE label = ? AND EXISTS (SELECT 1 FROM json_each("
                     "json_extract(edges.props, '$.text_unit_ids')) "
                     f"WHERE value IN ({placeholders(batch)}))",
@@ -660,7 +663,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         with self.store.read("find entities by name key") as connection:
             for batch in batches(list(dict.fromkeys(name_keys))):
                 rows = connection.execute(
-                    "SELECT id FROM vertices WHERE label = ? AND EXISTS "
+                    "SELECT id FROM vertices WHERE label = ? AND EXISTS "  # nosec B608 - constant key, ? marks, values bound
                     f"(SELECT 1 FROM json_each(vertices.props, '$.{NAME_KEY_PROPERTY}') "
                     f"WHERE value IN ({placeholders(batch)}))",
                     [label, *batch],
@@ -681,7 +684,7 @@ class SQLiteGraphIndexer(GraphIndexer):
             for batch in batches(list(dict.fromkeys(entity_ids))):
                 marks = placeholders(batch)
                 rows = connection.execute(
-                    "SELECT id FROM edges WHERE label = ? "
+                    "SELECT id FROM edges WHERE label = ? "  # nosec B608 - ? marks only, values bound
                     f"AND source_id IN ({marks}) "
                     "UNION ALL "
                     "SELECT id FROM edges WHERE label = ? "

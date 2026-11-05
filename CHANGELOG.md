@@ -2316,3 +2316,12 @@ Deployment (CDK).
   retry jitter draws from `random.SystemRandom` (#307).
 
 [Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/commits/main
+- The ASH scan (bandit, semgrep, detect-secrets, checkov, cdk-nag,
+  npm-audit) gates pull requests and pushes: an unsuppressed finding at
+  MEDIUM or above fails the `security` workflow. Each suppression carries
+  its reason, on the line (`# nosec`, `# nosemgrep`, `# pragma: allowlist
+  secret`) or path-scoped in `.ash/.ash.yaml` (tests, local-mode Gremlin
+  URL prose, token-count log lines). Dependabot waits 7 days after a release
+  before proposing it (security updates still open at once), and the LLM
+  XML parser never resolves DOCTYPE entities, whatever lxml's default
+  (#578).

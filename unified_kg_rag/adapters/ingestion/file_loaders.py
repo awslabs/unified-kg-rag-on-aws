@@ -234,6 +234,7 @@ class UnstructuredPartitionLoader(BaseLoader):
         self.partition = partition
 
     def lazy_load(self) -> Iterator[LangChainDocument]:
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import - html or md, validated
         module = importlib.import_module(f"unstructured.partition.{self.partition}")
         require_spacy_model()
         partition = getattr(module, f"partition_{self.partition}")

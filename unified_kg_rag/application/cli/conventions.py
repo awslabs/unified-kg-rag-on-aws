@@ -296,14 +296,14 @@ def _stop_watchdog() -> None:
         try:
             print_status(exit_code)
             _print_stop_line(signum)  # unless main's own exit printed it
-        except Exception:  # noqa: BLE001, S110 - ending anyway
+        except Exception:  # noqa: BLE001  # nosec B110 - ending anyway
             pass
         finally:
             _print_lock.release()
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
-        except Exception:  # noqa: BLE001, S110 - ending anyway
+        except Exception:  # noqa: BLE001  # nosec B110 - ending anyway
             pass
     os._exit(exit_code)
 

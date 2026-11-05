@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import threading
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -800,6 +801,23 @@ class TestRobustXMLOutputParser:
     def test_try_lxml_recover_parse_with_attributes(self) -> None:
         out = RobustXMLOutputParser._try_lxml_recover_parse(b'<root id="7">text</root>')
         assert out["root"]["@id"] == "7"
+
+    def test_doctype_entities_are_not_resolved(self, tmp_path: Path) -> None:
+        # Model output is untrusted: a SYSTEM entity must not read the file
+        # (XXE) and an internal one must not expand, whether the DTD reaches
+        # lxml directly or through parse().
+        secret = tmp_path / "secret.txt"
+        secret.write_text("FILE-CONTENT-MARKER")
+        doc = (
+            f'<!DOCTYPE r [<!ENTITY e SYSTEM "{secret.as_uri()}">'
+            '<!ENTITY a "EXPANDED-MARKER">]>'
+            "<r><name>&e;&a;</name></r>"
+        )
+        direct = RobustXMLOutputParser._try_lxml_recover_parse(doc.encode())
+        parsed = RobustXMLOutputParser(tags=["r"]).parse(doc)
+        for out in (direct, parsed):
+            assert "FILE-CONTENT-MARKER" not in repr(out)
+            assert "EXPANDED-MARKER" not in repr(out)
 
     def test_all_methods_exhausted_raises(self) -> None:
         # Plain prose with no recoverable tag structure: every recovery

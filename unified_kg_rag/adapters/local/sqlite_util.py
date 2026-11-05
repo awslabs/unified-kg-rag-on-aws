@@ -53,6 +53,7 @@ def connect(
         isolation_level=None,
     )
     try:
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query, python.lang.security.audit.formatted-sql-query.formatted-sql-query - int() value
         connection.execute(f"PRAGMA busy_timeout = {int(timeout_seconds * 1000)}")
         connection.execute("PRAGMA journal_mode=WAL")
         for statement in schema:

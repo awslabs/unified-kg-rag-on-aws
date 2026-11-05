@@ -2,6 +2,10 @@
 # repository and drive the fix(deps) history; scheduled version updates keep
 # both uv locks current and move the SHA-pinned workflow actions, which no
 # other path can do.
+#
+# Every entry waits `cooldown.default-days` after a release before proposing
+# it, so a compromised or broken release is usually yanked before it reaches a
+# PR. Security updates ignore the cooldown and still open at once.
 version: 2
 
 updates:
@@ -11,6 +15,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "fix(deps)"
@@ -52,6 +58,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "fix(deps)"
@@ -80,6 +88,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci(deps)"
@@ -99,6 +109,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps-dev)"

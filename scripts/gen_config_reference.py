@@ -117,7 +117,7 @@ def _type_name(annotation: Any) -> str:
             "int": "integer",
             "float": "number",
             "bool": "boolean",
-            "SecretStr": "secret string",
+            "SecretStr": "secret string",  # pragma: allowlist secret
         }.get(annotation.__name__, annotation.__name__)
     return str(annotation).replace("typing.", "")
 

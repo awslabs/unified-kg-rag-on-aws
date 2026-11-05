@@ -45,7 +45,7 @@ DEV_URL = (
     "https://huggingface.co/datasets/dgslibisey/MuSiQue/resolve/"
     "c8f4f8c9465fb69d31a8eae894c3fd509c4ca321/musique_ans_v1.0_dev.jsonl"
 )
-DEV_SHA256 = "15fa63794d18a94ce12411aca6e2327e65b6e83b0b1490efab3f1962e48abf3b"
+DEV_SHA256 = "15fa63794d18a94ce12411aca6e2327e65b6e83b0b1490efab3f1962e48abf3b"  # pragma: allowlist secret
 
 _HOPS = re.compile(r"(\d+)hop")
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
@@ -55,7 +55,10 @@ def download_dev(destination: Path, *, timeout: float = 120.0) -> Path:
     """Fetch the answerable dev split to ``destination`` and verify it."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading MuSiQue dev (%s) from %s", LICENSE, DEV_URL)
-    with urllib.request.urlopen(DEV_URL, timeout=timeout) as response:  # noqa: S310
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - constant https URL
+    with urllib.request.urlopen(  # nosec B310 - constant https URL
+        DEV_URL, timeout=timeout
+    ) as response:
         data = response.read()
     digest = hashlib.sha256(data).hexdigest()
     if digest != DEV_SHA256:

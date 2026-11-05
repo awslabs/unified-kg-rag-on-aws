@@ -2040,10 +2040,12 @@ by default**.
 - **CI** (`.github/workflows/`): `quality` gates pull requests and pushes to
   `main` (lint, types, tests with the coverage floor, the image build, the IaC
   synth with cdk-nag), `licenses` checks dependency licenses, `security` runs
-  a report-only ASH scan; the local checks are in
-  [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing).
+  an ASH scan that fails on an unsuppressed finding at MEDIUM or above
+  (configuration and path-scoped suppressions in `.ash/.ash.yaml`); the local
+  checks are in [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing).
 - **Dependabot** updates the `uv` locks (root and `iac/`) and the SHA-pinned
-  Actions weekly; known-breaking bumps are held back with a recorded reason.
+  Actions weekly, 7 days after a release at the earliest (security updates
+  at once); known-breaking bumps are held back with a recorded reason.
 - **Hardening.** Content hashes use SHA-256 only; credentials come from the
   environment, never from code.
 - **Guardrail at the query's edges** (`ports/guardrail.py`,

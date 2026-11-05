@@ -1307,7 +1307,7 @@ class EvaluationManager:
             return None, None
 
         def _git(*args: str) -> str:
-            return subprocess.run(  # noqa: S603 - fixed argv, no shell
+            return subprocess.run(  # nosec B603 - fixed argv, no shell
                 [git, *args],
                 cwd=_PACKAGE_DIR,
                 capture_output=True,
