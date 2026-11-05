@@ -24,7 +24,10 @@ from unified_kg_rag.domain.models import (
     Entity,
     TextUnit,
 )
-from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.domain.models.config import (
+    DEFAULT_LANGUAGE_ANALYZERS,
+    LanguageCode,
+)
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared.exceptions import StoreAccessDeniedError
 
@@ -147,7 +150,7 @@ def test_additional_target_languages_are_indexed(indexer) -> None:
     props = _props(indexer._get_text_units_mapping())
     assert props["translated_text_en"]["analyzer"] == "english"
     assert props["translated_text_ko"]["analyzer"] == "nori"
-    assert props["translated_text_ja"]["analyzer"] == "standard"
+    assert props["translated_text_ja"]["analyzer"] == "cjk"
     unit = TextUnit(
         id="t1",
         text="x",
@@ -423,9 +426,16 @@ def test_text_units_mapping(indexer) -> None:
 @pytest.mark.parametrize(
     ("source", "analyzer"),
     [
-        (LanguageCode.KO, "nori"),
+        (LanguageCode.DE, "german"),
         (LanguageCode.EN, "english"),
-        (LanguageCode.ZH, "standard"),
+        (LanguageCode.ES, "spanish"),
+        (LanguageCode.FR, "french"),
+        (LanguageCode.IT, "italian"),
+        (LanguageCode.JA, "cjk"),
+        (LanguageCode.KO, "nori"),
+        (LanguageCode.PT, "portuguese"),
+        (LanguageCode.RU, "russian"),
+        (LanguageCode.ZH, "cjk"),
     ],
 )
 def test_text_field_uses_source_language_analyzer(
@@ -436,6 +446,21 @@ def test_text_field_uses_source_language_analyzer(
     indexer.config.processing.translation.source_language = source
     props = _props(indexer._get_text_units_mapping())
     assert props["text"]["analyzer"] == analyzer
+
+
+def test_every_language_has_a_default_analyzer() -> None:
+    # A language without an entry fell back to 'standard', which keeps a
+    # Japanese or Chinese run of characters as one token: a word inside it
+    # never matched lexically.
+    assert set(DEFAULT_LANGUAGE_ANALYZERS) == {code.value for code in LanguageCode}
+    assert Config().indexing.opensearch.language_analyzers == DEFAULT_LANGUAGE_ANALYZERS
+
+
+def test_a_language_without_an_entry_uses_the_default_analyzer(indexer) -> None:
+    indexer.config.indexing.opensearch.language_analyzers = {"en": "english"}
+    indexer.config.processing.translation.source_language = LanguageCode.JA
+    props = _props(indexer._get_text_units_mapping())
+    assert props["text"]["analyzer"] == "standard"
 
 
 def test_claims_mapping(indexer) -> None:

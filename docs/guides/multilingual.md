@@ -29,8 +29,13 @@ documents of the `failed_units` as failed, so the next run retries them.
 
 ## Analyzers
 
-- **Analyzers** come from `indexing.opensearch.language_analyzers` (e.g.
-  `ko: nori`; others use `default_analyzer`). Chunk `text` is analyzed for
+- **Analyzers** come from `indexing.opensearch.language_analyzers`. Every
+  supported language has one by default: `de: german`, `en: english`,
+  `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese` and
+  `ru: russian` (OpenSearch's language analyzers: stop words and stemming),
+  `ja: cjk` and `zh: cjk` (overlapping character pairs, so "首都" matches
+  inside "日本の首都は"; no plugin), and `ko: nori`. A language without an
+  entry uses `default_analyzer`. Chunk `text` is analyzed for
   `source_language`, so set it to the corpus language even without
   translation: with `source_language: en` a Korean corpus keeps words with
   their particles ("홍길동으로부터") as single tokens. Changing it changes the

@@ -1705,7 +1705,10 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 ### 8.3 Multilingual Processing
 
 - **Analyzers.** `indexing.opensearch.language_analyzers` maps a language to an
-  OpenSearch analyzer (default `en: english`, `ko: nori`). An Amazon OpenSearch
+  OpenSearch analyzer. Each supported language has a default: the built-in
+  language analyzers (`german`, `english`, `spanish`, `french`, `italian`,
+  `portuguese`, `russian`), `cjk` (character bigrams) for `ja` and `zh`, and
+  `nori` for `ko`. An Amazon OpenSearch
   Service domain has `nori` only once its Nori package is associated, so the
   CDK deployment maps `ko` to the built-in `cjk` unless
   `opensearch_nori_package` associates the package (a custom resource) and

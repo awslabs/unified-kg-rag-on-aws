@@ -229,6 +229,62 @@ def test_other_language_settings_fail_with_the_reset_remedy(
     assert "indexing.reset: true" in str(raised.value)
 
 
+# The default analyzers before ja, zh, de, es, fr, it, pt and ru had one.
+_EN_KO_ANALYZERS = {"en": "english", "ko": "nori"}
+
+
+def _japanese_indexer(
+    mocker, client: Any, language_analyzers: dict[str, str] | None = None
+) -> OpenSearchIndexer:
+    mocker.patch.object(module, "OpenSearchClient", return_value=client)
+    opensearch = (
+        {} if language_analyzers is None else {"language_analyzers": language_analyzers}
+    )
+    config = Config(
+        processing={
+            "translation": {
+                "enabled": False,
+                "source_language": "ja",
+                "target_language": "ja",
+            }
+        },
+        indexing={"opensearch": opensearch},
+    )
+    return OpenSearchIndexer(
+        config, embedding_factory=HashingEmbeddingFactory(dimensions=8)
+    )
+
+
+def test_an_index_built_with_the_old_default_analyzers_needs_a_reset(
+    mocker,
+) -> None:
+    # A Japanese corpus indexed when ja had no default analyzer got
+    # 'standard'; the default is 'cjk' now, which a live field cannot take.
+    client = _FakeOpenSearchClient()
+    _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
+
+    with pytest.raises(
+        ConfigurationError, match="'text' uses 'standard' \\(needs 'cjk'\\)"
+    ) as raised:
+        _japanese_indexer(mocker, client).check_index_settings("default")
+    message = str(raised.value)
+    assert "other language settings" in message
+    assert "indexing.reset: true" in message
+    assert "indexing.opensearch.language_analyzers" in message
+
+
+def test_an_engine_that_analyzes_both_alike_takes_the_old_index(mocker) -> None:
+    # The embedded engine's 'standard' and 'cjk' are one analyzer.
+    client = _FakeOpenSearchClient()
+    _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
+    client.analyzes_alike = lambda first, second: {first, second} <= {  # type: ignore[attr-defined]
+        "standard",
+        "cjk",
+    }
+
+    _japanese_indexer(mocker, client).check_index_settings("default")
+
+
 def test_dropped_language_still_passes(mocker) -> None:
     # The unchanged documents keep the field; nothing new is mapped.
     client = _FakeOpenSearchClient()

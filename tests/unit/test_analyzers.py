@@ -13,11 +13,13 @@ import pytest
 
 from unified_kg_rag.adapters.local.search_engine import analyzers
 from unified_kg_rag.adapters.local.search_engine.analyzers import (
+    analyzes_alike,
     english_analyzer,
     get_analyzer,
     register_analyzer,
     standard_analyzer,
 )
+from unified_kg_rag.domain.models.config import DEFAULT_LANGUAGE_ANALYZERS
 from unified_kg_rag.shared import logging as shared_logging
 from unified_kg_rag.shared.utils.scripts import is_dense_script_char
 
@@ -63,6 +65,26 @@ def test_mixed_scripts_split_at_script_boundaries() -> None:
 @pytest.mark.parametrize("name", ["standard", "cjk", "nori", "kuromoji", "smartcn"])
 def test_cjk_analyzer_names_share_the_bigram_analyzer(name: str) -> None:
     assert get_analyzer(name) is standard_analyzer
+
+
+@pytest.mark.parametrize("name", sorted(set(DEFAULT_LANGUAGE_ANALYZERS.values())))
+def test_every_default_language_analyzer_is_known_without_a_warning(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The embedded engine analyzes a default analyzer's field as before
+    # (english stems, the others are standard), without the unknown-name
+    # warning.
+    with caplog.at_level(logging.WARNING):
+        analyzer = get_analyzer(name)
+    assert analyzer is (english_analyzer if name == "english" else standard_analyzer)
+    assert "has no" not in caplog.text
+
+
+def test_analyzes_alike_compares_the_registered_analyzers() -> None:
+    assert analyzes_alike("standard", "cjk")
+    assert analyzes_alike("german", None)
+    assert analyzes_alike("no-such-analyzer-y", "standard")
+    assert not analyzes_alike("english", "standard")
 
 
 def test_unknown_analyzer_falls_back_to_standard_and_warns_once(

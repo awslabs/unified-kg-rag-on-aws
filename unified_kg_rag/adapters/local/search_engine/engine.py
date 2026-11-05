@@ -53,6 +53,7 @@ import numpy as np
 from opensearchpy.exceptions import NotFoundError
 from opensearchpy.serializer import JSONSerializer
 
+from unified_kg_rag.adapters.local.search_engine.analyzers import analyzes_alike
 from unified_kg_rag.adapters.local.search_engine.query import (
     NUMERIC_TYPES,
     SPACE_TYPES,
@@ -304,6 +305,10 @@ class SQLiteSearchEngine:
 
     # Written in this process (see DataIngestionPipeline._stores_in_process).
     in_process: ClassVar[bool] = True
+    # Whether two analyzer names tokenize alike here, so a live field mapped
+    # with the other name takes this run's text (OpenSearchIndexer.
+    # check_index_settings): "standard" and "cjk", say.
+    analyzes_alike = staticmethod(analyzes_alike)
 
     def __init__(self, path: str | Path, *, timeout_seconds: float = 30.0) -> None:
         """Args:

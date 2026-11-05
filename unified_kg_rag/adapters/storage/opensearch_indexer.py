@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import operator
 import re
 import threading
 import time
@@ -697,16 +698,22 @@ class OpenSearchIndexer(VectorIndexer):
     def _mapping_funcs(self) -> dict[str, Callable[[], dict[str, Any]]]:
         return {spec.alias_prefix: spec.mapping for spec in self._specs()}
 
-    @staticmethod
     def _text_field_mismatches(
-        expected: dict[str, Any], live: dict[str, Any]
+        self, expected: dict[str, Any], live: dict[str, Any]
     ) -> list[str]:
         """The analyzed text fields of ``expected`` that ``live`` maps otherwise.
 
         A field the live index does not map yet would be mapped as a keyword
         by the ``strings_as_keywords`` dynamic template on the first write (or
         as a date, on an index built before date detection was turned off).
+        An engine with an ``analyzes_alike`` (the embedded one, where ``cjk``
+        and ``standard`` are one analyzer) accepts a field whose analyzer it
+        tokenizes alike under another name.
         """
+        engine_alike = getattr(self.opensearch_client, "analyzes_alike", None)
+        alike: Callable[[str, str], bool] = (
+            engine_alike if callable(engine_alike) else operator.eq
+        )
         mismatches = []
         for name, field in expected.items():
             if field.get("type") != "text":
@@ -719,7 +726,7 @@ class OpenSearchIndexer(VectorIndexer):
                 mismatches.append(
                     f"'{name}' is mapped as {stored.get('type')} (needs '{analyzer}')"
                 )
-            elif stored.get("analyzer", "standard") != analyzer:
+            elif not alike(stored.get("analyzer", "standard"), analyzer):
                 mismatches.append(
                     f"'{name}' uses '{stored.get('analyzer', 'standard')}' "
                     f"(needs '{analyzer}')"
@@ -813,7 +820,7 @@ class OpenSearchIndexer(VectorIndexer):
                     "indexing.reset: true to rebuild the indices for "
                     "processing.translation (and "
                     "indexing.opensearch.language_analyzers), or restore the "
-                    "previous languages."
+                    "previous languages and analyzers."
                 )
             if meta.get(_META_DOC_STATUS) is False:
                 raise ConfigurationError(

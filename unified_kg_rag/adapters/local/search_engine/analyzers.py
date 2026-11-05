@@ -23,6 +23,10 @@ with it. Approximations of the OpenSearch analyzers of the same names:
 - ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
+- ``german``, ``french``, ``spanish``, ``italian``, ``portuguese`` and
+  ``russian`` (the default ``language_analyzers`` of those languages): the
+  same analyzer as ``standard``, without OpenSearch's stop words and
+  stemming, so an inflected query word matches only its own form.
 - ``english``: OpenSearch's chain — possessive strip ("'s" off a token's
   end), lowercase, Lucene's 33 English stop words (``_english_``) and Porter
   stemming as Lucene's ``PorterStemmer`` (``snowballstemmer``'s "porter" with
@@ -217,6 +221,16 @@ def get_analyzer(name: str | None) -> Analyzer:
     return _ANALYZERS[STANDARD]
 
 
+def analyzes_alike(first: str | None, second: str | None) -> bool:
+    """Whether the analyzers named ``first`` and ``second`` are one analyzer
+    here (``standard`` standing in for an unknown name, as in
+    :func:`get_analyzer`), so a field mapped with either tokenizes alike."""
+    standard = _ANALYZERS[STANDARD]
+    return _ANALYZERS.get(first or STANDARD, standard) is _ANALYZERS.get(
+        second or STANDARD, standard
+    )
+
+
 def _bigrams(run: str) -> list[str]:
     if len(run) == 1:
         return [run]
@@ -246,7 +260,19 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     return tokens
 
 
-@register_analyzer(STANDARD, "cjk", "nori", "kuromoji", "smartcn")
+@register_analyzer(
+    STANDARD,
+    "cjk",
+    "nori",
+    "kuromoji",
+    "smartcn",
+    "german",
+    "french",
+    "spanish",
+    "italian",
+    "portuguese",
+    "russian",
+)
 def standard_analyzer(text: str) -> list[str]:
     return _tokens(text, lambda word: word)
 

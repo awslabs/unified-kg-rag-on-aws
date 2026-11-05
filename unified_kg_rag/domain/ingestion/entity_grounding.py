@@ -22,6 +22,7 @@ import re
 import unicodedata
 from functools import lru_cache
 
+from unified_kg_rag.shared.utils.legal_forms import latin_legal_form
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     has_dense_script,
@@ -169,13 +170,6 @@ def is_grounded(
 _NAME_JOINERS = frozenset(".'\u2019\u02bc")
 _POSSESSIVE = re.compile(r"['\u2019\u02bc]s\b")
 _PARENTHETICAL = re.compile(r"\(([^()]*)\)")
-# A last-token spelling and its canonical short form.
-_CORPORATE_SUFFIXES = {
-    "corporation": "corp",
-    "incorporated": "inc",
-    "company": "co",
-    "limited": "ltd",
-}
 # Shortest stem a trailing "s"/"es" may be added to: "us" is not "u" plural.
 _MIN_PLURAL_STEM = 3
 
@@ -238,16 +232,17 @@ def _is_dense(token: str) -> bool:
 
 
 def _same_last_token(name_token: str, text_token: str, *, suffix: bool) -> bool:
-    """Equal up to a trailing "s"/"es", or (``suffix``) a corporate suffix.
+    """Equal up to a trailing "s"/"es", or (``suffix``) two spellings of one
+    legal form (``latin_legal_form``: "corporation" and "corp").
 
-    The suffix table applies only after a main name: a bare "Co" is not
+    The legal forms apply only after a main name: a bare "Co" is not
     "company".
     """
     if name_token == text_token:
         return True
-    if suffix and _CORPORATE_SUFFIXES.get(
-        name_token, name_token
-    ) == _CORPORATE_SUFFIXES.get(text_token, text_token):
+    if suffix and (latin_legal_form(name_token) or name_token) == (
+        latin_legal_form(text_token) or text_token
+    ):
         return True
     short, long = sorted((name_token, text_token), key=len)
     return len(short) >= _MIN_PLURAL_STEM and long in (f"{short}s", f"{short}es")
@@ -319,7 +314,7 @@ def is_name_grounded(name: str | None, chunk_text: str) -> bool:
     - other scripts (Latin, digits): whole tokens, consecutive in the text,
       so "Ven" does not match "Vendor" nor "AI" "aim". The last token may
       differ by a trailing "s"/"es" ("Vendors" = "Vendor") or, after a main
-      name, a corporate suffix (Corporation/Corp, Incorporated/Inc,
+      name, the spelling of a legal form (Corporation/Corp, Incorporated/Inc,
       Company/Co, Limited/Ltd).
     - Han/Hangul/Kana: a substring of the text with the spaces next to those
       letters removed, since particles attach to the name ("벤더는" contains
