@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
+    coerce_llm_text,
     edge_weight,
     merge_attributes,
 )
@@ -1743,16 +1744,17 @@ class CommunityDetector:
         ``generated_at`` (now by default; a reused answer's own time)."""
         report_config = self.community_detection_config.report_generation
 
-        name = self._extract_text_from_result(result.get("community_name", ""))
-        summary = self._extract_text_from_result(
+        name = coerce_llm_text(result.get("community_name"))
+        summary = coerce_llm_text(
             result.get(
                 "summary", f"No summary generated for community {community.name}."
-            )
+            ),
+            join=True,
         )
         findings = self._extract_findings(result)
         rating = self._extract_rating(result)
-        rating_explanation = self._extract_text_from_result(
-            result.get("rating_explanation", "")
+        rating_explanation = coerce_llm_text(
+            result.get("rating_explanation"), join=True
         )
 
         report_id = generate_stable_id(f"report:{community.id}")
@@ -1800,22 +1802,10 @@ class CommunityDetector:
         )
         return report
 
-    @staticmethod
-    def _extract_text_from_result(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, dict):
-            if not value:  # an empty element (<summary></summary>)
-                return ""
-            if "#text" in value:
-                return str(value["#text"])
-            return str(value)
-        return str(value)
-
     @classmethod
     def _extract_rating(cls, result: dict[str, Any]) -> float:
         """Parse the 0-10 importance rating, tolerating noisy LLM output."""
-        raw = cls._extract_text_from_result(result.get("rating", "")).strip()
+        raw = coerce_llm_text(result.get("rating"))
         if not raw:
             return 0.0
         match = re.search(r"-?\d+(?:\.\d+)?", raw)
@@ -1847,12 +1837,10 @@ class CommunityDetector:
         findings: list[CommunityFinding] = []
         for item in raw_findings:
             if isinstance(item, dict):
-                summary = cls._extract_text_from_result(item.get("summary", "")).strip()
-                explanation = cls._extract_text_from_result(
-                    item.get("explanation", "")
-                ).strip()
+                summary = coerce_llm_text(item.get("summary"), join=True)
+                explanation = coerce_llm_text(item.get("explanation"), join=True)
             else:
-                summary = cls._extract_text_from_result(item).strip()
+                summary = coerce_llm_text(item, join=True)
                 explanation = ""
             if summary or explanation:
                 findings.append(

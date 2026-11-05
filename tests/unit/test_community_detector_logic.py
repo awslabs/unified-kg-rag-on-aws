@@ -1138,21 +1138,6 @@ class TestReportContextFidelity:
         assert report_cfg.max_report_context_tokens == 4000
 
 
-class TestExtractTextFromResult:
-    def test_passthrough_string(self) -> None:
-        assert CommunityDetector._extract_text_from_result("hello") == "hello"
-
-    def test_dict_with_hashtext_key(self) -> None:
-        assert CommunityDetector._extract_text_from_result({"#text": "body"}) == "body"
-
-    def test_dict_without_hashtext_stringifies(self) -> None:
-        out = CommunityDetector._extract_text_from_result({"a": 1})
-        assert "a" in out
-
-    def test_non_string_non_dict_stringifies(self) -> None:
-        assert CommunityDetector._extract_text_from_result(42) == "42"
-
-
 class TestGenerateReportsGuards:
     def test_returns_empty_when_report_generation_disabled(self) -> None:
         cd = _detector(report=False)

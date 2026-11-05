@@ -1805,6 +1805,14 @@ Ingestion and incremental indexing.
   section, a section holding prose, nameless entities in a complete
   answer), so the fixer repairs it; a gleaning plan written without its
   root is read as the plan. The bullet-list fallback is gone (#PR).
+- A field holding markup was read three ways: entities and relationships
+  stored its dict as text (`<description><p>one</p></description>` became
+  `{'p': 'one'}`, `<name lang="en">Beta</name>` a name of that dict), the
+  claim reader took a one-child dict's text, and community reports stored a
+  repeated `<summary>` of a finding as the list's repr. One rule
+  (`coerce_llm_text`) reads every field now: the element's own text, else
+  its children's text, attributes and comments dropped, a repeated
+  description-like field joined (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no

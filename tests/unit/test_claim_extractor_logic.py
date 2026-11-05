@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for ClaimExtractor pure logic (AWS-free).
 
-Covers _get_string_value coercion, _parse_claim_data (missing-field rejection,
+Covers _parse_claim_data (missing-field rejection,
 stable id, attributes), _parse_extraction_result (malformed/empty handling),
 and _prepare_extraction_inputs returning a dict keyed by unit id
 (the as_completed ordering fix). Bedrock/boto wiring is patched out so __init__
@@ -42,26 +42,6 @@ def extractor(config: Config, mocker) -> ClaimExtractor:
 @pytest.fixture
 def text_unit() -> TextUnit:
     return TextUnit(id="t1", text="Acme acquired Beta in 2020.")
-
-
-# --------------------------------------------------------------------------- #
-# _get_string_value
-# --------------------------------------------------------------------------- #
-class TestGetStringValue:
-    def test_plain_string_stripped(self) -> None:
-        assert ClaimExtractor._get_string_value("  hello  ") == "hello"
-
-    def test_none_is_empty(self) -> None:
-        assert ClaimExtractor._get_string_value(None) == ""
-
-    def test_text_key_dict(self) -> None:
-        assert ClaimExtractor._get_string_value({"#text": " v "}) == "v"
-
-    def test_single_value_dict_recurses(self) -> None:
-        assert ClaimExtractor._get_string_value({"x": "  y "}) == "y"
-
-    def test_int_coerced(self) -> None:
-        assert ClaimExtractor._get_string_value(2020) == "2020"
 
 
 # --------------------------------------------------------------------------- #

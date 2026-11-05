@@ -303,44 +303,19 @@ class ClaimExtractor(BaseProcessor):
                 claims.append(claim)
         return claims
 
-    @staticmethod
-    def _get_string_value(data: Any, *, join: bool = False) -> str:
-        """Coerce an XML-parsed claim field to one stripped string.
-
-        A repeated tag arrives as a list; like ``coerce_llm_text`` (#124),
-        identity fields take the first non-empty element and ``join=True``
-        (description-like fields) keeps every distinct element, newline-joined,
-        instead of stringifying the list (``"['A', 'B']"``).
-        """
-        if isinstance(data, dict):
-            if not data:  # an empty element (<object></object>)
-                return ""
-            if "#text" in data:
-                return str(data["#text"]).strip()
-            if len(data.values()) == 1:
-                return ClaimExtractor._get_string_value(
-                    list(data.values())[0], join=join
-                )
-            return str(data)
-        if isinstance(data, list):
-            return coerce_llm_text(
-                [ClaimExtractor._get_string_value(item) for item in data], join=join
-            )
-        return coerce_llm_text(data)
-
     def _parse_claim_data(
         self, claim_data: dict[str, Any], text_unit: TextUnit
     ) -> Claim | None:
         try:
-            subject_name = self._get_string_value(claim_data.get("subject"))
-            object_name = self._get_string_value(claim_data.get("object"))
-            claim_type = self._get_string_value(claim_data.get("claim_type"))
+            subject_name = coerce_llm_text(claim_data.get("subject"))
+            object_name = coerce_llm_text(claim_data.get("object"))
+            claim_type = coerce_llm_text(claim_data.get("claim_type"))
 
             if not all([subject_name, object_name, claim_type]):
                 return None
 
-            start_date = self._get_string_value(claim_data.get("start_date"))
-            end_date = self._get_string_value(claim_data.get("end_date"))
+            start_date = coerce_llm_text(claim_data.get("start_date"))
+            end_date = coerce_llm_text(claim_data.get("end_date"))
             claim_id = self._generate_claim_id(
                 subject_name, object_name, claim_type, start_date, end_date
             )
@@ -354,17 +329,13 @@ class ClaimExtractor(BaseProcessor):
                 object_id="",
                 object_name=object_name,
                 type=claim_type,
-                status=self._get_string_value(claim_data.get("claim_status")),
+                status=coerce_llm_text(claim_data.get("claim_status")),
                 start_date=start_date,
                 end_date=end_date,
-                description=self._get_string_value(
-                    claim_data.get("description"), join=True
-                ),
+                description=coerce_llm_text(claim_data.get("description"), join=True),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
-                source_text=self._get_string_value(
-                    claim_data.get("source_text"), join=True
-                ),
+                source_text=coerce_llm_text(claim_data.get("source_text"), join=True),
                 attributes=attributes,
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
@@ -479,7 +450,7 @@ class ClaimsOutputParser(RobustXMLOutputParser):
 def _complete(claim: Any) -> bool:
     """Whether ``claim`` has the fields a claim needs (as ``_parse_claim_data``)."""
     return isinstance(claim, dict) and all(
-        ClaimExtractor._get_string_value(claim.get(field))
+        coerce_llm_text(claim.get(field))
         for field in ("subject", "object", "claim_type")
     )
 

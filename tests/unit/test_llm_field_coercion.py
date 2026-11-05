@@ -33,6 +33,12 @@ def _text_unit() -> TextUnit:
         (["", "  "], False, ""),
         (["First.", "Second.", "First."], True, "First.\nSecond."),
         (3, False, "3"),
+        # Markup in a field: its own text, else its children's.
+        ({"#text": " Beta ", "@lang": "en"}, False, "Beta"),
+        ({"p": "one"}, False, "one"),
+        ({"p": ["one", "two"]}, True, "one\ntwo"),
+        ({"b": "one", "i": "two"}, False, "one"),
+        ({"@lang": "en"}, False, ""),
     ],
 )
 def test_coerce_llm_text(value, join: bool, expected: str) -> None:
@@ -118,10 +124,44 @@ def test_empty_elements_parse_to_empty_text() -> None:
         "<claims><claim><subject>Acme</subject><object></object>"
         "<description/></claim></claims>"
     )["claims"]["claim"]
-    assert ClaimExtractor._get_string_value(claim["object"]) == ""
-    assert ClaimExtractor._get_string_value(claim["description"], join=True) == ""
+    assert coerce_llm_text(claim["object"]) == ""
+    assert coerce_llm_text(claim["description"], join=True) == ""
 
     report = RobustXMLOutputParser(tags=["community_name", "summary"]).parse(
         "<community_name></community_name><summary>S</summary>"
     )
-    assert CommunityDetector._extract_text_from_result(report["community_name"]) == ""
+    assert coerce_llm_text(report["community_name"]) == ""
+
+
+def test_markup_in_a_field_is_read_as_its_text() -> None:
+    # A field holding markup parses to a dict: the entity and claim parsers
+    # took no dict (the description was "{'p': 'one'}") and the claim and
+    # report readers each had their own copy of the rule.
+    parser = RobustXMLOutputParser(tags=["entities"])
+    entity = parser.parse(
+        '<entities><entity><name lang="en">Beta</name><type>ORG</type>'
+        "<description><p>one</p></description></entity></entities>"
+    )["entities"]["entity"]
+    parsed = BaseProcessor(config=Config()).parse_entity_data(entity, _text_unit())
+    assert parsed is not None
+    assert (parsed.name, parsed.description) == ("Beta", "one")
+
+    claim = RobustXMLOutputParser(tags=["claims"]).parse(
+        '<claims><claim><subject lang="en">Beta</subject><object>Acme</object>'
+        "<claim_type>OWNERSHIP</claim_type>"
+        "<description><p>Beta owns Acme.</p></description></claim></claims>"
+    )["claims"]["claim"]
+    extractor = ClaimExtractor.__new__(ClaimExtractor)
+    made = ClaimExtractor._parse_claim_data(extractor, claim, _text_unit())
+    assert made is not None
+    assert (made.subject_name, made.description) == ("Beta", "Beta owns Acme.")
+
+
+def test_a_finding_with_a_repeated_summary_keeps_both() -> None:
+    report = RobustXMLOutputParser(tags=["findings"]).parse(
+        "<findings><finding><summary>First.</summary><summary>Second.</summary>"
+        "<explanation><p>Why.</p></explanation></finding></findings>"
+    )
+    (finding,) = CommunityDetector._extract_findings(report)
+    # It was the list's repr: "['First.', 'Second.']".
+    assert (finding.summary, finding.explanation) == ("First.\nSecond.", "Why.")

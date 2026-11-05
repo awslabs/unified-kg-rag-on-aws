@@ -212,14 +212,25 @@ def coerce_llm_text(value: Any, *, join: bool = False) -> str:
     (``<type>A</type><type>B</type>``). Identity fields (name, type, source,
     target) take the first non-empty element; description-like fields pass
     ``join=True`` to keep every distinct non-empty element, newline-joined.
+    A field with markup parses to a dict: its own text (``#text``, as in
+    ``<name lang="en">Beta</name>``, whose attribute is dropped), else its
+    child elements' text, as a list's (``<description><p>one</p>
+    </description>`` is "one"); an empty element (``{}``) is ``""``.
     ``None`` and other non-string scalars become ``""`` / ``str(value)``.
     """
     if value is None or value == {}:
         # An empty element (<description></description>) parses to {}.
         return ""
+    if isinstance(value, dict):
+        if "#text" in value:
+            return coerce_llm_text(value["#text"], join=join)
+        # Attributes ("@lang") and comments (non-string keys) are no text.
+        value = [
+            v for k, v in value.items() if isinstance(k, str) and not k.startswith("@")
+        ]
     if not isinstance(value, list):
         return str(value).strip()
-    parts = [p for p in (coerce_llm_text(v) for v in value) if p]
+    parts = [p for p in (coerce_llm_text(v, join=join) for v in value) if p]
     if not parts:
         return ""
     return "\n".join(dict.fromkeys(parts)) if join else parts[0]
