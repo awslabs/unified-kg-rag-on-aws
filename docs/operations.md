@@ -755,6 +755,13 @@ deployed stack:
    the notes ask for one stack first (`cdk deploy <stack> --exclusively`),
    deploy it before `--all`.
    A role with a custom IAM policy needs the permissions the notes list.
+   The stacks pass values to each other through strong cross-stack
+   references (CloudFormation exports, pinned in `iac/cdk.json`): a deploy
+   that would remove or change an export another stack still imports fails
+   with `Cannot delete export ... as it is in use`, which is why some notes
+   ask for one stack first. A move to CDK's weak references, which would
+   drop that ordering, is not made yet: it needs a `both` deploy of every
+   environment before `weak`.
 5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))
    as a one-off task with `UKR__INDEXING__RESET=true` as an environment
    override (the task override is in

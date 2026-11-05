@@ -46,6 +46,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
 
@@ -166,9 +167,9 @@ class ComputeStack(Stack):
             "TaskLogs",
             log_group_name=self.log_group_name,
             encryption_key=self.kms_key,
-            retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
+        set_retention(self.log_group, config.log_retention_days)
 
         self._collector_repository: ecr.IRepository | None = None
         # Per scope: the imports a task definition in another stack uses.
@@ -332,8 +333,10 @@ class ComputeStack(Stack):
                 ],
             )
         )
-        # Objects under eval/ only, and listing only within it (a HeadObject
-        # on a missing key then reports 404 rather than 403).
+        # Objects under eval/ only, and listing only within it. S3 answers a
+        # HeadObject on a missing key with 404 only to a caller allowed to
+        # list the bucket, and a HeadObject request carries no s3:prefix for
+        # the condition below to match, so a missing key may report 403.
         bucket = storage.cache_bucket
         role.add_to_policy(
             iam.PolicyStatement(

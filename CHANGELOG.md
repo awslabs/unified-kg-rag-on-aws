@@ -674,6 +674,21 @@ From 0.2.3 (or a `main` checkout since):
     `aws.bedrock.assumed_role_arn`: deploy with `-c sts_endpoint=true`, or
     the next deploy removes the STS endpoint and the role assumption hangs
     (#PR).
+16. A deployed CDK stack, on the next `cdk deploy --all` (#PR):
+    - The `owner` tag is removed from every resource (an in-place tag
+      update); pass `-c owner=aws-proserve` to keep it.
+    - Without `use_cmk`, `GraphRagSecurity` is no longer part of the app.
+      If an earlier deploy created it (it holds only CDK metadata), delete
+      it with `aws cloudformation delete-stack --stack-name
+      GraphRagSecurity` (`GraphRag<Env>Security` outside dev); no other
+      stack refers to it.
+    - The OpenSearch domain's TLS policy changes to
+      `Policy-Min-TLS-1-2-PFS-2023-10`. Clients older than TLS 1.2 or
+      without an ECDHE cipher can no longer connect (the package's client
+      can). To see whether the change runs as a blue/green deployment,
+      dry-run it first: `aws opensearch update-domain-config --domain-name
+      <domain> --domain-endpoint-options
+      TLSSecurityPolicy=Policy-Min-TLS-1-2-PFS-2023-10 --dry-run`.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1211,6 +1226,20 @@ From 0.2.3 (or a `main` checkout since):
   `aws.bedrock.assumed_role_arn` calls STS, and task role credentials come
   from the ECS credentials endpoint. One interface endpoint fewer (billed
   per AZ-hour) (#PR).
+- CDK: `log_retention_days` (default 30, as before) sets the retention of
+  the task, pipeline, OpenSearch application and custom-resource log
+  groups; the `owner` tag is applied only when `owner` is set (it was
+  `aws-proserve`); the security stack is synthesized only with `use_cmk`
+  (it held nothing otherwise); the `NeptuneLowFreeableMemory` threshold is
+  1/32 of the instance class's memory (512 MiB on the default
+  `db.r6g.large`, as before; 512 MiB for a class it does not know); the
+  `PipelineFailures` alarm treats a period without executions as no
+  failure, like the other alarms; the OpenSearch domain requires TLS 1.2 or
+  1.3 with forward-secret ciphers (`Policy-Min-TLS-1-2-PFS-2023-10`);
+  `cdk.json` pins strong cross-stack references and the custom resources'
+  bundled SDK, the behaviour synth warned it defaulted to (#PR).
+- Docs: with `bedrock_model_arns`, list the reranking model too: the
+  Rerank API also checks `bedrock:InvokeModel` on it (#PR).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot

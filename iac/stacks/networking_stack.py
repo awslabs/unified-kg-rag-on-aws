@@ -28,6 +28,7 @@ from aws_cdk import aws_logs as logs
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.log_retention import set_retention
 
 GATEWAY_ENDPOINTS = {
     "S3": ec2.GatewayVpcEndpointAwsService.S3,
@@ -163,11 +164,7 @@ class NetworkingStack(Stack):
                 else RemovalPolicy.RETAIN
             ),
         )
-        # The RetentionDays enum cannot be built from a number in Python, so set
-        # the CloudFormation property directly.
-        cfn_log_group = log_group.node.default_child
-        assert isinstance(cfn_log_group, logs.CfnLogGroup)
-        cfn_log_group.retention_in_days = self.config.flow_log_retention_days
+        set_retention(log_group, self.config.flow_log_retention_days)
         self.vpc.add_flow_log(
             "FlowLogs",
             destination=ec2.FlowLogDestination.to_cloud_watch_logs(log_group),

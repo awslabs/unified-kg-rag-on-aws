@@ -110,3 +110,51 @@ def test_concrete_account_synth_has_no_nag_errors(
     context: dict[str, Any], tmp_path: Path
 ) -> None:
     assert _synth_errors(context, tmp_path) == []
+
+
+def _cdk_json_context() -> dict[str, Any]:
+    """The context of cdk.json, which the cdk CLI passes to the app."""
+    context: dict[str, Any] = json.loads((_IAC / "cdk.json").read_text())["context"]
+    return context
+
+
+def _warnings(outdir: Path) -> list[str]:
+    return [
+        str(e["data"])
+        for metadata in outdir.glob("*.metadata.json")
+        for entries in json.loads(metadata.read_text()).values()
+        for e in entries
+        if e["type"] == "aws:cdk:warning"
+    ]
+
+
+def _tag_keys(outdir: Path, stack: str) -> set[str]:
+    template = json.loads((outdir / f"{stack}.template.json").read_text())
+    return {
+        tag["Key"]
+        for resource in template["Resources"].values()
+        for tag in resource.get("Properties", {}).get("Tags", [])
+        if isinstance(tag, dict) and "Key" in tag
+    }
+
+
+def test_cdk_json_pins_the_flags_synth_warned_about(tmp_path: Path) -> None:
+    # Set to the behaviour the stacks already had (strong cross-stack
+    # references; the custom resources' bundled SDK), so synth no longer
+    # warns that they defaulted.
+    assert _synth_errors(_cdk_json_context(), tmp_path) == []
+    warnings = "\n".join(_warnings(tmp_path))
+    assert "cross-stack-reference strength" not in warnings
+    assert "installLatestAwsSdk" not in warnings
+    # Without use_cmk there is no security stack (it would hold nothing),
+    # and without an owner no resource carries an owner tag.
+    assert not (tmp_path / "GraphRagSecurity.template.json").exists()
+    keys = _tag_keys(tmp_path, "GraphRagStorage")
+    assert "project" in keys and "owner" not in keys
+
+
+def test_the_security_stack_and_owner_tag_when_asked(tmp_path: Path) -> None:
+    context = {**_cdk_json_context(), "use_cmk": "true", "owner": "data-team"}
+    assert _synth_errors(context, tmp_path) == []
+    assert (tmp_path / "GraphRagSecurity.template.json").exists()
+    assert "owner" in _tag_keys(tmp_path, "GraphRagStorage")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
+import pytest
 from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
@@ -86,6 +87,8 @@ def test_failed_executions_alarm() -> None:
     assert alarm["Namespace"] == "AWS/States"
     assert (alarm["Threshold"], alarm["EvaluationPeriods"]) == (1, 1)
     assert len(alarm["AlarmActions"]) == 1
+    # No execution in a period is no failure (INSUFFICIENT_DATA before).
+    assert alarm["TreatMissingData"] == "notBreaching"
 
 
 def test_quarantined_documents_alarm() -> None:
@@ -151,6 +154,27 @@ def test_serverless_memory_alarm_fires_only_at_maximum_capacity() -> None:
     provisioned = _alarms()
     assert provisioned["NeptuneLowFreeableMemory"]["Threshold"] == 536870912
     assert "NeptuneServerlessAtMaxCapacity" not in provisioned
+
+
+@pytest.mark.parametrize(
+    ("instance", "mib"),
+    [
+        ("db.r6g.large", 512),
+        ("db.r6g.4xlarge", 4096),
+        ("db.x2g.2xlarge", 4096),
+        ("db.t4g.medium", 128),
+        ("db.serverless", 512),
+        ("db.r6g.metal", 512),
+    ],
+)
+def test_neptune_memory_alarm_follows_the_instance_memory(
+    instance: str, mib: int
+) -> None:
+    # The same share of the instance's memory as 512 MiB is of the default
+    # class: a fixed 512 MiB fired only when a large writer was nearly out.
+    # A class the table does not know keeps 512 MiB.
+    alarm = _alarms({"neptune_instance": instance})["NeptuneLowFreeableMemory"]
+    assert alarm["Threshold"] == mib * 1024**2
 
 
 def test_free_storage_threshold_follows_volume_size() -> None:

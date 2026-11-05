@@ -36,7 +36,7 @@ machine at the new revision.
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, Fn, RemovalPolicy, Stack, Token
-from aws_cdk import aws_ecs as ecs  # noqa: F401  (FargatePlatformVersion)
+from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
 from aws_cdk import aws_logs as logs
@@ -48,6 +48,7 @@ from constructs import Construct
 
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
+from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 
 
@@ -142,7 +143,6 @@ class OrchestrationStack(Stack):
             # The shared CMK when use_cmk (Step Functions log delivery needs
             # only the logs service principal in the key policy).
             encryption_key=kms_key,
-            retention=logs.RetentionDays.ONE_MONTH,
             # Fixed name: retained copies would collide on the next deploy.
             removal_policy=(
                 RemovalPolicy.DESTROY
@@ -150,6 +150,7 @@ class OrchestrationStack(Stack):
                 else RemovalPolicy.RETAIN
             ),
         )
+        set_retention(self.log_group, config.log_retention_days)
 
         # The task's failure handler: the Catch keeps the state input
         # and adds the error under $.error, so the message carries the run id

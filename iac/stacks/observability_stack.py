@@ -26,6 +26,40 @@ from iac.config import DeploymentConfig
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
 
+# Memory (GiB) per vCPU of the Neptune instance families: the memory-optimized
+# r families and x2g; a burstable t3/t4g.medium has 4 GiB.
+_GIB_PER_VCPU = {
+    **dict.fromkeys(("r5", "r5d", "r6g", "r6i", "r7g", "r7i", "r8g"), 8),
+    "x2g": 16,
+}
+# Low-memory threshold: this share of the instance's memory (512 MiB of the
+# default db.r6g.large's 16 GiB), and 512 MiB for a class not listed.
+_LOW_MEMORY_SHARE = 32
+_LOW_MEMORY_DEFAULT = 512 * 1024**2
+
+
+def neptune_instance_memory_bytes(instance_class: str) -> int | None:
+    """The memory of Neptune ``instance_class`` (``db.r6g.large``), or
+    ``None`` for a class this table does not know."""
+    parts = instance_class.split(".")
+    if len(parts) != 3 or parts[0] != "db":
+        return None
+    family, size = parts[1], parts[2]
+    if family in ("t3", "t4g"):
+        return 4 * 1024**3 if size == "medium" else None
+    if family not in _GIB_PER_VCPU:
+        return None
+    if size == "large":
+        vcpus = 2
+    elif size == "xlarge":
+        vcpus = 4
+    elif size.endswith("xlarge") and size[: -len("xlarge")].isdigit():
+        vcpus = 4 * int(size[: -len("xlarge")])
+    else:
+        return None
+    return _GIB_PER_VCPU[family] * vcpus * 1024**3
+
+
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
 # run-rag --metrics-sink cloudwatch: one query_latency_ms value per query,
@@ -125,6 +159,9 @@ class ObservabilityStack(Stack):
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            # No execution in a period publishes no ExecutionsFailed datum:
+            # that is no failure, not an unknown state.
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
             alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
         )
         failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
@@ -765,15 +802,17 @@ class ObservabilityStack(Stack):
         )
         # Minimum: the lowest point in the window, not a mean that hides it.
         freeable = _neptune_metric("FreeableMemory", statistic="Minimum", writer=True)
-        # bytes; ~512 MiB. Low freeable memory precedes query/write failures.
-        low_memory = 536870912
+        # Low freeable memory precedes query/write failures.
         serverless = self.config.neptune_serverless_ncu
         if serverless is None:
+            memory = neptune_instance_memory_bytes(self.config.neptune_instance)
+            low_memory = memory // _LOW_MEMORY_SHARE if memory else _LOW_MEMORY_DEFAULT
             _alarm(
                 "NeptuneLowFreeableMemory",
                 freeable,
                 low_memory,
-                "Neptune writer freeable memory is low (<512 MiB)",
+                "Neptune writer freeable memory is low "
+                f"(<{low_memory // 1024**2} MiB)",
                 comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
             )
         else:
@@ -795,7 +834,7 @@ class ObservabilityStack(Stack):
                     period=Duration.minutes(5),
                     label="Writer freeable memory at maximum capacity",
                 ),
-                low_memory,
+                _LOW_MEMORY_DEFAULT,
                 "Neptune Serverless writer is at its maximum capacity "
                 f"({max_ncu:g} NCU) with low freeable memory (<512 MiB)",
                 comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
