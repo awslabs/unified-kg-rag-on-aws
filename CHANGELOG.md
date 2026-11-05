@@ -336,7 +336,16 @@ Behaviour.
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing; entity and relationship `rank` come from
   node degree, and relationship weight sums the strengths per text unit
-  (#189, #214).
+  (#189, #214). Legal-form removal and name grounding read one table
+  (`shared/utils/legal_forms.py`): trailing Inc/Incorporated, Corp/
+  Corporation, Co/Company, Ltd/Limited, LLC, LLP, LP, PLC, Pty, Pte, GmbH,
+  AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting
+  ("L.L.C."), and the Korean, Japanese and Chinese company and juridical
+  person forms leading or trailing ("(주)", "유한책임회사", "(사)",
+  "재단법인", "合同会社", "株式會社", "股份有限公司", "有限责任公司"), so
+  "Acme GmbH" and "Acme" are one entity of a type (an entity of another type
+  stays apart). Not after "&"/"and" ("Smith & Co") nor after an article
+  alone ("The Company") (#PR).
 - A query with conversation history is rewritten as a standalone question
   (`models.roles.query_rewrite`) and every step reads the rewrite (#212).
 - Conversation memory is per chain, keyed by index suffix, `user_id` and
@@ -702,6 +711,17 @@ From 0.2.3 (or a `main` checkout since):
       the reports of communities it clusters differently. To keep `standard`
       instead, set `language_analyzers: {en: english, ko: nori}`. The
       embedded engine analyzes the new names as before and needs no reset.
+    - Every graph store: the entity `name_key` (Neptune, embedded SQLite)
+      follows the larger legal-form table, and an incremental run finds the
+      stored entities to merge with by it, so a stored "Acme GmbH" (key
+      `acme gmbh`) is not found for a new "Acme". Run once with
+      `indexing.reset: true` (a new or no `--pipeline-id`, so resolution runs
+      again) to merge the designator variants and rewrite the keys. No
+      extraction call: the extraction records are keyed by text and
+      extraction settings, not the resolver. It asks for one description
+      summary per newly merged entity over the summarization threshold and
+      embeds those descriptions, and for the reports of the communities it
+      clusters differently. Without a reset, entities stored apart stay apart.
 
 ### Added
 - Local mode: the `providers` section and provider registry

@@ -108,7 +108,7 @@ def test_legal_form_is_not_a_discriminator(name: str, expected: set[str]) -> Non
         ("Acme Co.", "acme"),
         ("Acme Corp", "acme"),
         ("Taco", "taco"),  # only a whole trailing word is a designator
-        ("Acme Corporation", "acme corporation"),
+        ("Acme Corporation", "acme"),
         ("Co Holdings", "co holdings"),  # Latin forms are trailing only
     ],
 )

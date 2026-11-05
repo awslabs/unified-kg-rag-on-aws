@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
-import unicodedata
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
@@ -19,6 +18,7 @@ from unified_kg_rag.shared.utils import (
     entity_key,
     normalize_name,
 )
+from unified_kg_rag.shared.utils.legal_forms import strip_legal_forms
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     is_dense_script_char,
@@ -62,55 +62,14 @@ _RE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
 # Entity types that carry no information and so never block a merge.
 _GENERIC_ENTITY_TYPES = frozenset({"", "unknown"})
 
-# Legal-form designators, matched after NFKC + casefold (so "㈜" is "(주)" and
-# "㈱" is "(株)"). They state the company form, not which company, so they are
-# ignored when comparing names: "(주)가나다", "가나다 주식회사" and "가나다"
-# name one company. CJK forms may lead or trail the name, with or without a
-# space; Latin forms must be a whole trailing word ("Acme Inc", not "Taco").
-_CJK_LEGAL_FORMS = (
-    "(주)",
-    "주식회사",
-    "(유)",
-    "유한회사",
-    "(株)",
-    "株式会社",
-    "(有)",
-    "有限会社",
-    "有限公司",
-)
-_LATIN_LEGAL_FORMS = ("inc", "ltd", "llc", "co", "corp")
-_CJK_LEGAL_FORM_ALT = "|".join(re.escape(f) for f in _CJK_LEGAL_FORMS)
-_RE_LEADING_LEGAL_FORM = re.compile(rf"^(?:{_CJK_LEGAL_FORM_ALT})\s*")
-_RE_TRAILING_LEGAL_FORM = re.compile(
-    rf"(?:\s*(?:{_CJK_LEGAL_FORM_ALT})|\s+(?:{'|'.join(_LATIN_LEGAL_FORMS)})\.?)$"
-)
-
-
-def strip_legal_forms(name: str) -> str:
-    """Remove leading/trailing legal-form designators from ``name``.
-
-    Expects (and returns) NFKC-casefolded text; ``entity_key`` output works.
-    A name that is only a designator is returned unchanged, so it never
-    collapses to an empty string.
-    """
-    text = unicodedata.normalize("NFKC", name).casefold().strip()
-    stripped = text
-    while True:
-        shorter = _RE_TRAILING_LEGAL_FORM.sub(
-            "", _RE_LEADING_LEGAL_FORM.sub("", stripped)
-        ).strip()
-        if shorter == stripped:
-            break
-        stripped = shorter
-    return stripped or text
-
 
 def compact_name_key(name: str | None) -> str:
     """Return the ``entity_key`` of ``name`` without its spelling variants.
 
-    Legal-form designators are stripped and spaces next to Han, Hangul and
-    Kana letters dropped. Names with the same compact key are the same entity
-    written differently, and the fuzzy matcher links them with score 1.0.
+    Legal-form designators are stripped (``shared.utils.legal_forms``) and
+    spaces next to Han, Hangul and Kana letters dropped. Names with the same
+    compact key are the same entity written differently, and the fuzzy
+    matcher links them with score 1.0.
     This is a matching key only: entity ids keep using ``entity_key``.
     """
     return drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
