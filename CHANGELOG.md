@@ -1156,7 +1156,7 @@ From 0.2.3 (or a `main` checkout since):
   and that section as its notes (`scripts/changelog_section.py`). A manual
   run is a dry run that publishes nothing. Nothing is uploaded to PyPI yet.
   `main` now reports version `0.3.0.dev0`; CONTRIBUTING.md describes the
-  release steps (#PR).
+  release steps (#572).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
