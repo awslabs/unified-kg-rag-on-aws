@@ -145,7 +145,8 @@ The rules to keep in mind:
 - **Docs**: user docs start at `docs/index.md` (the hub), with task pages in
   `docs/guides/`, concepts and measured evidence in `docs/concepts/`, and
   reference in `docs/reference/`, including the generated `cli.md` and
-  `configuration.md`. `docs/user-guide.md` is only a redirect. Operator
+  `configuration.md`. `docs/user-guide.md` is only a redirect (the 0.2.3
+  user guide's headings). Operator
   procedures are in `docs/operations.md`, extension recipes in
   `docs/design.md` §15. Where content goes, the Korean (Tier-1) pages and
   the docs checker (`uv run python scripts/check_docs.py`):
