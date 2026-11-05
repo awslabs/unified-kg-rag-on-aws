@@ -1925,3 +1925,23 @@ def test_a_relationship_hit_has_no_blank_line_inside(retriever) -> None:
         {"source_name": "a", "target_name": "b", "type": "T", "description": "d"}
     )
     assert content == "Relationship: a -[T]-> b\nDescription: d"
+
+
+async def test_the_ingested_suffix_check_raises_a_fatal_error(retriever) -> None:
+    # A missing index whose text-units check cannot reach the store: an
+    # unexpected error keeps skipping the one index, a store that cannot be
+    # reached fails the query (it was swallowed and the search came back
+    # empty).
+    from unified_kg_rag.shared.exceptions import StoreConnectionError
+
+    answers: list[Exception] = [RuntimeError("odd"), StoreConnectionError("down")]
+
+    class _Client:
+        async def aindex_exists(self, name: str) -> Any:
+            raise answers.pop(0)
+
+    object.__setattr__(retriever, "_opensearch_client", _Client())
+    cause = RuntimeError("index_not_found_exception")
+    await retriever._require_ingested_suffix("s1", cause)
+    with pytest.raises(StoreConnectionError):
+        await retriever._require_ingested_suffix("s1", cause)

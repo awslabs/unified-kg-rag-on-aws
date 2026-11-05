@@ -1512,14 +1512,19 @@ depth selects the cut.
   `max_level`, which bounds only this fallback). The walk starts at the roots
   as upstream's does but follows relevant reports to the leaves, where
   upstream's stops at `community_level`. Ratings run
-  `search.max_concurrency` at a time.
+  `search.max_concurrency` at a time. A rating is the first number of the
+  model's answer, clamped to the prompt's 1-10; an answer without one, like
+  a failed call, keeps its report unrated (MS GraphRAG keeps a report it
+  could not rate), recorded in `degraded_error` and
+  `global_unrated_report_count`.
 
 **Map-reduce.** At least `map_reduce_min_results` reports are packed, in the
 order the selection gives them (rank for the fixed cut, rating for dynamic
 selection, similarity for the similarity fallback; MS GraphRAG shuffles
 them), into batches of `map_context_tokens` (MS
 GraphRAG's `data_max_tokens`); each map
-call (`search.max_concurrency` at a time) extracts key points scored 0-100,
+call (`search.max_concurrency` at a time, awaited on the event loop, so the
+query deadline cancels them and starts no queued one) extracts key points scored 0-100,
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
@@ -1541,7 +1546,8 @@ is *unrated*; when no point passed but some reports were never rated, those
 reports pass through, so global search still answers, and the search
 metadata records it (`degraded_error`). When every map call failed (other than
 on a prompt longer than the model's context) and `processing.ignore_errors` is
-off, the query fails with the first error, as DRIFT does. When every batch was
+off, the query fails with the first error, as DRIFT does; a fatal error (no
+model access) fails it even under `ignore_errors`. When every batch was
 rated and every point rejected, it returns nothing
 (`map_reduce_no_relevant_points`) and the chain says it cannot answer, as MS
 GraphRAG does.

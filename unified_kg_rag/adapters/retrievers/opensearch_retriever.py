@@ -1465,7 +1465,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         try:
             if await self._opensearch_client.aindex_exists(alias):
                 return
-        except Exception:
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             return  # Cannot tell: keep skipping just the missing index.
         shown = suffix or Constants.DEFAULT_SUFFIX.value
         raise IndexNotFoundError(

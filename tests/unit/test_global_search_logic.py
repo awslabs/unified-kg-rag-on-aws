@@ -21,7 +21,6 @@ import pytest
 from botocore.exceptions import ClientError
 
 from tests.fixtures.fakes.retrievers import opensearch_fields_for
-from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
 from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
@@ -157,6 +156,9 @@ class _MapChain:
         self.reports.append(single_input["reports"])
         return json.dumps({"points": [{"description": "a point", "score": 50}]})
 
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        return self.invoke(single_input, config)
+
 
 class _Rater:
     """Rates a report 9 when its community is in ``relevant``, else 1."""
@@ -202,7 +204,6 @@ def _strategy(
     strat.hybrid_scorer = HybridScorer(config)
     strat.token_manager = _Tokens()  # type: ignore[assignment]
     strat.map_rater = _MapChain()
-    strat.batch_processor = BatchProcessor(max_concurrency=1, max_attempts=1)
     return strat
 
 
@@ -420,7 +421,6 @@ def test_the_fan_out_uses_the_search_concurrency() -> None:
     config.processing.max_concurrency = 40
     strat = GlobalSearchStrategy(config, {})
     assert strat.max_concurrency == 3
-    assert strat.batch_processor.max_concurrency == 3
 
 
 async def test_the_cap_leaves_the_probe_room_in_the_store_page() -> None:
@@ -673,6 +673,21 @@ async def test_a_failed_rating_keeps_the_report_under_ignore_errors() -> None:
     # Every rating failed, so every report counts as relevant: the leaves.
     assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
     assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_a_rating_without_a_number_keeps_the_report_and_is_recorded() -> None:
+    class _Unrated(_Rater):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            await super().ainvoke(inputs, config)
+            return "nan"
+
+    strat = _strategy(use_dynamic_selection=True)
+    strat.community_relevance_scorer = _Unrated(set())
+    result = await strat.asearch(SearchQuery(query="themes"))
+    # Kept unrated, as a failed rating is: down to the leaves.
+    assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
+    assert result.metadata["degraded_error"] == "LanguageModelError"
+    assert result.metadata["global_unrated_report_count"] == 9
 
 
 async def test_every_rating_of_a_step_failing_raises_without_ignore_errors() -> None:

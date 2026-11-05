@@ -2108,6 +2108,28 @@ Deployment (CDK).
   chunks or kept the cut, and a backend without a schema had its keys
   dropped. Both ask the document retriever (`filter_fields_for`); one
   without a schema declares every key (#PR).
+- Global search's map calls ran in a worker thread, so a query past
+  `search.query_timeout_seconds` or a closed chain left them running and
+  kept starting the queued ones, each a billed model call (all 10 of 10
+  batches started after a deadline that cancelled the query at 4). They
+  are awaited on the event loop now, at most `search.max_concurrency` at
+  a time, as DRIFT's: a deadline cancels the calls in flight and starts no
+  other. A map call is bounded by the model client's timeout
+  (`search.model_timeout_seconds`) and the query deadline; the 300 s
+  per-call ceiling and its "map call gave up after" error are gone (#PR).
+- Dynamic community selection read a rating with `float()` of the whole
+  answer: `8/10`, `Score: 2` or a number followed by a reason became the
+  default 5, `nan` became NaN, which no threshold drops, and `85` stood
+  above every 1-10 rating. A rating is its answer's first number, clamped
+  to 1-10; an answer without one keeps its report unrated (as a failed
+  rating does), is recorded in `degraded_error` and counted in
+  `global_unrated_report_count` (new search metadata) (#PR).
+- Under `processing.ignore_errors`, a fatal model error (no access to the
+  model) in global search's map or reduce step degraded to an answer from
+  the unrated reports; it fails the query, as in DRIFT and the dynamic
+  selection. An OpenSearch search of a missing index whose ingested-suffix
+  check could not reach the store skipped the index; a store that cannot
+  be reached fails the query there too (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
