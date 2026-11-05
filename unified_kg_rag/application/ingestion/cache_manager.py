@@ -24,7 +24,8 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class _CorruptCacheEntry(Exception):
-    """A cached entry's files are missing, truncated or fail their hash."""
+    """A cached entry's files are missing, truncated, fail their hash or no
+    longer validate as the requested model."""
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -323,6 +324,14 @@ class CacheManager:
 
     @staticmethod
     def _deserialize_data(content: str, data_type: type[T]) -> T | list[T] | Any:
+        """Validate a single-file entry into ``data_type``.
+
+        Raises:
+            _CorruptCacheEntry: The data does not validate (as a chunk that
+                does not, see :meth:`_load_chunked_data`): returning the raw
+                JSON would hand dicts to a stage expecting models and count
+                the entry as a hit.
+        """
         data = json.loads(content)
 
         try:
@@ -331,11 +340,9 @@ class CacheManager:
             if isinstance(data, dict):
                 return data_type.model_validate(data)
         except Exception as e:
-            logger.warning(
-                "Could not deserialize data into '%s', returning raw data. Error: %s",
-                data_type.__name__,
-                e,
-            )
+            raise _CorruptCacheEntry(
+                f"data does not validate as '{data_type.__name__}': {e}"
+            ) from e
 
         return data
 

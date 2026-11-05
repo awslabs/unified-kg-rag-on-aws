@@ -1734,6 +1734,11 @@ Ingestion and incremental indexing.
   WARNING. The read raises now (`AWSServiceError` on Neptune, the store's
   error on SQLite), as every other graph read does, and the run fails before
   it writes (#PR).
+- A cached stage output that no longer validates as its model (a model
+  field changed between releases) was returned as raw JSON and counted a
+  cache hit, so the stage resumed with dicts where it expects models. It is
+  a miss now, and the stage runs again, as a cached chunk that fails
+  validation already was (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
