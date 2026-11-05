@@ -181,14 +181,24 @@ def merge_attributes(
     return _with_seed_properties(merged, present)
 
 
-def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
-    """Newline-separated entity names for a prompt, at most ``max_entities``.
+def format_entities_with_limit_task(
+    entities: list[Entity], max_entities: int, *, typed: bool = False
+) -> str:
+    """Newline-separated entity names for a prompt, at most ``max_entities``,
+    each followed by its type in parentheses when ``typed`` and it has one
+    (``Acme (ORGANIZATION)``).
 
     Over the limit, entities with a description and then those cited by more
     text units come first, and a line counts the omitted ones.
     """
+
+    def line(entity: Entity) -> str:
+        return (
+            f"{entity.name} ({entity.type})" if typed and entity.type else entity.name
+        )
+
     if len(entities) <= max_entities:
-        return "\n".join(e.name for e in entities)
+        return "\n".join(line(e) for e in entities)
 
     sorted_entities = sorted(
         entities,
@@ -199,9 +209,8 @@ def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -
         reverse=True,
     )
     selected_entities = sorted_entities[:max_entities]
-    entity_list = "\n".join(e.name for e in selected_entities)
-    if len(entities) > max_entities:
-        entity_list += f"\n... and {len(entities) - max_entities} more entities"
+    entity_list = "\n".join(line(e) for e in selected_entities)
+    entity_list += f"\n... and {len(entities) - max_entities} more entities"
     return entity_list
 
 

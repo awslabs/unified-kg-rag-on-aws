@@ -649,6 +649,13 @@ From 0.2.3 (or a `main` checkout since):
       graph resolution runs on it again: a reset (it reuses the stored
       extraction records, no extraction call) or an incremental run that
       touches it.
+    - Gleaning (on by default): its prompt changed, which re-keys every
+      gleaned extraction record (the claims records too while claims are
+      on), as any template edit does. A reset therefore extracts and gleans
+      every text unit once more (and extracts its claims), the cost of a
+      first build's extraction and gleaning; later resets reuse the new
+      records. An incremental run keeps the stored documents' records and
+      uses the new prompt for new and changed documents only.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1813,6 +1820,17 @@ Ingestion and incremental indexing.
   (`coerce_llm_text`) reads every field now: the element's own text, else
   its children's text, attributes and comments dropped, a repeated
   description-like field joined (#PR).
+- The gleaning prompt listed the unit's entities by name only and named no
+  type: gleaned entities and relationships were typed without the declared
+  entity types or the schema's relationship types, and every gleaned
+  entity took confidence 1.0 (the
+  top) and every gleaned relationship weight 1.0 (the bottom of the 1-10
+  strength scale), as the prompt asked for no score. It now lists each
+  entity with its type (`Acme (ORGANIZATION)`), gives the extraction
+  prompt's entity and relationship type blocks, and asks for
+  `<confidence>` and `<strength>` on extraction's scales, which the
+  gleaner already read; a score left out takes extraction's default
+  (*Upgrading*) (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no

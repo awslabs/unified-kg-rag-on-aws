@@ -394,7 +394,10 @@ gets its models and stores from the run's `Providers` bundle.
   entity keys rejected for it. Gleaning edits one record at a time: its
   prompt lists the unit's own items, and a correction never reaches what
   another unit says (MS GraphRAG and LightRAG likewise glean each chunk's own
-  extraction).
+  extraction). It lists the entities with their types and gives the
+  extraction prompt's entity and relationship type blocks and its 1-10
+  confidence and strength scales, so a gleaned item is typed and scored as
+  an extracted one (a missing score takes extraction's default too).
 - **Resolution starts from the merge of all records**
   (`domain/ingestion/contributions.merge_contributions`: items merged by id,
   weights kept per unit), so the merged graph does not depend on which units
