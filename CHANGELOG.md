@@ -2291,6 +2291,10 @@ Deployment (CDK).
   or summary, marked `synthesized`) were returned in `search_results` by
   `ainvoke` and `asearch` unscreened. Each is screened as the answer is (one
   ApplyGuardrail call each): masked, or dropped when refused (#567).
+- A Bedrock guardrail word-filter intervention was reported as
+  `wordPolicy:unknown`: custom-word entries carry neither a name nor a
+  type. They are named by their list now (`wordPolicy:customWords`), and
+  managed word lists by their type (`wordPolicy:PROFANITY`) (#PR).
 - MMR diversity (`search.fusion.diversity_lambda` below 1) measured
   redundancy over whitespace words, and an unspaced Japanese or Chinese
   passage is one: a near-duplicate differing by one appended word shared

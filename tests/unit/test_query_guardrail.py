@@ -239,6 +239,40 @@ async def test_any_blocked_entry_blocks(runtime) -> None:  # noqa: ANN001
     ]
 
 
+async def test_word_filters_are_named_by_list(runtime) -> None:  # noqa: ANN001
+    # ApplyGuardrail's wordPolicy shape: customWords entries carry only the
+    # matched word (no name or type); managedWordLists entries carry a type.
+    client, stubber = runtime
+    response = {
+        "action": "GUARDRAIL_INTERVENED",
+        "outputs": [{"text": _REFUSAL}],
+        "assessments": [
+            {
+                "wordPolicy": {
+                    "customWords": [
+                        {"match": "forbidden", "action": "BLOCKED", "detected": True}
+                    ],
+                    "managedWordLists": [
+                        {
+                            "match": "darn",
+                            "type": "PROFANITY",
+                            "action": "BLOCKED",
+                            "detected": True,
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+    stubber.add_response("apply_guardrail", response, _request(_QUERY))
+    guard = BedrockGuardrail(_guarded_config(), client=client)
+
+    verdict = await guard.acheck(_QUERY, GuardSource.INPUT)
+
+    assert verdict.action is GuardAction.BLOCKED
+    assert verdict.policies == ["wordPolicy:PROFANITY", "wordPolicy:customWords"]
+
+
 async def test_unexplained_intervention_fails_closed(runtime) -> None:  # noqa: ANN001
     client, stubber = runtime
     stubber.add_response(
