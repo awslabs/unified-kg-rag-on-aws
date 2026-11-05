@@ -719,7 +719,8 @@ of the documents plus the configured seeds. No model reads a seed.
   on `is_seed_unit` (`document_first`): the type vote counts document
   statements and falls back to seed votes only when none gives a type;
   a resolved group's name is keyed `(-document units, -seed units,
-  name)`; confidence is the maximum over document statements when any
+  name)`, and its type is the named member's unless that is unknown
+  (none, blank, `unknown`), then the known type the most units cite; confidence is the maximum over document statements when any
   exist. Descriptions stay a union, document lines first because records
   merge in unit-id order. `Entity.iri` is a stated field, kept in
   records, merged as the smallest non-null value (groups with several

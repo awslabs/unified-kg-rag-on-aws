@@ -1764,6 +1764,14 @@ Ingestion and incremental indexing.
   stored match and never joins two stored entities, so a new name similar
   to two stored ones merges with one of them only until a reset. The
   design notes and the incremental guide say so now (#564).
+- Entity resolution took the merged entity's type from the member whose
+  name won only, so where that member had no type (an endpoint named only
+  in relationships, a stub), the merge had none: "Acme Inc"
+  (`organization`, one unit) and a stub "Acme" cited by two units became
+  an untyped "Acme". When the winning member's type is unknown (none,
+  blank, `unknown`), the merge takes the known type the most units cite
+  among the members documents state (a seed's only when no document gives
+  one); the incremental derivation runs the same code (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
