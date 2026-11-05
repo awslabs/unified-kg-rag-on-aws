@@ -65,30 +65,35 @@ from __future__ import annotations
 import hashlib
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Annotated, Literal, NamedTuple, TypeVar
+from typing import Literal, NamedTuple, TypeVar
 
 from pydantic import (
-    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
-    StringConstraints,
     ValidationError,
 )
 
 from unified_kg_rag.adapters.source_files.rdf_terms import (
     DCTERMS,
+    MAX_LABEL_CHARS,
     OWL,
     RDF,
     RDFS,
     SKOS,
     WELL_KNOWN_PREFIXES,
     XSD,
+    LabelOverride,
+    LanguageTag,
+    OptionTerm,
+    PrefixConflictError,
+    PrefixName,
     Text,
     best_text,
     local_name,
     namespace_of,
     preserve_case,
+    resolve_curie,
     upper_snake,
 )
 from unified_kg_rag.domain.models.schema import (
@@ -120,22 +125,6 @@ _DESCRIPTIVE_NAMESPACES = (SKOS, DCTERMS, "http://purl.org/dc/elements/1.1/")
 _UNRESTRICTED = frozenset({OWL + "Thing", RDFS + "Resource"})
 # The default ``description_properties``, which an ontology need not use.
 _DEFAULT_DESCRIPTIONS = frozenset({SKOS + "definition", RDFS + "comment"})
-# The longest label a type may get (a longer one needs a ``labels`` entry).
-MAX_LABEL_CHARS = 64
-
-_Option = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-_PrefixName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][\w.-]*$")]
-_Language = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True, pattern=r"^(|[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)$"
-    ),
-    AfterValidator(str.lower),
-]
-_Override = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LABEL_CHARS),
-]
 
 
 class MappingOptions(BaseModel):
@@ -147,18 +136,18 @@ class MappingOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    namespaces: tuple[_Option, ...] = Field(
+    namespaces: tuple[OptionTerm, ...] = Field(
         default=(),
         description="IRI prefixes of the classes and properties to map "
         "(default: every namespace but RDF, RDFS, OWL, XSD, SKOS and Dublin "
         "Core)",
     )
-    classes: tuple[_Option, ...] = Field(
+    classes: tuple[OptionTerm, ...] = Field(
         default=(),
         description="Root classes: each is mapped with its subclasses "
         "(default: every class)",
     )
-    exclude_classes: tuple[_Option, ...] = Field(
+    exclude_classes: tuple[OptionTerm, ...] = Field(
         default=(), description="Classes left out, with their subclasses"
     )
     max_depth: int | None = Field(
@@ -167,18 +156,18 @@ class MappingOptions(BaseModel):
         description="How many subclass levels below the roots to map "
         "(0: the roots only; default: all)",
     )
-    properties: tuple[_Option, ...] = Field(
+    properties: tuple[OptionTerm, ...] = Field(
         default=(),
         description="Root properties: each is mapped with its sub-properties "
         "(default: every object property)",
     )
-    exclude_properties: tuple[_Option, ...] = Field(
+    exclude_properties: tuple[OptionTerm, ...] = Field(
         default=(), description="Properties left out, with their sub-properties"
     )
     include_deprecated: bool = Field(
         default=False, description="Map terms marked owl:deprecated too"
     )
-    prefixes: dict[_PrefixName, _Option] = Field(
+    prefixes: dict[PrefixName, OptionTerm] = Field(
         default_factory=dict,
         description="Prefix -> namespace IRI for the CURIEs of these options",
     )
@@ -193,12 +182,12 @@ class MappingOptions(BaseModel):
         description="upper_snake: SUPPLY_CHAIN; preserve: the label as "
         "written, punctuation made spaces",
     )
-    languages: tuple[_Language, ...] = Field(
+    languages: tuple[LanguageTag, ...] = Field(
         default=("en", ""),
         description="Preferred language tags of labels and descriptions, in "
         'order ("" = untagged); any other tag comes after them',
     )
-    labels: dict[_Option, _Override] = Field(
+    labels: dict[OptionTerm, LabelOverride] = Field(
         default_factory=dict,
         description="IRI or CURIE -> the label to use, as written",
     )
@@ -208,7 +197,7 @@ class MappingOptions(BaseModel):
         "label with its namespace's prefix (qualify): one prefixes binds, "
         "else a well-known one, else the ontology's, else a hash",
     )
-    description_properties: tuple[_Option, ...] = Field(
+    description_properties: tuple[OptionTerm, ...] = Field(
         default=("skos:definition", "rdfs:comment"),
         description="Annotation properties a type's description is read "
         "from, first match wins (within the preferred language); one other "
@@ -687,31 +676,15 @@ class _Mapper:
 
     # Terms of the options.
 
-    def _binding(self, prefix: str) -> str | None:
-        if prefix in self.options.prefixes:
-            return self.options.prefixes[prefix]
-        bound = {
-            namespace
-            for namespace in (
-                WELL_KNOWN_PREFIXES.get(prefix),
-                self.model.prefixes.get(prefix),
-            )
-            if namespace is not None
-        }
-        if len(bound) > 1:
-            raise SchemaSourceError(
-                f"schema_source.options: prefix '{prefix}' is bound to "
-                f"{' and '.join(sorted(bound))}; say which in "
-                f"schema_source.options.prefixes.{prefix}"
-            )
-        return bound.pop() if bound else None
-
     def _resolve(self, term: str, option: str) -> str:
-        if "://" in term or term.startswith("urn:"):
-            return term
-        prefix, separator, name = term.partition(":")
-        namespace = self._binding(prefix) if separator else None
-        if namespace is None:
+        try:
+            resolved = resolve_curie(term, self.options.prefixes, self.model.prefixes)
+        except PrefixConflictError as e:
+            raise SchemaSourceError(
+                f"schema_source.options: {e}; say which in "
+                f"schema_source.options.prefixes.{e.prefix}"
+            ) from e
+        if resolved is None:
             raise SchemaSourceError(
                 f"schema_source.options.{option}: {term!r} is neither an IRI "
                 "nor a CURIE of a bound prefix; bind its prefix in "
@@ -719,7 +692,7 @@ class _Mapper:
                 "prefix the ontology's files bind to different namespaces is "
                 "not bound: a WARNING names those when the files are read)"
             )
-        return namespace + name
+        return resolved
 
     def _known(
         self, terms: Iterable[str], option: str, tree: _Hierarchy, what: str

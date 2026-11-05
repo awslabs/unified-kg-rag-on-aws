@@ -55,28 +55,29 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Annotated, Any, Literal, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar
 
-from pydantic import (
-    AfterValidator,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    ValidationError,
-)
+from pydantic import ConfigDict, Field, ValidationError
 
 from unified_kg_rag.adapters.source_files.locations import SourceTerms
 from unified_kg_rag.adapters.source_files.rdf_terms import (
     OWL,
     RDF,
     RDFS,
+    SCHEMA,
     SKOS,
     WELL_KNOWN_PREFIXES,
     XSD,
+    LabelOverride,
+    LanguageTag,
+    OptionTerm,
+    PrefixConflictError,
+    PrefixName,
     Text,
     best_text,
     local_name,
     namespace_of,
+    resolve_curie,
     upper_snake,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema
@@ -145,21 +146,6 @@ _INTEGER_TYPES = frozenset(
 _FLOAT_TYPES = frozenset(XSD + name for name in ("decimal", "double", "float"))
 _INTEGER = re.compile(r"^[+-]?\d+$")
 _BOOLEANS = {"true": True, "1": True, "false": False, "0": False}
-MAX_LABEL_CHARS = 64
-
-_Option = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-_PrefixName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][\w.-]*$")]
-_Language = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True, pattern=r"^(|[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)$"
-    ),
-    AfterValidator(str.lower),
-]
-_Override = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LABEL_CHARS),
-]
 
 TermKind = Literal["iri", "blank", "literal", "triple"]
 
@@ -193,47 +179,54 @@ class AboxMappingOptions(SeedSourceOptions):
     """``processing.seed_graphs[].options`` of kind ``rdf``: how instances
     become nodes and edges (and the options every kind takes). Terms are
     full IRIs or CURIEs (``prefix:name``, read with ``prefixes``, then the
-    well-known prefixes, then the files' own bindings)."""
+    well-known prefixes and the files' own bindings, which must agree)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    prefixes: dict[_PrefixName, _Option] = Field(
+    prefixes: dict[PrefixName, OptionTerm] = Field(
         default_factory=dict,
         description="Prefix -> namespace IRI for the CURIEs of these options "
         "and of the property keys",
     )
-    name_properties: tuple[_Option, ...] = Field(
-        default=("skos:prefLabel", "rdfs:label", "schema:name", SCHEMA_HTTP + "name"),
+    name_properties: tuple[OptionTerm, ...] = Field(
+        # Full IRIs: a file binding one of these prefixes elsewhere makes
+        # a CURIE ambiguous, not the defaults.
+        default=(
+            SKOS + "prefLabel",
+            RDFS + "label",
+            SCHEMA + "name",
+            SCHEMA_HTTP + "name",
+        ),
         description="Literal properties a node's name is read from, in the "
         "preferred language (else the IRI's local name)",
     )
-    description_properties: tuple[_Option, ...] = Field(
+    description_properties: tuple[OptionTerm, ...] = Field(
         default=(
-            "skos:definition",
-            "rdfs:comment",
-            "schema:description",
+            SKOS + "definition",
+            RDFS + "comment",
+            SCHEMA + "description",
             SCHEMA_HTTP + "description",
         ),
         description="Literal properties a node's description is read from, "
         "in the preferred language",
     )
-    languages: tuple[_Language, ...] = Field(
+    languages: tuple[LanguageTag, ...] = Field(
         default=("en", ""),
         description="Preferred language tags of names, descriptions and "
         'string properties, in order ("" = untagged); any other tag comes '
         "after them",
     )
-    labels: dict[_Option, _Override] = Field(
+    labels: dict[OptionTerm, LabelOverride] = Field(
         default_factory=dict,
         description="Class or property IRI (or CURIE) no schema type declares "
         "-> the type label to use (default: its local name in UPPER_SNAKE)",
     )
-    properties: tuple[_Option, ...] | None = Field(
+    properties: tuple[OptionTerm, ...] | None = Field(
         default=None,
         description="The literal properties kept as node properties "
         "(default: every one that is not a name or description property)",
     )
-    exclude_properties: tuple[_Option, ...] = Field(
+    exclude_properties: tuple[OptionTerm, ...] = Field(
         default=(), description="Literal properties never kept"
     )
 
@@ -336,22 +329,20 @@ class _Mapper:
     # Terms of the options.
 
     def _resolve(self, term: str, option: str) -> str:
-        if "://" in term or term.startswith("urn:"):
-            return term
-        prefix, separator, name = term.partition(":")
-        if separator:
-            for bound in (
-                self.options.prefixes,
-                WELL_KNOWN_PREFIXES,
-                self.file_prefixes,
-            ):
-                if prefix in bound:
-                    return bound[prefix] + name
-        raise self.terms(
-            f"options.{option}: {term!r} is neither an IRI nor a CURIE of a "
-            "bound prefix; bind its prefix in options.prefixes or write the "
-            "full IRI"
-        )
+        try:
+            resolved = resolve_curie(term, self.options.prefixes, self.file_prefixes)
+        except PrefixConflictError as e:
+            raise self.terms(
+                f"options.{option}: {term!r}: {e}; say which in "
+                f"options.prefixes.{e.prefix}"
+            ) from e
+        if resolved is None:
+            raise self.terms(
+                f"options.{option}: {term!r} is neither an IRI nor a CURIE of a "
+                "bound prefix; bind its prefix in options.prefixes or write the "
+                "full IRI"
+            )
+        return resolved
 
     def _resolved(self, terms: Sequence[str], option: str) -> list[str]:
         return list(dict.fromkeys(self._resolve(term, option) for term in terms))

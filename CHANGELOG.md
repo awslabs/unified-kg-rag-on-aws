@@ -1080,9 +1080,15 @@ From 0.2.3 (or a `main` checkout since):
   CURIE-keyed properties by `languages`; blank nodes, reification,
   RDF-star, `owl:sameAs` and non-instance objects are counted and
   skipped, nothing is inferred; an invalid node or edge fails naming its
-  subject (#504, #510). Schema and seed sources share
-  `adapters/source_files`, the RDF vocabulary and naming helpers in
-  `rdf_terms` included (#497, #510).
+  subject (#504, #510). A CURIE of the `rdf` options resolves as the
+  `owl` source's do: a prefix the files bind to another namespace than
+  the well-known one (`schema:` to `http://schema.org/`) fails naming the
+  option until `options.prefixes` settles it, where it took the
+  well-known namespace and names fell back to the local name; the
+  default `name_properties` and `description_properties` are full IRIs
+  (#PR). Schema and seed sources share
+  `adapters/source_files`, the RDF vocabulary, naming helpers, CURIE
+  resolution and option types in `rdf_terms` included (#497, #510, #PR).
 - `Entity.iri` (a stated IRI, the smallest when several merge) and
   `source_kinds` on entities and relationships (`["document",
   "seed_graph"]` or `["seed_graph"]`, written only on items a seed
