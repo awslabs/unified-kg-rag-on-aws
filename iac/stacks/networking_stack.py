@@ -5,9 +5,9 @@
 Two modes (config.network_mode):
   - "private" (default): isolated subnets with NO NAT gateway, and no public
     subnet or internet gateway. The data plane reaches AWS services only
-    through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs, STS;
+    through VPC endpoints (Bedrock, S3, DynamoDB, ECR, CloudWatch Logs;
     X-Ray too with enable_cloudwatch_tracing, Secrets Manager with
-    observability_secret_arn). No internet egress.
+    observability_secret_arn, STS with sts_endpoint). No internet egress.
   - "public": private subnets WITH NAT egress (simpler; allows arbitrary
     outbound, e.g. pulling public packages at runtime).
 
@@ -52,10 +52,14 @@ INTERFACE_ENDPOINTS = {
     "EcrApi": ec2.InterfaceVpcEndpointAwsService.ECR,
     "EcrDocker": ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
     "CwLogs": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-    # boto3 calls STS only for assumed-role credentials (adapters/aws/bedrock.py);
-    # kept so such a configuration does not hang in private mode.
-    "Sts": ec2.InterfaceVpcEndpointAwsService.STS,
 }
+# Only with sts_endpoint: the app calls STS only to assume
+# aws.bedrock.assumed_role_arn (adapters/aws/bedrock.py), which the image
+# config sets and the stack cannot see. Everything else (boto3, the AWS CLI
+# of the entrypoint, the collector's SigV4 signer) takes the task role's
+# credentials from the ECS container credentials endpoint (169.254.170.2,
+# link-local), and the Fargate agent fetches its own; none calls STS.
+STS_ENDPOINTS = {"Sts": ec2.InterfaceVpcEndpointAwsService.STS}
 # Only with enable_cloudwatch_tracing: the collector sidecar's route to the
 # CloudWatch OTLP traces endpoint (xray.<region>.amazonaws.com).
 TRACING_ENDPOINTS = {"XRay": ec2.InterfaceVpcEndpointAwsService.XRAY}
@@ -227,6 +231,8 @@ class NetworkingStack(Stack):
             endpoints.update(TRACING_ENDPOINTS)
         if self.config.observability_secret_arn:
             endpoints.update(SECRETS_ENDPOINTS)
+        if self.config.sts_endpoint:
+            endpoints.update(STS_ENDPOINTS)
         return endpoints
 
     def _restrict_gateway_endpoints(

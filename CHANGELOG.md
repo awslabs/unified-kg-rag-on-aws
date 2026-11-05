@@ -670,6 +670,10 @@ From 0.2.3 (or a `main` checkout since):
       and cut by size over it now, with no call. A reset re-chunks a
       document holding one and extracts its text units again where the
       pieces differ; pre-chunks of several lines are unchanged.
+15. A deployed private-mode CDK stack whose image config sets
+    `aws.bedrock.assumed_role_arn`: deploy with `-c sts_endpoint=true`, or
+    the next deploy removes the STS endpoint and the role assumption hangs
+    (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1202,6 +1206,11 @@ From 0.2.3 (or a `main` checkout since):
   A query right after an ingestion can miss its last writes for the
   replica lag ([Query access](docs/operations.md#query-access-and-tenant-isolation))
   (#PR).
+- CDK: a private-mode VPC gets the STS interface endpoint only with the new
+  `sts_endpoint` context key (default `false`): only an image config with
+  `aws.bedrock.assumed_role_arn` calls STS, and task role credentials come
+  from the ECS credentials endpoint. One interface endpoint fewer (billed
+  per AZ-hour) (#PR).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot

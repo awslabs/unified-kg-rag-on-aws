@@ -66,6 +66,20 @@ def test_secrets_manager_endpoint_only_with_an_observability_secret(
     assert sum(".secretsmanager" in s for s in services) == expected
 
 
+@pytest.mark.parametrize(
+    ("context", "expected"), [({}, 0), ({"sts_endpoint": "true"}, 1)]
+)
+def test_sts_endpoint_only_when_asked(context: dict[str, Any], expected: int) -> None:
+    # Only aws.bedrock.assumed_role_arn calls STS; task role credentials come
+    # from the ECS credentials endpoint. Each endpoint bills per AZ-hour.
+    services = _interface_services(_network(context))
+    assert len(services) == len(INTERFACE_ENDPOINTS) + expected
+    assert sum(".sts" in s for s in services) == expected
+    (warning,) = _reuse_warnings(_network({**context, "vpc_id": "vpc-0example"}))
+    listed = warning.split(":")[-1].rstrip(".").split(", ")
+    assert ("sts" in listed) is bool(expected)
+
+
 def test_public_mode_adds_no_secrets_manager_endpoint() -> None:
     stack = _network({**_SECRET, "network_mode": "public"})
     assert _endpoint_counts(stack) == {"Gateway": 2, "Interface": 0}

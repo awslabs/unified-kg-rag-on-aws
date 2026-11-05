@@ -23,6 +23,11 @@ cannot leave its setting at the default:
                                        "public"   -> private-with-NAT subnets
   max_azs             2                AZs for a newly-created VPC (>=2:
                                        Neptune needs subnets in two AZs)
+  sts_endpoint        False            private mode: add the STS interface
+                                       endpoint, which only an image config
+                                       with aws.bedrock.assumed_role_arn
+                                       calls (task role credentials come from
+                                       the ECS credentials endpoint)
 
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
@@ -475,6 +480,9 @@ class DeploymentConfig:
     opensearch_nori_package: bool = False
     # Neptune Serverless (min, max) NCU; None = provisioned neptune_instance.
     neptune_serverless_ncu: tuple[float, float] | None = None
+    # The STS interface endpoint in private mode (for aws.bedrock.
+    # assumed_role_arn only). Off: no endpoint, nothing else changes.
+    sts_endpoint: bool = False
     # Fargate Spot for the ingestion task, and the re-runs of a task Spot
     # interrupted. Off: the templates are exactly as without the feature.
     ingestion_fargate_spot: bool = False
@@ -761,6 +769,7 @@ class DeploymentConfig:
             opensearch_nori_package=opensearch_nori_package,
             neptune_serverless_ncu=neptune_serverless_ncu,
             ingestion_fargate_spot=ingestion_fargate_spot,
+            sts_endpoint=as_bool("sts_endpoint", default=False),
             spot_interruption_retries=as_int(
                 "spot_interruption_retries", 2, minimum=0, maximum=10
             ),
