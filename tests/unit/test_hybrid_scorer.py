@@ -33,10 +33,13 @@ class TestNormalizeScores:
     def test_empty_list(self) -> None:
         assert _scorer()._normalize_scores([]) == []
 
-    def test_constant_scores_get_half(self) -> None:
+    def test_constant_scores_get_the_top_score(self) -> None:
+        # As the hybrid search's normalization (SINGLE_RESULT_SCORE): a
+        # stream's only hit scored 0.5, below another stream's best.
         results = [_r("a", 3.0, "s1"), _r("b", 3.0, "s2")]
         out = _scorer()._normalize_scores(results)
-        assert all(r.score == 0.5 for r in out)
+        assert all(r.score == 1.0 for r in out)
+        assert _scorer()._normalize_scores([_r("only", 0.99, "s3")])[0].score == 1.0
 
     def test_min_max_normalized_to_unit_range(self) -> None:
         results = [_r("a", 10.0, "s1"), _r("b", 20.0, "s2"), _r("c", 15.0, "s3")]
@@ -804,3 +807,35 @@ class TestRerankBeforeDiversity:
         scorer = self._scorer({"a": 0.6, "b": 0.7, "c": 0.8, "d": 0.9}, top_n=3)
         scorer.fuse_and_rerank_results({"chunks": self._chunks()}, top_k=4, query="q")
         assert scorer.rerank_model.seen == ["a", "b", "c"]
+
+
+def _diverse(texts: list[str]) -> list[str]:
+    config = Config()
+    config.search.reranking.enabled = False
+    scorer = HybridScorer(config)
+    results = [
+        RetrievalResult(
+            content=text,
+            score=1.0 - i * 0.01,
+            source=f"c{i}",
+            retriever_type="text",
+            metadata={},
+        )
+        for i, text in enumerate(texts)
+    ]
+    return [r.source for r in scorer._apply_diversity_filtering(results, top_k=2)]
+
+
+def test_mmr_drops_a_japanese_near_duplicate() -> None:
+    # Regression: redundancy was measured over whitespace words, and an
+    # unspaced Japanese sentence is one: a copy with one word appended
+    # shared nothing with its original and was kept over a distinct passage.
+    original = "アクメ社は二〇二〇年にベータ社を一千万ドルで買収した。"
+    other = "ガンマ社はオハイオ州で輸出用の部品を製造している。"
+    assert _diverse([original, original + "今日", other]) == ["c0", "c2"]
+
+
+def test_mmr_on_spaced_text_is_unchanged() -> None:
+    original = "Acme Corp acquired Beta Inc in 2020 for ten million dollars"
+    other = "Gamma Ltd makes widgets in Ohio for export"
+    assert _diverse([original, original + " today", other]) == ["c0", "c2"]

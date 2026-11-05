@@ -17,9 +17,11 @@ from unified_kg_rag.domain.models import (
     RerankStatus,
     RetrievalResult,
 )
+from unified_kg_rag.domain.retrieval.hybrid_normalization import SINGLE_RESULT_SCORE
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,23 @@ def _cause_name(exc: BaseException) -> str:
         if code:
             return str(code)
     return type(cause).__name__
+
+
+def _redundancy_terms(text: str) -> frozenset[str]:
+    """The terms MMR compares two results by (Jaccard similarity).
+
+    Whitespace words, except that a word holding a Han, Hangul or Kana letter
+    is split into its character bigrams: those scripts need no spaces, so a
+    Japanese or Chinese sentence was one "word", and a near-duplicate that
+    differed by one character shared nothing with its original.
+    """
+    terms: set[str] = set()
+    for word in text.lower().split():
+        if has_dense_script(word) and len(word) > 1:
+            terms.update(word[i : i + 2] for i in range(len(word) - 1))
+        else:
+            terms.add(word)
+    return frozenset(terms)
 
 
 class RerankTrace:
@@ -388,9 +407,14 @@ class HybridScorer:
         max_score = max(r.score for r in copies)
         score_range = max_score - min_score
 
+        # A stream of one hit (or of equal scores) scores its hits at the top,
+        # as the hybrid search's own normalization does (SINGLE_RESULT_SCORE):
+        # 0.5 put a stream's only, best hit below another stream's best.
         for result in copies:
             result.score = (
-                0.5 if score_range == 0 else (result.score - min_score) / score_range
+                SINGLE_RESULT_SCORE
+                if score_range == 0
+                else (result.score - min_score) / score_range
             )
 
         return copies
@@ -522,10 +546,7 @@ class HybridScorer:
         if target_count >= len(results):
             return results
 
-        word_sets = [
-            frozenset(result.content.lower().split()) if result.content else frozenset()
-            for result in results
-        ]
+        word_sets = [_redundancy_terms(result.content or "") for result in results]
         word_counts = [len(words) for words in word_sets]
 
         # Min-max normalize relevance to [0, 1] over the candidate set so it is

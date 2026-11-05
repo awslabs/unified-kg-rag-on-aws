@@ -2146,6 +2146,17 @@ Deployment (CDK).
   or summary, marked `synthesized`) were returned in `search_results` by
   `ainvoke` and `asearch` unscreened. Each is screened as the answer is (one
   ApplyGuardrail call each): masked, or dropped when refused (#PR).
+- MMR diversity (`search.fusion.diversity_lambda` below 1) measured
+  redundancy over whitespace words, and an unspaced Japanese or Chinese
+  passage is one: a near-duplicate differing by one appended word shared
+  nothing with its original and was kept over a distinct passage. A word
+  holding a Han, Hangul or Kana letter is compared by its character bigrams
+  now; spaced text is compared as before (#PR).
+- Weighted fusion (`search.fusion.method: weighted`) scored a stream's only
+  hit (or hits of equal score) 0.5, so the best hit of a one-hit stream
+  ranked below another stream's best (a LightRAG linked chunk below the
+  vector chunks' top one); it scores 1.0, as the hybrid search's own
+  normalization does (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
