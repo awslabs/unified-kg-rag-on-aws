@@ -119,8 +119,8 @@ Configuration loading.
 - From a `main` checkout: `aws.bedrock.default_max_output_tokens` moved to
   `models.default_max_output_tokens`, as it caps every provider's models
   (the load fails naming it). The stage caches and recorded extraction
-  settings key it as before, so the move re-runs nothing (#PR).
-- Vendor-neutral result names (#PR):
+  settings key it as before, so the move re-runs nothing (#584).
+- Vendor-neutral result names (#584):
   - The fusion bucket of a simple search is `vector_all` (was
     `opensearch_all`): a `search.fusion.fusion_weights.opensearch_all`
     weight applies to `vector_all` with a WARNING; set the new key. A
@@ -468,17 +468,17 @@ Library API (Python callers and custom backends).
   import from the package root (#333). `IndexingManager` and
   `CloudWatchEMFSink` are not exported (no caller needs them: the
   pipeline builds its indexing manager and `--metrics-sink cloudwatch` its
-  sink) (#PR).
+  sink) (#584).
 - Store roles are named by role, not by the default backend: the indexers
   an `IndexingManager` holds are `vector_indexer` / `graph_indexer` (were
   `opensearch_indexer` / `neptune_indexer`; they hold any injected
   `VectorIndexer` / `GraphIndexer`), and `effective_max_output_tokens`
   (`ports/model_factory.py`) takes the cap
   (`models.default_max_output_tokens`) instead of a `BedrockConfig`
-  (#PR).
+  (#584).
 - `DocStatusPort.list_all` is removed: no run reads the whole registry. A
   custom registry no longer implements it; list one namespace with
-  `list_namespace` (#PR).
+  `list_namespace` (#584).
 - Retrieval-only queries are `GraphRAGChain.search()` / `asearch()`, which
   return a `SearchOutput`; `ChainMode` and `GraphRAGChain(mode=)` are
   removed. Replace `GraphRAGChain(cfg, mode=ChainMode.SEARCH).ainvoke(q)`
@@ -815,7 +815,7 @@ From 0.2.3 (or a `main` checkout since):
     them first if you need them). If a late log blocks the deletion, re-run
     the deploy or empty and delete the bucket by hand. A retained
     environment changes nothing (#583).
-19. Vendor-neutral names (#PR), nothing to re-run: rename
+19. Vendor-neutral names (#584), nothing to re-run: rename
     `aws.bedrock.default_max_output_tokens` to
     `models.default_max_output_tokens` (the load fails until you do) and a
     `search.fusion.fusion_weights.opensearch_all` key to `vector_all` (it
