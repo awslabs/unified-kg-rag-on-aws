@@ -100,16 +100,22 @@ jobs:
         # This one run also covers the property and integration suites. Keep
         # the coverage floor just under the measured level so new untested
         # code cannot silently regress it; ratchet it up as coverage grows.
-        # -n auto: pytest-xdist runs one worker per runner CPU; pytest-cov
-        # combines the workers' coverage before the floor is checked.
+        # -n logical: one pytest-xdist worker per vCPU (`auto` counts physical
+        # cores, half the runner's); pytest-cov combines the workers' coverage
+        # before the floor is checked.
+        env:
+          # Python 3.12's sys.monitoring tracer: line coverage (the suite
+          # measures no branches) at a fraction of the C tracer's cost.
+          COVERAGE_CORE: sysmon
         run: >-
-          uv run pytest -m "not aws" -n auto
+          uv run pytest -m "not aws" -n logical
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
           --cov-fail-under=95
 
       - name: Upload coverage + test report
-        # Surface coverage.xml / report.xml as artifacts for inspection on each run.
+        # Surface coverage.xml / report.xml as artifacts for inspection on each
+        # run, and the raw data the coverage-combined job merges.
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -117,6 +123,8 @@ jobs:
           path: |
             coverage.xml
             report.xml
+            .coverage
+          include-hidden-files: true
           if-no-files-found: ignore
 
   core-install:
@@ -197,20 +205,36 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked
 
+      # Coverage too: the Neptune and OpenSearch adapters run against real
+      # stores only here, so the coverage-combined job adds this data to the
+      # quality job's.
       - name: Adapter smoke test against the local stores
         env:
           LOCAL_STORES: "1"
-        run: uv run pytest tests/integration/test_local_stores.py
+          COVERAGE_CORE: sysmon
+        run: >-
+          uv run pytest tests/integration/test_local_stores.py
+          --cov=unified_kg_rag --cov-report=
 
       - name: Store conformance and parity against the local stores
         env:
           LOCAL_STORES: "1"
+          COVERAGE_CORE: sysmon
         run: >-
           uv run pytest tests/integration/test_*conformance*.py
           tests/integration/test_store_parity.py
           tests/integration/test_neptune_vertex_ids.py
           tests/integration/test_opensearch_vector_storage.py
           tests/integration/test_embedded_schema_e2e.py
+          --cov=unified_kg_rag --cov-append --cov-report=
+
+      - name: Upload coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-local-stores
+          path: .coverage
+          include-hidden-files: true
+          if-no-files-found: error
 
       - name: Store logs
         if: failure()
@@ -219,6 +243,47 @@ jobs:
       - name: Stop the stores
         if: always()
         run: docker compose -f docker/compose.local.yaml down -v
+
+  coverage-combined:
+    # The quality job's coverage plus the local-stores job's, as one report
+    # in the job summary. Informational only: the floor stays on the quality
+    # job's own report.
+    needs: [quality, local-stores]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync the dev tools
+        # coverage as the lock pins it (pytest-cov's, in the dev group); the
+        # report reads [tool.coverage] from the checkout.
+        run: uv sync --locked --only-dev
+
+      - name: Download the coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: coverage-data
+
+      - name: Combine and report
+        # Both jobs ran from the same checkout path, so no path remapping.
+        run: |
+          uv run --frozen --no-sync coverage combine --keep \
+            coverage-data/coverage-and-report/.coverage \
+            coverage-data/coverage-local-stores/.coverage
+          total=$(uv run --frozen --no-sync coverage report --format=total --precision=2)
+          echo "Combined line coverage (quality + local-stores): ${total}%"
+          {
+            echo "### Combined line coverage (quality + local-stores): ${total}%"
+            echo
+            uv run --frozen --no-sync coverage report --format=markdown --skip-covered
+          } >> "$GITHUB_STEP_SUMMARY"
 
   oldest-python:
     # The quality job runs one interpreter, so nothing else checks the LOWER
@@ -240,7 +305,7 @@ jobs:
         run: uv sync --python 3.11 --frozen --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.11 --frozen pytest -m "not aws" -q
+        run: uv run --python 3.11 --frozen pytest -m "not aws" -q -n logical
 
   python-3-13:
     # Early warning for the next interpreter, not a support claim:
@@ -270,7 +335,7 @@ jobs:
         run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.13 --frozen pytest -m "not aws" -q -n auto
+        run: uv run --python 3.13 --frozen pytest -m "not aws" -q -n logical
 
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected

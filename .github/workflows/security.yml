@@ -32,6 +32,19 @@ jobs:
           uvx git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780
           --source-dir . --no-fail-on-findings
 
+      - name: Findings in the job summary
+        # ASH's own Markdown summary: the findings per scanner and severity,
+        # and the files with the most. Still reports only (the job never
+        # fails on findings).
+        if: always()
+        run: |
+          summary=.ash/ash_output/reports/ash.summary.md
+          if [ -f "$summary" ]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ASH wrote no summary (see the Run ASH step log)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload ASH reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

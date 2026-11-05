@@ -1300,6 +1300,14 @@ From 0.2.3 (or a `main` checkout since):
   clean interpreter; the core-install job runs without the dev group (a
   `test` group holds the test runner) and runs a JSONL seed graph end to
   end too (#119, #257, #297, #303, #428, #456, #464, #465, #470, #512).
+- CI runs the suites on every runner vCPU (`-n logical`; `auto` counted
+  physical cores, half of them), on Python 3.11 in parallel too, and
+  measures coverage with Python 3.12's `sys.monitoring` tracer; a
+  `coverage-combined` job adds the local-store job's coverage of the
+  Neptune and OpenSearch adapters to the summary; a weekly
+  `hypothesis-explore` workflow runs the property tests from random seeds
+  with a larger budget; Dependabot also moves the local store images; the
+  ASH scan writes its findings table to the job summary (#PR).
 - Settings set in code on `processing.chunking`, `indexing.neptune`,
   `retry` and `aws.bedrock.guardrail` are validated on assignment (a string
   `length_unit` becomes the enum, `retry.max_attempts: 0` is refused), and

@@ -1,0 +1,46 @@
+name: hypothesis-explore
+
+# Weekly property-test exploration. Pull requests and pushes run Hypothesis
+# derandomized (the "ci" profile in quality.yml), so they meet the same
+# examples every time; this run draws from a fresh random seed with a larger
+# example budget ("explore" in tests/conftest.py) to find what those never
+# reach. A failure prints the @reproduce_failure blob that replays it.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hypothesis-explore
+  cancel-in-progress: false
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HYPOTHESIS_PROFILE: explore
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology
+
+      - name: Property tests with random seeds
+        # Every test module that uses Hypothesis, wherever it lives (some
+        # unit and integration modules hold property tests too).
+        run: |
+          mapfile -t modules < <(git grep -l -E '^(from|import) hypothesis' -- \
+            'tests/unit/test_*.py' 'tests/integration/test_*.py' 'tests/property/test_*.py')
+          [ "${#modules[@]}" -gt 0 ] || { echo "no Hypothesis test modules found"; exit 1; }
+          uv run --frozen pytest -m "not aws" -n logical "${modules[@]}"
