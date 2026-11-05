@@ -30,7 +30,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import register_strateg
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     document_filters,
-    opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
@@ -416,14 +415,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         depth = self.global_search_config.community_depth
         label = "Community report cut"
         # A key only the text units declare (text_unit_slots) leaves the
-        # reports alone.
-        declared = opensearch_filter_fields(
-            *self.config.processing.translation.translated_languages
-        )["community_reports"]
+        # reports alone. Declared by the document retriever; one without a
+        # schema declares every key.
         filters = query.filters or {}
+        report_keys = set(filters) - set(document_filters(filters))
+        declared = (
+            documents.filter_fields_for(
+                [self.config.indexing.opensearch.community_reports_index_prefix]
+            )
+            if report_keys and (documents := self.document_retriever) is not None
+            else None
+        )
         step_down = not any(
-            declared.declares(key)
-            for key in set(filters) - set(document_filters(filters))
+            declared is None or declared.declares(key) for key in report_keys
         )
         with observability.span("kg_rag.global.select", depth=depth) as span:
             first, complete = await self._browse_reports(

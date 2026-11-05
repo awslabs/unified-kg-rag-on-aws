@@ -10,16 +10,17 @@ keyword lists, fusing through the shared scorer.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Collection
 
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from tests.fixtures.fakes.retrievers import FakeRetriever
+from tests.fixtures.fakes.retrievers import FakeRetriever, opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     _pick_by_weighted_polling,
 )
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -168,6 +169,9 @@ class LineageRetriever:
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits()
+
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return opensearch_fields_for(Config(), prefixes)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)

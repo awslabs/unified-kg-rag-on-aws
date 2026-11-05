@@ -31,7 +31,6 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
     IndexLimits,
     document_filters,
-    opensearch_filter_fields,
     source_kinds_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -639,14 +638,18 @@ class BaseSearchStrategy(ABC):
     def _text_unit_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
         """The keys of ``filters`` that narrow the text units (every key the
         text-units index declares but ``id``, which ``_ids_allowed`` applies):
-        document filters, ``n_tokens`` ranges and the like."""
-        declared = opensearch_filter_fields(
-            *self.config.processing.translation.translated_languages
-        )["text_units"]
+        document filters, ``n_tokens`` ranges and the like. Declared by the
+        document retriever, which may be another backend's; one without a
+        schema declares every key."""
+        keys = {k: v for k, v in (filters or {}).items() if k != "id"}
+        documents = self.document_retriever
+        if not keys or documents is None:
+            return keys
+        declared = documents.filter_fields_for(
+            [self.config.indexing.opensearch.text_units_index_prefix]
+        )
         return {
-            k: v
-            for k, v in (filters or {}).items()
-            if k != "id" and declared.declares(k)
+            k: v for k, v in keys.items() if declared is None or declared.declares(k)
         }
 
     @staticmethod

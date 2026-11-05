@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Collection
 from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
 
+from tests.fixtures.fakes.retrievers import opensearch_fields_for
 from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     attach_report_hierarchy,
     max_cut_depth,
@@ -109,6 +111,9 @@ class _ReportStore:
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits(max_result_window=self.window)
+
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return opensearch_fields_for(Config(), prefixes)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -333,6 +338,36 @@ async def test_a_text_unit_filter_over_the_cap_still_steps_down(key: str) -> Non
     assert _mapped(strat) == {"A", "B", "C"}
     assert result.metadata["global_cut_depth"] == 1
     assert result.metadata["global_level_capped"] is False
+
+
+async def test_the_report_keys_are_the_document_retrievers() -> None:
+    # Regression: the step-down read the OpenSearch reports schema whatever
+    # the document retriever was: a backend declaring a report key of its
+    # own mapped a shallower cut its filter does not pass, one without a
+    # schema (every key) likewise.
+    class _Declaring(_ReportStore):
+        def __init__(self, declared: FilterFields | None) -> None:
+            super().__init__(_documents())
+            self.declared = declared
+
+        def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields | None:
+            return self.declared
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            filters = {k: v for k, v in (query.filters or {}).items() if k != "tier"}
+            return await super().aretrieve(
+                query.model_copy(update={"filters": filters})
+            )
+
+    for declared in (FilterFields(frozenset({"tier"})), None):
+        strat = _strategy(_Declaring(declared), max_reports_per_level=3)
+        result = await strat.asearch(
+            SearchQuery(query="themes", filters={"tier": "gold"})
+        )
+        assert result.metadata["global_level_capped"] is True, declared
+    strat = _strategy(_Declaring(FilterFields(frozenset())), max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"tier": "gold"}))
+    assert result.metadata["global_cut_depth"] == 1
 
 
 async def test_a_live_window_below_the_cap_bounds_it() -> None:

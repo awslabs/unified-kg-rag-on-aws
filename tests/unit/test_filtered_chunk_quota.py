@@ -11,14 +11,16 @@ first chunks that pass, and only those are fetched with their content.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from tests.fixtures.fakes.retrievers import opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -59,6 +61,9 @@ class _Store:
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits()
+
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return opensearch_fields_for(Config(), prefixes)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         filters = query.filters or {}
@@ -406,3 +411,29 @@ async def test_a_filter_passing_the_unfiltered_selection_costs_one_check(
         SearchQuery(query="q", top_k=10, filters={"attr_grp": "a"}), hits, []
     )
     assert len(store.checks) == 1, store.checks
+
+
+@pytest.mark.parametrize(
+    ("declared", "kept"),
+    [
+        (FilterFields(frozenset({"shard"})), {"shard": "a"}),
+        (None, {"shard": "a", "n_tokens": {"gte": 1}}),
+    ],
+)
+def test_the_text_unit_keys_are_the_document_retrievers(
+    config: Config, declared: FilterFields | None, kept: dict[str, Any]
+) -> None:
+    # Regression: the keys that narrow the text units were read off the
+    # OpenSearch schema whatever the document retriever was, so a backend's
+    # own key never narrowed the chunks (and one without a schema had its
+    # keys dropped).
+    class _Declaring(_Store):
+        def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields | None:
+            return declared
+
+    store = _Declaring(config.indexing.opensearch.text_units_index_prefix, [])
+    strategy = get_strategy_spec(SearchStrategy.LOCAL).strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: store}
+    )
+    filters = {"shard": "a", "n_tokens": {"gte": 1}, "id": ["u1"]}
+    assert strategy._text_unit_filters(filters) == kept

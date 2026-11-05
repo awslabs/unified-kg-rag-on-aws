@@ -2102,6 +2102,12 @@ Deployment (CDK).
   projection nor the SQLite graph's read its `type`. Both project it now,
   and a one-element `text_unit_ids` or `community_ids` comes back as a list
   from either store, as from the entities index (#PR).
+- Local search's chunk filter check and global search's step-down to a
+  shallower cut read the OpenSearch index schema whatever the document
+  retriever was: a custom backend's own filter keys never narrowed the
+  chunks or kept the cut, and a backend without a schema had its keys
+  dropped. Both ask the document retriever (`filter_fields_for`); one
+  without a schema declares every key (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
