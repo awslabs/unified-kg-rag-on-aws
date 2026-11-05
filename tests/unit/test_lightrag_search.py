@@ -353,18 +353,16 @@ async def test_per_source_failure_degrades_to_empty_not_crash(config: Config) ->
     assert result.results == []
 
 
-def test_collect_linked_chunk_ids_accepts_unwrapped_single_id() -> None:
-    # NeptuneRetriever._clean_property_map unwraps a single-element value_map list
-    # into a bare scalar, so a KG item whose lineage is exactly ONE chunk arrives
-    # with text_unit_ids as a str. The old isinstance(list) guard skipped those
-    # entirely, discarding the single-document bridge items multi-hop hinges on.
+def test_collect_linked_chunk_ids_follows_a_single_chunk_lineage() -> None:
+    # A KG item whose lineage is exactly ONE chunk (the single-document bridge
+    # items multi-hop hinges on) is followed like any other.
     uuid = "8c1f2a70-1111-2222-3333-444455556666"
     entity = RetrievalResult(
         content="e",
         score=1.0,
         source="e1",
         retriever_type="entity",
-        metadata={"text_unit_ids": uuid},
+        metadata={"text_unit_ids": [uuid]},
     )
     rel = RetrievalResult(
         content="r",

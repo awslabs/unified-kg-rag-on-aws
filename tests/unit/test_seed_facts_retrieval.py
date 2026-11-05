@@ -316,7 +316,7 @@ async def test_a_mapped_index_is_known_from_the_embedding_check(
 # --------------------------------------------------------------------------- #
 
 
-def _hit(name: str, units: list[str] | str, score: float = 1.0) -> RetrievalResult:
+def _hit(name: str, units: list[str], score: float = 1.0) -> RetrievalResult:
     return RetrievalResult(
         content=name,
         score=score,
@@ -327,7 +327,7 @@ def _hit(name: str, units: list[str] | str, score: float = 1.0) -> RetrievalResu
 
 
 def test_local_search_ranks_document_units_only() -> None:
-    nodes = [_hit("Vendor", ["u2", SEED, "u1"], 0.9), _hit("Port", SEED, 0.8)]
+    nodes = [_hit("Vendor", ["u2", SEED, "u1"], 0.9), _hit("Port", [SEED], 0.8)]
     nodes.append(_hit("Buyer", ["u1"], 0.5))
     assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["u1", "u2"]
 
@@ -338,7 +338,7 @@ class _SeedLineageGraph(FakeRetriever):
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
-        return [_hit("Vendor", ["u1", SEED]), _hit("Harbor Port", SEED)]
+        return [_hit("Vendor", ["u1", SEED]), _hit("Harbor Port", [SEED])]
 
 
 def _strategy(config: Config, mode: SearchStrategy) -> tuple[Any, FakeRetriever]:
@@ -379,7 +379,7 @@ def _mix(config: Config) -> Any:
 
 def test_the_chunk_follow_drops_seed_units(config: Config) -> None:
     strategy = _mix(config)
-    entities = [_hit("Vendor", [SEED, "u1"]), _hit("Harbor Port", SEED)]
+    entities = [_hit("Vendor", [SEED, "u1"]), _hit("Harbor Port", [SEED])]
     relationships = [_hit("Vendor->Port", [SEED, "u2"])]
     assert strategy._lineages(entities) == [["u1"]]
     assert strategy._collect_linked_chunk_ids(entities, relationships, limit=10) == (
@@ -396,7 +396,7 @@ class _SeedLineageDocuments(FakeRetriever):
         ids = (query.filters or {}).get("id")
         if ids:
             return [_hit(unit, []) for unit in ids]
-        return [_hit("Harbor Port", SEED), _hit("Vendor", ["u1", SEED])]
+        return [_hit("Harbor Port", [SEED]), _hit("Vendor", ["u1", SEED])]
 
 
 @pytest.mark.parametrize("mode", [SearchStrategy.MIX, SearchStrategy.HYBRID])

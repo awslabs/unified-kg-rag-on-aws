@@ -9,7 +9,8 @@ row per reached vertex in the projected shape ``NeptuneRetriever`` produces
 with Gremlin::
 
     {
-        "node": {"id": [...], "name": [...], "description": [...],
+        "node": {"id": [...], "name": [...], "type": [...],
+                 "description": [...],
                  "rank": [...], "text_unit_ids": [...],
                  "community_ids": [...], "iri": [...],
                  "source_kinds": [...]},  # value_map; the last three
@@ -51,8 +52,9 @@ from unified_kg_rag.shared.utils import text_digest
 logger = get_logger(__name__)
 
 # Vertex list properties: a list however many values they hold, where a
-# value_map's one-element list is otherwise read as its value.
-_LIST_PROPERTIES = frozenset({SOURCE_KINDS_FIELD})
+# value_map's one-element list is otherwise read as its value (an entity in
+# one text unit read as a str, and every consumer had to re-wrap it).
+_LIST_PROPERTIES = frozenset({"text_unit_ids", "community_ids", SOURCE_KINDS_FIELD})
 
 
 class GraphExpansionRetriever(BaseGraphRAGRetriever):

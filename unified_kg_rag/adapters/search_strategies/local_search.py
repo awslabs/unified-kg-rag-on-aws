@@ -578,12 +578,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
     @staticmethod
     def community_matches(entity_nodes: list[RetrievalResult]) -> dict[str, int]:
         """Each community's count of ``entity_nodes`` that name it in their
-        ``community_ids`` (a graph store unwraps one id to a str)."""
+        ``community_ids``."""
         matches: dict[str, int] = {}
         for node in entity_nodes:
             ids = (node.metadata or {}).get("community_ids") or []
-            if isinstance(ids, str):
-                ids = [ids]
             if not isinstance(ids, list):
                 continue
             for community_id in dict.fromkeys(str(i) for i in ids):
@@ -707,8 +705,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         best_score: dict[str, float] = {}
         for node in entity_nodes:
             ids = node.metadata.get("text_unit_ids") or []
-            if isinstance(ids, str):
-                ids = [ids]
             if not isinstance(ids, list):
                 continue
             score = node.score
@@ -731,21 +727,13 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _text_unit_count(node: RetrievalResult) -> int:
-        # Neptune's `_clean_property_map` unwraps any
-        # single-element value_map list into a bare scalar, so an entity that
-        # appears in EXACTLY ONE text unit arrives with `text_unit_ids` as a str
-        # (a 36-char UUID), not a list. `len()` on that counted CHARACTERS (36),
-        # which exceeds every sane frequency threshold, so the most specific
-        # entities in the graph — the multi-hop bridge nodes that occur in a
-        # single document — were silently dropped by the frequency filter, which
-        # also starved the text-unit fan-out those entities feed.
+        # `text_unit_ids` is a list from either store (graph expansion keeps a
+        # one-unit lineage a list: `_LIST_PROPERTIES`).
         #
         # Only document units count: an entity a seed graph states is not
         # more generic for it (one seed citation never pushes an entity over
         # the threshold).
         ids = node.metadata.get("text_unit_ids") or []
-        if isinstance(ids, str):
-            ids = [ids]
         return sum(1 for unit_id in ids if not is_seed_unit(str(unit_id)))
 
     @classmethod

@@ -140,6 +140,25 @@ def test_clean_property_map_unwraps_singletons(retriever) -> None:
     assert cleaned["scalar"] == 7
 
 
+def test_clean_property_map_keeps_list_properties_lists(retriever) -> None:
+    # An entity in one text unit or one community: every consumer read the
+    # unwrapped str and had to re-wrap it.
+    cleaned = retriever._clean_property_map(
+        {
+            "id": ["e1"],
+            "text_unit_ids": ["t1"],
+            "community_ids": ["c1"],
+            "source_kinds": ["document"],
+        }
+    )
+    assert cleaned == {
+        "id": "e1",
+        "text_unit_ids": ["t1"],
+        "community_ids": ["c1"],
+        "source_kinds": ["document"],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # _process_traversal_results
 # --------------------------------------------------------------------------- #
@@ -288,15 +307,29 @@ def test_build_content_entity_with_path(retriever) -> None:
     assert "Path: Alice -> Acme" in content
 
 
-@pytest.mark.parametrize("kind", ["PERSON", ["PERSON"]])
-def test_build_content_renders_the_entity_type(retriever, kind) -> None:
+def test_build_content_renders_the_entity_type(retriever) -> None:
     # As the entities index renders it ("Type: ..."), so an entity reads the
-    # same from either store; a value_map list is unwrapped.
-    content = retriever._build_content(
-        {"name": "Alice", "type": kind, "description": "researcher"}, []
-    )
-    assert content.splitlines()[:2] == ["Entity: Alice", "Type: PERSON"]
+    # same from either store. Read from a traversal row's value_map: the type
+    # was not projected, so a walked entity never showed one.
+    row = {
+        "node": {"id": ["e1"], "name": ["Alice"], "type": ["PERSON"]},
+        "path": [{"name": ["Alice"]}],
+        "node_type": "Entity-default",
+    }
+    (result,) = retriever._process_traversal_results([row], SearchQuery(query="x"))
+    assert result.content.splitlines()[:2] == ["Entity: Alice", "Type: PERSON"]
     assert "Type:" not in retriever._build_content({"name": "Bob", "type": ""}, [])
+
+
+def test_projection_reads_the_entity_type(retriever, mocker) -> None:
+    anonymous: list[tuple] = []
+    mocker.patch(
+        "unified_kg_rag.adapters.retrievers.neptune_retriever.__",
+        RecordingTraversal(anonymous),
+    )
+    retriever._with_projection(RecordingTraversal([]))
+    value_map_args = [c[1] for c in anonymous if c[0] == "value_map"]
+    assert "type" in value_map_args[0]
 
 
 # --------------------------------------------------------------------------- #

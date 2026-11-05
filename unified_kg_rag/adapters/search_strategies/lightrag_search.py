@@ -544,14 +544,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         for result in results:
             metadata = result.metadata or {}
             unit_ids = metadata.get("text_unit_ids")
-            # Neptune's `_clean_property_map` unwraps a
-            # single-element value_map list into a bare scalar, so an entity or
-            # relationship whose lineage is exactly ONE chunk arrives as a str.
-            # The old `isinstance(..., list)` guard skipped those outright,
-            # discarding precisely the most specific (single-document) bridge
-            # items — the ones multi-hop questions hinge on.
-            if isinstance(unit_ids, str):
-                unit_ids = [unit_ids]
             if not isinstance(unit_ids, list):
                 continue
             lineage = sorted(

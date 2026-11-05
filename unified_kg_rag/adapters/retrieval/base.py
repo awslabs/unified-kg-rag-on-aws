@@ -212,8 +212,6 @@ def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
     filtered expansion's redrawn paths)."""
     parts = [f"Entity: {node.get('name', 'Unknown')}"]
     kind = node.get("type")
-    if isinstance(kind, list):  # a graph value_map not unwrapped
-        kind = kind[0] if kind else None
     if kind and isinstance(kind, str):
         parts.append(f"Type: {kind}")
     parts.append(f"Description: {node.get('description', 'N/A')}")
@@ -223,9 +221,8 @@ def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
 
 
 def _text_unit_ids(result: RetrievalResult) -> list[str]:
-    """The ``text_unit_ids`` a result cites (a graph store unwraps one to a str)."""
-    ids = (result.metadata or {}).get("text_unit_ids") or []
-    return [str(ids)] if isinstance(ids, str) else [str(i) for i in ids]
+    """The ``text_unit_ids`` a result cites."""
+    return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
 class BaseGraphRAGRetriever(BaseRetriever, ABC):

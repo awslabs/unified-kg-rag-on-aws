@@ -46,6 +46,7 @@ logger = get_logger(__name__)
 _PROJECTED_PROPERTIES = (
     "id",
     "name",
+    "type",
     "description",
     "rank",
     "text_unit_ids",

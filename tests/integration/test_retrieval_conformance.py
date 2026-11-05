@@ -1281,6 +1281,66 @@ def test_graph_expansion_projects_the_entities_communities(
     }
 
 
+def test_graph_expansion_projects_types_and_keeps_one_element_lists(
+    graph_harness: StoreHarness,
+) -> None:
+    # A walked entity showed no type (the projection left it out), and an
+    # entity in one text unit or one community came back with the id as a
+    # str, where the entities index returns a list.
+    h = graph_harness
+    entities = [
+        Entity(
+            id="hub",
+            name="hub",
+            type="ORG",
+            description="d",
+            text_unit_ids=["t1"],
+            community_ids=["c1"],
+        ),
+        Entity(
+            id="leaf",
+            name="leaf",
+            type="LOCATION",
+            description="d",
+            text_unit_ids=["t1", "t2"],
+            community_ids=["c1", "c2"],
+        ),
+    ]
+    relationships = [
+        Relationship(
+            id="r-hub-leaf",
+            source_id="hub",
+            target_id="leaf",
+            source_name="hub",
+            target_name="leaf",
+            description="hub works with leaf",
+        )
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+    (expanded,) = _graph_retrieve(
+        h, SearchQuery(query="", suffix=_SUFFIX, top_k=10, filters={"id": ["hub"]})
+    )
+    shapes = {
+        r.source: (
+            (r.metadata or {}).get("type"),
+            sorted((r.metadata or {}).get("text_unit_ids")),
+            sorted((r.metadata or {}).get("community_ids")),
+            r.content.splitlines()[1],
+        )
+        for r in expanded
+    }
+    assert shapes == {
+        "hub": ("ORG", ["t1"], ["c1"], "Type: ORG"),
+        "leaf": ("LOCATION", ["t1", "t2"], ["c1", "c2"], "Type: LOCATION"),
+    }
+    for result in expanded:
+        metadata = result.metadata or {}
+        assert isinstance(metadata["text_unit_ids"], list)
+        assert isinstance(metadata["community_ids"], list)
+
+
 def test_reports_are_fetched_by_community_id(harness: StoreHarness) -> None:
     # The membership fetch: no text, a community_id list (local search).
     _ingest(harness)

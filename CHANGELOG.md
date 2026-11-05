@@ -2098,6 +2098,11 @@ Deployment (CDK).
   as the graph walk does (`Entity: X`, `Type: T`, `Description: ...`), a
   hit's lines are no longer split by blank lines and the context separates
   items with one (#PR).
+- An entity reached by graph expansion showed no type: neither the Gremlin
+  projection nor the SQLite graph's read its `type`. Both project it now,
+  and a one-element `text_unit_ids` or `community_ids` comes back as a list
+  from either store, as from the entities index (#PR).
+
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
   denial-of-service advisories through the PDF parser, for example
