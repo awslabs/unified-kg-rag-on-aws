@@ -288,7 +288,10 @@ cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
   the guardrail in the deploy region, and step 0 is not needed.
 - **Pass both flags on every later deploy**, or compute stops injecting them
   (without a version the task applies `DRAFT`, which every edit changes at
-  once). To change the baseline policy, edit `iac/stacks/guardrail_stack.py`
+  once): a `cdk deploy --all` without `guardrail_identifier` removes the
+  guardrail from the task definitions, and queries and answers are no longer
+  screened. Synth warns whenever the stack owns a guardrail it does not
+  attach. Keeping both in the `context` of `cdk.json` makes them stick. To change the baseline policy, edit `iac/stacks/guardrail_stack.py`
   and deploy `GraphRagGuardrail`: a new version is published and the previous
   one kept, which the tasks apply until you redeploy with the new
   `-c guardrail_version`.

@@ -106,6 +106,22 @@ def test_no_identifier_does_not_warn() -> None:
     Annotations.from_stack(stack).has_no_warning("*", _BYO_WARNING)
 
 
+_UNATTACHED_WARNING = Match.string_like_regexp("is not attached to compute")
+
+
+def test_an_owned_guardrail_left_unattached_warns() -> None:
+    # The id reaches compute only through context: a deploy without it
+    # detaches the guardrail, silently before (an info note).
+    stack, _ = _synth({})
+    Annotations.from_stack(stack).has_warning("*", _UNATTACHED_WARNING)
+    for context in (
+        {"guardrail_identifier": "gr-example123"},
+        {"create_guardrail": "false"},
+    ):
+        stack, _ = _synth(context)
+        Annotations.from_stack(stack).has_no_warning("*", _UNATTACHED_WARNING)
+
+
 def test_bring_your_own_creates_nothing() -> None:
     stack, template = _synth(
         {"create_guardrail": "false", "guardrail_identifier": "gr-external456"}

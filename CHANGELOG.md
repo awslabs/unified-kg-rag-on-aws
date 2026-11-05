@@ -1191,6 +1191,11 @@ From 0.2.3 (or a `main` checkout since):
   deployments set; `docs/reference/configuration.md` has every key (#468).
 - CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended alarm and
   `NeptuneHighCpu` needs 3 consecutive 5-minute periods (#298).
+- CDK: synth warns, rather than noting, when the guardrail stack owns a
+  guardrail that compute is not given (`guardrail_identifier` unset): a
+  later `cdk deploy --all` without the flag removed the guardrail from the
+  task definitions, and queries and answers went unscreened with no sign
+  (#PR).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
