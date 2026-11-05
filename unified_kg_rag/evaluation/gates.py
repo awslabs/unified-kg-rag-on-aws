@@ -21,6 +21,14 @@ measure when the strategy and its baseline failed different numbers of
 answers (``cost.strategies.<s>.failed_answers``): a failed answer counts
 with what it spent before failing, so the delta compares the failures too
 (a fast failure looks cheap, a timeout slow).
+
+A metric gate fails when an evaluator could not score the metric on
+different numbers of the strategy's and its baseline's answers
+(``strategies.<s>.failed_metrics``, a judge call that failed or returned
+NaN): those queries are unpaired, so a judge that fails exactly where a
+strategy would lose hides the loss. And any gate fails on a delta over
+fewer than ``MIN_GATE_PAIRS`` paired queries: its interval says nothing
+(one pair gives a zero-width interval at that pair's delta).
 """
 
 from __future__ import annotations
@@ -32,7 +40,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from .comparison import failed_metric_counts_differ
+
 STATS = ("mean_delta", "ci_low", "ci_high")
+# A gated delta over fewer paired queries fails the gate. The bootstrap
+# percentile interval means little on a handful of queries: on 1 pair it has
+# zero width, and on 5 pairs that all win it is [1, 1] although an exact
+# sign test gives p = 2 * 0.5**5 = 0.06. 10 is a round floor at which a
+# one-sided result survives that test (9 wins of 10: p = 0.02); real
+# comparisons need a few hundred queries (docs/guides/evaluate.md, "When a
+# difference counts").
+MIN_GATE_PAIRS = 10
 _OPS: dict[str, Callable[[float, float], bool]] = {
     "<=": operator.le,
     ">=": operator.ge,
@@ -126,11 +144,27 @@ def _failures_differ(
     return failed if len(set(failed.values())) > 1 else {}
 
 
+def _failed_scores_differ(
+    comparison: Mapping[str, Any], strategy: str, measure: str
+) -> dict[str, int]:
+    """Per side, the answers ``measure`` could not be scored on, when it is
+    a metric and the counts differ; else empty."""
+    if any(measure.startswith(prefix) for prefix in _UNMEASURED):
+        return {}
+    baseline = (comparison.get("baselines") or {}).get(
+        strategy, comparison.get("baseline")
+    )
+    return failed_metric_counts_differ(
+        comparison.get("strategies") or {}, [str(baseline), strategy], measure
+    )
+
+
 def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]:
     """Why ``comparison`` fails ``gates``: one line per strategy and gate
     that holds (or has no delta, or answers without the cost measure, to
-    read, or failed answers that differ under a cost measure); empty when
-    every gate passes."""
+    read, or failed answers that differ under a cost measure, or failed
+    scores that differ under a metric, or too few pairs); empty when every
+    gate passes."""
     deltas = comparison.get("deltas_vs_baseline") or {}
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
     breaches = []
@@ -151,6 +185,14 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
                     "failures too"
                 )
                 continue
+            if failed := _failed_scores_differ(comparison, strategy, gate.measure):
+                listed = ", ".join(f"{s} {n}" for s, n in failed.items())
+                breaches.append(
+                    f"{strategy}: --fail-if {gate}: '{gate.measure}' could not "
+                    f"be scored on different numbers of answers ({listed}), so "
+                    "its delta leaves out the queries one side failed to score"
+                )
+                continue
             delta = (deltas.get(strategy) or {}).get(gate.measure) or (
                 cost.get(strategy) or {}
             ).get(gate.measure)
@@ -158,6 +200,14 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
                 breaches.append(
                     f"{strategy}: --fail-if {gate}: no paired delta of "
                     f"'{gate.measure}' to check"
+                )
+                continue
+            pairs = int(delta.get("pairs") or 0)
+            if pairs < MIN_GATE_PAIRS:
+                breaches.append(
+                    f"{strategy}: --fail-if {gate}: the '{gate.measure}' delta "
+                    f"pairs {pairs} queries, fewer than the {MIN_GATE_PAIRS} a "
+                    "gate needs to read its interval"
                 )
                 continue
             observed = float(delta[gate.stat])

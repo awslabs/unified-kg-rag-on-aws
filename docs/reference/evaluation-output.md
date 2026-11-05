@@ -120,7 +120,12 @@ strategies, or `--repeats`) saves every run's files and adds
   that its own strategy scores on some query, so failing cannot help a
   strategy, and a metric it never produces (`global` reports no entities,
   so no `retrieved_entity_coverage`) is not invented as a loss; a strategy
-  that scored nothing is filled on every metric. The rule reads the data, so
+  that scored nothing is filled on every metric. A score the evaluator
+  tried and could not compute (a failed or NaN judge call) is not filled:
+  `strategies.<s>.failed_metrics` counts them per metric over every repeat,
+  the query is `unpaired` for that metric, a warning names a metric whose
+  counts differ between strategies, and the Markdown and console tables
+  print each delta's pairs and unpaired queries. The rule reads the data, so
   a metric that only the failed query could score (one item with
   `expected_relationships`, say) is not filled either
   (`failed_answers` / `failed_queries`;
@@ -245,7 +250,16 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   `latency/*`) that some answers of the strategy or of its baseline have no
   value of, or when the strategy and its baseline failed different numbers
   of answers (each counts with what it spent before failing, so the delta
-  compares the failures too). The result is in `comparison.gates` and the
+  compares the failures too). A metric gate also fails when the metric
+  could not be scored on different numbers of the two sides' answers
+  (`strategies.<s>.failed_metrics`): those queries are unpaired, so a judge
+  that fails exactly where a strategy would lose would hide the loss. Any
+  gate fails on a delta over fewer than 10 paired queries
+  (`gates.MIN_GATE_PAIRS`; one pair gives a zero-width interval, five wins
+  of five an interval that excludes 0 at a sign-test p of 0.06). Each gate
+  on each strategy is its own test, so k strategies and m gates multiply
+  the chance of a breach on noise ([Gates](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
+  The result is in `comparison.gates` and the
   JSON `gate_failures`. It needs a comparison: two strategies, or
   `--baseline-results`.
 
@@ -278,14 +292,22 @@ The share of the expected graph artifacts that appear in the generated answer
 (coverage = recall), with the phrase matcher of `answer_contains`. A
 relationship given as `{"source": "A", "target": "B"}` or `"A -> B"` counts
 when the answer mentions both endpoints; any other string must appear as a
-phrase. Precision and F1 are not emitted: the entities of a free-text answer
+phrase. Expected entities with the same entity key (below) are one
+expectation, met when the answer mentions any of their spellings, so a
+duplicate does not count twice (`expected_entity_count` counts them once).
+Precision and F1 are not emitted: the entities of a free-text answer
 cannot be enumerated reliably.
 
 Answer-text coverage rises with answer length, so compare strategies on
 `retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
 expectations matched against the entities and relationship endpoints of the
 sources the answer model was given) and read `answer_length` next to the
-answer coverage. Retrieved coverage is skipped, not 0, when the context had
+answer coverage. Retrieved coverage compares entity keys, not phrases: an
+expected entity, or a relationship endpoint, is covered by a retrieved
+entity of the same key (case, spacing next to CJK letters, quotes and a
+legal form such as `Corp.` ignored, as entity resolution links them:
+`ACME Corp.` covers `Acme`), not by a longer name containing it (`Seoul
+National University` does not cover `Seoul`). Retrieved coverage is skipped, not 0, when the context had
 no source of that type (`global` by design), so check the metric's `pairs` /
 `unpaired` in a comparison and `metric_outcomes`' skipped count in one run.
 
@@ -327,7 +349,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `2024년에`) but not a magnitude numeral (`3` does not match `3억`); spacing
   next to CJK letters is ignored (`3억 원` = `3억원`); a single-word CJK gold
   is matched as a substring, but not inside a longer number or Latin word
-  (`2년` does not match `12년`).
+  (`2년` does not match `12년`). In Chinese and Japanese, which put no space
+  around a Latin word or a number, any gold is also matched as such a
+  substring (`AWS` matches `AWSは`, `2024` matches `2024年`; `AI` does not
+  match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
+  above decide.
 - **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
   `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
   scored by the polarity of the first yes/no word that answers the question,

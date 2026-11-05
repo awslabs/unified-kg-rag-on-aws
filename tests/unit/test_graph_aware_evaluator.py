@@ -361,3 +361,61 @@ class TestRetrievedCoverage:
             [{"source": "A", "target": "B", "description": "A ships spare parts to B"}],
         )
         assert (cov, matched) == (1.0, 1)
+
+
+class TestEntityKeys:
+    def _values(self, evaluator: GraphAwareEvaluator, **fields):
+        result = EvaluationResult(
+            query_id="q1",
+            question="?",
+            ground_truth="",
+            retrieved_source_types=["entity", "relationship"],
+            **fields,
+        )
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q1", question="?"), result, ""
+        )
+        return {m.metric_type.value: m.value for m in report.metrics}, report.metadata
+
+    def test_a_retrieved_entity_covers_only_its_own_key(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        # Before, "Seoul" was covered by any retrieved name containing it.
+        values, _ = self._values(
+            evaluator,
+            generated_answer="No.",
+            metadata={
+                "expected_entities": ["Seoul", "Acme"],
+                "expected_relationships": [{"source": "Seoul", "target": "Busan"}],
+            },
+            retrieved_entities=["Seoul National University", "ACME Corp."],
+            retrieved_relationships=[
+                {"source": "Seoul National University", "target": "Busan Port"}
+            ],
+        )
+        assert values["retrieved_entity_coverage"] == 0.5  # Acme, by its key
+        assert values["retrieved_relationship_coverage"] == 0.0
+
+    def test_spellings_of_one_entity_are_one_expectation(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        # Before, a duplicate counted twice: 2 of 3 for an answer naming
+        # the one entity it repeats and missing the other.
+        values, metadata = self._values(
+            evaluator,
+            generated_answer="ACME Corp. ships parts.",
+            metadata={"expected_entities": ["Acme Corp", "ACME Corp.", "Auditor"]},
+            retrieved_entities=["acme corp"],
+        )
+        assert values["entity_coverage"] == 0.5
+        assert values["retrieved_entity_coverage"] == 0.5
+        assert metadata["expected_entity_count"] == 2
+        assert metadata["matched_entity_count"] == 1
+        # Any spelling of the group counts in the answer.
+        values, _ = self._values(
+            evaluator,
+            generated_answer="Acme ships parts.",
+            metadata={"expected_entities": ["Acme Corp", "Acme"]},
+            retrieved_entities=[],
+        )
+        assert values["entity_coverage"] == 1.0

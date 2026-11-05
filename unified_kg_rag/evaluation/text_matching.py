@@ -276,7 +276,12 @@ def phrase_in_text(phrase: str, text: str) -> bool:
     "3억원". A phrase that is a single CJK run (``is_spaceless_script``) is
     matched as a substring of the normalized text (spacing ignored), but not
     where a digit, decimal point or Latin letter continues it on either side:
-    "2년" does not match "12년" or "1.2년", nor "二年" "十二年".
+    "2년" does not match "12년" or "1.2년", nor "二年" "十二年". In a text
+    with CJK, any phrase is also matched as such a substring where no
+    Hangul letter is next to it, since Chinese and Japanese put no space
+    around a Latin word or a number: "AWS" matches "AWSは" and "2024"
+    "2024年", but "AI" does not match "airport附近", nor "2" "12年"
+    (``_substring_beside_han_or_kana``).
 
     LIMITATION (CJK): without a morphological segmenter there is no morpheme
     boundary, so a short expected word can match inside a longer one ("가나"
@@ -306,6 +311,46 @@ def phrase_in_text(phrase: str, text: str) -> bool:
         for start in range(len(actual) - window + 1)
     ):
         return True
-    return has_dense_script(phrase) and _compact_window_matches(
+    if has_dense_script(phrase) and _compact_window_matches(
         drop_dense_script_spaces(" ".join(expected)), actual
+    ):
+        return True
+    return has_dense_script(text) and _substring_beside_han_or_kana(
+        drop_dense_script_spaces(" ".join(expected)),
+        drop_dense_script_spaces(" ".join(actual)),
     )
+
+
+def _is_hangul(ch: str) -> bool:
+    return is_hangul_syllable(ch) or any(
+        lo <= ord(ch) <= hi for lo, hi in _HANGUL_JAMO_RANGES
+    )
+
+
+_HANGUL_JAMO_RANGES = ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F))
+
+
+def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
+    """True if ``needle`` occurs in ``haystack`` where no word, number or
+    Hangul letter continues it on either side.
+
+    Chinese and Japanese write no space between words, so a Latin word or a
+    number inside them ("AWSは", "合同于2024年签订") is not a whitespace token
+    of its own; a Han or Kana neighbour is a word boundary. A Latin letter or
+    a digit is not ("AI" is not in "airport", "2" not in "12年"), nor a Han
+    numeral after a digit ("3" is not in "3億"). Korean is left to the token
+    rules above: a Hangul neighbour is a particle, a unit or a magnitude
+    numeral they already judge ("3억").
+    """
+    start = haystack.find(needle)
+    while start != -1:
+        end = start + len(needle)
+        before = haystack[start - 1] if start else ""
+        after = haystack[end] if end < len(haystack) else ""
+        if not (
+            (before and (_is_hangul(before) or _continues_word(before, needle[0])))
+            or (after and (_is_hangul(after) or _continues_word(needle[-1], after)))
+        ):
+            return True
+        start = haystack.find(needle, start + 1)
+    return False

@@ -411,7 +411,17 @@ async def test_a_settled_call_leaves_its_task_and_settles_once() -> None:
     with usage.usage_scope() as meter:
         handler.on_chat_model_start({}, [[HumanMessage(content="hi")]], run_id=run_id)
         call = handler._calls[run_id]
-        handler.on_llm_end(_result(content="x"), run_id=run_id)
+        handler.on_llm_end(
+            _result(
+                content="x",
+                usage_metadata={
+                    "input_tokens": 3,
+                    "output_tokens": 1,
+                    "total_tokens": 4,
+                },
+            ),
+            run_id=run_id,
+        )
         # A second settle (a late end of the same call) changes nothing.
         call.finish(input_tokens=900, output_tokens=90)
         call.fail()
@@ -459,3 +469,23 @@ def test_calls_that_never_settle_are_let_go(monkeypatch: pytest.MonkeyPatch) -> 
             )
     assert len(handler._calls) == 2
     assert meter.snapshot()["estimated_calls"] == 5
+
+
+async def test_a_call_whose_model_reports_no_usage_keeps_its_estimate() -> None:
+    # A model or server that returns no token usage was settled at 0 tokens
+    # and 0 estimated calls, so the call read as free and measured.
+    from langchain_core.language_models.fake_chat_models import (
+        GenericFakeChatModel,
+    )
+
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="an answer of several words")]),
+        callbacks=[UsageCallbackHandler("local-model", role="query")],
+    )
+    prompt = "a fairly long prompt " * 200
+    with usage.usage_scope() as meter:
+        await model.ainvoke(prompt)
+    snapshot = meter.snapshot()
+    assert snapshot["llm_calls"] == 1
+    assert snapshot["estimated_calls"] == 1
+    assert snapshot["input_tokens"] == estimate_token_count(prompt) > 0

@@ -56,6 +56,7 @@ from typing import Any
 
 import numpy as np
 
+from unified_kg_rag.adapters.evaluators.base import FAILED_METRICS_KEY
 from unified_kg_rag.domain.models import (
     EvaluationMetricType,
     EvaluationReport,
@@ -347,6 +348,10 @@ def _paired_comparison(
                 )
             ),
             "metrics": metrics,
+            # Scores an evaluator tried and could not compute (a judge call
+            # that failed or returned NaN), over every repeat: such a query
+            # is unpaired for that metric, not scored.
+            "failed_metrics": _failed_metric_counts(runs[strategy]),
         }
         fallbacks = _span_fallbacks(runs[strategy])
         if fallbacks is not None:
@@ -487,9 +492,31 @@ def _span_fallback_warnings(summary: Mapping[str, Any]) -> list[str]:
     return warnings
 
 
+def _failed_metric_counts(strategy_runs: Sequence[Run]) -> dict[str, int]:
+    """``{"evaluator/metric": reports that list it as failed}`` over the runs."""
+    counts: Counter[str] = Counter()
+    for reports, _ in strategy_runs:
+        for report in reports:
+            for metric in report.metadata.get(FAILED_METRICS_KEY) or {}:
+                counts[f"{report.evaluator_type.value}/{metric}"] += 1
+    return dict(sorted(counts.items()))
+
+
+def failed_metric_counts_differ(
+    summary: Mapping[str, Any], strategies: Sequence[str], key: str
+) -> dict[str, int]:
+    """Per strategy, the failed scores of metric ``key``, when they differ
+    between ``strategies``; else empty."""
+    failed = {
+        s: int(((summary.get(s) or {}).get("failed_metrics") or {}).get(key, 0))
+        for s in dict.fromkeys(strategies)
+    }
+    return failed if len(set(failed.values())) > 1 else {}
+
+
 def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
     """Warnings when the strategies failed, or had blocked, different numbers
-    of answers."""
+    of answers, or failed to score a metric different numbers of times."""
     warnings = []
     failed = {s: stats["failed_answers"] for s, stats in summary.items()}
     if len(set(failed.values())) > 1:
@@ -498,6 +525,16 @@ def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:
             f"Strategies failed different numbers of answers ({counts}); each "
             "failed answer scores 0, so the comparison reflects those failures."
         )
+    keys = sorted({k for stats in summary.values() for k in stats["failed_metrics"]})
+    for key in keys:
+        if differ := failed_metric_counts_differ(summary, list(summary), key):
+            counts = ", ".join(f"{s} {n}" for s, n in differ.items())
+            warnings.append(
+                f"{key} could not be scored on different numbers of answers "
+                f"({counts}); those queries are left out of its delta "
+                "(unpaired), so a judge that fails where a strategy would "
+                "lose hides the loss."
+            )
     blocked = {s: stats["guardrail_blocked_counts"] for s, stats in summary.items()}
     if len({tuple(c.items()) for c in blocked.values()}) > 1:
         counts = ", ".join(f"{s} {sum(c.values())}" for s, c in blocked.items())

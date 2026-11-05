@@ -116,12 +116,30 @@ class StaticRenderer:
             return
 
         node_names = self._unique_factors([str(n.node_name) for n in top_nodes])
-        metrics = ["degree", "betweenness", "pagerank"]
-        colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+        # A metric that is off or failed to compute is None: plotted as 0 it
+        # read as a measured zero. A metric no node has is left out, a node
+        # without a value gets no bar (NaN).
+        colors_by_metric = {
+            "degree": "#1f77b4",
+            "betweenness": "#ff7f0e",
+            "pagerank": "#2ca02c",
+        }
+        metrics = [
+            m
+            for m in colors_by_metric
+            if any(getattr(n, m, None) is not None for n in top_nodes)
+        ]
+        if not metrics:
+            logger.warning("No centrality values to plot.")
+            return
+        colors = [colors_by_metric[m] for m in metrics]
 
         data: dict[str, Any] = {"nodes": node_names}
         for metric in metrics:
-            data[metric] = [getattr(n, metric, 0) or 0 for n in top_nodes]
+            data[metric] = [
+                float("nan") if (v := getattr(n, metric, None)) is None else v
+                for n in top_nodes
+            ]
 
         source = ColumnDataSource(data=data)
         p = self._create_figure(

@@ -977,6 +977,7 @@ def test_visualization_json_output_names_the_written_files(
     assert json.loads(capsys.readouterr().out) == {
         "output_directory": str(tmp_path / "out"),
         "files": [],
+        "failed_renderers": {},
     }
 
 
