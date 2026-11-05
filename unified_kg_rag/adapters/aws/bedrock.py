@@ -725,7 +725,7 @@ class BedrockLanguageModelFactory(
             kwargs.get("max_tokens")
             or effective_max_output_tokens(
                 model_info,
-                self.config.aws.bedrock,
+                self.config.models.default_max_output_tokens,
                 kwargs.get("min_output_tokens", 0),
             ),
             model_info,

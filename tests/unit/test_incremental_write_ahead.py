@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     POINTS,
@@ -176,7 +177,7 @@ def test_crash_mid_commit_leaves_the_rest_pending(k: int) -> None:
     harness.run(R0)
 
     assert harness.run(R1, interrupt="mid_commit", k=k)
-    records = {r.file_path: r for r in harness.store.list_all()}
+    records = {r.file_path: r for r in all_records(harness.store)}
     processed = [p for p, r in records.items() if r.status is DocStatus.PROCESSED]
     pending = [p for p, r in records.items() if r.status is DocStatus.PENDING]
     # The commit wrote k-1 of the four new/changed records before dying.

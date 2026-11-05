@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import (
@@ -54,13 +55,13 @@ def test_a_leased_namespace_stops_a_run_before_it_writes(
 
     with pytest.raises(NamespaceLeaseError, match="other-host:1:run"):
         _ingest(config, providers, source, tmp_path / "run-1")
-    assert registry.list_all() == []
+    assert all_records(registry) == []
 
     # The other run ends: this one indexes and leaves no lease behind.
     registry.release_lease("default", "other-host:1:run")
     context = _ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
-    assert len(registry.list_all()) == 1
+    assert len(all_records(registry)) == 1
     assert registry.lease_holder("default") is None
     # An expired lease does not block either; the run's first write waits
     # until the dead run's writes have landed.

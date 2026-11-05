@@ -2412,7 +2412,7 @@ class IndexingStage(_RegistryStage):
         # A text embedded unchanged takes its stored vector (the indexer's
         # default), unless the run rebuilds everything (--force-rebuild).
         if not reuse_stored:
-            self.indexing_manager.opensearch_indexer.set_embedding_reuse(False)
+            self.indexing_manager.vector_indexer.set_embedding_reuse(False)
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
 
@@ -2547,7 +2547,7 @@ class IndexingStage(_RegistryStage):
                 rebuild = (incremental, lineages)
             # A build the registry does not record must not be updated
             # incrementally later (see VectorIndexer.check_index_settings).
-            self.indexing_manager.opensearch_indexer.set_doc_status_tracking(
+            self.indexing_manager.vector_indexer.set_doc_status_tracking(
                 rebuild is not None
             )
             indexing_results = self.indexing_manager.index_all_data(
@@ -2772,7 +2772,7 @@ class IndexingStage(_RegistryStage):
                     runs_since=0,
                     last_commit=commit,
                 )
-            written = self.indexing_manager.opensearch_indexer.record_build(
+            written = self.indexing_manager.vector_indexer.record_build(
                 record.model_copy(update=update), suffix
             )
             if written is not None and written.communities is not None:

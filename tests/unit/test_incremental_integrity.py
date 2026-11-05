@@ -76,7 +76,7 @@ def test_commit_gate_matches_the_pipeline_gate(
     manager.config = Config()
     assert manager.config.indexing.max_failure_rate == 0.2
     results = {
-        "neptune_entities": IndexingStats(
+        "graph_entities": IndexingStats(
             total_items=total, successful_items=successful, failed_items=failed
         )
     }
@@ -110,7 +110,7 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
     manager.config = Config()
     # The stale-artifact removal reports a failed delete.
     manager.remove_text_units.return_value = {
-        "neptune_delete_default": IndexingStats(total_items=1, failed_items=1)
+        "graph_delete_default": IndexingStats(total_items=1, failed_items=1)
     }
     stage = _incremental_indexing_stage(mocker, store, manager)
     context = _context(

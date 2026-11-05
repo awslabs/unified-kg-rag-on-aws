@@ -18,16 +18,19 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.ingestion import cache_keys
 from unified_kg_rag.domain.ingestion.cache_keys import (
     CONFIG_KEYING,
+    EXTRACTION_SETTINGS_VERSION,
     Keyed,
     Unkeyed,
     answer_settings,
+    changed_settings,
     classify,
     extraction_fingerprint,
+    extraction_settings,
     shapes_answers,
     stage_input_fingerprint,
     unit_record_fingerprint,
 )
-from unified_kg_rag.domain.models import Config, PipelineStageType
+from unified_kg_rag.domain.models import Config, ExtractionSettings, PipelineStageType
 from unified_kg_rag.domain.models.config import (
     LanguageCode,
     NeptuneIndexingConfig,
@@ -146,11 +149,11 @@ def test_local_model_knobs_key_every_stage(field: str, value: object) -> None:
 
 
 def test_the_default_output_cap_keys_local_models_too() -> None:
-    # A local model is asked for aws.bedrock.default_max_output_tokens
+    # A local model is asked for models.default_max_output_tokens
     # (clamped to providers.llm.max_output_tokens); the keys dropped it with
     # the other Bedrock settings, so a changed cap reused cached output.
     capped = Config.model_validate(
-        {"backend": "local", "aws": {"bedrock": {"default_max_output_tokens": 512}}}
+        {"backend": "local", "models": {"default_max_output_tokens": 512}}
     )
     for stage in PipelineStageType:
         assert stage_input_fingerprint(capped, stage) != stage_input_fingerprint(
@@ -160,6 +163,26 @@ def test_the_default_output_cap_keys_local_models_too() -> None:
     assert unit_record_fingerprint(capped, gleaned=False) != (
         unit_record_fingerprint(_local(), gleaned=False)
     )
+
+
+def test_the_moved_output_cap_keys_under_its_former_path() -> None:
+    # models.default_max_output_tokens was aws.bedrock.default_max_output_tokens:
+    # keyed and recorded under the old path, the move re-keys no stage cache
+    # and re-extracts no incrementally indexed document.
+    old, new = (
+        "aws.bedrock.default_max_output_tokens",
+        "models.default_max_output_tokens",
+    )
+    recorded = extraction_settings(Config()).values
+    assert recorded[old] == 16384 and new not in recorded
+    assert answer_settings(Config())[old] == 16384
+    capped = Config.model_validate({"models": {"default_max_output_tokens": 512}})
+    before_the_move = ExtractionSettings(
+        version=EXTRACTION_SETTINGS_VERSION, values={**recorded, old: 512}
+    )
+    assert changed_settings(before_the_move, extraction_settings(capped)) == []
+    assert changed_settings(before_the_move, extraction_settings(Config())) == [new]
+    assert classify(old) is classify(new)
 
 
 def test_settings_of_the_inactive_model_provider_do_not_key() -> None:
@@ -197,7 +220,9 @@ def test_answer_settings_cover_every_field_but_the_neutral_ones() -> None:
     # two runs that answer differently claim the same configuration. Only
     # fields classified as changing no answer (and the location fields) stay
     # out, so the same evaluation hashes the same in every environment.
-    hashed = set(answer_settings(Config()))
+    hashed = {
+        cache_keys._CURRENT_PATH.get(path, path) for path in answer_settings(Config())
+    }
     excluded = {path for path in _FIELDS if not shapes_answers(path)}
     # Plus one derived entry: whether a guardrail is on (its id is a location).
     # Fields added at a default that keeps the earlier behaviour count once

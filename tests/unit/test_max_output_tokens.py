@@ -4,7 +4,7 @@
 
 Bedrock reserves input + max_tokens against the tokens-per-minute quota when a
 request starts, so a request must not ask for the model maximum by default.
-The cap is ``aws.bedrock.default_max_output_tokens``, raised to the prompt's
+The cap is ``models.default_max_output_tokens``, raised to the prompt's
 ``min_output_tokens`` floor and clamped to the model maximum.
 """
 
@@ -93,15 +93,23 @@ def test_explicit_max_tokens_wins() -> None:
 
 
 def test_null_cap_restores_the_model_maximum() -> None:
-    config = Config(aws={"bedrock": {"default_max_output_tokens": None}})
+    config = Config(models={"default_max_output_tokens": None})
     info = get_language_model_info(SONNET)
-    assert effective_max_output_tokens(info, config.aws.bedrock) == 128000
+    assert (
+        effective_max_output_tokens(info, config.models.default_max_output_tokens)
+        == 128000
+    )
 
 
 def test_configured_cap_above_the_floor_wins() -> None:
-    config = Config(aws={"bedrock": {"default_max_output_tokens": 50000}})
+    config = Config(models={"default_max_output_tokens": 50000})
     info = get_language_model_info(SONNET)
-    assert effective_max_output_tokens(info, config.aws.bedrock, 32768) == 50000
+    assert (
+        effective_max_output_tokens(
+            info, config.models.default_max_output_tokens, 32768
+        )
+        == 50000
+    )
 
 
 def test_short_output_prompts_take_the_default_cap() -> None:

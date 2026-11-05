@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -122,7 +123,7 @@ def _tuned(config: Config) -> Config:
 
 
 def _fingerprints(store: FakeDocStatusStore) -> set[str | None]:
-    return {record.extraction_fingerprint for record in store.list_all()}
+    return {record.extraction_fingerprint for record in all_records(store)}
 
 
 def test_changed_extraction_settings_reextract_unchanged_documents(
@@ -198,7 +199,7 @@ def test_a_setting_added_at_its_default_does_not_reextract(
     harness.store.put_many(
         [
             record.model_copy(update={"extraction_fingerprint": older.fingerprint})
-            for record in harness.store.list_all()
+            for record in all_records(harness.store)
         ]
     )
 
@@ -228,7 +229,7 @@ def test_records_without_a_fingerprint_are_not_reextracted(tmp_path: Path) -> No
             DocStatusRecord.model_validate(
                 {**record.model_dump(), "extraction_fingerprint": None}
             )
-            for record in harness.store.list_all()
+            for record in all_records(harness.store)
         ]
     )
 

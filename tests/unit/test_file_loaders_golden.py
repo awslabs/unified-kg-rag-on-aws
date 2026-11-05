@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.loader_corpus import write_loader_corpus
 from unified_kg_rag.adapters.ingestion.file_loaders import (
@@ -363,7 +364,7 @@ def test_rerun_after_switch_reports_no_changed_document(
         # The corpus as the old loaders recorded it: their content hashes.
         first = _run(corpus, store, mocker)
         goldens = _goldens()
-        for record in store.list_all():
+        for record in all_records(store):
             name = Path(record.file_path or "").name
             if name in goldens:
                 store.put(record.model_copy(update={"content_hash": goldens[name][0]}))

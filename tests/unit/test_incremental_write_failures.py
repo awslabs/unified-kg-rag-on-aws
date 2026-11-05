@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.ingestion.incremental import (
@@ -86,7 +87,7 @@ def _record(store: FakeDocStatusStore, results: dict[str, IndexingStats]) -> boo
 
 
 def _statuses(store: FakeDocStatusStore) -> dict[str, DocStatus]:
-    return {record.doc_id: record.status for record in store.list_all()}
+    return {record.doc_id: record.status for record in all_records(store)}
 
 
 def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
@@ -94,8 +95,8 @@ def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
     recorded = _record(
         store,
         {
-            "opensearch_entities": _stats(10, []),
-            "neptune_relationships": _stats(10, ["r-a"]),
+            "vector_entities": _stats(10, []),
+            "graph_relationships": _stats(10, ["r-a"]),
         },
     )
 
@@ -124,14 +125,14 @@ def test_the_commit_lists_the_documents_it_recorded_failed() -> None:
     indexer.record(
         lineages,
         _FINGERPRINTS,
-        {"neptune_relationships": _stats(10, ["r-a"])},
+        {"graph_relationships": _stats(10, ["r-a"])},
         ["doc-c"],
         artifact_owners(lineages, _ARTIFACTS),
         counted_failed_doc_ids=["doc-c"],
     )
 
     assert sorted(indexer.recorded_failed_doc_ids) == ["doc-a", "doc-c"]
-    assert sorted((r.doc_id, r.failure_count) for r in store.list_all()) == [
+    assert sorted((r.doc_id, r.failure_count) for r in all_records(store)) == [
         ("doc-a", 0),
         ("doc-b", 0),
         ("doc-c", 1),
@@ -140,7 +141,7 @@ def test_the_commit_lists_the_documents_it_recorded_failed() -> None:
 
 def test_a_failed_shared_artifact_fails_every_owner() -> None:
     store = FakeDocStatusStore()
-    _record(store, {"opensearch_entities": _stats(10, ["e-shared"])})
+    _record(store, {"vector_entities": _stats(10, ["e-shared"])})
 
     assert _statuses(store) == {
         "doc-a": DocStatus.FAILED,
@@ -151,24 +152,24 @@ def test_a_failed_shared_artifact_fails_every_owner() -> None:
 
 def test_a_failure_without_an_id_fails_the_whole_commit() -> None:
     store = FakeDocStatusStore()
-    _record(store, {"neptune_entities": _stats(10, [], unattributed=1)})
+    _record(store, {"graph_entities": _stats(10, [], unattributed=1)})
 
     assert set(_statuses(store).values()) == {DocStatus.FAILED}
 
 
 def test_clean_writes_record_every_document_processed() -> None:
     store = FakeDocStatusStore()
-    _record(store, {"opensearch_entities": _stats(10, [])})
+    _record(store, {"vector_entities": _stats(10, [])})
 
     assert set(_statuses(store).values()) == {DocStatus.PROCESSED}
 
 
 def test_failure_rate_gate_still_records_nothing() -> None:
     store = FakeDocStatusStore()
-    recorded = _record(store, {"neptune_relationships": _stats(2, ["r-a"])})
+    recorded = _record(store, {"graph_relationships": _stats(2, ["r-a"])})
 
     assert recorded is False
-    assert store.list_all() == []
+    assert all_records(store) == []
 
 
 def _document(path: str) -> Document:
@@ -190,7 +191,7 @@ def test_repeated_write_failures_are_retried_without_counting() -> None:
     (doc_id,) = fingerprints
     lineage = DocumentLineage(doc_id=doc_id, text_unit_ids=["t-1"])
     indexer = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
-    results = {"opensearch_entities": _stats(10, ["e-1"])}
+    results = {"vector_entities": _stats(10, ["e-1"])}
     owners = artifact_owners(
         [lineage], [Entity(id="e-1", name="E", text_unit_ids=["t-1"])]
     )
@@ -377,7 +378,7 @@ def test_repeated_ids_alone_are_fully_attributed() -> None:
         stats.add_error("edge batch failed", ids=["e-shared"])
     store = FakeDocStatusStore()
 
-    _record(store, {"neptune_communities": stats})
+    _record(store, {"graph_communities": stats})
 
     assert _statuses(store) == {
         "doc-a": DocStatus.FAILED,
@@ -395,7 +396,7 @@ def test_mixed_attributed_and_unattributed_failures_fail_the_whole_commit() -> N
     assert stats.unattributed_failures == 1
     store = FakeDocStatusStore()
 
-    _record(store, {"neptune_communities": stats})
+    _record(store, {"graph_communities": stats})
 
     assert set(_statuses(store).values()) == {DocStatus.FAILED}
 

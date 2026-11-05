@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.seed_graphs import seed_shard_extraction
@@ -524,7 +525,7 @@ class IncrementalRun:
         """Registry inconsistencies: rows not PROCESSED or not in the corpus,
         text units the rows and the stores disagree on, artifacts citing a
         text unit that is not stored."""
-        records = self.store.list_all()
+        records = all_records(self.store)
         problems = []
         paths = sorted(r.file_path or r.doc_id for r in records)
         if paths != sorted(corpus):

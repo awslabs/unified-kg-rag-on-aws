@@ -331,8 +331,8 @@ class IncrementalIndexer:
         }
         if not probes:
             return
-        graph = self.indexing_manager.neptune_indexer
-        vector = self.indexing_manager.opensearch_indexer
+        graph = self.indexing_manager.graph_indexer
+        vector = self.indexing_manager.vector_indexer
         lost = "doc-status registry lists indexed documents of this namespace whose"
         advice = (
             "Re-run with indexing.reset: true to rebuild the stores and the "
@@ -2696,7 +2696,7 @@ def index_delta(
     # this run's embedding model and languages by a run that kept the
     # registry (unchanged documents are not rewritten), and the graph must
     # still hold the registry's documents.
-    indexing_manager.opensearch_indexer.check_index_settings(incremental.suffix)
+    indexing_manager.vector_indexer.check_index_settings(incremental.suffix)
     incremental.check_graph_holds_registry(delta)
     reannotate = annotations_due(incremental, delta)
     # Write ahead before any store write: the new and changed docs are
@@ -2734,7 +2734,7 @@ def index_delta(
     # The commit is the run's last write: no later write takes a vector it
     # replaces, so its upserts read only the vectors they take (the removal's
     # replaced ones, kept above, are still taken).
-    vectors = indexing_manager.opensearch_indexer
+    vectors = indexing_manager.vector_indexer
     vectors.set_replaced_vector_keeping(False)
     try:
         results = incremental.commit(

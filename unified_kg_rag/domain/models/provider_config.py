@@ -93,7 +93,7 @@ class LLMProviderConfig(EndpointConfig):
         ge=1,
         description=(
             "Output-token ceiling of the non-Bedrock models. A request asks for "
-            "aws.bedrock.default_max_output_tokens (or a prompt's own floor), "
+            "models.default_max_output_tokens (or a prompt's own floor), "
             "clamped to this."
         ),
     )

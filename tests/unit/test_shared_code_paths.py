@@ -135,7 +135,7 @@ def test_full_and_delta_indexing_write_the_same_artifact_types(mocker) -> None:
     delta = manager.index_delta(**artifacts)
     # (The mocks' stats report failures, so the rebuild also reports its
     # skipped sweep: not an artifact type.)
-    assert set(full) - {"neptune_sweep"} == set(delta)
+    assert set(full) - {"graph_sweep"} == set(delta)
     rels = artifacts["relationships"]
     graph.index_relationships.assert_called_once_with(rels)  # the full build
     graph.upsert_relationships.assert_called_once_with(rels)  # the delta

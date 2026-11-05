@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
@@ -87,7 +88,7 @@ def test_add_then_delete_cycle_reaches_stores(harness) -> None:
     _commit(inc, [a, b], tu_a + tu_b, ent_a + ent_b)
     assert vector.ids("entities") == {"e-alice", "e-bob"}
     assert graph.ids("entities") == {"e-alice", "e-bob"}
-    assert {r.doc_id for r in store.list_all()} == {
+    assert {r.doc_id for r in all_records(store)} == {
         compute_doc_id("/a.txt"),
         compute_doc_id("/b.txt"),
     }
@@ -100,7 +101,7 @@ def test_add_then_delete_cycle_reaches_stores(harness) -> None:
     assert "e-bob" not in vector.ids("entities")
     assert "e-bob" not in graph.ids("entities")
     assert "e-alice" in vector.ids("entities")  # survivor untouched
-    assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
+    assert {r.doc_id for r in all_records(store)} == {compute_doc_id("/a.txt")}
 
 
 def test_shared_entity_survives_deletion(harness) -> None:
@@ -217,7 +218,7 @@ def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:
     (kept,) = graph.read_entities(["e-vendor"], suffix="tenant-b")
     assert kept.text_unit_ids == ["tu-tenant-b"]
     assert {suffix for _, suffix in vector.delete_calls} == {"tenant-a"}
-    assert [r.doc_id for r in store.list_all()] == ["doc-tenant-b"]
+    assert [r.doc_id for r in all_records(store)] == ["doc-tenant-b"]
 
 
 def test_an_entity_another_namespace_cites_is_stripped_not_deleted(harness) -> None:
@@ -263,7 +264,7 @@ def test_a_direct_api_record_retains_for_a_scoped_run_of_its_namespace(
     tu_a, _ = _artifacts_for(a, [])
     shared = Entity(id="e-shared", name="Shared", text_unit_ids=[tu_a[0].id])
     _commit(direct, [a], tu_a, [shared])
-    (record,) = store.list_all()
+    (record,) = all_records(store)
     assert record.scope is None
     assert record.doc_id == compute_doc_id("a.txt", "default")
 

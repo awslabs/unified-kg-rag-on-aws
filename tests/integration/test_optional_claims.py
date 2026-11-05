@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_claim_convergence as convergence
 from tests.integration import test_embedded_e2e as e2e
@@ -86,7 +87,7 @@ def _setup(tmp: Path, mode: dict[str, str]) -> tuple[Any, Any, Path, Counter]:
 def _state(providers: Any) -> dict[str, tuple]:
     return {
         r.file_path: (r.status, r.failure_count, r.retry_count)
-        for r in providers.build_doc_status().list_all()
+        for r in all_records(providers.build_doc_status())
     }
 
 
@@ -223,7 +224,7 @@ def test_claims_failing_after_a_graph_failure_are_retried_once(tmp_path: Path) -
 def _records(providers: Any) -> dict[str, tuple]:
     return {
         r.file_path: (r.status, r.error_info, r.failure_count)
-        for r in providers.build_doc_status().list_all()
+        for r in all_records(providers.build_doc_status())
     }
 
 

@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     Corpus,
@@ -126,7 +127,7 @@ def _run_until_settled(harness: IncrementalRun, corpus: Corpus, runs: int) -> in
     many runs it took."""
     for count in range(1, runs + 1):
         died = harness.run(corpus)
-        records = harness.store.list_all()
+        records = all_records(harness.store)
         if not died and all(r.status is not DocStatus.PENDING for r in records):
             return count
     raise AssertionError(f"not settled after {runs} runs")
@@ -187,7 +188,7 @@ def test_runs_that_die_on_large_batches_end_up_indexing_every_document() -> None
 
     _run_until_settled(harness, corpus, 12)
 
-    assert {r.status for r in harness.store.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.store)} == {DocStatus.PROCESSED}
     assert harness.state() == expected_state(corpus)
 
 
@@ -277,7 +278,7 @@ def test_runs_that_stop_cleanly_count_nothing() -> None:
     harness.run(corpus)
 
     assert harness.extracted == sorted(corpus)
-    assert {r.status for r in harness.store.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.store)} == {DocStatus.PROCESSED}
 
 
 def test_full_rebuilds_that_die_count_no_attempt() -> None:
@@ -301,7 +302,7 @@ def test_full_rebuilds_that_die_count_no_attempt() -> None:
     harness.run(corpus)
 
     assert harness.extracted == sorted(corpus)
-    assert {r.status for r in harness.store.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.store)} == {DocStatus.PROCESSED}
     assert harness.state() == expected_state(corpus)
 
 
@@ -504,7 +505,7 @@ def test_a_resumed_delta_is_recomputed_when_another_pipeline_id_wrote_its_record
     docs = [document(path, content) for path, content in {**_A, **_B}.items()]
     delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
     open_attempts(harness.store, delta, fingerprints, written_by="P1")
-    assert {r.written_by for r in harness.store.list_all()} == {"P1"}
+    assert {r.written_by for r in all_records(harness.store)} == {"P1"}
     assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
     # P1 resumed after its own death opens its attempts again: still its delta.
     open_attempts(harness.store, delta, fingerprints, written_by="P1")
@@ -522,7 +523,7 @@ def test_a_resumed_delta_is_recomputed_when_another_pipeline_id_wrote_its_record
     # Without a pipeline id (the direct API) the writer is not checked.
     assert delta_still_applies(harness.store, delta, fingerprints, 3)
     assert close_attempts(harness.store, delta, fingerprints, "P1") == 2
-    assert {r.written_by for r in harness.store.list_all()} == {"P1"}
+    assert {r.written_by for r in all_records(harness.store)} == {"P1"}
 
 
 def test_a_processed_record_without_a_writer_is_left_to_the_other_checks() -> None:
@@ -533,10 +534,10 @@ def test_a_processed_record_without_a_writer_is_left_to_the_other_checks() -> No
     docs = [document(path, content) for path, content in corpus.items()]
     delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
     harness.run(corpus)
-    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert {r.written_by for r in all_records(harness.store)} == {None}
     assert delta_still_applies(harness.store, delta, fingerprints, 3, pipeline_id="P1")
     harness.run({"/c/a.txt": [[("Vendor", "Depot", 2)]], **_B})
-    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert {r.written_by for r in all_records(harness.store)} == {None}
     assert not delta_still_applies(
         harness.store, delta, fingerprints, 3, pipeline_id="P1"
     )
@@ -554,11 +555,11 @@ def test_an_unfinished_record_without_a_writer_is_another_pipeline_ids(
     delta, fingerprints = detect_delta(docs, harness.store, max_attempts=3)
     open_attempts(harness.store, delta, fingerprints)
     if state != "open":
-        for record in harness.store.list_all():
+        for record in all_records(harness.store):
             harness.store.put(
                 closed_attempt(record).model_copy(update={"status": DocStatus(state)})
             )
-    assert {r.written_by for r in harness.store.list_all()} == {None}
+    assert {r.written_by for r in all_records(harness.store)} == {None}
     assert delta_still_applies(harness.store, delta, fingerprints, 3)
     assert not delta_still_applies(
         harness.store, delta, fingerprints, 3, pipeline_id="P1"
@@ -648,7 +649,7 @@ def test_a_changed_document_whose_old_version_had_other_settings_still_applies()
 def test_a_document_that_failed_to_load_is_no_move() -> None:
     harness = IncrementalRun()
     harness.run({**_A, **_B})
-    for record in harness.store.list_all():
+    for record in all_records(harness.store):
         harness.store.put(record.model_copy(update={"scope": "default|corpus"}))
     docs = [document(path, content) for path, content in {**_A, **_B}.items()]
     b_id = document_doc_id(docs[1])
@@ -819,7 +820,7 @@ def test_a_run_that_lost_its_lease_leaves_its_attempts_open() -> None:
             close_attempts(harness.store, delta, fingerprints)
     finally:
         remove_write_fence(token)
-    assert {r.attempt_batch is not None for r in harness.store.list_all()} == {True}
+    assert {r.attempt_batch is not None for r in all_records(harness.store)} == {True}
 
 
 @pytest.mark.parametrize(
@@ -858,7 +859,7 @@ def test_a_run_that_lost_its_lease_closes_its_attempts_unless_another_holds_it(
         elif holder == "another run":
             harness.store.leases["ns"] = ("other", time.time() + 60)
         pipe._close_attempts(context, lease)  # type: ignore[arg-type]
-    still_open = {r.attempt_batch is not None for r in harness.store.list_all()}
+    still_open = {r.attempt_batch is not None for r in all_records(harness.store)}
     assert still_open == {not closed}
     # The retaken lease is released at the end; another run's is kept.
     assert (harness.store.lease_holder("ns") or ("",))[0] == (
@@ -918,7 +919,7 @@ def test_a_resumed_run_opens_its_attempts_as_its_pipeline_id() -> None:
         pipeline_id="P1",
     )
     _resumed_pipeline(harness.store)._open_resumed_attempts(context, "graph_extraction")
-    records = harness.store.list_all()
+    records = all_records(harness.store)
     assert records and {r.written_by for r in records} == {"P1"}
     assert {r.attempt_batch is not None for r in records} == {True}
 

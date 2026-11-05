@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
@@ -131,10 +132,10 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
 
     # Writes no build record (so no community counters).
 
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, successful_items=1)
+        "graph_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)
@@ -155,7 +156,7 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
 
     manager.index_all_data.assert_called_once()
     manager.index_delta.assert_not_called()
-    records = {r.doc_id: r for r in store.list_all()}
+    records = {r.doc_id: r for r in all_records(store)}
     assert set(records) == {document_doc_id(a), document_doc_id(b), other.doc_id}
     assert records[other.doc_id] == other
     assert records[document_doc_id(a)].status == DocStatus.PROCESSED
@@ -172,10 +173,10 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     config = _reset_config()
     manager = mocker.MagicMock()
     # Writes no build record (so no community counters).
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, failed_items=1)
+        "graph_entities": IndexingStats(total_items=1, failed_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)
@@ -190,7 +191,7 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
 
     # Only the write-ahead record is left: PENDING, so the next run indexes
     # the document again (or removes what the rebuild wrote if it is gone).
-    records = store.list_all()
+    records = all_records(store)
     assert [r.doc_id for r in records] == [document_doc_id(a)]
     assert records[0].status is DocStatus.PENDING
     assert store.diff({document_doc_id(a): compute_content_hash(a)}).changed == [
@@ -205,10 +206,10 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
 
     # Writes no build record (so no community counters).
 
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, successful_items=1)
+        "graph_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     return ps.IndexingStage(config=config, doc_status=store)
@@ -243,10 +244,10 @@ def test_a_failed_reset_keeps_the_replaced_documents_records(mocker) -> None:
     config = _reset_config()
     manager = mocker.MagicMock()
     # Writes no build record (so no community counters).
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, failed_items=1)
+        "graph_entities": IndexingStats(total_items=1, failed_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)
@@ -293,7 +294,7 @@ def test_reset_keeps_the_records_of_another_namespace_of_the_suffix(
 
     stage._execute_core(context)
 
-    records = {r.doc_id: r for r in store.list_all()}
+    records = {r.doc_id: r for r in all_records(store)}
     assert records[other_namespace.doc_id] == other_namespace
     assert cleared.doc_id not in records
     assert document_doc_id(a) in records

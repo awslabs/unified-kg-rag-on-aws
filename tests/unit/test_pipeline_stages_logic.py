@@ -206,7 +206,7 @@ def _indexing_stage(
 
     # Writes no build record (so no community counters).
 
-    fake_mgr.opensearch_indexer.record_build.return_value = None
+    fake_mgr.vector_indexer.record_build.return_value = None
     fake_mgr.index_all_data.return_value = indexing_results
     mocker.patch.object(ps, "IndexingManager", return_value=fake_mgr)
 
@@ -220,15 +220,15 @@ def _indexing_stage(
 
 def test_indexing_stage_computes_relationships_indexed_metric(mocker) -> None:
     results = {
-        "neptune_entities": IndexingStats(total_items=3, successful_items=3),
-        "neptune_relationships": IndexingStats(total_items=4, successful_items=4),
-        "opensearch_relationships": IndexingStats(
+        "graph_entities": IndexingStats(total_items=3, successful_items=3),
+        "graph_relationships": IndexingStats(total_items=4, successful_items=4),
+        "vector_relationships": IndexingStats(
             total_items=4, successful_items=2, failed_items=2
         ),
-        "opensearch_text_units": IndexingStats(total_items=2, successful_items=2),
+        "vector_text_units": IndexingStats(total_items=2, successful_items=2),
     }
     # This test exercises metric aggregation, not the failure gate; the 50%
-    # opensearch_relationships failure would otherwise trip the (default 20%)
+    # vector_relationships failure would otherwise trip the (default 20%)
     # partial-failure gate. Disable the gate so metrics are tested in isolation.
     stage, _mgr = _indexing_stage(mocker, results, max_failure_rate=1.0)
 
@@ -238,7 +238,7 @@ def test_indexing_stage_computes_relationships_indexed_metric(mocker) -> None:
     # "relationship": neptune (4) + opensearch (2) = 6.
     assert metrics["relationships_indexed"] == 6
     assert metrics["total_indexed"] == 3 + 4 + 2 + 2
-    assert metrics["total_failed"] == 2  # opensearch_relationships failed_items
+    assert metrics["total_failed"] == 2  # vector_relationships failed_items
     assert total_indexed == metrics["total_indexed"]
 
 
@@ -273,7 +273,7 @@ def test_indexing_stage_input_count_sums_all_artifact_types(mocker) -> None:
     from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
 
     stage, _mgr = _indexing_stage(
-        mocker, {"neptune_entities": IndexingStats(total_items=1, successful_items=1)}
+        mocker, {"graph_entities": IndexingStats(total_items=1, successful_items=1)}
     )
     ctx = _context()
     ctx.text_units = [TextUnit(id="t1", text="a")]
@@ -288,9 +288,9 @@ def test_indexing_stage_input_count_sums_all_artifact_types(mocker) -> None:
 def test_validate_backend_success_raises_on_index_type_total_failure(mocker) -> None:
     stage, _mgr = _indexing_stage(mocker, {})
     results = {
-        "opensearch_entities": IndexingStats(total_items=5, successful_items=0),
+        "vector_entities": IndexingStats(total_items=5, successful_items=0),
     }
-    with pytest.raises(PipelineStageError, match="opensearch_entities"):
+    with pytest.raises(PipelineStageError, match="vector_entities"):
         stage._validate_backend_success(results)
 
 
@@ -301,7 +301,7 @@ def test_validate_backend_success_names_the_first_error(mocker) -> None:
     failed = IndexingStats(total_items=5)
     failed.add_error("unknown setting [index.refresh_intervl]", 5)
     with pytest.raises(PipelineStageError, match=r"refresh_intervl"):
-        stage._validate_backend_success({"opensearch_entities": failed})
+        stage._validate_backend_success({"vector_entities": failed})
 
 
 def test_validate_backend_success_passes_with_partial_success(mocker) -> None:
@@ -309,10 +309,10 @@ def test_validate_backend_success_passes_with_partial_success(mocker) -> None:
     # confirm a below-threshold partial failure still passes.
     stage, _mgr = _indexing_stage(mocker, {}, max_failure_rate=0.5)
     results = {
-        "opensearch_entities": IndexingStats(
+        "vector_entities": IndexingStats(
             total_items=5, successful_items=3, failed_items=2
         ),
-        "neptune_entities": IndexingStats(total_items=5, successful_items=5),
+        "graph_entities": IndexingStats(total_items=5, successful_items=5),
     }
     # No exception: 40% failure <= 50% tolerated, and every key has a success.
     stage._validate_backend_success(results)
@@ -326,11 +326,11 @@ def test_validate_backend_success_raises_on_partial_failure_over_threshold(
     # pass and the run was reported successful despite most writes failing).
     stage, _mgr = _indexing_stage(mocker, {})  # default 20% tolerance
     results = {
-        "neptune_relationships": IndexingStats(
+        "graph_relationships": IndexingStats(
             total_items=100, successful_items=22, failed_items=78
         ),
     }
-    with pytest.raises(PipelineStageError, match="neptune_relationships"):
+    with pytest.raises(PipelineStageError, match="graph_relationships"):
         stage._validate_backend_success(results)
 
 
@@ -339,7 +339,7 @@ def test_validate_backend_success_ignores_zero_total_items(mocker) -> None:
     # total_items==0 AND failed_items==0 keys had no work to do -> skipped (not a
     # failure). This is distinct from the exception-before-seeding case below.
     results = {
-        "opensearch_entities": IndexingStats(total_items=0, successful_items=0),
+        "vector_entities": IndexingStats(total_items=0, successful_items=0),
     }
     stage._validate_backend_success(results)
 
@@ -353,9 +353,9 @@ def test_validate_backend_success_raises_on_exception_before_seeding(mocker) -> 
     stage, _mgr = _indexing_stage(mocker, {})
     stats = IndexingStats()
     stats.add_error("Bedrock embedding endpoint unreachable", 500)
-    results = {"opensearch_entities": stats}
+    results = {"vector_entities": stats}
     assert stats.total_items == 0 and stats.failed_items == 500
-    with pytest.raises(PipelineStageError, match="opensearch_entities"):
+    with pytest.raises(PipelineStageError, match="vector_entities"):
         stage._validate_backend_success(results)
 
 
@@ -368,7 +368,7 @@ def test_validate_backend_success_raises_on_whole_backend_exception(mocker) -> N
     s1, s2 = IndexingStats(), IndexingStats()
     s1.add_error("conn refused", 3)
     s2.add_error("conn refused", 4)
-    results = {"neptune_entities": s1, "neptune_relationships": s2}
+    results = {"graph_entities": s1, "graph_relationships": s2}
     with pytest.raises(PipelineStageError):
         stage._validate_backend_success(results)
 

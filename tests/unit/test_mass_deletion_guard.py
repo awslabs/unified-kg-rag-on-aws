@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.ingestion.file_loaders import TextFileLoader
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -246,7 +247,7 @@ def test_a_file_skipped_for_its_type_is_kept_not_deleted(
         ParserFactory._loader_configs, ".note", (TextFileLoader, {}, "Note")
     )
     _run(root, store, mocker)
-    assert len(store.list_all()) == 2
+    assert len(all_records(store)) == 2
     monkeypatch.delitem(ParserFactory._loader_configs, ".note")
 
     context = _run(root, store, mocker)
@@ -257,7 +258,7 @@ def test_a_file_skipped_for_its_type_is_kept_not_deleted(
     assert delta is not None
     assert delta.deleted == []
     assert len(delta.failed) == 1
-    assert len(store.list_all()) == 2
+    assert len(all_records(store)) == 2
 
 
 def test_the_loading_stage_asks_before_its_first_write(
@@ -269,7 +270,7 @@ def test_the_loading_stage_asks_before_its_first_write(
         (root / f"d{k}.txt").write_text(f"Vendor {k} ships goods.")
     store = FakeDocStatusStore()
     _run(root, store, mocker)
-    before = {r.doc_id: r for r in store.list_all()}
+    before = {r.doc_id: r for r in all_records(store)}
     for k in range(6):
         (root / f"d{k}.txt").unlink()
     (root / "new.txt").write_text("Carrier moves parts.")
@@ -277,7 +278,7 @@ def test_the_loading_stage_asks_before_its_first_write(
     with pytest.raises(ConfirmationDeclinedError):
         _run(root, store, mocker)
     # No write-ahead record for new.txt, no attempt opened.
-    assert {r.doc_id: r for r in store.list_all()} == before
+    assert {r.doc_id: r for r in all_records(store)} == before
 
     context = _run(root, store, mocker, confirm=lambda question: True)
     assert context.incremental_delta is not None

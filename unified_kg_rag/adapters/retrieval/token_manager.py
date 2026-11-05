@@ -114,7 +114,7 @@ class TokenManager:
         # not the model maximum, so a capped output leaves room for context.
         answer_output_tokens = effective_max_output_tokens(
             answer_model_info,
-            config.aws.bedrock,
+            config.models.default_max_output_tokens,
             AnswerGenerationPrompt.min_output_tokens,
         )
         self._max_context_tokens = self._resolve_max_context_tokens(

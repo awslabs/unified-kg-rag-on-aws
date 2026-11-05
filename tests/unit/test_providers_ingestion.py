@@ -100,7 +100,7 @@ def test_injected_providers_reach_every_ingestion_stage(
     assert stages[T.GRAPH_RESOLUTION].description_summarizer.factory is llm
     assert stages[T.COMMUNITY_DETECTION].detector.factory is llm
     indexing = stages[T.INDEXING].indexing_manager
-    assert indexing.opensearch_indexer.embedding_factory is embedding
+    assert indexing.vector_indexer.embedding_factory is embedding
     assert indexing.description_summarizer.factory is llm
 
 

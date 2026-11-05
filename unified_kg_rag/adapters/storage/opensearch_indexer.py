@@ -2094,7 +2094,7 @@ class OpenSearchIndexer(VectorIndexer):
                 if prefix == rel_prefix and orphan_ids
                 else ids
             )
-            results[f"opensearch_delete_{prefix}_{suffix}"] = self.delete_by_id(
+            results[f"vector_delete_{prefix}_{suffix}"] = self.delete_by_id(
                 delete_ids, prefix, suffix
             )
         return results

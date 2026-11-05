@@ -429,10 +429,10 @@ class IndexingManager:
         self.providers = Providers.resolve(config, providers)
         # The attribute names predate the store-agnostic ports; they hold the
         # vector and graph writers whatever their backend.
-        self.opensearch_indexer: VectorIndexer = (
+        self.vector_indexer: VectorIndexer = (
             vector_indexer or self.providers.build_vector_indexer()
         )
-        self.neptune_indexer: GraphIndexer = (
+        self.graph_indexer: GraphIndexer = (
             graph_indexer or self.providers.build_graph_indexer()
         )
         # Built lazily on first cross-run merge so a manager only used for
@@ -510,7 +510,7 @@ class IndexingManager:
 
     def close(self) -> None:
         """Close both indexers' backing clients (best-effort, never raises)."""
-        for indexer in (self.opensearch_indexer, self.neptune_indexer):
+        for indexer in (self.vector_indexer, self.graph_indexer):
             try:
                 indexer.close()
             except Exception as e:  # noqa: BLE001 - teardown must never raise
@@ -531,8 +531,8 @@ class IndexingManager:
 
     def initialize(self) -> None:
         """Prepare both stores for writes; a store's error propagates."""
-        self.opensearch_indexer.initialize()
-        self.neptune_indexer.initialize()
+        self.vector_indexer.initialize()
+        self.graph_indexer.initialize()
 
     def index_all_data(
         self,
@@ -568,7 +568,7 @@ class IndexingManager:
             claims,
             suffixes=suffixes,
         )
-        written = results.get("opensearch_text_units")
+        written = results.get("vector_text_units")
         if written is not None and not written.failed_items:
             self._retain_extraction_records(
                 text_units or [], suffixes, community_reports or []
@@ -598,7 +598,7 @@ class IndexingManager:
                 named.setdefault(BaseIndexer.get_suffix(report), set()).add(key)
         for suffix, keys in sorted(named.items()):
             try:
-                kept = self.opensearch_indexer.retain_extraction_records(
+                kept = self.vector_indexer.retain_extraction_records(
                     sorted(keys), suffix=suffix
                 )
             except NamespaceLeaseError:
@@ -683,7 +683,7 @@ class IndexingManager:
             entities = self._annotated_entities(entities)
         if relationships is not None:
             relationships = self._annotated_relationships(relationships)
-        vector, graph = self.opensearch_indexer, self.neptune_indexer
+        vector, graph = self.vector_indexer, self.graph_indexer
         # (full-build writer, delta writer, items, result key)
         phase1: list[
             tuple[Callable[..., Any], Callable[..., Any], list[Any] | None, str]
@@ -692,22 +692,22 @@ class IndexingManager:
                 vector.index_text_units,
                 vector.upsert_text_units,
                 text_units,
-                "opensearch_text_units",
+                "vector_text_units",
             ),
             (
                 vector.index_entities,
                 vector.upsert_entities,
                 entities,
-                "opensearch_entities",
+                "vector_entities",
             ),
             (
                 vector.index_community_reports,
                 vector.upsert_community_reports,
                 community_reports,
-                "opensearch_community_reports",
+                "vector_community_reports",
             ),
-            (vector.index_claims, vector.upsert_claims, claims, "opensearch_claims"),
-            (graph.index_entities, graph.upsert_entities, entities, "neptune_entities"),
+            (vector.index_claims, vector.upsert_claims, claims, "vector_claims"),
+            (graph.index_entities, graph.upsert_entities, entities, "graph_entities"),
         ]
         # The OpenSearch relationship VECTOR index is only consumed by LightRAG
         # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
@@ -720,7 +720,7 @@ class IndexingManager:
                     vector.index_relationships,
                     self._upsert_vector_relationships,
                     relationships,
-                    "opensearch_relationships",
+                    "vector_relationships",
                 )
             )
 
@@ -761,17 +761,17 @@ class IndexingManager:
             results = self._run_indexing_phase(tasks(phase1))
             check_write_fence()
             writable, skipped = _edges_of_written_entities(
-                relationships, results.get("neptune_entities")
+                relationships, results.get("graph_entities")
             )
             phase2 = [
-                IndexingTask(edges, [writable], "neptune_relationships"),
+                IndexingTask(edges, [writable], "graph_relationships"),
                 *tasks(
                     [
                         (
                             graph.index_communities,
                             graph.upsert_communities,
                             communities,
-                            "neptune_communities",
+                            "graph_communities",
                         )
                     ]
                 ),
@@ -780,7 +780,7 @@ class IndexingManager:
             results.update(self._run_indexing_phase(phase2))
             check_write_fence()
             if skipped is not None:
-                results.setdefault("neptune_relationships", IndexingStats()).merge(
+                results.setdefault("graph_relationships", IndexingStats()).merge(
                     skipped
                 )
         except BaseException:
@@ -791,7 +791,7 @@ class IndexingManager:
             graph_failed = any(
                 stats.failed_items
                 for key, stats in results.items()
-                if key.startswith("neptune_")
+                if key.startswith("graph_")
             )
             if graph_failed:
                 logger.warning(
@@ -807,14 +807,14 @@ class IndexingManager:
                 skipped.add_error(
                     "previous graph not dropped: some graph writes failed"
                 )
-                results["neptune_sweep"] = skipped
+                results["graph_sweep"] = skipped
             try:
                 graph.end_rebuild(suffixes or [], sweep=not graph_failed)
             except Exception as e:  # noqa: BLE001 - reported as a failed write
                 logger.error("Dropping the previous graph failed: %s", e)
                 stats = IndexingStats(total_items=1)
                 stats.add_error(str(e))
-                results["neptune_sweep"] = stats
+                results["graph_sweep"] = stats
 
         self._log_completion_summary(results, time.time() - start_time)
         return results
@@ -826,7 +826,7 @@ class IndexingManager:
         for its rank only is updated in place (no embedding), unless its
         vector copy is missing (an interrupted write): that one is upserted."""
         rank_only, self._rank_only = self._rank_only, set()
-        vector = self.opensearch_indexer
+        vector = self.vector_indexer
         candidates = [r for r in relationships if r.id in rank_only]
         if not candidates:
             return vector.upsert_relationships(relationships)
@@ -863,8 +863,8 @@ class IndexingManager:
         cannot rewrite (a pass would read nothing). A read that fails
         raises."""
         stores: tuple[GraphIndexer | VectorIndexer, ...] = (
-            self.neptune_indexer,
-            self.opensearch_indexer,
+            self.graph_indexer,
+            self.vector_indexer,
         )
         if not all(rewrites_schema_annotations(store) for store in stores):
             return False
@@ -894,8 +894,8 @@ class IndexingManager:
         """
         result = SchemaReannotation()
         stores: tuple[GraphIndexer | VectorIndexer, ...] = (
-            self.neptune_indexer,
-            self.opensearch_indexer,
+            self.graph_indexer,
+            self.vector_indexer,
         )
         if not all(rewrites_schema_annotations(store) for store in stores):
             result.unsupported = True
@@ -1009,7 +1009,7 @@ class IndexingManager:
                 - delta_suffixes
             )
             if _PENDING_COMMIT
-            in self.opensearch_indexer.read_extraction_records(
+            in self.vector_indexer.read_extraction_records(
                 [_PENDING_COMMIT], suffix=suffix
             )
         }
@@ -1133,7 +1133,7 @@ class IndexingManager:
     def _read_stored_claims(self, ids: list[str], suffix: str) -> list[Claim]:
         """The stored claims of ``ids`` in ``suffix``, tagged with it (the
         write-back groups claims by their own index tag)."""
-        claims = self.opensearch_indexer.read_claims(ids, suffix=suffix) if ids else []
+        claims = self.vector_indexer.read_claims(ids, suffix=suffix) if ids else []
         for claim in claims:
             claim.attributes = {
                 **(claim.attributes or {}),
@@ -1169,11 +1169,11 @@ class IndexingManager:
             # are found through the stored names and read back as well.
             name_matcher, matched_ids = self._match_stored_names(suffix, entities)
             existing = self._with_full_descriptions(
-                self.neptune_indexer.read_entities(
+                self.graph_indexer.read_entities(
                     sorted({e.id for e in entities} | matched_ids | noted),
                     suffix=suffix,
                 ),
-                self.opensearch_indexer.read_entity_descriptions,
+                self.vector_indexer.read_entity_descriptions,
                 suffix,
             )
             if existing:
@@ -1182,8 +1182,8 @@ class IndexingManager:
                 )
         elif noted:
             existing = self._with_full_descriptions(
-                self.neptune_indexer.read_entities(sorted(noted), suffix=suffix),
-                self.opensearch_indexer.read_entity_descriptions,
+                self.graph_indexer.read_entities(sorted(noted), suffix=suffix),
+                self.vector_indexer.read_entity_descriptions,
                 suffix,
             )
             merged_entities = list(existing)
@@ -1198,7 +1198,7 @@ class IndexingManager:
                 # endpoint that merged into a stored entity): the full build
                 # merges them, so the entities' stored edges are read too.
                 rel_ids |= set(
-                    self.neptune_indexer.find_incident_relationship_ids(
+                    self.graph_indexer.find_incident_relationship_ids(
                         sorted({e.id for e in merged_entities}), suffix=suffix
                     )
                 )
@@ -1213,12 +1213,12 @@ class IndexingManager:
             existing_rels = self._with_full_descriptions(
                 [
                     r
-                    for r in self.neptune_indexer.read_relationships(
+                    for r in self.graph_indexer.read_relationships(
                         sorted(rel_ids), suffix=suffix
                     )
                     if r.id in delta_ids or (r.source_id, r.target_id) in pairs
                 ],
-                self.opensearch_indexer.read_relationship_descriptions,
+                self.vector_indexer.read_relationship_descriptions,
                 suffix,
             )
             # Even when no existing relationships are read back, delta endpoints
@@ -1249,19 +1249,19 @@ class IndexingManager:
             # re-pointed them.
             held = {r.id for r in merged_relationships or []}
             graph_incident = set(
-                self.neptune_indexer.find_incident_relationship_ids(
+                self.graph_indexer.find_incident_relationship_ids(
                     sorted(noted), suffix=suffix
                 )
             )
-            if _reads_back(self.neptune_indexer):
+            if _reads_back(self.graph_indexer):
                 in_graph = {
                     e.id
-                    for e in self.neptune_indexer.read_entities(
+                    for e in self.graph_indexer.read_entities(
                         sorted(noted), suffix=suffix
                     )
                 }
                 vector_entities = set(
-                    self.opensearch_indexer.read_vector_copies(
+                    self.vector_indexer.read_vector_copies(
                         "entities", sorted(noted - in_graph), suffix=suffix
                     )
                     if noted - in_graph
@@ -1274,14 +1274,14 @@ class IndexingManager:
                     - graph_incident
                     - held
                 )
-            noted_edges = self.neptune_indexer.read_relationships(
+            noted_edges = self.graph_indexer.read_relationships(
                 sorted(graph_incident - held),
                 suffix=suffix,
             )
             if noted_edges:
                 noted_edges = self._with_full_descriptions(
                     noted_edges,
-                    self.opensearch_indexer.read_relationship_descriptions,
+                    self.vector_indexer.read_relationship_descriptions,
                     suffix,
                 )
                 existing_rels = [*existing_rels, *noted_edges]
@@ -1294,8 +1294,8 @@ class IndexingManager:
                 } - known
                 if ends:
                     others = self._with_full_descriptions(
-                        self.neptune_indexer.read_entities(sorted(ends), suffix=suffix),
-                        self.opensearch_indexer.read_entity_descriptions,
+                        self.graph_indexer.read_entities(sorted(ends), suffix=suffix),
+                        self.vector_indexer.read_entity_descriptions,
                         suffix,
                     )
                     existing = [*existing, *others]
@@ -1451,7 +1451,7 @@ class IndexingManager:
         read_units: set[str] = set()
         # Nor do the stored edges (read once per call site, _IncidentEdges).
         incident = _IncidentEdges(
-            lambda ids: self.neptune_indexer.find_incident_relationship_ids(
+            lambda ids: self.graph_indexer.find_incident_relationship_ids(
                 ids, suffix=suffix
             )
         )
@@ -1506,7 +1506,7 @@ class IndexingManager:
             # reading of its dates gave it (``Derived.earlier_claim_ids``),
             # are held too.
             siblings = (
-                self.neptune_indexer.find_entity_ids_by_name_key(
+                self.graph_indexer.find_entity_ids_by_name_key(
                     sorted({compact_name_key(e.name) for e in derived.entities}),
                     suffix,
                 )
@@ -1558,7 +1558,7 @@ class IndexingManager:
             if candidates and not claims:
                 incident_ids = incident("moved", candidates)
                 if incident_ids - given:
-                    parted = self.neptune_indexer.read_relationships(
+                    parted = self.graph_indexer.read_relationships(
                         sorted(incident_ids - given), suffix=suffix
                     )
             if spellings:
@@ -1631,7 +1631,7 @@ class IndexingManager:
             known = {e.id for e in items[0]}
             if ends - known:
                 items[0].extend(
-                    self.neptune_indexer.read_entities(
+                    self.graph_indexer.read_entities(
                         sorted(ends - known), suffix=suffix
                     )
                 )
@@ -1683,7 +1683,7 @@ class IndexingManager:
             for part, whole in pending.items():
                 part_units = sorted(stated(part, whole))
                 citing = (
-                    self.opensearch_indexer.find_documents(
+                    self.vector_indexer.find_documents(
                         prefix, "text_unit_ids", part_units, suffix
                     )
                     or {}
@@ -1699,8 +1699,8 @@ class IndexingManager:
     ) -> tuple[list[Entity], list[Relationship], list[Claim]]:
         """The stored entities, relationships and claims of ``ids``."""
         return (
-            self.neptune_indexer.read_entities(ids, suffix=suffix),
-            self.neptune_indexer.read_relationships(ids, suffix=suffix),
+            self.graph_indexer.read_entities(ids, suffix=suffix),
+            self.graph_indexer.read_relationships(ids, suffix=suffix),
             self._read_stored_claims(ids, suffix),
         )
 
@@ -1711,7 +1711,7 @@ class IndexingManager:
         text_units: Sequence[TextUnit],
     ) -> tuple[dict[str, TextUnitExtraction], dict[str, list[Claim]]]:
         """The graph and claim records of ``unit_ids`` (those found)."""
-        return unit_records(self.opensearch_indexer, suffix, unit_ids, text_units)
+        return unit_records(self.vector_indexer, suffix, unit_ids, text_units)
 
     def _finish(
         self,
@@ -1789,7 +1789,7 @@ class IndexingManager:
         written = {r.id for r in relationships} | set(rekey) | set(dropped)
         extra_ids = sorted(
             set(
-                self.neptune_indexer.find_incident_relationship_ids(
+                self.graph_indexer.find_incident_relationship_ids(
                     _with_old_ids([e.id for e in entities], rekey), suffix=suffix
                 )
             )
@@ -1801,7 +1801,7 @@ class IndexingManager:
         # touched entities now give them (not the entities with their stored
         # copies): a run that wrote the entities but died before their edges
         # leaves edges a retry still finds stale.
-        stored_extra = self.neptune_indexer.read_relationships(extra_ids, suffix=suffix)
+        stored_extra = self.graph_indexer.read_relationships(extra_ids, suffix=suffix)
         # Annotated as they will be written, so a vector copy is compared
         # with what the write would store.
         extra = self._annotated_relationships(
@@ -1871,7 +1871,7 @@ class IndexingManager:
         moved |= repointed
         vectors = self.config.indexing.opensearch.build_relationship_vector_index
         vector_copy = (
-            self.opensearch_indexer.read_vector_copies(
+            self.vector_indexer.read_vector_copies(
                 "relationships",
                 [r.id for r in extra if {r.source_id, r.target_id} & moved],
                 suffix=suffix,
@@ -1899,7 +1899,7 @@ class IndexingManager:
             if before[r.id][:4] == shown(r)[:4] and r.id not in stale
         )
         extra = self._with_full_descriptions(
-            extra, self.opensearch_indexer.read_relationship_descriptions, suffix
+            extra, self.vector_indexer.read_relationship_descriptions, suffix
         )
         changed = {i for r in extra for i in (r.source_id, r.target_id)}
         logger.info(
@@ -1994,7 +1994,7 @@ class IndexingManager:
         ends = sorted({i for link in links for i in link})
         others = [
             i
-            for i in self.neptune_indexer.find_incident_relationship_ids(
+            for i in self.graph_indexer.find_incident_relationship_ids(
                 ends, suffix=suffix
             )
             if left(i)
@@ -2002,7 +2002,7 @@ class IndexingManager:
         backed = {
             frozenset((r.source_id, r.target_id))
             for r in (
-                self.neptune_indexer.read_relationships(sorted(others), suffix=suffix)
+                self.graph_indexer.read_relationships(sorted(others), suffix=suffix)
                 if others
                 else []
             )
@@ -2023,7 +2023,7 @@ class IndexingManager:
         (``rekey``: stored id -> new id), stated in the new ids, without the
         links of the ``rewired`` stored entities (the caller holds all their
         edges) or the ``dropped_links`` (stored id pairs of dropped edges)."""
-        stored = self.neptune_indexer.read_neighbor_ids(
+        stored = self.graph_indexer.read_neighbor_ids(
             _with_old_ids(ids, rekey), suffix=suffix, document_backed=True
         )
         merged: dict[str, set[str]] = defaultdict(set)
@@ -2119,7 +2119,7 @@ class IndexingManager:
         """The entities an earlier commit's note of ``suffix`` names (see
         :meth:`note_pending_commit`), recorded so their claims follow. A
         failed read raises (see merge_with_existing_graph)."""
-        note = self.opensearch_indexer.read_extraction_records(
+        note = self.vector_indexer.read_extraction_records(
             [_PENDING_COMMIT], suffix=suffix
         ).get(_PENDING_COMMIT)
         ids = _note_ids(note, "entity_ids")
@@ -2226,9 +2226,7 @@ class IndexingManager:
     def _write_note(self, key: str, suffix: str, note: dict[str, Any]) -> None:
         """Write the note ``key`` (one extraction-store record of ``suffix``).
         Raises when the write fails: the caller writes nothing before it."""
-        stats = self.opensearch_indexer.write_extraction_records(
-            {key: note}, suffix=suffix
-        )
+        stats = self.vector_indexer.write_extraction_records({key: note}, suffix=suffix)
         if stats.failed_items:
             raise DataProcessingError(
                 f"Writing the note '{key}' of '{suffix}' failed: {stats.errors[:1]}"
@@ -2238,7 +2236,7 @@ class IndexingManager:
         """Delete the note ``key`` of ``suffix`` (best-effort: one left only
         makes a later run derive its items again)."""
         try:
-            self.opensearch_indexer.delete_extraction_records([key], suffix=suffix)
+            self.vector_indexer.delete_extraction_records([key], suffix=suffix)
         except NamespaceLeaseError:
             raise
         except Exception as e:  # noqa: BLE001 - a leftover note is harmless
@@ -2261,7 +2259,7 @@ class IndexingManager:
         every stored name.
         """
         processing = self.config.processing
-        graph = self.neptune_indexer
+        graph = self.graph_indexer
         keyed = (
             None
             if processing.fuzzy_entity_resolution
@@ -2403,12 +2401,12 @@ class IndexingManager:
         doing = "Reading shared artifacts"
         try:
             entities = (
-                self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
+                self.graph_indexer.read_entities(entity_ids, suffix=suffix)
                 if entity_ids
                 else []
             )
             relationships = (
-                self.neptune_indexer.read_relationships(relationship_ids, suffix=suffix)
+                self.graph_indexer.read_relationships(relationship_ids, suffix=suffix)
                 if relationship_ids
                 else []
             )
@@ -2419,7 +2417,7 @@ class IndexingManager:
             # Retired once the derivation is known: a noted id an earlier
             # strip retired may be derived again (see below).
             absent: tuple[set[str], set[str]] = (set(), set())
-            if _reads_back(self.neptune_indexer):
+            if _reads_back(self.graph_indexer):
                 absent = (
                     set(entity_ids) - {e.id for e in entities},
                     set(relationship_ids) - {r.id for r in relationships},
@@ -2430,15 +2428,15 @@ class IndexingManager:
             ends = {i for r in relationships for i in (r.source_id, r.target_id)}
             ends -= {e.id for e in entities}
             if ends:
-                entities += self.neptune_indexer.read_entities(
+                entities += self.graph_indexer.read_entities(
                     sorted(ends), suffix=suffix
                 )
             entities = self._with_full_descriptions(
-                entities, self.opensearch_indexer.read_entity_descriptions, suffix
+                entities, self.vector_indexer.read_entity_descriptions, suffix
             )
             relationships = self._with_full_descriptions(
                 relationships,
-                self.opensearch_indexer.read_relationship_descriptions,
+                self.vector_indexer.read_relationship_descriptions,
                 suffix,
             )
             stripped_entities, stripped_relationships = remove_text_units(
@@ -2533,7 +2531,7 @@ class IndexingManager:
                 {compact_name_key(e.name) for e in derived.entities if e.id in changed}
             )
             family = (
-                self.neptune_indexer.find_entity_ids_by_name_key(family_keys, suffix)
+                self.graph_indexer.find_entity_ids_by_name_key(family_keys, suffix)
                 if family_keys
                 else None
             ) or []
@@ -2560,7 +2558,7 @@ class IndexingManager:
             logger.error("%s in '%s' failed: %s", doing, suffix, e)
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
-            return {**results, f"neptune_read_{suffix}": stats}, noted
+            return {**results, f"graph_read_{suffix}": stats}, noted
 
         def note(new_claims: set[str]) -> None:
             # Once, before the first write. With the claims derived under new
@@ -2592,7 +2590,7 @@ class IndexingManager:
             logger.error("Noting the pending strip in '%s' failed: %s", suffix, e)
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
-            return {**results, f"neptune_read_{suffix}": stats}, noted
+            return {**results, f"graph_read_{suffix}": stats}, noted
         if not new_entities and not new_relationships:
             return results, noted
         logger.info(
@@ -2613,10 +2611,10 @@ class IndexingManager:
         new_relationships = self._annotated_relationships(new_relationships)
         graph_copy = {e.id for e in entities} | {r.id for r in relationships}
         vector_copy = {
-            **self.opensearch_indexer.read_vector_copies(
+            **self.vector_indexer.read_vector_copies(
                 "entities", [e.id for e in new_entities], suffix=suffix
             ),
-            **self.opensearch_indexer.read_vector_copies(
+            **self.vector_indexer.read_vector_copies(
                 "relationships", [r.id for r in new_relationships], suffix=suffix
             ),
         }
@@ -2654,48 +2652,48 @@ class IndexingManager:
         # and a vector copy behind is rewritten (``unchanged``, ``_finish``).
         graph_edge_tasks = [
             IndexingTask(
-                self.neptune_indexer.upsert_relationships,
+                self.graph_indexer.upsert_relationships,
                 [new_relationships],
-                "neptune_relationships",
+                "graph_relationships",
             )
         ]
         relationship_tasks: list[IndexingTask] = []
         if self.config.indexing.opensearch.build_relationship_vector_index:
             relationship_tasks += [
                 IndexingTask(
-                    self.opensearch_indexer.update_relationship_lineage,
+                    self.vector_indexer.update_relationship_lineage,
                     [[r for r in new_relationships if unchanged(r)]],
-                    "opensearch_relationship_lineage",
+                    "vector_relationship_lineage",
                 ),
                 IndexingTask(
                     self._upsert_vector_relationships,
                     [[r for r in new_relationships if not unchanged(r)]],
-                    "opensearch_relationships",
+                    "vector_relationships",
                 ),
             ]
         phases = [
             [
                 IndexingTask(
-                    self.neptune_indexer.upsert_entities,
+                    self.graph_indexer.upsert_entities,
                     [rekeyed],
-                    "neptune_rekeyed_entities",
+                    "graph_rekeyed_entities",
                 )
             ],
             graph_edge_tasks,
             relationship_tasks,
             [
                 IndexingTask(
-                    self.neptune_indexer.upsert_entities, [kept], "neptune_entities"
+                    self.graph_indexer.upsert_entities, [kept], "graph_entities"
                 ),
                 IndexingTask(
-                    self.opensearch_indexer.update_entity_lineage,
+                    self.vector_indexer.update_entity_lineage,
                     [[e for e in new_entities if unchanged(e)]],
-                    "opensearch_entity_lineage",
+                    "vector_entity_lineage",
                 ),
                 IndexingTask(
-                    self.opensearch_indexer.upsert_entities,
+                    self.vector_indexer.upsert_entities,
                     [[e for e in new_entities if not unchanged(e)]],
-                    "opensearch_entities",
+                    "vector_entities",
                 ),
             ],
         ]
@@ -2729,7 +2727,7 @@ class IndexingManager:
             logger.error("Reading shared claims in '%s' failed: %s", suffix, e)
             stats = IndexingStats(total_items=len(claim_ids))
             stats.add_error(str(e), count=len(claim_ids), ids=claim_ids)
-            return {f"opensearch_read_claims_{suffix}": stats}
+            return {f"vector_read_claims_{suffix}": stats}
         before = {c.id: c for c in claims}
         lineage_only = [
             d
@@ -2740,12 +2738,12 @@ class IndexingManager:
         changed = [d for d in derived if d.id not in kept]
         results: dict[str, IndexingStats] = {}
         if lineage_only:
-            results[f"opensearch_claims_{suffix}"] = (
-                self.opensearch_indexer.update_claim_lineage(lineage_only)
+            results[f"vector_claims_{suffix}"] = (
+                self.vector_indexer.update_claim_lineage(lineage_only)
             )
         if changed:
-            results[f"opensearch_claim_content_{suffix}"] = (
-                self.opensearch_indexer.upsert_claims(changed)
+            results[f"vector_claim_content_{suffix}"] = (
+                self.vector_indexer.upsert_claims(changed)
             )
         return results
 
@@ -2759,7 +2757,7 @@ class IndexingManager:
         found: set[str] = set()
         for field in ("subject_id", "object_id"):
             found.update(
-                self.opensearch_indexer.find_documents(prefix, field, ids, suffix) or {}
+                self.vector_indexer.find_documents(prefix, field, ids, suffix) or {}
             )
         return sorted(found)
 
@@ -2782,7 +2780,7 @@ class IndexingManager:
         entity_ids = {rekeyed.get(i, i) for i in named} | {
             part for part, origin in split_from.items() if origin in named
         }
-        entities = self.neptune_indexer.read_entities(
+        entities = self.graph_indexer.read_entities(
             sorted(entity_ids - set(derived_entities)), suffix=suffix
         )
         # The claims' stored subject and object names too: an endpoint a
@@ -2812,11 +2810,11 @@ class IndexingManager:
                 | stated_keys
             )
             family = set(
-                self.neptune_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
+                self.graph_indexer.find_entity_ids_by_name_key(sorted(keys), suffix)
                 or []
             ) - (entity_ids | set(derived_entities))
             if family:
-                entities += self.neptune_indexer.read_entities(
+                entities += self.graph_indexer.read_entities(
                     sorted(family), suffix=suffix
                 )
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
@@ -2875,7 +2873,7 @@ class IndexingManager:
         documents' registry rows and retries the removal.
         """
         removed = set(text_unit_ids)
-        graph, vector = self.neptune_indexer, self.opensearch_indexer
+        graph, vector = self.graph_indexer, self.vector_indexer
         prefixes = self.config.indexing.opensearch
         try:
             found = graph.find_ids_citing(text_unit_ids, suffix=suffix)
@@ -3044,7 +3042,7 @@ class IndexingManager:
         if deleted_communities:
             # A kept text unit may still name one: a later delta wrote the
             # community anew under its id without that unit.
-            results[f"opensearch_text_unit_communities_{suffix}"] = (
+            results[f"vector_text_unit_communities_{suffix}"] = (
                 vector.prune_text_unit_communities(deleted_communities, suffix)
             )
         if shared_entities or shared_relationships or shared_claims:
@@ -3077,9 +3075,7 @@ class IndexingManager:
         found: set[str] = set()
         for field in ("source_id", "target_id"):
             found.update(
-                self.opensearch_indexer.find_documents(
-                    prefix, field, entity_ids, suffix
-                )
+                self.vector_indexer.find_documents(prefix, field, entity_ids, suffix)
                 or {}
             )
         return sorted(found)
@@ -3090,7 +3086,7 @@ class IndexingManager:
         """``{id: text_unit_ids}`` of the documents of ``alias_prefix`` citing
         any of ``text_unit_ids`` (``{}`` for a backend that cannot tell)."""
         return (
-            self.opensearch_indexer.find_documents(
+            self.vector_indexer.find_documents(
                 alias_prefix, "text_unit_ids", text_unit_ids, suffix
             )
             or {}
@@ -3105,7 +3101,7 @@ class IndexingManager:
         leaves records no text unit names, which cost space only.
         """
         results: dict[str, IndexingStats] = {}
-        vector = self.opensearch_indexer
+        vector = self.vector_indexer
         prefix = self.config.indexing.opensearch.text_units_index_prefix
         for suffix, keys in sorted(self._removed_record_keys.items()):
             try:
@@ -3173,7 +3169,7 @@ class IndexingManager:
             # dangling edge. Collect those incident edge ids BEFORE the Neptune
             # drop, then fold them into the relationship-index deletion below.
             try:
-                incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
+                incident_rel_ids = self.graph_indexer.find_incident_relationship_ids(
                     ids, suffix=suffix
                 )
                 # And the edges at a vector-only entity (see _strip_shared):
@@ -3193,18 +3189,18 @@ class IndexingManager:
                 logger.error("Reading incident edges in '%s' failed: %s", suffix, e)
                 stats = IndexingStats(total_items=len(ids))
                 stats.add_error(str(e), count=len(ids))
-                results[f"neptune_read_{suffix}"] = stats
+                results[f"graph_read_{suffix}"] = stats
                 continue
             # The vector copies first: a retry finds what to delete (and the
             # re-keyed items it retires) through the graph, so a run that
             # died between the stores must leave the graph copy, not an
             # orphaned vector copy nothing finds again.
             results.update(
-                self.opensearch_indexer.delete_document_artifacts(
+                self.vector_indexer.delete_document_artifacts(
                     ids, suffix, extra_relationship_ids=incident_rel_ids
                 )
             )
-            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
+            results[f"graph_delete_{suffix}"] = self.graph_indexer.delete_by_id(
                 ids, suffix=suffix
             )
         return results

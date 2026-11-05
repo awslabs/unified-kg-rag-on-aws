@@ -1040,7 +1040,7 @@ def test_index_delta_marks_the_namespace_before_the_write_ahead(mocker) -> None:
         side_effect=lambda *_: order.append("due") or False,
     )
     manager = SimpleNamespace(
-        opensearch_indexer=SimpleNamespace(check_index_settings=lambda s: None)
+        vector_indexer=SimpleNamespace(check_index_settings=lambda s: None)
     )
     context = SimpleNamespace(incremental_delta=DocumentDelta())
     with pytest.raises(_Stop):

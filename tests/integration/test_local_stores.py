@@ -34,6 +34,7 @@ import pytest
 from gremlin_python.driver.client import Client
 from opensearchpy.exceptions import NotFoundError
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory, HashingEmbeddings
 from tests.fixtures.store_backends import clear_extraction_records, local_store_config
@@ -422,7 +423,7 @@ def test_two_source_scopes_with_the_same_relative_path_keep_their_content(
         (source_a / "contract.txt").unlink()
         assert len(stack.run(source_a).incremental_delta.deleted) == 1
         assert _stored_texts(vectors, config) == {B_TEXT, depot}
-        assert sorted(r.file_path for r in stack.registry.list_all()) == [
+        assert sorted(r.file_path for r in all_records(stack.registry)) == [
             "contract.txt",
             "depot.txt",
         ]
@@ -517,7 +518,7 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         assert context.status is PipelineStageStatus.COMPLETED
         registry = providers.build_doc_status()
         assert isinstance(registry, SQLiteDocStatusStore)
-        assert len(registry.list_all()) == 2
+        assert len(all_records(registry)) == 2
 
         # A reset of the unchanged corpus asks the model nothing: the
         # extraction records, description summaries and report answers are

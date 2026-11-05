@@ -534,6 +534,22 @@ class ModelsConfig(BaseModel):
             "model name, required. Ignored with providers.rerank.kind none."
         ),
     )
+    default_max_output_tokens: int | None = Field(
+        default=16384,
+        ge=1,
+        description=(
+            "max_tokens sent with each LLM request, clamped to the model's "
+            "maximum (providers.llm.max_output_tokens for a non-Bedrock "
+            "model). Bedrock reserves input + max_tokens against the "
+            "tokens-per-minute quota when a request starts, so sending the "
+            "model maximum (128K on Claude 5.x) throttles concurrent calls "
+            "long before real usage does. Thinking tokens count toward it. "
+            "Prompts with long outputs (graph/claim extraction, gleaning, "
+            "community reports, document translation) declare a higher floor "
+            "that wins over this value. Raise it if answers are cut off "
+            "(stopReason max_tokens); null sends the model maximum."
+        ),
+    )
 
     @field_validator("default", "fast", mode="before")
     @classmethod
@@ -581,6 +597,7 @@ MOVED_KEYS: dict[str, str] = {
     "providers.rerank.model_id": "models.rerank",
     "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
+    "aws.bedrock.default_max_output_tokens": "models.default_max_output_tokens",
     # Retries are configured in one section; each old key counts what its
     # replacement counts, so a tuned value fails the load instead of
     # silently reverting to the default.
@@ -1027,21 +1044,6 @@ class BedrockConfig(BaseModel):
             "Keep it on: Claude 4.7+ and OpenAI GPT models are "
             "invocable only through a profile, which also needs "
             "bedrock:ListInferenceProfiles."
-        ),
-    )
-    default_max_output_tokens: int | None = Field(
-        default=16384,
-        ge=1,
-        description=(
-            "max_tokens sent with each LLM request, clamped to the model's "
-            "maximum. Bedrock reserves input + max_tokens against the "
-            "tokens-per-minute quota when a request starts, so sending the "
-            "model maximum (128K on Claude 5.x) throttles concurrent calls "
-            "long before real usage does. Thinking tokens count toward it. "
-            "Prompts with long outputs (graph/claim extraction, gleaning, "
-            "community reports, document translation) declare a higher floor "
-            "that wins over this value. Raise it if answers are cut off "
-            "(stopReason max_tokens); null sends the model maximum."
         ),
     )
     model_overrides: dict[str, dict[str, Any]] = Field(
@@ -3334,6 +3336,33 @@ class HybridConfig(BaseModel):
         return self
 
 
+# Fusion buckets renamed -> their name now. search.fusion.fusion_weights
+# keyed by the old name loads as the new one, with a warning.
+RENAMED_FUSION_BUCKETS: dict[str, str] = {"opensearch_all": "vector_all"}
+# Buckets no strategy emits any more: a weight keyed by one is dropped, with
+# a warning (global search fuses only its text units).
+RETIRED_FUSION_BUCKETS: frozenset[str] = frozenset({"opensearch_community_reports"})
+
+
+@functools.cache
+def _warn_renamed_bucket(old: str, new: str) -> None:
+    _logger.warning(
+        "search.fusion.fusion_weights: bucket '%s' is renamed; its weight "
+        "applies to '%s' (set that key instead)",
+        old,
+        new,
+    )
+
+
+@functools.cache
+def _warn_retired_bucket(old: str) -> None:
+    _logger.warning(
+        "search.fusion.fusion_weights: no search strategy emits bucket '%s'; "
+        "its weight is ignored (remove the key)",
+        old,
+    )
+
+
 class FusionConfig(BaseModel):
     rrf_k: int = Field(
         default=60,
@@ -3369,11 +3398,31 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
             "cite), lightrag_relation_chunks (those the relationships cite)), "
-            "simple (opensearch_all), "
-            "global (opensearch_community_reports, text_units) and drift "
-            "(results). A bucket without a key weighs 1.0 (the default: none)."
+            "simple (vector_all), global (text_units) and drift (results). A "
+            "bucket without a key weighs 1.0 (the default: none). A weight on "
+            "the former bucket opensearch_all applies to vector_all, with a "
+            "warning."
         ),
     )
+
+    @field_validator("fusion_weights", mode="before")
+    @classmethod
+    def _renamed_buckets(cls, value: Any) -> Any:
+        """Load a weight keyed by a renamed or retired bucket (a dict key
+        the moved-key mechanism cannot reach) with a warning."""
+        if not isinstance(value, dict):
+            return value
+        weights = dict(value)
+        for old, new in RENAMED_FUSION_BUCKETS.items():
+            if old in weights:
+                _warn_renamed_bucket(old, new)
+                weight = weights.pop(old)
+                weights.setdefault(new, weight)
+        for old in RETIRED_FUSION_BUCKETS:
+            if old in weights:
+                _warn_retired_bucket(old)
+                weights.pop(old)
+        return weights
 
 
 class RerankingConfig(BaseModel):
@@ -3750,7 +3799,7 @@ class TokenManagerConfig(BaseModel):
             "would never bind, so the per-type budgets would never trim "
             "anything. Always clamped to what models.roles.answer_generation "
             "accepts beside its output reservation "
-            "(aws.bedrock.default_max_output_tokens), with a warning. null "
+            "(models.default_max_output_tokens), with a warning. null "
             "derives it from that window minus the output reservation and "
             "context_window_headroom_ratio."
         ),
@@ -3891,7 +3940,7 @@ class QueryOutputCeilingsConfig(BaseModel):
 
     Bedrock reserves input + max_tokens against the tokens-per-minute quota
     when a request starts, so a router that answers one word but asks for
-    aws.bedrock.default_max_output_tokens reserves as much as the answer.
+    models.default_max_output_tokens reserves as much as the answer.
     A ceiling never leaves less than the call's thinking budget plus 1,024
     answer tokens (thinking counts toward max_tokens): the effort level's
     budget (low 2,048, medium 4,096, high 8,192, xhigh 16,384, max 32,768)
@@ -4802,7 +4851,7 @@ class EvaluationConfig(BaseModel):
             "max_tokens of each answer_span 'extracted' call, which answers "
             "a short span; it never leaves less than the call's thinking "
             "budget (judge_effort's, see search.output_ceilings) plus 1,024 "
-            "tokens. null = aws.bedrock.default_max_output_tokens."
+            "tokens. null = models.default_max_output_tokens."
         ),
     )
     answer_normalization: Literal["default", "official_squad", "hotpotqa"] = Field(

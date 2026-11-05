@@ -277,10 +277,10 @@ def test_log_completion_summary_aggregates_and_warns_on_failures(caplog) -> None
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     results = {
-        "opensearch_entities": IndexingStats(
+        "vector_entities": IndexingStats(
             total_items=10, successful_items=10, failed_items=0
         ),
-        "neptune_relationships": IndexingStats(
+        "graph_relationships": IndexingStats(
             total_items=10,
             successful_items=2,
             failed_items=8,
@@ -294,7 +294,7 @@ def test_log_completion_summary_aggregates_and_warns_on_failures(caplog) -> None
 
     text = caplog.text
     # High failure rate (>50%) for the relationship task is surfaced.
-    assert "neptune_relationships" in text
+    assert "graph_relationships" in text
     assert "Failed items" in text
 
 
@@ -304,7 +304,7 @@ def test_log_completion_summary_no_warnings_on_full_success(caplog) -> None:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     results = {
-        "opensearch_text_units": IndexingStats(
+        "vector_text_units": IndexingStats(
             total_items=5, successful_items=5, failed_items=0
         ),
     }
@@ -372,14 +372,14 @@ def test_edges_of_a_failed_entity_write_are_held_back(manager, mocker) -> None:
 
     (written,) = write.call_args.args
     assert [r.id for r in written] == ["r-ab"]
-    assert results["neptune_relationships"].failed_ids == ["r-bc"]
+    assert results["graph_relationships"].failed_ids == ["r-bc"]
 
     # A failure naming no entity holds back every edge.
     mocker.patch.object(graph, "upsert_entities", side_effect=RuntimeError("down"))
     write.reset_mock()
     results = mgr.index_delta(entities=entities, relationships=rels)
     write.assert_not_called()
-    assert sorted(results["neptune_relationships"].failed_ids) == ["r-ab", "r-bc"]
+    assert sorted(results["graph_relationships"].failed_ids) == ["r-ab", "r-bc"]
 
 
 def test_a_deletion_that_dies_between_the_stores_keeps_the_graph_copy(
@@ -457,8 +457,8 @@ def test_a_failed_sweep_is_reported_as_a_failed_write(mocker) -> None:
         entities=[Entity(id="new", name="New")]
     )
 
-    assert results["neptune_sweep"].failed_items == 1
-    assert "timeout" in results["neptune_sweep"].errors[0]
+    assert results["graph_sweep"].failed_items == 1
+    assert "timeout" in results["graph_sweep"].errors[0]
 
 
 def test_an_edge_rewritten_for_its_rank_only_is_not_embedded_again(

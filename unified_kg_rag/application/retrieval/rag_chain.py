@@ -290,7 +290,7 @@ class RAGInput(BaseModel):
         ge=1,
         description="Retrieval context budget in tokens for this query, capped "
         "at search.token_manager.max_context_tokens (the answer's output cap is "
-        "aws.bedrock.default_max_output_tokens)",
+        "models.default_max_output_tokens)",
     )
     conversation_id: str | None = Field(
         default=None, description="Unique identifier for the conversation session"

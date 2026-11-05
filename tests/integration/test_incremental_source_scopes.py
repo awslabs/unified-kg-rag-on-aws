@@ -31,6 +31,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -251,7 +252,7 @@ def test_two_scopes_with_the_same_relative_path_coexist(registry, tmp_path) -> N
             assert not stack.model.extractions
             assert stack.texts() == {A_TEXT, B_TEXT}
 
-    records = registry.list_all()
+    records = all_records(registry)
     assert sorted(r.scope for r in records) == sorted(
         [_scope_of(first_a), _scope_of(first_b)]
     )
@@ -279,7 +280,7 @@ def test_deleting_a_file_in_one_scope_removes_only_its_exclusive_artifacts(
     # Vendor only came from A's contract.txt; Buyer is shared with B's.
     assert stack.entity_names() == {"Buyer", "Bank", "Depot"}
     assert stack.texts() == {B_TEXT, "Depot stores widgets."}
-    assert {(r.file_path, r.scope) for r in registry.list_all()} == {
+    assert {(r.file_path, r.scope) for r in all_records(registry)} == {
         ("depot.txt", _scope_of(context)),
         ("contract.txt", _scope_of(stack.run(source_b))),
     }
@@ -329,7 +330,7 @@ def _store_snapshot(stack: ScopeStack) -> dict[str, Any]:
         },
         "registry": {
             (r.file_path, r.scope): (r.content_hash, sorted(r.text_unit_ids))
-            for r in stack.registry.list_all()
+            for r in all_records(stack.registry)
         },
     }
 
@@ -377,7 +378,7 @@ def test_an_edited_document_of_a_moved_corpus_does_not_warn_again(
         stack.run(new)
     assert any(old.as_posix() in r.getMessage() for r in caplog.records)
     # Committed by a release that recorded no extraction fingerprint.
-    for record in stack.registry.list_all():
+    for record in all_records(stack.registry):
         stack.registry.put(record.model_copy(update={"extraction_fingerprint": None}))
     (new / "contract.txt").write_text(A_TEXT + "\nAmended.", encoding="utf-8")
     caplog.clear()
@@ -386,7 +387,7 @@ def test_an_edited_document_of_a_moved_corpus_does_not_warn_again(
     assert not [r for r in caplog.records if old.as_posix() in r.getMessage()]
     # Nor is a changed PENDING record a run committed before (it has a
     # fingerprint): an interrupted reset left it so.
-    (record,) = [r for r in stack.registry.list_all() if r.scope.endswith(new.name)]
+    (record,) = [r for r in all_records(stack.registry) if r.scope.endswith(new.name)]
     assert record.extraction_fingerprint is not None
     stack.registry.put(
         record.model_copy(
@@ -437,7 +438,7 @@ def test_retiring_the_old_scope_of_a_moved_corpus_removes_its_content(
     # the other corpus and kept.
     assert stack.entity_names() == {"Vendor", "Buyer", "Bank"}
     assert stack.texts() == {A_TEXT, C_TEXT}
-    assert {r.scope for r in registry.list_all()} == {
+    assert {r.scope for r in all_records(registry)} == {
         _scope_of(retired),
         _scope_of(stack.run(other)),
     }
@@ -454,14 +455,14 @@ def test_retiring_the_runs_own_scope_fails_without_touching_anything(
     stack = ScopeStack(registry, tmp_path)
     source = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
     stack.run(source)
-    before = (_store_snapshot(stack), registry.list_all())
+    before = (_store_snapshot(stack), all_records(registry))
 
     stack.config.indexing.retire_source_scopes = [f"{source.as_posix()}/"]
     # A usage error (exit 2), not wrapped in a PipelineExecutionError.
     with pytest.raises(ConfigurationError, match="own source scope"):
         stack.run(source)
 
-    assert (_store_snapshot(stack), registry.list_all()) == before
+    assert (_store_snapshot(stack), all_records(registry)) == before
 
 
 def test_two_hosts_sharing_a_registry_never_delete_each_others_content(
@@ -487,7 +488,7 @@ def test_two_hosts_sharing_a_registry_never_delete_each_others_content(
     assert any(
         host_a.as_posix() in r.getMessage() for r in caplog.records
     ), "the other local scope is reported"
-    records = {r.doc_id: r for r in registry.list_all()}
+    records = {r.doc_id: r for r in all_records(registry)}
 
     for _ in range(2):
         for source, hidden in ((host_a, host_b), (host_b, host_a)):
@@ -496,7 +497,7 @@ def test_two_hosts_sharing_a_registry_never_delete_each_others_content(
             assert delta.new == delta.changed == delta.deleted == []
             assert not stack.model.extractions
             assert stack.texts() == {A_TEXT, B_TEXT}
-    assert {r.doc_id: r for r in registry.list_all()} == records
+    assert {r.doc_id: r for r in all_records(registry)} == records
     assert len(records) == 2 and _scope_of(first_b) in {
         r.scope for r in records.values()
     }
@@ -521,7 +522,7 @@ def test_a_configured_scope_with_a_trailing_slash_can_be_retired(
     context = stack.run(source)
 
     assert len(context.incremental_delta.deleted) == 1
-    assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
+    assert {r.scope for r in all_records(registry)} == {_scope_of(context)}
     assert stack.texts() == {DEPOT_TEXT}
     assert stack.entity_names() == {"Depot"}
 
@@ -557,7 +558,7 @@ def test_both_spellings_of_an_s3_scope_are_one_corpus(
     assert len(delta.unchanged) == 1 and len(delta.deleted) == 1
     assert not stack.model.extractions
     assert _scope_of(context) == _scope_of(first)
-    assert {r.scope for r in registry.list_all()} == {_scope_of(first)}
+    assert {r.scope for r in all_records(registry)} == {_scope_of(first)}
     assert stack.texts() == {A_TEXT}
 
 
@@ -591,7 +592,7 @@ def test_run_reads_and_scopes_the_directory_it_is_given(registry, tmp_path) -> N
 
     assert stack.texts() == {B_TEXT}
     assert _scope_of(context) == _scope_of(reference.run(source_b))
-    assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
+    assert {r.scope for r in all_records(registry)} == {_scope_of(context)}
 
 
 @pytest.mark.parametrize("own_error", [False, True])
@@ -621,7 +622,7 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         stack.model._extraction = unreachable  # type: ignore[method-assign]
     source = write_corpus(tmp_path / "src", {"good.txt": A_TEXT})
     stack.run(source)
-    (indexed,) = registry.list_all()
+    (indexed,) = all_records(registry)
 
     (source / "good.txt").write_text("UNREADABLE Vendor.", encoding="utf-8")
     if not own_error:
@@ -641,7 +642,7 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         assert indexed.doc_id in delta.changed
         assert len(delta.to_process) == (1 if own_error else 2)
         assert stack.model.extractions
-        records = {r.doc_id: r for r in registry.list_all()}
+        records = {r.doc_id: r for r in all_records(registry)}
         kept = records.pop(indexed.doc_id)
         if own_error:
             # FAILED at the new content, the indexed text units kept.

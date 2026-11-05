@@ -116,6 +116,30 @@ Configuration loading.
   keys* table of `docs/reference/configuration.md`); a removed key loads with a
   WARNING and is ignored (its *Removed keys* table) (#334, #344, #467,
   #468, #470).
+- From a `main` checkout: `aws.bedrock.default_max_output_tokens` moved to
+  `models.default_max_output_tokens`, as it caps every provider's models
+  (the load fails naming it). The stage caches and recorded extraction
+  settings key it as before, so the move re-runs nothing (#584).
+- Vendor-neutral result names (#584):
+  - The fusion bucket of a simple search is `vector_all` (was
+    `opensearch_all`): a `search.fusion.fusion_weights.opensearch_all`
+    weight applies to `vector_all` with a WARNING; set the new key. A
+    `fusion_weights.opensearch_community_reports` weight is dropped with a
+    WARNING: no strategy emits that bucket (global search fuses only its
+    text units since #318).
+  - The keys of the indexing stage's `indexing_results` (its stage metrics
+    in `pipeline_metadata.json`, and the index types an `Indexing failed`
+    error names) start `vector_` / `graph_` instead of `opensearch_` /
+    `neptune_`: `vector_text_units`, `vector_entities`,
+    `vector_relationships`, `vector_community_reports`, `vector_claims`,
+    `vector_entity_lineage`, `vector_relationship_lineage`,
+    `vector_read_claims_<suffix>`, `vector_claims_<suffix>`,
+    `vector_claim_content_<suffix>`, `vector_text_unit_communities_<suffix>`,
+    `vector_delete_<prefix>_<suffix>`, `graph_entities`,
+    `graph_relationships`, `graph_communities`, `graph_rekeyed_entities`,
+    `graph_sweep`, `graph_read_<suffix>` and `graph_delete_<suffix>`.
+    No CloudWatch metric, dashboard widget or alarm reads them: the EMF
+    metrics (`relationships_indexed`, `total_indexed`, ...) are unchanged.
 - Environment overrides use one prefix: `UKR__<SECTION>__<KEY>` sets any
   config key (double underscores between path segments, any case; JSON for
   lists and mappings). The former names are no longer read (#335):
@@ -343,7 +367,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.model_timeout_seconds` / `search.model_max_attempts` | (fixed: the ingestion client's 300 s read timeout, 6 requests) | 90 s / 2 for query-time model calls (#522) |
 | `search.auto_speculative_extraction` | (fixed: after the router) | `true`: `auto` extracts alongside the router call (#525) |
 | `search.query_extraction_cache_size` | (none: no cache) | 1024; 0 turns it off (#525) |
-| `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
+| `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `models.default_max_output_tokens` (#525) |
 | `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#533) |
 | `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#533) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#576) |
@@ -435,13 +459,26 @@ Deployment (CDK stack).
 
 Library API (Python callers and custom backends).
 - The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
-  `Config`, `get_config`, `DataIngestionPipeline`, `IndexingManager`,
+  `Config`, `get_config`, `DataIngestionPipeline`,
   `GraphRAGChain` with `RAGInput` / `RAGOutput` / `SearchOutput`,
   `EvaluationManager`, the errors it raises and the extension surface (the
   ports, `Providers`, `register_provider`, `BaseSearchStrategy` /
   `register_strategy`, `ParserFactory`, `register_renderer`). Other module
   paths are internal and moved (#164, #210, #216, #312, #456, #464):
-  import from the package root (#333).
+  import from the package root (#333). `IndexingManager` and
+  `CloudWatchEMFSink` are not exported (no caller needs them: the
+  pipeline builds its indexing manager and `--metrics-sink cloudwatch` its
+  sink) (#584).
+- Store roles are named by role, not by the default backend: the indexers
+  an `IndexingManager` holds are `vector_indexer` / `graph_indexer` (were
+  `opensearch_indexer` / `neptune_indexer`; they hold any injected
+  `VectorIndexer` / `GraphIndexer`), and `effective_max_output_tokens`
+  (`ports/model_factory.py`) takes the cap
+  (`models.default_max_output_tokens`) instead of a `BedrockConfig`
+  (#584).
+- `DocStatusPort.list_all` is removed: no run reads the whole registry. A
+  custom registry no longer implements it; list one namespace with
+  `list_namespace` (#584).
 - Retrieval-only queries are `GraphRAGChain.search()` / `asearch()`, which
   return a `SearchOutput`; `ChainMode` and `GraphRAGChain(mode=)` are
   removed. Replace `GraphRAGChain(cfg, mode=ChainMode.SEARCH).ainvoke(q)`
@@ -778,6 +815,17 @@ From 0.2.3 (or a `main` checkout since):
     them first if you need them). If a late log blocks the deletion, re-run
     the deploy or empty and delete the bucket by hand. A retained
     environment changes nothing (#583).
+19. Vendor-neutral names (#584), nothing to re-run: rename
+    `aws.bedrock.default_max_output_tokens` to
+    `models.default_max_output_tokens` (the load fails until you do) and a
+    `search.fusion.fusion_weights.opensearch_all` key to `vector_all` (it
+    loads with a WARNING meanwhile); drop an `opensearch_community_reports`
+    weight. A script or query that reads `indexing_results` from
+    `pipeline_metadata.json` reads the `vector_*` / `graph_*` keys
+    (*Breaking changes*); no CDK redeploy is needed, as no metric, alarm or
+    dashboard changes. Library code reads `IndexingManager.vector_indexer` /
+    `graph_indexer`, imports `IndexingManager` and `CloudWatchEMFSink` from
+    their modules, and lists a registry namespace with `list_namespace`.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -838,8 +886,8 @@ From 0.2.3 (or a `main` checkout since):
   `ConfigurationError`, `InvalidFilterError`, `IndexNotFoundError`,
   `StoreConnectionError`, `StoreRequestRejectedError`,
   `PipelineExecutionError`, `PipelineInterrupted`, `NamespaceLeaseError`),
-  `ModelRole`, `ModelPurpose`, `MetricsSink` and `CloudWatchEMFSink` (#334,
-  #365, #366, #416, #420).
+  `ModelRole`, `ModelPurpose` and `MetricsSink` (#334, #365, #366, #416,
+  #420).
 - Generated references: `docs/reference/configuration.md` (#337) and `docs/reference/cli.md`
   (#351), checked by unit tests.
 - `run-prompt-tuning` reads every format ingestion parses, and each `run-*`

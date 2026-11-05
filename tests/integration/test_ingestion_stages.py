@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -279,7 +280,7 @@ def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
     assert graph.ids("entities") and len(graph.ids("entities")) == 3
     # Passing a registry turns on incremental indexing: both documents are
     # recorded, so an unchanged re-run would skip them.
-    records = store.list_all()
+    records = all_records(store)
     assert len(records) == 2
     assert {r.status for r in records} == {DocStatus.PROCESSED}
 
@@ -408,7 +409,7 @@ def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
     assert context.status is PipelineStageStatus.COMPLETED
     assert len(context.communities) == 2
     assert context.community_reports == []
-    assert {r.status for r in store.list_all()} == {DocStatus.FAILED}
+    assert {r.status for r in all_records(store)} == {DocStatus.FAILED}
 
     fail_reports["on"] = False
     context = run("reports-retry")
@@ -418,4 +419,4 @@ def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
         c.id for c in context.communities
     }
     assert len(vectors.ids("community_reports")) == 2
-    assert {r.status for r in store.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(store)} == {DocStatus.PROCESSED}

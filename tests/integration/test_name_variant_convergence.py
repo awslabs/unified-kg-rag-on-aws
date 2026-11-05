@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pytest
 from opensearchpy.exceptions import NotFoundError
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
@@ -2447,7 +2448,7 @@ def test_a_finished_pipeline_run_again_sees_another_runs_changes(
         tmp_path, [(corpus, False, pipeline_id) for corpus, pipeline_id in steps]
     )
 
-    registry = providers.build_doc_status().list_all()
+    registry = all_records(providers.build_doc_status())
     assert {r.file_path: r.status.value for r in registry} == {"d1.txt": "processed"}
 
 

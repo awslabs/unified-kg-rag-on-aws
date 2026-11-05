@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -134,7 +135,7 @@ class _Harness:
     def statuses(self) -> dict[str, DocStatus]:
         return {
             Path(record.file_path or "").name: record.status
-            for record in self.store.list_all()
+            for record in all_records(self.store)
         }
 
 
@@ -179,20 +180,20 @@ def test_a_run_that_fails_with_an_error_closes_its_attempts(
     harness = _Harness(tmp_path)
 
     def broken(*args: Any, **kwargs: Any) -> None:
-        if harness.store.list_all():  # once the attempts are open
+        if all_records(harness.store):  # once the attempts are open
             raise RuntimeError("metrics sink broken")
 
     with monkeypatch.context() as patch:
         patch.setattr(DataIngestionPipeline, "_emit_stage_metrics", broken)
         with pytest.raises(PipelineExecutionError):
             harness.run("ingest-1", monkeypatch)
-    records = harness.store.list_all()
+    records = all_records(harness.store)
     assert records
     assert {r.attempt_batch for r in records} == {None}
 
     outcome = harness.run("ingest-2", monkeypatch)
     assert isinstance(outcome, PipelineContext)
-    assert {r.attempt_count for r in harness.store.list_all()} == {0}
+    assert {r.attempt_count for r in all_records(harness.store)} == {0}
 
 
 @pytest.mark.parametrize(
@@ -268,7 +269,7 @@ def test_runs_stopped_by_sigterm_count_no_attempt(
             chunking_fails_with=(PipelineInterrupted if stage == "chunking" else None),
         )
         assert isinstance(outcome, PipelineInterrupted)
-        records = harness.store.list_all()
+        records = all_records(harness.store)
         assert records
         assert {r.attempt_count for r in records} == {0}
     harness.graph_down = None
@@ -360,7 +361,7 @@ def test_a_reset_that_could_not_drop_the_previous_graph_is_not_recorded(
     reset = harness.run("ingest-2", monkeypatch)
     assert isinstance(reset, PipelineContext)
     assert reset.status is PipelineStageStatus.FAILED
-    assert "neptune_sweep" in str(
+    assert "graph_sweep" in str(
         [r.error_message for r in reset.stage_results if r.stage_name == "indexing"]
     )
     # The replaced document's record is kept for the next run to remove.

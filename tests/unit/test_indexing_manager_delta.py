@@ -20,31 +20,33 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def manager(mocker):
     # Patch the indexer classes before IndexingManager.__init__ instantiates them.
-    os_indexer = mocker.MagicMock()
-    neptune_indexer = mocker.MagicMock()
-    os_indexer.upsert_entities.return_value = IndexingStats()
-    os_indexer.upsert_text_units.return_value = IndexingStats()
-    os_indexer.upsert_relationships.return_value = IndexingStats()
-    os_indexer.index_community_reports.return_value = IndexingStats()
-    os_indexer.delete_by_id.return_value = IndexingStats()
-    os_indexer.opensearch_config.text_units_index_prefix = "text-units"
-    os_indexer.opensearch_config.entities_index_prefix = "entities"
-    os_indexer.opensearch_config.relationships_index_prefix = "relationships"
-    os_indexer.opensearch_config.claims_index_prefix = "claims"
-    os_indexer.opensearch_config.community_reports_index_prefix = "community-reports"
-    neptune_indexer.upsert_entities.return_value = IndexingStats()
-    neptune_indexer.upsert_relationships.return_value = IndexingStats()
-    neptune_indexer.index_communities.return_value = IndexingStats()
-    neptune_indexer.delete_by_id.return_value = IndexingStats()
+    vector_indexer = mocker.MagicMock()
+    graph_indexer = mocker.MagicMock()
+    vector_indexer.upsert_entities.return_value = IndexingStats()
+    vector_indexer.upsert_text_units.return_value = IndexingStats()
+    vector_indexer.upsert_relationships.return_value = IndexingStats()
+    vector_indexer.index_community_reports.return_value = IndexingStats()
+    vector_indexer.delete_by_id.return_value = IndexingStats()
+    vector_indexer.opensearch_config.text_units_index_prefix = "text-units"
+    vector_indexer.opensearch_config.entities_index_prefix = "entities"
+    vector_indexer.opensearch_config.relationships_index_prefix = "relationships"
+    vector_indexer.opensearch_config.claims_index_prefix = "claims"
+    vector_indexer.opensearch_config.community_reports_index_prefix = (
+        "community-reports"
+    )
+    graph_indexer.upsert_entities.return_value = IndexingStats()
+    graph_indexer.upsert_relationships.return_value = IndexingStats()
+    graph_indexer.index_communities.return_value = IndexingStats()
+    graph_indexer.delete_by_id.return_value = IndexingStats()
     # No orphaned incident edges by default; orphan-cleanup test overrides this.
-    neptune_indexer.find_incident_relationship_ids.return_value = []
+    graph_indexer.find_incident_relationship_ids.return_value = []
 
     # Inject the mocked indexers via the port-based DI seam (no module-level
     # patching needed — the manager constructs concrete adapters only when none
     # are supplied).
-    os_indexer.delete_document_artifacts.side_effect = (
+    vector_indexer.delete_document_artifacts.side_effect = (
         lambda ids, suffix, extra_relationship_ids=None: {
-            f"opensearch_delete_{prefix}_{suffix}": IndexingStats()
+            f"vector_delete_{prefix}_{suffix}": IndexingStats()
             for prefix in (
                 "text-units",
                 "entities",
@@ -58,52 +60,52 @@ def manager(mocker):
     from unified_kg_rag.domain.models import Config
 
     mgr = IndexingManager(
-        config=Config(), vector_indexer=os_indexer, graph_indexer=neptune_indexer
+        config=Config(), vector_indexer=vector_indexer, graph_indexer=graph_indexer
     )
-    return mgr, os_indexer, neptune_indexer
+    return mgr, vector_indexer, graph_indexer
 
 
 def test_index_delta_routes_to_upserts(manager) -> None:
-    mgr, os_indexer, neptune_indexer = manager
+    mgr, vector_indexer, graph_indexer = manager
     entities = [Entity(id="e1", name="Alice")]
     relationships = [Relationship(id="r1", source_id="e1", target_id="e2")]
 
     mgr.index_delta(entities=entities, relationships=relationships)
 
-    os_indexer.upsert_entities.assert_called_once_with(entities)
-    neptune_indexer.upsert_entities.assert_called_once_with(entities)
-    neptune_indexer.upsert_relationships.assert_called_once_with(relationships)
+    vector_indexer.upsert_entities.assert_called_once_with(entities)
+    graph_indexer.upsert_entities.assert_called_once_with(entities)
+    graph_indexer.upsert_relationships.assert_called_once_with(relationships)
     # Relationship vectors (LightRAG global) are upserted on a delta run too.
-    os_indexer.upsert_relationships.assert_called_once_with(relationships)
+    vector_indexer.upsert_relationships.assert_called_once_with(relationships)
     # Full-rebuild entity path must NOT be used on a delta run.
-    os_indexer.index_entities.assert_not_called()
-    neptune_indexer.index_entities.assert_not_called()
-    neptune_indexer.index_relationships.assert_not_called()
+    vector_indexer.index_entities.assert_not_called()
+    graph_indexer.index_entities.assert_not_called()
+    graph_indexer.index_relationships.assert_not_called()
 
 
 def test_delete_documents_routes_to_delete_by_id(manager) -> None:
-    mgr, os_indexer, neptune_indexer = manager
+    mgr, vector_indexer, graph_indexer = manager
 
     mgr.delete_documents({"default": ["e1", "r1", "t1"]})
 
     # Suffix is threaded through so the Neptune drop scopes to this suffix's
     # labels (cross-tenant safety: content-hash ids can collide across suffixes).
-    neptune_indexer.delete_by_id.assert_called_once_with(
+    graph_indexer.delete_by_id.assert_called_once_with(
         ["e1", "r1", "t1"], suffix="default"
     )
     # The manager delegates the per-index vector fan-out to the vector port's
     # cohesive delete_document_artifacts (the prefix layout is the adapter's
     # concern, not the manager's), threading the suffix and no orphan edges.
-    os_indexer.delete_document_artifacts.assert_called_once_with(
+    vector_indexer.delete_document_artifacts.assert_called_once_with(
         ["e1", "r1", "t1"], "default", extra_relationship_ids=[]
     )
 
 
 def test_delete_documents_skips_empty(manager) -> None:
-    mgr, os_indexer, neptune_indexer = manager
+    mgr, vector_indexer, graph_indexer = manager
     mgr.delete_documents({"default": []})
-    neptune_indexer.delete_by_id.assert_not_called()
-    os_indexer.delete_document_artifacts.assert_not_called()
+    graph_indexer.delete_by_id.assert_not_called()
+    vector_indexer.delete_document_artifacts.assert_not_called()
 
 
 def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
@@ -112,18 +114,18 @@ def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
     # delete_documents must query Neptune for incident edge ids and pass them as
     # extra_relationship_ids so the vector backend can fold them into the
     # relationship-index deletion (no dangling relationship document survives).
-    mgr, os_indexer, neptune_indexer = manager
-    neptune_indexer.find_incident_relationship_ids.return_value = ["r_orphan"]
+    mgr, vector_indexer, graph_indexer = manager
+    graph_indexer.find_incident_relationship_ids.return_value = ["r_orphan"]
 
     mgr.delete_documents({"default": ["e_target"]})
 
     # Incident edges are queried for the deleted entities, scoped to the suffix.
-    neptune_indexer.find_incident_relationship_ids.assert_called_once_with(
+    graph_indexer.find_incident_relationship_ids.assert_called_once_with(
         ["e_target"], suffix="default"
     )
     # The orphaned incident edge is handed to the vector port as an extra
     # relationship id to delete.
-    os_indexer.delete_document_artifacts.assert_called_once_with(
+    vector_indexer.delete_document_artifacts.assert_called_once_with(
         ["e_target"], "default", extra_relationship_ids=["r_orphan"]
     )
 
@@ -133,15 +135,15 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
     # delta relationship endpoints must be remapped so edges point at the
     # surviving entity id (the manager previously discarded the remap, leaving
     # relationships dangling on a now-nonexistent id).
-    mgr, os_indexer, neptune_indexer = manager
+    mgr, vector_indexer, graph_indexer = manager
 
     # Existing entity 'e_canon' and a delta entity 'e_dup' that normalizes to the
     # same name -> merge_entities collapses e_dup -> e_canon and returns a remap.
     survivor = Entity(id="e_canon", name="acme corp", text_unit_ids=["t1"])
     dup = Entity(id="e_dup", name="acme corp", text_unit_ids=["t2"])
-    neptune_indexer.read_entities.return_value = [survivor]
+    graph_indexer.read_entities.return_value = [survivor]
     # No existing relationship rows read back — the remap path must still apply.
-    neptune_indexer.read_relationships.return_value = []
+    graph_indexer.read_relationships.return_value = []
 
     delta_rel = Relationship(
         id="r1", source_id="e_dup", target_id="e_other", type="WORKS_AT"
@@ -163,8 +165,8 @@ def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
     # its other edges are rewritten only when the name or rank they carry
     # changes (here neither: the stored edge already counts the vendor's new
     # neighbour).
-    mgr, _, neptune_indexer = manager
-    neptune_indexer.read_entities.return_value = [
+    mgr, _, graph_indexer = manager
+    graph_indexer.read_entities.return_value = [
         Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
     ]
     other = Relationship(
@@ -175,11 +177,11 @@ def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
         target_name="Depot",
         rank=3,
     )
-    neptune_indexer.read_relationships.side_effect = lambda ids, suffix=None: (
+    graph_indexer.read_relationships.side_effect = lambda ids, suffix=None: (
         [other] if ids == ["r-old"] else []
     )
-    neptune_indexer.find_incident_relationship_ids.return_value = ["r-old", "r-new"]
-    neptune_indexer.read_neighbor_ids.return_value = {
+    graph_indexer.find_incident_relationship_ids.return_value = ["r-old", "r-new"]
+    graph_indexer.read_neighbor_ids.return_value = {
         "e-vendor": ["e-depot"],
         "e-depot": ["e-vendor"],
     }
@@ -191,7 +193,7 @@ def test_cross_run_merge_of_a_same_id_entity_rewrites_no_unchanged_edge(
         [Entity(id="e-vendor", name="Vendor", text_unit_ids=["t2"])], [delta_rel]
     )
 
-    assert neptune_indexer.read_relationships.call_args_list[0].args == (
+    assert graph_indexer.read_relationships.call_args_list[0].args == (
         ["r-new", "r-old"],
     )
     assert [r.id for r in result.relationships or []] == ["r-new"]
@@ -205,20 +207,20 @@ def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
     from unified_kg_rag.domain.models import Config
 
-    os_indexer = mocker.MagicMock()
-    neptune_indexer = mocker.MagicMock()
+    vector_indexer = mocker.MagicMock()
+    graph_indexer = mocker.MagicMock()
 
     existing = Entity(id="e_old", name="Acme Corporation", text_unit_ids=["t1"])
     # The delta's id differs (derived from a different surface form), so exact-id
     # read-back alone would miss it — the fuzzy name projection must find it.
-    neptune_indexer.read_entity_names.return_value = [("e_old", "Acme Corporation")]
-    neptune_indexer.read_entities.return_value = [existing]
-    neptune_indexer.read_relationships.return_value = []
+    graph_indexer.read_entity_names.return_value = [("e_old", "Acme Corporation")]
+    graph_indexer.read_entities.return_value = [existing]
+    graph_indexer.read_relationships.return_value = []
 
     config = Config()
     config.processing.fuzzy_entity_resolution = True
     mgr = IndexingManager(
-        config=config, vector_indexer=os_indexer, graph_indexer=neptune_indexer
+        config=config, vector_indexer=vector_indexer, graph_indexer=graph_indexer
     )
     # Keep the description summarizer a no-op (no Bedrock).
     mgr._description_summarizer = mocker.MagicMock()
@@ -243,14 +245,14 @@ def test_fuzzy_cross_run_merge_fails_loudly_when_names_cannot_be_read(
     from unified_kg_rag.domain.models import Config
     from unified_kg_rag.shared import AWSServiceError
 
-    neptune_indexer = mocker.MagicMock()
-    neptune_indexer.read_entity_names.side_effect = AWSServiceError("neptune down")
+    graph_indexer = mocker.MagicMock()
+    graph_indexer.read_entity_names.side_effect = AWSServiceError("neptune down")
     config = Config()
     config.processing.fuzzy_entity_resolution = True
     mgr = IndexingManager(
         config=config,
         vector_indexer=mocker.MagicMock(),
-        graph_indexer=neptune_indexer,
+        graph_indexer=graph_indexer,
     )
 
     with pytest.raises(AWSServiceError, match="neptune down"):
@@ -258,14 +260,14 @@ def test_fuzzy_cross_run_merge_fails_loudly_when_names_cannot_be_read(
             [Entity(id="e_new", name="Acme Corporatio", text_unit_ids=["t2"])],
             None,
         )
-    neptune_indexer.read_entities.assert_not_called()
+    graph_indexer.read_entities.assert_not_called()
 
 
 def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
     # Entity and relationship ids are suffix-independent: "Vendor" has the same
     # id in every tenant. Each tenant's delta must merge with that tenant's
     # stored state only and stay in its own suffix.
-    mgr, _, neptune_indexer = manager
+    mgr, _, graph_indexer = manager
     stored = {
         suffix: Entity(
             id="e-vendor",
@@ -275,10 +277,10 @@ def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
         )
         for suffix in ("tenant-a", "tenant-b")
     }
-    neptune_indexer.read_entities.side_effect = lambda ids, suffix=None: (
+    graph_indexer.read_entities.side_effect = lambda ids, suffix=None: (
         [stored[suffix]] if suffix in stored else []
     )
-    neptune_indexer.read_relationships.return_value = []
+    graph_indexer.read_relationships.return_value = []
     delta = [
         Entity(
             id="e-vendor",
@@ -298,15 +300,15 @@ def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
     for suffix, entity in by_suffix.items():
         assert entity.text_unit_ids == [f"{suffix}-old", f"{suffix}-new"]
     assert {
-        call.kwargs["suffix"] for call in neptune_indexer.read_entities.call_args_list
+        call.kwargs["suffix"] for call in graph_indexer.read_entities.call_args_list
     } == {"tenant-a", "tenant-b"}
 
 
 def test_read_back_entity_without_attributes_keeps_the_delta_suffix(manager) -> None:
     # A merged entity is written back under get_suffix(entity): losing the
     # attributes would move it into the default suffix.
-    mgr, _, neptune_indexer = manager
-    neptune_indexer.read_entities.return_value = [
+    mgr, _, graph_indexer = manager
+    graph_indexer.read_entities.return_value = [
         Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
     ]
     delta = Entity(
@@ -326,15 +328,15 @@ def test_read_back_entity_without_attributes_keeps_the_delta_suffix(manager) -> 
 def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
     # Stripping a removed text unit changes lineage and weight only: the
     # vector store must not re-embed the unchanged text.
-    mgr, os_indexer, neptune_indexer = manager
-    neptune_indexer.read_entities.return_value = [
+    mgr, vector_indexer, graph_indexer = manager
+    graph_indexer.read_entities.return_value = [
         Entity(id="e1", name="Vendor", text_unit_ids=["t1", "t2"])
     ]
-    neptune_indexer.read_relationships.return_value = [
+    graph_indexer.read_relationships.return_value = [
         Relationship(id="r1", source_id="e1", target_id="e2", text_unit_ids=["t2"])
     ]
     # The vector copies hold what the derived items embed.
-    os_indexer.read_vector_copies.side_effect = lambda kind, ids, suffix=None: {
+    vector_indexer.read_vector_copies.side_effect = lambda kind, ids, suffix=None: {
         "entities": {
             "e1": {"name": "Vendor", "type": "", "confidence": 1.0, "description": ""}
         },
@@ -348,26 +350,26 @@ def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
             }
         },
     }[kind]
-    os_indexer.update_entity_lineage.return_value = IndexingStats()
-    os_indexer.update_relationship_lineage.return_value = IndexingStats()
+    vector_indexer.update_entity_lineage.return_value = IndexingStats()
+    vector_indexer.update_relationship_lineage.return_value = IndexingStats()
 
     mgr.remove_text_units_from_shared(
         "default", entity_ids=["e1"], relationship_ids=["r1"], text_unit_ids=["t2"]
     )
 
-    os_indexer.upsert_entities.assert_not_called()
-    os_indexer.upsert_relationships.assert_not_called()
-    (entities,) = os_indexer.update_entity_lineage.call_args.args
+    vector_indexer.upsert_entities.assert_not_called()
+    vector_indexer.upsert_relationships.assert_not_called()
+    (entities,) = vector_indexer.update_entity_lineage.call_args.args
     assert entities[0].text_unit_ids == ["t1"]
-    os_indexer.update_relationship_lineage.assert_called_once()
-    neptune_indexer.upsert_entities.assert_called_once()
-    neptune_indexer.upsert_relationships.assert_called_once()
+    vector_indexer.update_relationship_lineage.assert_called_once()
+    graph_indexer.upsert_entities.assert_called_once()
+    graph_indexer.upsert_relationships.assert_called_once()
 
 
 def test_a_failed_shared_claim_read_fails_the_removal(manager) -> None:
     # The caller keeps the registry rows (and retries) on any failed item.
-    mgr, os_indexer, _ = manager
-    os_indexer.read_claims.side_effect = RuntimeError("search timed out")
+    mgr, vector_indexer, _ = manager
+    vector_indexer.read_claims.side_effect = RuntimeError("search timed out")
 
     results = mgr.remove_text_units_from_shared(
         "default",
@@ -377,10 +379,10 @@ def test_a_failed_shared_claim_read_fails_the_removal(manager) -> None:
         claim_ids=["c1"],
     )
 
-    stats = results["opensearch_read_claims_default"]
+    stats = results["vector_read_claims_default"]
     assert stats.failed_items == 1
     assert stats.failed_ids == ["c1"]
-    os_indexer.update_claim_lineage.assert_not_called()
+    vector_indexer.update_claim_lineage.assert_not_called()
 
 
 def test_a_stripped_claim_is_written_back_to_the_index_it_was_read_from(
@@ -389,8 +391,8 @@ def test_a_stripped_claim_is_written_back_to_the_index_it_was_read_from(
     # A read_claims that tags nothing still writes back to the read suffix.
     from unified_kg_rag.domain.models import Claim
 
-    mgr, os_indexer, _ = manager
-    os_indexer.read_claims.return_value = [
+    mgr, vector_indexer, _ = manager
+    vector_indexer.read_claims.return_value = [
         Claim(
             id="c1",
             subject_id="s",
@@ -400,7 +402,7 @@ def test_a_stripped_claim_is_written_back_to_the_index_it_was_read_from(
             text_unit_ids=["t1", "t2"],
         )
     ]
-    os_indexer.update_claim_lineage.return_value = IndexingStats()
+    vector_indexer.update_claim_lineage.return_value = IndexingStats()
 
     mgr.remove_text_units_from_shared(
         "tenant-a",
@@ -410,7 +412,7 @@ def test_a_stripped_claim_is_written_back_to_the_index_it_was_read_from(
         claim_ids=["c1"],
     )
 
-    (written,) = os_indexer.update_claim_lineage.call_args.args
+    (written,) = vector_indexer.update_claim_lineage.call_args.args
     assert [c.text_unit_ids for c in written] == [["t1"]]
     assert [BaseIndexer.get_suffix(c) for c in written] == ["tenant-a"]
 
@@ -418,8 +420,8 @@ def test_a_stripped_claim_is_written_back_to_the_index_it_was_read_from(
 def test_a_failed_stored_claim_read_raises_before_any_write(manager) -> None:
     from unified_kg_rag.domain.models import Claim
 
-    mgr, os_indexer, _ = manager
-    os_indexer.read_claims.side_effect = RuntimeError("search timed out")
+    mgr, vector_indexer, _ = manager
+    vector_indexer.read_claims.side_effect = RuntimeError("search timed out")
     claim = Claim(id="c1", subject_id="s", subject_name="S", object_name="O", type="T")
 
     with pytest.raises(RuntimeError):
@@ -535,7 +537,7 @@ def test_unit_records_reads_the_cited_ids_a_bounded_number_of_times() -> None:
 
     units = [TextUnit(id=f"t{i}", text="t") for i in range(50)]
     unit_ids = _CountedIds(f"t{i}" for i in range(100))
-    me = SimpleNamespace(opensearch_indexer=_Store())
+    me = SimpleNamespace(vector_indexer=_Store())
     IndexingManager._unit_records(me, "s", unit_ids, units)  # type: ignore[arg-type]
     assert _CountedIds.passes <= 2
 

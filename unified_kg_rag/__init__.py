@@ -55,16 +55,14 @@ _EXPORTS: dict[str, str] = {
     "get_config": "unified_kg_rag.application.config",
     "setup_logging": "unified_kg_rag.shared.logging",
     "configure_event_loop": "unified_kg_rag.shared.utils.event_loop",
-    # Ingestion and indexing
+    # Ingestion
     "DataIngestionPipeline": "unified_kg_rag.application.ingestion.pipeline",
     "PipelineConfig": "unified_kg_rag.domain.models",
     "PipelineContext": "unified_kg_rag.domain.models",
     "PipelineStageStatus": "unified_kg_rag.domain.models",
     "PipelineStageType": "unified_kg_rag.domain.models",
-    "IndexingManager": "unified_kg_rag.application.storage.indexing_manager",
     # DataIngestionPipeline(metrics_sink=...)
     "MetricsSink": "unified_kg_rag.shared.metrics",
-    "CloudWatchEMFSink": "unified_kg_rag.shared.metrics",
     # Querying
     "GraphRAGChain": "unified_kg_rag.application.retrieval.rag_chain",
     "RAGInput": "unified_kg_rag.application.retrieval.rag_chain",
@@ -174,7 +172,6 @@ if TYPE_CHECKING:
         RAGOutput,
         SearchOutput,
     )
-    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
     from unified_kg_rag.domain.models import (
         Config,
         ModelPurpose,
@@ -221,7 +218,7 @@ if TYPE_CHECKING:
         StoreRequestRejectedError,
     )
     from unified_kg_rag.shared.logging import setup_logging
-    from unified_kg_rag.shared.metrics import CloudWatchEMFSink, MetricsSink
+    from unified_kg_rag.shared.metrics import MetricsSink
     from unified_kg_rag.shared.utils.event_loop import configure_event_loop
 
 

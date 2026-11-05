@@ -72,7 +72,7 @@ def _context(**fields: Any) -> PipelineContext:
 class _RecordingManager:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.opensearch_indexer = FakeVectorStore()
+        self.vector_indexer = FakeVectorStore()
         self.deleted_communities: dict[str, set[str]] = {}
 
     def initialize(self) -> None:
