@@ -22,7 +22,6 @@ from botocore.exceptions import ClientError
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.drift_search import (
     DriftSearchStrategy,
-    _score,
 )
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
@@ -33,6 +32,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
 )
+from unified_kg_rag.shared.utils import parse_llm_score
 
 pytestmark = pytest.mark.unit
 
@@ -654,7 +654,7 @@ async def test_primer_folds_run_at_most_max_concurrency_at_a_time() -> None:
     [("80", 80), (250, 100), (-5, 0), ("Infinity", 0), ("NaN", 0), ("x", 0)],
 )
 def test_scores_are_clamped_integers(raw: Any, expected: int) -> None:
-    assert _score(raw) == expected
+    assert parse_llm_score(raw) == expected
 
 
 def test_rank_within_type_keeps_each_store_in_its_slots() -> None:

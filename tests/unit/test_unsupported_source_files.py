@@ -97,7 +97,9 @@ def test_files_under_hidden_directories_are_neither_parsed_nor_fingerprinted(
     hidden = tmp_path / ".drafts" / "note.txt"
     hidden.write_text("Draft text.")
 
-    assert [f.name for f in _stage(tmp_path)._discover_files()] == ["keep.txt"]
+    assert [f.name for f in _stage(tmp_path)._discover_source_files()[0]] == [
+        "keep.txt"
+    ]
     before = corpus_manifest_fingerprint(tmp_path, [".txt"])
     hidden.write_text("Edited draft text.")
     assert corpus_manifest_fingerprint(tmp_path, [".txt"]) == before
@@ -107,7 +109,7 @@ def test_hidden_corpus_root_is_not_excluded(tmp_path: Path) -> None:
     root = tmp_path / ".cache" / "corpus"
     root.mkdir(parents=True)
     (root / "keep.txt").write_text("Vendor ships goods to Buyer.")
-    assert [f.name for f in _stage(root)._discover_files()] == ["keep.txt"]
+    assert [f.name for f in _stage(root)._discover_source_files()[0]] == ["keep.txt"]
 
 
 def test_first_stage_with_no_parseable_files_names_the_source_directory(

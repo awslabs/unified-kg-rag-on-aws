@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -26,8 +27,9 @@ from opensearchpy.exceptions import (
 )
 from opensearchpy.helpers import streaming_bulk
 
-from unified_kg_rag.adapters.llm.retry import backoff_delay
+from unified_kg_rag.adapters.llm.retry import acall_with_transient_retry, backoff_delay
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.shared import (
     AWSServiceError,
     GraphRAGException,
@@ -54,11 +56,12 @@ logger = get_logger(__name__)
 # Module-level indirection so tests can stub the bulk-item backoff wait.
 _sleep = time.sleep
 
-# Per-item statuses inside a bulk response worth resending: the cluster
-# rejected the item under load (429, e.g. a full write queue) or a node was
-# briefly unavailable. The client's retry_on_status only covers the status of
-# the whole request, and a bulk request with rejected items still returns 200.
-RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
+# The statuses worth another attempt: the cluster rejected the request under
+# load (429, e.g. a full write queue) or a node was briefly unavailable. Both
+# clients retry a whole request answered so (retry_on_status), the query
+# client between backed-off attempts (_aquery); a bulk request with rejected
+# items still returns 200, so its items answered so are resent on their own.
+RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
 
 # Transport retries of the sync (indexing) client, whose per-request timeout
@@ -67,7 +70,6 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 # hung cluster blocked a query for 6 x 180 s before it answered from no
 # context.
 _CLIENT_MAX_RETRIES = 5
-_CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
 # Per-attempt timeout of the connection check (ping, then cluster info) that
 # opens the sync client (the store preflight's first requests): a cluster that accepts connections
 # but never answers failed it after 6 x INDEXING_REQUEST_TIMEOUT_SECONDS
@@ -240,7 +242,7 @@ def _wrap_transport_error(
     """The typed error the client raises for ``exc`` (to be chained ``from exc``).
 
     The transport has already retried what a retry may fix (a timeout and
-    ``_CLIENT_RETRY_STATUSES``), so: a cluster that cannot be reached
+    ``RETRYABLE_STATUSES``), so: a cluster that cannot be reached
     (refused, DNS, TLS) or still answers 429/502/503/504 is a
     ``StoreConnectionError``, one that did not answer a ``StoreTimeoutError``,
     a 401/403 a ``StoreAccessDeniedError`` and a 400 (or a 500 for a query
@@ -281,7 +283,7 @@ def _typed_transport_error(
         status == 500 and _error_types(exc.info or exc.error) & _CLAUSE_LIMIT_TYPES
     ):
         return StoreRequestRejectedError(msg, reason=reason)
-    if status in _CLIENT_RETRY_STATUSES:
+    if status in RETRYABLE_STATUSES:
         return StoreConnectionError(f"{msg} (still failing after the client's retries)")
     return AWSServiceError(msg)
 
@@ -368,9 +370,17 @@ def _finish_without_loop(awaitable: Any) -> None:
         close()
 
 
+def _retryable_query_error(exc: BaseException) -> bool:
+    """Whether another attempt of a query request may succeed."""
+    return isinstance(exc, TransportError) and (
+        isinstance(exc, OpenSearchConnectionError)
+        or exc.status_code in RETRYABLE_STATUSES
+    )
+
+
 class OpenSearchClient:
     # Resends of bulk items rejected with a retryable status (see
-    # RETRYABLE_BULK_ITEM_STATUSES), with exponential backoff between rounds.
+    # RETRYABLE_STATUSES), with exponential backoff between rounds.
     BULK_ITEM_MAX_RETRIES = 4
     BULK_ITEM_BASE_DELAY_SECONDS = 1.0
     BULK_ITEM_MAX_DELAY_SECONDS = 30.0
@@ -615,7 +625,7 @@ class OpenSearchClient:
             # backoff between them.
             "max_retries": 0 if async_mode else _CLIENT_MAX_RETRIES,
             "retry_on_timeout": True,
-            "retry_on_status": _CLIENT_RETRY_STATUSES,
+            "retry_on_status": RETRYABLE_STATUSES,
             **({"pool_maxsize": self._query_pool_size()} if async_mode else {}),
         }
 
@@ -768,7 +778,7 @@ class OpenSearchClient:
 
         ``streaming_bulk`` (``raise_on_error=False``) yields one result per
         action, in order, so each failed result maps back to its action. Items
-        that failed with a status in :data:`RETRYABLE_BULK_ITEM_STATUSES` are
+        that failed with a status in :data:`RETRYABLE_STATUSES` are
         resent up to :attr:`BULK_ITEM_MAX_RETRIES` times with backoff; other
         failures are final. A whole bulk request the cluster still answers with
         such a status after the client's own retries (which do not back off)
@@ -814,14 +824,14 @@ class OpenSearchClient:
                     answered += 1
                     if succeeded(ok, result):
                         success_count += 1
-                    elif _bulk_item_status(result) in RETRYABLE_BULK_ITEM_STATUSES:
+                    elif _bulk_item_status(result) in RETRYABLE_STATUSES:
                         retry_actions.append(action)
                         retry_results.append(result)
                     else:
                         failures.append(result)
             except TransportError as e:
                 if (
-                    e.status_code not in RETRYABLE_BULK_ITEM_STATUSES
+                    e.status_code not in RETRYABLE_STATUSES
                     or attempt == self.BULK_ITEM_MAX_RETRIES
                 ):
                     raise
@@ -988,36 +998,21 @@ class OpenSearchClient:
         """``request()`` in up to ``retry.query_store_max_attempts`` attempts.
 
         A timeout, a connection failure and a 429/502/503/504 are retried
-        after an exponential backoff (``backoff_delay``); the last attempt's
-        error, or any other, propagates.
+        after an exponential backoff (``acall_with_transient_retry``, which
+        also stops at the query's deadline); the last attempt's error, or any
+        other, propagates.
         """
-        attempts = self.config.retry.query_store_max_attempts
-        attempt = 1
-        while True:
-            try:
-                return await request()
-            except TransportError as e:
-                retryable = (
-                    isinstance(e, OpenSearchConnectionError)
-                    or e.status_code in _CLIENT_RETRY_STATUSES
-                )
-                if not retryable or attempt >= attempts:
-                    raise
-                delay = backoff_delay(
-                    attempt,
-                    _QUERY_RETRY_BASE_DELAY_SECONDS,
-                    _QUERY_RETRY_MAX_DELAY_SECONDS,
-                )
-                logger.warning(
-                    "OpenSearch query request failed (attempt %s/%s, status=%s); "
-                    "retrying in %.2fs",
-                    attempt,
-                    attempts,
-                    e.status_code,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                attempt += 1
+        return await acall_with_transient_retry(
+            request,
+            is_transient=_retryable_query_error,
+            operation="OpenSearch query",
+            policy=TransientRetryConfig(
+                max_attempts=self.config.retry.query_store_max_attempts,
+                base_delay_seconds=_QUERY_RETRY_BASE_DELAY_SECONDS,
+                max_delay_seconds=_QUERY_RETRY_MAX_DELAY_SECONDS,
+                max_total_seconds=math.inf,
+            ),
+        )
 
     @_handle_async_opensearch_errors
     async def aindex_exists(self, index: str) -> bool:

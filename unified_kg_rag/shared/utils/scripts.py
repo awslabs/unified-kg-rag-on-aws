@@ -15,26 +15,52 @@ import re
 
 __all__ = [
     "DENSE_SCRIPT_LETTERS",
+    "DENSE_SCRIPT_TOKEN_RANGES",
     "drop_dense_script_spaces",
     "has_dense_script",
     "is_dense_script_char",
     "is_hangul_syllable",
 ]
 
-# Letter blocks only: CJK punctuation and full-width forms are excluded (NFKC
-# folds the latter to ASCII).
-_DENSE_SCRIPT_LETTER_RANGES: tuple[tuple[int, int], ...] = (
+# The Han, Hangul and Kana letter blocks both tables below hold.
+_CORE_LETTER_RANGES: tuple[tuple[int, int], ...] = (
     (0x1100, 0x11FF),  # Hangul Jamo
     (0x3040, 0x30FF),  # Hiragana + Katakana
-    (0x3130, 0x318F),  # Hangul Compatibility Jamo
-    (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
     (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
     (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xA960, 0xA97F),  # Hangul Jamo Extended-A
     (0xAC00, 0xD7AF),  # Hangul Syllables
-    (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
-    (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
+)
+
+# Letter blocks only: CJK punctuation and full-width forms are excluded (NFKC
+# folds the latter to ASCII).
+_DENSE_SCRIPT_LETTER_RANGES: tuple[tuple[int, int], ...] = tuple(
+    sorted(
+        (
+            *_CORE_LETTER_RANGES,
+            (0x3130, 0x318F),  # Hangul Compatibility Jamo
+            (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
+            (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
+            (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
+        )
+    )
+)
+
+# What the token estimate (``adapters.llm.token_estimate``) counts at about
+# one token per character under BPE tokenizers: the core letters, CJK
+# radicals, CJK symbols and punctuation, and half/full-width forms. Not the
+# letter blocks added to the table above after the estimate was set: adding
+# them changes the estimate, a separate, measured change.
+DENSE_SCRIPT_TOKEN_RANGES: tuple[tuple[int, int], ...] = tuple(
+    sorted(
+        (
+            *_CORE_LETTER_RANGES,
+            (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
+            (0x3000, 0x303F),  # CJK symbols and punctuation
+            (0xFF00, 0xFFEF),  # Half/full-width forms
+        )
+    )
 )
 
 # The same letters as the body of a regex character class (``[...]``).

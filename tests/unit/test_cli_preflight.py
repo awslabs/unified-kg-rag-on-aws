@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.run_rag import patch_chain
 from unified_kg_rag.adapters import provider_registry
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
@@ -201,7 +202,7 @@ async def test_rag_exits_before_the_chain_when_the_strategy_lacks_endpoints(
     mocker, capsys: pytest.CaptureFixture[str]
 ) -> None:
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=_config())
-    create = mocker.patch.object(run_rag_chain, "create_rag_chain")
+    create = patch_chain(mocker)
     parser = run_rag_chain.CommandLineInterface._setup_arguments()
     args = parser.parse_args(["-q", "hi", "--search-strategy", "simple"])
     assert await run_rag_chain.async_main(args) == 2  # a configuration error
@@ -380,7 +381,7 @@ async def test_rag_exits_before_the_chain_without_the_extra(
     mocker, capsys: pytest.CaptureFixture[str], without_local_extra: None
 ) -> None:
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=_local_config())
-    create = mocker.patch.object(run_rag_chain, "create_rag_chain")
+    create = patch_chain(mocker)
     parser = run_rag_chain.CommandLineInterface._setup_arguments()
     args = parser.parse_args(["-q", "hi"])
     assert await run_rag_chain.async_main(args) == 2

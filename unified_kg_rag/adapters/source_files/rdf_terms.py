@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """RDF vocabulary IRIs and the pure helpers that name RDF terms, shared by
 every reader of RDF terms (the ``owl`` schema source and the ``rdf`` seed
-source): an IRI's namespace and local name, a label in ``UPPER_SNAKE`` or
-as written, and the preferred text of a term in a language order.
+source): an IRI's namespace and local name, a CURIE of the options as an
+IRI, a label in ``UPPER_SNAKE`` or as written, the preferred text of a term
+in a language order, and the value types of their options.
 
 Nothing here depends on an RDF library.
 """
@@ -13,9 +14,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
+from typing import Annotated
 from urllib.parse import unquote
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
@@ -35,6 +37,73 @@ WELL_KNOWN_PREFIXES: dict[str, str] = {
     "skos": SKOS,
     "xsd": XSD,
 }
+
+# The longest label a type may get (a longer one needs a ``labels`` entry).
+MAX_LABEL_CHARS = 64
+
+# The value types of the mapping options: a term (IRI or CURIE), a prefix
+# name, a language tag (lower-cased; "" = untagged), a label override.
+OptionTerm = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+PrefixName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][\w.-]*$")]
+LanguageTag = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, pattern=r"^(|[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)$"
+    ),
+    AfterValidator(str.lower),
+]
+LabelOverride = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LABEL_CHARS),
+]
+
+
+class PrefixConflictError(ValueError):
+    """A CURIE's prefix the well-known prefixes and the files bind to
+    different namespaces, which the options do not settle.
+
+    Attributes:
+        prefix: The prefix.
+        namespaces: Its namespaces, sorted.
+    """
+
+    def __init__(self, prefix: str, namespaces: Sequence[str]) -> None:
+        self.prefix = prefix
+        self.namespaces = tuple(sorted(namespaces))
+        super().__init__(
+            f"prefix '{prefix}' is bound to {' and '.join(self.namespaces)}"
+        )
+
+
+def resolve_curie(
+    term: str, prefixes: Mapping[str, str], file_prefixes: Mapping[str, str]
+) -> str | None:
+    """``term`` as an IRI: as written when it is one (``://`` or ``urn:``),
+    else the CURIE ``prefix:name`` with its prefix's namespace, which
+    ``prefixes`` (the options') binds, else the well-known prefixes and
+    ``file_prefixes`` (the files' own bindings) bind alike. None when no
+    one binds the prefix (or ``term`` has none).
+
+    Raises:
+        PrefixConflictError: The well-known prefixes and the files bind the
+            prefix to different namespaces and ``prefixes`` does not bind
+            it: guessing would read another vocabulary's terms.
+    """
+    if "://" in term or term.startswith("urn:"):
+        return term
+    prefix, separator, name = term.partition(":")
+    if not separator:
+        return None
+    if prefix in prefixes:
+        return prefixes[prefix] + name
+    bound = {
+        namespace
+        for namespace in (WELL_KNOWN_PREFIXES.get(prefix), file_prefixes.get(prefix))
+        if namespace is not None
+    }
+    if len(bound) > 1:
+        raise PrefixConflictError(prefix, sorted(bound))
+    return bound.pop() + name if bound else None
 
 
 class Text(BaseModel):

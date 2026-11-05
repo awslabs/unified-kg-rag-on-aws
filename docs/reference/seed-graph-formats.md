@@ -161,6 +161,14 @@ so it is no instance and the `ex:headquarters` edge is skipped (counted as
 - **IRIs relative to their file** (no `@base`) are warned about: moving
   the file renames the nodes, which then re-import.
 
+A term of these options is a full IRI or a CURIE whose prefix comes from
+`prefixes`, else the well-known `rdf`, `rdfs`, `owl`, `xsd`, `skos`,
+`schema` and `dcterms`, else the files' own bindings, as for the [`owl`
+schema source](ontology-mapping.md): a prefix the files bind to another
+namespace than the well-known one (`schema:` to `http://schema.org/`)
+fails the import until `prefixes` says which. The defaults are full IRIs,
+so such a file does not affect them.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `prefixes` | `{}` | Prefix → namespace for the CURIEs of these options and of the property keys |

@@ -48,17 +48,17 @@ from pathlib import Path
 from pydantic import Field, ValidationError
 
 from unified_kg_rag.adapters.source_files import rdf_files
-from unified_kg_rag.adapters.source_files.context import format_validation_errors
 from unified_kg_rag.adapters.source_files.locations import (
     SourceReader,
     SourceTerms,
-    is_s3,
+    is_s3_uri,
     resolve_source_path,
 )
 from unified_kg_rag.domain.models.config import SchemaSourceConfig
 from unified_kg_rag.domain.models.schema import SchemaDocument
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 from .ontology_mapping import MappingOptions, map_ontology
 from .ontology_model import OntologyModel
@@ -241,7 +241,7 @@ def read_ontology(
     statements = rdf_parse.Statements()
     total = 0
     for file, format_ in files:
-        if is_s3(file.location):
+        if is_s3_uri(file.location):
             if reader is None:
                 raise ValueError("read_ontology needs a reader for S3 files")
             data = reader.read(file, max_bytes=options.max_bytes)

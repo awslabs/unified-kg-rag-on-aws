@@ -47,7 +47,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_pref
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
-from unified_kg_rag.shared.utils.common import compute_hash
+from unified_kg_rag.shared.utils.common import compute_hash, safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
 
 logger = get_logger(__name__)
@@ -122,14 +122,6 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
     for result_type, count in by_type.items():
         attributes[f"kg_rag.hits.{result_type}"] = count
     return attributes
-
-
-def as_float(value: Any) -> float | None:
-    """``value`` as a float; ``None`` when it is absent or not a number."""
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def rank_expanded(
@@ -1157,7 +1149,7 @@ class BaseSearchStrategy(ABC):
 
         def importance(result: RetrievalResult) -> float | None:
             return (
-                as_float((result.metadata or {}).get("rank"))
+                safe_float_parse((result.metadata or {}).get("rank"))
                 if with_importance
                 else None
             )
@@ -1439,8 +1431,8 @@ class BaseSearchStrategy(ABC):
         def order(r: RetrievalResult) -> tuple[float, float, str]:
             metadata = r.metadata or {}
             return (
-                -(as_float(metadata.get("rank")) or 0.0),
-                -(as_float(metadata.get("weight")) or 0.0),
+                -(safe_float_parse(metadata.get("rank")) or 0.0),
+                -(safe_float_parse(metadata.get("weight")) or 0.0),
                 self._relationship_identity(r),
             )
 

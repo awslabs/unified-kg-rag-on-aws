@@ -69,6 +69,7 @@ RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 OWL = "http://www.w3.org/2002/07/owl#"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 SKOS = "http://www.w3.org/2004/02/skos/core#"
+SCHEMA_ORG = "https://schema.org/"
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 SEEDS = FIXTURES / "seeds"
 ONTOLOGY = FIXTURES / "ontologies" / "procure.ttl"
@@ -485,6 +486,53 @@ def test_an_unbound_curie_in_the_options_is_refused() -> None:
             SCHEMA,
             terms=SeedTerms(seed="procure", kind="rdf"),
         )
+
+
+def test_a_prefix_the_files_bind_unlike_the_well_known_one_must_be_settled() -> None:
+    # The files bind schema: to http://, the well-known prefix is https://.
+    http_schema = "http://schema.org/"
+    acme = iri(EX + "acme")
+    triples = [
+        *_typed(EX + "acme", VENDOR),
+        (acme, iri(http_schema + "name"), literal("Acme Supplies")),
+    ]
+    files = {"schema": http_schema}
+    with pytest.raises(
+        SeedGraphError,
+        match=r"options\.name_properties: 'schema:name': prefix 'schema' is bound "
+        r"to http://schema\.org/ and https://schema\.org/; say which in "
+        r"options\.prefixes\.schema",
+    ):
+        map_abox(
+            triples,
+            AboxMappingOptions(name_properties=["schema:name"]),
+            SCHEMA,
+            prefixes=files,
+            terms=SeedTerms(),
+        )
+    settled = AboxMappingOptions(
+        name_properties=["schema:name"], prefixes={"schema": http_schema}
+    )
+    graph = map_abox(triples, settled, SCHEMA, prefixes=files, terms=SeedTerms())
+    assert graph.graph.nodes[0].name == "Acme Supplies"
+    # The defaults are full IRIs: the files' binding makes them no CURIE.
+    graph = map_abox(
+        triples, AboxMappingOptions(), SCHEMA, prefixes=files, terms=SeedTerms()
+    )
+    assert graph.graph.nodes[0].name == "Acme Supplies"
+    # A file binding equal to the well-known one is no conflict.
+    https = [
+        *_typed(EX + "acme", VENDOR),
+        (acme, iri(SCHEMA_ORG + "name"), literal("A")),
+    ]
+    graph = map_abox(
+        https,
+        AboxMappingOptions(name_properties=["schema:name"]),
+        SCHEMA,
+        prefixes={"schema": SCHEMA_ORG},
+        terms=SeedTerms(),
+    )
+    assert graph.graph.nodes[0].name == "A"
 
 
 def test_property_keys_use_the_options_then_well_known_then_file_prefixes() -> None:

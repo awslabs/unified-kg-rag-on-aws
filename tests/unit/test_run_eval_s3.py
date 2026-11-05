@@ -84,6 +84,12 @@ def test_is_s3_uri() -> None:
     assert not is_s3_uri("data/eval.json")
     assert not is_s3_uri(Path("s3://b/k"))
     assert not is_s3_uri(None)
+    # The scheme is case-insensitive, as for the schema and seed sources.
+    assert is_s3_uri("S3://b/k")
+    assert parse_s3_uri("S3://my-bucket/k.json", require_key=True) == (
+        "my-bucket",
+        "k.json",
+    )
 
 
 def test_parse_s3_uri_object_and_prefix() -> None:

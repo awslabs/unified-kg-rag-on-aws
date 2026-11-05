@@ -91,7 +91,7 @@ Python and installation.
     container image installs `eval`.
   - `viz` holds `pyvis`, for the `interactive` renderer. Without it a
     `run-visualization` that requests `interactive` exits 2 naming the extra
-    and `render_all` raises `ConfigurationError`; the `static` renderer and
+    and `resolve_renderers` raises `ConfigurationError`; the `static` renderer and
     `from unified_kg_rag import BaseRenderer, register_renderer` work on a
     core install. `umap-learn` and `scikit-learn` are no longer
     dependencies, and neither are `bokeh` and what only it pulled in
@@ -242,7 +242,8 @@ Configuration keys.
   package (`GraphVisualizationManager`, `BedrockNodeEmbedder`,
   `DimensionalityReducer`, `HTMLExporter` and its
   `graph_analysis_report.html`) are gone; drive the renderers through
-  `unified_kg_rag.adapters.renderers` (`render_all`, `RenderContext`). The
+  `unified_kg_rag.adapters.renderers` (`resolve_renderers`,
+  `render_resolved`, `RenderContext`). The
   keys load with a WARNING and are ignored (#467):
 
   | Removed key | Replacement |
@@ -450,7 +451,7 @@ Library API (Python callers and custom backends).
   `model_factory=` and `retriever_builders=` cannot be combined with
   `providers=`. Only `Providers` and `build_providers` take `boto_session`
   (pass `providers=Providers(config, boto_session=...)` to
-  `DataIngestionPipeline`, `GraphRAGChain` and `create_rag_chain`, which no
+  `DataIngestionPipeline` and `GraphRAGChain`, which no
   longer take it) (#577); `GraphRAGChain` rejects unknown
   keyword arguments; `OpenSearchIndexer`, `OpenSearchRetriever` require
   `embedding_factory=` (#216, #218, #221).
@@ -1080,9 +1081,15 @@ From 0.2.3 (or a `main` checkout since):
   CURIE-keyed properties by `languages`; blank nodes, reification,
   RDF-star, `owl:sameAs` and non-instance objects are counted and
   skipped, nothing is inferred; an invalid node or edge fails naming its
-  subject (#504, #510). Schema and seed sources share
-  `adapters/source_files`, the RDF vocabulary and naming helpers in
-  `rdf_terms` included (#497, #510).
+  subject (#504, #510). A CURIE of the `rdf` options resolves as the
+  `owl` source's do: a prefix the files bind to another namespace than
+  the well-known one (`schema:` to `http://schema.org/`) fails naming the
+  option until `options.prefixes` settles it, where it took the
+  well-known namespace and names fell back to the local name; the
+  default `name_properties` and `description_properties` are full IRIs
+  (#579). Schema and seed sources share
+  `adapters/source_files`, the RDF vocabulary, naming helpers, CURIE
+  resolution and option types in `rdf_terms` included (#497, #510, #579).
 - `Entity.iri` (a stated IRI, the smallest when several merge) and
   `source_kinds` on entities and relationships (`["document",
   "seed_graph"]` or `["seed_graph"]`, written only on items a seed
@@ -1621,6 +1628,11 @@ From 0.2.3 (or a `main` checkout since):
   (`gates.MIN_GATE_PAIRS`): one pair gave a zero-width interval, so
   `ci_high<-0.02` passed on one improved query. The evaluation guide says
   how the false-breach chance grows with strategies × gates (#563).
+- One parser reads every S3 path (`run-eval`'s `--data-path` and
+  `--output-directory`, schema and seed sources), with the scheme in any
+  case: `run-eval` read `S3://bucket/key` as a local path. An OpenSearch
+  query request retries through the shared transient-retry helper, so no
+  retry starts past the query's deadline (#579).
 
 ### Deprecated
 - `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and

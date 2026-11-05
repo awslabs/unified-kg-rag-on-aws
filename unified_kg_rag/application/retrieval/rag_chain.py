@@ -3125,8 +3125,3 @@ def _iterate_async_generator(
         finally:
             if owned:
                 loop_runner.stop()
-
-
-def create_rag_chain(config: Config, **kwargs: Any) -> GraphRAGChain:
-    """A :class:`GraphRAGChain` of ``config`` (what ``run-rag`` builds)."""
-    return GraphRAGChain(config=config, **kwargs)

@@ -17,7 +17,6 @@
 """
 
 import asyncio
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,7 +53,7 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils import (
     parse_llm_json,
-    safe_float_parse,
+    parse_llm_score,
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -77,14 +76,6 @@ class _Answer:
     evidence: list[RetrievalResult] = field(default_factory=list)
     # The non-fatal error that left the answer without text, if any.
     error: Exception | None = None
-
-
-def _score(value: Any) -> int:
-    """A 0-100 integer score from untrusted LLM output (non-finite -> 0)."""
-    number = safe_float_parse(str(value), default_value=0.0)
-    if number is None or not math.isfinite(number):
-        return 0
-    return max(0, min(100, int(number)))
 
 
 def _follow_ups(payload: dict[str, Any]) -> list[str]:
@@ -389,7 +380,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             return _Answer(
                 query=query.query,
                 text=str(payload.get("intermediate_answer", "")).strip(),
-                score=_score(payload.get("score", 0)),
+                score=parse_llm_score(payload.get("score", 0)),
                 follow_ups=_follow_ups(payload),
                 evidence=list(fold),
             )
@@ -480,7 +471,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
             return answer
         answer.text = str(payload.get("response", "") or "").strip()
-        answer.score = _score(payload.get("score", 0))
+        answer.score = parse_llm_score(payload.get("score", 0))
         answer.follow_ups = _follow_ups(payload)
         return answer
 

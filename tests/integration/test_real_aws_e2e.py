@@ -120,7 +120,7 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     import asyncio
 
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-    from unified_kg_rag.application.retrieval.rag_chain import create_rag_chain
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
     from unified_kg_rag.domain.models import (
         PipelineConfig,
         PipelineStageStatus,
@@ -145,7 +145,7 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     assert context.status != PipelineStageStatus.FAILED, context.stage_results
 
     async def _ask() -> RAGOutput | dict:
-        chain = create_rag_chain(live_config)
+        chain = GraphRAGChain(live_config)
         try:
             return await chain.ainvoke(RAGInput(query="Where does Alice work?"))
         finally:

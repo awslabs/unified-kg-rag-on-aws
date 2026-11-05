@@ -5,7 +5,10 @@
 ``estimate_token_count`` is the only counter for models without CountTokens
 (the default Claude 5.5 models), so it runs over every context section of
 every query; it was rewritten from a per-character Python loop to one regex
-scan. The reference below is the original loop, kept to pin the results.
+scan. The reference below is the original loop over the original table of
+dense-script ranges, both kept to pin the results: the table now lives in
+``shared.utils.scripts`` beside the letter blocks, and a change to what
+the estimate counts is a measured change of its own.
 """
 
 from __future__ import annotations
@@ -14,12 +17,27 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from unified_kg_rag.adapters.llm.token_estimate import (
-    _DENSE_SCRIPT_RANGES,
-    estimate_token_count,
-)
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_TOKEN_RANGES
 
 pytestmark = pytest.mark.property
+
+_DENSE_SCRIPT_RANGES: tuple[tuple[int, int], ...] = (
+    (0x1100, 0x11FF),  # Hangul Jamo
+    (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
+    (0x3000, 0x303F),  # CJK symbols and punctuation
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xA960, 0xA97F),  # Hangul Jamo Extended-A
+    (0xAC00, 0xD7AF),  # Hangul Syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),  # Half/full-width forms
+)
+
+
+def test_the_estimate_counts_the_original_ranges() -> None:
+    assert DENSE_SCRIPT_TOKEN_RANGES == _DENSE_SCRIPT_RANGES
 
 
 def _reference_estimate(text: str) -> int:

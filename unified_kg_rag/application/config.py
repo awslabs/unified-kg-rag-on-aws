@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.domain.models.provider_config import SQLITE
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
     from typing_extensions import TypeForm
@@ -258,7 +259,7 @@ class ConfigLoader:
             file_config = Config(**config_data)
         except ValidationError as e:
             raise ConfigurationError(
-                f"Configuration validation error: {validation_summary(e)}{where}"
+                f"Configuration validation error: {format_validation_errors('', e)}{where}"
             ) from e
         env_data, unknown_env, env_paths = self._environment_layer(
             file_config, config_data
@@ -272,7 +273,7 @@ class ConfigLoader:
         except ValidationError as e:
             # The file alone is valid: the environment layer made it invalid.
             raise ConfigurationError(
-                f"Configuration validation error: {validation_summary(e)} "
+                f"Configuration validation error: {format_validation_errors('', e)} "
                 f"(set by environment variable {_variables_at(e, env_paths)})"
             ) from e
         self._check_unknown(
@@ -559,19 +560,6 @@ def _set_env_value(
 
 
 _config_loader = ConfigLoader()
-
-
-def validation_summary(error: ValidationError) -> str:
-    """One line naming each invalid key and why, without the rejected values.
-
-    The values are left out: a misplaced secret (a password under the wrong
-    key) would otherwise be echoed to the terminal and the logs.
-    """
-    return "; ".join(
-        f"{'.'.join(str(part) for part in detail['loc']) or '<root>'}: "
-        f"{detail['msg']}"
-        for detail in error.errors(include_url=False, include_input=False)
-    )
 
 
 def get_config(

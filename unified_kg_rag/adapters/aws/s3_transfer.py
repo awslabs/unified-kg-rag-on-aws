@@ -6,16 +6,17 @@ Used by CLIs whose inputs/outputs may live in S3 (``run-eval`` on the bundled
 ECS stack, where the image holds no dataset and the task disk is discarded on
 exit). Uploads apply the same per-object SSE args as every other pipeline
 upload (``sse_extra_args``). The AWS SDK is imported by the functions that
-call S3, so parsing a path (``is_s3_uri``) loads none of it.
+call S3, so parsing a path (``is_s3_uri``, from
+:mod:`unified_kg_rag.shared.utils.s3_uri`) loads none of it.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
+from unified_kg_rag.shared.utils.s3_uri import S3_SCHEME, is_s3_uri, split_s3_uri
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -23,16 +24,6 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.models import Config
 
 logger = get_logger(__name__)
-
-S3_SCHEME = "s3://"
-# S3 general-purpose bucket naming rules (3-63 chars; lowercase letters,
-# digits, dots and hyphens; starts and ends with a letter or digit).
-_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
-
-
-def is_s3_uri(value: str | Path | None) -> bool:
-    """True when ``value`` is an ``s3://`` URI (a ``Path`` never is)."""
-    return isinstance(value, str) and value.startswith(S3_SCHEME)
 
 
 def parse_s3_uri(uri: str, *, require_key: bool) -> tuple[str, str]:
@@ -44,9 +35,11 @@ def parse_s3_uri(uri: str, *, require_key: bool) -> tuple[str, str]:
     """
     if not is_s3_uri(uri):
         raise ConfigurationError(f"Not an S3 URI (expected s3://bucket/key): '{uri}'")
-    bucket, _, key = uri[len(S3_SCHEME) :].partition("/")
-    if not _BUCKET_RE.match(bucket):
+    split = split_s3_uri(uri)
+    if split is None:
+        bucket = uri[len(S3_SCHEME) :].partition("/")[0]
         raise ConfigurationError(f"Invalid S3 bucket name in '{uri}': '{bucket}'")
+    bucket, key = split
     if require_key:
         if not key or key.endswith("/"):
             raise ConfigurationError(

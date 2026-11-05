@@ -2266,8 +2266,11 @@ class ProcessingConfig(BaseModel):
     fuzzy_entity_resolution: bool = Field(
         default=False,
         description="Also merge entities whose names are only similar "
-        "(resolution_method at similarity_threshold), in full builds and "
-        "incremental merges alike. Off by default: names are merged when they "
+        "(resolution_method at similarity_threshold). An incremental merge "
+        "folds each new entity into its one best-matching stored entity and "
+        "never joins stored entities with each other, so where a full build "
+        "chains similar names into one group it can keep several, until "
+        "indexing.reset regroups the corpus. Off by default: names are merged when they "
         "are equal after normalization, legal-form removal ('Acme Inc' / "
         "'Acme') and dense-script spacing, because name similarity also joins "
         "different organizations that share most of their name ('... "
@@ -3763,7 +3766,8 @@ class TokenManagerConfig(BaseModel):
     token_count_cache_size: int = Field(
         default=1024,
         ge=1,
-        description="Maximum number of entries in the LRU cache for Bedrock token counting",
+        description="Maximum number of entries in the LRU cache of the answer "
+        "model's token counter (Bedrock CountTokens, or the local estimate)",
     )
     type_budgets: ContextTypeBudgetConfig = Field(
         default_factory=ContextTypeBudgetConfig,

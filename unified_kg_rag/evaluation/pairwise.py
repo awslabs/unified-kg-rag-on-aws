@@ -104,19 +104,15 @@ class PairwiseJudge:
             verdicts[criterion] = verdict
         return verdicts
 
-    async def ajudge(self, query: str, baseline: str, candidate: str) -> dict[str, str]:
-        """Per criterion: ``"candidate"``, ``"baseline"`` or ``"tie"``.
+    async def _ajudge_both_orders(
+        self, query: str, baseline: str, candidate: str
+    ) -> tuple[dict[str, str], dict[str, bool]]:
+        """The outcome per criterion (``"candidate"``, ``"baseline"`` or
+        ``"tie"``), and whether the two orders agreed.
 
         Judged as (baseline, candidate) and (candidate, baseline); a verdict
         that flips with the order is a tie.
         """
-        outcome, _ = await self._ajudge_both_orders(query, baseline, candidate)
-        return outcome
-
-    async def _ajudge_both_orders(
-        self, query: str, baseline: str, candidate: str
-    ) -> tuple[dict[str, str], dict[str, bool]]:
-        """The outcome per criterion, and whether the two orders agreed."""
         forward, backward = await asyncio.gather(
             self._verdicts(query, baseline, candidate),
             self._verdicts(query, candidate, baseline),

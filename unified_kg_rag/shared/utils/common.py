@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+import math
 import os
 import re
 import unicodedata
@@ -206,6 +207,16 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
         return float(value)
     except (ValueError, TypeError):
         return default_value
+
+
+def parse_llm_score(value: Any) -> int:
+    """A 0-100 integer score from untrusted LLM output: clamped, and 0 for
+    what is not a finite number (``parse_llm_json`` accepts ``Infinity`` and
+    ``NaN``, and ``"1e999"`` overflows to infinity, which ``int`` rejects)."""
+    number = safe_float_parse(str(value), default_value=0.0)
+    if number is None or not math.isfinite(number):
+        return 0
+    return max(0, min(100, int(number)))
 
 
 # A `{` that plausibly starts a JSON object: a key's quote, or the end of a

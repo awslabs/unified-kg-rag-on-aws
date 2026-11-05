@@ -808,18 +808,10 @@ def test_a_configured_schema_reaches_the_examples_unchanged() -> None:
     ]
 
 
-async def test_generate_examples_uses_the_profile_types(monkeypatch) -> None:
+def test_the_examples_use_the_profile_types() -> None:
     tuner = _listing_tuner(Config(), ["VENDOR"])
-    seen: list[Any] = []
-
-    def extract(texts: list[str], entity_types: list[str] | None = None) -> Any:
-        seen.append(entity_types)
-        return [], []
-
-    monkeypatch.setattr(tuner, "extract_examples", extract)
     profile = tuner_module.CorpusProfile(entity_types=["VENDOR", "BUYER"])
-    await tuner.generate_examples(profile, ["text"])
-    assert seen == [["VENDOR", "BUYER"]]
+    assert tuner.example_entity_types(profile) == ["VENDOR", "BUYER"]
 
 
 def test_a_broken_schema_source_fails_the_tuner(tmp_path: Path) -> None:

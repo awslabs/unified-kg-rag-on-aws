@@ -15,6 +15,12 @@ from unified_kg_rag.domain.prompts import CommunityReportPrompt, GraphExtraction
 pytestmark = pytest.mark.unit
 
 
+def _examples(tuner: PromptTuner, profile: CorpusProfile, texts: list[str]) -> str:
+    # The few-shot examples as PromptTuner.tune builds them.
+    entity_types = tuner.example_entity_types(profile)
+    return tuner.render_examples(*tuner.extract_examples(texts, entity_types))
+
+
 class TestCorpusProfile:
     def test_from_payload_uppercases_entity_types(self) -> None:
         p = CorpusProfile.from_payload(
@@ -225,12 +231,10 @@ class TestSampleAndParse:
         assert "graph_extraction_system" in result["custom_prompts"]
         assert "DOMAIN EXAMPLE" in result["custom_prompts"]["graph_extraction_system"]
 
-    async def test_generate_examples_empty_corpus_returns_empty(
-        self, tuner: PromptTuner
-    ) -> None:
-        assert await tuner.generate_examples(CorpusProfile(), []) == ""
+    def test_examples_empty_corpus_returns_empty(self, tuner: PromptTuner) -> None:
+        assert _examples(tuner, CorpusProfile(), []) == ""
 
-    async def test_generate_examples_degrades_on_extractor_error(
+    def test_examples_degrades_on_extractor_error(
         self, tuner: PromptTuner, mocker
     ) -> None:
         # The documented except branch: a failing extractor returns "" rather
@@ -239,12 +243,10 @@ class TestSampleAndParse:
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             side_effect=RuntimeError("bedrock down"),
         )
-        result = await tuner.generate_examples(
-            CorpusProfile(domain="x"), ["non-empty text"]
-        )
+        result = _examples(tuner, CorpusProfile(domain="x"), ["non-empty text"])
         assert result == ""
 
-    async def test_generate_examples_grounded_in_real_extraction(
+    def test_examples_grounded_in_real_extraction(
         self, tuner: PromptTuner, mocker
     ) -> None:
         # Few-shots are the REAL GraphExtractor output over sampled chunks,
@@ -303,8 +305,10 @@ class TestSampleAndParse:
             return_value=extractor,
         )
 
-        result = await tuner.generate_examples(
-            CorpusProfile(domain="trade"), ["Acme Corp supplies Globex with parts."]
+        result = _examples(
+            tuner,
+            CorpusProfile(domain="trade"),
+            ["Acme Corp supplies Globex with parts."],
         )
 
         # The demonstration text is the real sampled chunk, and the output is the
@@ -323,7 +327,7 @@ class TestSampleAndParse:
         # The extractor was fed real TextUnits built from the corpus sample.
         assert captured["units"][0].text.startswith("Acme Corp supplies Globex")
 
-    async def test_generate_examples_no_extraction_returns_empty(
+    def test_examples_no_extraction_returns_empty(
         self, tuner: PromptTuner, mocker
     ) -> None:
         # Extractor finds nothing -> no examples (graceful, no crash).
@@ -333,7 +337,7 @@ class TestSampleAndParse:
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             return_value=extractor,
         )
-        result = await tuner.generate_examples(CorpusProfile(), ["some text"])
+        result = _examples(tuner, CorpusProfile(), ["some text"])
         assert result == ""
 
     @pytest.mark.parametrize("raw", ["I cannot help with that", '{"domain": "x"'])
@@ -369,7 +373,7 @@ class TestSampleAndParse:
         await tuner.profile_corpus(["some text"])
         assert setup.call_args.kwargs["model_id"] == "extract-m"
 
-    async def test_generate_examples_uses_the_injected_providers(
+    def test_examples_uses_the_injected_providers(
         self, tuner: PromptTuner, mocker
     ) -> None:
         extractor = mocker.MagicMock()
@@ -378,7 +382,7 @@ class TestSampleAndParse:
             "unified_kg_rag.application.prompts.tuner.GraphExtractor",
             return_value=extractor,
         )
-        await tuner.generate_examples(CorpusProfile(), ["some text"])
+        _examples(tuner, CorpusProfile(), ["some text"])
         assert cls.call_args.kwargs["providers"] is tuner.providers
 
 

@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""What every source registry shares: the context a loader is given, the
-kind -> loader registry, and how a source names invalid settings.
+"""What every source registry shares: the context a loader is given and the
+kind -> loader registry (a source names invalid settings with
+:func:`unified_kg_rag.shared.utils.validation.format_validation_errors`).
 
 The schema-source registry (:mod:`.schema_sources.registry`) and the
 seed-source registry (:mod:`.seed_sources.registry`) build on these and keep
@@ -14,8 +15,6 @@ import re
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
-
-from pydantic import ValidationError
 
 from unified_kg_rag.domain.models.config import Config
 
@@ -137,25 +136,3 @@ class KindRegistry(Generic[LoaderT]):
     def kinds(self) -> list[str]:
         """The registered kinds, sorted."""
         return sorted(self.loaders)
-
-
-def format_validation_errors(
-    prefix: str, error: ValidationError, *, root: str | None = "<root>"
-) -> str:
-    """Each invalid key of ``error`` and why, ``;``-separated, without the
-    rejected values (a misplaced secret would be echoed).
-
-    A key is named by ``prefix`` and its location, dot-joined
-    (``schema_source.options.colour: Extra inputs are not permitted``). An
-    error with no key at all (an empty ``prefix`` and location) is named
-    ``root``, or by its message alone when ``root`` is None.
-    """
-    parts: list[str] = []
-    for detail in error.errors(include_url=False, include_input=False):
-        names = [str(part) for part in detail["loc"]]
-        key = ".".join([prefix, *names] if prefix else names)
-        if not key and root is None:
-            parts.append(detail["msg"])
-        else:
-            parts.append(f"{key or root}: {detail['msg']}")
-    return "; ".join(parts)

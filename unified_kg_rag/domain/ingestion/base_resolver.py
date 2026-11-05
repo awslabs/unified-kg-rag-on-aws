@@ -286,9 +286,7 @@ class FuzzyMatcher:
         return cached if cached is not None else head_character(candidate)
 
     def _find_all_lsh_matches(self, query: str) -> list[tuple[str, float]]:
-        if self.resolution_method != ResolutionMethod.MINHASH:
-            return []
-
+        # Called for the MINHASH method only (find_all_matches).
         query_minhash = self._query_minhash(query)
         similar_candidates = self.lsh.query(query_minhash)
         if not similar_candidates:

@@ -28,9 +28,9 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     IRI_PROPERTY,
     NAME_KEY_PROPERTY,
+    community_properties,
     entity_from_vertex,
     entity_properties,
-    item_properties,
     relationship_from_edge,
     relationship_label,
     relationship_properties,
@@ -258,7 +258,10 @@ class SQLiteGraphIndexer(GraphIndexer):
                 self._upsert_vertices(
                     connection,
                     community_label,
-                    [(comm.id, self._community_properties(comm)) for comm in comms],
+                    [
+                        (comm.id, community_properties(comm, self._max_length))
+                        for comm in comms
+                    ],
                 )
                 stats.add_success(len(comms))
         return stats
@@ -302,22 +305,6 @@ class SQLiteGraphIndexer(GraphIndexer):
                 )
         stats.add_success(len(annotations))
         return stats
-
-    def _community_properties(self, comm: Community) -> dict[str, Any]:
-        return item_properties(
-            comm,
-            {
-                "name": comm.name,
-                "level": comm.level,
-                "parent": comm.parent,
-                "size": comm.size,
-                "period": comm.period,
-                "children": comm.children,
-                # Found by them when its documents are removed.
-                "text_unit_ids": comm.text_unit_ids,
-            },
-            self._max_length,
-        )
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete edges and vertices by id, with the vertices' edges.

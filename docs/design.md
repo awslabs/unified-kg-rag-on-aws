@@ -1828,7 +1828,8 @@ Ingestion renders nothing: the community-detection stage writes the graph
 and its community hierarchy as JSON (`graph.visualization.export_data`,
 `domain/ingestion/visualization_data.py`). `run-visualization` renders that
 file without ingestion through the renderers of `adapters/renderers/`
-(`BaseRenderer`, `@register_renderer`, `RenderContext`, `render_all`):
+(`BaseRenderer`, `@register_renderer`, `RenderContext`, `resolve_renderers`,
+`render_resolved`):
 `InteractiveRenderer` (pyvis network and community hierarchy) and
 `StaticRenderer` (degree, centrality and community-size charts as HTML with
 inline SVG, written without a plotting package and with every name
