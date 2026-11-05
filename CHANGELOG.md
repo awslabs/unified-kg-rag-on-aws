@@ -1395,7 +1395,7 @@ From 0.2.3 (or a `main` checkout since):
   logging have one home each; design §4 documents the extraction, roll-up
   and report-rank deviations from MS GraphRAG; `--config-path`,
   `--search-type` and `--disable-query-processing` help say what they do
-  (#PR).
+  (#582).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the
