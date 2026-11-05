@@ -287,7 +287,7 @@ Configuration keys.
   still cite) (#344).
 - Settings whose other values were duplicates, never shown, or kept only to
   reproduce 0.2.3 are gone; the behaviour is the former default. The keys
-  load with a WARNING and are ignored (#PR):
+  load with a WARNING and are ignored (#577):
 
   | Removed key | Replacement |
   |---|---|
@@ -348,7 +348,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#576) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
-| `run-eval` warm-up query | (none: no warm-up) | one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate (#529); not configurable (#PR) |
+| `run-eval` warm-up query | (none: no warm-up) | one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate (#529); not configurable (#577) |
 | `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#533) |
 | `logging.log_to_file` | `true` | `false` (#520) |
 | `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori` (every other language `standard`) | one per language: also `de: german`, `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese`, `ru: russian` and `ja`/`zh: cjk` (character bigrams, no plugin), so a word inside a Japanese or Chinese run matches lexically (#574) |
@@ -451,7 +451,7 @@ Library API (Python callers and custom backends).
   `providers=`. Only `Providers` and `build_providers` take `boto_session`
   (pass `providers=Providers(config, boto_session=...)` to
   `DataIngestionPipeline`, `GraphRAGChain` and `create_rag_chain`, which no
-  longer take it) (#PR); `GraphRAGChain` rejects unknown
+  longer take it) (#577); `GraphRAGChain` rejects unknown
   keyword arguments; `OpenSearchIndexer`, `OpenSearchRetriever` require
   `embedding_factory=` (#216, #218, #221).
 - A custom doc-status registry implements the whole `DocStatusPort`: batch
@@ -550,7 +550,7 @@ Library API (Python callers and custom backends).
   of `CacheManager` (#471); with the settings above, `MapReduceSummaryPrompt`,
   `ModelRole.GLOBAL_REDUCE`, `FusionMethod`, `FixingConfig`,
   `HybridScorer._weighted_fusion` / `_normalize_scores` and
-  `CentralityMetrics.closeness` / `eigenvector` (#PR).
+  `CentralityMetrics.closeness` / `eigenvector` (#577).
 
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
@@ -759,7 +759,7 @@ From 0.2.3 (or a `main` checkout since):
     extra, which no longer installs Bokeh: re-render the static charts to
     get the SVG pages (nothing stored changes). A script that imported
     `bokeh` through the extra installs it itself (#576).
-17. A config that sets one of the settings removed in #PR loads with a
+17. A config that sets one of the settings removed in #577 loads with a
     WARNING naming its replacement; nothing is re-extracted or re-embedded.
     Review it where the value was not the default: `search.reranking.enabled:
     false` reranks again (a Bedrock Rerank call per query) until you set
@@ -1627,7 +1627,7 @@ From 0.2.3 (or a `main` checkout since):
   will be removed: the default models (Claude 5.x) always reason, so it has
   no effect on them; tune their depth with `aws.bedrock.default_effort` /
   `fast_effort`. It still turns thinking on for the models that opt in
-  (#PR).
+  (#577).
 
 ### Fixed
 Bugs present in 0.2.3.
