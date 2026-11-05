@@ -396,7 +396,7 @@ def test_an_unknown_kind_fails_naming_the_registered_ones() -> None:
 
 def test_the_context_reads_options_and_redacts_the_location() -> None:
     seed = _seed(
-        "s3://user:secret@seed-bucket/procure.jsonl?X-Amz-Signature=abc",
+        "s3://user:secret@seed-bucket/procure.jsonl?X-Amz-Signature=abc",  # gitleaks:allow
         options={"dangling": "skip"},
     )
     context = SeedSourceContext(seed, Config())
@@ -632,7 +632,7 @@ def test_jsonl_refuses_a_missing_path_an_empty_directory_and_other_urls(
     with pytest.raises(SeedGraphError, match="holds no .jsonl file"):
         _load(tmp_path / "empty")
     with pytest.raises(SeedGraphError, match="is a URL; kind 'jsonl' reads"):
-        _load("https://user:pw@example.org/seed.jsonl")
+        _load("https://user:pw@example.org/seed.jsonl")  # gitleaks:allow
     with pytest.raises(SeedGraphError, match="does not name an S3 bucket"):
         _load("s3://Not_A_Bucket/seed.jsonl")
 

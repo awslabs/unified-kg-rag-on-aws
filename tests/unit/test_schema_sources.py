@@ -559,7 +559,7 @@ def test_the_run_session_reaches_the_loader(custom_kind: str) -> None:
     ("path", "shown"),
     [
         (
-            "https://user:token@schemas.example.com:8443/v1/onto.ttl?sig=abc#frag",
+            "https://user:token@schemas.example.com:8443/v1/onto.ttl?sig=abc#frag",  # gitleaks:allow
             "https://schemas.example.com:8443/v1/onto.ttl",
         ),
         ("s3://bucket/schemas/onto.yaml", "s3://bucket/schemas/onto.yaml"),
@@ -575,7 +575,9 @@ def test_errors_never_show_a_url_credential(custom_kind: str) -> None:
     register_schema_source(custom_kind)(
         lambda context: SchemaDocument(relationship_patterns=["GENE -R-> PERSON"])
     )
-    path = "https://user:token@schemas.example.com/onto?sig=secret-sig"
+    path = (
+        "https://user:token@schemas.example.com/onto?sig=secret-sig"  # gitleaks:allow
+    )
     with pytest.raises(SchemaSourceError) as caught:
         resolve_extraction_schema(
             _config(schema_source={"kind": custom_kind, "path": path})
