@@ -20,7 +20,9 @@ processing:
 ```
 
 `source_language == target_language`이고 추가 대상 언어가 없으면 `enabled: true`여도
-번역 단계를 비용 없이 건너뜁니다.
+번역 단계를 비용 없이 건너뜁니다. `enabled: false`이면 코퍼스를 원문 그대로 색인하고,
+질의도 번역하지 않고 `source_language`로 처리합니다. 질의에 `target_language`를 지정하면
+그 언어를 따릅니다.
 
 **실패.** 번역에 실패한 텍스트 단위는 원문 언어로 추출합니다. 대상 언어 하나의 호출
 전체가 실패하면 `processing.ignore_errors: true`가 아닌 한 단계가 실패합니다. 증분

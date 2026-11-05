@@ -118,7 +118,9 @@ def _acting_policies(assessments: list[dict[str, Any]]) -> tuple[list[str], bool
 
     Each policy (``topicPolicy``, ``contentPolicy``, ...) holds lists of
     entries with an ``action``; an entry is named by its ``name`` (topics,
-    regexes) or else its ``type`` (filters, PII types).
+    regexes), else its ``type`` (filters, PII types, managed word lists),
+    else the list it sits in (``customWords`` entries carry only the
+    matched word, which is not echoed).
     """
     policies: list[str] = []
     blocked = False
@@ -126,7 +128,7 @@ def _acting_policies(assessments: list[dict[str, Any]]) -> tuple[list[str], bool
         for policy_name, policy in assessment.items():
             if not policy_name.endswith("Policy") or not isinstance(policy, dict):
                 continue
-            for entries in policy.values():
+            for list_name, entries in policy.items():
                 if not isinstance(entries, list):
                     continue
                 for entry in entries:
@@ -134,7 +136,7 @@ def _acting_policies(assessments: list[dict[str, Any]]) -> tuple[list[str], bool
                     if action not in (_BLOCKED, _ANONYMIZED):
                         continue
                     blocked = blocked or action == _BLOCKED
-                    label = entry.get("name") or entry.get("type") or "unknown"
+                    label = entry.get("name") or entry.get("type") or list_name
                     policies.append(f"{policy_name}:{label}")
     return sorted(set(policies)), blocked
 

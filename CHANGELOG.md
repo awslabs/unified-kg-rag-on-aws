@@ -772,6 +772,12 @@ From 0.2.3 (or a `main` checkout since):
     strategy and run. A run resumed from a `main` checkout across the change
     finds no stage-cache entry (`fixing.enabled` keyed every stage), as
     after any upgrade; the LLM response cache still serves its model calls.
+18. A deployed CDK stack with `removal_destroy` (the dev default), on the
+    next `cdk deploy --all`: the cache bucket stops writing S3 server access
+    logs and the `CacheAccessLogs` bucket is deleted with its logs (copy
+    them first if you need them). If a late log blocks the deletion, re-run
+    the deploy or empty and delete the bucket by hand. A retained
+    environment changes nothing (#583).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1340,6 +1346,14 @@ From 0.2.3 (or a `main` checkout since):
   bundled SDK, the behaviour synth warned it defaulted to (#566).
 - Docs: with `bedrock_model_arns`, list the reranking model too: the
   Rerank API also checks `bedrock:InvokeModel` on it (#566).
+- Docs: the rerank error codes and their causes: a missing
+  `bedrock:InvokeModel` grant on the rerank model fails as a
+  `ValidationException`, a region without the model as an
+  `AccessDeniedException` (troubleshooting, `bedrock_model_arns`) (#583).
+- Docs: *Defaults and evidence* has the 2026-11-05 retrieval A/B
+  (`entity_frequency_threshold`, three LightRAG chunk and embedding
+  switches, the relationship context share), and the `report_selection`
+  description says `membership` reads leaf communities (#583).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
@@ -2166,6 +2180,12 @@ Deployment (CDK).
 - The *Incremental run health* dashboard widget plots
   `community_growth_ratio` and `runs_since_clustering` as well, as the
   runbook said it did (#558).
+- `cdk destroy` of a `removal_destroy` environment could fail on the
+  storage stack's `CacheAccessLogs` bucket: S3 delivers access logs late,
+  so a log of the teardown's own requests landed after the auto-delete
+  emptied the bucket (`The bucket you tried to delete is not empty`). Only
+  a retained environment writes the cache bucket's access logs now; the
+  teardown docs say what to do when an older stack hits it (#583).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter
@@ -2274,6 +2294,13 @@ Deployment (CDK).
   model call a query, and lexical recall lost). The query is translated only
   when ingestion translates, or when the caller asks for a language
   (`RAGInput.target_language`) (#567).
+- With the translation stage disabled and `target_language` differing
+  from `source_language`, the query's entities and keywords were still
+  extracted in `target_language` (an English corpus queried for Korean
+  entity names), so they matched nothing in an index that keeps the source
+  text and names. They are extracted in `source_language` now, unless the
+  caller asks for a language; an enabled stage still uses
+  `target_language` (#583).
 - DRIFT's primer answers reached the answer model, but the community
   reports they were written from did not, so an answer resting on a primer
   answer cited no source for it. Each primer fold's reports are its
@@ -2284,6 +2311,10 @@ Deployment (CDK).
   or summary, marked `synthesized`) were returned in `search_results` by
   `ainvoke` and `asearch` unscreened. Each is screened as the answer is (one
   ApplyGuardrail call each): masked, or dropped when refused (#567).
+- A Bedrock guardrail word-filter intervention was reported as
+  `wordPolicy:unknown`: custom-word entries carry neither a name nor a
+  type. They are named by their list now (`wordPolicy:customWords`), and
+  managed word lists by their type (`wordPolicy:PROFANITY`) (#583).
 - MMR diversity (`search.fusion.diversity_lambda` below 1) measured
   redundancy over whitespace words, and an unspaced Japanese or Chinese
   passage is one: a near-duplicate differing by one appended word shared

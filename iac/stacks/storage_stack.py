@@ -129,16 +129,23 @@ class StorageStack(Stack):
             return s3.Bucket.from_bucket_name(
                 self, "CacheBucket", self.config.cache_bucket_name
             )
-        access_logs = s3.Bucket(
-            self,
-            "CacheAccessLogs",
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            enforce_ssl=True,
-            removal_policy=self.removal_policy,
-            auto_delete_objects=self.config.removal_destroy,
-            lifecycle_rules=[s3.LifecycleRule(expiration=Duration.days(90))],
-        )
+        # Server access logs only where the buckets are retained. S3 delivers
+        # them best-effort, minutes to hours after the request, so with
+        # removal_destroy a log of the teardown's own requests (the cache
+        # bucket being emptied) can land in the log bucket after its
+        # auto-delete emptied it, and the stack deletion fails on a non-empty
+        # bucket. No ordering of the deletions closes that window.
+        access_logs: s3.Bucket | None = None
+        if not self.config.removal_destroy:
+            access_logs = s3.Bucket(
+                self,
+                "CacheAccessLogs",
+                block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+                encryption=s3.BucketEncryption.S3_MANAGED,
+                enforce_ssl=True,
+                removal_policy=self.removal_policy,
+                lifecycle_rules=[s3.LifecycleRule(expiration=Duration.days(90))],
+            )
         return s3.Bucket(
             self,
             "CacheBucket",
@@ -152,7 +159,7 @@ class StorageStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             server_access_logs_bucket=access_logs,
-            server_access_logs_prefix="cache-access/",
+            server_access_logs_prefix="cache-access/" if access_logs else None,
             # Versioned (NONCURRENT_VERSION_DAYS above). Versioning cannot be
             # turned off once on, only suspended.
             versioned=True,
