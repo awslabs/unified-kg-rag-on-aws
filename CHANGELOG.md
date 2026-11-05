@@ -1358,9 +1358,9 @@ From 0.2.3 (or a `main` checkout since):
   `docs/operations.md` (now with *Shipping configuration to the deployed
   tasks* and *Upgrading the library*) and `docs/design.md` keep their
   paths, headings and section numbers. `docs/user-guide.md` and
-  `docs/user-guide.ko.md` are now a permanent redirect: each former
-  heading keeps its fragment and points to the new page, so older links
-  and `--help` URLs still land. The generated references moved to
+  `docs/user-guide.ko.md` are now a permanent redirect for the 0.2.3 user
+  guide: each of its headings keeps its fragment and points to the new
+  page, so links into it still land. The generated references moved to
   `docs/reference/cli.md` and `docs/reference/configuration.md`, with
   `docs/reference/models.md`. The 14 Tier-1 pages have a Korean twin
   (`<page>.ko.md`, listed in `TRANSLATED_PAGES` in `scripts/check_docs.py`):
@@ -1386,6 +1386,16 @@ From 0.2.3 (or a `main` checkout since):
   evaluation result names, the JSON each CLI prints on failure, and when
   `model_overrides` entries are checked. The "No indices found for suffix"
   error no longer names OpenSearch on `backend: local` (#557).
+- Documentation: new search strategies and evaluators are marked as
+  in-tree extensions (a `SearchStrategy` member or an `EvaluatorType`
+  branch), with a strategy skeleton in design §15; the runbook gains *Run a
+  one-off ingestion task*; Getting started on AWS lists network and engine
+  version prerequisites; the Graviton (`fargate_cpu_architecture=arm64`)
+  opt-in, the non-CDK collector configuration and Bedrock invocation
+  logging have one home each; design §4 documents the extraction, roll-up
+  and report-rank deviations from MS GraphRAG; `--config-path`,
+  `--search-type` and `--disable-query-processing` help say what they do
+  (#PR).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`
   (context-overflow errors), langchain-openai 1.7, langsmith 0.14, datasets
   5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the

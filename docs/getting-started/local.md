@@ -80,6 +80,12 @@ uv run run-rag --backend local --search-strategy local --query "Who is the chief
 uv run run-rag --backend local --search-strategy mix --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
+The first query downloads the default rerank model, the cross-encoder
+`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, from Hugging Face, so it needs
+internet access once and takes longer; later queries use the cached copy.
+Offline, download it beforehand or set `providers.rerank.kind: none`
+([Local mode](../guides/local-mode.md)).
+
 Without `--search-strategy`, an LLM router picks a strategy per query
 (`auto`). [Search strategies](../concepts/retrieval.md#search-strategies--when-to-use-which)
 explains when to use which.

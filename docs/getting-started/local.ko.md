@@ -77,6 +77,11 @@ uv run run-rag --backend local --search-strategy local --query "Who is the chief
 uv run run-rag --backend local --search-strategy mix --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
+첫 질의는 기본 재순위화 모델인 크로스 인코더 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`을
+Hugging Face에서 내려받으므로 한 번은 인터넷 연결이 필요하고 시간이 더 걸립니다. 이후
+질의는 캐시된 모델을 씁니다. 오프라인 환경에서는 미리 내려받거나
+`providers.rerank.kind: none`으로 설정하세요([Local mode](../guides/local-mode.md), 영문).
+
 `--search-strategy`를 생략하면 LLM 라우터가 질의마다 전략을 고릅니다(`auto`). 어떤
 전략을 언제 쓰는지는 [검색 전략 선택](../concepts/retrieval.ko.md#검색-전략-선택)에 있습니다.
 

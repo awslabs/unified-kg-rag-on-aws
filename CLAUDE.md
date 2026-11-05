@@ -137,9 +137,10 @@ The rules to keep in mind:
 - **Visualization**: ingestion only exports `visualization_data.json`
   (`graph.visualization.export_data`); `run-visualization` renders it through
   the renderers registered via `@register_renderer` (`adapters/renderers/`,
-  one registry + `RenderContext`). Rendering needs the `viz` extra.
-- **Extras**: `eval` (LLM judges) and `viz` (pyvis, Bokeh) are optional, like
-  `otel`, `local` and `unstructured`; a feature whose extra is missing fails
+  one registry + `RenderContext`). The interactive renderer needs the `viz`
+  extra; the static charts need none.
+- **Extras**: `eval` (LLM judges) and `viz` (pyvis) are optional, like
+  `otel`, `ontology` (rdflib), `local` and `unstructured`; a feature whose extra is missing fails
   fast with a `ConfigurationError` naming the extra. Tests that need one use
   `tests/fixtures/extras.py`; the CI `core-install` job runs without them.
 - **Docs**: user docs start at `docs/index.md` (the hub), with task pages in
@@ -204,7 +205,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
   `quality.yml` sits just under it: currently 95, measured ~96%). Run:
-  `uv run --extra otel --extra eval --extra viz pytest -m "not aws" -n auto --cov=unified_kg_rag`.
+  `uv run --extra otel --extra eval --extra viz pytest -m "not aws" -n logical --cov=unified_kg_rag`.
 
 ## Quality gate
 

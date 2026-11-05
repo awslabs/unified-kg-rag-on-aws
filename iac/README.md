@@ -18,8 +18,10 @@ the [Operator Runbook](../docs/operations.md).
 
 Prerequisites:
 
-- [uv](https://docs.astral.sh/uv/) and Python 3.12+. `iac/` is a uv project of
-  its own: `iac/uv.lock` pins the CDK libraries.
+- [uv](https://docs.astral.sh/uv/) and Python 3.12 or later for the CDK app.
+  `iac/` is a uv project of its own (`iac/uv.lock` pins the CDK libraries), so
+  its Python is not the library's: the package supports Python 3.11 and 3.12,
+  and the image runs 3.12.
 - Node.js 22 or 24 (CI uses 24) and the AWS CDK CLI v2.1146.1 or later
   (`npm install -g aws-cdk@2.1146.1`, the version CI pins); an older CLI can
   reject the cloud assembly the locked `aws-cdk-lib` produces.

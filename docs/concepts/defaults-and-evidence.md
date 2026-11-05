@@ -73,7 +73,7 @@ ships no price table, because one would go stale.
 | `processing.gleaning.max_rounds` | 3 | +9.8 points [+3.7, +17.1] of intermediate answers found as graph entities against 1 round, for +38% ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
 | `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
-| `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
+| `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 
 ## Answer style
@@ -171,9 +171,11 @@ No change was significantly better on the answers, so both defaults stayed
 ## Local report selection
 
 `search.local_search.report_selection: membership` reads the reports of
-the communities the traversed entities belong to, as MS GraphRAG local
-search does; `similarity` (the default) reads the reports most similar to
-the query entities. A later run on the same 200 questions, two repeats
+the leaf (level-0) communities the traversed entities belong to;
+`similarity` (the default) reads the reports most similar to the query
+entities. MS GraphRAG local search reads each entity's community at its
+`community_level` cut (default 2) instead, so the measurement covers the
+leaf variant, not upstream's selection. A later run on the same 200 questions, two repeats
 each, measured membership against similarity: exact match -4.0 points
 [-7.75, -0.25], token F1 -4.1 [-7.7, -0.6], both significant, for about 0.5%
 fewer tokens. Similarity stays the default

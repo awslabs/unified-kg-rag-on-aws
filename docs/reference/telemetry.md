@@ -95,4 +95,7 @@ usage is read (an `auto` query's unread extraction, still running in the
 background) or was cancelled in flight (by `search.query_timeout_seconds`,
 say) was sent and is billed, so it counts in `llm_calls` and in
 `estimated_calls`, at an estimate of its input tokens and no output tokens;
-one that answers later is settled in `run-eval`'s run usage. `stream` / `astream` yield text only and report no usage.
+one that answers later is settled in `run-eval`'s run usage. A call that
+answers without reporting usage (a local server that returns none, say)
+stays estimated the same way, rather than reading as free.
+`stream` / `astream` yield text only and report no usage.

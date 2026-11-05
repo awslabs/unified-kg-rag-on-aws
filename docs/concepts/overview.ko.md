@@ -116,7 +116,8 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   ([근거](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
 - **local 검색의 리포트.** `local`은 질의 엔티티와 가장 비슷한 리포트를 읽습니다. MS
   GraphRAG local은 엔티티가 속한 커뮤니티의 리포트를 읽으며(`mixed_context.py`), 여기서는
-  `report_selection: membership`에 해당하고 측정 결과가 더 나빴습니다
+  `report_selection: membership`이 이를 따르되 업스트림의 `community_level` 단면 대신 최하위
+  커뮤니티를 읽습니다. 측정 결과는 더 나빴습니다
   ([근거](./defaults-and-evidence.md#local-report-selection), 영문).
 - **global 답변.** 답변 모델은 순위를 매긴 핵심 내용과, 그 내용이 인용한 리포트를 최대
   4,000 토큰까지 읽습니다. MS GraphRAG의 reduce 단계는 핵심 내용만 읽으며

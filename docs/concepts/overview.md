@@ -136,7 +136,8 @@ purpose:
   no different ([evidence](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
 - **Local search reports.** `local` reads the reports most similar to the
   query entities; MS GraphRAG local reads those of the entities' communities
-  (`mixed_context.py`), which is `report_selection: membership` here and
+  (`mixed_context.py`), which `report_selection: membership` follows here
+  over the leaf communities rather than upstream's `community_level` cut, and
   measured worse ([evidence](./defaults-and-evidence.md#local-report-selection)).
 - **Global answers.** The answer model reads the ranked key points and up
   to 4,000 tokens of the reports they cite; MS GraphRAG's reduce step reads
