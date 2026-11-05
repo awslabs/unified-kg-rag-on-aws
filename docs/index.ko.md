@@ -88,9 +88,9 @@
 | 글리닝(gleaning) | 첫 추출에서 빠진 것을 모델에 다시 묻는 추가 추출 라운드 |
 | 커뮤니티(community), 커뮤니티 리포트(community report) | 엔티티를 Leiden으로 묶은 군집과, `global`과 `drift`가 읽는 LLM 작성 요약 |
 | 방법론(methodology), 전략(strategy) | GraphRAG 또는 LightRAG, 그리고 질의마다 고르는 실제 검색 알고리즘(`local`, `mix` 등) |
-| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`). 테넌트나 코퍼스 버전마다 하나 |
+| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`. 지정하면 뒤에 `-<indexing.additional_suffix>`가 붙음). 테넌트나 코퍼스 버전마다 하나 |
 | 문서 상태 레지스트리(doc-status registry) | 문서마다 해시와 텍스트 단위를 기록해 증분 수집을 가능하게 하는 DynamoDB(또는 SQLite) 테이블 |
-| 네임스페이스(namespace) | 한 인덱스 접미사가 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)) |
+| 네임스페이스(namespace) | 인덱스 접미사에 `indexing.additional_suffix`와 기본값이 아닌 인덱스·레이블 접두사의 태그를 더한 것, 그리고 그 이름이 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)). 메시지에서는 index namespace라고 부름 |
 | 소스 범위(source scope) | 실행이 비교하고 삭제하는 코퍼스 출처(기본값은 소스 디렉터리). 문서 ID와 텍스트 단위 ID가 여기서 나옴 |
 | 격리(quarantine) | 처리하다 실행이 거듭 죽은 문서를 따로 둔 상태. 파일이 바뀌거나 한도를 올릴 때까지 건너뜀 |
 | 시드 그래프(seed graph) | 이미 가진 지식 그래프. 가상 문서로 추출 그래프에 병합 |

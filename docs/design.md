@@ -1955,13 +1955,15 @@ checks that its values are the defaults and each key is in the reference).
   `summarized_with`). A unit record's key holds them as the default
   configuration has them (`_summary_key`, the same whatever the run's
   `models` tiers), and a unit without a record under it is looked up under
-  the keys earlier releases stored it under too
-  (`legacy_unit_record_fingerprints`: them at their defaults resolved
-  through the run's tiers, and at the run's values, the key of a record
-  stored while they keyed graph extraction): `ExtractionStore.load` stores
-  a record found there under the current key, the one its unit names. `changed_settings`
-  ignores them in a scope's earlier record. So stored records are found,
-  documents read as unchanged, and a summary change asks no unit again.
+  the keys earlier `main` builds stored it under too (no release stored
+  the extraction store; `legacy_unit_record_fingerprints`: them at their
+  defaults resolved through the run's tiers, and at the run's values, the
+  key of a record stored while they keyed graph extraction):
+  `ExtractionStore.load` stores a record found there under the current
+  key, the one its unit names. `changed_settings` ignores them in a
+  scope's earlier record. So stored records are found, documents read as
+  unchanged, and a summary change asks no unit again. The lookup is
+  kept until the first release after 0.2.3 and removed in it.
   The schema keys count as extraction sees them
   (`cache_keys._as_extracted`): a type by its label and description (a
   string item as written, a mapping as the string that reads back the

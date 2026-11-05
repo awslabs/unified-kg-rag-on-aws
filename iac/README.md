@@ -267,6 +267,30 @@ running ([Resume](#3-upload-the-corpus-and-start-an-ingestion-run)).
   RunTask fails to start the task, which the state machine retries twice as
   for any start failure, then notifies.
 
+### Graviton (arm64)
+
+`-c fargate_cpu_architecture=arm64` runs both task definitions on AWS
+Graviton. It is opt-in, and the default stays `x86_64`, because the
+architecture is part of the task definition: switching it under a deployed
+image built for the other platform stops every task at start with
+`exec format error`.
+
+- **The image.** Build it for `linux/arm64`, or once for both platforms so
+  one tag runs on either architecture:
+  `docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t "$REGISTRY/graphrag-app:<tag>" --push .`
+  (a multi-platform build needs a builder that supports it, such as one
+  from `docker buildx create --use`; on an x86_64 host the arm64 half builds
+  through QEMU emulation, which is much slower). The Dockerfile's base images and the collector sidecar are
+  pinned by multi-arch digests, so nothing else changes.
+- **Switching.** Push the image under a new tag and deploy it with the
+  flag in one deploy, with no `RUNNING` execution:
+  `cdk deploy --all -c image_tag=<tag> -c fargate_cpu_architecture=arm64`.
+  Keep the flag on every later deploy (or in `cdk.json`); switching back is
+  the same deploy with `x86_64` and an amd64 image.
+- **Cost.** Fargate on Graviton is typically about 20% cheaper per vCPU-hour
+  and GB-hour than x86_64 (an estimate: check the Fargate pricing of your
+  region). Model calls, which dominate a run's cost, are unchanged.
+
 ### Guardrail
 
 The guardrail must live in the Bedrock runtime region (`bedrock_region`),
@@ -407,12 +431,10 @@ docker push "$REGISTRY/graphrag-app:latest"
 ```
 
 - With `-c fargate_cpu_architecture=arm64`, build with
-  `--platform linux/arm64` instead (on a Graviton host, or through
-  `docker buildx` with QEMU emulation, which is much slower). The platform
-  must match the task's: an x86_64 image on an ARM64 task, or the reverse,
-  stops at start with `exec format error`. Switch the architecture by
-  pushing the new image under a new tag and deploying both together
-  (`cdk deploy --all -c image_tag=<tag> -c fargate_cpu_architecture=arm64`).
+  `--platform linux/arm64` instead, or for both platforms
+  ([Graviton (arm64)](#graviton-arm64)). The platform must match the
+  task's: an x86_64 image on an ARM64 task, or the reverse, stops at start
+  with `exec format error`.
 
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped

@@ -22,10 +22,10 @@ scope)**는 실행이 비교하는 코퍼스 소스를 정하고, **네임스페
 
 ## 소스 범위
 
-실행의 **범위**는 인덱스 접미사(`document_parsing.index_value`와
-`indexing.additional_suffix`)와 코퍼스 소스(`document_parsing.source_scope`. 기본값은
+실행은 자기 **범위** 안에서 비교합니다. 범위는 인덱스 접미사(`document_parsing.index_value`와
+`indexing.additional_suffix`)와 **소스 범위**, 즉 코퍼스 소스(`document_parsing.source_scope`. 기본값은
 해석된 소스 디렉터리이며, 컨테이너 엔트리포인트는 동기화 원본인 S3 URI로 설정. 끝의
-슬래시가 있든 없든 같은 범위이며, 쓰인 표기는 WARNING에 남음)입니다.
+슬래시가 있든 없든 같은 소스 범위이며, 쓰인 표기는 WARNING에 남음)입니다.
 문서의 레지스트리 키는 이 범위와 소스 디렉터리 기준 상대 경로이며, 실행은 자기 범위의
 문서만 비교하고 삭제 대상으로 봅니다. 따라서 다른 테넌트(다른 `index_value`)의 실행은 이
 테넌트의 문서를 삭제하지 않고, 하위 폴더를 소스 디렉터리로 따로 실행해도 코퍼스의
@@ -42,7 +42,9 @@ scope)**는 실행이 비교하는 코퍼스 소스를 정하고, **네임스페
 
 **네임스페이스**는 인덱스 접미사(`index_value`, 지정하지 않으면 `default`)에
 `indexing.additional_suffix`와, 기본값이 아닌 `indexing.opensearch.*_index_prefix` /
-`indexing.neptune.*_label_prefix` 값의 태그를 더한 것입니다. 문서 상태 레지스트리를 쓰면
+`indexing.neptune.*_label_prefix` 값의 태그를 더한 것입니다. 로그와 오류 메시지에서는
+*index namespace*라고 부릅니다(`Index namespace '<namespace>' is being written by ...`).
+문서 상태 레지스트리를 쓰면
 네임스페이스 하나에는 한 번에 실행 하나만 씁니다(그 실행이 네임스페이스의 쓰기 임대(lease)를
 가짐). 네임스페이스가 다르면 동시에 실행할 수 있습니다. 임대, 비정상 종료 뒤의 인계,
 레지스트리 없이 실행할 때의 동작은 [운영 런북: 동시 실행](../operations.md#concurrent-runs)(영문)에

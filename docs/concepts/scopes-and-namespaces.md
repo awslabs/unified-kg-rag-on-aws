@@ -23,11 +23,11 @@ sides; incremental indexing and deletion are scoped to it
 
 ## Source scope
 
-A run's **scope** is its index suffix (`document_parsing.index_value`, plus
-`indexing.additional_suffix`) and its corpus source
-(`document_parsing.source_scope`, by default the resolved source directory;
+A run diffs within its **scope**: its index suffix (`document_parsing.index_value`,
+plus `indexing.additional_suffix`) together with its **source scope**, the
+corpus source (`document_parsing.source_scope`, by default the resolved source directory;
 the container entrypoint sets it to the S3 URI it syncs from; with and
-without a trailing slash is one scope, and a WARNING names the spelling
+without a trailing slash is one source scope, and a WARNING names the spelling
 used). A document's
 registry key is its scope and its path relative to the source directory, and a
 run only diffs, and treats as deleted, the documents of its own scope. So
@@ -48,7 +48,9 @@ Keeping a corpus at one source, moving it, and what a mass deletion asks:
 The **namespace** is the index suffix (`index_value`, `default` when unset)
 plus `indexing.additional_suffix`, plus a tag of non-default
 `indexing.opensearch.*_index_prefix` / `indexing.neptune.*_label_prefix`
-values. With the doc-status registry, one run writes a namespace at a time
+values; log and error messages call it the *index namespace*
+(`Index namespace '<namespace>' is being written by ...`). With the
+doc-status registry, one run writes a namespace at a time
 (it holds the namespace's write lease); different namespaces can run side
 by side. The lease, takeover after a crash and what runs without the
 registry: [Operator Runbook: Concurrent runs](../operations.md#concurrent-runs).
