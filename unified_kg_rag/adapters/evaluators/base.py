@@ -112,13 +112,13 @@ class BaseGraphRAGEvaluator:
         semaphore = asyncio.Semaphore(self.config.processing.max_concurrency)
 
         async def _run_with_semaphore(
-            coro: Coroutine, index: int
+            coro: Coroutine[Any, Any, Any], index: int
         ) -> tuple[int, EvaluationReport | None, Exception | None]:
             async with semaphore:
                 try:
                     result = await coro
                     return index, result, None
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - the caller reports it
                     return index, None, e
 
         tasks = []

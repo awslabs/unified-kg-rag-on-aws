@@ -260,7 +260,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         # Extracted spans by (question, answer): repeats and strategies that
         # give the same answer reuse it.
         self._spans: dict[str, str] = {}
-        self._span_chain: Runnable | None = None
+        self._span_chain: Runnable[Any, Any] | None = None
         if self.answer_span == "extracted":
             providers = Providers.resolve(self.config, providers)
             self._span_chain = setup_chain(

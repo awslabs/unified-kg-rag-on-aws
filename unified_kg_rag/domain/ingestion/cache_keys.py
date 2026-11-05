@@ -133,7 +133,7 @@ _QUERY = "read at query time only"
 _QUERY_PROMPT = Unkeyed("a query-time prompt")
 
 
-def _keyed_at(stage: PipelineStageType, *paths: str, **kwargs: Any) -> dict:
+def _keyed_at(stage: PipelineStageType, *paths: str, **kwargs: Any) -> dict[str, Any]:
     return dict.fromkeys(paths, Keyed(stage, **kwargs))
 
 

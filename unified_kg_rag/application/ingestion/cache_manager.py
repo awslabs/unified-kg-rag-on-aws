@@ -227,7 +227,7 @@ class CacheManager:
         cache_key: str,
         pipeline_id: str,
         data_type: type[T] | None = None,
-        chunk_filter: Callable | None = None,
+        chunk_filter: Callable[..., Any] | None = None,
         max_items: int | None = None,
     ) -> T | list[T] | Any | None:
         try:
@@ -287,7 +287,7 @@ class CacheManager:
         entry: CacheEntry,
         pipeline_id: str,
         data_type: type[T] | None = None,
-        chunk_filter: Callable | None = None,
+        chunk_filter: Callable[..., Any] | None = None,
         max_items: int | None = None,
     ) -> list[Any]:
         """Load a chunked entry; any bad chunk makes the whole entry a miss.
@@ -403,7 +403,7 @@ class CacheManager:
                     self.MAX_FILE_BYTES / 1024 / 1024,
                 )
                 return True
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.warning("Failed to estimate data size: %s", e)
 
         return False

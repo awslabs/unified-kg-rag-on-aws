@@ -443,7 +443,7 @@ class DescriptionSummarizer:
                 task_name="Description Summarization",
                 show_progress=False,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the concatenated descriptions are kept
             # The whole pass failed (not a per-item error): keep all originals.
             logger.warning(
                 "Description summarization failed; keeping concatenated "

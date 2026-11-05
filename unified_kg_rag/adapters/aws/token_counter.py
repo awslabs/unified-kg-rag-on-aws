@@ -152,7 +152,7 @@ class BedrockTokenCounter:
             return self._estimate(text)
         try:
             return self._cached_count(text)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the count falls back to the estimate
             if is_count_tokens_unsupported_error(e):
                 mark_count_tokens_unsupported(self.model_id, e)
                 return self._estimate(text)

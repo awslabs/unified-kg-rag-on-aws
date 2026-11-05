@@ -31,8 +31,6 @@ _COMPARISONS = {
     "lte": lambda stored, value: stored <= value,
     "gt": lambda stored, value: stored > value,
     "lt": lambda stored, value: stored < value,
-    "eq": lambda stored, value: stored == value,
-    "neq": lambda stored, value: stored != value,
 }
 
 
@@ -66,7 +64,8 @@ def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
     vertices that have the property, and a ``source_kinds`` entry naming
     ``document`` passes vertices without it too (an entity no seed graph
     states); every other key also drops vertices without it. A dict without
-    a range operator filters nothing.
+    a range operator filters nothing; the retriever refuses one before
+    (``check_filter_values``), as the OpenSearch retriever does.
     """
     entries = [
         (key, value)

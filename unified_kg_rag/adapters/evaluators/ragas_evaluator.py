@@ -101,7 +101,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         show_progress: bool = True,
     ) -> None:
         self.embeddings: Embeddings | None = None
-        self.llm: BaseLanguageModel | None = None
+        self.llm: BaseLanguageModel[Any] | None = None
         self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
         # Judge LLM, embeddings and token counter come from the shared
@@ -414,8 +414,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                         [self.RAGAS_METRICS[m]() for m in m_types],
                     )
                 )
-            except Exception as e:
-                logger.error("Ragas evaluation failed for batch: %s", e)
+            except Exception as e:  # noqa: BLE001 - one batch fails only its metrics
+                logger.error("Ragas evaluation failed for batch: %s", e, exc_info=True)
                 failed_runs.update(
                     dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")
                 )

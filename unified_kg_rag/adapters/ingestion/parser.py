@@ -58,7 +58,7 @@ class FileParser(BaseParser):
         self,
         config: Config,
         loader_class: type[BaseLoader],
-        loader_kwargs: dict | None = None,
+        loader_kwargs: dict[str, Any] | None = None,
         file_type_name: str = "file",
     ):
         super().__init__(config)
@@ -141,7 +141,7 @@ _ENCODING_AWARE_LOADERS = (CsvFileLoader, JsonTextLoader, TextFileLoader)
 
 class ParserFactory:
     # Loaders with no heavy optional deps — always available.
-    _loader_configs: dict[str, tuple[type[BaseLoader], dict, str]] = {
+    _loader_configs: dict[str, tuple[type[BaseLoader], dict[str, Any], str]] = {
         ".csv": (CsvFileLoader, {}, "CSV"),
         # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
         ".json": (JsonTextLoader, {}, "JSON"),
@@ -169,7 +169,7 @@ class ParserFactory:
         cls,
         extension: str,
         loader_class: type[BaseLoader],
-        loader_kwargs: dict | None = None,
+        loader_kwargs: dict[str, Any] | None = None,
         file_type_name: str | None = None,
     ) -> None:
         """Register a custom loader for a file extension (extension seam).

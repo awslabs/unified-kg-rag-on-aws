@@ -163,6 +163,12 @@ images in `docker/compose.local.yaml`. These pins it cannot read; bump them by h
 - LLM calls as LangChain LCEL chains; prompts live in `unified_kg_rag/domain/prompts/` and can be overridden with
   `custom_prompts`.
 - Raise the specific exception types from `unified_kg_rag/shared/exceptions.py`.
+- Catch the specific exceptions a call raises. A broad `except Exception` (ruff `BLE`) is for isolating one
+  item's failure or degrading on purpose, and says why on the line: `except Exception as e:  # noqa: BLE001 - <reason>`.
+  When it logs an unexpected error at ERROR and goes on, it logs the traceback too (`exc_info=True`).
+- mypy runs with `disallow_any_generics` and `no_implicit_reexport`: give generics their type arguments
+  (`Callable[..., Any]`, `dict[str, Any]`), and import a name from the module that defines it, or list it in that
+  package's `__all__`.
 - Keep the dependency rule: `domain/` must not import boto3, LangChain or a backend client, directly or transitively
   (`tests/unit/test_domain_purity.py` checks this).
 

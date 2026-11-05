@@ -979,8 +979,10 @@ class IntelligentTextChunker(BaseChunker):
                 task_name=f"Processing boundaries for {label}",
                 show_progress=self.show_progress,
             )
-        except Exception as e:
-            logger.error("Failed to get boundary results for %s: %s", label, e)
+        except Exception as e:  # noqa: BLE001 - split by size instead
+            logger.error(
+                "Failed to get boundary results for %s: %s", label, e, exc_info=True
+            )
             results = [None] * len(requests)
         new_records: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         for (n, i), result in zip(requests, results, strict=True):
@@ -1133,7 +1135,7 @@ class IntelligentTextChunker(BaseChunker):
 
             return self._extract_chunks_from_line_indices(text, indices)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the pre-chunk is split by size instead
             # The pre-chunk is split by size instead (_handle_llm_failure).
             logger.warning("Failed LLM line-based boundary chunking: %s", e)
             return None
@@ -1165,7 +1167,7 @@ class IntelligentTextChunker(BaseChunker):
     def _create_pre_chunks(self, content: str) -> list[str]:
         try:
             return self.pre_splitter.split_text(content)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the document stays one pre-chunk
             logger.warning("Failed to create pre-chunks: %s", e)
             return [content] if content else []
 

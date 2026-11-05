@@ -215,7 +215,7 @@ class EvaluationManager:
     def __init__(
         self,
         config: Config,
-        rag_chain: Runnable | None = None,
+        rag_chain: Runnable[Any, Any] | None = None,
         source_resolver: SourceFileResolver | None = None,
         *,
         providers: Providers | None = None,
@@ -248,7 +248,7 @@ class EvaluationManager:
 
     @staticmethod
     def _default_source_resolver(
-        config: Config, rag_chain: Runnable
+        config: Config, rag_chain: Runnable[Any, Any]
     ) -> SourceFileResolver | None:
         """Resolve graph-source lineage through the chain's own document store.
 
@@ -289,7 +289,7 @@ class EvaluationManager:
                 reason = (
                     None if evaluator.validate_config() else "invalid configuration"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - raised below unless ignore_errors
                 evaluator, reason, cause = None, f"initialization failed: {e}", e
             if evaluator is not None and reason is None:
                 self.evaluators[evaluator_type] = evaluator
@@ -612,9 +612,12 @@ class EvaluationManager:
                         usage=_answer_usage(rag_metadata.get("usage"), record),
                     )
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one query's failure
                 logger.error(
-                    "Failed to process result for query '%s': %s", query.query_id, e
+                    "Failed to process result for query '%s': %s",
+                    query.query_id,
+                    e,
+                    exc_info=True,
                 )
                 results.append(
                     EvaluationResult(
@@ -988,9 +991,12 @@ class EvaluationManager:
                         scorable_queries, scorable_results, gt_list
                     )
                 all_reports.extend(reports)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - recorded per query below
                 logger.error(
-                    "Failed to run '%s' evaluation: %s", evaluator_type.value, e
+                    "Failed to run '%s' evaluation: %s",
+                    evaluator_type.value,
+                    e,
+                    exc_info=True,
                 )
                 # Every answer is already generated: record the crash per query
                 # (as the per-query path in BaseGraphRAGEvaluator does) so the results

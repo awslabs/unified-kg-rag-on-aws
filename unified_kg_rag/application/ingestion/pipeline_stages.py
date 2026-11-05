@@ -17,7 +17,6 @@ from unified_kg_rag.adapters.ingestion.claim_extractor import (
 )
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
-    CommunityMetrics,
 )
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
@@ -112,6 +111,7 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityChange,
     CommunityCounters,
+    CommunityMetrics,
     CommunityReport,
     Config,
     Constants,
@@ -823,7 +823,7 @@ class DocumentParsingStage(PipelineStage):
                         document, file_path, self.target_directory
                     )
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - reported as a failed file
                 logger.error("Failed to parse '%s': %s", file_path, e)
                 failed_files.append(str(file_path))
 
@@ -913,7 +913,7 @@ class DocumentParsingStage(PipelineStage):
         try:
             document.to_json_file(output_path)
             logger.debug("Saved parsed document: '%s'", output_path)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error("Failed to save parsed document '%s': %s", output_path, e)
 
 
@@ -1953,7 +1953,7 @@ class CommunityDetectionStage(_RegistryStage):
             )
             outputs_dir.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data, default=str), encoding="utf-8")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the export is optional
             logger.warning("Visualization data export failed: %s", e)
             return
         logger.info("Exported visualization data to '%s'", path)
@@ -2051,7 +2051,7 @@ class CommunityDetectionStage(_RegistryStage):
                     )
                 finally:
                     graph.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - left unclustered
                 logger.warning(
                     "Could not read the stored graph around %s small delta "
                     "components; leaving them out of the communities: %s",
@@ -2190,7 +2190,7 @@ class CommunityDetectionStage(_RegistryStage):
             finally:
                 if vector is not None:
                     vector.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - counted in reports_failed
             logger.warning(
                 "Could not read the stored members of %s communities only seed "
                 "graphs state in this run; storing them without a report, "

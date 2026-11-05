@@ -1645,6 +1645,12 @@ From 0.2.3 (or a `main` checkout since):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- The graph retrievers (Neptune, embedded SQLite) check the filters a
+  strategy sends as the OpenSearch retriever does (`check_filter_values`):
+  a range operator other than `gt`/`gte`/`lt`/`lte` (`in`, `eq`, `neq`)
+  was dropped, so a custom strategy's filter matched every vertex, and a
+  null or empty-range value reached the traversal. Each now raises
+  `InvalidFilterError` (#581).
 - A number or boolean document filter value is a keyword on OpenSearch, as
   the filter docs said: a field's first numeric value mapped it as `long`,
   so a document with a string value for the same key failed to index

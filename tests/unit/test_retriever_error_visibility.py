@@ -54,7 +54,6 @@ from unified_kg_rag.adapters.aws.opensearch import (
     _handle_opensearch_errors,
     is_index_not_found,
 )
-from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage import neptune_indexer
@@ -63,6 +62,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
 )
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
     Constants,

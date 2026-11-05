@@ -310,12 +310,13 @@ class GraphExtractor(BaseProcessor):
                         "target_language": target_language,
                     }
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one unit's failure
                 failed_preparations += 1
                 logger.error(
                     "Failed to prepare input for text unit '%s': %s",
                     text_unit.id,
                     str(e),
+                    exc_info=True,
                 )
                 # Append a sentinel (empty input) rather than skipping, so the
                 # returned inputs stay 1:1 with text_units. execute_with_fallback
@@ -367,7 +368,7 @@ class GraphExtractor(BaseProcessor):
             try:
                 records.append(self._parse_extraction_result(result, text_unit))
                 self.stats.num_successful_extractions += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one unit's malformed answer
                 if discard := (discards or {}).get(idx):
                     discard()
                 self.stats.num_failed_extractions += 1

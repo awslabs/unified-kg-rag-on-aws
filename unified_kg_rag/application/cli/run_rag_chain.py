@@ -259,7 +259,7 @@ class RAGChainRunner:
         warn_deprecated_query_arguments(args)
         self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
-        self.interactive_commands: dict[str, Callable] = {
+        self.interactive_commands: dict[str, Callable[..., Any]] = {
             "help": self._handle_help,
             "new": self._handle_new_conversation,
             "set-filter": self._handle_set_filter,

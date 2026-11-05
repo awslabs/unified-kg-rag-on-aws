@@ -25,7 +25,6 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.source_files.locations import (
     SourceFile,
     SourceReader,
-    is_s3_uri,
     resolve_source_path,
 )
 from unified_kg_rag.domain.models.seed_graph import (
@@ -35,6 +34,7 @@ from unified_kg_rag.domain.models.seed_graph import (
     SeedNode,
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 from .registry import SeedSourceContext, statement_problems
 

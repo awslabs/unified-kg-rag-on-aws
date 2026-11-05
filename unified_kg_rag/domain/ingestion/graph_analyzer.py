@@ -171,7 +171,7 @@ class GraphAnalyzer:
     def _compute_centrality(
         self,
         metric_name: str,
-        computation_func: Callable,
+        computation_func: Callable[..., Any],
         kwargs: Any,
         centrality_data: dict[str, CentralityMetrics],
     ) -> None:
@@ -267,11 +267,11 @@ class GraphAnalyzer:
         try:
             result = computation_func(self._graph)
             on_success(result)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a statistic is optional
             logger.warning("Failed to calculate %s: %s", metric_name, e)
 
     @staticmethod
-    def _update_component_stats(result: list[set], stats: GraphStatistics) -> None:
+    def _update_component_stats(result: list[set[Any]], stats: GraphStatistics) -> None:
         stats.num_connected_components = len(result)
         if result:
             stats.largest_component_size = len(max(result, key=len))

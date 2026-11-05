@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,6 +26,7 @@ from gremlin_python.structure.graph import Graph
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery
+from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
@@ -695,3 +697,25 @@ async def test_traversals_beyond_the_pool_wait_on_the_loop(config: Config) -> No
     )
     assert results == [[1]] * 12
     assert _SlowTraversal.max_active == 3
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [{"rank": {"in": [1]}}, {"rank": {"eq": 5}}, {"type": None}, {"rank": {}}],
+)
+async def test_a_filter_the_stores_refuse_fails_before_the_traversal(
+    config: Config, filters: dict[str, Any]
+) -> None:
+    # An unknown range operator left no ``has`` step: the walk matched all.
+    retriever = NeptuneRetriever(config=config, neptune_client=MagicMock())
+    traversed: list[Any] = []
+
+    async def traverse(seed_ids: list[Any], query: SearchQuery) -> list[Any]:
+        traversed.append(seed_ids)
+        return []
+
+    retriever._traverse = traverse  # type: ignore[method-assign]
+    query = SearchQuery(query="q", filters={"id": ["s"], **filters})
+    with pytest.raises(InvalidFilterError):
+        await retriever.aretrieve(query)
+    assert traversed == []

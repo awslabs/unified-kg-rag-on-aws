@@ -244,6 +244,7 @@ select = [
     "G",  # flake8-logging-format (enforce %-style lazy logging, no f-strings)
     "LOG",  # flake8-logging (getLogger(__name__), no root logger, exc_info use)
     "ASYNC",  # flake8-async (blocking calls and busy-wait loops in async code)
+    "BLE",  # flake8-blind-except (a broad except is narrowed or says why)
 ]
 ignore = [
     "E501",  # line too long, handled by black
@@ -277,6 +278,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+# Every generic names its type arguments, and a name is imported from the
+# module that defines it (or from a package that lists it in __all__).
+disallow_any_generics = true
+no_implicit_reexport = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]

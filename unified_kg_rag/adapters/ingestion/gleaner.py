@@ -418,9 +418,12 @@ class GraphGleaner(BaseProcessor):
                     record.relationships,
                     config_for_task,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one unit's failure
                 logger.error(
-                    "Error preparing gleaning input for unit '%s': %s", unit.id, e
+                    "Error preparing gleaning input for unit '%s': %s",
+                    unit.id,
+                    e,
+                    exc_info=True,
                 )
 
         # Only the units whose input prep succeeded are processed, and
@@ -563,7 +566,7 @@ class GraphGleaner(BaseProcessor):
                 # An addition the check dropped is no gain.
                 kept = {r.id for r in record.relationships}
                 new_relationships = [r for r in new_relationships if r.id in kept]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - isolate one unit's malformed answer
             logger.warning(
                 "Failed to parse refinement output for unit %s: %s",
                 unit.id,

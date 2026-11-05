@@ -392,8 +392,8 @@ class SchemaReannotation(BaseModel):
 
 
 class IndexingTask(NamedTuple):
-    fn: Callable
-    args: list
+    fn: Callable[..., Any]
+    args: list[Any]
     key: str
     # Run even without items (a full build replacing a type with nothing).
     run_empty: bool = False
@@ -685,7 +685,9 @@ class IndexingManager:
             relationships = self._annotated_relationships(relationships)
         vector, graph = self.opensearch_indexer, self.neptune_indexer
         # (full-build writer, delta writer, items, result key)
-        phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [
+        phase1: list[
+            tuple[Callable[..., Any], Callable[..., Any], list[Any] | None, str]
+        ] = [
             (
                 vector.index_text_units,
                 vector.upsert_text_units,
@@ -723,7 +725,9 @@ class IndexingManager:
             )
 
         def tasks(
-            specs: list[tuple[Callable, Callable, list[Any] | None, str]],
+            specs: list[
+                tuple[Callable[..., Any], Callable[..., Any], list[Any] | None, str]
+            ],
         ) -> list[IndexingTask]:
             if suffixes is None:
                 return [IndexingTask(fn, [items], key) for _, fn, items, key in specs]
@@ -3236,8 +3240,8 @@ class IndexingManager:
                     phase_results[task_name] = future.result()
                 except NamespaceLeaseError:
                     raise
-                except Exception as e:
-                    logger.error("Task '%s' failed: %s", task_name, e)
+                except Exception as e:  # noqa: BLE001 - reported as a failed task
+                    logger.error("Task '%s' failed: %s", task_name, e, exc_info=True)
                     stats = IndexingStats()
                     stats.add_error(str(e))
                     phase_results[task_name] = stats

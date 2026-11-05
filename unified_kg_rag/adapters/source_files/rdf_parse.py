@@ -99,7 +99,7 @@ def parse(
             statements.bind((p, str(ns)) for p, ns in graph.namespaces())
     # The parsers raise many types (BadSyntax, SAXParseException, ValueError,
     # ...): each is a file that does not parse.
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - re-raised as a parse error
         raise terms(
             f"{terms.noun} file '{name}' does not parse as {format_}: "
             f"{_first_line(e)}"

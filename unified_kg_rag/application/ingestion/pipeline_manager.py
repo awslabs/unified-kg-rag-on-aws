@@ -90,7 +90,7 @@ class PipelineStateManager:
         if self._rerun_from is None or position < self._rerun_from:
             self._rerun_from = position
 
-    def create_context_from_metadata(self, metadata: dict) -> PipelineContext:
+    def create_context_from_metadata(self, metadata: dict[str, Any]) -> PipelineContext:
         context_data = {
             k: v for k, v in metadata.items() if k not in self.EXCLUDED_DATA_FIELDS
         }
@@ -307,7 +307,7 @@ class PipelineStateManager:
                 json.load(f)
             return True
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error("Metadata verification failed: %s", e)
             return False
 
@@ -462,7 +462,7 @@ class PipelineResumeManager:
 
     @staticmethod
     def _handle_explicit_stage_resume(
-        stage_results: list[dict], explicit_stage: str
+        stage_results: list[dict[str, Any]], explicit_stage: str
     ) -> tuple[str, list[str]]:
         stage_names = [result["stage_name"] for result in stage_results]
 
@@ -494,7 +494,9 @@ class PipelineResumeManager:
         return explicit_stage, completed_stages
 
     @staticmethod
-    def _handle_auto_resume(stage_results: list[dict]) -> tuple[str, list[str]]:
+    def _handle_auto_resume(
+        stage_results: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
         completed_stages = []
         resume_stage = None
 
@@ -668,9 +670,12 @@ class PipelineResumeManager:
                 try:
                     if self._load_stage_cache_data(pipeline_id, stage_name, context):
                         loaded_count += 1
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - isolate one stage's cache
                     logger.error(
-                        "Error loading cache for stage '%s': %s", stage_name, e
+                        "Error loading cache for stage '%s': %s",
+                        stage_name,
+                        e,
+                        exc_info=True,
                     )
 
             logger.info(
@@ -723,12 +728,13 @@ class PipelineResumeManager:
                         stage_name,
                         context_attr,
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one output's cache
                 logger.error(
                     "Failed to load cache data '%s' for stage '%s': %s",
                     context_attr,
                     stage_name,
                     e,
+                    exc_info=True,
                 )
 
         return loaded_files_count > 0

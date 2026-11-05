@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 from collections.abc import Collection
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -139,7 +140,7 @@ def display_pipeline_results(
     )
 
 
-def _get_resolved_data(context: PipelineContext, data_type: str) -> list | None:
+def _get_resolved_data(context: PipelineContext, data_type: str) -> list[Any] | None:
     resolved_attr = f"resolved_{data_type}"
     return getattr(context, resolved_attr, getattr(context, data_type, None))
 

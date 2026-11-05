@@ -712,7 +712,7 @@ class NeptuneIndexer(GraphIndexer):
                     stats.add_success(len(batch))
                 except NamespaceLeaseError:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - reported as failed items
                     stats.add_error(str(e), len(batch), ids=list(batch))
                     logger.warning("Failed to write schema annotations: %s", e)
         return stats
@@ -1010,7 +1010,7 @@ class NeptuneIndexer(GraphIndexer):
                     )
                 except NamespaceLeaseError:
                     raise
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - reported as a failed write
                     return str(e)
 
             workers = max(1, min(self.neptune_config.index_concurrency, len(rels)))
@@ -1126,7 +1126,7 @@ class NeptuneIndexer(GraphIndexer):
                 stats.add_success(len(id_batch))
             except NamespaceLeaseError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - reported as failed items
                 stats.add_error(str(e), len(id_batch), ids=list(id_batch))
                 logger.warning("Failed to delete ids batch: %s", e)
 
@@ -1168,7 +1168,7 @@ class NeptuneIndexer(GraphIndexer):
         items: list[Any],
         item_type_name: str,
         label_prefix: str,
-        traversal_builder_func: Callable,
+        traversal_builder_func: Callable[..., Any],
         *,
         clear_first: bool,
         suffixes: Collection[str] = (),
@@ -1413,7 +1413,7 @@ class NeptuneIndexer(GraphIndexer):
             stats.add_success(len(batch))
         except NamespaceLeaseError:
             raise
-        except Exception as batch_error:
+        except Exception as batch_error:  # noqa: BLE001 - retried per item below
             logger.warning(
                 "Batch %s failed (%s items), falling back to individual indexing: %s",
                 operation_name,
@@ -1432,7 +1432,7 @@ class NeptuneIndexer(GraphIndexer):
                     stats.add_success(1)
                 except NamespaceLeaseError:
                     raise
-                except Exception as item_error:
+                except Exception as item_error:  # noqa: BLE001 - failed items
                     item_id = getattr(item, "id", None)
                     stats.add_error(
                         str(item_error),
