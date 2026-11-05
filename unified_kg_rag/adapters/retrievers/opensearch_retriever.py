@@ -14,6 +14,7 @@ from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     current_query_scope,
+    entity_content,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.embedding_settings import (
@@ -1479,7 +1480,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         index_name = hit.get("_index", "")
         source_id = str(source.get("id", hit.get("_id", "")))
         section_type = self._determine_section_type(index_name)
-        content = self._extract_content(source)
+        # An entity reads as the graph walk renders it (one formatter for both
+        # stores: name first, then type and description).
+        content = (
+            entity_content(source, [])
+            if section_type is SectionType.ENTITY
+            else self._extract_content(source)
+        )
 
         # Defensive twin of the `_source` excludes in the request: a custom
         # client or a cluster that ignores excludes must still not leak vectors
@@ -1552,18 +1559,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         else:
             if name := source.get("name"):
                 content_parts.append(f"Title: {name}")
-                # An entity's type, as a relationship's and a claim's show
-                # theirs (graph expansion's `entity_content` too).
-                if (kind := source.get("type")) and isinstance(kind, str):
-                    content_parts.append(f"Type: {kind}")
             if summary := source.get("summary"):
                 content_parts.append(f"Summary: {summary}")
 
         if (text := source.get("text")) and not source.get(translated_key):
             content_parts.append(text)
 
+        # One newline inside a hit: the context separates hits with a blank
+        # line (TokenManager.build_context_string), and a relationship whose
+        # description sat a blank line below its endpoints read as two items.
         unique_parts = list(dict.fromkeys(content_parts))
-        return "\n\n".join(unique_parts).strip()
+        return "\n".join(unique_parts).strip()
 
     def _determine_section_type(self, index_name: str) -> SectionType:
         opensearch_config = self._opensearch_config

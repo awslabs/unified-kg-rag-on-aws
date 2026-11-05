@@ -473,9 +473,8 @@ class HybridScorer:
         both the graph stream and the vector stream rank must accumulate BOTH
         contributions. Keying on a hash of the RENDERED content defeated that,
         because the two stores render the same artifact differently — the graph
-        path builds "Entity: X / Description: ... / Path: ..."
-        (`NeptuneRetriever._build_content`) while the vector path builds
-        "Description: ... / Title: X" (`OpenSearchRetriever._extract_content`).
+        path appends the walk's "Path: ..." (`entity_content`) and its
+        description may be a store's newer copy than the vector index's.
         One entity present in both stores therefore produced two keys and never
         fused, so graph/vector agreement — the signal the hybrid retriever
         exists to exploit — was never rewarded.

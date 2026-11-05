@@ -954,3 +954,16 @@ class TestConcurrentCounting:
         mgr = _manager_with_counter(mocker, counter)
         assert mgr.count_tokens_many(["", "a b"]) == [0, 2]
         assert counter.calls == ["a b"]
+
+
+def test_context_items_are_separated_by_a_blank_line(mocker) -> None:
+    # Entity and relationship items span several lines and carry no "[id]"
+    # prefix; a single newline between them ran one into the next.
+    mgr = _make_manager(mocker)
+    results = [
+        _r("Entity: Vendor\nDescription: sells", 0.9, "entity", "e-1"),
+        _r("Entity: Buyer\nDescription: buys", 0.8, "entity", "e-2"),
+    ]
+    out = mgr.optimize_context(results, query="q", max_tokens=10000)
+    rendered = TokenManager.build_context_string(out)
+    assert "Description: sells\n\nEntity: Buyer" in rendered

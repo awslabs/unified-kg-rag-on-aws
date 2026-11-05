@@ -2089,7 +2089,15 @@ Deployment (CDK).
   performance log group, the storage stack's two Lambda log groups and the
   `INACTIVE` task-definition revisions) and the commands that delete them
   (#562).
-
+- An entity hit from the entities index reached the answer prompt as
+  `Description: ...`, a blank line, `Title: X`, a blank line, `Type: T`,
+  and the context joined items with one newline, so under `mix`, `hybrid`,
+  `simple`, `local` and `drift` the next entity's description read as this
+  one's title (relationships too: the description sat a blank line below
+  its endpoints, right above the next relationship). An entity hit renders
+  as the graph walk does (`Entity: X`, `Type: T`, `Description: ...`), a
+  hit's lines are no longer split by blank lines and the context separates
+  items with one (#PR).
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
   denial-of-service advisories through the PDF parser, for example

@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from unified_kg_rag.adapters.retrieval.base import query_scope
+from unified_kg_rag.adapters.retrieval.base import entity_content, query_scope
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
@@ -1168,8 +1168,7 @@ def test_parse_hit_basic(retriever) -> None:
     assert result.score == 1.5
     assert result.retriever_type == SectionType.ENTITY.value
     assert result.metadata["_search_index"] == "graphrag-entities-default-1"
-    assert "Title: Alice" in result.content
-    assert "Description: researcher" in result.content
+    assert result.content == "Entity: Alice\nDescription: researcher"
     assert "Type:" not in result.content  # none stored
 
 
@@ -1179,7 +1178,7 @@ def test_parse_hit_renders_the_entity_type(retriever) -> None:
     source = {"id": "e1", "name": "Alice", "type": "PERSON", "description": "d"}
     hit = {"_index": "graphrag-entities-default-1", "_id": "e1", "_source": source}
     content = retriever._parse_hit(hit).content
-    assert "Title: Alice\n\nType: PERSON" in content
+    assert content == "Entity: Alice\nType: PERSON\nDescription: d"
     relationship = {
         "id": "r1",
         "source_name": "Alice",
@@ -1908,3 +1907,21 @@ async def test_limits_dropped_during_their_read_leave_no_waiter_hanging(
     else:
         assert found == [retriever._configured_limits] * 2
     assert retriever._index_limits == {}
+
+
+def test_an_entity_hit_reads_as_the_graph_walk_renders_it(retriever) -> None:
+    # The vector store rendered "Description: ...\n\nTitle: X\n\nType: T"
+    # while the graph walk rendered "Entity: X\nType: T\nDescription: ...":
+    # in the context the next entity's name read as this one's.
+    source = {"id": "e1", "name": "Alice", "type": "PERSON", "description": "d"}
+    hit = {"_index": "graphrag-entities-default-1", "_id": "e1", "_source": source}
+    assert retriever._parse_hit(hit).content == entity_content(source, [])
+
+
+def test_a_relationship_hit_has_no_blank_line_inside(retriever) -> None:
+    # Hits are separated by a blank line in the context, so one inside a hit
+    # read as the boundary between two.
+    content = retriever._extract_content(
+        {"source_name": "a", "target_name": "b", "type": "T", "description": "d"}
+    )
+    assert content == "Relationship: a -[T]-> b\nDescription: d"
