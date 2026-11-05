@@ -234,6 +234,33 @@ def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
     assert set(merged_entities[0].text_unit_ids) == {"t1", "t2"}
 
 
+def test_fuzzy_cross_run_merge_fails_loudly_when_names_cannot_be_read(
+    mocker,
+) -> None:
+    # A failed name projection must fail the run: merging without the stored
+    # names would leave near-duplicates a full build collapses.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.shared import AWSServiceError
+
+    neptune_indexer = mocker.MagicMock()
+    neptune_indexer.read_entity_names.side_effect = AWSServiceError("neptune down")
+    config = Config()
+    config.processing.fuzzy_entity_resolution = True
+    mgr = IndexingManager(
+        config=config,
+        vector_indexer=mocker.MagicMock(),
+        graph_indexer=neptune_indexer,
+    )
+
+    with pytest.raises(AWSServiceError, match="neptune down"):
+        mgr.merge_with_existing_graph(
+            [Entity(id="e_new", name="Acme Corporatio", text_unit_ids=["t2"])],
+            None,
+        )
+    neptune_indexer.read_entities.assert_not_called()
+
+
 def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
     # Entity and relationship ids are suffix-independent: "Vendor" has the same
     # id in every tenant. Each tenant's delta must merge with that tenant's

@@ -1727,6 +1727,13 @@ Ingestion and incremental indexing.
 - A request OpenSearch rejects (a 400) is logged without the client's
   traceback, so the refusal of `vector_mode` on OpenSearch 2.13 shows the
   message that names the fix (#534).
+- With `processing.fuzzy_entity_resolution` on, a graph store read of the
+  stored entity names that failed (Neptune, the SQLite graph) returned no
+  names: the incremental run merged its delta without the fuzzy cross-run
+  merge and stored near-duplicates a full build merges, logging only a
+  WARNING. The read raises now (`AWSServiceError` on Neptune, the store's
+  error on SQLite), as every other graph read does, and the run fails before
+  it writes (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
