@@ -120,7 +120,12 @@ strategies, or `--repeats`) saves every run's files and adds
   that its own strategy scores on some query, so failing cannot help a
   strategy, and a metric it never produces (`global` reports no entities,
   so no `retrieved_entity_coverage`) is not invented as a loss; a strategy
-  that scored nothing is filled on every metric. The rule reads the data, so
+  that scored nothing is filled on every metric. A score the evaluator
+  tried and could not compute (a failed or NaN judge call) is not filled:
+  `strategies.<s>.failed_metrics` counts them per metric over every repeat,
+  the query is `unpaired` for that metric, a warning names a metric whose
+  counts differ between strategies, and the Markdown and console tables
+  print each delta's pairs and unpaired queries. The rule reads the data, so
   a metric that only the failed query could score (one item with
   `expected_relationships`, say) is not filled either
   (`failed_answers` / `failed_queries`;
@@ -245,7 +250,16 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   `latency/*`) that some answers of the strategy or of its baseline have no
   value of, or when the strategy and its baseline failed different numbers
   of answers (each counts with what it spent before failing, so the delta
-  compares the failures too). The result is in `comparison.gates` and the
+  compares the failures too). A metric gate also fails when the metric
+  could not be scored on different numbers of the two sides' answers
+  (`strategies.<s>.failed_metrics`): those queries are unpaired, so a judge
+  that fails exactly where a strategy would lose would hide the loss. Any
+  gate fails on a delta over fewer than 10 paired queries
+  (`gates.MIN_GATE_PAIRS`; one pair gives a zero-width interval, five wins
+  of five an interval that excludes 0 at a sign-test p of 0.06). Each gate
+  on each strategy is its own test, so k strategies and m gates multiply
+  the chance of a breach on noise ([Gates](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
+  The result is in `comparison.gates` and the
   JSON `gate_failures`. It needs a comparison: two strategies, or
   `--baseline-results`.
 

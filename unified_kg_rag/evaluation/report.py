@@ -47,12 +47,19 @@ def _cell(text: Any) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def _delta(delta: Mapping[str, Any] | None) -> str:
+def delta_cell(delta: Mapping[str, Any] | None) -> str:
+    """A paired delta as ``mean [ci_low, ci_high] (pairs, unpaired)``; the
+    counts show how many queries the interval rests on and how many one
+    side did not score (skipped, or failed to score)."""
     if not delta:
         return "-"
+    counts = f"{delta['pairs']} pairs" if "pairs" in delta else ""
+    if delta.get("unpaired"):
+        counts += f", {delta['unpaired']} unpaired"
     return (
         f"{delta['mean_delta']:+.3f} "
         f"[{delta['ci_low']:+.3f}, {delta['ci_high']:+.3f}]"
+        + (f" ({counts})" if counts else "")
     )
 
 
@@ -125,7 +132,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
             stats = strategies[strategy]["metrics"].get(key)
             row.append(f"{stats['mean']:.3f}" if stats else "-")
         for strategy in others:
-            row.append(_delta(comparison["deltas_vs_baseline"][strategy].get(key)))
+            row.append(delta_cell(comparison["deltas_vs_baseline"][strategy].get(key)))
         rows.append(row)
     header = [
         "Metric",
@@ -177,7 +184,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                     [
                         f"`{measure}`",
                         *(
-                            _delta(cost["deltas_vs_baseline"][s].get(measure))
+                            delta_cell(cost["deltas_vs_baseline"][s].get(measure))
                             for s in others
                         ),
                     ]

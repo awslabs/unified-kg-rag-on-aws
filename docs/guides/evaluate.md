@@ -133,7 +133,9 @@ How to read it:
   a 95% paired bootstrap interval (`ci_low`/`ci_high`) and
   `wins`/`ties`/`losses`, each query averaged over its repeats first. A
   failed answer scores 0 where the other side scored, so failing cannot
-  help a strategy.
+  help a strategy. The tables print each delta's `pairs` and `unpaired`
+  queries: a judge that could not score a query leaves it unpaired, and
+  different counts per strategy are warned about.
 - **When a difference counts.** A difference is supported when its interval
   excludes 0; a 10-point difference on binary metrics is detected in 15% of
   runs with 50 queries and 59% with 200, so compare on a few hundred
@@ -225,8 +227,16 @@ run-eval --data-path eval.json --search-strategy local \
 - **Gates.** `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1
   when a compared strategy's paired delta meets the condition;
   `ci_high<-0.02` fails only on a regression the query sample supports. A
-  strategy with no delta of the measure fails too. It needs two strategies
-  or `--baseline-results`.
+  strategy with no delta of the measure fails too, and so does a delta over
+  fewer than 10 paired queries (one pair gives a zero-width interval), or a
+  metric the judge failed to score on different numbers of the two sides'
+  answers (`strategies.<s>.failed_metrics`; those queries are unpaired). It
+  needs two strategies or `--baseline-results`.
+- **How many gates.** Each gate on each compared strategy is its own test:
+  a `ci_high<0` gate breaches on noise alone in about 2.5% of runs, so with
+  k compared strategies and m such gates a clean change fails up to
+  k × m × 2.5% of the time (3 strategies × 4 gates: up to 30%). Gate a few
+  measures chosen in advance, with a margin (`ci_high<-0.02`, not `<0`).
 
 The full rules (what each warning compares, when a cost gate fails):
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules).

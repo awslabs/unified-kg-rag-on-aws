@@ -32,12 +32,14 @@ from unified_kg_rag.domain.models.config import (
     JUDGE_MODEL_ID,
     ModelPrice,
 )
+from unified_kg_rag.evaluation import gates as gates_module
 from unified_kg_rag.evaluation.comparison import (
     answer_cost_usd,
     cost_comparison,
     paired_comparison,
 )
 from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
+from unified_kg_rag.evaluation.report import comparison_markdown
 from unified_kg_rag.evaluation.saved_results import load_saved_runs
 
 pytestmark = pytest.mark.unit
@@ -91,6 +93,12 @@ def _run(
         for i, qid in enumerate(scores)
     ]
     return reports, results
+
+
+@pytest.fixture
+def small_gates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gates read the 4-query fixtures below (a gate needs 10 pairs)."""
+    monkeypatch.setattr(gates_module, "MIN_GATE_PAIRS", 1)
 
 
 _BASE = {"q1": 0.8, "q2": 0.6, "q3": 0.9, "q4": 0.5}
@@ -210,7 +218,9 @@ class TestGates:
             with pytest.raises(ValueError):
                 parse_gate(bad)
 
-    def test_a_supported_regression_breaches_and_missing_data_fails(self) -> None:
+    def test_a_supported_regression_breaches_and_missing_data_fails(
+        self, small_gates: None
+    ) -> None:
         comparison = paired_comparison(
             {
                 "local": [_run(_BASE, "local")],
@@ -229,6 +239,110 @@ class TestGates:
             gate_breaches(comparison, [parse_gate("answer_match/token_f1:ci_low>0")])
             == []
         )
+
+    def test_a_delta_over_too_few_pairs_fails_every_gate(self) -> None:
+        # One pair gives a zero-width interval at its own delta, so
+        # ci_high<-0.02 passed silently on a single improved query.
+        one = paired_comparison(
+            {
+                "local": [_run({"q1": 0.5}, "local")],
+                "mix": [_run({"q1": 0.9}, "mix")],
+            }
+        )
+        delta = one["deltas_vs_baseline"]["mix"]["answer_match/token_f1"]
+        assert delta["ci_low"] == delta["ci_high"]
+        gates = [
+            parse_gate("answer_match/token_f1:ci_high<-0.02"),
+            parse_gate("usage/total_tokens:mean_delta>500"),
+        ]
+        breaches = gate_breaches(one, gates)
+        assert len(breaches) == 2
+        assert "pairs 1 queries, fewer than the 10 a gate needs" in breaches[0]
+        assert "'usage/total_tokens' delta pairs 1 queries" in breaches[1]
+        ten = {f"q{i}": 0.5 for i in range(10)}
+        enough = paired_comparison(
+            {"local": [_run(ten, "local")], "mix": [_run(ten, "mix")]}
+        )
+        assert gate_breaches(enough, gates) == []
+
+
+def _judged(
+    scores: dict[str, float | None],
+) -> tuple[list[EvaluationReport], list[EvaluationResult]]:
+    """One ragas run; a ``None`` score is a judge that failed on the query."""
+    reports = [
+        EvaluationReport(
+            query_id=qid,
+            evaluator_type=EvaluatorType.RAGAS,
+            metrics=(
+                []
+                if value is None
+                else [
+                    EvaluationMetric(
+                        metric_type=EvaluationMetricType.FAITHFULNESS, value=value
+                    )
+                ]
+            ),
+            metadata=(
+                {"failed_metrics": {"faithfulness": "uncomputable (NaN)"}}
+                if value is None
+                else {}
+            ),
+        )
+        for qid, value in scores.items()
+    ]
+    results = [
+        EvaluationResult(
+            query_id=qid, question="?", generated_answer="a", ground_truth="g"
+        )
+        for qid in scores
+    ]
+    return reports, results
+
+
+class TestFailedScores:
+    """A judge failure leaves the query out of the metric's delta."""
+
+    def _comparison(self) -> dict[str, Any]:
+        queries = [f"q{i}" for i in range(12)]
+        # The judge fails on the four queries where mix would score 0.0.
+        candidate = {q: (None if i < 4 else 0.7) for i, q in enumerate(queries)}
+        return paired_comparison(
+            {
+                "local": [_judged(dict.fromkeys(queries, 0.6))],
+                "mix": [_judged(candidate)],
+            }
+        )
+
+    def test_counted_warned_and_fail_the_metric_gates(self) -> None:
+        comparison = self._comparison()
+        assert comparison["strategies"]["mix"]["failed_metrics"] == {
+            "ragas/faithfulness": 4
+        }
+        assert comparison["strategies"]["local"]["failed_metrics"] == {}
+        delta = comparison["deltas_vs_baseline"]["mix"]["ragas/faithfulness"]
+        assert (delta["pairs"], delta["unpaired"]) == (8, 4)
+        (warning,) = comparison["warnings"]
+        assert warning.startswith(
+            "ragas/faithfulness could not be scored on different numbers of "
+            "answers (local 0, mix 4)"
+        )
+        # Before, both gates passed on the 8 queries the judge scored.
+        for condition in (
+            "ragas/faithfulness:ci_high<0",
+            "ragas/faithfulness:mean_delta<0",
+        ):
+            (breach,) = gate_breaches(comparison, [parse_gate(condition)])
+            assert "could not be scored on different numbers" in breach
+        # A cost gate does not read the metric's failures.
+        (cost,) = gate_breaches(
+            comparison, [parse_gate("latency/response_time_seconds:mean_delta>1")]
+        )
+        assert "could not be scored" not in cost
+
+    def test_the_tables_show_pairs_and_unpaired(self) -> None:
+        text = comparison_markdown(self._comparison())
+        assert "+0.100 [+0.100, +0.100] (8 pairs, 4 unpaired)" in text
 
 
 # --- run-eval --from-results / --baseline-results ------------------------------
@@ -361,7 +475,9 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
     assert "## Cost per query (mean / p50 / p95)" in text
 
 
-def test_a_regression_gate_exits_1_and_a_clean_run_passes(tmp_path: Path) -> None:
+def test_a_regression_gate_exits_1_and_a_clean_run_passes(
+    tmp_path: Path, small_gates: None
+) -> None:
     regressed, clean = tmp_path / "regressed", tmp_path / "clean"
     _saved_comparison(regressed, _WORSE)
     _saved_comparison(clean, _BASE)
@@ -636,7 +752,9 @@ def _saved_strategies(
             path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def test_baseline_results_pair_each_strategy_with_its_own(tmp_path: Path) -> None:
+def test_baseline_results_pair_each_strategy_with_its_own(
+    tmp_path: Path, small_gates: None
+) -> None:
     # Before, every strategy was compared with the baseline's first one, so
     # a regression of mix against the earlier mix passed the gate.
     earlier, later = tmp_path / "earlier", tmp_path / "later"
@@ -723,7 +841,7 @@ class TestFailedAnswersInCost:
         assert "mix 1/4" in warning
 
     def test_answers_without_measures_are_warned_and_fail_the_cost_gates(
-        self,
+        self, small_gates: None
     ) -> None:
         # A failed answer saved before failed answers kept their measures.
         unmeasured = _failing_run(_BASE, "mix", {"q1": (None, None)})
@@ -744,7 +862,9 @@ class TestFailedAnswersInCost:
         )
         assert "'latency/response_time_seconds'" in breaches[1]
 
-    def test_failed_answers_that_differ_fail_the_cost_gates(self) -> None:
+    def test_failed_answers_that_differ_fail_the_cost_gates(
+        self, small_gates: None
+    ) -> None:
         # A failed answer counts with what it spent before failing: a cost
         # delta between strategies that failed different numbers of answers
         # compares the failures too (a fast failure looks cheap).

@@ -1401,6 +1401,17 @@ From 0.2.3 (or a `main` checkout since):
   detection skipped…", "No communities provided for report generation"). A
   full build, or a delta whose documents state no entity, still warns
   (#545).
+- A comparison counts the scores an evaluator could not compute (a failed
+  or NaN judge call) per strategy and metric
+  (`strategies.<s>.failed_metrics`), warns when the counts differ, and a
+  `--fail-if` on such a metric fails: the query was only left out of the
+  delta, so a judge that failed on the 4 queries a strategy lost showed
+  +0.10 [+0.10, +0.10] over the other 6 and passed the gate. The Markdown
+  and console tables print each delta's pairs and unpaired queries (#PR).
+- A `run-eval --fail-if` fails on a delta over fewer than 10 paired queries
+  (`gates.MIN_GATE_PAIRS`): one pair gave a zero-width interval, so
+  `ci_high<-0.02` passed on one improved query. The evaluation guide says
+  how the false-breach chance grows with strategies × gates (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

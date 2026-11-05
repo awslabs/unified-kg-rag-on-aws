@@ -88,6 +88,7 @@ from unified_kg_rag.evaluation.report import (
     compared_pairs,
     comparison_csv,
     comparison_markdown,
+    delta_cell,
 )
 from unified_kg_rag.evaluation.saved_results import (
     SavedRun,
@@ -657,12 +658,8 @@ class EvaluationRunner:
                 stats = strategies[strategy]["metrics"].get(key)
                 row.append(f"{stats['mean']:.3f}" if stats else "-")
             for strategy in pairs:
-                delta = comparison["deltas_vs_baseline"][strategy].get(key)
                 row.append(
-                    f"{delta['mean_delta']:+.3f} "
-                    f"[{delta['ci_low']:+.3f}, {delta['ci_high']:+.3f}]"
-                    if delta
-                    else "-"
+                    delta_cell(comparison["deltas_vs_baseline"][strategy].get(key))
                 )
             table.add_row(*row)
         console.print(table)
