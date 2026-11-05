@@ -656,6 +656,12 @@ From 0.2.3 (or a `main` checkout since):
       first build's extraction and gleaning; later resets reuse the new
       records. An incremental run keeps the stored documents' records and
       uses the new prompt for new and changed documents only.
+    - The `intelligent` chunker: a pre-chunk of one line was cut as the
+      model's answer left it (whole, or by size after an answer naming
+      lines that do not exist); it is kept whole up to `max_chunk_size`
+      and cut by size over it now, with no call. A reset re-chunks a
+      document holding one and extracts its text units again where the
+      pieces differ; pre-chunks of several lines are unchanged.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1831,6 +1837,14 @@ Ingestion and incremental indexing.
   `<confidence>` and `<strength>` on extraction's scales, which the
   gleaner already read; a score left out takes extraction's default
   (*Upgrading*) (#PR).
+- The `intelligent` chunker asked the model for the boundaries of a
+  pre-chunk of one line (text without line breaks, common in extracted
+  PDF and CJK text), which has no line to cut at: the call answered no cut
+  or lines that do not exist, and the second case counted as a failed call
+  in `llm_processing_failures` (a 40,000-character line: one call, one
+  "failure", ten size-split chunks). Such a pre-chunk is now split by size
+  without a call, counted in `fallback_chunks_used` only, so
+  `llm_failure_rate` counts failed calls (*Upgrading*) (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
