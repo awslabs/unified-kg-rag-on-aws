@@ -582,6 +582,60 @@ def test_an_in_schema_false_is_written_as_false(harness: StoreHarness) -> None:
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_cleared_annotation_filters_as_one_never_written(
+    harness: StoreHarness,
+) -> None:
+    # Re-annotation clears an annotation with null (an in-place update that
+    # left the field out would keep the old value): a filter treats the
+    # cleared copy as one written without the field, as a full build writes.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    indexer = harness.vector_indexer
+    entities = _entities()
+    entities[1] = entities[1].model_copy(update={"in_schema": True})
+    entities[2] = entities[2].model_copy(update={"in_schema": False})
+    _write(harness, "entities", "upsert", entities)
+    indexer.write_schema_annotations(
+        "entities", {"e-buyer": (None, None), "e-depot": (None, None)}
+    )
+    assert harness.vector_retriever is not None
+    prefix = harness.config.indexing.opensearch.entities_index_prefix
+
+    async def matching(filters: dict[str, Any]) -> set[str]:
+        retriever = harness.vector_retriever()
+        try:
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=10,
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefix],
+                    filters=filters,
+                    source_fields=[],
+                )
+            )
+        finally:
+            await retriever.aclose()
+        return {str(hit.source) for hit in hits}
+
+    assert asyncio.run(matching({"in_schema": True})) == set()
+    assert asyncio.run(matching({"in_schema": False})) == set()
+    assert asyncio.run(matching({"type": ["ORG", "LOCATION"]})) == {
+        "e-vendor",
+        "e-buyer",
+        "e-depot",
+    }
+    copies = indexer.read_vector_copies("entities", ["e-vendor", "e-buyer"])
+    assert copies["e-buyer"].get("in_schema") is None
+    assert {k: v for k, v in copies["e-buyer"].items() if v is not None}.keys() == {
+        k for k, v in copies["e-vendor"].items() if v is not None
+    }
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_schema_annotations_are_read_past_one_search_window(
     harness: StoreHarness,
 ) -> None:
