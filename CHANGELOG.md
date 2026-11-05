@@ -95,7 +95,7 @@ Python and installation.
     `from unified_kg_rag import BaseRenderer, register_renderer` work on a
     core install. `umap-learn` and `scikit-learn` are no longer
     dependencies, and neither are `bokeh` and what only it pulled in
-    (`contourpy`, `tornado`, `xyzservices`) (#PR).
+    (`contourpy`, `tornado`, `xyzservices`) (#576).
   - The security floors follow the packages that pull the pinned package in:
     `pillow` in `eval`, `llvmlite` in `unstructured`, `langchain-openai` in
     `eval` and `local`.
@@ -105,7 +105,7 @@ Python and installation.
   `centrality_comparison.html`, `community_size_distribution.html`, names
   unchanged) as self-contained HTML pages with an inline SVG instead of
   Bokeh documents: no script, a tooltip on every bar, no pan or zoom. A
-  tool that read the Bokeh JSON embedded in them finds none (#PR).
+  tool that read the Bokeh JSON embedded in them finds none (#576).
 
 Configuration loading.
 - Unknown config keys, in the file or as `UKR__` environment variables, are
@@ -333,7 +333,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
 | `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#533) |
 | `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#533) |
-| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#PR) |
+| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#576) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
 | `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
@@ -737,11 +737,11 @@ From 0.2.3 (or a `main` checkout since):
     `--fail-if langchain/...` gate fails for want of the measure. To keep
     it, list every evaluator you want, e.g. `enabled_evaluators: [langchain,
     ragas, answer_match, retrieval, graph_aware]`; leaving it out saves its
-    two judge calls per query (#PR).
+    two judge calls per query (#576).
 18. `run-visualization --renderers static` no longer needs the `viz`
     extra, which no longer installs Bokeh: re-render the static charts to
     get the SVG pages (nothing stored changes). A script that imported
-    `bokeh` through the extra installs it itself (#PR).
+    `bokeh` through the extra installs it itself (#576).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1997,7 +1997,7 @@ Evaluation, visualization and tuning.
   #230).
 - The static charts' logarithmic histograms (`static.log_scale_x`) count
   the largest values: the last bin's edge could round below them, which left
-  the highest-degree node out of the degree distribution (#PR).
+  the highest-degree node out of the degree distribution (#576).
 - `run-visualization` rejects unknown `--renderers` and invalid data with
   exit 2 (#255, #353) and lays out only the drawn nodes (#246); physics
   stays off when `interactive` omits it (#292).
