@@ -227,6 +227,16 @@ def _one_line_correction() -> str:
     return f"{first}{outputs.CORRECTION_LINE}\n\n{final.strip().replace(chr(10), '')}"
 
 
+def _one_line_entities(*names: str) -> str:
+    """An ``<entities>`` section on one line, one record per name."""
+    records = "".join(
+        f"<entity><name>{name}</name><type>ORGANIZATION</type>"
+        f"<description>{name} trades.</description></entity>"
+        for name in names
+    )
+    return f"<entities>{records}</entities>"
+
+
 class TestXMLSectionDetection:
     def test_a_summary_inside_an_unwrapped_finding_is_not_the_report_summary(
         self,
@@ -269,6 +279,33 @@ class TestXMLSectionDetection:
         result = _checked(_extraction_parser().parse(text))
         assert _types(result) == outputs.FINAL_RELATIONSHIP_TYPES
         assert len(ensure_list(result["entities"], inner_key="entity")) == 4
+
+    @pytest.mark.parametrize("both", [True, False])
+    def test_a_correction_after_prose_on_the_same_line_keeps_the_final_answer(
+        self, both: bool
+    ) -> None:
+        # As a correction on its own line does: the repeated sections keep
+        # their last occurrence, not a list of the two answers.
+        first = _one_line_entities("Vendor Corp", "Buyer Ltd")
+        final = _one_line_entities("Vendor Corp", "Depot Inc")
+        rels = "<relationships></relationships>"
+        text = f"{first}{rels if both else ''} Sorry, correction: {final}{rels}"
+        parser = _extraction_parser()
+        assert parser.final_answer(text) == f"{final}\n{rels}"
+        names = [
+            e["name"]
+            for e in ensure_list(parser.parse(text)["entities"], inner_key="entity")
+        ]
+        assert names == ["Vendor Corp", "Depot Inc"]
+
+    def test_a_mid_line_section_tag_no_end_tag_follows_is_prose(self) -> None:
+        # Prose naming a section already written, after the answer, on its
+        # line: not a second (cut-off) occurrence.
+        text = (
+            f"{_one_line_entities('Vendor Corp')}<relationships></relationships>"
+            " The <entities> above are all of them."
+        )
+        assert _extraction_parser().final_answer(text) == text
 
     def test_a_section_tag_mid_line_in_its_own_section_is_content(self) -> None:
         # Not a new <entities> occurrence that would cut the answer short.

@@ -792,9 +792,11 @@ class RobustXMLOutputParser(XMLOutputParser):
         closed, or its last one when none is. A section written once is kept
         as it is, as is a response that repeats none (returned unchanged): a
         single answer cut off is still parsed, and flagged, as before. Only
-        sections opened at the start of a line count, so prose naming a tag
-        ("the <relationships> above") does not, and only top-level ones, so
-        a ``<summary>`` inside ``<findings>`` is not a second ``<summary>``.
+        sections opened at the start of a line count (or written in full
+        again after prose on the line of a closed one: a correction), so
+        prose naming a tag ("the <relationships> above") does not, and only
+        top-level ones, so a ``<summary>`` inside ``<findings>`` is not a
+        second ``<summary>``.
         """
         sections = self._top_level_sections(text)
         counts = Counter(section.tag for section in sections)
@@ -846,7 +848,9 @@ class RobustXMLOutputParser(XMLOutputParser):
         sections never nest in one of their own name.
 
         A section starts at the start of a line or right after a closed one
-        (whitespace between them only, as a one-line answer writes them). An
+        (whitespace between them only, as a one-line answer writes them), or
+        mid-line when it repeats a closed one in full (a correction after
+        prose: ``_repeats_closed_section``). An
         expected tag inside another element (``<summary>`` in a ``<finding>``
         written without its ``<findings>``) is not top-level; an element that
         holds expected sections only (an ``<output>`` wrapper) does not hide
@@ -891,6 +895,7 @@ class RobustXMLOutputParser(XMLOutputParser):
                     after_section >= 0
                     and not text[after_section : match.start()].strip()
                 )
+                or self._repeats_closed_section(text, match, sections)
             ):
                 continue
             if stack:
@@ -904,6 +909,22 @@ class RobustXMLOutputParser(XMLOutputParser):
         if stack:
             sections.append(_Section(stack[0], start, len(text), False))
         return sections
+
+    @staticmethod
+    def _repeats_closed_section(
+        text: str, match: re.Match[str], sections: list[_Section]
+    ) -> bool:
+        """Whether a mid-line opening tag starts a section again: one already
+        closed at the top level, written in full again (self-closing, or an
+        end tag of its name follows), as a model correcting itself after
+        prose on the same line ("... Sorry, correction: <entities>") does.
+        Prose naming a section ("the <entities> above") writes no end tag."""
+        name = match.group(2)
+        if not any(section.closed and section.tag == name for section in sections):
+            return False
+        return match.group(3).rstrip().endswith("/") or bool(
+            re.compile(rf"</{re.escape(name)}\s*>").search(text, match.end())
+        )
 
     def _detect_xml_sections(self, text: str) -> set[str]:
         """The sections of ``text`` a parse result must keep to be accepted.

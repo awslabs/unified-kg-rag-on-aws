@@ -1563,7 +1563,13 @@ Ingestion and incremental indexing.
   `<relationships>`: they were dropped for the superseded ones. An expected
   tag inside another element is not a section, so a community report whose
   `<finding>`s lack their `<findings>` keeps its own `<summary>`, not the
-  last finding's (#536).
+  last finding's (#536). A correction after prose on the same line
+  ("... Sorry, correction: <entities>...") counts too when it writes a
+  section already closed in full again: each section parsed as a list of
+  the two answers, which graph extraction failed as malformed output
+  ("none of the 2 entities ... has a name") and retried. Prose naming a
+  section ("the <entities> above") writes no end tag and still does not
+  (#560).
 - Strict `parse_llm_json` (LightRAG keywords, prompt tuning, the pairwise
   judge) raises when the last object is cut off instead of returning an
   earlier one (the answer being corrected, or an example), and prefers the
