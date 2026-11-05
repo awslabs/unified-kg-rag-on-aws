@@ -74,6 +74,7 @@ ships no price table, because one would go stale.
 | `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
+| `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 
 ## Answer style
@@ -167,6 +168,27 @@ On the 200 MuSiQue questions:
 
 No change was significantly better on the answers, so both defaults stayed
 ([Search strategies](./retrieval.md#search-strategies--when-to-use-which)).
+
+## Retrieval switches
+
+A later run (2026-11-05) on the same index, models and 200 MuSiQue
+questions, two repeats each, compared five retrieval switches against the
+defaults. "Supporting paragraphs" is the share of each question's MuSiQue
+supporting paragraphs among the text chunks of the answer context, and
+latencies are the answer call's alone.
+
+| Change | Answers | Retrieval | Latency and cost |
+|---|---|---|---|
+| `local`: no `entity_frequency_threshold` cut instead of 20 | `answer_contains` -1.5 points [-3.0, 0.0], borderline; EM and F1 n.s. | recall@5 -1.75 [-3.12, -0.50] and supporting paragraphs -2.42 [-3.96, -1.04], both significant | +3.08 s (significant), +370 input tokens |
+| LightRAG: no per-side cut of the knowledge-graph chunks before the rerank | n.s. on `mix` and `hybrid` | `hybrid` supporting paragraphs +1.87 [+0.12, +3.71], significant; `mix` n.s. | `hybrid` +0.82 s (significant), +195 input tokens |
+| LightRAG: chunks picked from upstream's merged, token-truncated entity and relationship lists | n.s. on `mix` and `hybrid` | n.s. | +0.48 s `hybrid`, +0.32 s `mix` (both significant) |
+| Relationships embedded as upstream LightRAG does (source, target and description) instead of the description (`hybrid`, one repeat) | n.s. | n.s. | +0.24 s; a re-embedding of every relationship |
+| `search.token_manager.type_budgets.relationship` 0.27 instead of 0.13 | Not measurable: the shares never bound on MuSiQue, so both arms read the same context | — | — |
+
+None was better on the answers, so every default stayed: the frequency cut
+for its retrieval and latency, the others for their latency or re-embedding
+cost. The context shares need a corpus whose contexts fill their budget to
+be measured.
 
 ## Local report selection
 

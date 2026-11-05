@@ -3587,8 +3587,10 @@ class LocalSearchConfig(BaseModel):
         default="similarity",
         description=(
             "How local search (and each DRIFT follow-up) picks its community "
-            "reports. 'membership' (MS GraphRAG local): the reports of the "
-            "level-0 communities the graph-expanded entities belong to, most "
+            "reports. 'membership' (MS GraphRAG local's, on leaf communities "
+            "where upstream takes each entity's community at its "
+            "community_level cut): the reports of the level-0 (leaf) "
+            "communities the graph-expanded entities belong to, most "
             "matched entities first, then by report rank; when no expanded "
             "entity names a community (under a document filter, whose walk "
             "reads the entities index, or when graph expansion failed), or "

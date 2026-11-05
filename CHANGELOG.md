@@ -1346,6 +1346,14 @@ From 0.2.3 (or a `main` checkout since):
   bundled SDK, the behaviour synth warned it defaulted to (#566).
 - Docs: with `bedrock_model_arns`, list the reranking model too: the
   Rerank API also checks `bedrock:InvokeModel` on it (#566).
+- Docs: the rerank error codes and their causes: a missing
+  `bedrock:InvokeModel` grant on the rerank model fails as a
+  `ValidationException`, a region without the model as an
+  `AccessDeniedException` (troubleshooting, `bedrock_model_arns`) (#PR).
+- Docs: *Defaults and evidence* has the 2026-11-05 retrieval A/B
+  (`entity_frequency_threshold`, three LightRAG chunk and embedding
+  switches, the relationship context share), and the `report_selection`
+  description says `membership` reads leaf communities (#PR).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
