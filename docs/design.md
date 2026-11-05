@@ -509,8 +509,14 @@ gets its models and stores from the run's `Providers` bundle.
   are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
   "가나다연구소" stay apart). A type-aware union-find never groups two
-  differently typed names; the incremental merge uses the same matcher, so
-  full and incremental builds group the same names.
+  differently typed names. Without fuzzy matching, full and incremental
+  builds group the same names (both merge by compact name key). With it, the
+  incremental merge uses the same matcher but folds each delta entity into
+  its one best-matching stored entity and does not join stored entities with
+  each other: a delta name that links two stored names a full build chains
+  into one group ("Northfield Medical Centre" between "... Center" and
+  "... Centre Annex") merges with one of them only, until
+  `indexing.reset: true` regroups the corpus.
 - **Schema annotations are written, not extracted.** `IndexingManager`
   sets `in_schema` and `type_iri` on each entity and `in_schema` and
   `predicate_iri` on each relationship it writes, on every write path (full

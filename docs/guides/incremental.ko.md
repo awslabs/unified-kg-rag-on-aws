@@ -274,3 +274,7 @@ SQLite 레지스트리에는 이 한도가 없습니다.
 문서와 공유하는 엔티티는 그 문서들의 설명과 청크 계보를 유지하고, 바뀌거나 삭제된 문서가
 공유하던 항목은 남은 청크에서 다시 도출됩니다. 규칙은
 [설계 §5.4](../design.md#54-identity-derived-content-and-merge-rules)(영문)에 있습니다.
+`processing.fuzzy_entity_resolution`을 켜면 델타 엔티티는 가장 비슷한 저장된 엔티티 하나에만
+병합되고, 새 이름이 저장된 두 엔티티와 모두 비슷해도 두 엔티티는 따로 남습니다. 전체 빌드는 이
+셋을 한 그룹으로 묶습니다([설계 §4.2](../design.md#42-graph-identity-and-merging-stages-5-7), 영문).
+코퍼스를 다시 묶으려면 `indexing.reset: true`로 실행합니다.

@@ -1758,6 +1758,12 @@ Ingestion and incremental indexing.
   the delta derives again to the commit, and the commit summarizes an item
   the removal derived again from its lines, as a full build does
   (*Upgrading*) (#PR).
+- The design notes said full and incremental builds group the same names
+  with fuzzy matching on. Without it they do (both merge by compact name
+  key); with it, an incremental run folds a delta entity into its one best
+  stored match and never joins two stored entities, so a new name similar
+  to two stored ones merges with one of them only until a reset. The
+  design notes and the incremental guide say so now (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
