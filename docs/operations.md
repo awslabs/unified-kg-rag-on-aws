@@ -747,7 +747,10 @@ deployed stack:
    deploy's other `-c` flags
    ([`iac/README.md`](../iac/README.md#2-build-and-push-the-app-image)).
    Deploy every stack, not one: a new tag replaces both task definitions,
-   and the state machine runs the ingestion revision of its own deploy. When
+   and the state machine runs the ingestion revision of its own deploy.
+   Deploy only with no `RUNNING` execution (step 2): the deploy deregisters
+   the revision a running execution is pinned to, so a retried RunTask in
+   that execution (a Spot interruption, a start failure) cannot start. When
    the notes ask for one stack first (`cdk deploy <stack> --exclusively`),
    deploy it before `--all`.
    A role with a custom IAM policy needs the permissions the notes list.
