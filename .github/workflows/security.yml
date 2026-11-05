@@ -1,10 +1,16 @@
 name: security
 
-# Automated Security Helper (ASH) scan. Reports only, never blocks.
+# Automated Security Helper (ASH) scan: bandit, semgrep, detect-secrets,
+# checkov, cdk-nag and npm-audit. A gate: an unsuppressed finding at MEDIUM or
+# above fails the job. The threshold, the path-scoped suppressions (each with
+# its reason) and the scanners left out are in .ash/.ash.yaml; a suppression
+# about one statement sits on that line (`# nosec`, `# nosemgrep`,
+# `# pragma: allowlist secret`).
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 # The scan only reads the checkout and uploads its reports as a workflow
@@ -12,11 +18,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: security-${{ github.ref }}
+  # Supersede stale PR runs only, as quality.yml does.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ash-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -28,14 +38,17 @@ jobs:
 
       - name: Run ASH
         # Pinned to the commit of tag v3.1.2: a tag can be moved, a SHA cannot.
+        # Exits non-zero on an actionable finding (fail_on_findings in
+        # .ash/.ash.yaml). semgrep runs the registry's `auto` rules, so a rule
+        # published upstream can fail a run whose diff did not change: triage
+        # it like any finding (fix, or suppress with the reason).
         run: >-
           uvx git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780
-          --source-dir . --no-fail-on-findings
+          --source-dir .
 
       - name: Findings in the job summary
         # ASH's own Markdown summary: the findings per scanner and severity,
-        # and the files with the most. Still reports only (the job never
-        # fails on findings).
+        # and the files with the most. Written when the scan fails too.
         if: always()
         run: |
           summary=.ash/ash_output/reports/ash.summary.md

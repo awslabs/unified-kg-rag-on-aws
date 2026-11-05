@@ -211,8 +211,10 @@ cdk.context.json
 # Local backups of gitignored configs (may carry real endpoints / account ids)
 *.bak
 
-# Security-scan output (ASH) — local artifacts, not for the published repo
-.ash/
+# Security-scan output (ASH) — local artifacts, not for the published repo.
+# The scan configuration (.ash/.ash.yaml) is tracked.
+.ash/*
+!.ash/.ash.yaml
 
 # Local-only copies of non-public test corpora (never commit)
 .test-corpus-backup/

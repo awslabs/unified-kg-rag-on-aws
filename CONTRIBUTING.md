@@ -116,6 +116,20 @@ When a pull request changes `pyproject.toml` or `uv.lock`, the
 source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
 reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license.
 
+The [`security`](./.github/workflows/security.yml) workflow runs the Automated Security Helper (ASH: bandit, semgrep,
+detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. To run it locally
+(the same pinned version, as CI does; reports land in the gitignored `.ash/ash_output/`):
+
+```bash
+uvx git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780 --source-dir .
+```
+
+Fix a true positive. For a false positive, suppress it with its reason: on the statement for a single site
+(`# nosec B608 - <reason>`, `# nosemgrep: <rule id> - <reason>` on the line above, `# pragma: allowlist secret`), or
+in `.ash/.ash.yaml` for a whole class of files (each entry has a `reason`). ASH matches `.gitignore` against the
+absolute path, so in a checkout below a directory the file ignores (for example `.claude/worktrees/`)
+detect-secrets, which scans ASH's file list, finds nothing: run it from a clone outside such a directory.
+
 ### Pins Dependabot does not move
 
 [Dependabot](./.github/dependabot.yml) updates both uv locks, the SHA-pinned workflow actions and the local store

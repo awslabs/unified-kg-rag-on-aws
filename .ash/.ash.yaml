@@ -1,0 +1,117 @@
+# Automated Security Helper (ASH) configuration, read by .github/workflows/security.yml
+# (ASH finds it at .ash/.ash.yaml). Schema: ASH 3.1.x AshConfig.
+#
+# The scan is a gate: a finding at or above MEDIUM that is not suppressed
+# fails the job. A suppression belongs in the source line when it is about
+# that one statement (`# nosec Bxxx - reason`, `# nosemgrep: <rule> - reason`,
+# `# pragma: allowlist secret`); the path-scoped entries below cover a whole
+# class of files where the rule does not apply. Every entry carries its
+# reason. No entry sets `expiration`: once one is past, ASH rejects this
+# whole file and scans with its defaults (no suppressions at all), so every
+# run fails from that date; and each entry here is about what the files are,
+# not a pending fix.
+project_name: unified-kg-rag-on-aws
+fail_on_findings: true
+
+global_settings:
+  severity_threshold: MEDIUM
+  suppressions:
+    # --- Tests (tests/, iac/tests/) --------------------------------------
+    # Test code asserts, writes under fixed temp paths of throwaway
+    # fixtures, seeds non-cryptographic randomness for reproducibility and
+    # runs fixed-argv subprocesses (the CLI under test, git); its SQL reads
+    # the embedded test stores with literal names.
+    - path: tests/*
+      rule_id: B101
+      reason: pytest asserts are the test mechanism
+    - path: iac/tests/*
+      rule_id: B101
+      reason: pytest asserts are the test mechanism
+    - path: tests/*
+      rule_id: B108
+      reason: fixed /tmp paths are fake config values or tmp_path-scoped fixtures, never written outside the test
+    - path: tests/*
+      rule_id: B311
+      reason: seeded random for reproducible test data, not cryptography
+    - path: iac/tests/*
+      rule_id: B311
+      reason: seeded random for reproducible test data, not cryptography
+    - path: tests/*
+      rule_id: B404
+      reason: tests run the CLIs and git in subprocesses on purpose
+    - path: iac/tests/*
+      rule_id: B404
+      reason: tests run the CLIs and git in subprocesses on purpose
+    - path: tests/*
+      rule_id: B603
+      reason: fixed argv (sys.executable, the CLI under test), no shell
+    - path: iac/tests/*
+      rule_id: B603
+      reason: fixed argv, no shell
+    - path: tests/*
+      rule_id: B607
+      reason: tests resolve git/uv from PATH like a developer shell does
+    - path: iac/tests/*
+      rule_id: B607
+      reason: tests resolve tools from PATH like a developer shell does
+    - path: tests/*
+      rule_id: B608
+      reason: test-store SQL interpolates only literal table names and ? placeholders
+    - path: tests/*
+      rule_id: SECRET-*
+      reason: test credentials are synthetic placeholders (moto, fake OpenSearch auth)
+    - path: iac/tests/*
+      rule_id: SECRET-*
+      reason: test credentials are synthetic placeholders
+
+    # --- Repository files ----------------------------------------------------
+    - path: .pre-commit-config.yaml
+      rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      reason: hook revisions are pinned to git commit SHAs, not secrets
+    - path: docs/*
+      rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+      reason: prose naming the plain-WebSocket URL of the local Gremlin Server (local mode, bound to 127.0.0.1); TLS is the default
+    - path: docker/*
+      rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+      reason: comments on the local store stack, whose Gremlin Server binds to 127.0.0.1 only
+    - path: unified_kg_rag/domain/models/config.py
+      rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
+      reason: the use_ssl field description names the plain-WebSocket scheme for a local Gremlin Server; TLS is the default
+    - path: unified_kg_rag/*
+      rule_id: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+      reason: the matched messages log LLM token counts and budgets, not credentials
+    - path: pyproject.toml
+      rule_id: package_managers.uv.uv-missing-dependency-cooldown.uv-missing-dependency-cooldown
+      reason: the lock moves through Dependabot, which waits 7 days (cooldown in .github/dependabot.yml); a uv exclude-newer would also hold back deliberate manual locks
+    - path: iac/pyproject.toml
+      rule_id: package_managers.uv.uv-missing-dependency-cooldown.uv-missing-dependency-cooldown
+      reason: the lock moves through Dependabot, which waits 7 days (cooldown in .github/dependabot.yml)
+
+scanners:
+  # These need binaries that the uvx install does not provide, so they
+  # cannot run in this job; disabled explicitly to record that the gate does
+  # not rely on them (ASH's summary still lists them as MISSING). Container
+  # mode (`ash --mode container`) ships them: drop these entries to use it.
+  opengrep:
+    enabled: false
+  cfn-nag:
+    enabled: false
+  grype:
+    enabled: false
+  syft:
+    enabled: false
+
+reporters:
+  # Formats for other platforms that nothing here reads (tens of MB each,
+  # mostly the LOW and suppressed findings); the junitxml writer also ran
+  # for over 20 minutes without finishing in a local scan. The job summary
+  # uses the markdown report; sarif, flat-json, html and text stay in the
+  # uploaded artifact.
+  junitxml:
+    enabled: false
+  gitlab-sast:
+    enabled: false
+  ocsf:
+    enabled: false
+  csv:
+    enabled: false
