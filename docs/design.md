@@ -1048,7 +1048,7 @@ items mixed until that final drop. Only after every
 document is recorded again are the namespace's other records deleted, so a
 failed rebuild drops nothing. A rebuild whose graph writes partly failed
 (within `indexing.max_failure_rate`) skips the drop, so a retry still finds the
-previous copies, and is reported failed (`neptune_sweep`) rather than recorded:
+previous copies, and is reported failed (`graph_sweep`) rather than recorded:
 clearing the replaced documents' records would orphan their vertices and edges.
 
 The corpus a reset rebuilds includes the run's configured seed graphs;

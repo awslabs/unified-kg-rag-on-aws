@@ -332,10 +332,10 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     assert stages[T.GRAPH_RESOLUTION].description_summarizer.factory is llm
     assert stages[T.COMMUNITY_DETECTION].detector.factory is llm
     manager = stages[T.INDEXING].indexing_manager
-    assert isinstance(manager.opensearch_indexer, OpenSearchIndexer)
-    assert isinstance(manager.opensearch_indexer.opensearch_client, SQLiteSearchEngine)
-    assert isinstance(manager.neptune_indexer, SQLiteGraphIndexer)
-    assert manager.opensearch_indexer.embedding_factory is providers.embedding_factory
+    assert isinstance(manager.vector_indexer, OpenSearchIndexer)
+    assert isinstance(manager.vector_indexer.opensearch_client, SQLiteSearchEngine)
+    assert isinstance(manager.graph_indexer, SQLiteGraphIndexer)
+    assert manager.vector_indexer.embedding_factory is providers.embedding_factory
     assert manager.description_summarizer.factory is llm
     # The registry the pipeline injects is the configured SQLite store.
     assert isinstance(stages[T.DOCUMENT_LOADING]._doc_status, SQLiteDocStatusStore)

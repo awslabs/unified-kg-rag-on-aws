@@ -131,10 +131,10 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
 
     # Writes no build record (so no community counters).
 
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, successful_items=1)
+        "graph_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)
@@ -172,10 +172,10 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     config = _reset_config()
     manager = mocker.MagicMock()
     # Writes no build record (so no community counters).
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, failed_items=1)
+        "graph_entities": IndexingStats(total_items=1, failed_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)
@@ -205,10 +205,10 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
 
     # Writes no build record (so no community counters).
 
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, successful_items=1)
+        "graph_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     return ps.IndexingStage(config=config, doc_status=store)
@@ -243,10 +243,10 @@ def test_a_failed_reset_keeps_the_replaced_documents_records(mocker) -> None:
     config = _reset_config()
     manager = mocker.MagicMock()
     # Writes no build record (so no community counters).
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     manager.index_all_data.return_value = {
-        "neptune_entities": IndexingStats(total_items=1, failed_items=1)
+        "graph_entities": IndexingStats(total_items=1, failed_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)

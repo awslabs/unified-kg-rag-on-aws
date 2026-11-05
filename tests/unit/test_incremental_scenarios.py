@@ -533,7 +533,7 @@ class TestDeltaWriteGate:
 
     def test_complete_success_records_processed(self) -> None:
         results = {
-            "opensearch_entities": IndexingStats(total_items=5, successful_items=5),
+            "vector_entities": IndexingStats(total_items=5, successful_items=5),
         }
         assert self._inc()._delta_writes_succeeded(results) is True
 
@@ -541,7 +541,7 @@ class TestDeltaWriteGate:
         # 2/5 = 40% failed > 20% default -> blocked; raise tolerance to confirm a
         # below-threshold partial failure still records.
         results = {
-            "opensearch_entities": IndexingStats(
+            "vector_entities": IndexingStats(
                 total_items=5, successful_items=3, failed_items=2
             ),
         }
@@ -553,7 +553,7 @@ class TestDeltaWriteGate:
         # pipeline) while the registry write is already committed -> the failed
         # artifacts are classified `unchanged` next run and never retried.
         results = {
-            "neptune_relationships": IndexingStats(
+            "graph_relationships": IndexingStats(
                 total_items=100, successful_items=22, failed_items=78
             ),
         }
@@ -561,7 +561,7 @@ class TestDeltaWriteGate:
 
     def test_zero_success_with_seeded_total_blocks(self) -> None:
         results = {
-            "opensearch_entities": IndexingStats(total_items=5, successful_items=0),
+            "vector_entities": IndexingStats(total_items=5, successful_items=0),
         }
         assert self._inc()._delta_writes_succeeded(results) is False
 

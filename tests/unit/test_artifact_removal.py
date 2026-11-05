@@ -615,7 +615,7 @@ def test_a_stripped_entity_that_gains_units_is_written_before_its_edges(
     )
 
     (first,) = phases.call_args_list[0].args[0]
-    assert first.key == "neptune_rekeyed_entities"
+    assert first.key == "graph_rekeyed_entities"
     assert [e.id for e in first.args[0]] == ["e"]
 
 

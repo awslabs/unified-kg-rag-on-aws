@@ -271,7 +271,7 @@ def test_communities_and_claims_follow_the_merge_remap() -> None:
     # the stored edge: the delta's community and claim must reference the
     # kept ids, not ids that are never written.
     incremental, graph, _ = _harness()
-    vector = incremental.indexing_manager.opensearch_indexer
+    vector = incremental.indexing_manager.vector_indexer
     incremental.commit(
         lineages=[DocumentLineage(doc_id="doc-a")],
         fingerprints={"doc-a": "h-a"},

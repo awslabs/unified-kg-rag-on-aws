@@ -59,11 +59,11 @@ class _RecordingManager:
         self.outdated_reports: set[str] = set()
         self.deleted_communities: dict[str, set[str]] = {}
         # The graph still holds what the registry lists.
-        self.neptune_indexer = SimpleNamespace(
+        self.graph_indexer = SimpleNamespace(
             find_ids_citing=lambda ids, suffix=None: {"e": list(ids)}
         )
         # The live indices were built for this run's settings.
-        self.opensearch_indexer = SimpleNamespace(
+        self.vector_indexer = SimpleNamespace(
             check_index_settings=lambda suffix=None: None,
             set_doc_status_tracking=lambda tracked: None,
             set_replaced_vector_keeping=lambda keep: None,
@@ -263,7 +263,7 @@ def test_embedding_mismatch_stops_the_run_before_any_write(mocker) -> None:
         checked.append(suffix)
         raise ConfigurationError("embedded with another model")
 
-    manager.opensearch_indexer = SimpleNamespace(check_index_settings=mismatch)
+    manager.vector_indexer = SimpleNamespace(check_index_settings=mismatch)
     stage = _stage(mocker, store, manager)
     text_units, entities = _delta_inputs(attributes={"index": "tenant1"})
     ctx = _context(_full_delta(), [_document("run-changed", _CHANGED)])
@@ -311,7 +311,7 @@ def test_deletion_only_run_checks_the_configured_suffix(mocker) -> None:
     manager = _RecordingManager()
     manager.config.processing.document_parsing.index_value = "tenant1"
     checked: list[str | None] = []
-    manager.opensearch_indexer = SimpleNamespace(
+    manager.vector_indexer = SimpleNamespace(
         check_index_settings=checked.append,
         set_doc_status_tracking=lambda tracked: None,
         set_replaced_vector_keeping=lambda keep: None,
@@ -545,7 +545,7 @@ def test_records_the_build_on_each_written_suffix(
 ) -> None:
     manager = _RecordingManager()
     recorded: list[tuple[Any, str | None]] = []
-    manager.opensearch_indexer.record_build = lambda record, suffix: recorded.append(
+    manager.vector_indexer.record_build = lambda record, suffix: recorded.append(
         (record, suffix)
     )
     stage = _stage(mocker, FakeDocStatusStore(), manager)
@@ -566,9 +566,7 @@ def test_delete_only_run_records_its_configured_suffix(mocker) -> None:
     manager = _RecordingManager()
     manager.config.processing.document_parsing.index_value = "tenant1"
     recorded: list[str | None] = []
-    manager.opensearch_indexer.record_build = lambda record, suffix: recorded.append(
-        suffix
-    )
+    manager.vector_indexer.record_build = lambda record, suffix: recorded.append(suffix)
     stage = _stage(mocker, FakeDocStatusStore(), manager)
     stage.config.processing.document_parsing.index_value = "tenant1"
     stage._record_build(_context(DocumentDelta(deleted=["x"]), []), [])

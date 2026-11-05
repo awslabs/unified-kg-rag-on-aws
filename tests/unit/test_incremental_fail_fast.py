@@ -88,7 +88,7 @@ def _loading_stage(config: Config, root: Path, store):
 def _indexing_stage(config: Config, store, mocker):
     manager = mocker.MagicMock()
     # Writes no build record (so no community counters).
-    manager.opensearch_indexer.record_build.return_value = None
+    manager.vector_indexer.record_build.return_value = None
     manager.config = config
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     stage = ps.IndexingStage(config=config, doc_status=store)

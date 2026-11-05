@@ -270,7 +270,7 @@ def _run(
         {d.file_path: corpus[d.file_path] for d in extracted}
     )
     # The extraction stages store the units' records before indexing.
-    inc.indexing_manager.opensearch_indexer.write_extraction_records(
+    inc.indexing_manager.vector_indexer.write_extraction_records(
         {
             record_keys(unit)["graph"]: record_payload(record)
             for unit, record in zip(units, records, strict=True)

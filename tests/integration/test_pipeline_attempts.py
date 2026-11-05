@@ -360,7 +360,7 @@ def test_a_reset_that_could_not_drop_the_previous_graph_is_not_recorded(
     reset = harness.run("ingest-2", monkeypatch)
     assert isinstance(reset, PipelineContext)
     assert reset.status is PipelineStageStatus.FAILED
-    assert "neptune_sweep" in str(
+    assert "graph_sweep" in str(
         [r.error_message for r in reset.stage_results if r.stage_name == "indexing"]
     )
     # The replaced document's record is kept for the next run to remove.

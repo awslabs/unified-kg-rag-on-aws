@@ -94,7 +94,7 @@ their records. A failed reset drops nothing, so it is safe to re-run. **Set
 During a reset, vector queries read the previous indices until each new one
 swaps in, and graph queries see previous and rebuilt items mixed until the
 final drop. A reset whose graph writes partly failed (even within
-`indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
+`indexing.max_failure_rate`) fails too (`graph_sweep` in the indexing
 results), and the next run removes what the previous graph still holds. One
 stopped or killed before it swapped an index in leaves that index
 (`<alias>-<timestamp>`, no alias) until the next reset deletes it (an

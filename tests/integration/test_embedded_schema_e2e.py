@@ -736,7 +736,7 @@ def test_a_reset_records_the_annotations_once_it_wrote_every_item(
 
     def one_failed(self: IndexingManager, **kwargs: Any) -> Any:
         results = index_all_data(self, **kwargs)
-        results["neptune_entities"].add_error("refused")
+        results["graph_entities"].add_error("refused")
         return results
 
     monkeypatch.setattr(f"{manager}.index_all_data", one_failed)

@@ -529,7 +529,7 @@ def test_force_rebuild_asks_and_embeds_everything_again(
         assert chunking.store._reuse is not force_rebuild
         assert resolution.reuse_stored is not force_rebuild
         assert detection.store._reuse is not force_rebuild
-        vector = indexing.indexing_manager.opensearch_indexer
+        vector = indexing.indexing_manager.vector_indexer
         assert vector._reuse_embeddings is not force_rebuild
     finally:
         pipeline.close()
