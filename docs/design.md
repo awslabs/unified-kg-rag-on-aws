@@ -178,9 +178,13 @@ unified_kg_rag/
 │  │                    #   display (rich console helpers)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
 │  │                    #   namespace lease, extraction-record store, stage cache
-│  │                    #   (cache_manager) and resume (pipeline_manager)
+│  │                    #   (cache_manager), resume (pipeline_manager; the resume
+│  │                    #   point and rewinds in resume) and run metrics
+│  │                    #   (pipeline_metrics)
 │  ├─ storage/          #   IndexingManager (indexer fan-out)
-│  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
+│  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
+│  │                    #   processing (query_processing) and filter-key checks
+│  │                    #   (filter_validation)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
 │  │                    #   build_checkpoint_sync, resolve_extraction_schema,
@@ -651,7 +655,8 @@ gets its models and stores from the run's `Providers` bundle.
 
 - **Resume.** Each stage's output is checkpointed under the run's pipeline id
   (`application/ingestion/pipeline_manager.py`, `application/ingestion/cache_manager.py`); the stage cache
-  key is described in §12.
+  key is described in §12. Where a resumed run starts, and the rewinds that
+  move it back, are in `application/ingestion/resume.py`.
 - **S3 sync** (`adapters/aws/s3_cache.py`) uploads the changed files after
   every stage, data before the metadata that refers to it. On SIGTERM,
   `run-ingestion` stops the running stage (`request_stop`: deferred while a
