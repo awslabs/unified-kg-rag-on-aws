@@ -23,13 +23,18 @@ import networkx as nx
 import pytest
 from pydantic import ValidationError
 
-from unified_kg_rag.adapters.ingestion.community_detector import (
-    CommunityDetector,
-    _canonical_graph,
-    community_content_id,
-    leiden,
-)
+from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.domain.ingestion.community_clustering import (
+    build_cluster_graph,
+    canonical_graph,
+    community_content_id,
+    entity_subgraph,
+    find_optimal_resolution,
+    leiden,
+    merge_small_communities,
+    partition_dict_to_communities,
+)
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
     Claim,
@@ -92,16 +97,15 @@ class TestConstruction:
 class TestPartitionDictToCommunities:
     def test_groups_nodes_by_label(self) -> None:
         partition = {"a": 0, "b": 0, "c": 1, "d": 1, "e": 1}
-        out = CommunityDetector._partition_dict_to_communities(partition)
+        out = partition_dict_to_communities(partition)
         assert out == {0: {"a", "b"}, 1: {"c", "d", "e"}}
 
     def test_empty_dict_yields_empty(self) -> None:
-        assert CommunityDetector._partition_dict_to_communities({}) == {}
+        assert partition_dict_to_communities({}) == {}
 
 
 class TestMergeSmallCommunities:
     def test_merges_small_into_largest_neighbor(self) -> None:
-        cd = _detector()
         # A 5-clique (big), and a single straggler node attached to it.
         g = nx.Graph()
         for n in ("a", "b", "c", "d", "e"):
@@ -113,7 +117,7 @@ class TestMergeSmallCommunities:
         g.add_node("z")
         g.add_edge("z", "a")
         communities = {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
-        merged = cd._merge_small_communities(communities, g, min_size=2)
+        merged = merge_small_communities(communities, g, min_size=2)
         # 'z' (size 1 < 2) must be absorbed into the clique community.
         assert len(merged) == 1
         assert merged[0] == {"a", "b", "c", "d", "e", "z"}
@@ -121,10 +125,9 @@ class TestMergeSmallCommunities:
     def test_iterates_to_convergence_chained_small_communities(self) -> None:
         # Path a-b-c-d, each its own community. With min_size=2 a single pass
         # can leave a community still too small; the loop repeats until stable.
-        cd = _detector()
         g = nx.path_graph(["a", "b", "c", "d"])
         communities = {0: {"a"}, 1: {"b"}, 2: {"c"}, 3: {"d"}}
-        merged = cd._merge_small_communities(communities, g, min_size=2)
+        merged = merge_small_communities(communities, g, min_size=2)
         # Every surviving community has >= 2 nodes, and all 4 nodes preserved.
         all_nodes = set().union(*merged.values())
         assert all_nodes == {"a", "b", "c", "d"}
@@ -133,28 +136,25 @@ class TestMergeSmallCommunities:
     def test_isolated_small_community_cannot_merge(self) -> None:
         # An isolated node has no eligible neighbor -> stays as its own
         # community (loop terminates without merging it).
-        cd = _detector()
         g = nx.Graph()
         g.add_edge("a", "b")
         g.add_node("iso")
         communities = {0: {"a", "b"}, 1: {"iso"}}
-        merged = cd._merge_small_communities(communities, g, min_size=2)
+        merged = merge_small_communities(communities, g, min_size=2)
         assert {"iso"} in merged.values()
 
     def test_no_merge_when_all_above_min_size(self) -> None:
-        cd = _detector()
         g = nx.Graph()
         g.add_edge("a", "b")
         g.add_edge("c", "d")
         g.add_edge("b", "c")
         communities = {0: {"a", "b"}, 1: {"c", "d"}}
-        merged = cd._merge_small_communities(dict(communities), g, min_size=2)
+        merged = merge_small_communities(dict(communities), g, min_size=2)
         assert merged == communities
 
     def test_merges_into_the_most_strongly_tied_neighbor(self) -> None:
         # {s1, s2} has one weak edge to A and one strong edge to B: it joins B,
         # whatever the edge counts are.
-        cd = _detector()
         g = nx.Graph()
         for group in (("a1", "a2", "a3"), ("b1", "b2", "b3")):
             g.add_edges_from(
@@ -165,7 +165,7 @@ class TestMergeSmallCommunities:
         g.add_edge("s2", "a2", weight=0.1)
         g.add_edge("s2", "b1", weight=50.0)
         communities = {0: {"a1", "a2", "a3"}, 1: {"b1", "b2", "b3"}, 2: {"s1", "s2"}}
-        merged = cd._merge_small_communities(communities, g, min_size=3)
+        merged = merge_small_communities(communities, g, min_size=3)
         assert merged == {
             0: {"a1", "a2", "a3"},
             1: {"b1", "b2", "b3", "s1", "s2"},
@@ -183,7 +183,6 @@ class TestMergeSmallCommunities:
             def __iter__(self):
                 return iter(order)
 
-        cd = _detector()
         g = nx.Graph()
         for group in (("p1", "p2", "p3", "p4"), ("q1", "q2", "q3", "q4")):
             g.add_edges_from(
@@ -198,18 +197,17 @@ class TestMergeSmallCommunities:
             1: {"q1", "q2", "q3", "q4"},
             2: Ordered(order),
         }
-        merged = cd._merge_small_communities(communities, g, min_size=4)
+        merged = merge_small_communities(communities, g, min_size=4)
         assert merged[0] == {"p1", "p2", "p3", "p4", "a", "b", "c"}
         assert merged[1] == {"q1", "q2", "q3", "q4"}
 
     def test_merge_does_not_exceed_max_size(self) -> None:
         # {z} would join the clique, but that would make 6 > max_size 5: it
         # stays small instead of undoing the max_cluster_size split.
-        cd = _detector()
         g = nx.complete_graph(["a", "b", "c", "d", "e"])
         g.add_edge("z", "a")
         communities = {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
-        merged = cd._merge_small_communities(communities, g, min_size=2, max_size=5)
+        merged = merge_small_communities(communities, g, min_size=2, max_size=5)
         assert merged == {0: {"a", "b", "c", "d", "e"}, 1: {"z"}}
 
 
@@ -353,8 +351,10 @@ class TestSmallComponents:
             graph.add_edge(f"p{i}a", f"p{i}b", weight=5.0)
         skipped = _detector(auto_resolution=False)(graph)
         assert len(skipped.unclustered) == 60
+        from unified_kg_rag.adapters.ingestion import community_detector
+
         monkeypatch.setattr(
-            CommunityDetector, "_small_component_nodes", lambda self, g, a: set()
+            community_detector, "small_component_nodes", lambda g, size, a: set()
         )
         every = _detector(auto_resolution=False)(graph).generate_community_objects()
         assert {c.id for c in skipped.generate_community_objects()} == {
@@ -412,7 +412,7 @@ class TestCanonicalOrder:
     @staticmethod
     def _shuffled_leiden(monkeypatch: pytest.MonkeyPatch) -> None:
         """Return Leiden's result reversed and with relabelled communities."""
-        from unified_kg_rag.adapters.ingestion import community_detector as module
+        from unified_kg_rag.domain.ingestion import community_clustering as module
 
         def shuffled(graph: nx.Graph, **kwargs: Any) -> dict[Any, int]:
             items = list(leiden(graph, **kwargs).items())
@@ -445,7 +445,6 @@ class TestCanonicalOrder:
         assert snapshot() == expected
 
     def test_small_community_ties_go_to_the_lowest_label(self) -> None:
-        cd = _detector()
         g = nx.Graph()
         # z's first neighbor is in community 1, its second in community 0.
         g.add_edge("z", "c")
@@ -453,13 +452,13 @@ class TestCanonicalOrder:
         g.add_edge("a", "b")
         g.add_edge("c", "d")
         communities = {0: {"a", "b"}, 1: {"c", "d"}, 2: {"z"}}
-        merged = cd._merge_small_communities(communities, g, min_size=2)
+        merged = merge_small_communities(communities, g, min_size=2)
         assert merged[0] == {"a", "b", "z"}
 
     def test_leiden_failure_raises_instead_of_truncating(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from unified_kg_rag.adapters.ingestion import community_detector as module
+        from unified_kg_rag.domain.ingestion import community_clustering as module
 
         def failing_above_level_0(graph: nx.Graph, **kwargs: Any) -> dict[Any, int]:
             if all(isinstance(n, int) for n in graph.nodes):
@@ -477,7 +476,7 @@ class TestOptimalResolution:
         cd = _detector(auto_resolution=True)
         cd.community_detection_config.auto_resolution_candidates = [0.1, 1.0, 3.0]
         g = _two_triangle_graph()
-        chosen = cd._find_optimal_resolution(g)
+        chosen = find_optimal_resolution(g, cd.community_detection_config)
         assert chosen in {0.1, 1.0, 3.0}
 
     def test_isolated_node_does_not_void_the_sweep(self) -> None:
@@ -489,7 +488,7 @@ class TestOptimalResolution:
         cd.community_detection_config.auto_resolution_candidates = [0.01, 1.0]
         g = _two_triangle_graph()
         g.add_node("lonely", name="Lonely")
-        assert cd._find_optimal_resolution(g) == 1.0
+        assert find_optimal_resolution(g, cd.community_detection_config) == 1.0
 
     def test_falls_back_to_configured_resolution_when_no_split(self) -> None:
         # A single clique cannot be split into >=2 communities at any
@@ -498,13 +497,12 @@ class TestOptimalResolution:
         cd.community_detection_config.resolution = 1.0
         cd.community_detection_config.auto_resolution_candidates = [0.1, 0.2]
         g = nx.complete_graph(["a", "b", "c", "d"])
-        chosen = cd._find_optimal_resolution(g)
+        chosen = find_optimal_resolution(g, cd.community_detection_config)
         assert chosen == 1.0
 
 
 class TestClusterGraph:
     def test_aggregates_inter_community_edges_with_weights(self) -> None:
-        cd = _detector()
         # Two communities: {a,b} and {c,d}; two cross edges with weights.
         g = nx.Graph()
         g.add_edge("a", "b", weight=5.0)  # intra-community, ignored
@@ -512,18 +510,17 @@ class TestClusterGraph:
         g.add_edge("a", "c", weight=1.5)
         g.add_edge("b", "d", weight=2.5)
         partition = [{"a", "b"}, {"c", "d"}]
-        cluster = cd._create_cluster_graph(partition, g)
+        cluster = build_cluster_graph(partition, g)
         assert cluster.number_of_nodes() == 2
         assert cluster.number_of_edges() == 1
         # The single cluster edge weight is the SUM of inter-community edges.
         assert cluster[0][1]["weight"] == pytest.approx(4.0)
 
     def test_no_inter_community_edges_yields_no_edges(self) -> None:
-        cd = _detector()
         g = nx.Graph()
         g.add_edge("a", "b")
         g.add_edge("c", "d")
-        cluster = cd._create_cluster_graph([{"a", "b"}, {"c", "d"}], g)
+        cluster = build_cluster_graph([{"a", "b"}, {"c", "d"}], g)
         assert cluster.number_of_nodes() == 2
         assert cluster.number_of_edges() == 0
 
@@ -538,7 +535,7 @@ class TestClusterGraph:
         prev_cluster.add_edge(0, 1, weight=1.0)  # intra-supercluster, ignored
         # Supercommunities over the previous cluster graph's nodes {0,1} and {2}.
         partition = [{0, 1}, {2}]
-        cluster = cd._create_cluster_graph(partition, prev_cluster)
+        cluster = build_cluster_graph(partition, prev_cluster)
         assert cluster.number_of_nodes() == 2
         # The 0-2 edge crosses the two superclusters and survives with its weight.
         assert cluster.number_of_edges() == 1
@@ -1801,7 +1798,7 @@ class TestClaimNodesExcluded:
 
     def test_graph_without_node_type_is_used_as_is(self) -> None:
         graph = _two_triangle_graph()
-        assert CommunityDetector._entity_subgraph(graph) is graph
+        assert entity_subgraph(graph) is graph
 
 
 def _triangles(prefix: str, count: int) -> nx.Graph:
@@ -1989,7 +1986,7 @@ class TestLeidenWrapper:
             "extra_forced_iterations": extra_forced_iterations,
         }
         partitions = [
-            leiden(_canonical_graph(graph), **kwargs) for graph in self._graphs()
+            leiden(canonical_graph(graph), **kwargs) for graph in self._graphs()
         ]
         assert [
             (self._digest(partition), len(set(partition.values())))
