@@ -1148,6 +1148,15 @@ From 0.2.3 (or a `main` checkout since):
   earlier version has no counters until the next full build (#540).
 - The package ships a `py.typed` marker (PEP 561), so type checkers read
   its annotations instead of treating it as untyped (#568).
+- Releases: pushing a `v<version>` tag runs `.github/workflows/release.yml`,
+  which fails unless the tag matches `unified_kg_rag.__version__` and this
+  file has a section for that version, builds the sdist and wheel, checks
+  them with `twine check --strict` and for LICENSE and NOTICE, installs the
+  wheel in a clean environment, and creates a GitHub release with both files
+  and that section as its notes (`scripts/changelog_section.py`). A manual
+  run is a dry run that publishes nothing. Nothing is uploaded to PyPI yet.
+  `main` now reports version `0.3.0.dev0`; CONTRIBUTING.md describes the
+  release steps (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
@@ -2214,3 +2223,5 @@ Deployment (CDK).
 - The compose containers drop all capabilities and run with
   `no-new-privileges`, the data-plane image declares `HEALTHCHECK NONE`, and
   retry jitter draws from `random.SystemRandom` (#307).
+
+[Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/commits/main

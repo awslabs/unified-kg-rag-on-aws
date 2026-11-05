@@ -225,6 +225,43 @@ unit test fails when a page is stale):
 - [docs/reference/cli.md](./docs/reference/cli.md): every CLI flag has a user-facing `help=`. After adding or
   changing a flag, run `uv run python scripts/gen_cli_reference.py`.
 
+### Releasing
+
+The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `pyproject.toml` reads it from there
+(`[tool.hatch.version]`). Between releases `main` carries the next version with a `.devN` suffix (for example
+`0.3.0.dev0`), so a build from `main` is never mistaken for a release. Maintainers release as follows:
+
+1. On a `chore/release-X.Y.Z` branch, set `__version__ = "X.Y.Z"` (a pre-release such as `X.Y.Zrc1` works the same
+   way).
+2. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a new empty `## [Unreleased]` above
+   it, and update the link references at the bottom: `[Unreleased]` compares `vX.Y.Z...HEAD`, and `[X.Y.Z]` compares
+   the previous tag with `vX.Y.Z` (the first tagged release links to `releases/tag/vX.Y.Z` instead).
+3. Optionally, run the `release` workflow by hand (Actions, Run workflow) on the branch: it is a dry run that builds and
+   checks the artifacts and publishes nothing.
+4. Land the pull request, then tag the merge commit on `main` and push the tag:
+
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z" <merge-commit>
+   git push origin vX.Y.Z
+   ```
+
+   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tag is
+   `v` plus `__version__` and the changelog has a non-empty section for that version; it builds the sdist and wheel,
+   runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the wheel in a clean environment, and
+   creates the GitHub release with both files and that changelog section as its notes
+   (`scripts/changelog_section.py`; a section longer than a release body allows ends with a link to the full
+   changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
+5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
+   `X.(Y+1).0.dev0`).
+
+A failed release run creates no release; fix the cause on `main` and release a new version rather than moving a pushed
+tag.
+
+Publishing to PyPI is not set up yet. The planned addition is a `pypi` job in `release.yml` that needs the build job,
+runs in a protected `pypi` GitHub environment with `permissions: id-token: write` only, downloads the same artifacts
+and uploads them with the SHA-pinned `pypa/gh-action-pypi-publish` action through PyPI trusted publishing (OpenID
+Connect), so no API token is stored in the repository.
+
 
 ## Finding contributions to work on
 
