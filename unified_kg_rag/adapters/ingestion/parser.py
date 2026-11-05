@@ -140,6 +140,14 @@ _ENCODING_AWARE_LOADERS = (CsvFileLoader, JsonTextLoader, TextFileLoader)
 
 
 class ParserFactory:
+    """The file-extension registry of document loaders.
+
+    Maps each extension (``.pdf``, ``.txt``, ...) to a LangChain loader;
+    ``create_parser`` builds the parser for one file and
+    ``get_supported_extensions`` lists what ingestion discovers. Add or
+    override a format with :meth:`register_loader`.
+    """
+
     # Loaders with no heavy optional deps — always available.
     _loader_configs: dict[str, tuple[type[BaseLoader], dict[str, Any], str]] = {
         ".csv": (CsvFileLoader, {}, "CSV"),

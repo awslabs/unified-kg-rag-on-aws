@@ -213,6 +213,15 @@ DEFAULT_ERROR_MESSAGE: str = (
 
 
 class ProcessedQuery(BaseModel):
+    """How the chain rewrote one query before searching it.
+
+    ``final_query`` is what the strategy searched: the original, rewritten
+    as a standalone question from the conversation history and translated
+    when those steps ran. ``entities`` and the LightRAG keywords are the
+    query-side extractions the resolved strategy read (empty when it read
+    none or query processing was disabled).
+    """
+
     original_query: str = Field(
         description="The original user query before any processing"
     )

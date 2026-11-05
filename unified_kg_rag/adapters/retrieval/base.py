@@ -217,6 +217,16 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
 
 
 class BaseGraphRAGRetriever(BaseRetriever, ABC):
+    """A store-backed retriever the search strategies call by role.
+
+    Subclasses implement :meth:`aretrieve` (one search, within the index's
+    :meth:`aindex_limits`, honouring ``SearchQuery.exclude``) and may declare
+    the filter keys they apply (:meth:`filter_fields`). It is also a
+    LangChain ``BaseRetriever``, so ``invoke``/``ainvoke`` work. Bind one to
+    a ``RetrieverRole`` through ``Providers(retriever_builders=...)`` or
+    ``GraphRAGChain(retriever_builders=...)``.
+    """
+
     def __init__(self, config: Config, **kwargs: Any) -> None:
         BaseRetriever.__init__(self, **kwargs)
         self._config = config

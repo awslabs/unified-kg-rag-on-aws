@@ -23,7 +23,7 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or an RDF A-Box) merge a graph you already have into the extracted one as virtual documents: documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
 - **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges ([Evaluation](./docs/guides/evaluate.md)); `run-visualization` renders an exported graph ([Visualization](./docs/guides/visualize.md)).
-- **Pluggable.** Storage and model backends sit behind ports, and strategies, renderers, parsers and providers register through registries ([extension guide](./docs/design.md#15-extension-guide)).
+- **Pluggable.** Storage and model backends sit behind ports, and renderers, parsers, schema and seed sources and providers register from your own package through registries. A new search strategy or evaluator is an in-tree change (a fork or a contribution): strategies are keyed by the closed `SearchStrategy` enum ([extension guide](./docs/design.md#15-extension-guide)).
 
 ## Architecture
 
