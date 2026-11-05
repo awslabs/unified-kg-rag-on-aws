@@ -60,7 +60,8 @@ def _graph_aware_manager(config: Config) -> EvaluationManager:
 
 class TestLoadData:
     def test_requires_path(self) -> None:
-        with pytest.raises(ValueError):
+        # A ValueError too, as before.
+        with pytest.raises(ConfigurationError, match="data path is required"):
             EvaluationManager.load_data("")
 
     def test_missing_file_raises(self, tmp_path) -> None:
@@ -326,8 +327,12 @@ class TestInitialization:
         mocker.patch.object(
             EvaluationManager, "_resolve_evaluator_class", return_value=_Boom
         )
-        with pytest.raises(EvaluationException, match="graph_aware.*init failed"):
+        with pytest.raises(
+            EvaluationException, match="graph_aware.*init failed"
+        ) as raised:
             EvaluationManager(config, rag_chain=object())
+        # The evaluator's own error is the cause, with its traceback.
+        assert isinstance(raised.value.__cause__, RuntimeError)
 
     def test_invalid_config_aborts_by_default(self, config: Config, mocker) -> None:
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]

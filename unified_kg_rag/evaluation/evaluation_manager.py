@@ -281,6 +281,7 @@ class EvaluationManager:
                 self.dropped_evaluators[str(evaluator_type)] = "unknown evaluator type"
                 continue
 
+            cause: Exception | None = None
             try:
                 evaluator = evaluator_class(
                     config=self.config, providers=self.providers
@@ -289,16 +290,17 @@ class EvaluationManager:
                     None if evaluator.validate_config() else "invalid configuration"
                 )
             except Exception as e:
-                evaluator, reason = None, f"initialization failed: {e}"
+                evaluator, reason, cause = None, f"initialization failed: {e}", e
             if evaluator is not None and reason is None:
                 self.evaluators[evaluator_type] = evaluator
                 continue
             message = f"'{evaluator_type.value}' evaluator {reason}"
             if not self.config.processing.ignore_errors:
+                # Chained, so the traceback shows where the evaluator failed.
                 raise EvaluationException(
                     f"{message} (set processing.ignore_errors to drop it and "
                     "continue)"
-                )
+                ) from cause
             logger.error("Dropping %s", message)
             self.dropped_evaluators[evaluator_type.value] = str(reason)
 
@@ -330,7 +332,7 @@ class EvaluationManager:
         comparison runs every item with) or else the item's own strategy.
         """
         if not eval_data_path:
-            raise ValueError("Evaluation data path is required.")
+            raise ConfigurationError("Evaluation data path is required.")
 
         try:
             with open(eval_data_path, encoding="utf-8") as f:
