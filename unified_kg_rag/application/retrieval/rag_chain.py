@@ -996,7 +996,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         translation? Only flags when the candidate differs from the original
         (an identical passthrough is fine) and opens with a known refusal/notice
         phrase, so genuine translations that merely contain such words mid-text
-        are not caught."""
+        are not caught.
+
+        The phrases are English: a meta-reply written in another language
+        passes as a translation. No language-agnostic test separates the two
+        reliably (a script mismatch misses a reply in the target language,
+        which is the common case, and lengths differ legitimately across
+        scripts), so the miss is accepted; the reply then searches as the
+        query."""
         text = cls._refusal_text(candidate)
         if not text or text == cls._refusal_text(original):
             return False

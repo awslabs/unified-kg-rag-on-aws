@@ -372,7 +372,10 @@ class BaseSearchStrategy(ABC):
     # per-section budgets the same way (top_k_entities and
     # top_k_relationships 10). The floor keeps enough of each type at a small
     # top_k. What the context then holds of each type is
-    # search.token_manager.type_budgets.
+    # search.token_manager.type_budgets. Only the entity and relationship
+    # floors follow upstream; the text, community and claim values are
+    # unmeasured choices (no A/B in docs/concepts/defaults-and-evidence.md),
+    # so a change needs one.
     TYPE_QUOTA: ClassVar[dict[SectionType, tuple[float, int]]] = {
         SectionType.TEXT: (2.0, 20),
         SectionType.ENTITY: (1.0, 10),

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """LightRAG dual-level keyword search strategy.
 
-Implements LightRAG's local/global/hybrid/mix/naive retrieval on top of
-unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduced path:
+Implements LightRAG's ``mix``, ``hybrid`` and ``naive`` retrieval modes (the
+ones registered; LightRAG's ``local`` and ``global`` are not: ``hybrid``
+runs both levels) on top of unified-kg-rag-on-aws's *shared* infrastructure
+rather than as a separate, reduced path:
 
 - low-level keywords (``ll_keywords``) -> entities index (lexical + vector),
 - high-level keywords (``hl_keywords``) -> relationships index (lexical + vector),
