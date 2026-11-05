@@ -93,6 +93,18 @@ def test_multi_node_opensearch_uses_smaller_dedicated_masters(prod: Template) ->
     assert cluster["InstanceType"] == "r6g.large.search"
 
 
+def test_opensearch_requires_forward_secret_tls() -> None:
+    _storage_template({}).has_resource_properties(
+        "AWS::OpenSearchService::Domain",
+        {
+            "DomainEndpointOptions": {
+                "EnforceHTTPS": True,
+                "TLSSecurityPolicy": "Policy-Min-TLS-1-2-PFS-2023-10",
+            }
+        },
+    )
+
+
 def test_opensearch_endpoint_output_is_a_bare_host() -> None:
     """The output feeds UKR__AWS__OPENSEARCH__ENDPOINT, which the adapter uses as a host."""
     output = _storage_template({}).find_outputs("OpenSearchEndpoint")

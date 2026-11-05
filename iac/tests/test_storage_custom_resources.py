@@ -201,3 +201,36 @@ def test_the_waiters_log_every_event(enabled: tuple[Template, Template]) -> None
     assert len(machines) == 1
     for machine in machines.values():
         assert machine["Properties"]["LoggingConfiguration"]["Level"] == "ALL"
+
+
+@pytest.mark.parametrize(
+    ("context", "days"), [({}, 30), ({"log_retention_days": 90}, 90)]
+)
+def test_log_groups_keep_log_retention_days(context: dict[str, Any], days: int) -> None:
+    # The task, pipeline, OpenSearch application and custom-resource log
+    # groups (one setting; the flow logs keep flow_log_retention_days).
+    app = cdk.App(context={"opensearch_nori_package": "true", **context})
+    config = DeploymentConfig.from_context(app)
+    networking = NetworkingStack(app, "Net", config=config, env=_ENV)
+    storage = StorageStack(app, "Store", config=config, networking=networking, env=_ENV)
+    compute = ComputeStack(
+        app, "Compute", config=config, networking=networking, storage=storage, env=_ENV
+    )
+    orchestration = OrchestrationStack(
+        app,
+        "Orch",
+        config=config,
+        networking=networking,
+        compute=compute,
+        cache_bucket_name="example-bucket",
+        env=_ENV,
+    )
+    retention = {
+        f"{stack.stack_name}/{logical_id}": group["Properties"].get("RetentionInDays")
+        for stack in (storage, compute, orchestration)
+        for logical_id, group in Template.from_stack(stack)
+        .find_resources("AWS::Logs::LogGroup")
+        .items()
+    }
+    assert {name.split("/")[0] for name in retention} == {"Store", "Compute", "Orch"}
+    assert set(retention.values()) == {days}, sorted(retention.items())

@@ -328,6 +328,102 @@ def test_term_terms_range_and_attribute_filters(harness: StoreHarness) -> None:
     assert all(r.score == 0.0 for r in results[1])
 
 
+def _filtered_units(values: dict[str, Any]) -> list[TextUnit]:
+    """One unit per id of ``values``, its document filters ``attr_year``
+    (and ``attr_flag``, ``attr_score`` where given) set to the value."""
+    return [
+        TextUnit(
+            id=unit_id,
+            text=f"Vendor ships widgets, record {unit_id}.",
+            attributes={"filters": filters},
+        )
+        for unit_id, filters in values.items()
+    ]
+
+
+def test_document_filter_values_of_mixed_types_are_keywords(
+    harness: StoreHarness,
+) -> None:
+    # A first numeric value mapped attr_year as long on OpenSearch: the
+    # string value failed its unit's write, and a range compared numbers
+    # where the embedded engine compared text. Both stores now hold every
+    # filter value as a keyword, a number or boolean as its JSON text.
+    harness.initialize()
+    units = _filtered_units(
+        {
+            "t1": {"year": 2023, "flag": True},
+            "t2": {"year": "draft", "score": 2.0},
+            "t3": {"year": 2023.5, "flag": False},
+        }
+    )
+    stats = harness.vector_indexer.index_text_units(units)
+    assert stats.failed_items == 0, stats.errors
+    prefix = _prefixes(harness).text_units_index_prefix
+    cases: list[tuple[dict[str, Any], list[str]]] = [
+        ({"attr_year": "2023"}, ["t1"]),
+        ({"attr_year": 2023}, ["t1"]),
+        ({"attributes.filters.year": 2023}, ["t1"]),
+        ({"attr_year": "2023.5"}, ["t3"]),
+        ({"attr_year": ["draft", 2023.5]}, ["t2", "t3"]),
+        # Ranges compare text: "2023.5" sorts below "2024", "draft" above "3".
+        ({"attr_year": {"gte": "2023", "lt": "2024"}}, ["t1", "t3"]),
+        ({"attr_year": {"gte": 3}}, ["t2"]),
+        ({"attributes.filters.year": {"gte": "3"}}, ["t2"]),
+        ({"attr_flag": True}, ["t1"]),
+        ({"attr_flag": "false"}, ["t3"]),
+        ({"attr_score": "2.0"}, ["t2"]),
+        ({"attr_score": 2}, []),
+    ]
+    results = _search(harness, *(_query("", prefix, filters=f) for f, _ in cases))
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        expected for _, expected in cases
+    ]
+
+
+def test_an_earlier_index_maps_new_filter_fields_as_keywords(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An index built before the filter templates: check_index_settings adds
+    # them, so a filter field first written from then on is a keyword; one
+    # mapped earlier keeps its type (a warning names it).
+    harness.initialize()
+    indexer = harness.vector_indexer
+    current = indexer._get_text_units_mapping
+
+    def earlier() -> dict[str, Any]:
+        mapping = current()
+        mapping["mappings"]["dynamic_templates"] = mapping["mappings"][
+            "dynamic_templates"
+        ][:1]
+        return mapping
+
+    monkeypatch.setattr(indexer, "_get_text_units_mapping", earlier)
+    stats = indexer.index_text_units(_filtered_units({"t1": {"year": 2023}}))
+    monkeypatch.undo()
+    assert stats.failed_items == 0, stats.errors
+    with caplog.at_level("WARNING"):
+        indexer.check_index_settings(_SUFFIX)
+    stats = indexer.upsert_text_units(
+        _filtered_units({"t2": {"rev": 3}, "t3": {"rev": "draft"}})
+    )
+    assert stats.failed_items == 0, stats.errors
+    prefix = _prefixes(harness).text_units_index_prefix
+    results = _search(
+        harness,
+        _query("", prefix, filters={"attr_rev": {"gte": "10"}}),
+        _query("", prefix, filters={"attr_year": 2023}),
+    )
+    assert [sorted(r.source for r in hits) for hits in results] == [
+        ["t2", "t3"],
+        ["t1"],
+    ]
+    # Only OpenSearch maps a field by its first value.
+    typed = "maps the document filter field(s) attr_year" in caplog.text
+    assert typed == (harness.kind != "sqlite")
+
+
 def test_schema_annotation_filters_on_entities_and_relationships(
     harness: StoreHarness,
 ) -> None:

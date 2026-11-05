@@ -586,6 +586,14 @@ From 0.2.3 (or a `main` checkout since):
       then match no filter.
     - `attr_*` values are keywords (#446): an `attr_*` field an older index
       mapped as a date stays one.
+    - Numeric and boolean document filter values are keywords (#566): an
+      `attr_<key>` or `attributes.filters.<key>` field an older OpenSearch
+      index mapped by a first number (`long`, `float`) or boolean keeps that
+      type, so a later string value fails its document's write and a range
+      compares numbers; a warning names each such field. The first run maps
+      the fields it adds from then on as keywords without a reset; the
+      reset costs what the #562 one below does (stored extraction records
+      and vectors reused). The embedded SQLite store needs no reset.
     - Seed properties are stored unmapped (#508): an entities index that
       maps `attributes.seed_properties` field by field is refused (exit 2).
     - Relationships store their type (#562): a relationship an older build
@@ -662,6 +670,25 @@ From 0.2.3 (or a `main` checkout since):
       and cut by size over it now, with no call. A reset re-chunks a
       document holding one and extracts its text units again where the
       pieces differ; pre-chunks of several lines are unchanged.
+15. A deployed private-mode CDK stack whose image config sets
+    `aws.bedrock.assumed_role_arn`: deploy with `-c sts_endpoint=true`, or
+    the next deploy removes the STS endpoint and the role assumption hangs
+    (#566).
+16. A deployed CDK stack, on the next `cdk deploy --all` (#566):
+    - The `owner` tag is removed from every resource (an in-place tag
+      update); pass `-c owner=aws-proserve` to keep it.
+    - Without `use_cmk`, `GraphRagSecurity` is no longer part of the app.
+      If an earlier deploy created it (it holds only CDK metadata), delete
+      it with `aws cloudformation delete-stack --stack-name
+      GraphRagSecurity` (`GraphRag<Env>Security` outside dev); no other
+      stack refers to it.
+    - The OpenSearch domain's TLS policy changes to
+      `Policy-Min-TLS-1-2-PFS-2023-10`. Clients older than TLS 1.2 or
+      without an ECDHE cipher can no longer connect (the package's client
+      can). To see whether the change runs as a blue/green deployment,
+      dry-run it first: `aws opensearch update-domain-config --domain-name
+      <domain> --domain-endpoint-options
+      TLSSecurityPolicy=Policy-Min-TLS-1-2-PFS-2023-10 --dry-run`.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1183,6 +1210,36 @@ From 0.2.3 (or a `main` checkout since):
   deployments set; `docs/reference/configuration.md` has every key (#468).
 - CDK alarms: `OpenSearchJvmPressure` follows AWS's recommended alarm and
   `NeptuneHighCpu` needs 3 consecutive 5-minute periods (#298).
+- CDK: synth warns, rather than noting, when the guardrail stack owns a
+  guardrail that compute is not given (`guardrail_identifier` unset): a
+  later `cdk deploy --all` without the flag removed the guardrail from the
+  task definitions, and queries and answers went unscreened with no sign
+  (#566).
+- CDK: the query task reads the graph through the Neptune reader endpoint
+  (ingestion keeps the writer), so with `neptune_instances` above 1 queries
+  go to the replicas instead of competing with an ingestion on the writer.
+  A query right after an ingestion can miss its last writes for the
+  replica lag ([Query access](docs/operations.md#query-access-and-tenant-isolation))
+  (#566).
+- CDK: a private-mode VPC gets the STS interface endpoint only with the new
+  `sts_endpoint` context key (default `false`): only an image config with
+  `aws.bedrock.assumed_role_arn` calls STS, and task role credentials come
+  from the ECS credentials endpoint. One interface endpoint fewer (billed
+  per AZ-hour) (#566).
+- CDK: `log_retention_days` (default 30, as before) sets the retention of
+  the task, pipeline, OpenSearch application and custom-resource log
+  groups; the `owner` tag is applied only when `owner` is set (it was
+  `aws-proserve`); the security stack is synthesized only with `use_cmk`
+  (it held nothing otherwise); the `NeptuneLowFreeableMemory` threshold is
+  1/32 of the instance class's memory (512 MiB on the default
+  `db.r6g.large`, as before; 512 MiB for a class it does not know); the
+  `PipelineFailures` alarm treats a period without executions as no
+  failure, like the other alarms; the OpenSearch domain requires TLS 1.2 or
+  1.3 with forward-secret ciphers (`Policy-Min-TLS-1-2-PFS-2023-10`);
+  `cdk.json` pins strong cross-stack references and the custom resources'
+  bundled SDK, the behaviour synth warned it defaulted to (#566).
+- Docs: with `bedrock_model_arns`, list the reranking model too: the
+  Rerank API also checks `bedrock:InvokeModel` on it (#566).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
@@ -1468,6 +1525,13 @@ From 0.2.3 (or a `main` checkout since):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A number or boolean document filter value is a keyword on OpenSearch, as
+  the filter docs said: a field's first numeric value mapped it as `long`,
+  so a document with a string value for the same key failed to index
+  (`mapper_parsing_exception`) and a range compared numbers where the
+  embedded engine compared text. Both stores hold such a value as its JSON
+  text (`2023`, `2.0`, `true`): the embedded engine no longer reads `2.0`
+  as `2`, and compares a keyword's numbers as text in a range (#566).
 - Local search looks each query entity up on its own, concurrently, and
   seeds graph expansion with the entity of its name, else with its top hit
   when that scores at least `search.local_search.seed_score_ratio` (new,

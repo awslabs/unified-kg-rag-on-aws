@@ -61,6 +61,7 @@ def test_booleans_accept_the_usual_spellings(value: Any, expected: bool) -> None
         ("neptune_instances", "0", "neptune_instances must be at least 1"),
         ("max_azs", "1", "max_azs must be at least 2"),
         ("opensearch_volume_gib", "abc", "opensearch_volume_gib must be an integer"),
+        ("log_retention_days", "45", "log_retention_days must be a CloudWatch Logs"),
     ],
 )
 def test_out_of_range_numbers_are_rejected(key: str, value: str, message: str) -> None:

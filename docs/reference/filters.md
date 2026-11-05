@@ -76,7 +76,16 @@ does a typed value of another type: a number for a boolean field
 (`in_schema: 1`), a boolean for a numeric one (`rank: true`) or a
 fractional number for an integer one (`level: 2.5`; `2.0` is `2`). The
 values of every other field are matched as given, `attr_<key>` and
-`attributes.<path>` included.
+`attributes.<path>` included. A number or boolean document filter value
+(`attr_<key>`, `attributes.filters.<key>`) is a keyword too, held as its
+JSON text, on OpenSearch and the embedded engine alike: `attr_year:2023`
+and `{"attr_year": 2023}` match a document's `2023`, a `2.0` matches `2.0`
+or `"2.0"` (not `2`), `true` matches `true` or `"true"`, and a range compares
+text (`{"gte": "10"}` matches `9`). A document's value of another type than
+an earlier one's (`"draft"` after `2023`) is stored either way. On an
+OpenSearch index an earlier release built, a field mapped then by its first
+number or boolean keeps that type until `indexing.reset: true` (a warning
+names it).
 
 ## Per-strategy applicability
 

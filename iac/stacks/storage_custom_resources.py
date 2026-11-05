@@ -24,6 +24,8 @@ from aws_cdk import aws_stepfunctions as sfn
 from aws_cdk import custom_resources as cr
 from constructs import Construct
 
+from iac.stacks.log_retention import set_retention
+
 _HANDLERS = Path(__file__).resolve().parent.parent / "custom_resources"
 NORI_PACKAGE_NAME = "analysis-nori"
 
@@ -42,15 +44,16 @@ class _PollingProvider(Construct):
         total_timeout: Duration,
         kms_key: kms.IKey | None,
         removal_policy: RemovalPolicy,
+        log_retention_days: int,
     ) -> None:
         super().__init__(scope, construct_id)
         self.log_group = logs.LogGroup(
             self,
             "Logs",
             encryption_key=kms_key,
-            retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
+        set_retention(self.log_group, log_retention_days)
         code = lambda_.Code.from_asset(str(_HANDLERS), exclude=["__pycache__"])
 
         self.on_event = lambda_.Function(
@@ -110,6 +113,7 @@ class NoriPackage(Construct):
         engine_version: str,
         kms_key: kms.IKey | None,
         removal_policy: RemovalPolicy,
+        log_retention_days: int,
     ) -> None:
         super().__init__(scope, construct_id)
         self.handlers = _PollingProvider(
@@ -122,6 +126,7 @@ class NoriPackage(Construct):
             total_timeout=Duration.hours(2),
             kms_key=kms_key,
             removal_policy=removal_policy,
+            log_retention_days=log_retention_days,
         )
         # DescribePackages has no resource-level scoping.
         self.handlers.on_event.add_to_role_policy(

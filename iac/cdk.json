@@ -6,6 +6,8 @@
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false,
 
     "env_name": "dev",
     "network_mode": "private",

@@ -147,6 +147,69 @@ _EXACT_TYPES = frozenset({"keyword", "boolean"})
 # index's field limit.
 _SEED_PROPERTIES_MAPPING: dict[str, Any] = {"type": "object", "enabled": False}
 
+# Every index's dynamic templates (the first that matches a new field maps
+# it). A document filter value (attr_<key>, attributes.filters.<key>) is a
+# keyword whatever its JSON type, as the filter docs promise: mapped by its
+# first value, a number would type the field as long (a later string value
+# failing its document's write), and a range on it would compare numbers on
+# OpenSearch but strings on the embedded engine. OpenSearch indexes a number
+# or a boolean into a keyword field as its JSON text ("2023", "2.5", "true").
+# One template per pattern and JSON type: OpenSearch takes one path_match per
+# template, and "*" would also match an object value (a keyword cannot hold it).
+_FILTER_PATHS = {
+    "filter_attributes": f"{ATTRIBUTE_KEY_PREFIX}*",
+    "document_filters": f"attributes.{Constants.FILTERS.value}.*",
+}
+_DYNAMIC_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "strings_as_keywords": {
+            "match_mapping_type": "string",
+            "mapping": {"type": "keyword"},
+        }
+    },
+    *(
+        {
+            f"{name}_{json_type}_as_keywords": {
+                "path_match": pattern,
+                "match_mapping_type": json_type,
+                "mapping": {"type": "keyword"},
+            }
+        }
+        for name, pattern in _FILTER_PATHS.items()
+        for json_type in ("long", "double", "boolean")
+    ),
+]
+
+
+def _typed_filter_fields(live: dict[str, Any]) -> list[str]:
+    """The document filter fields of the ``live`` properties mapped as
+    another type than keyword (by their first value, before
+    ``_DYNAMIC_TEMPLATES`` mapped them as keywords)."""
+    filters = (
+        ((live.get("attributes") or {}).get("properties") or {}).get(
+            Constants.FILTERS.value
+        )
+        or {}
+    ).get("properties") or {}
+    fields = [
+        *(
+            (name, field)
+            for name, field in live.items()
+            if name.startswith(ATTRIBUTE_KEY_PREFIX)
+        ),
+        *(
+            (f"attributes.{Constants.FILTERS.value}.{name}", field)
+            for name, field in filters.items()
+        ),
+    ]
+    return sorted(
+        name
+        for name, field in fields
+        if isinstance(field, dict)
+        and field.get("type", "object") not in {"keyword", "object"}
+    )
+
+
 # Each vector field's digest of the text it embeds, under the field's name
 # (_embedding_digest: the embedding settings are hashed in). A write reuses
 # a stored vector whose digest matches instead of embedding its text again.
@@ -695,8 +758,11 @@ class OpenSearchIndexer(VectorIndexer):
         before #444, the schema annotations of one built before
         ``in_schema``, the seed-graph fields ``iri``, ``source_kinds`` and
         ``source_kind`` of one built before them, the unmapped
-        ``attributes.seed_properties``) and date detection turned off, before
-        any write.
+        ``attributes.seed_properties``), date detection turned off and the
+        dynamic templates (``_DYNAMIC_TEMPLATES``) this release maps new
+        fields by, before any write. A document filter field an earlier build
+        mapped as a number or boolean is logged as a warning: it keeps its
+        type until a reset.
 
         Raises:
             ConfigurationError: An index of ``suffix`` does not match.
@@ -836,9 +902,25 @@ class OpenSearchIndexer(VectorIndexer):
                 "with indexing.reset: true to rebuild the indices."
             )
         missing = _missing_properties(expected, live)
+        update: dict[str, Any] = {}
         if missing or mappings.get("date_detection") is not False:
-            self._put_index_mapping(
-                index_name, {"date_detection": False, "properties": missing}
+            update = {"date_detection": False, "properties": missing}
+        if mappings.get("dynamic_templates") != _DYNAMIC_TEMPLATES:
+            # Filter values mapped from now on are keywords; one an earlier
+            # build mapped by its first value keeps that type.
+            update["dynamic_templates"] = _DYNAMIC_TEMPLATES
+        if update:
+            self._put_index_mapping(index_name, update)
+        if typed := _typed_filter_fields(live):
+            logger.warning(
+                "The OpenSearch index '%s' maps the document filter field(s) %s "
+                "as a number or boolean (an earlier build mapped each by its "
+                "first value): a later string value fails its document's write "
+                "and a range compares numbers, where the embedded engine "
+                "compares text. Re-run once with indexing.reset: true to map "
+                "them as keywords.",
+                index_name,
+                ", ".join(typed),
             )
 
     def record_build(
@@ -2591,14 +2673,7 @@ class OpenSearchIndexer(VectorIndexer):
                 # otherwise map its field as a date on the first write, and
                 # every later value of another form would fail to write.
                 "date_detection": False,
-                "dynamic_templates": [
-                    {
-                        "strings_as_keywords": {
-                            "match_mapping_type": "string",
-                            "mapping": {"type": "keyword"},
-                        }
-                    }
-                ],
+                "dynamic_templates": _DYNAMIC_TEMPLATES,
                 "properties": properties,
             },
         }

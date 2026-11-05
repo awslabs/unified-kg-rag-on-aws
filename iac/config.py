@@ -23,6 +23,11 @@ cannot leave its setting at the default:
                                        "public"   -> private-with-NAT subnets
   max_azs             2                AZs for a newly-created VPC (>=2:
                                        Neptune needs subnets in two AZs)
+  sts_endpoint        False            private mode: add the STS interface
+                                       endpoint, which only an image config
+                                       with aws.bedrock.assumed_role_arn
+                                       calls (task role credentials come from
+                                       the ECS credentials endpoint)
 
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
@@ -92,6 +97,10 @@ cannot leave its setting at the default:
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
   flow_log_retention_days 731         flow-log log group retention (a CloudWatch
                                        Logs retention value, e.g. 30/90/365/731)
+  log_retention_days  30               retention of the task, pipeline,
+                                       OpenSearch application and custom-
+                                       resource log groups (a CloudWatch Logs
+                                       retention value)
   deletion_protection dev:False/else:True  deletion protection on Neptune + the
                                        DynamoDB table (OpenSearch has none; it
                                        is only retained via removal_destroy)
@@ -148,7 +157,8 @@ cannot leave its setting at the default:
                                        expired
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
-  owner               "aws-proserve"   `owner` tag on every resource
+  owner               None             `owner` tag on every resource; unset =
+                                       no owner tag
   cost_center         "unified-kg-rag-on-aws"   `cost-center` tag on every resource
 
   # --- Lifecycle ---
@@ -455,7 +465,7 @@ class DeploymentConfig:
     alarm_email: str | None
     enable_cdk_nag: bool
     # governance (propagated as cost-allocation / ownership tags)
-    owner: str
+    owner: str | None
     cost_center: str
     # lifecycle
     removal_destroy: bool
@@ -475,6 +485,11 @@ class DeploymentConfig:
     opensearch_nori_package: bool = False
     # Neptune Serverless (min, max) NCU; None = provisioned neptune_instance.
     neptune_serverless_ncu: tuple[float, float] | None = None
+    # The STS interface endpoint in private mode (for aws.bedrock.
+    # assumed_role_arn only). Off: no endpoint, nothing else changes.
+    sts_endpoint: bool = False
+    # Retention of the task, pipeline, OpenSearch and custom-resource logs.
+    log_retention_days: int = 30
     # Fargate Spot for the ingestion task, and the re-runs of a task Spot
     # interrupted. Off: the templates are exactly as without the feature.
     ingestion_fargate_spot: bool = False
@@ -608,11 +623,16 @@ class DeploymentConfig:
                 f"network_mode must be 'private' or 'public', got '{network_mode}'"
             )
         flow_log_retention_days = as_int("flow_log_retention_days", 731)
-        if flow_log_retention_days not in _LOG_RETENTION_DAYS:
-            raise ValueError(
-                "flow_log_retention_days must be a CloudWatch Logs retention value "
-                f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
-            )
+        log_retention_days = as_int("log_retention_days", 30)
+        for key, days in (
+            ("flow_log_retention_days", flow_log_retention_days),
+            ("log_retention_days", log_retention_days),
+        ):
+            if days not in _LOG_RETENTION_DAYS:
+                raise ValueError(
+                    f"{key} must be a CloudWatch Logs retention value "
+                    f"{sorted(_LOG_RETENTION_DAYS)}, got {days}"
+                )
         opensearch_nori_package = as_bool("opensearch_nori_package", default=False)
         # With the package associated the domain has nori, so Korean maps to
         # it unless the analyzer is set (cjk, say, until the ko indices are
@@ -750,7 +770,7 @@ class DeploymentConfig:
             ),
             alarm_email=ctx("alarm_email"),
             enable_cdk_nag=as_bool("enable_cdk_nag", default=False),
-            owner=str(ctx("owner", "aws-proserve")),
+            owner=str(owner) if (owner := ctx("owner")) else None,
             cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
             removal_destroy=as_bool("removal_destroy", default=is_dev),
             create_guardrail_explicit=ctx("create_guardrail") is not None,
@@ -761,6 +781,8 @@ class DeploymentConfig:
             opensearch_nori_package=opensearch_nori_package,
             neptune_serverless_ncu=neptune_serverless_ncu,
             ingestion_fargate_spot=ingestion_fargate_spot,
+            sts_endpoint=as_bool("sts_endpoint", default=False),
+            log_retention_days=log_retention_days,
             spot_interruption_retries=as_int(
                 "spot_interruption_retries", 2, minimum=0, maximum=10
             ),

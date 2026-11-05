@@ -514,10 +514,34 @@ def test_query_task_definition_runs_the_same_app_with_the_query_role() -> None:
     (q_app,) = query["Properties"]["ContainerDefinitions"]
     (i_app,) = ingestion["Properties"]["ContainerDefinitions"]
     assert q_app["Name"] == i_app["Name"] == "app"
-    assert q_app["Environment"] == i_app["Environment"]
+    graph = "UKR__AWS__NEPTUNE__ENDPOINT"
+    assert [e for e in q_app["Environment"] if e["Name"] != graph] == [
+        e for e in i_app["Environment"] if e["Name"] != graph
+    ]
     assert "EphemeralStorage" not in query["Properties"]
     outputs = template.find_outputs("*")
     assert {"QueryTaskDefinitionArn", "QueryTaskRoleArn"} <= set(outputs)
+
+
+def test_queries_read_the_graph_through_the_reader_endpoint() -> None:
+    # Ingestion writes through the writer (cluster) endpoint; the read-only
+    # query task goes to the reader endpoint, which spreads its reads over
+    # the replicas.
+    task_defs = _compute_template().find_resources("AWS::ECS::TaskDefinition")
+
+    def endpoint(prefix: str) -> str:
+        task_def = next(v for k, v in task_defs.items() if k.startswith(prefix))
+        (app,) = task_def["Properties"]["ContainerDefinitions"]
+        (value,) = [
+            e["Value"]
+            for e in app["Environment"]
+            if e["Name"] == "UKR__AWS__NEPTUNE__ENDPOINT"
+        ]
+        return json.dumps(value)
+
+    assert "ReadEndpoint" in endpoint("QueryTask")
+    ingestion = endpoint("IngestionTask")
+    assert "Endpoint" in ingestion and "ReadEndpoint" not in ingestion
 
 
 def test_tracing_adds_the_collector_to_both_task_definitions() -> None:

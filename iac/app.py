@@ -4,7 +4,7 @@
 """CDK app entry point for the unified-kg-rag-on-aws infrastructure.
 
 Assembles the modular stacks (networking -> storage -> compute -> orchestration
--> observability, plus security). Deployment is parameterized via cdk.json
+-> observability, plus security with use_cmk). Deployment is parameterized via cdk.json
 context — see iac/config.py and iac/README.md. Reuses an existing VPC / S3 cache
 bucket when provided, and supports a fully-private (no-NAT) data plane.
 """
@@ -62,7 +62,14 @@ def stack_id(name: str) -> str:
     return f"{stack_prefix}{name}"
 
 
-security = SecurityStack(app, stack_id("Security"), config=config, env=env)
+# Only with use_cmk: without a key the stack would be empty (CloudFormation
+# refuses a template with no resources, so cdk deploy skipped it anyway), and
+# no other stack refers to it.
+kms_key = (
+    SecurityStack(app, stack_id("Security"), config=config, env=env).kms_key
+    if config.use_cmk
+    else None
+)
 # The guardrail is region-pinned to bedrock_region in its own stack. We avoid a
 # cross-region CloudFormation reference (those rewrite SSM/export plumbing across
 # every stack and cause export-in-use churn on the deploy-region stacks).
@@ -74,14 +81,14 @@ security = SecurityStack(app, stack_id("Security"), config=config, env=env)
 # controls that), so step 2 never deletes what step 1 created.
 GuardrailStack(app, stack_id("Guardrail"), config=config, env=bedrock_env)
 networking = NetworkingStack(
-    app, stack_id("Network"), config=config, kms_key=security.kms_key, env=env
+    app, stack_id("Network"), config=config, kms_key=kms_key, env=env
 )
 storage = StorageStack(
     app,
     stack_id("Storage"),
     config=config,
     networking=networking,
-    kms_key=security.kms_key,
+    kms_key=kms_key,
     env=env,
 )
 compute = ComputeStack(
@@ -90,7 +97,7 @@ compute = ComputeStack(
     config=config,
     networking=networking,
     storage=storage,
-    kms_key=security.kms_key,
+    kms_key=kms_key,
     guardrail_identifier=config.guardrail_identifier,
     env=env,
 )
@@ -101,7 +108,7 @@ orchestration = OrchestrationStack(
     networking=networking,
     compute=compute,
     cache_bucket_name=storage.cache_bucket.bucket_name,
-    kms_key=security.kms_key,
+    kms_key=kms_key,
     env=env,
 )
 ObservabilityStack(
@@ -123,7 +130,8 @@ for tag_key, tag_value in {
     "owner": config.owner,
     "cost-center": config.cost_center,
 }.items():
-    cdk.Tags.of(app).add(tag_key, tag_value)
+    if tag_value:  # no owner tag unless one is set
+        cdk.Tags.of(app).add(tag_key, tag_value)
 
 # Well-Architected checks at synth time (opt-in: -c enable_cdk_nag=true).
 # NOTE: cdk-nag reports unsuppressed violations as error-level annotations that

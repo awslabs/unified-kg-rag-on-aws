@@ -46,6 +46,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_stack import StorageStack
 
@@ -166,9 +167,9 @@ class ComputeStack(Stack):
             "TaskLogs",
             log_group_name=self.log_group_name,
             encryption_key=self.kms_key,
-            retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
+        set_retention(self.log_group, config.log_retention_days)
 
         self._collector_repository: ecr.IRepository | None = None
         # Per scope: the imports a task definition in another stack uses.
@@ -196,9 +197,13 @@ class ComputeStack(Stack):
         # orchestration stack's (build_task_definition).
         self.task_role = self._build_task_role(storage)
         self.query_role = self._build_query_role(storage)
-        # Queries keep nothing on disk: the default 20 GiB is plenty.
+        # Queries keep nothing on disk: the default 20 GiB is plenty. They
+        # only read the graph, so they go to the cluster's reader endpoint:
+        # it spreads them over the read replicas (neptune_instances > 1) and
+        # leaves the writer to ingestion; a single-instance cluster routes it
+        # to the writer.
         self.query_task_definition = self.build_task_definition(
-            self, "QueryTask", self.query_role
+            self, "QueryTask", self.query_role, neptune_reader=True
         )
         CfnOutput(
             self,
@@ -328,8 +333,10 @@ class ComputeStack(Stack):
                 ],
             )
         )
-        # Objects under eval/ only, and listing only within it (a HeadObject
-        # on a missing key then reports 404 rather than 403).
+        # Objects under eval/ only, and listing only within it. S3 answers a
+        # HeadObject on a missing key with 404 only to a caller allowed to
+        # list the bucket, and a HeadObject request carries no s3:prefix for
+        # the condition below to match, so a missing key may report 403.
         bucket = storage.cache_bucket
         role.add_to_policy(
             iam.PolicyStatement(
@@ -499,10 +506,18 @@ class ComputeStack(Stack):
         construct_id: str,
         role: iam.Role,
         ephemeral_storage_gib: int | None = None,
+        neptune_reader: bool = False,
     ) -> ecs.FargateTaskDefinition:
         """A data-plane task definition in ``scope`` (this stack or another
-        one of the same app and environment), running ``role``."""
+        one of the same app and environment), running ``role``; with
+        ``neptune_reader``, against the Neptune reader endpoint."""
         storage = self.storage
+        neptune = storage.neptune_cluster
+        neptune_endpoint = (
+            neptune.cluster_read_endpoint
+            if neptune_reader
+            else neptune.cluster_endpoint
+        )
         imports = self._task_imports(scope)
         # CPU/memory are config-driven: the in-task ProcessPool extractors scale
         # with vCPU count, so a larger corpus benefits from more CPU.
@@ -529,7 +544,7 @@ class ComputeStack(Stack):
             "AWS_REGION": scope.region,
             "UKR__AWS__BEDROCK__REGION_NAME": self.config.bedrock_region
             or scope.region,
-            "UKR__AWS__NEPTUNE__ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
+            "UKR__AWS__NEPTUNE__ENDPOINT": neptune_endpoint.hostname,
             # Bare hostname — the OpenSearch adapter prepends the scheme itself
             # via use_ssl; passing https:// here yields https://[https://…].
             "UKR__AWS__OPENSEARCH__ENDPOINT": storage.opensearch_domain.domain_endpoint,

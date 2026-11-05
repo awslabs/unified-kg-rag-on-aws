@@ -237,7 +237,8 @@ run it with an operator role.
    the restored table's name makes CDK try to create a table of that name,
    which fails. So start a task of the ingestion task definition
    (`.States.Ingest.Parameters.TaskDefinition`) or the query task
-   definition with both variables as environment overrides (the task
+   definition with both variables as environment overrides (the query
+   task's endpoint is the restored cluster's reader endpoint) (the task
    override is in [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
    The roles, the DynamoDB gateway-endpoint policy and the alarms are scoped
    to the stack's resources, so first add, as policies of your own (a deploy
@@ -754,6 +755,13 @@ deployed stack:
    the notes ask for one stack first (`cdk deploy <stack> --exclusively`),
    deploy it before `--all`.
    A role with a custom IAM policy needs the permissions the notes list.
+   The stacks pass values to each other through strong cross-stack
+   references (CloudFormation exports, pinned in `iac/cdk.json`): a deploy
+   that would remove or change an export another stack still imports fails
+   with `Cannot delete export ... as it is in use`, which is why some notes
+   ask for one stack first. A move to CDK's weak references, which would
+   drop that ordering, is not made yet: it needs a `both` deploy of every
+   environment before `weak`.
 5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))
    as a one-off task with `UKR__INDEXING__RESET=true` as an environment
    override (the task override is in
@@ -1301,6 +1309,17 @@ fine-grained access control, give it `indices:data/read/search`,
 `indices:monitor/settings/get` (searches sized by the live index's
 `max_result_window` / `max_terms_count`) on the package's indices; without
 the last two a query still runs and logs one warning for each.
+
+The query task reads the graph through the Neptune cluster's reader
+endpoint, the ingestion task writes through the cluster (writer) endpoint.
+With `neptune_instances` above 1 the reader endpoint spreads queries over
+the read replicas and keeps them off the writer an ingestion is busy with;
+a single-instance cluster (the dev default) routes it to the writer. A
+replica applies the writer's changes after a short lag (typically well
+under a second, longer while the writer is loaded), so a query started the
+moment an ingestion finishes may not yet see its last writes: wait a few
+seconds, or check `ReplicaLag` (Neptune metrics) before an evaluation that
+must read a just-finished build. OpenSearch is unaffected (one endpoint).
 
 **The index suffix is a naming separation, not an access-control boundary.**
 `RAGInput.suffix` / `--suffix` selects the indices and labels a query reads

@@ -94,11 +94,19 @@ class GuardrailStack(Stack):
                     "silence this warning)."
                 )
             if not config.guardrail_identifier:
-                Annotations.of(self).add_info(
-                    "Guardrail created but not attached to compute yet: re-run "
-                    "`cdk deploy --all -c guardrail_identifier=<GuardrailIdentifier "
-                    "output> -c guardrail_version=<GuardrailVersion output>` to "
-                    "inject UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER and __VERSION."
+                # A warning, not a note: the id reaches compute only through
+                # context, so a later deploy that omits it detaches the
+                # guardrail an earlier one attached, and the tasks then run
+                # with no screening.
+                Annotations.of(self).add_warning(
+                    "The guardrail this stack owns is not attached to compute: "
+                    "this synth gives the tasks no guardrail, so no query or "
+                    "answer is screened (a deploy of it detaches one an earlier "
+                    "deploy attached). Pass `-c guardrail_identifier="
+                    "<GuardrailIdentifier output> -c guardrail_version="
+                    "<GuardrailVersion output>` on every deploy, or keep both in "
+                    "the context of cdk.json; `-c create_guardrail=false` "
+                    "creates none."
                 )
         else:
             # Bring-your-own path: nothing is created; surface the external id.

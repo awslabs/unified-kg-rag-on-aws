@@ -26,6 +26,7 @@ from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 from iac.config import DeploymentConfig
+from iac.stacks.log_retention import set_retention
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.storage_custom_resources import NoriPackage
 
@@ -85,6 +86,7 @@ class StorageStack(Stack):
                 engine_version=OPENSEARCH_VERSION.version,
                 kms_key=self.kms_key,
                 removal_policy=self.removal_policy,
+                log_retention_days=config.log_retention_days,
             )
         self._export_outputs()
 
@@ -367,7 +369,8 @@ class StorageStack(Stack):
                 enabled=True, kms_key=self.kms_key
             ),
             enforce_https=True,
-            tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
+            # TLS 1.2 to 1.3 with forward-secret ciphers only.
+            tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2_PFS,
             # Service software updates and Auto-Tune run in the daily 10-hour
             # off-peak window, on for every domain created since 2023 and by
             # default starting at 10:00 P.M. region-local time. CDK would emit
@@ -387,6 +390,7 @@ class StorageStack(Stack):
         log_group = domain.app_log_group
         assert log_group is not None  # enabled in `logging` above
         log_group.apply_removal_policy(self.removal_policy)
+        set_retention(log_group, self.config.log_retention_days)
         if self.kms_key is not None:
             # The domain construct offers no key option for the log group it
             # creates, so set it on the CloudFormation resource.
