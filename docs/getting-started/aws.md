@@ -35,6 +35,22 @@ component.
 | **Amazon S3** | Only for `--s3-sync` or `s3://` paths | Stage-cache sync, `s3://` datasets and the CDK corpus |
 | **Amazon DynamoDB** | Only for incremental indexing | The document-status registry that diffs the corpus by content hash |
 
+### Network and versions
+
+- **Reach both stores from the CLI host.** A Neptune cluster takes
+  connections only from inside its VPC, so run the CLIs on a host in that
+  VPC (or one connected to it through a VPN, peering or a tunnel), with
+  security groups that let it reach Neptune's port and the OpenSearch
+  domain. A host outside the VPC cannot connect.
+- **OpenSearch.** Tested on OpenSearch 2.13, the version the CDK domain
+  runs. The opt-in on-disk vector keys need 2.17 or later, and faiss with
+  the default `cosinesimil` space 2.19
+  ([Operator Runbook: On-disk vector storage](../operations.md#on-disk-vector-storage)).
+- **Neptune.** The CDK app does not pin an engine version (a new cluster
+  starts on Neptune's default); the client is `gremlinpython` below 3.8, so
+  an engine needs TinkerPop below 3.8
+  ([`iac/README.md`](../../iac/README.md#configuration-cdkjson-context---c-keyvalue)).
+
 ## Required models
 
 Enable access to these Bedrock models (the code defaults; a model you

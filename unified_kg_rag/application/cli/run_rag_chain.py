@@ -173,7 +173,12 @@ class CommandLineInterface:
         parser.add_argument(
             "--disable-query-processing",
             action="store_true",
-            help="Skip query translation and entity extraction",
+            help="Skip query translation and the query-side entity and keyword "
+            "extraction (no LLM call before retrieval). mix and hybrid then "
+            "have no high- or low-level keywords: a question shorter than "
+            "search.lightrag_search.raw_query_fallback_max_len characters is "
+            "searched as its own low-level keyword, a longer one retrieves no "
+            "entities or relationships",
         )
         parser.add_argument(
             "--filters",
@@ -201,7 +206,7 @@ class CommandLineInterface:
             action="store_true",
             help="Show query-processing details, sources and metrics",
         )
-        add_config_arguments(parser, "Path to custom configuration file")
+        add_config_arguments(parser)
         add_provider_arguments(parser)
         return parser
 

@@ -153,6 +153,7 @@ What extraction will use, with no model call:
 import yaml
 
 from unified_kg_rag import get_config
+# Internal, not exported from unified_kg_rag: may change in any release.
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 
 extraction = resolve_extraction_schema(get_config("config.yaml")).processing.graph_extraction

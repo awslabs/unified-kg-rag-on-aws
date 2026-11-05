@@ -30,7 +30,7 @@ retrieval, graph_aware]`.
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 
 심사 평가기 둘은 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
-없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 상태 코드 `2`로 종료하며,
+없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 종료 코드 `2`로 종료하며,
 `processing.ignore_errors: true`여도 같습니다. 위의 심사 모델 없는 실행에는 extra가
 필요 없습니다. 그 밖에 켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한
 없음) 설정을 거부하면 실행이 멈춥니다. `processing.ignore_errors: true`이면 그 평가기를 빼고

@@ -11,6 +11,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Check a deployment before the first run | [Before a run](#before-a-run) |
 | Size the ingestion task and estimate a run's time | [Capacity sizing](#capacity-sizing) |
 | Resume, recompute or rebuild an ingestion | [Re-ingest](#re-ingest) |
+| Run a reset or answer a confirmation on a deployed stack | [Run a one-off ingestion task](#run-a-one-off-ingestion-task) |
 | Keep a corpus up to date | [Incremental indexing](./guides/incremental.md) (the rules), [Incremental runs](#incremental-runs) |
 | Recover a run that stopped | [Interrupted runs](#interrupted-runs) |
 | Find out why a document is `FAILED` or `QUARANTINED` | [Failed documents](#failed-documents), [Quarantined documents](#quarantined-documents) |
@@ -104,26 +105,8 @@ or the language analyzers, or a built-in prompt template (code), and when a
 Other extraction settings need no reset: the next incremental run re-extracts
 the affected documents and logs how many
 ([Incremental indexing: Workflows](./guides/incremental.md#workflows)). What a
-reset reuses and refreshes:
-[Incremental indexing: Rebuild](./guides/incremental.md#rebuild-indexingreset).
-
-During a reset, vector queries read the previous indices until each new one
-swaps in; graph queries see previous and rebuilt items mixed until the final
-drop. Quarantined documents are skipped and keep their records. A failed reset
-drops nothing: re-run it. One whose graph writes partly failed (even within
-`indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
-results); the next run removes what the previous graph still holds. A
-reset stopped or killed before it swapped an index in leaves that index
-(`<alias>-<timestamp>`, no alias) until the next reset deletes it; an
-incremental run does not. Delete it by hand, or re-run the reset.
-A reset pipeline id run again resumes from its cached stages like any
-other; when another pipeline id has since deleted extraction records its
-text units name (an incremental run with other settings deletes the
-records of the units it re-extracts), it resumes from the stage that
-stores them instead (WARNING `Extraction records this pipeline stored are
-gone ...`) and extracts those units again: the LLM response cache answers
-them, and with `cache.llm_responses.enabled: false` the rerun costs what
-the reset did.
+reset reuses, what queries see during one, and a reset that failed, stopped or
+runs again: [Incremental indexing: Rebuild](./guides/incremental.md#rebuild-indexingreset).
 **Set `indexing.reset` back to `false` afterwards**, or every run rebuilds.
 
 ### Incremental runs
@@ -139,21 +122,59 @@ deployed stack:
   documents ...`, exit 1, before any write;
   [Mass deletions](./guides/incremental.md#mass-deletions)): check the
   corpus sync, its S3 prefix and the volume. When the files are really gone,
-  re-run once with `UKR_CONFIRM_DELETIONS=1` as an environment override, as
-  for the reset in
-  [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3).
+  re-run once with `UKR_CONFIRM_DELETIONS=1` as an environment override
+  ([Run a one-off ingestion task](#run-a-one-off-ingestion-task)).
 - **Rebuild signals** (`community_rebuild_recommended`,
   `community_growth_ratio`, `runs_since_clustering`) are on the dashboard; no
   [alarm](#alarms) watches them. The state machine passes only the source
   directory and pipeline id, so run the reset they recommend
   ([When to reset](./guides/incremental.md#when-to-reset)) as a one-off task
-  with `UKR__INDEXING__RESET=true` as an environment override (the task
-  override is in [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
+  with `UKR__INDEXING__RESET=true`
+  ([Run a one-off ingestion task](#run-a-one-off-ingestion-task)).
 
 **Registry unreadable** (missing table, denied access, lasting throttling):
 `document_loading` fails with `DocStatusRegistryError` naming the table and
 cause, rather than reindexing everything. Fix the registry and re-run with the
 same `--pipeline-id`, or set `providers.doc_status.enabled: false`.
+
+### Run a one-off ingestion task
+
+The Step Functions pipeline passes only the source directory and the
+pipeline id, so a run that needs another setting (a reset, an answer to a
+confirmation question) runs as a one-off task of the ingestion task
+definition (`.States.Ingest.Parameters.TaskDefinition`), in the cluster,
+subnets and security group of the query example in
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc). Keep the
+state machine's command (the image's own command only prints the help) and
+pass the settings as environment overrides, so the config in the image
+stays as it is. A reset of the corpus under `<prefix>/`:
+
+```json
+{"containerOverrides": [{"name": "app",
+  "command": ["run-ingestion", "--config-path", "/app/config.yaml",
+              "--metrics-sink", "cloudwatch", "--s3-sync",
+              "--s3-bucket-name", "<cache bucket>"],
+  "environment": [{"name": "UKR__INDEXING__RESET", "value": "true"},
+                  {"name": "UKR_CONFIRM_RESET", "value": "1"},
+                  {"name": "UKR_CONFIRM_DELETIONS", "value": "1"},
+                  {"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
+                  {"name": "UKR_PIPELINE_ID", "value": "reset-001"}]}]}
+```
+
+Each answer covers one question; keep only the ones the run asks:
+
+- `UKR__INDEXING__RESET=true`: the reset ([Re-ingest](#re-ingest)). Any
+  other `UKR__...` variable overrides its configuration key the same way.
+- `UKR_CONFIRM_RESET=1`: a reset when another scope holds seeds or the
+  corpus is seeds alone, and an empty-corpus seed build with the registry
+  off ([Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
+- `UKR_CONFIRM_DELETIONS=1`: an incremental run, without the reset, that
+  deletes more than `indexing.max_deletion_share` of its scope's documents
+  ([Mass deletions](./guides/incremental.md#mass-deletions)); for that
+  re-run drop the two reset lines. A reset is never checked for mass
+  deletions, so with the reset on it changes nothing.
+
+Neither confirmation answers a resume's integrity check (`--yes` does).
 
 ### Caches and prefixes
 
@@ -238,8 +259,8 @@ run it with an operator role.
    which fails. So start a task of the ingestion task definition
    (`.States.Ingest.Parameters.TaskDefinition`) or the query task
    definition with both variables as environment overrides (the query
-   task's endpoint is the restored cluster's reader endpoint) (the task
-   override is in [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)).
+   task's endpoint is the restored cluster's reader endpoint;
+   [Run a one-off ingestion task](#run-a-one-off-ingestion-task)).
    The roles, the DynamoDB gateway-endpoint policy and the alarms are scoped
    to the stack's resources, so first add, as policies of your own (a deploy
    rewrites the stack's): Neptune data access on the restored cluster's
@@ -660,38 +681,10 @@ and an ECS task has no terminal to ask on: the run stops at
 `document_loading`, before it writes (`... needs confirmation, but stdin
 is not a terminal. Re-run with --confirm-reset (or UKR_CONFIRM_RESET=1)
 to proceed.`, exit 1). `UKR_CONFIRM_RESET=1` answers that question only
-(not a resume's integrity check, which `--yes` answers). The Step
-Functions pipeline passes only the source directory and pipeline id, so
-run that one reset as a one-off task of the ingestion task definition
-(`.States.Ingest.Parameters.TaskDefinition`, in the network of the query
-example in [`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)):
-the state machine's command unchanged (the image's own command only
-prints the help), and the reset and its answer as environment overrides,
-so the config in the image stays as it is:
-
-```json
-{"containerOverrides": [{"name": "app",
-  "command": ["run-ingestion", "--config-path", "/app/config.yaml",
-              "--metrics-sink", "cloudwatch", "--s3-sync",
-              "--s3-bucket-name", "<cache bucket>"],
-  "environment": [{"name": "UKR__INDEXING__RESET", "value": "true"},
-                  {"name": "UKR_CONFIRM_RESET", "value": "1"},
-                  {"name": "UKR_CONFIRM_DELETIONS", "value": "1"},
-                  {"name": "UKR_SOURCE_DIRECTORY", "value": "s3://<corpus bucket>/<prefix>/"},
-                  {"name": "UKR_PIPELINE_ID", "value": "reset-001"}]}]}
-```
-
-Each answer covers one question; keep only the ones the run asks.
-`UKR_CONFIRM_RESET=1` is for this reset (`UKR__INDEXING__RESET=true`) when
-another scope holds seeds or the corpus is seeds alone, and for an
-empty-corpus seed build with the registry off (**Seeds with the registry
-off**, below). `UKR_CONFIRM_DELETIONS=1` is for an
-incremental run, without the reset, that deletes more than
-`indexing.max_deletion_share` of its scope's documents ([Mass
-deletions](./guides/incremental.md#mass-deletions)): for that re-run drop the two reset lines.
-A reset is never checked for mass deletions, so with the reset on
-`UKR_CONFIRM_DELETIONS` changes nothing; neither answers a resume's
-integrity check (`--yes` does).
+(not a resume's integrity check, which `--yes` answers). Run that one
+reset as a one-off task with `UKR__INDEXING__RESET=true` and
+`UKR_CONFIRM_RESET=1` as environment overrides
+([Run a one-off ingestion task](#run-a-one-off-ingestion-task)).
 
 Two resets from an empty corpus (seeds alone) fail whatever the answer,
 `UKR_CONFIRM_RESET=1` included: of a scope that holds documents, under
@@ -763,9 +756,8 @@ deployed stack:
    drop that ordering, is not made yet: it needs a `both` deploy of every
    environment before `weak`.
 5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))
-   as a one-off task with `UKR__INDEXING__RESET=true` as an environment
-   override (the task override is in
-   [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3)), and
+   as a one-off task with `UKR__INDEXING__RESET=true`
+   ([Run a one-off ingestion task](#run-a-one-off-ingestion-task)), and
    start it with a new pipeline id rather than resume one an older package
    ran.
 6. Run a query and one incremental ingestion before the next large run.
@@ -846,57 +838,16 @@ processes the same delta again. The exception: when graph extraction fails on al
 files: ...`), the documents whose units failed with an error of their own
 are recorded `FAILED`, so the retry limit below applies.
 
-Only an error of the unit's own counts toward the retry limit, on this path
-and when the indexing stage records a document `FAILED`: a response that does
-not parse or was cut off (or an empty translation), or a request the model rejects for its content (a
-Bedrock `ValidationException`, HTTP 400/413/422 from a local server) other
-than a rejection of the model or a setting (an invalid model id, a model that
-needs an inference profile, an unsupported parameter). Nothing else counts:
-throttling, 5xx, timeouts, connections, credentials (an expired SSO token,
-`NoCredentialsError`), a missing region, quotas
-(`ServiceQuotaExceededException`), stream errors, bugs and failed store writes
-fail every document alike. Such a document stays `PENDING` (or `FAILED`,
-retried by the next run), uncounted, until the cause is fixed: an outage or a
-bad setting never excludes it. Its consecutive failed runs of the same
-content are kept (`retry_count`; new content, a success or an
-error of its own starts it over; a stop or death during extraction leaves
-it, one during indexing, once the `PENDING` records are written, resets it):
-from the second, the run warns with the file and the count and reports it in
-`documents_retrying`. When every unit sent fails and its errors of their own
-are of one cause (the same error type, code and HTTP status, whatever the
-message says; or all output that does not parse or was cut off; a unit
-throttled or timed out alongside is left out), output errors on the units of
-more than one document count as each document's own, without a known-good
-request: a server-side output cap cuts them all, and a short known-good
-request cannot tell it from each document's own output. Each run they fail
-counts once (`FAILED`, `1/N` from the first run; an outage run in between
-neither counts nor ends the streak), so a batch that always fails is
-excluded after `indexing.max_document_failures` runs and cannot stop every
-run with the delta's deletions. The trade-off: a server-side output cap that
-persists for that many runs excludes those documents too, until their
-content or the extraction settings change (fix the cap, then edit the files
-or change a setting). Otherwise a known-good request decides (sent through the same chain,
-never served from the LLM response cache): failed too (for output errors,
-an answer that does not parse is a failure), nothing counts; answered, the
-errors count, so a delta of documents the model rejects is still excluded,
-and so is a single document whose output never parses. A content error that
-later clears with no change can thus exclude a document. Graph extraction
-output that lists entities but none with a name, with a section left
-unclosed (cut off without a stop reason), is output cut off (not retried, as
-at the token limit); with every section closed it is malformed output,
-retried like output that does not parse and counted the same way when every
-attempt fails. Output cut later keeps the entities before the cut, with a
-WARNING (`XML output ends with <entities> unclosed`). The response behind a
-failed graph or claim extraction check is logged at DEBUG (its start and end
-when long). An answer the model corrects
-(the answer, a line such as "Correction: ... final output:", the answer
-again) is parsed by its last complete answer, each section repeated keeping
-its last closed occurrence (INFO `XML output repeats <entities>, ...`; a
-WARNING when the last one is unclosed), and a JSON answer by the last object
-that parses; a single answer cut off is handled as above. An OpenAI-compatible server's
-context-length rejection that counts the requested `max_tokens` ("you
-requested N tokens", "'max_tokens' or 'max_completion_tokens' is too large")
-is a setting and counts for none.
+Only an error of the unit's own counts toward the retry limit: output that
+does not parse or was cut off, or a request the model rejects for its content
+(not for the model or a setting). Throttling, 5xx, timeouts, credentials,
+quotas, bugs and failed store writes count for none: the document stays
+`PENDING` or `FAILED` until the cause is fixed, and from its second failed run
+the run warns with the file (`retry_count`, `documents_retrying`). Output
+errors alike on several documents count as each one's own, so a server-side
+output cap that persists excludes them after `indexing.max_document_failures`
+runs: fix the cap, then edit the files or change a setting. The full
+classification and output parsing: [Design Doc §5.1](./design.md#51-the-steps), step 6.
 
 - **Claims are optional.** When only claim extraction failed on some of a
   document's units, for an error of their own (a request rejected for its
@@ -979,27 +930,14 @@ would stop every later run, so runs count deaths and isolate the culprit.
   document producing no text units stays `PENDING` and is quarantined the
   same way.
 - **Resumed runs** with the same pipeline id reuse their delta unless the
-  registry no longer matches it or a culprit can be isolated; they then
-  resume from `document_loading` (WARNING
-  `... resuming from 'document_loading' ...`). So do they when
-  `document_loading`'s inputs changed since the delta was computed (a reset,
-  retry or corpus setting; WARNING `Rewinding resume point from ... to
-  'document_loading'`). A finished pipeline id run again counts as resumed:
-  it resumes from `document_loading` when another pipeline id has since
-  written a record of one of its documents (every record names the pipeline
-  id that wrote it last; a record written before that was recorded names
-  none: a `PENDING` or `FAILED` one, or one with an open attempt, counts as
-  another pipeline id's, as does a `PROCESSED` one at other content than the
-  delta's; one at the delta's content is left to the other checks),
-  committed one of its documents with other extraction settings (a record
-  naming no writer counts even for a document the delta re-extracts for a
-  settings change), or added, changed or deleted a document outside its
-  delta. A run diffs within its own scope (index namespace and source
-  scope), so the last check reads only that scope; a document the delta
-  deletes that another pipeline id (or a record naming none) has since
-  recorded in another scope (one the delta does not retire) makes it diff
-  again too, so a rerun never deletes another scope's live document. A run
-  resumed after its own kill or stop keeps its delta.
+  registry no longer matches it (another pipeline id has since written one of
+  its documents, or changed the scope outside it), a culprit can be isolated,
+  or `document_loading`'s inputs changed (a reset, retry or corpus setting);
+  they then resume from `document_loading` (WARNING `... resuming from
+  'document_loading' ...` or `Rewinding resume point from ... to
+  'document_loading'`). A finished pipeline id run again counts as resumed;
+  one resumed after its own kill or stop keeps its delta. The checks:
+  [Design Doc §5.3](./design.md#53-crash-recovery-write-ahead-protocol).
 
 ### Concurrent runs
 

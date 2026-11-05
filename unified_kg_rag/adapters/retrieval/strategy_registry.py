@@ -2,16 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Registry for search strategies.
 
-Replaces the previous hardcoded ``strategy_map`` dict and ``if SIMPLE/else``
-retriever wiring in :mod:`unified_kg_rag.application.retrieval.rag_chain` with a declarative,
-enum-keyed registry. New strategies register themselves with
-``@register_strategy`` and declare which retrievers they need, so adding a
-strategy no longer requires editing dispatch code.
-
-This mirrors the declarative-factory pattern already used by
-``ParserFactory._loader_configs`` and
-``EvaluationManager._resolve_evaluator_class``. Like the provider and
-renderer registries it lives with what it registers: the strategies are
+Each strategy class registers itself under its ``SearchStrategy`` member with
+``@register_strategy``, declaring the retriever roles it needs, the
+query-side extractions it reads and whether it answers from community
+reports; :mod:`unified_kg_rag.application.retrieval.rag_chain` builds and
+dispatches strategies from these records alone. The keys are the closed
+``SearchStrategy`` enum, so a new strategy is an in-tree change
+(docs/design.md#15-extension-guide). Like the provider and renderer
+registries it lives with what it registers: the strategies are
 ``BaseSearchStrategy`` adapters, so the registry is an adapter module too.
 """
 

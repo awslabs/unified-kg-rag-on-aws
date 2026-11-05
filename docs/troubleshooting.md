@@ -114,7 +114,7 @@ files are really gone, re-run once with `UKR_CONFIRM_DELETIONS=1` as an
 environment override of the task (`--confirm-deletions` on a command line)
 ([Incremental indexing: Mass deletions](./guides/incremental.md#mass-deletions);
 the override:
-[Operator Runbook: Seed graphs in the image or S3](./operations.md#seed-graphs-in-the-image-or-s3)).
+[Operator Runbook: Run a one-off ingestion task](./operations.md#run-a-one-off-ingestion-task)).
 A reset that would drop another scope's seed graph documents asks too, and
 takes `UKR_CONFIRM_RESET=1` (`--confirm-reset`). `--yes` answers every
 question.

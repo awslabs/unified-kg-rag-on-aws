@@ -32,6 +32,19 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 | **Amazon S3** | `--s3-sync`나 `s3://` 경로를 쓸 때만 | 단계 캐시 동기화, `s3://` 데이터셋, CDK 코퍼스 |
 | **Amazon DynamoDB** | 증분 인덱싱을 쓸 때만 | 콘텐츠 해시로 코퍼스의 변경분을 계산하는 문서 상태 레지스트리 |
 
+### 네트워크와 버전
+
+- **CLI 호스트에서 두 저장소에 접근할 수 있어야 합니다.** Neptune 클러스터는 VPC 안에서만
+  연결을 받으므로 CLI는 그 VPC 안의 호스트(또는 VPN, 피어링, 터널로 연결된 호스트)에서
+  실행하고, 보안 그룹이 Neptune 포트와 OpenSearch 도메인으로 가는 연결을 허용해야 합니다.
+  VPC 밖의 호스트는 연결할 수 없습니다.
+- **OpenSearch.** CDK 도메인이 쓰는 OpenSearch 2.13에서 테스트했습니다. 선택 기능인 온디스크
+  벡터 키는 2.17 이상, 기본 `cosinesimil` 공간을 쓰는 faiss는 2.19가 필요합니다
+  ([운영 런북: 온디스크 벡터 저장](../operations.md#on-disk-vector-storage), 영문).
+- **Neptune.** CDK 앱은 엔진 버전을 고정하지 않습니다(새 클러스터는 Neptune 기본 버전으로
+  시작). 클라이언트가 3.8 미만의 `gremlinpython`이므로 엔진도 TinkerPop 3.8 미만이어야
+  합니다([`iac/README.md`](../../iac/README.md#configuration-cdkjson-context---c-keyvalue), 영문).
+
 ## 필수 모델
 
 처음 실행하기 전에 다음 Bedrock 모델의 액세스를 활성화하세요(코드 기본값이며, 다른
@@ -39,7 +52,7 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 
 | 역할 | 기본 모델 ID | 설정 키 |
 |---|---|---|
-| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| 기본 계층(추출, 글리닝, 커뮤니티 리포트, 답변) | `anthropic.claude-sonnet-5-5` | `models.default` |
 | `run-eval` LLM 판정 모델(LLM 판정을 실행할 때만) | `anthropic.claude-opus-5-5` | `models.roles.evaluation` |
 | 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `models.fast` |
 | 임베딩(인덱싱, 질의, 평가) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
@@ -69,7 +82,7 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
 `uv sync`만 실행하면 수집과 질의만 설치됩니다. 나머지는 extra 두 개로 추가하며, 필요한
-extra가 없으면 해당 명령이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
+extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료 코드 `2`로 종료합니다.
 
 - **`eval`**: `run-eval`의 LangChain·RAGAS 심사 평가기(ragas, datasets, pandas,
   langchain-openai). 둘 다 기본으로 켜져 있습니다([평가기](../guides/evaluate.ko.md#평가기)). LLM을 쓰지 않는

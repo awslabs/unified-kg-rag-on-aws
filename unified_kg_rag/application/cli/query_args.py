@@ -136,7 +136,9 @@ def add_query_arguments(
         "--search-type",
         default="hybrid",
         choices=[st.value for st in SearchType],
-        help="Search method. The lexical side searches the first 150 words of "
+        help="Search method: hybrid (default) fuses a lexical (BM25) and a "
+        "vector (embedding kNN) search of each index, lexical and vector run "
+        "one of them alone. The lexical side searches the first 150 words of "
         "the question (a Hangul, Han or Kana character counts as a word) and, "
         "on OpenSearch, tolerates typos only in questions of up to 10 words "
         "with no Hangul, Han or Kana; the vector side embeds the whole question",

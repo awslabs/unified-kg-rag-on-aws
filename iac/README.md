@@ -18,8 +18,10 @@ the [Operator Runbook](../docs/operations.md).
 
 Prerequisites:
 
-- [uv](https://docs.astral.sh/uv/) and Python 3.12+. `iac/` is a uv project of
-  its own: `iac/uv.lock` pins the CDK libraries.
+- [uv](https://docs.astral.sh/uv/) and Python 3.12 or later for the CDK app.
+  `iac/` is a uv project of its own (`iac/uv.lock` pins the CDK libraries), so
+  its Python is not the library's: the package supports Python 3.11 and 3.12,
+  and the image runs 3.12.
 - Node.js 22 or 24 (CI uses 24) and the AWS CDK CLI v2.1146.1 or later
   (`npm install -g aws-cdk@2.1146.1`, the version CI pins); an older CLI can
   reject the cloud assembly the locked `aws-cdk-lib` produces.
@@ -267,6 +269,30 @@ running ([Resume](#3-upload-the-corpus-and-start-an-ingestion-run)).
   RunTask fails to start the task, which the state machine retries twice as
   for any start failure, then notifies.
 
+### Graviton (arm64)
+
+`-c fargate_cpu_architecture=arm64` runs both task definitions on AWS
+Graviton. It is opt-in, and the default stays `x86_64`, because the
+architecture is part of the task definition: switching it under a deployed
+image built for the other platform stops every task at start with
+`exec format error`.
+
+- **The image.** Build it for `linux/arm64`, or once for both platforms so
+  one tag runs on either architecture:
+  `docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t "$REGISTRY/graphrag-app:<tag>" --push .`
+  (a multi-platform build needs a builder that supports it, such as one
+  from `docker buildx create --use`; on an x86_64 host the arm64 half builds
+  through QEMU emulation, which is much slower). The Dockerfile's base images and the collector sidecar are
+  pinned by multi-arch digests, so nothing else changes.
+- **Switching.** Push the image under a new tag and deploy it with the
+  flag in one deploy, with no `RUNNING` execution:
+  `cdk deploy --all -c image_tag=<tag> -c fargate_cpu_architecture=arm64`.
+  Keep the flag on every later deploy (or in `cdk.json`); switching back is
+  the same deploy with `x86_64` and an amd64 image.
+- **Cost.** Fargate on Graviton is typically about 20% cheaper per vCPU-hour
+  and GB-hour than x86_64 (an estimate: check the Fargate pricing of your
+  region). Model calls, which dominate a run's cost, are unchanged.
+
 ### Guardrail
 
 The guardrail must live in the Bedrock runtime region (`bedrock_region`),
@@ -407,12 +433,10 @@ docker push "$REGISTRY/graphrag-app:latest"
 ```
 
 - With `-c fargate_cpu_architecture=arm64`, build with
-  `--platform linux/arm64` instead (on a Graviton host, or through
-  `docker buildx` with QEMU emulation, which is much slower). The platform
-  must match the task's: an x86_64 image on an ARM64 task, or the reverse,
-  stops at start with `exec format error`. Switch the architecture by
-  pushing the new image under a new tag and deploying both together
-  (`cdk deploy --all -c image_tag=<tag> -c fargate_cpu_architecture=arm64`).
+  `--platform linux/arm64` instead, or for both platforms
+  ([Graviton (arm64)](#graviton-arm64)). The platform must match the
+  task's: an x86_64 image on an ARM64 task, or the reverse, stops at start
+  with `exec format error`.
 
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
@@ -674,95 +698,8 @@ sample root traces, and keep the indexing percentage at 1% unless you search
 trace summaries. The `xray` interface endpoint (private mode) bills per
 AZ-hour like the others.
 
-### Without the CDK stacks
-
-Run the same collector configuration yourself; the
-one the stack renders (`compute_stack.py`, after the CloudWatch OTLP guide) is,
-for `us-east-1`. The memory limit fits a 512 MiB container, and the exporter
-has no queue and no retry so a shutdown flush ends inside ECS's 30 s stop
-timeout:
-
-```yaml
-extensions:
-  health_check:
-    endpoint: 127.0.0.1:13133
-  sigv4auth/traces:
-    region: us-east-1
-    service: xray
-receivers:
-  otlp:
-    protocols:
-      http:
-        endpoint: 127.0.0.1:4318
-processors:
-  memory_limiter:
-    check_interval: 1s
-    limit_mib: 400
-    spike_limit_mib: 100
-  batch:
-    send_batch_size: 512
-    send_batch_max_size: 1000
-    timeout: 5s
-exporters:
-  otlp_http/traces:
-    traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
-    compression: gzip
-    auth:
-      authenticator: sigv4auth/traces
-    timeout: 10s
-    sending_queue:
-      enabled: false
-    retry_on_failure:
-      enabled: false
-service:
-  extensions: [health_check, sigv4auth/traces]
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp_http/traces]
-  telemetry:
-    metrics:
-      level: none
-```
-
-The collector's role needs `xray:PutTraceSegments`, the one action the OTLP
-traces endpoint authorizes (`xray:PutSpans` alone gets a 403). The
-`AWSXrayWriteOnlyAccess` managed policy the CloudWatch guide names includes
-it.
-
-### Account-level backstop: Bedrock model invocation logging
-
-It records
-every `InvokeModel` / `Converse` request and response in a region, embeddings
-included, to CloudWatch Logs or S3, whatever this package's tracing does:
-use it as the audit record and traces for the per-query breakdown. It does not
-cover the Rerank call (`bedrock-agent-runtime`), and it holds full prompt and
-response text, so protect its destination like captured content (restricted
-readers, the CMK, a retention period). It is one setting per account and
-region, shared by every workload there, so the CDK stacks do not manage it:
-turning it on or off from a stack would change logging for everything else in
-the account. Set it in the Bedrock runtime region (`bedrock_region`):
-
-```bash
-# Check first: an existing configuration is replaced by the put below.
-aws bedrock get-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME"
-
-aws bedrock put-model-invocation-logging-configuration --region "$UKR__AWS__BEDROCK__REGION_NAME" \
-  --logging-config '{
-    "cloudWatchConfig": {
-      "logGroupName": "/aws/bedrock/model-invocation-logs",
-      "roleArn": "arn:aws:iam::<account>:role/<bedrock-logging-role>"
-    },
-    "textDataDeliveryEnabled": true,
-    "embeddingDataDeliveryEnabled": false
-  }'
-```
-
-The log group must exist, and the role must trust `bedrock.amazonaws.com` and
-allow `logs:CreateLogStream` and `logs:PutLogEvents` on it; the console
-(**Amazon Bedrock, Settings, Model invocation logging**) can create both. See
-[Monitor model invocation using CloudWatch Logs and Amazon S3](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html).
-`aws bedrock delete-model-invocation-logging-configuration` turns it off.
-In the CloudWatch console, **GenAI Observability, Model Invocations** lists
-these logs next to Bedrock's own invocation, token and latency metrics.
+The collector configuration for a deployment without these stacks is in
+[Observability: CloudWatch without the CDK stacks](../docs/guides/observability.md#cloudwatch-without-the-cdk-stacks),
+and Bedrock model invocation logging, the account-level audit record of every
+model call, in
+[Observability: Account-level backstop](../docs/guides/observability.md#account-level-backstop-bedrock-model-invocation-logging).

@@ -281,7 +281,7 @@ def _yaml(node: Any, indent: str = "") -> str:
     return "".join(lines)
 
 
-def test_readme_shows_the_collector_config_the_stack_renders() -> None:
+def test_the_observability_guide_shows_the_collector_config_the_stack_renders() -> None:
     _, compute = _stacks(_ON)
     rendered = _render(
         _env(_containers(compute)["otel-collector"])["AOT_CONFIG_CONTENT"]
@@ -291,7 +291,8 @@ def test_readme_shows_the_collector_config_the_stack_renders() -> None:
             "<AWS::URLSuffix>", "amazonaws.com"
         )
     )
-    text = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    guide = Path(__file__).parents[2] / "docs" / "guides" / "observability.md"
+    text = guide.read_text(encoding="utf-8")
     start = text.index("```yaml\nextensions:\n  health_check:")
     block = text[start + len("```yaml\n") : text.index("```\n", start + 7)]
     assert block == _yaml(config)

@@ -23,7 +23,7 @@
 - **가지고 있는 지식 그래프 가져오기.** 시드 그래프(JSONL, CSV, RDF A-Box)로 이미 가진 그래프를 가상 문서로 추출 그래프에 합칩니다. 문서가 기준이 되고, 시드는 설명, 속성, IRI, 에지를 더합니다([Seed graphs](./docs/guides/seed-graphs.md), 영문).
 - **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 지원합니다.
 - **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고([도메인 적응](./docs/guides/domain-adaptation.ko.md)), `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며([평가](./docs/guides/evaluate.ko.md)), `run-visualization`은 내보낸 그래프를 렌더링합니다([Visualization](./docs/guides/visualize.md), 영문).
-- **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 전략·렌더러·파서·공급자는 레지스트리로 등록합니다([확장 가이드](./docs/design.md#15-extension-guide)).
+- **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 렌더러·파서·스키마 소스·시드 소스·공급자는 사용자 패키지에서 레지스트리로 등록합니다. 새 검색 전략이나 평가기는 저장소 안에서 고쳐야 합니다(포크하거나 기여). 전략은 정해진 `SearchStrategy` 열거형을 키로 쓰기 때문입니다([확장 가이드](./docs/design.md#15-extension-guide)).
 
 ## 아키텍처
 

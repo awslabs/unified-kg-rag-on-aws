@@ -15,7 +15,7 @@
 | **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [AWS에서 시작하기](./getting-started/aws.ko.md)(기존 저장소, [필수 모델](./getting-started/aws.ko.md#필수-모델)) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./guides/configure.ko.md) → [수집](./guides/ingest.ko.md) → [질의](./guides/query.ko.md) → [증분 인덱싱](./guides/incremental.ko.md) → [도메인 적응](./guides/domain-adaptation.ko.md) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
 | **운영자** | 실행, 모니터링, 복구, 업그레이드 | [`iac/README.md`](../iac/README.md)(영문) → [운영 런북](./operations.md)(영문: [실행 전](./operations.md#before-a-run), [실행이 실패하면](./operations.md#when-a-run-fails), [경보](./operations.md#alarms), [문제 해결](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | 모든 경보와 오류에서 대응 절차를 찾을 수 있음 |
 | **평가자·연구자** | 품질과 비용 측정, 기본값 재현, 논문과 비교 | [평가](./guides/evaluate.ko.md) → [전략 비교](./guides/evaluate.ko.md#전략-비교) → [Evaluation output](./reference/evaluation-output.md)(영문) → [Benchmarks](./guides/benchmarks.md)(영문) → [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) → [원 논문을 넘어서](./concepts/overview.ko.md#원-논문을-넘어서) | MuSiQue나 자체 데이터로 신뢰 구간과 게이트가 있는 짝지은 비교 실행 |
-| **확장 개발자** | 백엔드, 전략, 파서, 스키마, 시드 소스 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md)(영문) | 등록한 플러그인이 가짜 포트(fake port) 적합성 테스트를 통과 |
+| **확장 개발자** | 백엔드, 파서, 렌더러, 스키마, 시드 소스를 플러그인으로 추가하거나 전략, 평가기를 저장소 안에서 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md)(영문) | 등록한 플러그인이나 저장소 안에 추가한 전략·평가기가 가짜 포트(fake port) 적합성 테스트를 통과 |
 | **기여자** | 품질 게이트를 깨지 않고 코드와 문서 수정 | [CONTRIBUTING.md](../CONTRIBUTING.md)(영문) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)와 [§13](./design.md#13-testing-strategy) → [문서 규칙](../CONTRIBUTING.md#documentation) | 문서 검사를 포함한 CI를 통과하는 풀 리퀘스트 |
 
 ## 문서 지도
@@ -47,7 +47,6 @@
 | 레퍼런스 | [Telemetry reference](./reference/telemetry.md)(영문) | 모든 스팬과 속성, 벤더 속성 이름, 알려진 제한, 모델 사용량 집계 |
 | 런북 | [운영 런북](./operations.md)(영문) | 용량, 재수집, 증분 실행, 캐시, 백업과 복원, 업그레이드, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리 |
 | 문제 해결 | [Troubleshooting](./troubleshooting.md)(영문) | 자주 묻는 질문(Markdown 파일, 리전, 재순위화, Nori, 추론 프로필, 쓰기 임대, 확인 질문, 제한 시간)과 오류 메시지별 의미와 조치 |
-| 이전 문서 | [사용자 가이드](./user-guide.ko.md) | 이전 사용자 가이드의 각 절이 옮겨 간 곳 |
 | 프로젝트 | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md)(영문) | 개발 절차, 릴리스 노트, 보안 이슈 신고 |
 
 ## 하려는 일별 안내
@@ -88,9 +87,9 @@
 | 글리닝(gleaning) | 첫 추출에서 빠진 것을 모델에 다시 묻는 추가 추출 라운드 |
 | 커뮤니티(community), 커뮤니티 리포트(community report) | 엔티티를 Leiden으로 묶은 군집과, `global`과 `drift`가 읽는 LLM 작성 요약 |
 | 방법론(methodology), 전략(strategy) | GraphRAG 또는 LightRAG, 그리고 질의마다 고르는 실제 검색 알고리즘(`local`, `mix` 등) |
-| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`). 테넌트나 코퍼스 버전마다 하나 |
+| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`. 지정하면 뒤에 `-<indexing.additional_suffix>`가 붙음). 테넌트나 코퍼스 버전마다 하나 |
 | 문서 상태 레지스트리(doc-status registry) | 문서마다 해시와 텍스트 단위를 기록해 증분 수집을 가능하게 하는 DynamoDB(또는 SQLite) 테이블 |
-| 네임스페이스(namespace) | 한 인덱스 접미사가 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)) |
+| 네임스페이스(namespace) | 인덱스 접미사에 `indexing.additional_suffix`와 기본값이 아닌 인덱스·레이블 접두사의 태그를 더한 것, 그리고 그 이름이 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)). 메시지에서는 index namespace라고 부름 |
 | 소스 범위(source scope) | 실행이 비교하고 삭제하는 코퍼스 출처(기본값은 소스 디렉터리). 문서 ID와 텍스트 단위 ID가 여기서 나옴 |
 | 격리(quarantine) | 처리하다 실행이 거듭 죽은 문서를 따로 둔 상태. 파일이 바뀌거나 한도를 올릴 때까지 건너뜀 |
 | 시드 그래프(seed graph) | 이미 가진 지식 그래프. 가상 문서로 추출 그래프에 병합 |

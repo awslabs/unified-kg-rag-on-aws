@@ -172,6 +172,18 @@ def _answer_usage(chain_usage: Any, record: _AnswerSpend | None) -> LLMUsage | N
 
 
 class EvaluationManager:
+    """Answer an evaluation dataset with a RAG chain and score the answers.
+
+    ``load_data`` reads and validates a dataset; ``evaluate_dataset`` answers
+    every query through ``rag_chain``, runs the evaluators that
+    ``evaluation.enabled_evaluators`` names and returns the per-query
+    results, the per-evaluator reports and a summary with the run manifest.
+    The evaluators share one ``Providers`` bundle: ``providers`` if given,
+    else the chain's. A new evaluator type is an in-tree change: an
+    ``EvaluatorType`` member and a branch in ``_resolve_evaluator_class``
+    (docs/design.md#15-extension-guide).
+    """
+
     @staticmethod
     def _resolve_evaluator_class(
         evaluator_type: EvaluatorType,

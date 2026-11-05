@@ -13,7 +13,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./guides/ingest.md) → [Querying](./guides/query.md) → [Incremental indexing](./guides/incremental.md) → [Domain adaptation](./guides/domain-adaptation.md) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
 | **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [troubleshooting](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./guides/evaluate.md) → [Comparing strategies](./guides/evaluate.md#comparing-strategies) → [Evaluation output](./reference/evaluation-output.md) → [Benchmarks](./guides/benchmarks.md) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
-| **Extender** | Add a backend, strategy, parser, schema or seed source | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md) | A registered plugin that passes the fake-port conformance tests |
+| **Extender** | Add a backend, parser, renderer, schema or seed source as a plugin, or a strategy or evaluator in-tree | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md) | A registered plugin, or an in-tree strategy or evaluator, that passes the fake-port conformance tests |
 | **Contributor** | Change code and docs without breaking the gate | [CONTRIBUTING.md](../CONTRIBUTING.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) and [§13](./design.md#13-testing-strategy) → [Documentation rules](../CONTRIBUTING.md#documentation) | The pull request passes CI, including the docs checks |
 
 ## Page map
@@ -45,7 +45,6 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Reference | [Telemetry reference](./reference/telemetry.md) | Every span and attribute, vendor attribute names, known limits, model-usage counters |
 | Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation |
 | Troubleshooting | [Troubleshooting](./troubleshooting.md) | Frequent questions (Markdown files, regions, rerank, Nori, inference profiles, leases, confirmations, timeouts) and every error message with its meaning and action |
-| Legacy | [User Guide](./user-guide.md) | Where each section of the former user guide went |
 | Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
 
 ## I want to
@@ -84,9 +83,9 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Gleaning | Extra extraction rounds that ask the model what the first pass missed |
 | Community, community report | A Leiden cluster of entities, and the LLM-written summary that `global` and `drift` read |
 | Methodology, strategy | GraphRAG or LightRAG, and the concrete retrieval algorithm (`local`, `mix`, ...) chosen per query |
-| Index suffix | The `<suffix>` in every index and graph label name (`processing.document_parsing.index_value`); one per tenant or corpus version |
+| Index suffix | The `<suffix>` in every index and graph label name (`processing.document_parsing.index_value`, followed by `-<indexing.additional_suffix>` when set); one per tenant or corpus version |
 | Doc-status registry | The DynamoDB (or SQLite) table of each document's hash and text units that makes ingestion incremental |
-| Namespace | The indexes one index suffix names; one writing run per namespace at a time (a write lease) |
+| Namespace | The index suffix plus `indexing.additional_suffix` and a tag of non-default index or label prefixes, and so the indexes it names; one writing run per namespace at a time (a write lease). Messages call it the index namespace |
 | Source scope | The corpus source a run diffs and deletes within (by default the source directory); document and text-unit ids derive from it |
 | Quarantine | A document set aside after runs repeatedly died processing it; skipped until its file changes or the limit is raised |
 | Seed graph | A knowledge graph you already have, merged into the extracted one as virtual documents |
