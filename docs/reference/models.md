@@ -96,7 +96,7 @@ Four things differ for Claude 4.7-and-later models:
   when that differs from `models.default`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
   how much it reasons on fast-tier calls. A default-tier ingestion call uses
-  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` (deprecated) is a
   no-op for it — depth is `effort` only. A level the model does not accept
   (e.g. `xhigh` on Opus 4.6 or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted

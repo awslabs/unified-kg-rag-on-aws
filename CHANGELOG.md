@@ -1622,6 +1622,13 @@ From 0.2.3 (or a `main` checkout since):
   `ci_high<-0.02` passed on one improved query. The evaluation guide says
   how the false-breach chance grows with strategies × gates (#563).
 
+### Deprecated
+- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and
+  will be removed: the default models (Claude 5.x) always reason, so it has
+  no effect on them; tune their depth with `aws.bedrock.default_effort` /
+  `fast_effort`. It still turns thinking on for the models that opt in
+  (#PR).
+
 ### Fixed
 Bugs present in 0.2.3.
 

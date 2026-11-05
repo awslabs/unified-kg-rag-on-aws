@@ -50,6 +50,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     query_suffix,
+    warn_deprecated_query_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -256,6 +257,7 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        warn_deprecated_query_arguments(args)
         self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable] = {

@@ -71,7 +71,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
 | `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | Enable thinking mode for language model reasoning and step-by-step problem solving. No-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
+| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`. |
 | `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
 | `--top-k` | `10` | Set the maximum number of search results. |
@@ -99,7 +99,7 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--judge-model` `MODEL_ID` | — | Model of the LLM judges for this run (models.roles.evaluation): the pairwise judge and the langchain/ragas evaluators. |
 | `--output-directory` | — | Directory to save evaluation results (default: evaluation.outputs_directory). Accepts a local path or an s3://bucket/prefix/ URI (results are uploaded after the run; a failed upload exits non-zero). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | Enable thinking mode for language model reasoning and step-by-step problem solving. No-op for models that always reason (Claude 4.7+ / 5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
+| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
 | `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
 | `--top-k` | `10` | Set the maximum number of search results. |

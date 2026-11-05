@@ -12,6 +12,9 @@ from unified_kg_rag.domain.models import (
     SearchType,
     validate_safe_name,
 )
+from unified_kg_rag.shared import get_logger
+
+logger = get_logger(__name__)
 
 
 def positive_int(value: str) -> int:
@@ -73,6 +76,17 @@ class _StrategyListOnce(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
+def warn_deprecated_query_arguments(args: argparse.Namespace) -> None:
+    """Log a WARNING for each deprecated query flag ``args`` sets (call it
+    once logging is set up)."""
+    if getattr(args, "enable_thinking", False):
+        logger.warning(
+            "--enable-thinking is deprecated and will be removed: the default "
+            "models (Claude 5.x) always reason, so it has no effect on them. "
+            "Tune their depth with aws.bedrock.default_effort / fast_effort."
+        )
+
+
 def add_query_arguments(
     parser: argparse.ArgumentParser, *, multiple_strategies: bool = False
 ) -> None:
@@ -92,10 +106,10 @@ def add_query_arguments(
         "--enable-thinking",
         action="store_true",
         help=(
-            "Enable thinking mode for language model reasoning and step-by-step "
-            "problem solving. No-op for models that always reason (Claude 4.7+ / "
-            "5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort "
-            "/ fast_effort in the config"
+            "(deprecated) Enable thinking mode for language model reasoning. "
+            "No-op for models that always reason (Claude 4.7+ / 5.x, the "
+            "defaults, and OpenAI GPT); tune their depth with "
+            "aws.bedrock.default_effort / fast_effort in the config"
         ),
     )
     if multiple_strategies:
