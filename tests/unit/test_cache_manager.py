@@ -336,6 +336,18 @@ class TestIntegrity:
         )
         assert mgr.load_stage_result("c", PIPELINE, data_type=_Item) is None
 
+    @pytest.mark.parametrize(
+        "data", [[{"name": "a", "value": 1}, {"x": 2}], {"x": 2}], ids=["list", "one"]
+    )
+    def test_a_single_file_that_fails_validation_is_a_miss(
+        self, tmp_path: Path, data: object
+    ) -> None:
+        # As a chunk that fails validation: not the raw JSON counted as a hit.
+        mgr = _manager(tmp_path)
+        mgr.save_stage_result(data, "s", STAGE, PIPELINE)
+        assert mgr.load_stage_result("s", PIPELINE, data_type=_Item) is None
+        assert (mgr.stats.hit_count, mgr.stats.miss_count) == (0, 1)
+
     def test_an_entry_without_hashes_is_a_miss(self, tmp_path: Path) -> None:
         # Pre-release builds wrote chunked entries without hashes; nothing
         # this release writes lacks them, so one is not trusted.

@@ -323,3 +323,8 @@ and claims it touches, so an entity shared with unchanged documents keeps
 their descriptions and chunk lineage, and what a changed or deleted document
 shared is derived again from the chunks left; the rules are in
 [Design §5.4](../design.md#54-identity-derived-content-and-merge-rules).
+With `processing.fuzzy_entity_resolution` on, a delta entity merges into
+its one most similar stored entity and two stored entities stay apart even
+when a new name is similar to both, which a full build groups together
+([Design §4.2](../design.md#42-graph-identity-and-merging-stages-5-7)); run
+`indexing.reset: true` to regroup the corpus.

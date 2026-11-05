@@ -48,7 +48,7 @@ from unified_kg_rag.ports.indexer import (
     SchemaAnnotation,
     StoredAnnotation,
 )
-from unified_kg_rag.shared import GraphRAGException, get_logger
+from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
@@ -469,19 +469,14 @@ class SQLiteGraphIndexer(GraphIndexer):
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """``(id, name)`` of every entity of ``suffix``, by id.
 
-        Best-effort like Neptune's: ``[]`` (no fuzzy merge) when the read fails.
+        A failed read raises like the other reads (see Neptune's): an empty
+        projection would silently skip the fuzzy cross-run merge.
         """
-        try:
-            with self.store.read("read entity names") as connection:
-                rows = connection.execute(
-                    "SELECT id, props FROM vertices WHERE label = ? ORDER BY id",
-                    (self._entity_label(suffix),),
-                ).fetchall()
-        except GraphRAGException as e:
-            logger.warning(
-                "read_entity_names failed (%s); fuzzy cross-run merge disabled", e
-            )
-            return []
+        with self.store.read("read entity names") as connection:
+            rows = connection.execute(
+                "SELECT id, props FROM vertices WHERE label = ? ORDER BY id",
+                (self._entity_label(suffix),),
+            ).fetchall()
         pairs = []
         for entity_id, props in rows:
             names = json.loads(props).get("name")

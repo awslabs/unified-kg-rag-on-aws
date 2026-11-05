@@ -100,6 +100,9 @@ class _RecordingManager:
     def offer_summaries(self, entities: Any) -> None:
         return None
 
+    def expect_delta(self, entities: Any, relationships: Any) -> None:
+        return None
+
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         return {}
 

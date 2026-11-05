@@ -509,8 +509,14 @@ gets its models and stores from the run's `Providers` bundle.
   are identical, their types are compatible, and, for names ending in Han,
   Hangul or Kana, their final (head) characters are equal ("가나다연구원" and
   "가나다연구소" stay apart). A type-aware union-find never groups two
-  differently typed names; the incremental merge uses the same matcher, so
-  full and incremental builds group the same names.
+  differently typed names. Without fuzzy matching, full and incremental
+  builds group the same names (both merge by compact name key). With it, the
+  incremental merge uses the same matcher but folds each delta entity into
+  its one best-matching stored entity and does not join stored entities with
+  each other: a delta name that links two stored names a full build chains
+  into one group ("Northfield Medical Centre" between "... Center" and
+  "... Centre Annex") merges with one of them only, until
+  `indexing.reset: true` regroups the corpus.
 - **Schema annotations are written, not extracted.** `IndexingManager`
   sets `in_schema` and `type_iri` on each entity and `in_schema` and
   `predicate_iri` on each relationship it writes, on every write path (full
@@ -1159,9 +1165,15 @@ every write and check that the next run converges to a fresh full build.
   writes the delta as graph resolution made it) and matches through a key
   index. A stored summary that only grew (the item still cites every text unit
   it did) is summarized from itself and the new description, as LightRAG
-  merges into the stored one; an item that lost a text unit is summarized from
-  its derived description, so removed text goes. A stored edge rewritten for
-  its rank only is updated in place, not embedded again.
+  merges into the stored one, and a stored description that is no summary is
+  extended with the delta's summary when graph resolution made one (which
+  would otherwise go unused). An item that lost a text unit is summarized from
+  its derived description, so removed text goes, and so is an item this
+  run's removal summarized; the removal leaves the summary of an item the
+  delta derives again under its id to the commit (`expect_delta`), so an
+  edited document's shared entity is summarized once, from its lines, as in a
+  full build. A stored edge rewritten for its rank only is updated in place,
+  not embedded again.
 - **Merge rules** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG
   `update/*`), all idempotent:
 

@@ -731,7 +731,8 @@ def test_corrupt_database_is_a_configuration_error(tmp_path: Path) -> None:
         indexer.initialize()
     with pytest.raises(StoreConfigurationError):
         indexer.read_entities(["a"])
-    assert indexer.read_entity_names() == []  # best-effort, as in Neptune
+    with pytest.raises(StoreConfigurationError):  # never [] (no fuzzy merge)
+        indexer.read_entity_names()
     with pytest.raises(StoreConfigurationError):
         indexer.clear(["default"])
 

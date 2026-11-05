@@ -629,6 +629,13 @@ From 0.2.3 (or a `main` checkout since):
     `--baseline-results` reuse saved scores. To compare those metrics with
     a new run, run the baseline again: one answer and score per query and
     repeat (#563).
+15. Incremental runs from a `main` checkout may have stored a summary of a
+    summary for an entity or relationship that an edited document shared
+    (#564). It is still a summary of what its chunks state; to summarize
+    such items from their lines, run once with `indexing.reset: true` (one
+    summarization call per such item over the threshold; the other stored
+    summaries are reused), or leave them until a run edits or removes one
+    of their documents.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1727,6 +1734,36 @@ Ingestion and incremental indexing.
 - A request OpenSearch rejects (a 400) is logged without the client's
   traceback, so the refusal of `vector_mode` on OpenSearch 2.13 shows the
   message that names the fix (#534).
+- With `processing.fuzzy_entity_resolution` on, a graph store read of the
+  stored entity names that failed (Neptune, the SQLite graph) returned no
+  names: the incremental run merged its delta without the fuzzy cross-run
+  merge and stored near-duplicates a full build merges, logging only a
+  WARNING. The read raises now (`AWSServiceError` on Neptune, the store's
+  error on SQLite), as every other graph read does, and the run fails before
+  it writes (#564).
+- A cached stage output that no longer validates as its model (a model
+  field changed between releases) was returned as raw JSON and counted a
+  cache hit, so the stage resumed with dicts where it expects models. It is
+  a miss now, and the stage runs again, as a cached chunk that fails
+  validation already was (#564).
+- An incremental run summarized a description in vain or summarized a
+  summary. Adding a document whose lines graph resolution summarized
+  merged into a stored description that was not a summary: the indexing
+  summarized all its lines again and the first summary went unused (now the
+  stored description is extended with it, one call at most). Editing a
+  document summarized each shared entity and relationship it still names
+  twice: the removal summarized what was left, then the commit extended
+  that summary, storing a summary of a summary where a full build
+  summarizes the lines once. The removal now leaves the summary of an item
+  the delta derives again to the commit, and the commit summarizes an item
+  the removal derived again from its lines, as a full build does
+  (*Upgrading*) (#564).
+- The design notes said full and incremental builds group the same names
+  with fuzzy matching on. Without it they do (both merge by compact name
+  key); with it, an incremental run folds a delta entity into its one best
+  stored match and never joins two stored entities, so a new name similar
+  to two stored ones merges with one of them only until a reset. The
+  design notes and the incremental guide say so now (#564).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no

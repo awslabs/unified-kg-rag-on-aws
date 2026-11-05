@@ -770,6 +770,23 @@ def test_read_entity_names_retries_after_a_lost_connection(indexer) -> None:
     assert indexer.read_entity_names("default") == [("e1", "Vendor")]
 
 
+def test_read_entity_names_raises_on_a_failed_read(indexer, monkeypatch) -> None:
+    # [] would read as "no stored names": the fuzzy cross-run merge would be
+    # skipped silently and the incremental graph would differ from a full build.
+    from unified_kg_rag.adapters.storage import neptune_indexer
+    from unified_kg_rag.shared import AWSServiceError
+
+    monkeypatch.setattr(neptune_indexer, "_sleep", lambda _s: None)
+
+    class _Boom:
+        def V(self):  # noqa: N802
+            raise RuntimeError("gremlin exploded")
+
+    indexer.neptune_client.g = _Boom()
+    with pytest.raises(AWSServiceError, match="read_entity_names failed"):
+        indexer.read_entity_names("default")
+
+
 def test_delete_by_id_retries_after_a_lost_connection(indexer) -> None:
     g = _LostOnce([])
     indexer.neptune_client.g = g

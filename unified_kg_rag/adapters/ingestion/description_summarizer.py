@@ -24,7 +24,7 @@ and every non-description field is left untouched.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
 
@@ -164,6 +164,8 @@ def extend_summaries(
     items: Sequence[_Summarized],
     stored: Sequence[_Summarized],
     added: Mapping[str, str | None],
+    *,
+    summarized: Collection[str] = (),
 ) -> None:
     """Summarize a grown item from its stored summary, not all its text.
 
@@ -175,22 +177,26 @@ def extend_summaries(
     LightRAG merges a new description into the stored one. An item that lost
     a text unit keeps the description derived from its records: only a
     summary of those drops what the removed units said.
+
+    An item whose added description is itself a summary (its id is in
+    ``summarized``: graph resolution summarized the run's own lines) takes
+    the stored description followed by it even when the stored copy is not a
+    summary, so that summary is used rather than made in vain.
     """
     by_id = {item.id: item for item in stored}
     for item in items:
         previous = by_id.get(item.id)
-        source = (
-            (previous.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
-            if previous is not None
-            else None
-        )
         new = added.get(item.id)
-        if (
-            previous is None
-            or source is None
-            or not new
-            or source == compute_hash(item.description or "")
-            or not set(previous.text_unit_ids or []) <= set(item.text_unit_ids or [])
+        if previous is None or not new:
+            continue
+        source = (previous.attributes or {}).get(SUMMARIZED_FROM_ATTRIBUTE)
+        grown = (
+            source != compute_hash(item.description or "")
+            if source is not None
+            else item.id in summarized and previous.description != item.description
+        )
+        if not grown or not set(previous.text_unit_ids or []) <= set(
+            item.text_unit_ids or []
         ):
             continue
         item.description = merge_descriptions([previous.description, new])
