@@ -2280,7 +2280,7 @@ class DataIngestionPipeline:
                     stage_name,
                     ", ".join(saved_outputs),
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the stage reruns on resume
             logger.warning(
                 "Failed to save outputs to cache for stage '%s': %s", stage_name, e
             )
@@ -2573,14 +2573,14 @@ class DataIngestionPipeline:
                 metrics=scalars,
                 dimensions={"pipeline_id": pipeline_id},
             )
-        except Exception as e:  # never let metrics emission break a run
+        except Exception as e:  # noqa: BLE001 - metrics never break a run
             logger.warning("Metrics emission failed: %s", e)
 
     def _emit_stage_metrics(self, context: PipelineContext, stage_name: str) -> None:
         """Emit what ``stage_name`` completes, right after it ran."""
         try:
             metrics = self._create_pipeline_metrics(context)
-        except Exception as e:  # never let metrics emission break a run
+        except Exception as e:  # noqa: BLE001 - metrics never break a run
             logger.warning("Metrics emission failed: %s", e)
             return
         self._emit_metrics(
@@ -2706,8 +2706,11 @@ class DataIngestionPipeline:
                     "Pipeline metadata verification failed for: %s", pipeline_id
                 )
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - verification only reports
             logger.error(
-                "Error during pipeline metadata verification for %s: %s", pipeline_id, e
+                "Error during pipeline metadata verification for %s: %s",
+                pipeline_id,
+                e,
+                exc_info=True,
             )
             return False

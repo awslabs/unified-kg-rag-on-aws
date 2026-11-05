@@ -244,6 +244,7 @@ select = [
     "G",  # flake8-logging-format (enforce %-style lazy logging, no f-strings)
     "LOG",  # flake8-logging (getLogger(__name__), no root logger, exc_info use)
     "ASYNC",  # flake8-async (blocking calls and busy-wait loops in async code)
+    "BLE",  # flake8-blind-except (a broad except is narrowed or says why)
 ]
 ignore = [
     "E501",  # line too long, handled by black

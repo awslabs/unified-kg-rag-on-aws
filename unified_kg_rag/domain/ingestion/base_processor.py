@@ -312,7 +312,7 @@ class BaseProcessor:
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - isolate one malformed entity
             logger.warning(
                 "Failed to parse entity in text unit '%s': %s", text_unit.short_id, e
             )
@@ -426,7 +426,7 @@ class BaseProcessor:
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - isolate one malformed relationship
             logger.warning(
                 "Failed to parse relationship in text unit '%s': %s",
                 text_unit.short_id,

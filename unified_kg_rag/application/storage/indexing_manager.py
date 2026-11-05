@@ -3236,8 +3236,8 @@ class IndexingManager:
                     phase_results[task_name] = future.result()
                 except NamespaceLeaseError:
                     raise
-                except Exception as e:
-                    logger.error("Task '%s' failed: %s", task_name, e)
+                except Exception as e:  # noqa: BLE001 - reported as a failed task
+                    logger.error("Task '%s' failed: %s", task_name, e, exc_info=True)
                     stats = IndexingStats()
                     stats.add_error(str(e))
                     phase_results[task_name] = stats

@@ -267,7 +267,7 @@ class GraphAnalyzer:
         try:
             result = computation_func(self._graph)
             on_success(result)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a statistic is optional
             logger.warning("Failed to calculate %s: %s", metric_name, e)
 
     @staticmethod

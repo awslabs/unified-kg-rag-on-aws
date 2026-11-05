@@ -733,7 +733,7 @@ class CommunityDetector:
                     best_modularity = modularity
                     best_resolution = resolution
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a failed resolution is skipped
                 logger.warning("Resolution %s failed: %s", resolution, e)
                 continue
 

@@ -138,8 +138,10 @@ class DirectoryLoader:
                         documents.append(doc)
                     else:
                         failed_paths.append(path)
-                except Exception as e:
-                    logger.error("Error processing file '%s': %s", path, e)
+                except Exception as e:  # noqa: BLE001 - isolate one file's failure
+                    logger.error(
+                        "Error processing file '%s': %s", path, e, exc_info=True
+                    )
                     failed_paths.append(path)
 
         return documents, failed_paths
@@ -156,7 +158,7 @@ class DirectoryLoader:
                 }
             )
             return doc
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - isolate one file's failure
             logger.warning("Failed to load document '%s': %s", file_path, e)
             return None
 
@@ -234,7 +236,7 @@ class DirectoryLoader:
                 try:
                     if result := future.result():
                         minhashes[result[0]] = result[1]
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - isolate one document's failure
                     failures += 1
                     logger.warning(
                         "MinHash computation failed for document %s: %s",

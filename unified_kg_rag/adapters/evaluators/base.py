@@ -118,7 +118,7 @@ class BaseGraphRAGEvaluator:
                 try:
                     result = await coro
                     return index, result, None
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - the caller reports it
                     return index, None, e
 
         tasks = []

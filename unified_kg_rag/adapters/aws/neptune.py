@@ -604,7 +604,7 @@ class NeptuneClient:
                     self._connection = None
                     self._g = None
                     logger.info("Closed Neptune connection")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
                     logger.error("Error closing Neptune connection: %s", e)
 
     def __enter__(self) -> "NeptuneClient":

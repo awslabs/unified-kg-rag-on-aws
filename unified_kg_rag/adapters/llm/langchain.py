@@ -381,7 +381,7 @@ class BatchProcessor(BaseModel):
                 return result
             except _BatchAbandoned:
                 return BATCH_ITEM_FAILED
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - isolate one item's failure
                 discard_responses()
                 if errors is not None:
                     errors[idx] = error
@@ -579,7 +579,7 @@ class BatchProcessor(BaseModel):
             async with semaphore:
                 try:
                     result = await retrying_sequential_func(single_input)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - isolate one item's failure
                     result = self._failed(task_name, error)
             progress.update()
             return result
@@ -783,7 +783,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in lxml result")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the next parse fallback runs
             logger.debug(
                 "LXML recovery parsing failed: %s: %s. Trying XML fallback...",
                 type(e).__name__,
@@ -794,7 +794,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             fallback_result = self._extract_xml_fallback(text)
             if fallback_result:
                 return fallback_result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the next parse fallback runs
             logger.debug(
                 "XML fallback extraction failed: %s: %s. Trying tags fallback...",
                 type(e).__name__,
@@ -805,7 +805,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             fallback_result = self._extract_tags_fallback(text)
             if fallback_result:
                 return fallback_result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported below
             logger.debug(
                 "Tags fallback extraction failed: %s: %s. All methods exhausted.",
                 type(e).__name__,
@@ -1022,7 +1022,7 @@ class RobustXMLOutputParser(XMLOutputParser):
 
             return result if result else None
 
-        except Exception:
+        except Exception:  # noqa: BLE001 - the next parse fallback runs
             return None
 
     @staticmethod

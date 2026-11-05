@@ -889,7 +889,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         config,
                     )
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - classified below
                 errors.append(e)
                 if is_bad_request(e):
                     bad_requests.append(e)

@@ -236,9 +236,12 @@ class ClaimExtractor(BaseProcessor):
                 unit_to_input[unit.id] = prepare_claim_input(
                     unit, entities_by_unit.get(unit.id, []), config_for_task
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one unit's failure
                 logger.error(
-                    "Error preparing claim input for unit '%s': %s", unit.id, e
+                    "Error preparing claim input for unit '%s': %s",
+                    unit.id,
+                    e,
+                    exc_info=True,
                 )
 
         return unit_to_input
@@ -265,7 +268,7 @@ class ClaimExtractor(BaseProcessor):
                         result, text_unit
                     )
                     self.stats.num_successful_extractions += 1
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - one malformed answer
                     if discard := (discards or {}).get(idx):
                         discard()
                     self._record_failure(text_unit)
@@ -340,7 +343,7 @@ class ClaimExtractor(BaseProcessor):
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - isolate one malformed claim
             logger.warning(
                 "Error creating claim object from text unit '%s': %s", text_unit.id, e
             )

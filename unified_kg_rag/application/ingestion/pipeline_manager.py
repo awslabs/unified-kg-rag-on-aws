@@ -307,7 +307,7 @@ class PipelineStateManager:
                 json.load(f)
             return True
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.error("Metadata verification failed: %s", e)
             return False
 
@@ -668,9 +668,12 @@ class PipelineResumeManager:
                 try:
                     if self._load_stage_cache_data(pipeline_id, stage_name, context):
                         loaded_count += 1
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - isolate one stage's cache
                     logger.error(
-                        "Error loading cache for stage '%s': %s", stage_name, e
+                        "Error loading cache for stage '%s': %s",
+                        stage_name,
+                        e,
+                        exc_info=True,
                     )
 
             logger.info(
@@ -723,12 +726,13 @@ class PipelineResumeManager:
                         stage_name,
                         context_attr,
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one output's cache
                 logger.error(
                     "Failed to load cache data '%s' for stage '%s': %s",
                     context_attr,
                     stage_name,
                     e,
+                    exc_info=True,
                 )
 
         return loaded_files_count > 0

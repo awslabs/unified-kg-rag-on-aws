@@ -367,7 +367,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                         },
                         config,
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - classified by _degrade
                 self._degrade("DRIFT primer", e, degraded)
                 return e
             payload = parse_llm_json(str(raw))
@@ -430,7 +430,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
             try:
                 local = await self.local_search.asearch(sub_query, config)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - classified by _degrade
                 self._degrade("DRIFT action search", e, degraded)
                 return _Answer(query=follow_up, text="", score=0, error=e)
             selection = (local.metadata or {}).get("report_selection")
@@ -460,7 +460,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     },
                     config,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - classified by _degrade
                 self._degrade("DRIFT action", e, degraded)
                 answer.error = e
                 return answer

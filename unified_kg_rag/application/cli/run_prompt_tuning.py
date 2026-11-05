@@ -80,7 +80,7 @@ def load_corpus_texts(
             else:
                 document = ParserFactory.create_parser(path, config).parse_file(path)
                 text = document.page_content
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - an unreadable file is skipped
             logger.warning("Could not read %s: %s", path, e)
             continue
         if text.strip():

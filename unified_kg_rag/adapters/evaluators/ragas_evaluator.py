@@ -414,8 +414,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                         [self.RAGAS_METRICS[m]() for m in m_types],
                     )
                 )
-            except Exception as e:
-                logger.error("Ragas evaluation failed for batch: %s", e)
+            except Exception as e:  # noqa: BLE001 - one batch fails only its metrics
+                logger.error("Ragas evaluation failed for batch: %s", e, exc_info=True)
                 failed_runs.update(
                     dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")
                 )

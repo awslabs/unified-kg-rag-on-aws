@@ -909,7 +909,7 @@ class OpenSearchClient:
                 self._delete_index_batch(batch)
             except NamespaceLeaseError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - reported once for the whole delete
                 not_deleted.extend(batch)
                 errors.append(str(e))
         if not_deleted:

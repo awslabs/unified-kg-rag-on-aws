@@ -12,6 +12,7 @@ import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import (
+    BotoCoreError,
     ClientError,
     NoCredentialsError,
     PartialCredentialsError,
@@ -369,7 +370,7 @@ class BedrockCrossRegionModelHelper:
                 model_id,
             )
             return model_id
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - uses the base model id
             cause = e.__cause__ if isinstance(e, AWSServiceError) else e
             if cause is not None and _is_credential_error(cause):
                 raise AWSServiceError(
@@ -1137,9 +1138,9 @@ def get_assumed_role_boto_session(
                                 assumed_role_arn,
                             )
                             return boto_session
-                except Exception as e:
+                except (BotoCoreError, ClientError) as e:
                     logger.debug("Could not verify current role identity: %s", e)
-    except Exception as e:
+    except (BotoCoreError, ClientError) as e:
         logger.debug("Could not check assumed role status: %s", e)
 
     logger.info(

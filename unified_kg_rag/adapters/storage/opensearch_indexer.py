@@ -1538,7 +1538,7 @@ class OpenSearchIndexer(VectorIndexer):
                     )
         except NamespaceLeaseError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(
                 f"Update of '{alias_name}' failed: {e}",
                 len(ids) - stats.successful_items - stats.failed_items,
@@ -2023,7 +2023,7 @@ class OpenSearchIndexer(VectorIndexer):
                     )
             except NamespaceLeaseError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - reported as failed items
                 stats.add_error(
                     f"Update of '{alias_name}' failed: {e}",
                     len(chunk),
@@ -2058,7 +2058,7 @@ class OpenSearchIndexer(VectorIndexer):
                 stats.add_error(f"Bulk delete errors: {failed}", failed)
         except NamespaceLeaseError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(f"Delete-by-id failed: {e}", len(ids))
         return stats
 
@@ -2140,9 +2140,13 @@ class OpenSearchIndexer(VectorIndexer):
                 )
             except NamespaceLeaseError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - reported as failed items
                 logger.error(
-                    "Failed to upsert %s (suffix=%s): %s", spec.name, suffix, e
+                    "Failed to upsert %s (suffix=%s): %s",
+                    spec.name,
+                    suffix,
+                    e,
+                    exc_info=True,
                 )
                 total_stats.add_error(
                     str(e), len(chunk_items), ids=[item.id for item in chunk_items]
@@ -2253,8 +2257,14 @@ class OpenSearchIndexer(VectorIndexer):
 
             except NamespaceLeaseError:
                 raise
-            except Exception as e:
-                logger.error("Failed to index %s (suffix=%s): %s", spec.name, suffix, e)
+            except Exception as e:  # noqa: BLE001 - reported as failed items
+                logger.error(
+                    "Failed to index %s (suffix=%s): %s",
+                    spec.name,
+                    suffix,
+                    e,
+                    exc_info=True,
+                )
                 # A failed empty replacement still fails the run.
                 total_stats.add_error(
                     str(e),
@@ -2393,7 +2403,7 @@ class OpenSearchIndexer(VectorIndexer):
                 )
         except NamespaceLeaseError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - garbage only costs space
             logger.warning(
                 "Failed to delete stale indices of '%s' (live index '%s' kept): %s",
                 alias_name,
@@ -2415,7 +2425,7 @@ class OpenSearchIndexer(VectorIndexer):
             self._delete_indices([index_name])
         except NamespaceLeaseError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the next run deletes it
             logger.warning("Failed to delete unused index '%s': %s", index_name, e)
 
     def _generate_embeddings(
@@ -2517,7 +2527,7 @@ class OpenSearchIndexer(VectorIndexer):
             try:
                 embeddings = self.embedding_model.embed_documents(batch_texts)
                 return list(zip(keys, embeddings, strict=True))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - retried per item below
                 # The embedding wrapper already retried transient Bedrock errors
                 # with backoff; re-embedding per item isolates the text(s) that
                 # still fail so the rest of the batch is not lost.
@@ -2531,7 +2541,7 @@ class OpenSearchIndexer(VectorIndexer):
                     try:
                         single_embs = self.embedding_model.embed_documents([text])
                         out.append((key, single_embs[0] if single_embs else None))
-                    except Exception as item_error:
+                    except Exception as item_error:  # noqa: BLE001 - one text's failure
                         # Summarized once per call in _batch_embed (WARNING).
                         logger.debug("Failed to embed text '%s': %s", key, item_error)
                         out.append((key, None))
@@ -2581,9 +2591,12 @@ class OpenSearchIndexer(VectorIndexer):
 
             try:
                 docs.append(prepare_func(item, embedding_tuple))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - isolate one item's failure
                 logger.error(
-                    "Failed to prepare document for item ID: %s. Error: %s", item.id, e
+                    "Failed to prepare document for item ID: %s. Error: %s",
+                    item.id,
+                    e,
+                    exc_info=True,
                 )
                 failed_ids.append(item.id)
 
@@ -2626,7 +2639,7 @@ class OpenSearchIndexer(VectorIndexer):
                 stats.add_success(len(documents) - len(failed))
         except NamespaceLeaseError:
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - reported as failed items
             stats.add_error(
                 f"Bulk indexing failed: {e}",
                 len(documents),

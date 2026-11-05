@@ -1440,7 +1440,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return None
         # A loader that breaks its contract (raises something else) must not
         # fail, and reload on, every filtered query: the check is advisory.
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - the check is advisory
             self._schema_fields_unreadable = True
             logger.warning(
                 "Not checking schema filter keys against the extraction schema: "
@@ -2352,11 +2352,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 rag_input.suffix, rag_input.user_id, output.conversation_id
             )
             await self.memory_manager.add_turn(key, query, output.answer)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - memory never fails an answer
             logger.error(
                 "Failed to save conversation memory for conversation '%s': %s",
                 output.conversation_id,
                 e,
+                exc_info=True,
             )
 
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a

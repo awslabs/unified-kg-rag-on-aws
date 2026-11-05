@@ -403,7 +403,7 @@ class CacheManager:
                     self.MAX_FILE_BYTES / 1024 / 1024,
                 )
                 return True
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.warning("Failed to estimate data size: %s", e)
 
         return False
