@@ -770,9 +770,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The language the query is processed into, and whether its
         translation is skipped.
 
-        Translation is skipped when it would be a no-op: no explicit target
-        was requested AND the corpus is same-language (mirrors the ingestion
-        side's TranslationConfig.is_noop skip). This avoids paying an LLM
+        Translation is skipped when no explicit target was requested AND
+        ingestion did not translate: the translation stage is disabled (the
+        corpus is indexed as written) or would be a no-op (a same-language
+        corpus, TranslationConfig.is_noop). This avoids paying an LLM
         call per query for e.g. an English-only or Japanese-only corpus, and
         — more importantly — avoids the failure mode where the translator
         LLM returns a meta-response ("I notice the text you...") for a query
@@ -783,8 +784,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         target_language = language_name(
             requested_language or self.config.processing.translation.target_language
         )
-        skip_translation = (
-            requested_language is None and self.config.processing.translation.is_noop
+        translation = self.config.processing.translation
+        skip_translation = requested_language is None and (
+            not translation.enabled or translation.is_noop
         )
         return target_language, skip_translation
 

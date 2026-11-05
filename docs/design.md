@@ -1712,7 +1712,10 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   with an error naming it.
 - **Identity keys** keep the letters of all scripts (§3).
 - **Translation** is skipped when the source and target languages match and
-  no other target is set (`TranslationConfig.is_noop`).
+  no other target is set (`TranslationConfig.is_noop`). A query is
+  translated only when ingestion translated: not when the translation stage
+  is disabled or a no-op, unless the caller asks for a language
+  (`RAGInput.target_language`).
 - **Encoding.** A non-UTF-8 text file is re-read with the encoding
   `charset-normalizer` detects.
 

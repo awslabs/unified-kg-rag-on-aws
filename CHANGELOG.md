@@ -2130,6 +2130,12 @@ Deployment (CDK).
   selection. An OpenSearch search of a missing index whose ingested-suffix
   check could not reach the store skipped the index; a store that cannot
   be reached fails the query there too (#PR).
+- A query was translated into `processing.translation.target_language`
+  when the translation stage was disabled and the languages differed, so a
+  corpus indexed untranslated was searched in another language (one extra
+  model call a query, and lexical recall lost). The query is translated only
+  when ingestion translates, or when the caller asks for a language
+  (`RAGInput.target_language`) (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
