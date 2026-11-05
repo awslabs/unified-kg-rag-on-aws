@@ -59,7 +59,7 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
 `--force-rebuild` 없이 다시 실행하면 완료된 단계는 캐시를 쓰고 건너뜁니다.
 
 - `--pipeline-id <id>`는 그 실행을 처음으로 실패했거나 끝나지 않은 단계부터
-  재개합니다(`--enabled-stages`가 있으면 그 범위 안에서). 그 뒤에 켠 단계(gleaning,
+  재개합니다(`--enabled-stages`가 있으면 그 범위 안에서). 그 뒤에 켠 단계(글리닝,
   주장)는 끝나지 않은 단계로 봅니다. `--pipeline-id`가 없는 실행은 새 ID를 받습니다.
 - 코퍼스나 설정이 바뀌면 CLI는 출력이 더는 캐시에 없는 완료 단계를 나열하고, 다시
   계산하기 전에 묻습니다(터미널이 없으면 `--yes`).
@@ -129,11 +129,11 @@ temperature, 추론 설정입니다.
 
 ## 비용 조절 수단
 
-비용은 대부분 LLM 호출에서 나옵니다. 추출(청크당 1회 이상), gleaning(청크당 최대
+비용은 대부분 LLM 호출에서 나옵니다. 추출(청크당 1회 이상), 글리닝(청크당 최대
 `max_rounds`회), 커뮤니티 리포트, 주장(텍스트 단위당 1회, 기본은 꺼짐), 질의마다의 답변
 생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
-gleaning 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
+글리닝 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
 
-이 중 가장 큰 것은 gleaning입니다. `processing.gleaning.max_rounds`는 측정한 그래프
+이 중 가장 큰 것은 글리닝입니다. `processing.gleaning.max_rounds`는 측정한 그래프
 재현율 때문에 3을 유지합니다([근거](../concepts/defaults-and-evidence.md#gleaning-rounds), 영문).
 그래프 재현율보다 수집 비용이 중요하면 `max_rounds: 1`(MS GraphRAG 기본값)로 두세요.

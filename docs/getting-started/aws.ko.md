@@ -52,7 +52,7 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 
 | 역할 | 기본 모델 ID | 설정 키 |
 |---|---|---|
-| 기본 계층(추출, gleaning, 커뮤니티 리포트, 답변) | `anthropic.claude-sonnet-5-5` | `models.default` |
+| 기본 계층(추출, 글리닝, 커뮤니티 리포트, 답변) | `anthropic.claude-sonnet-5-5` | `models.default` |
 | `run-eval` LLM 판정 모델(LLM 판정을 실행할 때만) | `anthropic.claude-opus-5-5` | `models.roles.evaluation` |
 | 빠른 계층(청킹, 번역, 요약, 라우팅, map 단계) | `anthropic.claude-haiku-5-5` | `models.fast` |
 | 임베딩(인덱싱, 질의, 평가) | `amazon.titan-embed-text-v2:0` | `models.embedding.model_id` |
@@ -82,7 +82,7 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
 `uv sync`만 실행하면 수집과 질의만 설치됩니다. 나머지는 extra 두 개로 추가하며, 필요한
-extra가 없으면 해당 명령이 extra 이름을 알려 주고 상태 코드 `2`로 종료합니다.
+extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료 코드 `2`로 종료합니다.
 
 - **`eval`**: `run-eval`의 LangChain·RAGAS 심사 평가기(ragas, datasets, pandas,
   langchain-openai). 둘 다 기본으로 켜져 있습니다([평가기](../guides/evaluate.ko.md#평가기)). LLM을 쓰지 않는
