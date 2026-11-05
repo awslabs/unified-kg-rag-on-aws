@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
@@ -255,7 +256,7 @@ def test_suffix_is_taken_from_first_text_unit(mocker) -> None:
 def test_embedding_mismatch_stops_the_run_before_any_write(mocker) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store, suffix="tenant1")
-    before = store.list_all()
+    before = all_records(store)
     manager = _RecordingManager()
     checked: list[str | None] = []
 
@@ -274,7 +275,7 @@ def test_embedding_mismatch_stops_the_run_before_any_write(mocker) -> None:
     # Checked on the run's suffix; nothing written to the stores or registry.
     assert checked == ["tenant1"]
     assert manager.calls == []
-    assert store.list_all() == before
+    assert all_records(store) == before
 
 
 def test_suffix_defaults_when_there_are_no_text_units(mocker) -> None:

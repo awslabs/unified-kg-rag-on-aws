@@ -298,13 +298,6 @@ class SQLiteDocStatusStore:
             ).fetchall()
         return [DocStatusRecord.model_validate_json(row[0]) for row in rows]
 
-    def list_all(self) -> list[DocStatusRecord]:
-        with self._lock, self._registry_errors("read the records"):
-            rows = self.connection.execute(
-                "SELECT record FROM documents ORDER BY rowid"
-            ).fetchall()
-        return [DocStatusRecord.model_validate_json(row[0]) for row in rows]
-
     # --- diff --------------------------------------------------------------
 
     def diff(

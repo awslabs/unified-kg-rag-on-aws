@@ -21,6 +21,7 @@ import boto3
 import httpx
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration.test_ingestion_stages import _respond
@@ -204,7 +205,7 @@ async def test_local_backend_ingests_and_answers_without_aws(
     # A fresh store on the configured file sees what the run committed.
     registry = providers.build_doc_status()
     assert isinstance(registry, SQLiteDocStatusStore)
-    records = registry.list_all()
+    records = all_records(registry)
     assert len(records) == 2 and {r.status for r in records} == {DocStatus.PROCESSED}
     assert await asyncio.to_thread(Path(config.providers.doc_status.sqlite_path).exists)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import (
@@ -124,7 +125,7 @@ def test_artifacts_shared_only_by_a_changed_and_a_deleted_doc_are_removed(
     assert vendor.text_unit_ids == ["tu-a2"]
     (edge,) = graph.read_relationships(["r-vendor-carrier"])
     assert edge.weight == 1.0
-    assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
+    assert {r.doc_id for r in all_records(store)} == {compute_doc_id("/a.txt")}
 
 
 def test_a_survivor_keeps_its_text_units_on_shared_artifacts(harness) -> None:
@@ -160,4 +161,4 @@ def test_a_survivor_keeps_its_text_units_on_shared_artifacts(harness) -> None:
     (kept_edge,) = graph.read_relationships(["r-vendor-depot"])
     assert kept_edge.text_unit_ids == ["tu-c1"]
     assert kept_edge.weight == 1.0
-    assert compute_doc_id("/b.txt") not in {r.doc_id for r in store.list_all()}
+    assert compute_doc_id("/b.txt") not in {r.doc_id for r in all_records(store)}

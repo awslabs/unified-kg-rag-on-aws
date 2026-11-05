@@ -22,6 +22,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from moto import mock_aws
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     POINTS,
@@ -120,7 +121,7 @@ def test_missing_and_deleted_records(store: DocStatusPort) -> None:
     store.delete("d1")
     store.delete("never-stored")
     assert store.get("d1") is None
-    assert store.list_all() == []
+    assert all_records(store) == []
 
 
 def test_put_overwrites(store: DocStatusPort) -> None:
@@ -129,7 +130,7 @@ def test_put_overwrites(store: DocStatusPort) -> None:
     fetched = store.get("d1")
     assert fetched is not None
     assert (fetched.content_hash, fetched.status) == ("h2", DocStatus.FAILED)
-    assert len(store.list_all()) == 1
+    assert len(all_records(store)) == 1
 
 
 def test_get_many_skips_unknown_ids(store: DocStatusPort) -> None:
@@ -142,7 +143,7 @@ def test_get_many_skips_unknown_ids(store: DocStatusPort) -> None:
 
 def test_put_many_last_record_per_doc_wins(store: DocStatusPort) -> None:
     store.put_many([_record("d1", "old"), _record("d2"), _record("d1", "new")])
-    assert {r.doc_id: r.content_hash for r in store.list_all()} == {
+    assert {r.doc_id: r.content_hash for r in all_records(store)} == {
         "d1": "new",
         "d2": "h",
     }
@@ -309,7 +310,7 @@ def test_a_lease_is_no_record(store: DocStatusPort) -> None:
     store.try_acquire_lease("ns", "run-a", 60)
 
     assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
-    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    assert [r.doc_id for r in all_records(store)] == ["ns#d1"]
     delta = store.diff({}, scope="ns|corpus")
     assert delta.deleted == ["ns#d1"]
 
@@ -330,7 +331,7 @@ def test_extraction_settings_are_kept_per_scope_and_are_no_record(
     assert store.get_extraction_settings("ns|corpus-a") == ("fp-3", newer)
     # Never listed or diffed as a document.
     assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
-    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    assert [r.doc_id for r in all_records(store)] == ["ns#d1"]
     assert store.diff({}, scope="ns|corpus-a").deleted == ["ns#d1"]
 
 
@@ -348,7 +349,7 @@ def test_annotation_digests_are_kept_per_namespace_and_are_no_record(
     # Not a scope's extraction settings, never listed or diffed as a document.
     assert store.get_extraction_settings("ns") is None
     assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
-    assert [r.doc_id for r in store.list_all()] == ["ns#d1"]
+    assert [r.doc_id for r in all_records(store)] == ["ns#d1"]
     assert store.diff({}, scope="ns|corpus-a").deleted == ["ns#d1"]
 
 
@@ -374,7 +375,7 @@ def test_namespaces_partition_the_registry(store: DocStatusPort) -> None:
     # A key without a namespace belongs to the default one.
     assert [r.doc_id for r in store.list_namespace("default")] == ["plain"]
     assert store.list_namespace("tenant-c") == []
-    assert len(store.list_all()) == 4
+    assert len(all_records(store)) == 4
 
 
 # --- diff partition properties ----------------------------------------------
@@ -395,7 +396,7 @@ _per_store = settings(
 
 
 def _reset(store: DocStatusPort, records: dict[str, str]) -> None:
-    for record in store.list_all():
+    for record in all_records(store):
         store.delete(record.doc_id)
     store.put_many(
         [_record(doc_id, content_hash) for doc_id, content_hash in records.items()]
@@ -497,7 +498,7 @@ def test_sqlite_locked_registry_waits_store_timeout_seconds(tmp_path: Path) -> N
         holder.execute("ROLLBACK")
         holder.close()
     store.put(_record("d2"))
-    assert {r.doc_id for r in store.list_all()} == {"d1", "d2"}
+    assert {r.doc_id for r in all_records(store)} == {"d1", "d2"}
     store.close()
 
 
@@ -526,5 +527,5 @@ def test_sqlite_interrupted_write_is_rolled_back(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError), store._transaction("write") as connection:
         connection.execute("DELETE FROM documents")
         raise RuntimeError("interrupted")
-    assert [r.doc_id for r in store.list_all()] == ["kept"]
+    assert [r.doc_id for r in all_records(store)] == ["kept"]
     store.close()

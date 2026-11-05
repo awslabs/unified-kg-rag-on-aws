@@ -150,9 +150,6 @@ class _PortSubclassStore(DocStatusPort):
     def delete(self, doc_id: str) -> None:
         self.inner.delete(doc_id)
 
-    def list_all(self) -> list[DocStatusRecord]:
-        return self.inner.list_all()
-
     def diff(
         self,
         incoming: dict[str, str],

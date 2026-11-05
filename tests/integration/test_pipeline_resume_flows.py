@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -226,13 +227,13 @@ def test_a_crashed_artifact_stage_never_commits_documents_processed(
 
     monkeypatch.setattr(stage_class, "execute", execute)
     assert harness.run("--continue-on-error") == 1
-    records = harness.registry.list_all()
+    records = all_records(harness.registry)
     assert records and {r.status for r in records} == {DocStatus.FAILED}
 
     # The next run re-processes them instead of skipping them as unchanged.
     crash["on"] = False
     assert harness.run() == 0
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
     assert harness.graph.ids("entities")
     assert harness.graph.ids("communities")
 
@@ -245,7 +246,7 @@ def test_a_crashed_corpus_stage_skips_indexing(
     # document as deleted, or record new ones processed with no content.
     assert harness.run() == 0
     entities = harness.graph.ids("entities")
-    records = {(r.doc_id, r.status) for r in harness.registry.list_all()}
+    records = {(r.doc_id, r.status) for r in all_records(harness.registry)}
     assert entities and records
 
     def execute(stage, context):  # type: ignore[no-untyped-def]
@@ -255,7 +256,7 @@ def test_a_crashed_corpus_stage_skips_indexing(
     (harness.source / "new.txt").write_text("Buyer pays Depot.")
     assert harness.run("--continue-on-error") == 1
     assert harness.graph.ids("entities") == entities
-    stored = {r.doc_id: r for r in harness.registry.list_all()}
+    stored = {r.doc_id: r for r in all_records(harness.registry)}
     assert {(doc_id, stored[doc_id].status) for doc_id, _ in records} == records
     # Past document_loading, the new document has the record of the attempt
     # the run opened (and closed), with nothing indexed.
@@ -314,7 +315,7 @@ def test_a_failed_phased_run_resumes_at_the_failed_stage(
     harness.sink.emitted.clear()
     assert _run_phases(harness, "run-001", attempt=2) == [0, 0, 0, 0]
     assert harness.llm_calls == calls
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
     statuses = {
         r["stage_name"]: r["status"]
         for r in harness.metadata("run-001", cache="cache-2-3")["stage_results"]
@@ -347,7 +348,7 @@ def test_a_delta_whose_documents_name_no_entity_still_commits(
     (harness.source / "logistics.txt").unlink()
 
     assert harness.run() == 0
-    records = harness.registry.list_all()
+    records = all_records(harness.registry)
     assert [Path(r.file_path).name for r in records] == ["contract.txt"]
     assert {r.status for r in records} == {DocStatus.PROCESSED}
     assert not harness.graph.ids("entities")
@@ -375,7 +376,7 @@ def test_a_claims_failure_on_a_delta_naming_no_entity_still_commits(
     (harness.source / "logistics.txt").unlink()
 
     assert harness.run() == 0
-    (record,) = harness.registry.list_all()
+    (record,) = all_records(harness.registry)
     assert Path(record.file_path).name == "contract.txt"
     assert not harness.graph.ids("entities")
 
@@ -484,11 +485,11 @@ def test_a_stage_that_crashed_then_succeeds_commits_its_documents(
 
     monkeypatch.setattr(ps.GraphResolutionStage, "execute", execute)
     assert harness.run("--pipeline-id", "p1", "--continue-on-error") == 1
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.FAILED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.FAILED}
 
     crash["on"] = False
     assert harness.run("--pipeline-id", "p1", "--yes") == 0
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
 
 
 def test_a_failed_run_says_which_stage_failed(
@@ -559,14 +560,14 @@ def test_a_rerun_asks_again_for_the_claims_a_bad_response_failed(
         monkeypatch, "claim extraction specialist", "<claims><claim><subj"
     )
     assert harness.run("--pipeline-id", "p1") == 0
-    status = {Path(r.file_path).name: r.status for r in harness.registry.list_all()}
+    status = {Path(r.file_path).name: r.status for r in all_records(harness.registry)}
     assert status["logistics.txt"] == DocStatus.FAILED
     assert not harness.vectors.ids("claims")
     asked = len(calls)
 
     assert harness.run("--pipeline-id", "p1") == 0
     assert [t for t in calls[asked:] if "Depot" in t]
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
     assert harness.vectors.ids("claims")
 
 
@@ -579,13 +580,15 @@ def test_a_rerun_asks_again_for_the_graph_a_bad_response_failed(
         monkeypatch, "knowledge graph extraction expert", "garbage"
     )
     assert harness.run("--pipeline-id", "p1") == 0
-    (failed,) = [r for r in harness.registry.list_all() if r.status is DocStatus.FAILED]
+    (failed,) = [
+        r for r in all_records(harness.registry) if r.status is DocStatus.FAILED
+    ]
     assert failed.failure_count == 1
     asked = len(calls)
 
     assert harness.run("--pipeline-id", "p1") == 0
     assert [t for t in calls[asked:] if "Depot" in t]
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
 
 
 def test_a_rerun_asks_again_only_for_the_unit_a_bad_response_failed(
@@ -600,7 +603,7 @@ def test_a_rerun_asks_again_only_for_the_unit_a_bad_response_failed(
 
     assert harness.run("--pipeline-id", "p1") == 0
     assert calls[asked:] == ["Depot stores widgets for Vendor."]
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
 
 
 def test_a_rerun_stopped_before_it_asked_again_does_not_replay_the_response(
@@ -632,4 +635,4 @@ def test_a_rerun_stopped_before_it_asked_again_does_not_replay_the_response(
 
     assert harness.run("--pipeline-id", "p1") == 0
     assert "Depot stores widgets for Vendor." in calls[asked:]
-    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}

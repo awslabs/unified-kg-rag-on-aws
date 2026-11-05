@@ -568,10 +568,6 @@ class DynamoDBDocStatusStore:
         with self._registry_errors("query the records"):
             return [self._deserialize(item) for item in self._items(namespace)]
 
-    def list_all(self) -> list[DocStatusRecord]:
-        with self._registry_errors("scan the records"):
-            return [self._deserialize(item) for item in self._items(None)]
-
     def _stored_states(self, namespace: str | None) -> dict[str, StoredDocument]:
         """The records of ``namespace`` (every namespace for ``None``) as the
         delta rule reads them, projected: ``diff`` needs no text units."""

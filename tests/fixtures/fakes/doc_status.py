@@ -120,9 +120,6 @@ class FakeDocStatusStore:
             if doc_id_namespace(doc_id) == namespace
         ]
 
-    def list_all(self) -> list[DocStatusRecord]:
-        return list(self._records.values())
-
     def diff(
         self,
         incoming: dict[str, str],

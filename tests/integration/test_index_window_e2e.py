@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import (
@@ -68,4 +69,4 @@ def test_incremental_runs_read_within_the_live_window(tmp_path: Path) -> None:
     (source / "d0.txt").write_text("Vendor ships gadget lot 0 to Carrier.")
     context, registry = _run(tmp_path, source, None, "reverted")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
-    assert {r.status for r in registry.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(registry)} == {DocStatus.PROCESSED}

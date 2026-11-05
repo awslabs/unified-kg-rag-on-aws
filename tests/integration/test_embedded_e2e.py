@@ -25,6 +25,7 @@ import httpx
 import pytest
 import yaml
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.extras import LANGCHAIN_JUDGE_INSTALLED, VIZ_INSTALLED
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_ingestion_stages as stages
@@ -251,7 +252,7 @@ def _stored_ids(config: Config, providers: Providers) -> set[str]:
 def _registry(providers: Providers) -> dict[str, DocStatus]:
     registry = providers.build_doc_status()
     assert isinstance(registry, SQLiteDocStatusStore)
-    return {r.file_path: r.status for r in registry.list_all()}
+    return {r.file_path: r.status for r in all_records(registry)}
 
 
 def _ask(chain: GraphRAGChain, strategy: SearchStrategy) -> RAGOutput:

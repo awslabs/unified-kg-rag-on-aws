@@ -20,6 +20,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.providers import Providers
@@ -126,7 +127,7 @@ def test_another_tenants_run_does_not_delete_this_tenants_documents(
     assert len(second.incremental_delta.new) == 1
     assert second.incremental_delta.deleted == []
     assert second.incremental_delta.changed == []
-    assert len(store.list_all()) == 2
+    assert len(all_records(store)) == 2
 
 
 @pytest.mark.parametrize("copy_name", ["a_copy.txt", "z_copy.txt"])
@@ -264,7 +265,7 @@ def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
     )
     store = FakeDocStatusStore()
     _run(root, store, _config(), mocker)
-    assert len(store.list_all()) == 2
+    assert len(all_records(store)) == 2
 
     # b.txt now fails to parse (empty text is rejected by the parser).
     (root / "b.txt").write_text("", encoding="utf-8")
@@ -314,7 +315,7 @@ def test_a_json_file_that_fails_to_load_is_not_deleted(tmp_path, mocker) -> None
         (root / f"{name}.json").write_text(document.model_dump_json(), encoding="utf-8")
     store = FakeDocStatusStore()
     _load_json_corpus(root, store, _config(), mocker)
-    assert len(store.list_all()) == 2
+    assert len(all_records(store)) == 2
 
     (root / "b.json").write_text("{ not json", encoding="utf-8")
     context = _load_json_corpus(root, store, _config(), mocker)
@@ -375,7 +376,7 @@ def test_committed_records_carry_scope_and_relative_path(tmp_path, mocker) -> No
     store = FakeDocStatusStore()
     context = _run(root, store, _config("tenant-a"), mocker)
 
-    (record,) = store.list_all()
+    (record,) = all_records(store)
     assert record.scope == context.incremental_scope
     assert record.scope.startswith("tenant-a|")
     assert record.file_path == "docs/a.txt"
@@ -488,7 +489,7 @@ def test_a_retired_scope_is_deleted_and_nothing_else(registry) -> None:
     assert delta.new == [document_doc_id(document)]
     assert sorted(delta.deleted) == ["old-1", "old-2"]
     # Detection writes nothing: the records go when their removal succeeds.
-    assert len(registry.list_all()) == 5
+    assert len(all_records(registry)) == 5
 
 
 def test_a_retired_scope_matches_every_stored_spelling_of_it(registry) -> None:

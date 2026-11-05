@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.ingestion.incremental import (
@@ -86,7 +87,7 @@ def _record(store: FakeDocStatusStore, results: dict[str, IndexingStats]) -> boo
 
 
 def _statuses(store: FakeDocStatusStore) -> dict[str, DocStatus]:
-    return {record.doc_id: record.status for record in store.list_all()}
+    return {record.doc_id: record.status for record in all_records(store)}
 
 
 def test_documents_owning_a_failed_write_are_recorded_failed() -> None:
@@ -131,7 +132,7 @@ def test_the_commit_lists_the_documents_it_recorded_failed() -> None:
     )
 
     assert sorted(indexer.recorded_failed_doc_ids) == ["doc-a", "doc-c"]
-    assert sorted((r.doc_id, r.failure_count) for r in store.list_all()) == [
+    assert sorted((r.doc_id, r.failure_count) for r in all_records(store)) == [
         ("doc-a", 0),
         ("doc-b", 0),
         ("doc-c", 1),
@@ -168,7 +169,7 @@ def test_failure_rate_gate_still_records_nothing() -> None:
     recorded = _record(store, {"graph_relationships": _stats(2, ["r-a"])})
 
     assert recorded is False
-    assert store.list_all() == []
+    assert all_records(store) == []
 
 
 def _document(path: str) -> Document:

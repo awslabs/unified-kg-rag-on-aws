@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import (
@@ -237,7 +238,7 @@ class TestModify:
         assert compute_doc_id("/b.txt") in delta.changed
         # Same content hash for the two distinct docs, but two registry entries.
         assert fps2[compute_doc_id("/a.txt")] == fps2[compute_doc_id("/b.txt")]
-        assert len(rig.store.list_all()) == 2
+        assert len(all_records(rig.store)) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +269,7 @@ class TestDelete:
         assert rig.graph.ids("relationships") == {"ra"}
         assert rig.vector.ids("relationships") == {"ra"}
         assert rig.vector.ids("text_units") == {_unit_id("/a.txt")}
-        assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
+        assert {r.doc_id for r in all_records(rig.store)} == {compute_doc_id("/a.txt")}
 
     def test_delete_preserves_shared_artifacts(self, rig) -> None:
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
@@ -279,7 +280,7 @@ class TestDelete:
         delta, _ = detect_delta([a], rig.inc.doc_status)  # delete b
         assert rig.inc.remove_changed_and_deleted(delta)
         assert rig.entity_units() == {"shared": [_unit_id("/a.txt")]}
-        assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
+        assert {r.doc_id for r in all_records(rig.store)} == {compute_doc_id("/a.txt")}
 
     def test_delete_last_referencing_doc_removes_the_entity(self, rig) -> None:
         # Two docs both state 'shared'. Delete one -> kept (still stated).
@@ -296,7 +297,7 @@ class TestDelete:
         d2, _ = detect_delta([], rig.inc.doc_status)
         assert rig.inc.remove_changed_and_deleted(d2)
         assert rig.stored_ids() == set()
-        assert rig.store.list_all() == []
+        assert all_records(rig.store) == []
 
     def test_delete_empty_corpus_removes_everything(self, rig) -> None:
         _, fps = detect_delta([_doc("/a.txt", "A")], rig.inc.doc_status)
@@ -304,7 +305,7 @@ class TestDelete:
         delta, _ = detect_delta([], rig.inc.doc_status)  # entire corpus gone
         assert delta.deleted == [compute_doc_id("/a.txt")]
         assert rig.inc.remove_changed_and_deleted(delta)
-        assert rig.store.list_all() == []
+        assert all_records(rig.store) == []
         assert rig.stored_ids() == set()
         assert rig.vector.ids("text_units") == set()
 
@@ -337,7 +338,7 @@ class TestCombinations:
         rig.commit(fps2, "/b.txt", {"eb2": "B2"}, version="-v2")
         rig.commit(fps2, "/d.txt", {"ed": "D"})
         assert rig.stored_ids() == {"ea", "eb2", "ed"}
-        live = {r.doc_id for r in rig.store.list_all()}
+        live = {r.doc_id for r in all_records(rig.store)}
         assert live == {compute_doc_id(p) for p in ("/a.txt", "/b.txt", "/d.txt")}
 
     def test_delete_then_readd_same_doc_id(self, rig) -> None:
@@ -427,7 +428,7 @@ class TestCombinations:
         rig.commit(fps, "/a.txt", {"e1": "A"})
         rec = rig.store.get(compute_doc_id("/a.txt"))
         assert rec is not None and rec.text_unit_ids == [_unit_id("/a.txt")]
-        assert len(rig.store.list_all()) == 1
+        assert len(all_records(rig.store)) == 1
         assert rig.entity_units() == {"e1": [_unit_id("/a.txt")]}
 
 

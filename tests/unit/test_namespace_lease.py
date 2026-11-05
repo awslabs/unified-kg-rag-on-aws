@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import IncrementalRun
 from unified_kg_rag.application.ingestion.namespace_lease import (
@@ -87,7 +88,7 @@ def test_incremental_writes_check_the_lease() -> None:
         with pytest.raises(NamespaceLeaseError):
             harness.run(corpus)
     # Nothing was written: neither registry record nor artifact.
-    assert harness.store.list_all() == []
+    assert all_records(harness.store) == []
     assert harness.graph.ids("entities") == set()
 
 

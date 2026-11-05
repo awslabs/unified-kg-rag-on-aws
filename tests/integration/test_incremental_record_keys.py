@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -137,7 +138,7 @@ def test_a_record_that_was_not_stored_fails_its_document(tmp_path, monkeypatch) 
 
     # Indexed, but recorded FAILED: without its records no later run could
     # derive what the document's units state.
-    assert {r.status for r in harness.store.list_all()} == {DocStatus.FAILED}
+    assert {r.status for r in all_records(harness.store)} == {DocStatus.FAILED}
     assert all(not keys for keys in harness.unit_keys().values())
     resolution = next(
         r for r in context.stage_results if r.stage_name == "graph_resolution"
@@ -146,7 +147,7 @@ def test_a_record_that_was_not_stored_fails_its_document(tmp_path, monkeypatch) 
 
     monkeypatch.setattr(FakeVectorStore, "write_extraction_records", write)
     harness.run("run-2")
-    assert {r.status for r in harness.store.list_all()} == {DocStatus.PROCESSED}
+    assert {r.status for r in all_records(harness.store)} == {DocStatus.PROCESSED}
     assert all(
         set(keys) == {"graph", "claims"} for keys in harness.unit_keys().values()
     )

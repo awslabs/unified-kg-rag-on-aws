@@ -24,6 +24,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from moto import mock_aws
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.integration.test_incremental_source_scopes import (
     ScopeStack,
@@ -76,7 +77,7 @@ def _stack(registry: DocStatusPort, tmp_path: Path, namespace: str) -> ScopeStac
 def _records(registry: DocStatusPort, namespace: str) -> dict[str, object]:
     return {
         r.doc_id: r.model_dump()
-        for r in registry.list_all()
+        for r in all_records(registry)
         if scope_namespace(r.scope) == f"default-{namespace}"
     }
 
@@ -283,7 +284,7 @@ def _records_of(registry: DocStatusPort, stack: ScopeStack) -> dict[str, object]
     namespace = config_registry_namespace(stack.config.indexing, None)
     return {
         r.doc_id: r.model_dump()
-        for r in registry.list_all()
+        for r in all_records(registry)
         if scope_namespace(r.scope) == namespace
     }
 

@@ -23,6 +23,7 @@ import httpx
 import pytest
 from botocore.exceptions import NoCredentialsError, TokenRetrievalError
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_ingestion_stages import _source_text
@@ -94,7 +95,7 @@ def _runs(
         context = e2e._ingest(config, providers, source, cache)
         if contexts is not None:
             contexts.append(context)
-        records = {r.file_path: r for r in providers.build_doc_status().list_all()}
+        records = {r.file_path: r for r in all_records(providers.build_doc_status())}
         fz = records["fz.txt"]
         seen.append(
             (
@@ -261,12 +262,12 @@ def test_a_whole_delta_outage_excludes_nothing_once_fixed(tmp_path: Path) -> Non
         (source / name).write_text(text)
     for run in range(config.indexing.max_document_failures):
         e2e._ingest(config, providers, source, tmp_path / f"down{run}")
-        counts = {r.failure_count for r in providers.build_doc_status().list_all()}
+        counts = {r.failure_count for r in all_records(providers.build_doc_status())}
         assert counts == {0}, (run, counts)
     down["on"] = False
     context = e2e._ingest(config, providers, source, tmp_path / "fixed")
     assert context.status == PipelineStageStatus.COMPLETED
-    records = providers.build_doc_status().list_all()
+    records = all_records(providers.build_doc_status())
     assert {r.status for r in records} == {DocStatus.PROCESSED}, records
     entities = e2e._stored(
         config, providers, config.indexing.opensearch.entities_index_prefix
@@ -360,7 +361,7 @@ def _rejecting(tmp: Path, rejects: dict[str, Any]) -> tuple[Any, Any, Path]:
 
 def _counts(providers: Any) -> dict[str, int]:
     return {
-        r.file_path: r.failure_count for r in providers.build_doc_status().list_all()
+        r.file_path: r.failure_count for r in all_records(providers.build_doc_status())
     }
 
 
@@ -500,7 +501,7 @@ def _cut_runs(
         if run == change:
             config.processing.graph_extraction.max_entities_per_chunk += 1
         context = e2e._ingest(config, providers, source, tmp / f"run{run}")
-        records = {r.file_path: r for r in providers.build_doc_status().list_all()}
+        records = {r.file_path: r for r in all_records(providers.build_doc_status())}
         z1 = records["z1.txt"]
         seen.append(
             (
@@ -661,7 +662,7 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
         context = e2e._ingest(config, providers, source, tmp_path / f"run{run}")
         (fz,) = [
             r
-            for r in providers.build_doc_status().list_all()
+            for r in all_records(providers.build_doc_status())
             if r.file_path == "fz.txt"
         ]
         result = runner._json_result(context)
@@ -673,7 +674,7 @@ def test_a_document_failing_runs_for_an_error_not_its_own_is_reported(
     providers = e2e._providers(config, server_ok, e2e.FakeCrossEncoder("r"))
     e2e._ingest(config, providers, source, tmp_path / "fixed")
     (fz,) = [
-        r for r in providers.build_doc_status().list_all() if r.file_path == "fz.txt"
+        r for r in all_records(providers.build_doc_status()) if r.file_path == "fz.txt"
     ]
     assert (fz.status, fz.retry_count) == (DocStatus.PROCESSED, 0)
 
@@ -718,7 +719,7 @@ def _outage(tmp: Path, stage: str, mode: dict[str, int]) -> tuple[Any, Any, Path
 
 def _fz(providers: Any) -> Any:
     (fz,) = [
-        r for r in providers.build_doc_status().list_all() if r.file_path == "fz.txt"
+        r for r in all_records(providers.build_doc_status()) if r.file_path == "fz.txt"
     ]
     return fz
 

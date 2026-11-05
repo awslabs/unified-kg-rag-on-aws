@@ -28,6 +28,7 @@ from unittest.mock import patch
 import pytest
 from botocore.exceptions import NoCredentialsError
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama, ModelRejects
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_ingestion_stages import _source_text
@@ -227,10 +228,10 @@ def _failing_document_states(
         failing["on"] = fail
         e2e._ingest(config, providers, source, tmp / pipeline_id)
         registry = providers.build_doc_status()
-        (record,) = [r for r in registry.list_all() if r.file_path == "d5.txt"]
+        (record,) = [r for r in all_records(registry) if r.file_path == "d5.txt"]
         if not seen:
             # The first run wrote every record and names itself on them.
-            assert {r.written_by for r in registry.list_all()} == {pipeline_id}
+            assert {r.written_by for r in all_records(registry)} == {pipeline_id}
         seen.append((record.status.value, record.failure_count))
     return seen
 
@@ -324,7 +325,7 @@ def test_a_rerun_pipeline_id_does_not_record_a_stage_it_no_longer_runs(
     for gleaning in (True, False):
         config.processing.gleaning.enabled = gleaning
         e2e._ingest(config, providers, source, tmp_path / "P1")
-        (record,) = providers.build_doc_status().list_all()
+        (record,) = all_records(providers.build_doc_status())
         states.append((record.status.value, record.failure_count))
     assert states == [("failed", 1), ("processed", 0)], states
 
@@ -355,7 +356,7 @@ def test_an_explicit_resume_point_is_kept_past_a_failed_stage(
     finally:
         pipeline.close()
     (record,) = [
-        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+        r for r in all_records(providers.build_doc_status()) if r.file_path == "d5.txt"
     ]
     assert (record.status.value, record.failure_count) == ("failed", 2)
     assert "resuming from 'indexing' as asked" in caplog.text
@@ -393,7 +394,7 @@ def test_an_indexing_only_rerun_does_not_count_a_disabled_stage_again(
     # Said once ("Failed to run pipeline: Pipeline resume failed: ..." before).
     assert str(raised.value).startswith("Pipeline resume failed: "), raised.value
     (record,) = [
-        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+        r for r in all_records(providers.build_doc_status()) if r.file_path == "d5.txt"
     ]
     assert (record.status.value, record.failure_count) == ("failed", 1)
 
@@ -433,6 +434,6 @@ def test_an_explicit_indexing_only_rerun_warns_and_counts_again(
         in caplog.text
     )
     (record,) = [
-        r for r in providers.build_doc_status().list_all() if r.file_path == "d5.txt"
+        r for r in all_records(providers.build_doc_status()) if r.file_path == "d5.txt"
     ]
     assert (record.status.value, record.failure_count) == ("failed", 2)

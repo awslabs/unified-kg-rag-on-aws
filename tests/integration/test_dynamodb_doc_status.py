@@ -15,6 +15,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.fixtures.doc_status_records import all_records
 from unified_kg_rag.adapters.doc_status import dynamodb as dynamodb_module
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.domain.models import (
@@ -199,7 +200,7 @@ def test_string_sets_read_back_sorted(ddb_store: DynamoDBDocStatusStore) -> None
 
     read = ddb_store.get("a")
     assert read.text_unit_ids == ["t1", "t2", "t3"]
-    assert ddb_store.list_all() == [read]
+    assert all_records(ddb_store) == [read]
     assert ddb_store.get_many(["a"]) == {"a": read}
 
 
@@ -222,7 +223,7 @@ def test_put_many_writes_in_batches_of_25_and_last_record_wins(
     ddb_store.put_many([])
 
     assert calls == [25, 25, 10]
-    assert len(ddb_store.list_all()) == 60
+    assert len(all_records(ddb_store)) == 60
     stored = ddb_store.get("d0")
     assert stored is not None and stored.content_hash == "h-last"
 
@@ -252,7 +253,7 @@ def test_put_many_retries_unprocessed_items(
     )
 
     assert requests == [["a", "b", "c"], ["b", "c"]]
-    assert sorted(r.doc_id for r in ddb_store.list_all()) == ["a", "b", "c"]
+    assert sorted(r.doc_id for r in all_records(ddb_store)) == ["a", "b", "c"]
 
 
 def test_put_many_fails_when_items_stay_unprocessed(
@@ -281,7 +282,7 @@ def test_put_many_rejects_an_oversized_record_before_writing_any(
     with pytest.raises(DataProcessingError, match="400 KB"):
         ddb_store.put_many([DocStatusRecord(doc_id="small", content_hash="h"), huge])
 
-    assert ddb_store.list_all() == []
+    assert all_records(ddb_store) == []
 
 
 def test_write_ahead_record_round_trips_and_diffs_as_changed(
@@ -400,7 +401,7 @@ def test_every_batch_write_request_checks_the_fence(
         remove_write_fence(token)
     # Only the first request (25 records) went out; the lease requests and
     # the reads are not fenced.
-    assert len(ddb_store.list_all()) == 25
+    assert len(all_records(ddb_store)) == 25
 
 
 def test_a_retried_registry_write_checks_the_fence_per_attempt(

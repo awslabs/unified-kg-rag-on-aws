@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore
@@ -385,7 +386,7 @@ def test_incremental_run_after_a_registry_off_build_stops_before_any_write(
         _stage_context([old], text_units=[_unit("t-1")], resolved_entities=[vendor])
     )
     assert graph.ids("entities") == {"e-vendor"}
-    before = store.list_all()
+    before = all_records(store)
 
     incremental = _stage_context(
         [new],
@@ -402,7 +403,7 @@ def test_incremental_run_after_a_registry_off_build_stops_before_any_write(
     with pytest.raises(ConfigurationError, match="registry off"):
         stage._execute_core(incremental)
 
-    assert store.list_all() == before
+    assert all_records(store) == before
     assert len(client.documents) == written
 
 

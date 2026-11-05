@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
@@ -111,7 +112,7 @@ def test_first_run_marks_all_new_and_records_registry(rig) -> None:
     )
     assert rig.graph.ids("entities") == {"ea", "eb"}
     assert rig.vector.ids("text_units") == {"tu-a.txt", "tu-b.txt"}
-    assert {r.doc_id: r.text_unit_ids for r in rig.store.list_all()} == {
+    assert {r.doc_id: r.text_unit_ids for r in all_records(rig.store)} == {
         compute_doc_id("/a.txt"): ["tu-a.txt"],
         compute_doc_id("/b.txt"): ["tu-b.txt"],
     }
@@ -181,7 +182,7 @@ def test_deleted_document_removes_exclusive_artifacts(rig) -> None:
     assert delta.deleted == [compute_doc_id("/b.txt")]
 
     assert rig.inc.remove_changed_and_deleted(delta)
-    assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
+    assert {r.doc_id for r in all_records(rig.store)} == {compute_doc_id("/a.txt")}
     assert rig.graph.ids("entities") == rig.vector.ids("entities") == {"ea"}
     assert rig.vector.ids("text_units") == {"tu-a.txt"}
 
@@ -229,7 +230,7 @@ def test_shared_artifacts_are_not_deleted(rig) -> None:
     assert rig.entity_units() == {"shared": ["tu-a.txt"]}
     assert rig.vector.ids("entities") == {"shared"}
     # b's registry record is removed even though its only artifact survives.
-    assert {r.doc_id for r in rig.store.list_all()} == {compute_doc_id("/a.txt")}
+    assert {r.doc_id for r in all_records(rig.store)} == {compute_doc_id("/a.txt")}
 
 
 def _fail(

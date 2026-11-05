@@ -142,12 +142,6 @@ class DocStatusPort(Protocol):
         """Return every record of index ``namespace`` (its registry partition)."""
         ...
 
-    def list_all(self) -> list[DocStatusRecord]:
-        """Return every stored record, of every namespace (administration and
-        tests; a run reads its namespace with :meth:`list_namespace` or
-        :meth:`diff`)."""
-        ...
-
     def diff(
         self,
         incoming: dict[str, str],

@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.fixtures.doc_status_records import all_records
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_name_variant_convergence import _Died, _dying
 from tests.integration.test_pipeline_id_rerun import _setup, _write_corpus
@@ -50,6 +51,6 @@ def test_a_rerun_does_not_delete_documents_another_scope_indexed_again(
     run("A", "P0")  # rerun: restores its delta
     scopes = sorted(
         (r.scope or "").rsplit("|", 1)[-1]
-        for r in providers.build_doc_status().list_all()
+        for r in all_records(providers.build_doc_status())
     )
     assert scopes == ["A", "B"]
