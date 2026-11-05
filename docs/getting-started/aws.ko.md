@@ -48,7 +48,7 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 - **리전.** 모든 Bedrock 호출은 `aws.bedrock.region_name`(기본값은
   `aws.region_name`인 `us-west-2`이며 다섯 모델이 모두 있음)으로 갑니다. 재순위화 모델이
   없는 리전(예: `ap-northeast-2`)에서는 이 값을 모델이 있는 리전으로 지정하거나
-  `search.reranking.enabled: false`로 설정하세요. Bedrock으로 가는 경로가 VPC
+  `providers.rerank.kind: none`으로 설정하세요. Bedrock으로 가는 경로가 VPC
   엔드포인트뿐인 프라이빗 VPC는 자기 리전을 유지해야 합니다.
 - **추론 프로파일.** Claude Sonnet 5.5와 Haiku 5.5는 교차 리전 추론 프로파일로만
   호출할 수 있습니다. `aws.bedrock.enable_global_profile: true`를 유지하고
@@ -125,7 +125,7 @@ CLI를 실행하는 주체에는 Bedrock(설정한 모델 ID와 임베딩에 대
   거부됩니다(CDK 태스크 역할은 별도로 허용함). 이 권한이 없으면 질의마다
   `Reranking failed: ...` ERROR가 남고 재순위화하지 않은 융합 결과를
   반환합니다(`metadata.rerank.status: failed`). 권한을 줄 수 없다면
-  `search.reranking.enabled: false`로 설정하세요.
+  `providers.rerank.kind: none`으로 설정하세요.
 - **`Resource: "*"`에 `bedrock:ListInferenceProfiles`.** 모델 해석기가 호출하는 계정
   수준 읽기 권한입니다.
 - **`bedrock:ApplyGuardrail`.** 가드레일을 쓰면 해당 가드레일

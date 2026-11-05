@@ -266,7 +266,7 @@ class CommunityDetector:
             parser = create_robust_xml_output_parser(
                 model_purpose=ModelPurpose.INGESTION,
                 factory=self.factory,
-                enable_output_fixing=self.config.fixing.enabled,
+                enable_output_fixing=True,
                 output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
                 min_output_tokens=CommunityReportPrompt.output_floor(self.config),
                 output_tags=[

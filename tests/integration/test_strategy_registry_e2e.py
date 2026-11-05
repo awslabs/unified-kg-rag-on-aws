@@ -56,7 +56,7 @@ def test_all_registered_strategies_have_valid_specs() -> None:
 
 async def test_simple_strategy_runs_through_registry() -> None:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     spec = get_strategy_spec(SearchStrategy.SIMPLE)
 
     # Inject only the roles the strategy declares it needs.

@@ -53,7 +53,7 @@ whose rerank call fails keeps the fused order and reports
 `aws.bedrock.region_name` at a region with the model, grant `bedrock:Rerank`
 on `Resource: "*"`
 ([IAM permissions](./getting-started/aws.md#iam-permissions)), or set
-`search.reranking.enabled: false`
+`providers.rerank.kind: none`
 ([Required models](./getting-started/aws.md#required-models)).
 
 ### Why did my run use another region after an SSO login?
@@ -184,7 +184,7 @@ model or credential error fails a query rather than answering from no context.
 |---|---|---|
 | `No valid AWS credentials for Amazon Bedrock in region ...` | Missing or expired credentials | Refresh them; check `AWS_PROFILE` / `aws.profile_name` |
 | `Model '<id>' is only available through a cross-region inference profile, but none resolved ...` | No on-demand throughput and no profile found | Keep `aws.bedrock.enable_global_profile: true`, grant `bedrock:ListInferenceProfiles`, or use another region |
-| `Reranking failed: ...` (per query, `metadata.rerank.status: failed`) / `Reranking initialization failed; queries keep the fused order ...` (`unavailable`) | The Rerank call was denied or the model is not in the region; or the rerank model could not be built | Grant `bedrock:Rerank` on `Resource: "*"`, use a region with the model, check `models.rerank` / `providers.rerank`, or set `search.reranking.enabled: false` |
+| `Reranking failed: ...` (per query, `metadata.rerank.status: failed`) / `Reranking initialization failed; queries keep the fused order ...` (`unavailable`) | The Rerank call was denied or the model is not in the region; or the rerank model could not be built | Grant `bedrock:Rerank` on `Resource: "*"`, use a region with the model, check `models.rerank` / `providers.rerank`, or set `providers.rerank.kind: none` |
 | `RerankModelError: ...` | As above, with `search.reranking.required: true` | Fix the cause, or `required: false` to answer from the fused order |
 | `ClientError: ... (ValidationException) ... InvokeModel ...` / `(ResourceNotFoundException)` / `NoCredentialsError` during a query | The query embedding call cannot succeed | Check `models.embedding.model_id`, `aws.bedrock.region_name`, model access and credentials |
 | `EmbeddingModelError: Query embedding failed: ...` | The embedding call failed after retries (a crashed Ollama runner or vLLM engine, a persistent `InternalServerException`) | Check the embedding server and its logs; retry |

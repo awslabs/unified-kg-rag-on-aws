@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.output_parsers import StrOutputParser
 
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval import rag_chain as rag_chain_module
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, _LoopRunner
 from unified_kg_rag.domain.models import Config, RetrieverRole
@@ -69,10 +70,14 @@ def _chain(
         built.append(retriever)
         return retriever
 
+    config = Config()
     chain = GraphRAGChain(
-        config=Config(),
-        boto_session=MagicMock(),
-        retriever_builders={RetrieverRole.DOCUMENT: build},  # type: ignore[dict-item]
+        config=config,
+        providers=Providers(
+            config,
+            boto_session=MagicMock(),
+            retriever_builders={RetrieverRole.DOCUMENT: build},  # type: ignore[dict-item]
+        ),
     )
 
     async def fake_ainvoke(input: Any, config: Any = None, **kwargs: Any) -> Any:
@@ -398,7 +403,10 @@ def test_prompt_chains_are_built_once_per_prompt_model_and_flags(mocker) -> None
     setup = mocker.patch.object(
         rag_chain_module, "setup_chain", side_effect=lambda **_: object()
     )
-    chain = GraphRAGChain(config=Config(), boto_session=MagicMock())
+    config = Config()
+    chain = GraphRAGChain(
+        config=config, providers=Providers(config, boto_session=MagicMock())
+    )
     try:
         get = chain._get_chain_for_prompt
         first = get(AnswerGenerationPrompt, StrOutputParser(), enable_thinking=False)

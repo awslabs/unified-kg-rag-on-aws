@@ -5,9 +5,9 @@
 Covers the MAP -> FILTER+RANK -> PACK -> REDUCE pipeline added to
 ``GlobalSearchStrategy``: the map step produces scored key points, the filter
 drops score<=threshold, ranking orders by score descending, the token budget
-caps the packed points, the reduce step receives the ranked points (not the raw
-report concatenation), and a parse failure degrades to the legacy
-concat-and-reduce path. Style mirrors ``test_global_search_logic.py`` /
+caps the packed points, the answer model receives the ranked points as one
+section (not the raw report concatenation), and a parse failure passes the
+unrated reports through. Style mirrors ``test_global_search_logic.py`` /
 ``test_global_search_scoring.py``: the strategy is built via ``__new__`` so its
 Bedrock ``__init__`` never runs, and chains are replaced with fakes / mocks.
 """
@@ -66,13 +66,6 @@ class _SyncMapChain:
         return self.invoke(single_input, config)
 
 
-def _reducer(return_value: str) -> Any:
-    """A reduce chain stub whose ``.ainvoke`` is an awaitable mock."""
-    chain = SimpleNamespace()
-    chain.ainvoke = AsyncMock(return_value=return_value)
-    return chain
-
-
 class _TokenCounter:
     """Token counter that returns a fixed cost per call (1 token/char by len)."""
 
@@ -101,7 +94,7 @@ def _no_rerank_scorer() -> Any:
     from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     return HybridScorer(config)
 
 
@@ -113,9 +106,7 @@ def _strategy(
     map_reduce_min_results: int = 1,
     ignore_errors: bool = True,
     map_outputs: list[str | Exception] | None = None,
-    reducer: Any = None,
     token_cost: int = 10,
-    reduce_with_llm: bool = False,
     evidence_tokens: int | None = None,
 ) -> GlobalSearchStrategy:
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
@@ -127,7 +118,6 @@ def _strategy(
         max_map_reduce_tokens=max_map_reduce_tokens,
         map_reduce_min_results=map_reduce_min_results,
         enable_map_reduce=True,
-        reduce_with_llm=reduce_with_llm,
         use_dynamic_selection=False,
         community_depth=2,
         text_unit_slots=0,
@@ -138,9 +128,6 @@ def _strategy(
     strat.target_language = "English"
     strat.hybrid_scorer = _no_rerank_scorer()
     strat.map_rater = _SyncMapChain(map_outputs or [])
-    strat.map_reducer = (
-        reducer if reducer is not None else _reducer("SYNTHESIZED ANSWER")
-    )
     strat.token_manager = _TokenCounter(cost=token_cost)
     # The stub assigns outputs in call order, so run the map calls serially.
     strat.max_concurrency = 1
@@ -299,28 +286,46 @@ def test_pack_always_keeps_at_least_one_point() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# REDUCE — receives ranked points, not the raw concatenation
+# REDUCE — the answer model receives the ranked points, not the raw reports
 # --------------------------------------------------------------------------- #
 
 
-async def test_reduce_receives_ranked_points() -> None:
-    reducer = _reducer("FINAL")
-    strat = _strategy(reducer=reducer, reduce_with_llm=True)
+def test_reduce_hands_the_ranked_points_to_the_answer_model() -> None:
+    strat = _strategy()
     points = [_MapPoint("alpha", 90), _MapPoint("beta", 40)]
     results = _communities(3)
-    out = await strat._reduce_from_points(points, results, SearchQuery(query="q"))
+    out = strat._reduce_from_points(points, results)
 
-    assert out[0].source == "synthesized_summary"
-    assert out[0].content == "FINAL"
+    assert out[0].source == "synthesized_key_points"
     assert out[0].metadata["ranked_key_points"] == 2
     assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
-
-    sent = reducer.ainvoke.await_args.args[0]
-    # The reduce input is the ranked key points (with relevance), NOT the raw
+    # The section is the ranked key points (with relevance), NOT the raw
     # report bodies.
-    assert "alpha" in sent["summaries"] and "beta" in sent["summaries"]
-    assert "relevance 90" in sent["summaries"]
-    assert "community report 0" not in sent["summaries"]
+    assert "alpha" in out[0].content and "beta" in out[0].content
+    assert "relevance 90" in out[0].content
+    assert "community report 0" not in out[0].content
+
+
+def test_global_search_builds_no_reduce_chain() -> None:
+    # The reduce LLM call is gone: the strategy builds the map chain only (it
+    # built the reduce chain even with the reduce call off).
+    from unittest.mock import MagicMock
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+
+    config = Config()
+    config.providers.rerank.kind = "none"
+    factory = ScriptedLLMFactory(lambda system, human: "")
+    built: list[Any] = []
+    get_model = factory.get_model
+    factory.get_model = lambda model_id, **kw: built.append(model_id) or get_model(  # type: ignore[method-assign]
+        model_id, **kw
+    )
+    providers = Providers(config, boto_session=MagicMock(), llm_factory=factory)
+    strat = GlobalSearchStrategy(config=config, retrievers={}, providers=providers)
+    assert not hasattr(strat, "map_reducer")
+    assert len(built) == 1  # the map rater
 
 
 # --------------------------------------------------------------------------- #
@@ -343,21 +348,19 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
             _map_payload(("strong point", 95)),
             _map_payload(("weak point", 0)),  # dropped by filter
         ],
-        reducer=_reducer("THE ANSWER"),
-        reduce_with_llm=True,
     )
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
-    assert out[0].content == "THE ANSWER"
+    assert out[0].source == "synthesized_key_points"
     assert out[0].metadata["ranked_key_points"] == 1  # only the 95 survived
-    # LLM synthesis, not evidence: flagged so it is never reported as a source.
+    # Map-LLM output, not evidence: flagged so it is never reported as a source.
     assert out[0].metadata["synthesized"] is True
     # Only the batch behind a packed point is evidence: c1 gave none.
     assert [r.source for r in out[1:]] == ["c0"]
 
 
 # --------------------------------------------------------------------------- #
-# Parse failure / empty map -> degrade to concat-and-reduce
+# Parse failure / empty map -> the unrated reports pass through
 # --------------------------------------------------------------------------- #
 
 
@@ -378,77 +381,43 @@ def test_parse_map_payload_clamps_scores() -> None:
     assert {p.description: p.score for p in points} == {"over": 100, "under": 0}
 
 
-async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
-    reducer = _reducer("CONCAT SUMMARY")
-    strat = _strategy(
-        map_batch_size=1,
-        map_reduce_min_results=2,
-        map_outputs=["garbage", "still garbage"],  # all map calls unparseable
-        reducer=reducer,
-        reduce_with_llm=True,
-    )
-    results = _communities(2)
-    out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
-    assert out[0].content == "CONCAT SUMMARY"
-    assert out[0].metadata["synthesized"] is True
-    # Concat path metadata has no ranked_key_points key.
-    assert "ranked_key_points" not in out[0].metadata
-    # Reduce was fed the raw report bodies (concat path).
-    sent = reducer.ainvoke.await_args.args[0]
-    assert "community report 0" in sent["summaries"]
-
-
 async def test_apply_map_reduce_all_filtered_returns_no_context() -> None:
     # Every map point scored at/below the threshold: the map step judged the
     # reports irrelevant to the query. Synthesizing from them anyway (the old
     # concat-and-reduce degradation) produced an answer with no supporting
     # evidence. MS GraphRAG returns its no-data answer here, so the strategy
     # returns no context and the chain's empty-context guard answers instead.
-    reducer = _reducer("CONCAT SUMMARY")
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
         map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 50))],
-        reducer=reducer,
-        reduce_with_llm=True,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out == []
-    reducer.ainvoke.assert_not_awaited()
 
 
-async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() -> None:
+async def test_apply_map_reduce_unrated_batch_passes_the_unrated_through() -> None:
     # One batch rated every point irrelevant, the other failed (throttled): the
     # failed batch's reports were never judged, so "no relevant data" would be
-    # an unfounded verdict. Synthesize from the unrated reports instead.
-    reducer = _reducer("CONCAT SUMMARY")
+    # an unfounded verdict. Answer from the unrated reports instead.
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
         map_outputs=[_map_payload(("low", 0)), TimeoutError("throttled")],
-        reducer=reducer,
-        reduce_with_llm=True,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
-    assert out[0].content == "CONCAT SUMMARY"
-    assert out[0].metadata["synthesized"] is True
-    assert [r.source for r in out[1:]] == ["c1"]
-    sent = reducer.ainvoke.await_args.args[0]
-    assert "community report 1" in sent["summaries"]
-    assert "community report 0" not in sent["summaries"]
+    assert [r.source for r in out] == ["c1"]
 
 
-async def test_apply_map_reduce_map_exception_concats_all_reports() -> None:
-    reducer = _reducer("CONCAT SUMMARY")
-    strat = _strategy(map_reduce_min_results=2, reducer=reducer, reduce_with_llm=True)
+async def test_apply_map_reduce_map_exception_passes_all_reports_through() -> None:
+    strat = _strategy(map_reduce_min_results=2)
     strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("map down")
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
-    assert out[0].content == "CONCAT SUMMARY"
-    assert [r.source for r in out[1:]] == ["c0", "c1"]
+    assert [r.source for r in out] == ["c0", "c1"]
 
 
 async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
@@ -474,24 +443,17 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
     assert result.metadata["map_reduce_applied"] is False
 
 
-@pytest.mark.parametrize("failing", ["map", "reduce"])
-async def test_asearch_marks_a_map_reduce_failure_ignore_errors_degraded(
-    failing: str,
-) -> None:
-    # Regression: with ignore_errors on, a failed map or reduce call degraded
-    # the answer with no marker on the result (nor error.type on the span).
+async def test_asearch_marks_a_map_failure_ignore_errors_degraded() -> None:
+    # Regression: with ignore_errors on, a failed map call degraded the answer
+    # with no marker on the result (nor error.type on the span).
     strat = _strategy(
         ignore_errors=True,
         map_batch_size=1,
-        reduce_with_llm=True,
         map_outputs=[_map_payload(("p", 50))] * 2,
     )
-    if failing == "map":
-        strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
-            side_effect=TimeoutError("map down")
-        )
-    else:
-        strat.map_reducer.ainvoke = AsyncMock(side_effect=TimeoutError("down"))
+    strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
+        side_effect=TimeoutError("map down")
+    )
     strat._cut_reports = AsyncMock(  # type: ignore[method-assign]
         return_value=_communities(2)
     )
@@ -514,12 +476,11 @@ async def test_asearch_without_a_failure_has_no_degraded_marker() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Default (reduce_with_llm=False): packed points go to the answer model as-is
+# The packed points go to the answer model as-is
 # --------------------------------------------------------------------------- #
 
 
-async def test_default_passes_ranked_points_without_a_reduce_call() -> None:
-    reducer = _reducer("SHOULD NOT RUN")
+async def test_passes_ranked_points_as_one_section() -> None:
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
@@ -527,13 +488,11 @@ async def test_default_passes_ranked_points_without_a_reduce_call() -> None:
             _map_payload(("weaker point", 40)),
             _map_payload(("strong point", 95), ("noise", 0)),
         ],
-        reducer=reducer,
     )
     results = _communities(2)
 
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
 
-    reducer.ainvoke.assert_not_awaited()
     points = out[0]
     assert points.source == "synthesized_key_points"
     assert points.metadata["synthesized"] is True  # never reported as a source
@@ -586,19 +545,16 @@ def test_the_map_prompt_asks_for_the_report_ids() -> None:
     assert "cid-" not in formatted
 
 
-async def test_default_degraded_path_passes_unrated_reports_through() -> None:
-    reducer = _reducer("SHOULD NOT RUN")
+async def test_degraded_path_passes_unrated_reports_through() -> None:
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
-        map_outputs=["garbage", "still garbage"],
-        reducer=reducer,
+        map_outputs=["garbage", "still garbage"],  # all map calls unparseable
     )
     results = _communities(2)
 
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
 
-    reducer.ainvoke.assert_not_awaited()
     assert [r.source for r in out] == ["c0", "c1"]
 
 
@@ -729,7 +685,7 @@ async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
     # call runs on another model and did not fail either.
     import openai
 
-    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
     strat.map_rater = _DeniedMapChain(_bad_request("Unknown parameter: 'top_k'"))
     with pytest.raises(openai.BadRequestError, match="top_k"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
@@ -750,17 +706,16 @@ async def test_map_phase_a_typed_overflow_on_every_batch_answers() -> None:
         ),
         body=None,
     )
-    strat = _strategy(ignore_errors=False, map_batch_size=5, reduce_with_llm=True)
+    strat = _strategy(ignore_errors=False, map_batch_size=5)
     strat.map_rater = _DeniedMapChain(overflow)
     out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
-    assert out[0].content == "SYNTHESIZED ANSWER"
-    assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
+    assert [r.source for r in out] == ["c0", "c1", "c2"]
 
 
 async def test_map_phase_fatal_error_raises_even_when_ignored() -> None:
     # As DRIFT's: a model the caller cannot access fails the query, where
     # ignore_errors answered from the unrated reports.
-    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat = _strategy(ignore_errors=True, map_batch_size=1)
     strat.map_rater = _DeniedMapChain(
         ClientError(
             {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
@@ -771,36 +726,18 @@ async def test_map_phase_fatal_error_raises_even_when_ignored() -> None:
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
-@pytest.mark.parametrize("path", ["points", "concat"])
-async def test_a_fatal_reduce_error_raises_even_when_ignored(path: str) -> None:
-    denied = ClientError(
-        {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
-        "Converse",
-    )
-    reducer = SimpleNamespace(ainvoke=AsyncMock(side_effect=denied))
-    strat = _strategy(ignore_errors=True, reducer=reducer, reduce_with_llm=True)
-    query = SearchQuery(query="q")
-    with pytest.raises(ClientError, match="AccessDenied"):
-        if path == "points":
-            await strat._reduce_from_points(
-                [_MapPoint("point", 80)], _communities(2), query
-            )
-        else:
-            await strat._concat_reduce(_communities(2), query)
-
-
 async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> None:
     # Regression: a map model that answered no batch (throttled past its
     # retries, timing out) degraded silently to an answer from the unjudged
     # reports; DRIFT raises the first error when a whole step fails.
-    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
     with pytest.raises(TimeoutError, match="read timed out"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
 
 
 async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
-    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat = _strategy(ignore_errors=True, map_batch_size=1)
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
     degraded: list[str] = []
     out = await strat._apply_map_reduce(
@@ -918,51 +855,6 @@ async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Reduce LLM failure: ignore_errors decides between raising and degrading
-# --------------------------------------------------------------------------- #
-
-
-def _failing_reducer() -> Any:
-    chain = SimpleNamespace()
-    chain.ainvoke = AsyncMock(side_effect=RuntimeError("reduce model down"))
-    return chain
-
-
-@pytest.mark.parametrize("path", ["points", "concat"])
-async def test_reduce_failure_raises_without_ignore_errors(path: str) -> None:
-    strat = _strategy(
-        ignore_errors=False, reducer=_failing_reducer(), reduce_with_llm=True
-    )
-    query = SearchQuery(query="q")
-    with pytest.raises(RuntimeError, match="reduce model down"):
-        if path == "points":
-            await strat._reduce_from_points(
-                [_MapPoint("point", 80)], _communities(2), query
-            )
-        else:
-            await strat._concat_reduce(_communities(2), query)
-
-
-@pytest.mark.parametrize("path", ["points", "concat"])
-async def test_reduce_failure_degrades_with_ignore_errors(path: str) -> None:
-    strat = _strategy(
-        ignore_errors=True, reducer=_failing_reducer(), reduce_with_llm=True
-    )
-    query = SearchQuery(query="q")
-    results = _communities(2)
-    degraded: list[str] = []
-    if path == "points":
-        out = await strat._reduce_from_points(
-            [_MapPoint("point", 80)], results, query, degraded=degraded
-        )
-    else:
-        out = await strat._concat_reduce(results, query, degraded=degraded)
-    # The reports pass through without a synthesis; the failure is recorded.
-    assert out == results
-    assert degraded == ["RuntimeError"]
-
-
-# --------------------------------------------------------------------------- #
 # evidence_tokens — the cited report text after the key points
 # --------------------------------------------------------------------------- #
 
@@ -1011,14 +903,3 @@ def test_evidence_tokens_defaults_to_4000() -> None:
     from unified_kg_rag.domain.models.config import GlobalSearchConfig
 
     assert GlobalSearchConfig().evidence_tokens == 4000
-
-
-async def test_evidence_tokens_also_caps_the_reduce_call_path() -> None:
-    strat = _strategy(
-        map_batch_size=3,
-        map_outputs=_ranked_three(),
-        evidence_tokens=0,
-        reduce_with_llm=True,
-    )
-    out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
-    assert [r.source for r in out] == ["synthesized_summary"]

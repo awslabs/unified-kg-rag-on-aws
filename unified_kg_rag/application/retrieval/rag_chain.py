@@ -22,7 +22,7 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from langchain_core.output_parsers import (
     BaseOutputParser,
@@ -146,9 +146,6 @@ from unified_kg_rag.shared.utils import (
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import discard, settle
-
-if TYPE_CHECKING:
-    import boto3
 
 logger = get_logger(__name__)
 
@@ -408,7 +405,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def __init__(
         self,
         config: Config,
-        boto_session: "boto3.Session | None" = None,
         *,
         model_factory: LLMFactoryPort | None = None,
         providers: Providers | None = None,
@@ -435,12 +431,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "or on the Providers bundle (llm_factory=, retriever_builders=), "
                 "not both."
             )
-        if providers is not None and boto_session is not None:
-            raise ValueError(
-                "Pass boto_session either to GraphRAGChain or on the Providers "
-                "bundle (Providers(config, boto_session=...)), not both: the "
-                "bundle's session is the one every component uses."
-            )
         # Composition root (hexagonal): ONE provider bundle — session plus
         # LLM/embedding/rerank/token-counter factories — built here (or
         # injected) and passed explicitly to every component the chain builds
@@ -450,7 +440,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # selects (Bedrock by default).
         self.providers = providers or build_providers(
             config,
-            boto_session,
             llm_factory=model_factory,
             retriever_builders=retriever_builders,
         )
@@ -3138,10 +3127,6 @@ def _iterate_async_generator(
                 loop_runner.stop()
 
 
-def create_rag_chain(
-    config: Config,
-    boto_session: "boto3.Session | None" = None,
-    **kwargs: Any,
-) -> GraphRAGChain:
+def create_rag_chain(config: Config, **kwargs: Any) -> GraphRAGChain:
     """A :class:`GraphRAGChain` of ``config`` (what ``run-rag`` builds)."""
-    return GraphRAGChain(config=config, boto_session=boto_session, **kwargs)
+    return GraphRAGChain(config=config, **kwargs)

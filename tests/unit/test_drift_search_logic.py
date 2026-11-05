@@ -179,7 +179,7 @@ def _strategy(
     **settings: Any,
 ) -> DriftSearchStrategy:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     config.processing.ignore_errors = ignore_errors
     drift = config.search.drift_search
     drift.k_followups = 6

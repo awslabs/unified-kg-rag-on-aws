@@ -31,7 +31,6 @@ the keys most deployments set.
 - [`providers`](#providers)
 - [`models`](#models)
 - [`aws`](#aws)
-- [`fixing`](#fixing)
 - [`processing`](#processing)
 - [`graph`](#graph)
 - [`indexing`](#indexing)
@@ -155,7 +154,6 @@ Per-role overrides: a model id or a tier name per role.
 | `answer_generation` | string \| null (min length 1) | `null` | Model that writes the answer: a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
 | `community_relevance` | string \| null (min length 1) | `null` | Model that rates community relevance for global search's dynamic selection: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `global_map` | string \| null (min length 1) | `null` | Model that answers from each report batch (global map): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `global_reduce` | string \| null (min length 1) | `null` | Model that combines the map answers (global reduce): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `drift_primer` | string \| null (min length 1) | `null` | Model that writes DRIFT's primer and follow-ups: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `drift_action` | string \| null (min length 1) | `null` | Model that answers each DRIFT follow-up: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `evaluation` | string \| null (min length 1) | `null` | Model of the run-eval LLM judges (the langchain and ragas evaluators and --pairwise-judge): a model id, or a tier name ('default' / 'fast'). null = anthropic.claude-opus-5-5 on Bedrock, a model other than the default answer model; when the answer model is that model, the default tier's model or else Claude Sonnet 5.5, whichever is not (run-eval logs the choice at INFO): a judge favours its own answers (measured on 50 global questions: Sonnet 5.5 judging its own answers against Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] against a GPT-5.5 judge). It costs about twice the default tier per token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / output tokens against $2 / $10). With another provider, null runs it on the 'default' tier. 'default' restores the judge of earlier versions, the answer model (run-eval warns when a configured judge is the answer model). |
@@ -270,14 +268,6 @@ AWS DynamoDB document-status registry configuration
 | `table_name` | string (min length 1) | `"unified-kg-rag-on-aws-doc-status-v2"` | DynamoDB table holding each document's status and text units, partitioned by index namespace. |
 | `create_table_if_missing` | boolean | `true` | Create the doc-status table on first use. Set false when the table is managed by IaC (the CDK stack does). |
 | `billing_mode` | string | `"PAY_PER_REQUEST"` | Billing mode used when auto-creating the table |
-
-## `fixing`
-
-Output fixing configuration
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | When a structured stage gets malformed JSON from the model, ask a model (models.roles.fixing) to repair it instead of failing the item. Leave it on. |
 
 ## `processing`
 
@@ -436,10 +426,7 @@ Graph-level statistics configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `calculate_density` | boolean | `true` | Calculate graph density to measure network connectivity |
-| `calculate_clustering` | boolean | `true` | Calculate clustering coefficient to measure local connectivity |
-| `calculate_diameter` | boolean | `false` | Calculate graph diameter (computationally expensive) |
-| `calculate_components` | boolean | `true` | Analyze connected components to identify isolated subgraphs |
+| `calculate_diameter` | boolean | `false` | Calculate graph diameter (computationally expensive; only on a connected graph) |
 
 ### `graph.community_detection`
 
@@ -489,15 +476,11 @@ Node centrality metrics the visualization sizes nodes and plots by (computed at 
 | `calculate_degree` | boolean | `true` | Calculate degree centrality to measure node connectivity |
 | `calculate_betweenness` | boolean | `true` | Compute betweenness centrality (bridge nodes) for the visualization; ingestion itself computes no centrality. On graphs larger than betweenness_auto_sample_threshold nodes it is sampled instead of computed exactly. |
 | `calculate_pagerank` | boolean | `true` | Calculate PageRank centrality to rank node importance |
-| `calculate_closeness` | boolean | `false` | Calculate closeness centrality to measure node proximity |
-| `calculate_eigenvector` | boolean | `false` | Calculate eigenvector centrality to measure influence based on connections |
 | `pagerank_alpha` | number (≥ 0.0, ≤ 1.0) | `0.85` | PageRank damping factor |
 | `pagerank_max_iter` | integer (≥ 1) | `100` | Maximum iterations for PageRank convergence |
 | `betweenness_k` | integer \| null (≥ 1) | `null` | Sample size for betweenness calculation (None for all nodes) |
 | `betweenness_auto_sample_threshold` | integer (≥ 1) | `2000` | When betweenness_k is None (exact) AND the graph has more nodes than this, automatically switch to sampled betweenness (using this value as the pivot-sample size) instead of exact all-pairs shortest paths. Exact betweenness is O(V*E) and stalls on large real graphs; sampling keeps the analysis phase bounded. Raise this to force exact computation on larger graphs. |
 | `betweenness_seed` | integer | `42` | Random seed for sampled betweenness (only used when betweenness_k is set). Fixed for reproducibility — sampled betweenness picks random pivots, so without a seed centrality is non-deterministic. |
-| `eigenvector_max_iter` | integer (≥ 1) | `1000` | Maximum iterations for eigenvector centrality convergence |
-| `eigenvector_tol` | number (> 0.0) | `0.001` | Convergence tolerance for eigenvector centrality |
 
 #### `graph.visualization.interactive`
 
@@ -623,10 +606,9 @@ Search result fusion configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `method` | `"rrf"` \| `"weighted"` | `"rrf"` | How results of different sources are fused: rrf (reciprocal rank fusion) or weighted (score-weighted). |
 | `rrf_k` | integer (≥ 1) | `60` | The k constant of reciprocal rank fusion: each result adds 1 / (rrf_k + rank). |
 | `diversity_lambda` | number (≥ 0.0, ≤ 1.0) | `0.5` | MMR lambda for diversity filtering: score = lambda*relevance - (1-lambda)*max_similarity, with relevance min-max normalized to [0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), 0.0 = maximum diversity. Lower values penalize redundant results more strongly. Filtering is skipped at 1.0 (no diversity benefit). On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant answer difference against 0.5 (answer_contains -1.0 points [-3.75, +1.5] and -2.25 [-5.25, +0.5]). |
-| `fusion_weights` | dict[string, number] | `{}` | Per-source-bucket weights, applied by both fusion methods: RRF scales each bucket's 1/(rrf_k + rank) term and weighted fusion scales its scores. Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (opensearch_all), global (opensearch_community_reports, text_units) and drift (results). A bucket without a key weighs 1.0 (the default: none). |
+| `fusion_weights` | dict[string, number] | `{}` | Per-source-bucket weights: reciprocal rank fusion scales each bucket's 1/(rrf_k + rank) term. Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (opensearch_all), global (opensearch_community_reports, text_units) and drift (results). A bucket without a key weighs 1.0 (the default: none). |
 
 ### `search.reranking`
 
@@ -634,9 +616,8 @@ Reranking configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `true` | Rerank the fused results with models.rerank. Bedrock rerank models are not offered in every region, and the Rerank API needs its own IAM statement (bedrock:Rerank on Resource '*'). |
 | `top_k` | integer (≥ 1) | `100` | Fused candidates sent to the reranker. |
-| `required` | boolean | `false` | Fail the query with RerankModelError when reranking is enabled but the rerank model cannot be built, the rerank call fails or it returns nothing usable. false keeps the fused order and reports the outcome in SearchResult.metadata['rerank']. No effect when reranking is disabled or providers.rerank.kind is none. |
+| `required` | boolean | `false` | Fail the query with RerankModelError when the rerank model cannot be built, the rerank call fails or it returns nothing usable. false keeps the fused order and reports the outcome in SearchResult.metadata['rerank']. No effect with providers.rerank.kind none. |
 
 ### `search.global_search`
 
@@ -652,8 +633,7 @@ Global search configuration
 | `map_reduce_min_results` | integer (≥ 1) | `3` | Minimum community results before map-reduce synthesis is applied; below this the results are returned directly. |
 | `map_context_tokens` | integer (≥ 128) | `12000` | Report tokens packed into one map-step LLM call (MS GraphRAG's data_max_tokens, 12000). Reports are packed in the order the selection gives them (rank for the fixed cut, rating for dynamic selection, similarity for the similarity fallback; MS GraphRAG shuffles them first) until the next one would exceed it; a longer report gets a call of its own. Map calls run search.max_concurrency at a time. |
 | `map_relevance_threshold` | integer (≥ 0, ≤ 100) | `0` | Drop map-step key points whose 0-100 relevance score is at or below this threshold before ranking (0 keeps any positive score). |
-| `max_map_reduce_tokens` | integer (≥ 128) | `8000` | Token budget for the ranked key points packed into the reduce step; the highest-scored points are taken until this budget is reached, so the reduce LLM synthesizes from focused, ranked evidence. The reports the points cite follow them in the context. |
-| `reduce_with_llm` | boolean | `false` | Run the reduce step as its own LLM call that summarizes the packed key points, which the answer model then rewrites. Off by default: the packed points go straight to the answer model as one ranked context section, saving one LLM call per query and a second synthesis that can drop facts. |
+| `max_map_reduce_tokens` | integer (≥ 128) | `8000` | Token budget for the ranked key points handed to the answer model; the highest-scored points are taken until this budget is reached, so the answer is written from focused, ranked evidence. The reports the points cite follow them in the context. |
 | `text_unit_slots` | integer (≥ 0) | `0` | Text units of the communities behind the key points added to the context (retrieved for the query and reranked). 0 (default) = none: MS GraphRAG's global context is community reports only, and chunks next to them took most of the answer budget the reports and key points need. Local and mix search cover chunk evidence. |
 | `evidence_tokens` | integer \| null (≥ 0) | `4000` | Tokens of the cited reports' text that follow the key points in the answer context: whole reports, best-scored point first, until the next would exceed it. 4000 (default): measured on 50 global questions over a 3,318-document MuSiQue corpus, it cut the cost per global query by 41% ($0.1016 -> $0.0597) against no cap, with no consistent quality difference across three pairwise judges (position consistency 0.43-0.57), and the answer keeps its sources. null = no cap (the default before): as many as the answer's context budget holds, which on a large cut is most of a global query's input tokens. 0 = the key points only, as MS GraphRAG's reduce step reads them (-49% cost, also no measured quality difference); the answer then reports no sources, since the key points are model output. Applies to the map-reduce path (enable_map_reduce). |
 
@@ -816,7 +796,6 @@ Evaluation configuration
 | `pairwise_overall` | boolean | `false` | Ask the run-eval --pairwise-judge judge for an 'overall' winner too, as LightRAG's evaluation prompt does, reported as a fifth criterion. A custom_prompts.pairwise_comparison_* override must then return an 'overall' verdict as well. |
 | `retrieval_k` | integer (≥ 1) | `5` | Cutoff k for the retrieval evaluator's hit@k / recall@k: the number of top-ranked distinct files (of the reported sources, in rank order) compared with reference_sources. |
 | `save_detailed_results` | boolean | `true` | Whether to save detailed evaluation results and reports (run-eval --from-results and --baseline-results read them). |
-| `warm_up_query` | boolean | `true` | Before each strategy's first timed run, run-eval answers one synthetic query with that strategy, untimed, unscored and not counted in the usage, so the first strategy's latency does not include opening the store connections and the models' first calls. Costs one extra query (its model calls) per strategy and run, which is not counted in the run's usage or USD estimate (Bedrock bills it all the same). false: no warm-up, as in 0.2.3; the first strategy's first answers then read slower. |
 | `prices` | dict[string, ModelPrice] | `{}` | USD prices per model id, as the usage records name them (usage.by_model: the id the model factory resolved, an inference profile id included), for the comparison's cost estimate (cost.strategies.<s>.usd_per_query). Empty (default): no USD estimate, token counts only. No prices ship with the package: fill in the current Amazon Bedrock on-demand prices of your region. input_tokens includes the cache reads and writes; each is priced at its own rate when the model's price sets one. |
 
 ## `custom_prompts`
@@ -966,7 +945,6 @@ These keys are refused at load with the key that replaced them.
 | `search.answer_generation_model_id` | `models.roles.answer_generation` |
 | `search.global_search.community_relevance_model_id` | `models.roles.community_relevance` |
 | `search.global_search.map_model_id` | `models.roles.global_map` |
-| `search.global_search.map_reduce_model_id` | `models.roles.global_reduce` |
 | `search.drift_search.primer_model_id` | `models.roles.drift_primer` |
 | `search.drift_search.action_model_id` | `models.roles.drift_action` |
 | `evaluation.evaluation_model_id` | `models.roles.evaluation` |
@@ -1015,3 +993,17 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | `search.local_search.type_quota` | the fusion slots local search and DRIFT reserve per section type are fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager.type_budgets sets each type's share of the context |
 | `cache.chunking` | a stage-cache entry of more than 1,000 items or 50 MB is always written in chunk files |
 | `search.lightrag_search.structured_keyword_output` | keyword extraction parses the model's text answer; the structured output pilot was removed before any release |
+| `search.global_search.reduce_with_llm` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
+| `search.global_search.map_reduce_model_id` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
+| `models.roles.global_reduce` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
+| `search.fusion.method` | results are always fused by reciprocal rank fusion (rrf, the default before); weighted fusion is gone |
+| `graph.visualization.centrality.calculate_closeness` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
+| `graph.visualization.centrality.calculate_eigenvector` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
+| `graph.visualization.centrality.eigenvector_max_iter` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
+| `graph.visualization.centrality.eigenvector_tol` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
+| `search.reranking.enabled` | providers.rerank.kind picks the reranker, so reranking stays on; set providers.rerank.kind: none to turn it off |
+| `graph.analysis.statistics.calculate_density` | density, the average clustering coefficient and the connected components are always computed |
+| `graph.analysis.statistics.calculate_clustering` | density, the average clustering coefficient and the connected components are always computed |
+| `graph.analysis.statistics.calculate_components` | density, the average clustering coefficient and the connected components are always computed |
+| `fixing` | output fixing is always on (the default before); models.roles.fixing picks its model |
+| `evaluation.warm_up_query` | run-eval always answers one untimed, unscored warm-up query per strategy and run (the default before) |

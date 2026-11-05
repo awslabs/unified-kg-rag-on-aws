@@ -51,7 +51,7 @@ configure replaces the one in its row) before the first run:
 - **Region.** Every Bedrock call goes to `aws.bedrock.region_name`
   (default: `aws.region_name`, `us-west-2`, which offers all five). Where
   rerank models are missing (for example `ap-northeast-2`), point it at a
-  region that has them or set `search.reranking.enabled: false`; a private
+  region that has them or set `providers.rerank.kind: none`; a private
   VPC whose only Bedrock route is its VPC endpoint must keep its own region.
 - **Inference profiles.** Claude Sonnet 5.5 and Haiku 5.5 are invocable only
   through a cross-region inference profile: keep
@@ -134,7 +134,7 @@ indexing). Three Bedrock actions need statements of their own:
   inference-profile ARNs denies it (the CDK task role grants it separately).
   Without it every query logs `Reranking failed: ...` at ERROR and returns
   the fused results unreranked (`metadata.rerank.status: failed`); if you
-  cannot grant it, set `search.reranking.enabled: false`.
+  cannot grant it, set `providers.rerank.kind: none`.
 - **`bedrock:ListInferenceProfiles` on `Resource: "*"`**, an account-level
   read the model resolver makes.
 - **`bedrock:ApplyGuardrail`** on the guardrail's ARN

@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Property-based tests for fusion invariants (HybridScorer RRF / normalization)."""
+"""Property-based tests for fusion invariants (HybridScorer RRF)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.property
 
 def _scorer() -> HybridScorer:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     return HybridScorer(config)
 
 
@@ -39,49 +39,3 @@ def test_rrf_is_rank_monotonic(n: int) -> None:
         a > b
         for a, b in zip(scores_in_rank_order, scores_in_rank_order[1:], strict=False)
     )
-
-
-_SCORES = st.lists(
-    st.floats(min_value=-1e6, max_value=1e6, allow_nan=False, allow_infinity=False),
-    min_size=1,
-    max_size=30,
-)
-
-
-@given(_SCORES)
-def test_normalization_is_min_max(scores: list[float]) -> None:
-    """Each score maps to (s - min) / (max - min), or 1.0 when all are equal
-    (``SINGLE_RESULT_SCORE``, as the hybrid search's normalization).
-
-    Checked against a reference, so a constant output (which would satisfy the
-    bound and order properties alone) fails.
-    """
-    scorer = _scorer()
-    results = [_result(f"i{i}", s) for i, s in enumerate(scores)]
-    out = scorer._normalize_scores(results)
-    low, high = min(scores), max(scores)
-    expected = [1.0 if high == low else (s - low) / (high - low) for s in scores]
-    assert [r.content for r in out] == [r.content for r in results]
-    assert [r.score for r in out] == pytest.approx(expected)
-
-
-@given(_SCORES)
-def test_normalization_bounded_unit_interval(scores: list[float]) -> None:
-    """Normalized scores always land in [0, 1] regardless of input range."""
-    scorer = _scorer()
-    results = [_result(f"i{i}", s) for i, s in enumerate(scores)]
-    out = scorer._normalize_scores(results)
-    assert all(0.0 <= r.score <= 1.0 for r in out)
-
-
-@given(st.permutations(list(range(20))), st.integers(min_value=2, max_value=20))
-def test_normalization_preserves_order(order: list[int], n: int) -> None:
-    """Min-max normalization is monotonic: on shuffled input, a higher raw
-    score never gets a lower normalized one, and distinct scores stay distinct."""
-    scorer = _scorer()
-    raw = [float(i) for i in order if i < n]
-    results = [_result(f"i{i}", s) for i, s in enumerate(raw)]
-    out = scorer._normalize_scores(results)
-    pairs = sorted(zip(raw, (r.score for r in out), strict=True))
-    normalized = [score for _, score in pairs]
-    assert all(a < b for a, b in zip(normalized, normalized[1:], strict=False))

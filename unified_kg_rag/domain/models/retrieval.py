@@ -42,11 +42,6 @@ def validate_path_segment(value: str, field: str) -> str:
     return value
 
 
-class FusionMethod(str, Enum):
-    RRF = "rrf"
-    WEIGHTED = "weighted"
-
-
 class RetrieverRole(str, Enum):
     """Abstract retriever roles a search strategy depends on.
 
@@ -177,8 +172,7 @@ class RerankStatus(str, Enum):
     """What reranking did for one query (``SearchResult.metadata["rerank"]``).
 
     - ``applied``: the rerank model reordered the candidates.
-    - ``disabled``: reranking is off (``search.reranking.enabled: false`` or
-      ``providers.rerank.kind: none``).
+    - ``disabled``: reranking is off (``providers.rerank.kind: none``).
     - ``unavailable``: reranking is on but the rerank model could not be built.
     - ``skipped``: nothing to rerank (no candidates, none of a rerank-eligible
       type, no query text).

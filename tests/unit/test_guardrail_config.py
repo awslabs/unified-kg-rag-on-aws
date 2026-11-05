@@ -137,7 +137,7 @@ def test_ingestion_components_request_ingestion_models(name: str, mocker) -> Non
 
     module, cls = _INGESTION_COMPONENTS[name]
     cfg = Config()
-    cfg.fixing.enabled = True  # also cover the output-fixing LLMs
+    # The output-fixing LLMs are covered too: output fixing is always on.
     factory = _RecordingFactory(cfg)
     providers = Providers(cfg, boto_session=mocker.MagicMock(), llm_factory=factory)
     component = getattr(importlib.import_module(module), cls)(

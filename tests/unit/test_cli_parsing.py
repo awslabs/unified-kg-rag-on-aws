@@ -161,6 +161,27 @@ def test_rag_runner_accepts_query(config, mocker) -> None:
     assert runner.args.query == "hi"
 
 
+@pytest.mark.parametrize("given", [True, False])
+def test_enable_thinking_still_works_but_warns_it_is_deprecated(
+    config, mocker, caplog: pytest.LogCaptureFixture, given: bool
+) -> None:
+    # A no-op for the default Claude 5.x models: kept for the models that opt
+    # in, with a WARNING each time it is used.
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "setup_logging")
+    argv = ["-q", "hi", *(["--enable-thinking"] if given else [])]
+    args = _rag_parser().parse_args(argv)
+    with caplog.at_level("WARNING"):
+        run_rag_chain.RAGChainRunner(args)
+    assert args.enable_thinking is given
+    warned = [
+        r for r in caplog.records if "--enable-thinking is deprecated" in r.message
+    ]
+    assert len(warned) == (1 if given else 0)
+    help_text = _rag_parser().format_help()
+    assert "(deprecated)" in " ".join(help_text.split())
+
+
 def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
     config, mocker
 ) -> None:

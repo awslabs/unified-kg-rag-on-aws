@@ -188,11 +188,10 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.bedrock.guardrail.contextual_grounding": Unkeyed(
         "checks the final answer against its retrieved context only"
     ),
-    # Output fixing repairs malformed model output in every stage.
-    "fixing": _EVERY_CALL,
     # --- models: each role keys the stage it runs in, by its resolved id ----
     "models.default": Unkeyed(_TIER),
     "models.fast": Unkeyed(_TIER),
+    # Output fixing repairs malformed model output in every stage.
     "models.roles.fixing": _EVERY_CALL,
     "models.roles.chunking": Keyed(_P.TEXT_CHUNKING),
     "models.roles.translation": Keyed(_P.TRANSLATION),
@@ -208,7 +207,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.roles.answer_generation": Unkeyed(_QUERY),
     "models.roles.community_relevance": Unkeyed(_QUERY),
     "models.roles.global_map": Unkeyed(_QUERY),
-    "models.roles.global_reduce": Unkeyed(_QUERY),
     "models.roles.drift_primer": Unkeyed(_QUERY),
     "models.roles.drift_action": Unkeyed(_QUERY),
     "models.roles.evaluation": Unkeyed("read by run-eval only"),
@@ -364,7 +362,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "evaluation": Unkeyed("read by run-eval only"),
     "evaluation.outputs_directory": _neutral("says where run-eval writes"),
     "evaluation.save_detailed_results": _neutral("says what run-eval writes"),
-    "evaluation.warm_up_query": _neutral("times run-eval's answers, changes none"),
     "logging": _neutral("telemetry"),
     "observability": _neutral("telemetry"),
     "custom_prompts.answer_generation_system": _QUERY_PROMPT,
@@ -487,7 +484,6 @@ _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
     **{
         f"models.roles.{role}": functools.partial(_block_on, path=block)
         for role, block in {
-            "fixing": "fixing",
             "translation": "processing.translation",
             "description_summary": (
                 "processing.graph_extraction.description_summarization"

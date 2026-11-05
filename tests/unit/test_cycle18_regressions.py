@@ -85,15 +85,13 @@ def test_chunkers_reject_unknown_keywords(config) -> None:
         IntelligentTextChunker(config, boto_session=object())
 
 
-def test_pipeline_rejects_session_alongside_providers(config) -> None:
-    from unified_kg_rag.adapters.providers import Providers
+def test_entry_points_take_the_session_on_the_providers_only(config) -> None:
+    # The session is the Providers bundle's (Providers(config, boto_session=)):
+    # the constructors' own boto_session duplicated it.
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.domain.models import PipelineConfig
 
-    with pytest.raises(ValueError, match="not both"):
-        DataIngestionPipeline(
-            config,
-            PipelineConfig(),
-            providers=Providers(config),
-            boto_session=object(),
-        )
+    with pytest.raises(TypeError, match="boto_session"):
+        DataIngestionPipeline(config, PipelineConfig(), boto_session=object())
+    with pytest.raises(TypeError, match="boto_session"):
+        GraphRAGChain(config, boto_session=object())

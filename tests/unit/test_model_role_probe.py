@@ -83,7 +83,6 @@ def _probe_config() -> Config:
     config.processing.claim_extraction.enabled = True
     config.graph.community_detection.report_generation.enabled = True
     config.search.global_search.use_dynamic_selection = True
-    config.search.global_search.reduce_with_llm = True
     return config
 
 
@@ -137,12 +136,6 @@ CASES: list[tuple[str, Builder, str, ModelRole]] = [
         lambda c, p: GlobalSearchStrategy(c, {}, providers=p),
         "map_rater",
         ModelRole.GLOBAL_MAP,
-    ),
-    (
-        "reduce",
-        lambda c, p: GlobalSearchStrategy(c, {}, providers=p),
-        "map_reducer",
-        ModelRole.GLOBAL_REDUCE,
     ),
     (
         "hyde",

@@ -197,8 +197,11 @@ def _unknown_variable(name: str) -> str:
 
 def _removed_path(name: str) -> str | None:
     """The removed key a ``UKR__`` variable sets, itself or under a removed
-    section (``REMOVED_KEYS``), if any."""
+    section (``REMOVED_KEYS``), if any. A moved key under a removed section
+    (``fixing.fixing_model_id``) is reported as moved instead."""
     upper = name.upper()
+    if any(upper == env_var(old) for old in MOVED_KEYS):
+        return None
     for path in REMOVED_KEYS:
         variable = env_var(path)
         if upper == variable or upper.startswith(f"{variable}__"):

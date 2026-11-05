@@ -136,7 +136,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
         config=config,
         pipeline_config=PipelineConfig(local_directory=str(tmp_path)),
         source_directory=tmp_path,
-        boto_session=MagicMock(),
+        providers=Providers(config, boto_session=MagicMock()),
     )
 
     # Every LLM-using stage shares one default factory: built exactly once.

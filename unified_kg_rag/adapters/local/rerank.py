@@ -183,11 +183,4 @@ class NoRerankFactory:
         return None
 
     def get_model(self, model_id: Any, **kwargs: Any) -> None:
-        if self.config.search.reranking.enabled:
-            warn_once(
-                logger,
-                "none",
-                "search.reranking.enabled is true but providers.rerank.kind is "
-                "'none'; queries keep the fused order.",
-            )
         return None

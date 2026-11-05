@@ -107,9 +107,10 @@ class _FakeRerankFactory:
         return None
 
 
-def _config(*, enabled: bool = True, required: bool = False) -> Config:
+def _config(*, rerank_off: bool = False, required: bool = False) -> Config:
     config = Config()
-    config.search.reranking.enabled = enabled
+    if rerank_off:
+        config.providers.rerank.kind = "none"
     config.search.reranking.required = required
     config.search.fusion.diversity_lambda = 1.0
     return config
@@ -162,10 +163,9 @@ def test_applied_reorders_and_reports_applied() -> None:
 
 
 def test_disabled_in_config() -> None:
-    factory = _FakeRerankFactory(_FakeReranker())
-    _, rerank = _fuse(_scorer(factory, enabled=False), _results("text"))
+    _, rerank = _fuse(_scorer(rerank_off=True), _results("text"))
     assert rerank["status"] == "disabled"
-    assert rerank["reason"] == "search.reranking.enabled is false"
+    assert rerank["reason"] == "providers.rerank.kind is none"
 
 
 def test_provider_none_is_disabled_even_when_required() -> None:
@@ -251,7 +251,7 @@ def test_a_query_that_never_reached_fusion_is_skipped() -> None:
     assert rerank["status"] == "skipped"
     assert rerank["reason"] == "no candidates"
     # ...unless reranking is off or unavailable, which says more.
-    assert _scorer(enabled=False).new_trace().summary()["status"] == "disabled"
+    assert _scorer(rerank_off=True).new_trace().summary()["status"] == "disabled"
     assert _scorer(_FakeRerankFactory(None)).new_trace().summary()["status"] == (
         "unavailable"
     )
@@ -364,7 +364,7 @@ def test_required_does_not_fail_the_legitimate_no_op_paths() -> None:
     scorer = _scorer(_FakeRerankFactory(_FakeReranker("boom")), required=True)
     assert _fuse(scorer, [])[1]["status"] == "skipped"
     assert _fuse(scorer, _results("text"), query=None)[1]["status"] == "skipped"
-    assert _scorer(enabled=False, required=True).rerank_model is None
+    assert _scorer(rerank_off=True, required=True).rerank_model is None
 
 
 # --- strategies ------------------------------------------------------------------

@@ -61,7 +61,7 @@ attempt count includes the first attempt; `1` disables the retry.
 | `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
 | `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) |
 | `graph.community_detection.enabled` | `true` | LightRAG-only, lighter ingestion (`global` and `drift` need it) |
-| `search.reranking.enabled` | `true` | No rerank model in the region, or no reranking wanted |
+| `providers.rerank.kind` | `bedrock` | `none`: no rerank model in the region, or no reranking wanted |
 | `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](../concepts/retrieval.md#context-budget)) |
 | `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus (quarantined documents skipped) |
 | `aws.bedrock.guardrail.identifier` | `null` | Screen queries and answers ([Guardrail](./guardrail.md)) |

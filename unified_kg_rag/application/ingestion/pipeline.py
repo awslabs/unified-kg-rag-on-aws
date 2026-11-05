@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
@@ -112,9 +112,6 @@ from unified_kg_rag.shared.write_fence import (
     install_write_fence,
     remove_write_fence,
 )
-
-if TYPE_CHECKING:
-    import boto3
 
 logger = get_logger(__name__)
 
@@ -360,7 +357,6 @@ class DataIngestionPipeline:
         pipeline_config: PipelineConfig,
         source_directory: Path | None = None,
         target_directory: Path | None = None,
-        boto_session: boto3.Session | None = None,
         metrics_sink: MetricsSink | None = None,
         *,
         providers: Providers | None = None,
@@ -406,14 +402,10 @@ class DataIngestionPipeline:
         """
         # Loaded once: every stage reads the schema from the inline keys. A
         # source's AWS calls use the run's session.
-        config = resolve_extraction_schema(
-            config, providers=providers, boto_session=boto_session
-        )
+        config = resolve_extraction_schema(config, providers=providers)
         # Against that schema, before any model is built or called: a seed
         # that cannot be imported fails here.
-        self.seed_conversions = tuple(
-            load_seed_graphs(config, providers, boto_session=boto_session)
-        )
+        self.seed_conversions = tuple(load_seed_graphs(config, providers))
         self._confirm = confirm
         self._confirm_deletions = confirm_deletions
         self.config = config
@@ -458,16 +450,8 @@ class DataIngestionPipeline:
         # LLM/embedding factories) built here or injected, and passed to every
         # stage, so an injected factory reaches every LLM/embedding adapter
         # and the default Bedrock clients are created once per pipeline.
-        if providers is not None and boto_session is not None:
-            raise ValueError(
-                "Pass boto_session either to DataIngestionPipeline or on the "
-                "Providers bundle (Providers(config, boto_session=...)), not both: "
-                "the bundle's session is the one every stage uses."
-            )
         self.providers = (
-            providers
-            if providers is not None
-            else build_providers(config, boto_session, **overrides)
+            providers if providers is not None else build_providers(config, **overrides)
         )
 
         # The ingestion models the stages build below answer from (and add

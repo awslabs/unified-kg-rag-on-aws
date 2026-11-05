@@ -96,7 +96,7 @@ Four things differ for Claude 4.7-and-later models:
   when that differs from `models.default`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
   how much it reasons on fast-tier calls. A default-tier ingestion call uses
-  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` (deprecated) is a
   no-op for it — depth is `effort` only. A level the model does not accept
   (e.g. `xhigh` on Opus 4.6 or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
@@ -143,7 +143,7 @@ against the tokens-per-minute quota.
 `aws.bedrock.query_prompt_cache_ttl: 1h` (default `5m`) keeps the checkpoint
 of query-time chains for an hour. Only a chain whose system prompt reaches the
 minimum size above has a checkpoint: with the shipped prompts, answer
-generation, query entity extraction and the global-search reduce step on the
+generation and query entity extraction on the
 models with a 512-token minimum; on a 1,024- or 4,096-token model no shipped
 query prompt is long enough. Answers that `run-eval` generates are query
 chains too. Ingestion chains and evaluation judges reuse each prompt within
@@ -167,7 +167,7 @@ switches the pipeline; a `models.roles` entry (a model id, or `default` /
 | Tier | Roles |
 | --- | --- |
 | `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` (with a provider other than Bedrock; see below) |
-| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `global_reduce`, `drift_primer`, `drift_action`, `answer_span` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `drift_primer`, `drift_action`, `answer_span` |
 
 ```yaml
 models:

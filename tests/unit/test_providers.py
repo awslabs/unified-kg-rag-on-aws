@@ -194,7 +194,6 @@ def test_injected_llm_factory_reaches_global_and_drift(
     strategy: SearchStrategy, no_bedrock
 ) -> None:
     config = Config()
-    config.search.reranking.enabled = True
     providers = _fake_providers(config)
     chain = GraphRAGChain(config=config, providers=providers)
     chain._get_retriever = lambda role: MagicMock()  # type: ignore[method-assign]
@@ -221,9 +220,9 @@ def test_model_factory_shorthand_reaches_strategies(no_bedrock) -> None:
     # The pre-existing seam: GraphRAGChain(model_factory=...) alone.
     no_bedrock["BedrockTokenCounter"].side_effect = None
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     fake = FakeLLMFactory()
-    chain = GraphRAGChain(config=config, boto_session=MagicMock(), model_factory=fake)
+    chain = GraphRAGChain(config=config, model_factory=fake)
     chain._get_retriever = lambda role: MagicMock()  # type: ignore[method-assign]
 
     instance = chain._get_strategy_instance(SearchStrategy.GLOBAL)
@@ -276,18 +275,6 @@ def test_providers_and_model_factory_are_exclusive() -> None:
             config=config,
             providers=_fake_providers(config),
             model_factory=FakeLLMFactory(),
-        )
-
-
-def test_providers_and_boto_session_are_exclusive() -> None:
-    # The bundle's session is the one every component uses, so a separate
-    # boto_session would be silently ignored.
-    config = Config()
-    with pytest.raises(ValueError, match="boto_session either to GraphRAGChain"):
-        GraphRAGChain(
-            config=config,
-            boto_session=MagicMock(),
-            providers=_fake_providers(config),
         )
 
 

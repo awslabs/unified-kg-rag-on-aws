@@ -658,8 +658,8 @@ gets its models and stores from the run's `Providers` bundle.
   to build), through the `discards` the batch hands back. A call abandoned on
   its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
   is not its item's, which was retried or failed meanwhile.
-- **Output fixing.** Structured outputs are parsed with a
-  `FixingConfig`-based output-fixing parser. The XML parser unwraps one
+- **Output fixing.** Structured outputs are parsed with an output-fixing
+  parser (the model of `models.roles.fixing`, always on). The XML parser unwraps one
   element wrapping the expected sections and reads a section holding only
   "None" (or "N/A", "null", "-") as empty; the extraction, claims and
   gleaning parsers raise `OutputParserException` for any other answer that
@@ -1529,9 +1529,9 @@ query deadline cancels them and starts no queued one) extracts key points scored
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
-into `max_map_reduce_tokens` and by default handed to the answer model as one
-synthesized section (`reduce_with_llm: false`: a separate reduce call only
-added a rewrite that could drop facts), followed by the reports they cite; a
+into `max_map_reduce_tokens` and handed to the answer model as one
+synthesized section (no separate reduce call: it only added a rewrite that
+could drop facts), followed by the reports they cite; a
 point citing none of its batch's reports credits the whole batch.
 `evidence_tokens` caps the cited report text (whole reports, best point
 first) at 4000 tokens by default; null keeps the reports the answer's
@@ -2445,8 +2445,8 @@ providers = Providers(
     cfg,
     llm_factory=MyLLMFactory(),
     embedding_factory=MyEmbeddingFactory(),
-    # Reranking is on by default (search.reranking.enabled) and would otherwise
-    # call Bedrock; pass a factory or set search.reranking.enabled: false.
+    # Reranking is on by default (providers.rerank.kind: bedrock) and would
+    # otherwise call Bedrock; pass a factory or set providers.rerank.kind: none.
     rerank_factory=MyRerankFactory(),
     token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
 )

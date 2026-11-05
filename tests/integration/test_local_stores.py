@@ -479,7 +479,6 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     config.processing.translation.enabled = False
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
-    config.fixing.enabled = False
     # Every merged description is summarized (the reset below reuses them).
     summarization = config.processing.graph_extraction.description_summarization
     summarization.force_summary_threshold_tokens = 3

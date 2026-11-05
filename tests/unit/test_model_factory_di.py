@@ -97,7 +97,6 @@ def test_opensearch_indexer_uses_injected_embedding_factory(mocker) -> None:
 
 def test_hybrid_scorer_uses_injected_rerank_factory() -> None:
     config = Config()
-    config.search.reranking.enabled = True
     fake = FakeRerankFactory()
     scorer = HybridScorer(config=config, rerank_factory=fake)
     # The injected factory is used; its get_model produced the rerank model.

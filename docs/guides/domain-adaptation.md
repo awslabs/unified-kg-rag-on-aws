@@ -160,9 +160,8 @@ that drops a tag the parser reads (`<entities>`, `<relationships>`,
 Every prompt has a `custom_prompts.*_system` / `*_human` override except
 the prompts of the intelligent chunker (`TextChunkingPrompt`), document
 translation (`TextTranslationPrompt`), query translation
-(`TranslationPrompt`), global search's community rating
-(`CommunityRelevancePrompt`) and reduce step (`MapReduceSummaryPrompt`),
-which are not overridable.
+(`TranslationPrompt`) and global search's community rating
+(`CommunityRelevancePrompt`), which are not overridable.
 
 ## Extraction schema and seed graphs
 

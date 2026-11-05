@@ -98,6 +98,9 @@ def _respond(system: str, human: str) -> str:
         return "<claims></claims>"
     if "community analysis" in system:
         return _REPORT
+    if not system:
+        # The output fixer (always on): it cannot repair what it is shown.
+        return "still not the requested structure"
     raise AssertionError(f"unexpected prompt: {system[:80]!r}")
 
 
@@ -113,7 +116,6 @@ def _config() -> Config:
     config.processing.gleaning.max_rounds = 1
     config.processing.claim_extraction.enabled = True
     config.retry.max_attempts = 1
-    config.fixing.enabled = False
     return config
 
 

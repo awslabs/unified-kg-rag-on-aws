@@ -44,9 +44,9 @@ def _not_overridable() -> set[str]:
     "guide", ["guides/domain-adaptation.md", "guides/domain-adaptation.ko.md"]
 )
 def test_the_guide_lists_the_prompts_without_an_override(guide: str) -> None:
-    # The guide said every prompt was overridable; five are not.
+    # The guide said every prompt was overridable; four are not.
     text = (_DOCS / guide).read_text(encoding="utf-8")
     section = text[text.index("custom_prompts.*_system") - 600 :][:1500]
     missing = sorted(name for name in _not_overridable() if f"`{name}`" not in section)
-    assert len(_not_overridable()) == 5
+    assert len(_not_overridable()) == 4
     assert not missing, f"{guide} does not name {missing} as not overridable"

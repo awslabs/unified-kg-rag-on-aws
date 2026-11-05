@@ -570,7 +570,7 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
 ) -> None:
     exporter = tracing()
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     chain = GraphRAGChain(
         config=config,
         model_factory=_FakeModelFactory(),
@@ -624,7 +624,7 @@ async def test_query_span_tree_carries_counts_and_ids_not_content(
 
 def _simple_chain(model_factory: Any = None) -> GraphRAGChain:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     chain = GraphRAGChain(
         config=config,
         model_factory=model_factory or _FakeModelFactory(),
@@ -813,7 +813,7 @@ async def test_a_degraded_strategy_marks_its_span_with_the_error_type(
     # error.type on the kg_rag.strategy span.
     exporter = tracing()
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     chain = GraphRAGChain(
         config=config,
         model_factory=_FakeModelFactory(),
@@ -853,7 +853,7 @@ async def test_query_spans_carry_the_conversation_as_session_and_the_user(
 ) -> None:
     exporter = tracing()
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     chain = GraphRAGChain(
         config=config,
         model_factory=_FakeModelFactory(),

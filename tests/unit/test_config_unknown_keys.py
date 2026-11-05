@@ -182,6 +182,21 @@ _REMOVED_SETTINGS = [
     ("cache.chunking", "chunk_size", 500),
     ("graph.visualization.embeddings", "model_id", "amazon.titan-embed-text-v2:0"),
     ("search.lightrag_search.structured_keyword_output", None, True),
+    # Settings with one useful value: the behaviour is the former default.
+    ("search.global_search.reduce_with_llm", None, True),
+    ("search.global_search.map_reduce_model_id", None, "m"),
+    ("models.roles.global_reduce", None, "fast"),
+    ("search.fusion.method", None, "weighted"),
+    ("search.reranking.enabled", None, False),
+    ("graph.visualization.centrality.calculate_closeness", None, True),
+    ("graph.visualization.centrality.calculate_eigenvector", None, True),
+    ("graph.visualization.centrality.eigenvector_max_iter", None, 50),
+    ("graph.visualization.centrality.eigenvector_tol", None, 0.01),
+    ("graph.analysis.statistics.calculate_density", None, False),
+    ("graph.analysis.statistics.calculate_clustering", None, False),
+    ("graph.analysis.statistics.calculate_components", None, False),
+    ("fixing", "enabled", False),
+    ("evaluation.warm_up_query", None, False),
 ]
 
 
@@ -279,3 +294,24 @@ def test_a_removed_setting_loads_with_a_warning_from_file_or_environment(
     assert len(warnings) == 2
     assert f"'{removed}'" in warnings[0] and REMOVED_KEYS[removed] in warnings[0]
     assert env_var(path) in warnings[1] and REMOVED_KEYS[removed] in warnings[1]
+
+
+def test_the_removed_rerank_switch_names_its_replacement() -> None:
+    # enabled: false alone no longer turns reranking off; the warning says
+    # what does.
+    assert "providers.rerank.kind: none" in REMOVED_KEYS["search.reranking.enabled"]
+
+
+def test_a_moved_key_under_a_removed_section_still_fails_as_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fixing is removed, but fixing.fixing_model_id moved to
+    # models.roles.fixing: ignoring it would drop the model it names.
+    old, new = "fixing.fixing_model_id", "models.roles.fixing"
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(old, "m")))
+    with pytest.raises(ConfigurationError, match=f"{old} -> {new}"):
+        ConfigLoader(config_file).load_config()
+    monkeypatch.setenv(env_var(old), "m")
+    with pytest.raises(ConfigurationError, match=f"moved: set {env_var(new)}"):
+        ConfigLoader().load_config()
