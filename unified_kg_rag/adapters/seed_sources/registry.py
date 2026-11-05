@@ -41,13 +41,13 @@ from unified_kg_rag.adapters.source_files.context import (
     KIND_PATTERN,
     KindRegistry,
     SourceContextBase,
-    format_validation_errors,
 )
 from unified_kg_rag.adapters.source_files.locations import SourceTerms
 from unified_kg_rag.domain.ingestion.seed_graph import SeedDangling
 from unified_kg_rag.domain.models.config import Config, SeedGraphConfig
 from unified_kg_rag.domain.models.seed_graph import SeedGraph
 from unified_kg_rag.shared.exceptions import ConfigurationError, SeedGraphError
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
     import boto3

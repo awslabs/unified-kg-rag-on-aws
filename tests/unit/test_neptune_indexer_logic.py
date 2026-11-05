@@ -12,7 +12,7 @@ real Gremlin Server). Here we cover the non-upsert paths and pure helpers:
   label clear.
 * Retries of reads and drops, and writes that a retry cannot duplicate.
 * ``_group_items_by_suffix`` partitioning by item ``attributes["index"]``.
-* ``_build_vertex_properties`` (None drop, attribute_ prefix, truncation).
+* ``neptune_codec.item_properties`` (None drop, attribute_ prefix, truncation).
 * ``neptune_codec`` truncation and JSON serialization for edge list values.
 
 NeptuneClient is patched so no real connection is made.
@@ -25,6 +25,8 @@ import json
 import pytest
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
+    community_properties,
+    item_properties,
     property_value,
     relationship_properties,
 )
@@ -326,39 +328,70 @@ def test_group_items_by_suffix_index_list_uses_first(indexer) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _build_vertex_properties
+# neptune_codec.item_properties
 # --------------------------------------------------------------------------- #
 
 
-def test_build_vertex_properties_drops_none(indexer) -> None:
+def test_item_properties_drops_none(indexer) -> None:
     entity = Entity(id="e1", name="Alice")
-    props = indexer._build_vertex_properties(
-        entity, {"name": "Alice", "type": None, "description": None}
+    props = item_properties(
+        entity,
+        {"name": "Alice", "type": None, "description": None},
+        indexer.neptune_config.property_max_length,
     )
     assert props == {"name": "Alice"}
 
 
-def test_build_vertex_properties_prefixes_attributes(indexer) -> None:
+def test_item_properties_prefixes_attributes(indexer) -> None:
     entity = Entity(id="e1", name="Alice", attributes={"sector": "tech", "x": None})
-    props = indexer._build_vertex_properties(entity, {"name": "Alice"})
+    props = item_properties(
+        entity, {"name": "Alice"}, indexer.neptune_config.property_max_length
+    )
     # attribute keys are prefixed; None-valued attribute is skipped.
     assert props["attr_sector"] == "tech"
     assert "attr_x" not in props
 
 
-def test_build_vertex_properties_truncates_long_strings(indexer) -> None:
+def test_item_properties_truncates_long_strings(indexer) -> None:
     max_len = indexer.neptune_config.property_max_length
     long_value = "x" * (max_len + 50)
     entity = Entity(id="e1", name="Alice")
-    props = indexer._build_vertex_properties(entity, {"description": long_value})
+    props = item_properties(
+        entity, {"description": long_value}, indexer.neptune_config.property_max_length
+    )
     assert len(props["description"]) == max_len
 
 
-def test_build_vertex_properties_serializes_dict_value(indexer) -> None:
+def test_item_properties_serializes_dict_value(indexer) -> None:
     entity = Entity(id="e1", name="Alice", attributes={"meta": {"k": "v"}})
-    props = indexer._build_vertex_properties(entity, {"name": "Alice"})
+    props = item_properties(
+        entity, {"name": "Alice"}, indexer.neptune_config.property_max_length
+    )
     # dict attribute values are JSON-serialized to a single string.
     assert props["attr_meta"] == json.dumps({"k": "v"})
+
+
+def test_both_graph_stores_write_one_community_encoding(indexer) -> None:
+    # Neptune and the embedded graph write community_properties: one place
+    # names the fields, so the stores cannot drift apart.
+    comm = Community(
+        id="c1",
+        name="C",
+        level="1",
+        parent="c0",
+        size=2,
+        children=["c2"],
+        text_unit_ids=["t1"],
+    )
+    props = community_properties(comm, indexer.neptune_config.property_max_length)
+    assert props == {
+        "name": "C",
+        "level": "1",
+        "parent": "c0",
+        "size": 2,
+        "children": ["c2"],
+        "text_unit_ids": ["t1"],
+    }
 
 
 # --------------------------------------------------------------------------- #

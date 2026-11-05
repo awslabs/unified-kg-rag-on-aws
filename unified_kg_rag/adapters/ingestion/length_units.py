@@ -25,9 +25,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from unified_kg_rag.adapters.llm.token_estimate import (
     dense_char_count,
+    estimate_from_counts,
     estimate_token_count,
 )
-from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.models import ChunkLengthUnit
 
 
@@ -105,7 +105,7 @@ class _Window:
             last = piece
         if dense + other == 0:
             return 0
-        return max(words, dense + other // LATIN_CHARS_PER_TOKEN, 1)
+        return estimate_from_counts(dense, other, words)
 
 
 class GrowingText:

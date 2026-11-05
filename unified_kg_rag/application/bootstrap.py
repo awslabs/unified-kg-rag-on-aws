@@ -55,7 +55,6 @@ from unified_kg_rag.adapters.seed_sources import (
     get_seed_source,
     seed_options,
 )
-from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedConversion,
     SeedConversionSettings,
@@ -71,6 +70,7 @@ from unified_kg_rag.domain.models.config import (
 from unified_kg_rag.ports.guardrail import ContentGuardPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 if TYPE_CHECKING:
     import boto3
@@ -198,12 +198,9 @@ def resolve_extraction_schema(
     source = extraction.schema_source
     if source.kind == INLINE_SCHEMA_SOURCE:
         return config
-    session_factory: Callable[[], boto3.Session] | None = None
-    if providers is not None:
-        session_factory = lambda: providers.boto_session  # noqa: E731
-    elif boto_session is not None:
-        session_factory = lambda: boto_session  # noqa: E731
-    context = SchemaSourceContext(source, config, session_factory=session_factory)
+    context = SchemaSourceContext(
+        source, config, session_factory=_session_factory(providers, boto_session)
+    )
     document = get_schema_source(source.kind)(context)
     # The location without userinfo or query: a URL may carry a token.
     where = f"schema_source ({source.kind} '{context.location}')"
@@ -221,7 +218,7 @@ def resolve_extraction_schema(
         resolved = Config.model_validate(data)
     except ValidationError as e:
         raise SchemaSourceError(
-            f"The schema of {where} is invalid: {validation_summary(e)}"
+            f"The schema of {where} is invalid: {format_validation_errors('', e)}"
         ) from e
     schema = resolved.processing.graph_extraction.extraction_schema()
     logger.info(
@@ -395,5 +392,5 @@ def with_provider_overrides(
         return Config.model_validate(data)
     except ValidationError as e:
         raise ConfigurationError(
-            f"Invalid provider settings: {validation_summary(e)}"
+            f"Invalid provider settings: {format_validation_errors('', e)}"
         ) from e

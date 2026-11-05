@@ -16,7 +16,6 @@ The errors are the :class:`SourceTerms` a caller passes: what they raise
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -26,11 +25,8 @@ from urllib.request import url2pathname
 from pydantic import BaseModel, ConfigDict
 
 from unified_kg_rag.shared.exceptions import ConfigurationError, SchemaSourceError
+from unified_kg_rag.shared.utils.s3_uri import S3_SCHEME, is_s3_uri, split_s3_uri
 
-S3_SCHEME = "s3://"
-# S3 general-purpose bucket naming rules (3-63 chars; lowercase letters,
-# digits, dots and hyphens; starts and ends with a letter or digit).
-_BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _MISSING = {"404", "NoSuchKey", "NotFound"}
 _DENIED = {"403", "AccessDenied", "AccessDeniedException", "AllAccessDisabled"}
 
@@ -96,11 +92,6 @@ def redact_location(path: str | None) -> str:
     return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
-def is_s3(location: str) -> bool:
-    """True when ``location`` is an ``s3://`` URL (any case of the scheme)."""
-    return location[: len(S3_SCHEME)].lower() == S3_SCHEME
-
-
 def split_s3(
     location: str, *, terms: SourceTerms = SCHEMA_SOURCE_TERMS
 ) -> tuple[str, str]:
@@ -111,13 +102,13 @@ def split_s3(
         terms.error: The bucket name is not a valid one (a URL with
             userinfo, say).
     """
-    bucket, _, key = location[len(S3_SCHEME) :].partition("/")
-    if not _BUCKET.match(bucket):
+    split = split_s3_uri(location)
+    if split is None:
         raise terms(
             f"{terms.noun} '{redact_location(location)}' does not name an S3 "
             "bucket; write s3://bucket/key (or s3://bucket/prefix/)"
         )
-    return bucket, key
+    return split
 
 
 def resolve_source_path(
@@ -137,7 +128,7 @@ def resolve_source_path(
     """
     if "://" not in path:
         return Path(path)
-    if is_s3(path):
+    if is_s3_uri(path):
         split_s3(path, terms=terms)
         return path
     parts = urlsplit(path)
@@ -168,7 +159,7 @@ class SourceFile(BaseModel):
     def base(self) -> str:
         """The URI the file's relative references resolve against: the
         ``s3://`` URL, or the local file's ``file://`` URI."""
-        if is_s3(self.location):
+        if is_s3_uri(self.location):
             return self.location
         return Path(self.location).resolve().as_uri()
 

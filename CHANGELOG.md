@@ -1628,6 +1628,11 @@ From 0.2.3 (or a `main` checkout since):
   (`gates.MIN_GATE_PAIRS`): one pair gave a zero-width interval, so
   `ci_high<-0.02` passed on one improved query. The evaluation guide says
   how the false-breach chance grows with strategies × gates (#563).
+- One parser reads every S3 path (`run-eval`'s `--data-path` and
+  `--output-directory`, schema and seed sources), with the scheme in any
+  case: `run-eval` read `S3://bucket/key` as a local path. An OpenSearch
+  query request retries through the shared transient-retry helper, so no
+  retry starts past the query's deadline (#PR).
 
 ### Deprecated
 - `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and

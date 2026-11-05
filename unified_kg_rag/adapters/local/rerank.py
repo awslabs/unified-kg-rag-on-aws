@@ -25,7 +25,7 @@ from langchain_core.callbacks import Callbacks
 from langchain_core.documents import BaseDocumentCompressor, Document
 from pydantic import ConfigDict, Field
 
-from unified_kg_rag.adapters.local.embeddings import truncate_to_estimate
+from unified_kg_rag.adapters.llm.token_estimate import truncate_to_estimate
 from unified_kg_rag.adapters.local.models import import_optional
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.ports.model_factory import RerankModelInfo

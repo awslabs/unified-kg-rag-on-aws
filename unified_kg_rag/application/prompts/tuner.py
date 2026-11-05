@@ -36,7 +36,6 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import redact_location
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
-from unified_kg_rag.application.config import validation_summary
 from unified_kg_rag.domain.ingestion.contributions import unit_entities
 from unified_kg_rag.domain.ingestion.schema_conformance import unit_entity_types
 from unified_kg_rag.domain.models import (
@@ -70,6 +69,7 @@ from unified_kg_rag.shared.utils import (
     parse_llm_json,
     text_digest,
 )
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
 
@@ -424,7 +424,7 @@ class PromptTuner:
             logger.warning(
                 "Extracting the examples with the configured entity types: "
                 "the profile's are not a valid schema (%s)",
-                validation_summary(e),
+                format_validation_errors("", e),
             )
             return self.config
 

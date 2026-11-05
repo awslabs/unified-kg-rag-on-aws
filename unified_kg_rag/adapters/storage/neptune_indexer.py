@@ -37,10 +37,10 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     BUILD_TAG_PROPERTY,
     IRI_PROPERTY,
     NAME_KEY_PROPERTY,
+    community_properties,
     edge_text_unit_ids,
     entity_from_vertex,
     entity_properties,
-    item_properties,
     relationship_from_edge,
     relationship_label,
     relationship_properties,
@@ -790,18 +790,8 @@ class NeptuneIndexer(GraphIndexer):
                     t = self._upsert_vertex(t, community_label, comm.id)
                     self._set_properties_on_traversal(
                         t,
-                        self._build_vertex_properties(
-                            comm,
-                            {
-                                "name": comm.name,
-                                "level": comm.level,
-                                "parent": comm.parent,
-                                "size": comm.size,
-                                "period": comm.period,
-                                "children": comm.children,
-                                # Found by them when its documents are removed.
-                                "text_unit_ids": comm.text_unit_ids,
-                            },
+                        community_properties(
+                            comm, self.neptune_config.property_max_length
                         ),
                     )
                 return cast(GraphTraversal, t)
@@ -1172,13 +1162,6 @@ class NeptuneIndexer(GraphIndexer):
                         traversal.property(Cardinality.set_, key, item)
             else:
                 traversal.property(Cardinality.single, key, value)
-
-    def _build_vertex_properties(
-        self, item: Any, base_props: dict[str, Any]
-    ) -> dict[str, Any]:
-        return item_properties(
-            item, base_props, self.neptune_config.property_max_length
-        )
 
     def _index_generic(
         self,

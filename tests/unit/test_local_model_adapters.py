@@ -30,11 +30,13 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     setup_chain,
 )
 from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
-from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import (
+    estimate_token_count,
+    truncate_to_estimate,
+)
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
     OpenAICompatibleEmbeddingFactory,
-    truncate_to_estimate,
 )
 from unified_kg_rag.adapters.local.models import (
     PLACEHOLDER_API_KEY,

@@ -32,7 +32,6 @@ from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
-    as_float,
     entity_content,
     graph_relevance,
     rank_expanded,
@@ -47,7 +46,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
-from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils import safe_float_parse, text_digest
 
 logger = get_logger(__name__)
 
@@ -201,7 +200,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         if importance_key is not None:
             max_importance = max(
                 (
-                    as_float(self._node_data(item).get(importance_key)) or 0.0
+                    safe_float_parse(self._node_data(item).get(importance_key)) or 0.0
                     for item in traversal_results
                 ),
                 default=0.0,
@@ -345,7 +344,11 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         expansion passes the whole question, which never occurs inside a node
         name.)
         """
-        raw = as_float(node.get(importance_key)) if importance_key is not None else None
+        raw = (
+            safe_float_parse(node.get(importance_key))
+            if importance_key is not None
+            else None
+        )
         return graph_relevance(
             len(path) or 1,
             raw / max_importance if raw is not None and max_importance > 0 else 0.5,

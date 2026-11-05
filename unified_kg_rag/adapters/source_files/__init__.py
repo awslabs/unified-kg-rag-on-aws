@@ -4,9 +4,8 @@
 schema source, a seed graph source).
 
 - :mod:`.context`: what the schema and seed registries share: the context a
-  loader is given (:class:`.context.SourceContextBase`), the kind -> loader
-  registry (:class:`.context.KindRegistry`) and the message naming each
-  invalid setting (:func:`.context.format_validation_errors`).
+  loader is given (:class:`.context.SourceContextBase`) and the kind ->
+  loader registry (:class:`.context.KindRegistry`).
 - :mod:`.locations`: local paths (or ``file://`` URLs) and S3 objects or
   prefixes, resolved alike for every kind
   (:func:`.locations.resolve_source_path`), sized before they are read and

@@ -38,7 +38,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SOURCE_KINDS_FIELD,
     encoded_source_kinds,
 )
-from unified_kg_rag.domain.models import Constants, Entity, Relationship
+from unified_kg_rag.domain.models import Community, Constants, Entity, Relationship
 from unified_kg_rag.ports.indexer import AnnotatedKind, StoredAnnotation
 from unified_kg_rag.shared import get_logger
 
@@ -113,6 +113,24 @@ def entity_properties(entity: Entity, max_length: int) -> dict[str, Any]:
         },
         max_length,
         whole=("type_iri", "iri"),
+    )
+
+
+def community_properties(comm: Community, max_length: int) -> dict[str, Any]:
+    """Vertex properties of a community (lists stay lists: multi-valued)."""
+    return item_properties(
+        comm,
+        {
+            "name": comm.name,
+            "level": comm.level,
+            "parent": comm.parent,
+            "size": comm.size,
+            "period": comm.period,
+            "children": comm.children,
+            # Found by them when its documents are removed.
+            "text_unit_ids": comm.text_unit_ids,
+        },
+        max_length,
     )
 
 

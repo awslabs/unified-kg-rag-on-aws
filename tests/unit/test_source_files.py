@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.source_files.locations import (
     SourceTerms,
     read_source_bytes,
     redact_location,
+    resolve_source_path,
     split_s3,
 )
 from unified_kg_rag.domain.models import Config
@@ -148,6 +149,14 @@ def test_the_default_terms_stay_the_schema_source_ones() -> None:
     with pytest.raises(SchemaSourceError, match="^Schema source 's3://B_/k'"):
         split_s3("s3://B_/k")
     assert SourceTerms().error is SchemaSourceError
+
+
+def test_every_s3_path_is_parsed_alike() -> None:
+    # One parser for run-eval's paths and the sources': any case of the
+    # scheme, the key as written (run-eval strips a prefix's "/" after it).
+    for location in ("s3://bucket/k?x#y", "S3://bucket/k?x#y"):
+        assert split_s3(location) == ("bucket", "k?x#y")
+        assert resolve_source_path(location, refusal="") == location
 
 
 # --- S3, through a non-schema provider ---------------------------------------------------

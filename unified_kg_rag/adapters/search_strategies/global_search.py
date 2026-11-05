@@ -9,7 +9,6 @@ the ranked points, packed into a token budget, are the answer context.
 """
 
 import asyncio
-import math
 import re
 import time
 from typing import Any
@@ -22,7 +21,6 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    as_float,
     is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
@@ -51,7 +49,12 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
+from unified_kg_rag.shared.utils import (
+    parse_llm_json,
+    parse_llm_score,
+    safe_float_parse,
+    text_digest,
+)
 from unified_kg_rag.shared.utils.concurrency import gather_bounded
 
 logger = get_logger(__name__)
@@ -304,7 +307,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         reports = [report for part in parts for report in part]
         reports.sort(
             key=lambda r: (
-                -(as_float((r.metadata or {}).get("rank")) or 0.0),
+                -(safe_float_parse((r.metadata or {}).get("rank")) or 0.0),
                 str((r.metadata or {}).get("id") or r.source),
             )
         )
@@ -966,18 +969,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             description = str(item.get("description", "")).strip()
             if not description:
                 continue
-            score = safe_float_parse(str(item.get("score", 0)), default_value=0.0)
-            # Guard against non-finite scores BEFORE int(): the LLM map output is
-            # untrusted, and parse_llm_json (json.loads) accepts Infinity/-Infinity/
-            # NaN while a string like "1e999" overflows float() to inf. int(inf)
-            # raises OverflowError and int(nan) raises ValueError, which would
-            # abort the whole query. Coerce non-finite to 0 (below the relevance
-            # threshold, so the point is simply dropped).
-            if score is None or not math.isfinite(score):
-                score_int = 0
-            else:
-                score_int = int(score)
-            score_int = max(0, min(100, score_int))
+            # A non-finite score is 0: below the relevance threshold, so the
+            # point is dropped instead of int() aborting the query.
+            score_int = parse_llm_score(item.get("score", 0))
             raw_ids = item.get("report_ids")
             report_ids = (
                 [str(rid).strip() for rid in raw_ids]

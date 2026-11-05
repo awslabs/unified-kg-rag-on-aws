@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.source_files.locations import (
     SourceFile,
     SourceReader,
-    is_s3,
+    is_s3_uri,
     resolve_source_path,
 )
 from unified_kg_rag.domain.models.seed_graph import (
@@ -118,7 +118,7 @@ class FileReader:
         """
         terms, cap = self.context.terms, self.context.source.max_bytes
         left = cap - self.bytes_read
-        if is_s3(file.location):
+        if is_s3_uri(file.location):
             data = self.s3.read(file, max_bytes=max(left, 0))
         else:
             try:

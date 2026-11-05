@@ -4,7 +4,7 @@
 
 The declared schema for ``SearchQuery.filters`` keys: the fields the indexers
 write on each index / vertex label (``OpenSearchIndexer._get_*_mapping`` and
-``NeptuneIndexer._build_vertex_properties``; a unit test pins the two
+``neptune_codec.entity_properties``; a unit test pins the two
 together). Both retrievers scope filters with it, so a key applies only to the
 indexes / labels that declare it, and the chain rejects a key that no store a
 strategy reads declares.

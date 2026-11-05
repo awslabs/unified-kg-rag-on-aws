@@ -24,7 +24,7 @@ from unified_kg_rag.adapters.llm.retry import (
     call_with_transient_retry,
     looks_transient,
 )
-from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import truncate_to_estimate
 from unified_kg_rag.adapters.local.models import (
     api_key_value,
     import_optional,
@@ -44,21 +44,6 @@ from unified_kg_rag.shared.genai import embedding_span
 logger = get_logger(__name__)
 
 T = TypeVar("T")
-
-
-def truncate_to_estimate(text: str, max_tokens: int) -> str:
-    """``text`` cut so its estimated token count is at most ``max_tokens``."""
-    if estimate_token_count(text) <= max_tokens:
-        return text
-    low, high = 0, len(text)
-    # Largest prefix that fits; the estimate is monotone in the prefix length.
-    while low < high:
-        middle = (low + high + 1) // 2
-        if estimate_token_count(text[:middle]) <= max_tokens:
-            low = middle
-        else:
-            high = middle - 1
-    return text[:low]
 
 
 class TracedEmbeddings(Embeddings):
