@@ -365,7 +365,7 @@ class CommandLineInterface:
             action="store_true",
             help="Enable detailed logging output for debugging.",
         )
-        add_config_arguments(parser, "Path to custom configuration file")
+        add_config_arguments(parser)
         add_output_format_argument(parser)
         add_provider_arguments(parser)
         return parser

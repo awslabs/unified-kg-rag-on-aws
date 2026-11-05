@@ -53,7 +53,7 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--enabled-stages` | — | Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled. |
 | `--metrics-sink` | `none` | Where to forward pipeline metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not a dimension). A stage's metrics are emitted when it finishes and only by the run that executed it, so a resumed run does not repeat restored stages' counts. |
 | `--retire-source-scope` `SCOPE` | — | Incremental runs: treat every doc-status record of this former source scope (in this run's index namespace) as deleted, removing its exclusive graph and vector content. Use it once after moving a corpus, with the old absolute source directory or former document_parsing.source_scope value (a value that is not a URI is also tried as a path resolved like --source-directory; a bare value whose name and path readings both have records stops the run: use ./ or an absolute path). Repeatable; added to indexing.retire_source_scopes. Never this run's own scope. |
-| `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
@@ -73,15 +73,15 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
 | `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`. |
-| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
+| `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
-| `--disable-query-processing` | off | Skip query translation and entity extraction. |
+| `--disable-query-processing` | off | Skip query translation and the query-side entity and keyword extraction (no LLM call before retrieval). mix and hybrid then have no high- or low-level keywords: a question shorter than search.lightrag_search.raw_query_fallback_max_len characters is searched as its own low-level keyword, a longer one retrieves no entities or relationships. |
 | `--filters` | — | Attribute filters as space-separated 'key:value' pairs (a repeated --filters adds its pairs); a boolean or numeric field takes its type's value (in_schema:false, rank:2). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms of each --mode rag query under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not with --output-format json). |
 | `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
-| `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 
 ## `run-eval`
@@ -101,14 +101,14 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
 | `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
-| `--search-type` | `hybrid` | Search method. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. One of `hybrid`, `lexical`, `vector`. |
+| `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--repeats` | `1` | Answer and score the dataset this many times per strategy; the comparison averages each query over the repeats and reports the run-to-run spread (default 1). |
 | `--pairwise-judge` | off | With two or more strategies, also judge each strategy's answers against the first's with an LLM (comprehensiveness, diversity, empowerment, directness; both orders) using models.roles.evaluation. |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of attempted values of any metric that failed, exceeds this value (0.0-1.0). Skipped metrics do not count. Default 1.0 = fail only when all queries, or all attempts of a metric, failed. |
 | `--verbose`, `-v` | off | Enable detailed logging output for debugging. |
-| `--config-path` | — | Path to custom configuration file; a missing file is a usage error. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
@@ -123,7 +123,7 @@ Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](
 | `--data-path` | required | Path to exported visualization-data JSON. |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
 | `--renderers` `RENDERER` | `interactive`, `static` | Renderers to run. Available: interactive, static. |
-| `--config-path` | — | Config YAML path; a missing file is a usage error. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
@@ -140,7 +140,7 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 | `--schema-out` `PATH` | — | Also write an extraction schema draft (.yaml/.yml): the profile's entity types (the configured ones when the config declares them) and the relationship types the tuning examples use most, for schema_source: {kind: file, path: PATH} with schema_mode: align. Every type and pattern the config declares is kept, with its description and IRI. An existing file is refused unless --force, and so are the --config-path file and the schema file the config loads, always: write the draft elsewhere and merge it. |
 | `--force` | off | Let --output-path and --schema-out replace an existing file (never the --config-path file or the schema file the config loads). |
 | `--max-docs` | `20` | Max documents to sample (at least 1). |
-| `--config-path` | — | Config YAML path; a missing file is a usage error. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 

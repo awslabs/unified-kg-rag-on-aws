@@ -43,7 +43,10 @@ def exit_on_config_error() -> Iterator[None]:
 
 def add_config_arguments(
     parser: argparse.ArgumentParser | argparse._ArgumentGroup,
-    help_text: str = "Config YAML path",
+    help_text: str = (
+        "Configuration YAML file (without one: the built-in defaults and the "
+        "UKR__ environment variables)"
+    ),
 ) -> None:
     """Add ``--config-path`` and ``--allow-unknown-keys``."""
     parser.add_argument(
