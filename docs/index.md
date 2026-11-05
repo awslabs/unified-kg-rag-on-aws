@@ -45,7 +45,6 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Reference | [Telemetry reference](./reference/telemetry.md) | Every span and attribute, vendor attribute names, known limits, model-usage counters |
 | Runbook | [Operator Runbook](./operations.md) | Capacity, re-ingestion, incremental runs, caches, backup and restore, upgrades, failed and quarantined documents, alarms, query deadlines, tenant isolation |
 | Troubleshooting | [Troubleshooting](./troubleshooting.md) | Frequent questions (Markdown files, regions, rerank, Nori, inference profiles, leases, confirmations, timeouts) and every error message with its meaning and action |
-| Legacy | [User Guide](./user-guide.md) | Where each section of the 0.2.3 release's user guide went |
 | Project | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md) | Development workflow, release notes, reporting security issues |
 
 ## I want to

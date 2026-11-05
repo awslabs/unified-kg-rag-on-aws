@@ -837,7 +837,7 @@ From 0.2.3 (or a `main` checkout since):
 - Generated references: `docs/reference/configuration.md` (#337) and `docs/reference/cli.md`
   (#351), checked by unit tests.
 - `run-prompt-tuning` reads every format ingestion parses, and each `run-*`
-  `--help` ends with an example and a user-guide link (#121).
+  `--help` ends with an example and a link to the docs (#121).
 - Operability: bound run, stage and query ids in logs, extraction-failure
   metrics and alarms, start-up endpoint checks, runbook sections on backup,
   restore, replicas and OpenSearch upgrades (#122, #178, #211, #457).
@@ -1357,10 +1357,9 @@ From 0.2.3 (or a `main` checkout since):
   in `docs/reference/`, and error messages in `docs/troubleshooting.md`.
   `docs/operations.md` (now with *Shipping configuration to the deployed
   tasks* and *Upgrading the library*) and `docs/design.md` keep their
-  paths, headings and section numbers. `docs/user-guide.md` and
-  `docs/user-guide.ko.md` are now a permanent redirect for the 0.2.3 user
-  guide: each of its headings keeps its fragment and points to the new
-  page, so links into it still land. The generated references moved to
+  paths, headings and section numbers. The 0.2.3 user guide
+  (`docs/user-guide.md` and its Korean twin) is removed: its content lives
+  in the pages above, and links into it no longer resolve. The generated references moved to
   `docs/reference/cli.md` and `docs/reference/configuration.md`, with
   `docs/reference/models.md`. The 14 Tier-1 pages have a Korean twin
   (`<page>.ko.md`, listed in `TRANSLATED_PAGES` in `scripts/check_docs.py`):

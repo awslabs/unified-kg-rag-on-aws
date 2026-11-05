@@ -194,7 +194,6 @@ to its page map, and link it from the pages around it.
 | `docs/operations.md` | Runbook | Procedures an operator runs against a deployment, and what to do when a run, an alarm or a query fails. `iac/README.md`, code and error messages link its section headings: keep them |
 | `docs/troubleshooting.md` | Reference | Frequent questions and every error message with its meaning and action |
 | `docs/design.md` | Explanation, for contributors | Architecture, algorithms and design decisions. Code cites its section numbers (`design §6.1.1`): never renumber a section |
-| `docs/user-guide.md` | Redirect | The permanent index of the 0.2.3 release's user guide: one heading per section of that release, keeping its fragment, so links into it still land. Unreleased `main` builds get no redirect. Add no content to it |
 | [`iac/README.md`](./iac/README.md) | How-to | The CDK stacks, their options and the after-deploy commands |
 
 - **Current behaviour only.** A page describes what the code does. Do not write "previously", "now", "no longer" or
@@ -212,8 +211,7 @@ to its page map, and link it from the pages around it.
 a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
 [`scripts/check_docs.py`](./scripts/check_docs.py): `README.md`, `docs/index.md`, the two `getting-started/` pages,
 `concepts/overview.md`, `concepts/retrieval.md` and `concepts/scopes-and-namespaces.md`, and `guides/configure.md`,
-`ingest.md`, `multilingual.md`, `query.md`, `incremental.md`, `domain-adaptation.md` and `evaluate.md`, plus the
-`docs/user-guide.md` redirect. Every other page is English-only, and a Korean page that links one adds "(영문)" after
+`ingest.md`, `multilingual.md`, `query.md`, `incremental.md`, `domain-adaptation.md` and `evaluate.md`. Every other page is English-only, and a Korean page that links one adds "(영문)" after
 the link.
 
 1. **Same pull request.** A change to a Tier-1 English page updates its `.ko.md` twin in the same pull request.

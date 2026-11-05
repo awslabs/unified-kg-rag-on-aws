@@ -48,7 +48,6 @@ TRANSLATED_PAGES = [
     "docs/guides/incremental",
     "docs/guides/domain-adaptation",
     "docs/guides/evaluate",
-    "docs/user-guide",
 ]
 
 # The note a Korean page carries while its translation lags the English page

@@ -47,7 +47,6 @@
 | 레퍼런스 | [Telemetry reference](./reference/telemetry.md)(영문) | 모든 스팬과 속성, 벤더 속성 이름, 알려진 제한, 모델 사용량 집계 |
 | 런북 | [운영 런북](./operations.md)(영문) | 용량, 재수집, 증분 실행, 캐시, 백업과 복원, 업그레이드, 실패한 문서와 격리된 문서, 경보, 질의 마감 시간, 테넌트 격리 |
 | 문제 해결 | [Troubleshooting](./troubleshooting.md)(영문) | 자주 묻는 질문(Markdown 파일, 리전, 재순위화, Nori, 추론 프로필, 쓰기 임대, 확인 질문, 제한 시간)과 오류 메시지별 의미와 조치 |
-| 이전 문서 | [사용자 가이드](./user-guide.ko.md) | 0.2.3 릴리스 사용자 가이드의 각 절이 옮겨 간 곳 |
 | 프로젝트 | [CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md), [SECURITY.md](../SECURITY.md)(영문) | 개발 절차, 릴리스 노트, 보안 이슈 신고 |
 
 ## 하려는 일별 안내
