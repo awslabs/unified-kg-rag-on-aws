@@ -157,7 +157,7 @@ def test_long_notes_are_cut_at_a_line_break_with_a_link() -> None:
 
 
 def test_real_unreleased_notes_fit_a_release_body() -> None:
-    # The [Unreleased] section alone is longer than GitHub accepts.
+    # Whatever the [Unreleased] section grows to, the published body fits.
     module = _script()
     text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     body = module.fit_release_body(
