@@ -1007,15 +1007,6 @@ class CommunityDetector:
             return None
 
         community_sizes = [len(nodes) for nodes in level_0_communities]
-        if not community_sizes:
-            return CommunityMetrics(
-                modularity=0.0,
-                num_communities=0,
-                average_community_size=0.0,
-                largest_community_size=0,
-                smallest_community_size=0,
-                community_size_distribution={},
-            )
 
         size_distribution: dict[int, int] = defaultdict(int)
         for size in community_sizes:
