@@ -73,6 +73,16 @@ def test_an_rdf_seed_under_a_strict_owl_schema(tmp_path: Path) -> None:
     units = "\n".join(unit["text"] for unit in harness.seed_units())
     assert '"type":"SUPPLIES"' in units and '"type":"EMPLOYS"' in units
     assert "PARTNER_OF" not in units and "Initech" not in units
+    # An RDF edge states no description: its vector copy keeps the type.
+    prefix = harness.config.indexing.opensearch.relationships_index_prefix
+    assert {
+        (hit["source_name"], hit["target_name"]): hit.get("type", "").upper()
+        for hit in harness.hits(prefix)
+        if hit.get("source_kinds") == ["seed_graph"]
+    } == {
+        ("Acme Supplies", "Globex Buyer"): "SUPPLIES",
+        ("Globex Buyer", "Jane Roe"): "EMPLOYS",
+    }
     harness.assert_no_seed_text_prompted()
 
     # A reset re-imports the RDF seed: the namespace is rebuilt as it was.

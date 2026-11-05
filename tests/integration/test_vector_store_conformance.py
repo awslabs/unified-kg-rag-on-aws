@@ -924,6 +924,75 @@ def test_incremental_run_maps_the_seed_graph_fields_of_earlier_indices(
 
 
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_a_relationship_hit_names_its_type_on_an_earlier_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A relationship without a description (a seed edge) read as its
+    # endpoints alone: the vector copy did not store its type.
+    import asyncio
+
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    indexer = harness.vector_indexer
+    client = indexer.opensearch_client
+    prefix = harness.config.indexing.opensearch.relationships_index_prefix
+    undescribed = [r.model_copy(update={"description": ""}) for r in _relationships()]
+    current_mapping = indexer._get_relationships_mapping
+    current_doc = indexer._prepare_relationship_doc
+
+    def earlier_mapping() -> dict[str, Any]:
+        mapping = current_mapping()
+        del mapping["mappings"]["properties"]["type"]
+        return mapping
+
+    def earlier_doc(rel: Relationship, embeddings: Any) -> dict[str, Any]:
+        doc = current_doc(rel, embeddings)
+        doc.pop("type", None)
+        return doc
+
+    monkeypatch.setattr(indexer, "_get_relationships_mapping", earlier_mapping)
+    monkeypatch.setattr(indexer, "_prepare_relationship_doc", earlier_doc)
+    _write(harness, "relationships", "index", undescribed)
+    monkeypatch.undo()
+    name = client.get_index_name_by_alias(indexer._get_name(prefix, None))
+    assert name and "type" not in client.get_index_mappings(name)["properties"]
+    indexer.check_index_settings("default")  # the run's preflight maps it
+    assert client.get_index_mappings(name)["properties"]["type"] == {"type": "keyword"}
+
+    def contents() -> dict[str, str]:
+        assert harness.vector_retriever is not None
+        retriever = harness.vector_retriever()
+
+        async def search() -> list[Any]:
+            try:
+                return await retriever.aretrieve(
+                    SearchQuery(
+                        query="Vendor",
+                        search_type=SearchType.LEXICAL,
+                        top_k=10,
+                        retrieval_multiplier=1,
+                        index_prefixes=[prefix],
+                    )
+                )
+            finally:
+                await retriever.aclose()
+
+        return {str(hit.source): hit.content for hit in asyncio.run(search())}
+
+    # An earlier copy still reads, without its type.
+    assert contents() == {
+        "r-supplies": "Relationship: Vendor -> Buyer",
+        "r-ships": "Relationship: Vendor -> Depot",
+    }
+    # A copy written now names it; an untyped one names the graph's label.
+    _write(harness, "relationships", "upsert", undescribed)
+    assert contents() == {
+        "r-supplies": "Relationship: Vendor -[SUPPLIES]-> Buyer",
+        "r-ships": "Relationship: Vendor -[RELATED_TO]-> Depot",
+    }
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_incremental_run_refuses_an_annotation_mapped_as_another_type(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

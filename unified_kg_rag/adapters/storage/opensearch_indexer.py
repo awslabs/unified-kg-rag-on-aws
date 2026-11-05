@@ -1108,6 +1108,10 @@ class OpenSearchIndexer(VectorIndexer):
             "target_id": rel.target_id,
             "source_name": rel.source_name or "",
             "target_name": rel.target_name or "",
+            # The edge's label (neptune_codec.relationship_label): a
+            # relationship without a description (every seed edge an RDF
+            # seed states) reads as its endpoints and type alone.
+            "type": rel.type or Constants.DEFAULT_RELATIONSHIP_TYPE.value,
             "description": rel.description or "",
             "description_embedding": embeddings[0],
             "weight": rel.weight if rel.weight is not None else 1.0,
@@ -2706,6 +2710,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "target_id": {"type": "keyword"},
                 "source_name": {"type": "text", "analyzer": self.analyzer},
                 "target_name": {"type": "text", "analyzer": self.analyzer},
+                "type": {"type": "keyword"},
                 "description": {"type": "text", "analyzer": self.analyzer},
                 "description_embedding": self._get_knn_vector_mapping(),
                 "weight": {"type": "double"},
