@@ -94,7 +94,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         results = await self._safe_aretrieve(
             self.document_retriever, search_query, "Document retrieval"
         )
-        return {"opensearch_all": results} if results else {}
+        return {"vector_all": results} if results else {}
 
     def _without_reports(self, query: SearchQuery) -> SearchQuery | None:
         # A community report carries no source kind and summarizes seed-only

@@ -3334,6 +3334,33 @@ class HybridConfig(BaseModel):
         return self
 
 
+# Fusion buckets renamed -> their name now. search.fusion.fusion_weights
+# keyed by the old name loads as the new one, with a warning.
+RENAMED_FUSION_BUCKETS: dict[str, str] = {"opensearch_all": "vector_all"}
+# Buckets no strategy emits any more: a weight keyed by one is dropped, with
+# a warning (global search fuses only its text units).
+RETIRED_FUSION_BUCKETS: frozenset[str] = frozenset({"opensearch_community_reports"})
+
+
+@functools.cache
+def _warn_renamed_bucket(old: str, new: str) -> None:
+    _logger.warning(
+        "search.fusion.fusion_weights: bucket '%s' is renamed; its weight "
+        "applies to '%s' (set that key instead)",
+        old,
+        new,
+    )
+
+
+@functools.cache
+def _warn_retired_bucket(old: str) -> None:
+    _logger.warning(
+        "search.fusion.fusion_weights: no search strategy emits bucket '%s'; "
+        "its weight is ignored (remove the key)",
+        old,
+    )
+
+
 class FusionConfig(BaseModel):
     rrf_k: int = Field(
         default=60,
@@ -3369,11 +3396,31 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
             "cite), lightrag_relation_chunks (those the relationships cite)), "
-            "simple (opensearch_all), "
-            "global (opensearch_community_reports, text_units) and drift "
-            "(results). A bucket without a key weighs 1.0 (the default: none)."
+            "simple (vector_all), global (text_units) and drift (results). A "
+            "bucket without a key weighs 1.0 (the default: none). A weight on "
+            "the former bucket opensearch_all applies to vector_all, with a "
+            "warning."
         ),
     )
+
+    @field_validator("fusion_weights", mode="before")
+    @classmethod
+    def _renamed_buckets(cls, value: Any) -> Any:
+        """Load a weight keyed by a renamed or retired bucket (a dict key
+        the moved-key mechanism cannot reach) with a warning."""
+        if not isinstance(value, dict):
+            return value
+        weights = dict(value)
+        for old, new in RENAMED_FUSION_BUCKETS.items():
+            if old in weights:
+                _warn_renamed_bucket(old, new)
+                weight = weights.pop(old)
+                weights.setdefault(new, weight)
+        for old in RETIRED_FUSION_BUCKETS:
+            if old in weights:
+                _warn_retired_bucket(old)
+                weights.pop(old)
+        return weights
 
 
 class RerankingConfig(BaseModel):

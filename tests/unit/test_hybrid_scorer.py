@@ -6,12 +6,14 @@ every GraphRAG and LightRAG search strategy (AWS-free)."""
 from __future__ import annotations
 
 import copy
+import logging
 
 import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import config as config_module
 
 pytestmark = pytest.mark.unit
 
@@ -97,6 +99,42 @@ class TestReciprocalRankFusion:
         by_content = {r.content: r.score for r in fused}
         assert by_content["b"] == pytest.approx(3.0 / (k + 1))
         assert by_content["p"] == pytest.approx(1.0 / (k + 1))
+
+
+class TestRenamedFusionBuckets:
+    @pytest.fixture(autouse=True)
+    def _fresh_warnings(self) -> None:
+        config_module._warn_renamed_bucket.cache_clear()
+        config_module._warn_retired_bucket.cache_clear()
+
+    def test_a_weight_on_a_renamed_bucket_applies_to_its_new_name(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            config = Config.model_validate(
+                {"search": {"fusion": {"fusion_weights": {"opensearch_all": 2.0}}}}
+            )
+        assert config.search.fusion.fusion_weights == {"vector_all": 2.0}
+        assert "'opensearch_all' is renamed" in caplog.text
+        assert "'vector_all'" in caplog.text
+
+    def test_the_new_name_wins_over_the_old_one(self) -> None:
+        weights = {"opensearch_all": 2.0, "vector_all": 0.5}
+        config = Config.model_validate(
+            {"search": {"fusion": {"fusion_weights": weights}}}
+        )
+        assert config.search.fusion.fusion_weights == {"vector_all": 0.5}
+
+    def test_a_weight_on_a_retired_bucket_is_dropped_with_a_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        weights = {"opensearch_community_reports": 3.0, "text_units": 2.0}
+        with caplog.at_level(logging.WARNING):
+            config = Config.model_validate(
+                {"search": {"fusion": {"fusion_weights": weights}}}
+            )
+        assert config.search.fusion.fusion_weights == {"text_units": 2.0}
+        assert "'opensearch_community_reports'" in caplog.text
 
 
 class TestResultKey:
