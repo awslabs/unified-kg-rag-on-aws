@@ -516,7 +516,7 @@ Settings of the interactive pyvis graph.
 
 #### `graph.visualization.static`
 
-Settings of the static Bokeh charts.
+Settings of the static HTML/SVG charts.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

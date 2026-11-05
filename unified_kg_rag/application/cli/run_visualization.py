@@ -9,8 +9,9 @@ Renders visualizations from a previously exported visualization-data JSON
 gets a spring layout here unless it carries its own, and the configured
 centrality metrics when a requested renderer reads them (``static``). Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently. The
-built-in renderers need the ``viz`` extra; without it the run stops before
-rendering (exit 2) naming the extra.
+``interactive`` renderer needs the ``viz`` extra; without it a run that
+requests it stops before rendering (exit 2) naming the extra. ``static``
+needs no extra.
 """
 
 from __future__ import annotations

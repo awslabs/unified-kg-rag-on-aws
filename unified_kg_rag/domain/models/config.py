@@ -2563,7 +2563,7 @@ class InteractiveGraphSettings(BaseModel):
 
 
 class StaticChartSettings(BaseModel):
-    """The static Bokeh charts."""
+    """The static charts (dependency-free HTML with inline SVG)."""
 
     figure_width: int = Field(default=900, ge=100, description="Chart width (px).")
     figure_height: int = Field(default=600, ge=100, description="Chart height (px).")
@@ -2600,7 +2600,7 @@ class VisualizationConfig(BaseModel):
     )
     static: StaticChartSettings = Field(
         default_factory=StaticChartSettings,
-        description="Settings of the static Bokeh charts.",
+        description="Settings of the static HTML/SVG charts.",
     )
 
 

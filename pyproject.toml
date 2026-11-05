@@ -135,15 +135,10 @@ eval = [
     # can requires datasets>=4.0.0.
     "ragas>=0.4.3,<0.5.0",
 ]
-# Optional: graph visualization (`run-visualization`): the pyvis interactive
-# graph and the Bokeh static charts. The core package imports neither;
-# `run-visualization` and the renderers fail fast naming this extra when they
-# are missing.
+# Optional: the pyvis interactive graph of `run-visualization`. The core
+# package does not import it; the interactive renderer fails fast naming this
+# extra when it is missing. The static charts need no extra.
 viz = [
-    "bokeh>=3.9.2",
-    # Not imported here: Bokeh depends on Pillow, and 13.0.0 fixes the
-    # critical/high Pillow advisories.
-    "pillow>=13.0.0",
     "pyvis>=0.3.2",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
@@ -179,11 +174,6 @@ local = [
 ]
 
 [tool.uv]
-constraint-dependencies = [
-    # Bokeh pulls in Tornado; 6.6 fixes GHSA-pcg2-g6cj-q92c, GHSA-r4j5-9xpp-3985
-    # and GHSA-pw9p-v7r6-gx4p.
-    "tornado>=6.6",
-]
 # The optional `unstructured` extra caps filelock below 4 (every release up to
 # 0.27.x), which would hold every install on a filelock with the 4.2.1-fixed
 # advisories (GHSA-v4x8-3wr5-3wq8 and eight more). unstructured only takes a
@@ -302,7 +292,6 @@ module = [
     "lxml.*",
     "tqdm.*",
     "yaml.*",
-    "bokeh.*",
     # [otel] extra only; the dev group installs the SDK but no exporter.
     "opentelemetry.exporter.*",
 ]

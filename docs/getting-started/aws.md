@@ -79,7 +79,7 @@ without one, the command that needs it stops with exit `2`, naming it:
 - **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
   pandas, langchain-openai), both enabled by default ([Evaluators](../guides/evaluate.md#evaluators)).
   The LLM-free evaluators need no extra.
-- **`viz`**: pyvis and Bokeh for `run-visualization` ([Visualization](../guides/visualize.md)).
+- **`viz`**: pyvis for `run-visualization`'s interactive graph ([Visualization](../guides/visualize.md)); the static charts need no extra.
 
 **Markdown and HTML** need the `unstructured` extra
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which

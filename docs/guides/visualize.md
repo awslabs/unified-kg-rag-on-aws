@@ -14,10 +14,12 @@ run-visualization --data-path visualization_data.json --output-directory ./viz -
 run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
 ```
 
-It needs the `viz` extra (`uv sync --extra viz`, [Install](../getting-started/aws.md#install)). The two
-renderers are **`interactive`** (pyvis) and **`static`** (Bokeh), configured
-under `graph.visualization` (`interactive.*`, `static.*`, `centrality.*`;
-every key: [Configuration Reference](../reference/configuration.md)).
+The two renderers are **`interactive`** (pyvis; it needs the `viz` extra,
+`uv sync --extra viz`, [Install](../getting-started/aws.md#install)) and
+**`static`** (dependency-free HTML with inline SVG; it runs on a core
+install), configured under `graph.visualization` (`interactive.*`,
+`static.*`, `centrality.*`; every key: [Configuration
+Reference](../reference/configuration.md)).
 Ingestion itself renders nothing. Another renderer plugs in through
 `@register_renderer` ([Design Doc §15](../design.md#15-extension-guide)).
 
@@ -40,6 +42,12 @@ Ingestion itself renders nothing. Another renderer plugs in through
   5,000-node graph an `interactive`-only run took 22 s instead of 71 s). A
   metric that is off or failed to compute is left out of the centrality
   chart, not drawn as 0.
+- **Files.** `interactive` writes `interactive_graph.html` and, with a
+  community hierarchy, `community_hierarchy.html`. `static` writes
+  `degree_distribution.html`, `centrality_comparison.html` (the top 25 nodes
+  by degree, with their degree, betweenness and PageRank) and
+  `community_size_distribution.html` (level 0): each is one page with an
+  SVG chart and a tooltip on every bar, which needs no script or network.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
   by degree (default 2000) and lays out only those.
 - Edge width and opacity are log-scaled to the graph's own weight range.

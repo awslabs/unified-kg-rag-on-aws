@@ -1830,11 +1830,13 @@ and its community hierarchy as JSON (`graph.visualization.export_data`,
 file without ingestion through the renderers of `adapters/renderers/`
 (`BaseRenderer`, `@register_renderer`, `RenderContext`, `render_all`):
 `InteractiveRenderer` (pyvis network and community hierarchy) and
-`StaticRenderer` (Bokeh degree, centrality and community-size charts),
-computing a seeded spring layout and the configured centrality first. The
-renderers are the `viz` extra: the adapters import them on use, so the
-registry and `BaseRenderer` work on a core install, and a missing extra
-fails the run (`BaseRenderer.check_dependencies`) before anything renders.
+`StaticRenderer` (degree, centrality and community-size charts as HTML with
+inline SVG, written without a plotting package and with every name
+HTML-escaped), computing a seeded spring layout and the configured
+centrality first. The interactive renderer is the `viz` extra: the adapters
+import the renderers on use, so the registry, `BaseRenderer` and `static`
+work on a core install, and a missing extra fails the run
+(`BaseRenderer.check_dependencies`) before anything renders.
 Using it: [Visualization](./guides/visualize.md).
 
 ---
