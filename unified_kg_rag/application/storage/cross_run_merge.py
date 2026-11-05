@@ -230,151 +230,33 @@ class CrossRunMerge:
         one under a different id.
         """
         m = self._m
-        merged_entities = entities
-        existing: list[Entity] = []
-        entity_id_remap: dict[str, str] = {}
-        # What an earlier commit of this suffix split, re-keyed or rewired
-        # and may not have written in full (see note_pending_commit): the
-        # stored entities and their edges are derived again with the delta,
-        # and the claims about them follow.
-        noted = self._read_commit_note(suffix)
-        if entities:
-            # The full build also merges names that differ only by legal form
-            # or spacing (and by similarity with fuzzy_entity_resolution);
-            # their stored entities have other ids than the delta's, so they
-            # are found through the stored names and read back as well.
-            name_matcher, matched_ids = self._match_stored_names(suffix, entities)
-            existing = m._with_full_descriptions(
-                m.graph_indexer.read_entities(
-                    sorted({e.id for e in entities} | matched_ids | noted),
-                    suffix=suffix,
-                ),
-                m.vector_indexer.read_entity_descriptions,
-                suffix,
+        merged_entities, existing, entity_id_remap, noted = self._merge_entities(
+            suffix, entities
+        )
+        merged_relationships, existing_rels, relationship_remap = (
+            self._merge_relationships(
+                suffix, relationships, merged_entities, entity_id_remap
             )
-            if existing:
-                merged_entities, entity_id_remap = merge_entities(
-                    existing, entities, fuzzy_matcher=name_matcher
-                )
-        elif noted:
-            existing = m._with_full_descriptions(
-                m.graph_indexer.read_entities(sorted(noted), suffix=suffix),
-                m.vector_indexer.read_entity_descriptions,
-                suffix,
-            )
-            merged_entities = list(existing)
-        merged_relationships = relationships
-        existing_rels: list[Relationship] = []
-        relationship_remap: dict[str, str] = {}
-        if relationships:
-            rel_ids = {r.id for r in relationships}
-            if merged_entities:
-                # A delta edge can match a stored edge of other id between the
-                # same entities (extracted with other spellings, or with an
-                # endpoint that merged into a stored entity): the full build
-                # merges them, so the entities' stored edges are read too.
-                rel_ids |= set(
-                    m.graph_indexer.find_incident_relationship_ids(
-                        sorted({e.id for e in merged_entities}), suffix=suffix
-                    )
-                )
-            delta_ids = {r.id for r in relationships}
-            pairs = {
-                (
-                    entity_id_remap.get(r.source_id, r.source_id),
-                    entity_id_remap.get(r.target_id, r.target_id),
-                )
-                for r in relationships
-            }
-            existing_rels = m._with_full_descriptions(
-                [
-                    r
-                    for r in m.graph_indexer.read_relationships(
-                        sorted(rel_ids), suffix=suffix
-                    )
-                    if r.id in delta_ids or (r.source_id, r.target_id) in pairs
-                ],
-                m.vector_indexer.read_relationship_descriptions,
-                suffix,
-            )
-            # Even when no existing relationships are read back, delta endpoints
-            # must follow any entity-id collapse from the entity merge above —
-            # otherwise a remapped entity leaves its relationships pointing at a
-            # now-nonexistent id. Pass the remap through unconditionally.
-            if existing_rels or entity_id_remap:
-                merged_relationships = merge_relationships(
-                    existing_rels,
-                    relationships,
-                    entity_id_remap=entity_id_remap or None,
-                )
-                relationship_remap = relationship_id_remap(
-                    relationships, merged_relationships, entity_id_remap
-                )
-                # The incident edges were read only to find matches: write
-                # back just the edges a delta edge became or merged into.
-                written = {relationship_remap.get(r.id, r.id) for r in relationships}
-                merged_relationships = [
-                    r for r in merged_relationships if r.id in written
-                ]
+        )
         # The vector copies of the noted entities and their edges the graph
         # does not hold: a commit killed after its vector writes and before
         # its graph writes left them, and nothing else finds them.
         vector_orphans: set[str] = set()
         if noted:
-            # The noted entities' stored edges: a killed commit may not have
-            # re-pointed them.
-            held = {r.id for r in merged_relationships or []}
-            graph_incident = set(
-                m.graph_indexer.find_incident_relationship_ids(
-                    sorted(noted), suffix=suffix
-                )
+            (
+                existing,
+                existing_rels,
+                merged_entities,
+                merged_relationships,
+                vector_orphans,
+            ) = self._with_noted_edges(
+                suffix,
+                noted,
+                existing,
+                existing_rels,
+                merged_entities,
+                merged_relationships,
             )
-            if _reads_back(m.graph_indexer):
-                in_graph = {
-                    e.id
-                    for e in m.graph_indexer.read_entities(sorted(noted), suffix=suffix)
-                }
-                vector_entities = set(
-                    m.vector_indexer.read_vector_copies(
-                        "entities", sorted(noted - in_graph), suffix=suffix
-                    )
-                    if noted - in_graph
-                    else {}
-                )
-                if vector_entities:
-                    m._vector_only.setdefault(suffix, set()).update(vector_entities)
-                vector_orphans = vector_entities | (
-                    set(m._vector_incident_relationship_ids(sorted(noted), suffix))
-                    - graph_incident
-                    - held
-                )
-            noted_edges = m.graph_indexer.read_relationships(
-                sorted(graph_incident - held),
-                suffix=suffix,
-            )
-            if noted_edges:
-                noted_edges = m._with_full_descriptions(
-                    noted_edges,
-                    m.vector_indexer.read_relationship_descriptions,
-                    suffix,
-                )
-                existing_rels = [*existing_rels, *noted_edges]
-                # Their other endpoints too: a re-pointed edge changes their
-                # rank. (Stored edges join stored ids, which the entity merge
-                # keeps: no delta id remaps one.)
-                known = {e.id for e in merged_entities or []}
-                ends = {
-                    i for r in noted_edges for i in (r.source_id, r.target_id)
-                } - known
-                if ends:
-                    others = m._with_full_descriptions(
-                        m.graph_indexer.read_entities(sorted(ends), suffix=suffix),
-                        m.vector_indexer.read_entity_descriptions,
-                        suffix,
-                    )
-                    existing = [*existing, *others]
-                    merged_entities = [*(merged_entities or []), *others]
-                merged_relationships = [*(merged_relationships or []), *noted_edges]
         if merged_entities is not entities and merged_relationships:
             # Merged with stored entities: an edge re-pointed at one, or at one
             # whose stored name differs from the delta's, must name it as the
@@ -394,58 +276,16 @@ class CrossRunMerge:
                 relationships=list(merged_relationships),
             )
         rekey = derived.id_remap
-        renamed = self._note_renamed(suffix, derived.entities, existing)
-        derived_ids = {e.id for e in derived.entities}
-        decided = {
-            # A rename too: a run killed between the stores leaves the
-            # vector copies of its edges and claims ahead of the graph's.
-            *renamed,
-            *(i for pair in rekey.items() if pair[1] in derived_ids for i in pair),
-            *(i for pair in derived.split_from.items() for i in pair),
-            *derived.rewired,
-        }
-        if decided:
-            m._commit_entities.setdefault(suffix, set()).update(decided)
-
-        def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
-            """The id a delta item ends under: the stored one it merged into
-            (another spelling, say), as the derivation re-keyed it."""
-            kept = merged_into.get(delta_id, delta_id)
-            return rekey.get(kept, kept)
-
-        # A stored summary that only grew is summarized with what the delta
-        # added (see extend_summaries), and so is a stored description the
-        # delta added a summary to. Not one this run's removal summarized:
-        # that summary was made from what the strip left, and extending it
-        # would summarize a summary where a full build summarizes the lines.
-        reuse_summaries(derived.entities, entities)
-        reuse_summaries(derived.relationships, relationships)
-        stripped = m._stripped_ids.get(suffix, set())
-        extend_summaries(
-            derived.entities,
-            [
-                e.model_copy(update={"id": rekey.get(e.id, e.id)})
-                for e in existing
-                if e.id not in stripped
-            ],
-            {final_id(e.id, entity_id_remap): e.description for e in entities},
-            summarized={
-                final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
-            },
-        )
-        extend_summaries(
-            derived.relationships,
-            [
-                r.model_copy(update={"id": rekey.get(r.id, r.id)})
-                for r in existing_rels
-                if r.id not in stripped
-            ],
-            {final_id(r.id, relationship_remap): r.description for r in relationships},
-            summarized={
-                final_id(r.id, relationship_remap)
-                for r in relationships
-                if _is_summary(r)
-            },
+        self._note_decided(suffix, derived, existing)
+        self._extend_stored_summaries(
+            suffix,
+            derived,
+            entities,
+            relationships,
+            existing,
+            existing_rels,
+            entity_id_remap,
+            relationship_remap,
         )
         merged_entities, merged_relationships = self._finish(
             suffix,
@@ -500,6 +340,268 @@ class CrossRunMerge:
                         **relationship_remap,
                     }.items()
                 },
+            },
+        )
+
+    def _merge_entities(
+        self, suffix: str, entities: list[Entity]
+    ) -> tuple[list[Entity], list[Entity], dict[str, str], set[str]]:
+        """The delta ``entities`` merged with the stored entities they
+        match (by id or name), the stored ones read, ``{delta id: stored
+        id}`` and the entities a commit note names (read with them)."""
+        m = self._m
+        merged_entities = entities
+        existing: list[Entity] = []
+        entity_id_remap: dict[str, str] = {}
+        # What an earlier commit of this suffix split, re-keyed or rewired
+        # and may not have written in full (see note_pending_commit): the
+        # stored entities and their edges are derived again with the delta,
+        # and the claims about them follow.
+        noted = self._read_commit_note(suffix)
+        if entities:
+            # The full build also merges names that differ only by legal form
+            # or spacing (and by similarity with fuzzy_entity_resolution);
+            # their stored entities have other ids than the delta's, so they
+            # are found through the stored names and read back as well.
+            name_matcher, matched_ids = self._match_stored_names(suffix, entities)
+            existing = m._with_full_descriptions(
+                m.graph_indexer.read_entities(
+                    sorted({e.id for e in entities} | matched_ids | noted),
+                    suffix=suffix,
+                ),
+                m.vector_indexer.read_entity_descriptions,
+                suffix,
+            )
+            if existing:
+                merged_entities, entity_id_remap = merge_entities(
+                    existing, entities, fuzzy_matcher=name_matcher
+                )
+        elif noted:
+            existing = m._with_full_descriptions(
+                m.graph_indexer.read_entities(sorted(noted), suffix=suffix),
+                m.vector_indexer.read_entity_descriptions,
+                suffix,
+            )
+            merged_entities = list(existing)
+        return merged_entities, existing, entity_id_remap, noted
+
+    def _merge_relationships(
+        self,
+        suffix: str,
+        relationships: list[Relationship],
+        merged_entities: list[Entity],
+        entity_id_remap: dict[str, str],
+    ) -> tuple[list[Relationship], list[Relationship], dict[str, str]]:
+        """The delta ``relationships`` merged with the stored edges they
+        match (by id, or by endpoints once ``entity_id_remap`` re-points
+        them), the stored ones read and ``{delta id: stored id}``."""
+        m = self._m
+        merged_relationships = relationships
+        existing_rels: list[Relationship] = []
+        relationship_remap: dict[str, str] = {}
+        if relationships:
+            rel_ids = {r.id for r in relationships}
+            if merged_entities:
+                # A delta edge can match a stored edge of other id between the
+                # same entities (extracted with other spellings, or with an
+                # endpoint that merged into a stored entity): the full build
+                # merges them, so the entities' stored edges are read too.
+                rel_ids |= set(
+                    m.graph_indexer.find_incident_relationship_ids(
+                        sorted({e.id for e in merged_entities}), suffix=suffix
+                    )
+                )
+            delta_ids = {r.id for r in relationships}
+            pairs = {
+                (
+                    entity_id_remap.get(r.source_id, r.source_id),
+                    entity_id_remap.get(r.target_id, r.target_id),
+                )
+                for r in relationships
+            }
+            existing_rels = m._with_full_descriptions(
+                [
+                    r
+                    for r in m.graph_indexer.read_relationships(
+                        sorted(rel_ids), suffix=suffix
+                    )
+                    if r.id in delta_ids or (r.source_id, r.target_id) in pairs
+                ],
+                m.vector_indexer.read_relationship_descriptions,
+                suffix,
+            )
+            # Even when no existing relationships are read back, delta endpoints
+            # must follow any entity-id collapse from the entity merge above —
+            # otherwise a remapped entity leaves its relationships pointing at a
+            # now-nonexistent id. Pass the remap through unconditionally.
+            if existing_rels or entity_id_remap:
+                merged_relationships = merge_relationships(
+                    existing_rels,
+                    relationships,
+                    entity_id_remap=entity_id_remap or None,
+                )
+                relationship_remap = relationship_id_remap(
+                    relationships, merged_relationships, entity_id_remap
+                )
+                # The incident edges were read only to find matches: write
+                # back just the edges a delta edge became or merged into.
+                written = {relationship_remap.get(r.id, r.id) for r in relationships}
+                merged_relationships = [
+                    r for r in merged_relationships if r.id in written
+                ]
+        return merged_relationships, existing_rels, relationship_remap
+
+    def _with_noted_edges(
+        self,
+        suffix: str,
+        noted: set[str],
+        existing: list[Entity],
+        existing_rels: list[Relationship],
+        merged_entities: list[Entity],
+        merged_relationships: list[Relationship],
+    ) -> tuple[
+        list[Entity], list[Relationship], list[Entity], list[Relationship], set[str]
+    ]:
+        """The stored and merged items with the stored edges of the
+        ``noted`` entities and their other endpoints (``existing``,
+        ``existing_rels``, ``merged_entities``, ``merged_relationships``,
+        in that order), and the vector copies of the noted entities and
+        their edges the graph does not hold."""
+        m = self._m
+        vector_orphans: set[str] = set()
+        # The noted entities' stored edges: a killed commit may not have
+        # re-pointed them.
+        held = {r.id for r in merged_relationships or []}
+        graph_incident = set(
+            m.graph_indexer.find_incident_relationship_ids(sorted(noted), suffix=suffix)
+        )
+        if _reads_back(m.graph_indexer):
+            in_graph = {
+                e.id
+                for e in m.graph_indexer.read_entities(sorted(noted), suffix=suffix)
+            }
+            vector_entities = set(
+                m.vector_indexer.read_vector_copies(
+                    "entities", sorted(noted - in_graph), suffix=suffix
+                )
+                if noted - in_graph
+                else {}
+            )
+            if vector_entities:
+                m._vector_only.setdefault(suffix, set()).update(vector_entities)
+            vector_orphans = vector_entities | (
+                set(m._vector_incident_relationship_ids(sorted(noted), suffix))
+                - graph_incident
+                - held
+            )
+        noted_edges = m.graph_indexer.read_relationships(
+            sorted(graph_incident - held),
+            suffix=suffix,
+        )
+        if noted_edges:
+            noted_edges = m._with_full_descriptions(
+                noted_edges,
+                m.vector_indexer.read_relationship_descriptions,
+                suffix,
+            )
+            existing_rels = [*existing_rels, *noted_edges]
+            # Their other endpoints too: a re-pointed edge changes their
+            # rank. (Stored edges join stored ids, which the entity merge
+            # keeps: no delta id remaps one.)
+            known = {e.id for e in merged_entities or []}
+            ends = {i for r in noted_edges for i in (r.source_id, r.target_id)} - known
+            if ends:
+                others = m._with_full_descriptions(
+                    m.graph_indexer.read_entities(sorted(ends), suffix=suffix),
+                    m.vector_indexer.read_entity_descriptions,
+                    suffix,
+                )
+                existing = [*existing, *others]
+                merged_entities = [*(merged_entities or []), *others]
+            merged_relationships = [*(merged_relationships or []), *noted_edges]
+        return (
+            existing,
+            existing_rels,
+            merged_entities,
+            merged_relationships,
+            vector_orphans,
+        )
+
+    def _note_decided(
+        self, suffix: str, derived: Derived, existing: Sequence[Entity]
+    ) -> None:
+        """Record the stored entities a commit's derivation renamed,
+        re-keyed, split or rewired, for its write-ahead note (see
+        :meth:`IndexingManager.note_pending_commit`)."""
+        m = self._m
+        rekey = derived.id_remap
+        renamed = self._note_renamed(suffix, derived.entities, existing)
+        derived_ids = {e.id for e in derived.entities}
+        decided = {
+            # A rename too: a run killed between the stores leaves the
+            # vector copies of its edges and claims ahead of the graph's.
+            *renamed,
+            *(i for pair in rekey.items() if pair[1] in derived_ids for i in pair),
+            *(i for pair in derived.split_from.items() for i in pair),
+            *derived.rewired,
+        }
+        if decided:
+            m._commit_entities.setdefault(suffix, set()).update(decided)
+
+    def _extend_stored_summaries(
+        self,
+        suffix: str,
+        derived: Derived,
+        entities: Sequence[Entity],
+        relationships: Sequence[Relationship],
+        existing: Sequence[Entity],
+        existing_rels: Sequence[Relationship],
+        entity_id_remap: Mapping[str, str],
+        relationship_remap: Mapping[str, str],
+    ) -> None:
+        """Reuse and extend the summaries of the derived items from the
+        delta's and the stored ones (``existing``, ``existing_rels``)."""
+        m = self._m
+        rekey = derived.id_remap
+
+        def final_id(delta_id: str, merged_into: Mapping[str, str]) -> str:
+            """The id a delta item ends under: the stored one it merged into
+            (another spelling, say), as the derivation re-keyed it."""
+            kept = merged_into.get(delta_id, delta_id)
+            return rekey.get(kept, kept)
+
+        # A stored summary that only grew is summarized with what the delta
+        # added (see extend_summaries), and so is a stored description the
+        # delta added a summary to. Not one this run's removal summarized:
+        # that summary was made from what the strip left, and extending it
+        # would summarize a summary where a full build summarizes the lines.
+        reuse_summaries(derived.entities, entities)
+        reuse_summaries(derived.relationships, relationships)
+        stripped = m._stripped_ids.get(suffix, set())
+        extend_summaries(
+            derived.entities,
+            [
+                e.model_copy(update={"id": rekey.get(e.id, e.id)})
+                for e in existing
+                if e.id not in stripped
+            ],
+            {final_id(e.id, entity_id_remap): e.description for e in entities},
+            summarized={
+                final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
+            },
+        )
+        extend_summaries(
+            derived.relationships,
+            [
+                r.model_copy(update={"id": rekey.get(r.id, r.id)})
+                for r in existing_rels
+                if r.id not in stripped
+            ],
+            {final_id(r.id, relationship_remap): r.description for r in relationships},
+            summarized={
+                final_id(r.id, relationship_remap)
+                for r in relationships
+                if _is_summary(r)
             },
         )
 
@@ -573,73 +675,12 @@ class CrossRunMerge:
                 stored_relationship_ids=stored_edges,
             )
             given = {item.id for group in items for item in group}
-            # Stored entities of a derived name's key (another spelling a
-            # full build merges with it, that cites none of these units), and
-            # stored claims of a derived claim's id, or of an id an earlier
-            # reading of its dates gave it (``Derived.earlier_claim_ids``),
-            # are held too.
-            siblings = (
-                m.graph_indexer.find_entity_ids_by_name_key(
-                    sorted({compact_name_key(e.name) for e in derived.entities}),
-                    suffix,
-                )
-                if derived.entities and not claims
-                else None
+            sibling_ids, held = self._held_by_others(
+                suffix, derived, given, blocked, claims
             )
-            sibling_ids = set(siblings or ()) - given - blocked
-            targets = sorted(
-                (
-                    set(derived.id_remap.values())
-                    | set(derived.split_from)
-                    | sibling_ids
-                    | {c.id for c in derived.claims}
-                    | set(derived.earlier_claim_ids)
-                )
-                - given
-                - blocked
+            spellings, moved, parted = self._parted_edges(
+                suffix, derived, items, claims, given, incident
             )
-            held = self._read_held(suffix, targets) if targets else ([], [], [])
-            # Another spelling of a derived entity: a run that split them and
-            # died before their edges and claims were written leaves those on
-            # the other spelling, and only its entity copies record the split
-            # (the two need not share a text unit). Such a leftover cites a
-            # unit of the spelling it belongs to: only a spelling holding one
-            # is rederived (all its edges, and its claims follow through
-            # ``split_from``). A spelling a full build keeps apart holds none,
-            # and is left as stored.
-            spellings = (
-                {
-                    part: whole
-                    for part, whole in _other_spellings(
-                        derived.entities, items[0]
-                    ).items()
-                    if whole not in derived.id_remap
-                }
-                if not claims
-                else {}
-            )
-            moved = set(derived.rewired)
-            # And the stored endpoints a given edge was re-pointed away from
-            # (onto a part an earlier, interrupted strip split off): their
-            # stored links still count that edge's old copy.
-            now = {r.id: {r.source_id, r.target_id} for r in derived.relationships}
-            for rel in items[1]:
-                if ends := now.get(derived.id_remap.get(rel.id, rel.id)):
-                    moved |= {rel.source_id, rel.target_id} - ends
-            candidates = sorted({*moved, *spellings.values()})
-            parted: list[Relationship] = []
-            if candidates and not claims:
-                incident_ids = incident("moved", candidates)
-                if incident_ids - given:
-                    parted = m.graph_indexer.read_relationships(
-                        sorted(incident_ids - given), suffix=suffix
-                    )
-            if spellings:
-                spellings = self._leftover_spellings(
-                    suffix, derived.entities, spellings, parted
-                )
-                moved |= set(spellings.values())
-                parted = [r for r in parted if {r.source_id, r.target_id} & moved]
             rewired = sorted(moved)
             done = not any(held) and not parted
             if not done and attempt == _DERIVE_ROUNDS - 1:
@@ -664,50 +705,161 @@ class CrossRunMerge:
                         "split_from": {**spellings, **derived.split_from},
                     }
                 )
-            if attempt == 0:
-                items = (
-                    [*items[0], *held[0]],
-                    [*items[1], *held[1]],
-                    [*items[2], *held[2]],
-                )
-            else:
-                # Another spelling of a name that joined since (an endpoint
-                # of a rewired edge, say) is derived with it, as on the first
-                # attempt: derived without its other statements, a spelling
-                # the full build keeps apart (another type) merges in. Only
-                # the other held items keep their holders.
-                # So is the copy an interrupted re-key left at a new id this
-                # attempt maps to (found only once a late sibling joined).
-                joining = sibling_ids | set(derived.id_remap.values())
-                items[0].extend(e for e in held[0] if e.id in joining)
-                # And a claim stored under an earlier reading of its dates:
-                # it is the derived claim (found once its statements were
-                # read, a unit another held item cites).
-                earlier = set(derived.earlier_claim_ids)
-                items[2].extend(c for c in held[2] if c.id in earlier)
-                joining |= earlier
-                # Edges too: a re-key killed after writing an edge's copy at
-                # its new id, before retiring the old one, left that copy.
-                items[1].extend(r for r in held[1] if r.id in joining)
-                blocked |= {
-                    item.id
-                    for group in held
-                    for item in group
-                    if item.id not in joining
-                }
-            # Not twice: after a split killed before its edges were written,
-            # a leftover edge is both held (merged in above) and parted.
-            known_edges = {r.id for r in items[1]}
-            items[1].extend(r for r in parted if r.id not in known_edges)
-            # Their other endpoints too: a re-pointed edge changes their rank.
-            ends = {i for r in parted for i in (r.source_id, r.target_id)}
-            known = {e.id for e in items[0]}
-            if ends - known:
-                items[0].extend(
-                    m.graph_indexer.read_entities(sorted(ends - known), suffix=suffix)
-                )
+            items = self._next_round_items(
+                suffix, items, held, parted, derived, sibling_ids, blocked, attempt
+            )
         m.underived_items += len(set(derived.underived))
         return derived
+
+    def _held_by_others(
+        self,
+        suffix: str,
+        derived: Derived,
+        given: set[str],
+        blocked: set[str],
+        claims: Sequence[Claim],
+    ) -> tuple[set[str], tuple[list[Entity], list[Relationship], list[Claim]]]:
+        """The stored entities of a derived name's key the derivation was
+        not given, and the stored items another item of a round of
+        :meth:`derive` holds the new id of."""
+        m = self._m
+        # Stored entities of a derived name's key (another spelling a
+        # full build merges with it, that cites none of these units), and
+        # stored claims of a derived claim's id, or of an id an earlier
+        # reading of its dates gave it (``Derived.earlier_claim_ids``),
+        # are held too.
+        siblings = (
+            m.graph_indexer.find_entity_ids_by_name_key(
+                sorted({compact_name_key(e.name) for e in derived.entities}),
+                suffix,
+            )
+            if derived.entities and not claims
+            else None
+        )
+        sibling_ids = set(siblings or ()) - given - blocked
+        targets = sorted(
+            (
+                set(derived.id_remap.values())
+                | set(derived.split_from)
+                | sibling_ids
+                | {c.id for c in derived.claims}
+                | set(derived.earlier_claim_ids)
+            )
+            - given
+            - blocked
+        )
+        held = self._read_held(suffix, targets) if targets else ([], [], [])
+        return sibling_ids, held
+
+    def _parted_edges(
+        self,
+        suffix: str,
+        derived: Derived,
+        items: tuple[list[Entity], list[Relationship], list[Claim]],
+        claims: Sequence[Claim],
+        given: set[str],
+        incident: _IncidentEdges,
+    ) -> tuple[dict[str, str], set[str], list[Relationship]]:
+        """Of a round of :meth:`derive`: the leftover spellings
+        (``{part: whole}``), the stored entities whose edges moved, and
+        their stored edges the derivation was not given."""
+        m = self._m
+        # Another spelling of a derived entity: a run that split them and
+        # died before their edges and claims were written leaves those on
+        # the other spelling, and only its entity copies record the split
+        # (the two need not share a text unit). Such a leftover cites a
+        # unit of the spelling it belongs to: only a spelling holding one
+        # is rederived (all its edges, and its claims follow through
+        # ``split_from``). A spelling a full build keeps apart holds none,
+        # and is left as stored.
+        spellings = (
+            {
+                part: whole
+                for part, whole in _other_spellings(derived.entities, items[0]).items()
+                if whole not in derived.id_remap
+            }
+            if not claims
+            else {}
+        )
+        moved = set(derived.rewired)
+        # And the stored endpoints a given edge was re-pointed away from
+        # (onto a part an earlier, interrupted strip split off): their
+        # stored links still count that edge's old copy.
+        now = {r.id: {r.source_id, r.target_id} for r in derived.relationships}
+        for rel in items[1]:
+            if ends := now.get(derived.id_remap.get(rel.id, rel.id)):
+                moved |= {rel.source_id, rel.target_id} - ends
+        candidates = sorted({*moved, *spellings.values()})
+        parted: list[Relationship] = []
+        if candidates and not claims:
+            incident_ids = incident("moved", candidates)
+            if incident_ids - given:
+                parted = m.graph_indexer.read_relationships(
+                    sorted(incident_ids - given), suffix=suffix
+                )
+        if spellings:
+            spellings = self._leftover_spellings(
+                suffix, derived.entities, spellings, parted
+            )
+            moved |= set(spellings.values())
+            parted = [r for r in parted if {r.source_id, r.target_id} & moved]
+        return spellings, moved, parted
+
+    def _next_round_items(
+        self,
+        suffix: str,
+        items: tuple[list[Entity], list[Relationship], list[Claim]],
+        held: tuple[list[Entity], list[Relationship], list[Claim]],
+        parted: list[Relationship],
+        derived: Derived,
+        sibling_ids: set[str],
+        blocked: set[str],
+        attempt: int,
+    ) -> tuple[list[Entity], list[Relationship], list[Claim]]:
+        """The items the next round of :meth:`derive` derives: ``items``
+        with the ``held`` items that join them (the others are added to
+        ``blocked``), the ``parted`` edges and their other endpoints."""
+        m = self._m
+        if attempt == 0:
+            items = (
+                [*items[0], *held[0]],
+                [*items[1], *held[1]],
+                [*items[2], *held[2]],
+            )
+        else:
+            # Another spelling of a name that joined since (an endpoint
+            # of a rewired edge, say) is derived with it, as on the first
+            # attempt: derived without its other statements, a spelling
+            # the full build keeps apart (another type) merges in. Only
+            # the other held items keep their holders.
+            # So is the copy an interrupted re-key left at a new id this
+            # attempt maps to (found only once a late sibling joined).
+            joining = sibling_ids | set(derived.id_remap.values())
+            items[0].extend(e for e in held[0] if e.id in joining)
+            # And a claim stored under an earlier reading of its dates:
+            # it is the derived claim (found once its statements were
+            # read, a unit another held item cites).
+            earlier = set(derived.earlier_claim_ids)
+            items[2].extend(c for c in held[2] if c.id in earlier)
+            joining |= earlier
+            # Edges too: a re-key killed after writing an edge's copy at
+            # its new id, before retiring the old one, left that copy.
+            items[1].extend(r for r in held[1] if r.id in joining)
+            blocked.update(
+                item.id for group in held for item in group if item.id not in joining
+            )
+        # Not twice: after a split killed before its edges were written,
+        # a leftover edge is both held (merged in above) and parted.
+        known_edges = {r.id for r in items[1]}
+        items[1].extend(r for r in parted if r.id not in known_edges)
+        # Their other endpoints too: a re-pointed edge changes their rank.
+        ends = {i for r in parted for i in (r.source_id, r.target_id)}
+        known = {e.id for e in items[0]}
+        if ends - known:
+            items[0].extend(
+                m.graph_indexer.read_entities(sorted(ends - known), suffix=suffix)
+            )
+        return items
 
     def _leftover_spellings(
         self,
@@ -823,6 +975,69 @@ class CrossRunMerge:
         """
         m = self._m
         rekey = rekey or {}
+        self._summarize(
+            suffix,
+            entities,
+            relationships,
+            stored_entities,
+            stored_relationships,
+            unsummarized,
+            made,
+        )
+        dropped_links = self._dropped_links(
+            suffix, relationships, stored_relationships, rekey, dropped
+        )
+        entities, relationships = self._rank_with_stored_graph(
+            suffix, entities, relationships, rekey, rewired, dropped_links
+        )
+        # The edges the derivation dropped go with the retired ids: they are
+        # not rewritten as other stored edges of the touched entities.
+        written = {r.id for r in relationships} | set(rekey) | set(dropped)
+        extra_ids = sorted(
+            set(
+                m.graph_indexer.find_incident_relationship_ids(
+                    _with_old_ids([e.id for e in entities], rekey), suffix=suffix
+                )
+            )
+            - written
+        )
+        if not extra_ids:
+            return entities, relationships
+        extra = self._stored_edges_to_rewrite(
+            suffix,
+            entities,
+            relationships,
+            extra_ids,
+            stored_entities=stored_entities,
+            rekey=rekey,
+            rewired=rewired,
+            split_from=split_from,
+            dropped_links=dropped_links,
+        )
+        if not extra:
+            return entities, relationships
+        changed = {i for r in extra for i in (r.source_id, r.target_id)}
+        logger.info(
+            "Rewriting the name or rank of %d stored relationships of %d "
+            "entities in '%s'",
+            len(extra),
+            len(changed & {e.id for e in entities}),
+            suffix,
+        )
+        return entities, [*relationships, *extra]
+
+    def _summarize(
+        self,
+        suffix: str,
+        entities: list[Entity],
+        relationships: list[Relationship],
+        stored_entities: Sequence[Entity],
+        stored_relationships: Sequence[Relationship],
+        unsummarized: Collection[str],
+        made: set[str] | None,
+    ) -> None:
+        """Summarize the derived items in place, as :meth:`_finish` says."""
+        m = self._m
         # A summary (reused, or already held) is not summarized again, even
         # when it is over the threshold itself (summarized in place).
         reused = reuse_summaries(
@@ -845,6 +1060,18 @@ class CrossRunMerge:
             made.update(
                 i.id for i in summarized if i.description != derived_descriptions[i.id]
             )
+
+    def _dropped_links(
+        self,
+        suffix: str,
+        relationships: Sequence[Relationship],
+        stored_relationships: Sequence[Relationship],
+        rekey: Mapping[str, str],
+        dropped: Collection[str],
+    ) -> set[frozenset[str]]:
+        """Stored id pairs whose stored link does not count toward the
+        ranks: the ``dropped`` edges' and the demoted ones
+        (:meth:`_demoted_links`)."""
         # A dropped edge is still stored until the retired ids are deleted
         # (a resumed strip reads it back): its link does not count either.
         dropped_ids = set(dropped)
@@ -856,22 +1083,25 @@ class CrossRunMerge:
         dropped_links |= self._demoted_links(
             suffix, relationships, stored_relationships, rekey, dropped_ids
         )
-        entities, relationships = self._rank_with_stored_graph(
-            suffix, entities, relationships, rekey, rewired, dropped_links
-        )
-        # The edges the derivation dropped go with the retired ids: they are
-        # not rewritten as other stored edges of the touched entities.
-        written = {r.id for r in relationships} | set(rekey) | set(dropped)
-        extra_ids = sorted(
-            set(
-                m.graph_indexer.find_incident_relationship_ids(
-                    _with_old_ids([e.id for e in entities], rekey), suffix=suffix
-                )
-            )
-            - written
-        )
-        if not extra_ids:
-            return entities, relationships
+        return dropped_links
+
+    def _stored_edges_to_rewrite(
+        self,
+        suffix: str,
+        entities: list[Entity],
+        relationships: list[Relationship],
+        extra_ids: list[str],
+        *,
+        stored_entities: Sequence[Entity],
+        rekey: Mapping[str, str],
+        rewired: Collection[str],
+        split_from: Mapping[str, str] | None,
+        dropped_links: Collection[frozenset[str]],
+    ) -> list[Relationship]:
+        """The stored edges ``extra_ids`` of the touched ``entities`` whose
+        names or ranks now differ, or whose vector copies are stale, as they
+        are written (see :meth:`_finish`); ``[]`` when none."""
+        m = self._m
         # Their stored copies are compared with the names and ranks the
         # touched entities now give them (not the entities with their stored
         # copies): a run that wrote the entities but died before their edges
@@ -927,6 +1157,36 @@ class CrossRunMerge:
             return r.source_id, r.target_id, r.source_name, r.target_name, r.rank
 
         before = {r.id: shown(r) for r in stored_extra}
+        stale = self._stale_vector_copies(
+            suffix, extra, entities, stored_entities, rewired, split_from
+        )
+        extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
+        if not extra:
+            return []
+        # Only the rank changed (a neighbour's degree): the vector copy is
+        # updated in place, not embedded again (_upsert_vector_relationships).
+        m._rank_only.update(
+            r.id
+            for r in extra
+            if before[r.id][:4] == shown(r)[:4] and r.id not in stale
+        )
+        extra = m._with_full_descriptions(
+            extra, m.vector_indexer.read_relationship_descriptions, suffix
+        )
+        return extra
+
+    def _stale_vector_copies(
+        self,
+        suffix: str,
+        extra: Sequence[Relationship],
+        entities: Sequence[Entity],
+        stored_entities: Sequence[Entity],
+        rewired: Collection[str],
+        split_from: Mapping[str, str] | None,
+    ) -> set[str]:
+        """The ids of the stored edges ``extra`` whose vector copies are
+        stale (or missing, where an edge was re-pointed)."""
+        m = self._m
         # And with their vector copies, where an endpoint's name or id
         # changed: a commit killed between its vector and graph edge writes
         # (or a strip before the graph edges came first) left the vector
@@ -963,28 +1223,7 @@ class CrossRunMerge:
                 else vectors and bool({r.source_id, r.target_id} & repointed)
             )
         }
-        extra = [r for r in extra if before[r.id] != shown(r) or r.id in stale]
-        if not extra:
-            return entities, relationships
-        # Only the rank changed (a neighbour's degree): the vector copy is
-        # updated in place, not embedded again (_upsert_vector_relationships).
-        m._rank_only.update(
-            r.id
-            for r in extra
-            if before[r.id][:4] == shown(r)[:4] and r.id not in stale
-        )
-        extra = m._with_full_descriptions(
-            extra, m.vector_indexer.read_relationship_descriptions, suffix
-        )
-        changed = {i for r in extra for i in (r.source_id, r.target_id)}
-        logger.info(
-            "Rewriting the name or rank of %d stored relationships of %d "
-            "entities in '%s'",
-            len(extra),
-            len(changed & {e.id for e in entities}),
-            suffix,
-        )
-        return entities, [*relationships, *extra]
+        return stale
 
     def _rank_with_stored_graph(
         self,
