@@ -623,6 +623,12 @@ From 0.2.3 (or a `main` checkout since):
     (`<stack prefix>OrchestrationIngestionTask...`), so its Container
     Insights series start again under the new name; the alarms and the
     dashboard follow it (#558).
+15. `run-eval` results saved before #PR scored `graph_aware`'s
+    `entity_coverage` and `retrieved_*_coverage` by the earlier rule
+    (phrase containment, duplicates counted twice), and `--from-results` /
+    `--baseline-results` reuse saved scores. To compare those metrics with
+    a new run, run the baseline again: one answer and score per query and
+    repeat (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1412,6 +1418,14 @@ From 0.2.3 (or a `main` checkout since):
   delta, so a judge that failed on the 4 queries a strategy lost showed
   +0.10 [+0.10, +0.10] over the other 6 and passed the gate. The Markdown
   and console tables print each delta's pairs and unpaired queries (#PR).
+- `graph_aware`: `retrieved_entity_coverage` and the endpoints of
+  `retrieved_relationship_coverage` match a retrieved entity by entity key
+  (case, CJK spacing, quotes and legal forms ignored, as entity resolution
+  links names), not as a phrase inside its name: `Seoul National
+  University` covered an expected `Seoul`. Expected entities with the same
+  key are one expectation (any spelling in the answer meets it), so a
+  duplicate no longer counts twice in either coverage. Both metrics can
+  read lower than before on the same answers (*Upgrading*) (#PR).
 - A `run-eval --fail-if` fails on a delta over fewer than 10 paired queries
   (`gates.MIN_GATE_PAIRS`): one pair gave a zero-width interval, so
   `ci_high<-0.02` passed on one improved query. The evaluation guide says

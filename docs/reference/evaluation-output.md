@@ -292,14 +292,22 @@ The share of the expected graph artifacts that appear in the generated answer
 (coverage = recall), with the phrase matcher of `answer_contains`. A
 relationship given as `{"source": "A", "target": "B"}` or `"A -> B"` counts
 when the answer mentions both endpoints; any other string must appear as a
-phrase. Precision and F1 are not emitted: the entities of a free-text answer
+phrase. Expected entities with the same entity key (below) are one
+expectation, met when the answer mentions any of their spellings, so a
+duplicate does not count twice (`expected_entity_count` counts them once).
+Precision and F1 are not emitted: the entities of a free-text answer
 cannot be enumerated reliably.
 
 Answer-text coverage rises with answer length, so compare strategies on
 `retrieved_entity_coverage` / `retrieved_relationship_coverage` (the same
 expectations matched against the entities and relationship endpoints of the
 sources the answer model was given) and read `answer_length` next to the
-answer coverage. Retrieved coverage is skipped, not 0, when the context had
+answer coverage. Retrieved coverage compares entity keys, not phrases: an
+expected entity, or a relationship endpoint, is covered by a retrieved
+entity of the same key (case, spacing next to CJK letters, quotes and a
+legal form such as `Corp.` ignored, as entity resolution links them:
+`ACME Corp.` covers `Acme`), not by a longer name containing it (`Seoul
+National University` does not cover `Seoul`). Retrieved coverage is skipped, not 0, when the context had
 no source of that type (`global` by design), so check the metric's `pairs` /
 `unpaired` in a comparison and `metric_outcomes`' skipped count in one run.
 

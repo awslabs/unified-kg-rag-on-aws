@@ -23,7 +23,11 @@ Answer-text coverage grows with answer length (a wordier answer names more
 things), so the evaluator also reports ``retrieved_entity_coverage`` /
 ``retrieved_relationship_coverage`` — the same expectations matched against
 the entity names and relationship endpoints of the sources the answer model
-was given — and ``answer_length`` (characters) alongside. Retrieved coverage is
+was given, by entity key (``compact_name_key``: the key the resolver links
+spellings of one entity by, so "ACME Corp." is "Acme", but "Seoul" is not
+"Seoul National University") — and ``answer_length`` (characters)
+alongside. Expected entities that share that key are one expectation, met
+when the answer mentions any of their spellings. Retrieved coverage is
 skipped for a query whose context has no entity (or relationship) source, not
 scored 0: a strategy that reads no such sources by design (``global``) has none
 to measure. A strategy that finds none for a query is therefore not scored on
@@ -47,6 +51,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     BaseGraphRAGEvaluator,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -124,16 +129,56 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         )
         return matched / len(expected), matched
 
+    @staticmethod
+    def _entity_groups(expected: list[Any]) -> dict[str, list[Any]]:
+        """The expected entities by entity key, each with its spellings in
+        dataset order: "Acme Corp" and "ACME Corp." are one expectation."""
+        groups: dict[str, list[Any]] = {}
+        for item in expected:
+            key = compact_name_key(item) if isinstance(item, str) else repr(item)
+            groups.setdefault(key, []).append(item)
+        return groups
+
+    @classmethod
+    def _entity_coverage(
+        cls, groups: dict[str, list[Any]], answer: str
+    ) -> tuple[float | None, int]:
+        """``_coverage`` of the entity expectations: one is met when the
+        answer mentions any of its spellings."""
+        if not groups:
+            return None, 0
+        matched = sum(
+            1
+            for spellings in groups.values()
+            if any(cls._is_covered(item, answer, False) for item in spellings)
+        )
+        return matched / len(groups), matched
+
+    @staticmethod
+    def _retrieved_entity_coverage(
+        groups: dict[str, list[Any]], retrieved: list[str]
+    ) -> tuple[float | None, int]:
+        """Coverage of the entity expectations over the retrieved entity
+        sources: met when a retrieved entity has the same entity key."""
+        if not groups:
+            return None, 0
+        names = {compact_name_key(name) for name in retrieved if name}
+        matched = sum(
+            1
+            for key, spellings in groups.items()
+            if key and isinstance(spellings[0], str) and key in names
+        )
+        return matched / len(groups), matched
+
     @classmethod
     def _retrieved_coverage(
-        cls, expected: list[Any], retrieved: list[str] | list[dict[str, str]]
+        cls, expected: list[Any], retrieved: list[dict[str, str]]
     ) -> tuple[float | None, int]:
-        """Coverage of ``expected`` over the retrieved graph sources.
+        """Coverage of the expected relationships over the retrieved ones.
 
-        An expected entity is covered when it matches (as a phrase) the name of
-        a retrieved entity source. An expected relationship pair is covered
-        when ONE retrieved relationship has both endpoints, in either
-        direction; any other relationship string must appear in a retrieved
+        An expected relationship pair is covered when ONE retrieved
+        relationship has both endpoints, in either direction, by entity key;
+        any other relationship string must appear in a retrieved
         relationship's endpoints or description.
         """
         if not expected:
@@ -143,18 +188,13 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             if not item:
                 return False
             for element in retrieved:
-                if isinstance(element, str):
-                    if cls._is_covered(item, element, relationships=False):
-                        return True
-                    continue
                 source = element.get("source", "")
                 target = element.get("target", "")
                 endpoints = cls._relationship_endpoints(item)
                 if endpoints is not None:
-                    if any(
-                        phrase_in_text(a, source) and phrase_in_text(b, target)
-                        for a, b in (endpoints, endpoints[::-1])
-                    ):
+                    keys = tuple(compact_name_key(end) for end in endpoints)
+                    ends = (compact_name_key(source), compact_name_key(target))
+                    if all(keys) and ends in (keys, keys[::-1]):
                         return True
                 elif isinstance(item, str) and phrase_in_text(
                     item, " ".join((source, target, element.get("description", "")))
@@ -173,12 +213,13 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         expected_relationships = result.metadata.get("expected_relationships", []) or []
         source_types = set(result.retrieved_source_types)
 
-        e_cov, e_matched = self._coverage(expected_entities, answer)
+        entity_groups = self._entity_groups(expected_entities)
+        e_cov, e_matched = self._entity_coverage(entity_groups, answer)
         r_cov, r_matched = self._coverage(
             expected_relationships, answer, relationships=True
         )
-        re_cov, re_matched = self._retrieved_coverage(
-            expected_entities, result.retrieved_entities
+        re_cov, re_matched = self._retrieved_entity_coverage(
+            entity_groups, result.retrieved_entities
         )
         rr_cov, rr_matched = self._retrieved_coverage(
             expected_relationships, result.retrieved_relationships
@@ -227,7 +268,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             )
         metadata = {
             **self._extract_search_metadata(result),
-            "expected_entity_count": len(expected_entities),
+            # Distinct by entity key (spellings of one entity count once).
+            "expected_entity_count": len(entity_groups),
             "matched_entity_count": e_matched,
             "retrieved_matched_entity_count": re_matched,
             "expected_relationship_count": len(expected_relationships),
