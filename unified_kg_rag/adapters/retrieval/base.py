@@ -31,7 +31,6 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
     IndexLimits,
     document_filters,
-    opensearch_filter_fields,
     source_kinds_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
@@ -212,8 +211,6 @@ def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
     filtered expansion's redrawn paths)."""
     parts = [f"Entity: {node.get('name', 'Unknown')}"]
     kind = node.get("type")
-    if isinstance(kind, list):  # a graph value_map not unwrapped
-        kind = kind[0] if kind else None
     if kind and isinstance(kind, str):
         parts.append(f"Type: {kind}")
     parts.append(f"Description: {node.get('description', 'N/A')}")
@@ -223,9 +220,8 @@ def entity_content(node: dict[str, Any], path_names: list[str]) -> str:
 
 
 def _text_unit_ids(result: RetrievalResult) -> list[str]:
-    """The ``text_unit_ids`` a result cites (a graph store unwraps one to a str)."""
-    ids = (result.metadata or {}).get("text_unit_ids") or []
-    return [str(ids)] if isinstance(ids, str) else [str(i) for i in ids]
+    """The ``text_unit_ids`` a result cites."""
+    return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
 class BaseGraphRAGRetriever(BaseRetriever, ABC):
@@ -376,7 +372,10 @@ class BaseSearchStrategy(ABC):
     # per-section budgets the same way (top_k_entities and
     # top_k_relationships 10). The floor keeps enough of each type at a small
     # top_k. What the context then holds of each type is
-    # search.token_manager.type_budgets.
+    # search.token_manager.type_budgets. Only the entity and relationship
+    # floors follow upstream; the text, community and claim values are
+    # unmeasured choices (no A/B in docs/concepts/defaults-and-evidence.md),
+    # so a change needs one.
     TYPE_QUOTA: ClassVar[dict[SectionType, tuple[float, int]]] = {
         SectionType.TEXT: (2.0, 20),
         SectionType.ENTITY: (1.0, 10),
@@ -642,14 +641,18 @@ class BaseSearchStrategy(ABC):
     def _text_unit_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
         """The keys of ``filters`` that narrow the text units (every key the
         text-units index declares but ``id``, which ``_ids_allowed`` applies):
-        document filters, ``n_tokens`` ranges and the like."""
-        declared = opensearch_filter_fields(
-            *self.config.processing.translation.translated_languages
-        )["text_units"]
+        document filters, ``n_tokens`` ranges and the like. Declared by the
+        document retriever, which may be another backend's; one without a
+        schema declares every key."""
+        keys = {k: v for k, v in (filters or {}).items() if k != "id"}
+        documents = self.document_retriever
+        if not keys or documents is None:
+            return keys
+        declared = documents.filter_fields_for(
+            [self.config.indexing.opensearch.text_units_index_prefix]
+        )
         return {
-            k: v
-            for k, v in (filters or {}).items()
-            if k != "id" and declared.declares(k)
+            k: v for k, v in keys.items() if declared is None or declared.declares(k)
         }
 
     @staticmethod

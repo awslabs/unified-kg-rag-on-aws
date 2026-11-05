@@ -2089,6 +2089,74 @@ Deployment (CDK).
   performance log group, the storage stack's two Lambda log groups and the
   `INACTIVE` task-definition revisions) and the commands that delete them
   (#562).
+- An entity hit from the entities index reached the answer prompt as
+  `Description: ...`, a blank line, `Title: X`, a blank line, `Type: T`,
+  and the context joined items with one newline, so under `mix`, `hybrid`,
+  `simple`, `local` and `drift` the next entity's description read as this
+  one's title (relationships too: the description sat a blank line below
+  its endpoints, right above the next relationship). An entity hit renders
+  as the graph walk does (`Entity: X`, `Type: T`, `Description: ...`), a
+  hit's lines are no longer split by blank lines and the context separates
+  items with one (#567).
+- An entity reached by graph expansion showed no type: neither the Gremlin
+  projection nor the SQLite graph's read its `type`. Both project it now,
+  and a one-element `text_unit_ids` or `community_ids` comes back as a list
+  from either store, as from the entities index (#567).
+- Local search's chunk filter check and global search's step-down to a
+  shallower cut read the OpenSearch index schema whatever the document
+  retriever was: a custom backend's own filter keys never narrowed the
+  chunks or kept the cut, and a backend without a schema had its keys
+  dropped. Both ask the document retriever (`filter_fields_for`); one
+  without a schema declares every key (#567).
+- Global search's map calls ran in a worker thread, so a query past
+  `search.query_timeout_seconds` or a closed chain left them running and
+  kept starting the queued ones, each a billed model call (all 10 of 10
+  batches started after a deadline that cancelled the query at 4). They
+  are awaited on the event loop now, at most `search.max_concurrency` at
+  a time, as DRIFT's: a deadline cancels the calls in flight and starts no
+  other. A map call is bounded by the model client's timeout
+  (`search.model_timeout_seconds`) and the query deadline; the 300 s
+  per-call ceiling and its "map call gave up after" error are gone (#567).
+- Dynamic community selection read a rating with `float()` of the whole
+  answer: `8/10`, `Score: 2` or a number followed by a reason became the
+  default 5, `nan` became NaN, which no threshold drops, and `85` stood
+  above every 1-10 rating. A rating is its answer's first number, clamped
+  to 1-10; an answer without one keeps its report unrated (as a failed
+  rating does), is recorded in `degraded_error` and counted in
+  `global_unrated_report_count` (new search metadata) (#567).
+- Under `processing.ignore_errors`, a fatal model error (no access to the
+  model) in global search's map or reduce step degraded to an answer from
+  the unrated reports; it fails the query, as in DRIFT and the dynamic
+  selection. An OpenSearch search of a missing index whose ingested-suffix
+  check could not reach the store skipped the index; a store that cannot
+  be reached fails the query there too (#567).
+- A query was translated into `processing.translation.target_language`
+  when the translation stage was disabled and the languages differed, so a
+  corpus indexed untranslated was searched in another language (one extra
+  model call a query, and lexical recall lost). The query is translated only
+  when ingestion translates, or when the caller asks for a language
+  (`RAGInput.target_language`) (#567).
+- DRIFT's primer answers reached the answer model, but the community
+  reports they were written from did not, so an answer resting on a primer
+  answer cited no source for it. Each primer fold's reports are its
+  answer's evidence now, fused and reported with the actions' local search
+  results (#567).
+- With the output guardrail check on (`check_output`), the model-written
+  search results (DRIFT's intermediate answers, global search's key points
+  or summary, marked `synthesized`) were returned in `search_results` by
+  `ainvoke` and `asearch` unscreened. Each is screened as the answer is (one
+  ApplyGuardrail call each): masked, or dropped when refused (#567).
+- MMR diversity (`search.fusion.diversity_lambda` below 1) measured
+  redundancy over whitespace words, and an unspaced Japanese or Chinese
+  passage is one: a near-duplicate differing by one appended word shared
+  nothing with its original and was kept over a distinct passage. A word
+  holding a Han, Hangul or Kana letter is compared by its character bigrams
+  now; spaced text is compared as before (#567).
+- Weighted fusion (`search.fusion.method: weighted`) scored a stream's only
+  hit (or hits of equal score) 0.5, so the best hit of a one-hit stream
+  ranked below another stream's best (a LightRAG linked chunk below the
+  vector chunks' top one); it scores 1.0, as the hybrid search's own
+  normalization does (#567).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

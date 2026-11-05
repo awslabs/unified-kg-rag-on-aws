@@ -1084,3 +1084,99 @@ def test_no_context_means_no_grounding_reference() -> None:
     # not screened at all.
     for context in ("", "   ", EMPTY_CONTEXT_PLACEHOLDER):
         assert chain._grounding_context({"context": context}) is None
+
+
+class _SynthesizingRetriever(_Retriever):
+    """Retrieved corpus text plus two model-written (``synthesized``) results,
+    as DRIFT's intermediate answers and global search's key points are."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        retrieved = await super().aretrieve(query)
+        return retrieved + [
+            RetrievalResult(
+                content=content,
+                score=0.8,
+                source=source,
+                retriever_type="general",
+                metadata={"id": source, "synthesized": True, "text_unit_ids": []},
+            )
+            for source, content in (
+                ("synth-refused", "Intermediate answer: FORBIDDEN detail"),
+                ("synth-masked", "Intermediate answer: mail a@example.com"),
+            )
+        ]
+
+
+class _ScreeningGuard(_RecordingGuard):
+    """Refuses an output naming FORBIDDEN, masks an email address."""
+
+    async def acheck(
+        self, text: str, source: GuardSource, **kwargs: Any
+    ) -> GuardVerdict:
+        await super().acheck(text, source, **kwargs)
+        if source is GuardSource.OUTPUT and "FORBIDDEN" in text:
+            return GuardVerdict(
+                action=GuardAction.BLOCKED,
+                text=_REFUSAL,
+                policies=["contentPolicy:MISCONDUCT"],
+            )
+        if source is GuardSource.OUTPUT and "a@example.com" in text:
+            return GuardVerdict(
+                action=GuardAction.MASKED,
+                text=text.replace("a@example.com", "{EMAIL}"),
+                policies=["sensitiveInformationPolicy:EMAIL"],
+            )
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+@pytest.mark.parametrize("search", [False, True])
+async def test_model_written_results_are_screened_with_the_answer(
+    search: bool,
+) -> None:
+    # Regression: with check_output on, DRIFT's intermediate answers and
+    # global search's key points (synthesized model output) came back in the
+    # search results unscreened, from ainvoke and asearch alike.
+    guard, retriever = _ScreeningGuard(), _SynthesizingRetriever()
+    chain = GraphRAGChain(
+        config=_guarded_config(),
+        model_factory=_Factory(),
+        retriever_builders={
+            RetrieverRole.DOCUMENT: lambda: retriever,
+            RetrieverRole.GRAPH: lambda: retriever,
+        },
+        guard=guard,
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    chain.memory_manager = _Memory()  # type: ignore[assignment]
+
+    output = await (chain.asearch if search else chain.ainvoke)(_input())
+
+    contents = {r.source: r.content for r in output.search_results.results}
+    assert "synth-refused" not in contents
+    assert contents["synth-masked"] == "Intermediate answer: mail {EMAIL}"
+    assert contents["doc-1"] == "Vendor and Buyer signed the supply agreement."
+    assert output.search_results.total_results == len(contents)
+    screened = [text for text, source, _ in guard.calls if source is GuardSource.OUTPUT]
+    assert "Vendor and Buyer signed the supply agreement." not in screened
+    assert [r["action"] for r in output.metadata["guardrail"]] == ["blocked", "masked"]
+
+
+async def test_model_written_results_are_not_screened_without_the_output_check() -> (
+    None
+):
+    guard, retriever = _ScreeningGuard(), _SynthesizingRetriever()
+    chain = GraphRAGChain(
+        config=_guarded_config(check_output=False),
+        model_factory=_Factory(),
+        retriever_builders={
+            RetrieverRole.DOCUMENT: lambda: retriever,
+            RetrieverRole.GRAPH: lambda: retriever,
+        },
+        guard=guard,
+    )
+    output = await chain.asearch(_input())
+    assert {r.source for r in output.search_results.results} >= {
+        "synth-refused",
+        "synth-masked",
+    }
+    assert all(source is GuardSource.INPUT for _, source, _ in guard.calls)

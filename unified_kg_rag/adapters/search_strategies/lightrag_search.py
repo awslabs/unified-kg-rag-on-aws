@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """LightRAG dual-level keyword search strategy.
 
-Implements LightRAG's local/global/hybrid/mix/naive retrieval on top of
-unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduced path:
+Implements LightRAG's ``mix``, ``hybrid`` and ``naive`` retrieval modes (the
+ones registered; LightRAG's ``local`` and ``global`` are not: ``hybrid``
+runs both levels) on top of unified-kg-rag-on-aws's *shared* infrastructure
+rather than as a separate, reduced path:
 
 - low-level keywords (``ll_keywords``) -> entities index (lexical + vector),
 - high-level keywords (``hl_keywords``) -> relationships index (lexical + vector),
@@ -544,14 +546,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         for result in results:
             metadata = result.metadata or {}
             unit_ids = metadata.get("text_unit_ids")
-            # Neptune's `_clean_property_map` unwraps a
-            # single-element value_map list into a bare scalar, so an entity or
-            # relationship whose lineage is exactly ONE chunk arrives as a str.
-            # The old `isinstance(..., list)` guard skipped those outright,
-            # discarding precisely the most specific (single-document) bridge
-            # items — the ones multi-hop questions hinge on.
-            if isinstance(unit_ids, str):
-                unit_ids = [unit_ids]
             if not isinstance(unit_ids, list):
                 continue
             lineage = sorted(

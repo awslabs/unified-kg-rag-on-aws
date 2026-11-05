@@ -359,7 +359,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         degraded: list[str],
     ) -> list[_Answer]:
         """One intermediate answer per fold of the primer reports, at most
-        ``search.max_concurrency`` folds at a time (as the actions)."""
+        ``search.max_concurrency`` folds at a time (as the actions), each
+        citing its fold's reports."""
         folds = self._folds(reports, self.drift_config.primer_folds)
 
         async def prime(fold: list[RetrievalResult]) -> _Answer | Exception | None:
@@ -382,11 +383,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if not payload:
                 logger.warning("DRIFT primer returned no JSON; fold skipped")
                 return None
+            # The fold's reports are the answer's evidence, as an action's
+            # local search results are: the primer answer reaches the answer
+            # model, so the reports it was written from are its sources.
             return _Answer(
                 query=query.query,
                 text=str(payload.get("intermediate_answer", "")).strip(),
                 score=_score(payload.get("score", 0)),
                 follow_ups=_follow_ups(payload),
+                evidence=list(fold),
             )
 
         primed = await gather_or_cancel(prime(fold) for fold in folds)

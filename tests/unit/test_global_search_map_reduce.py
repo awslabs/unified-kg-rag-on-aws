@@ -14,9 +14,8 @@ Bedrock ``__init__`` never runs, and chains are replaced with fakes / mocks.
 
 from __future__ import annotations
 
+import asyncio
 import json
-import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -24,13 +23,11 @@ from unittest.mock import AsyncMock
 import pytest
 from botocore.exceptions import ClientError
 
-from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED
 from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
-from unified_kg_rag.shared import LanguageModelTimeoutError
 
 pytestmark = pytest.mark.unit
 
@@ -50,16 +47,23 @@ def _communities(n: int) -> list[RetrievalResult]:
 
 
 class _SyncMapChain:
-    """Stub map chain exposing .invoke (called per item by BatchProcessor)."""
+    """Stub map chain: ``.ainvoke`` answers through ``.invoke``."""
 
-    def __init__(self, outputs: list[str]) -> None:
-        # outputs are returned in call order, one per input dict.
+    def __init__(self, outputs: list[str | Exception]) -> None:
+        # outputs are returned (an exception raised) in call order, one per
+        # input dict.
         self._outputs = list(outputs)
         self.batch_inputs: list[dict] = []
 
     def invoke(self, single_input: dict, config: Any = None) -> str:
         self.batch_inputs.append(single_input)
-        return self._outputs.pop(0) if self._outputs else ""
+        output = self._outputs.pop(0) if self._outputs else ""
+        if isinstance(output, Exception):
+            raise output
+        return output
+
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        return self.invoke(single_input, config)
 
 
 def _reducer(return_value: str) -> Any:
@@ -108,7 +112,7 @@ def _strategy(
     max_map_reduce_tokens: int = 8000,
     map_reduce_min_results: int = 1,
     ignore_errors: bool = True,
-    map_outputs: list[str] | None = None,
+    map_outputs: list[str | Exception] | None = None,
     reducer: Any = None,
     token_cost: int = 10,
     reduce_with_llm: bool = False,
@@ -139,10 +143,7 @@ def _strategy(
     )
     strat.token_manager = _TokenCounter(cost=token_cost)
     # The stub assigns outputs in call order, so run the map calls serially.
-    # Concurrency and result ordering have dedicated BatchProcessor tests.
-    from unified_kg_rag.adapters.llm.langchain import BatchProcessor
-
-    strat.batch_processor = BatchProcessor(max_concurrency=1)
+    strat.max_concurrency = 1
     return strat
 
 
@@ -169,10 +170,10 @@ async def test_map_phase_produces_scored_points() -> None:
 
 async def test_map_phase_reports_unrated_batches() -> None:
     # Batch 0 is rated (even with no points); batch 1 is unparseable; batch 2
-    # failed (marked BATCH_ITEM_FAILED). Only 1 and 2 are unrated.
+    # failed. Only 1 and 2 are unrated.
     strat = _strategy(
         map_batch_size=1,
-        map_outputs=[json.dumps({"points": []}), "not json", BATCH_ITEM_FAILED],  # type: ignore[list-item]
+        map_outputs=[json.dumps({"points": []}), "not json", TimeoutError("t")],
     )
     communities = _communities(3)
     points, unrated = await strat._run_map_phase(
@@ -426,7 +427,7 @@ async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() 
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
-        map_outputs=[_map_payload(("low", 0)), BATCH_ITEM_FAILED],  # type: ignore[list-item]
+        map_outputs=[_map_payload(("low", 0)), TimeoutError("throttled")],
         reducer=reducer,
         reduce_with_llm=True,
     )
@@ -632,10 +633,12 @@ class _DeniedMapChain:
     def invoke(self, single_input: dict, config: Any = None) -> str:
         raise self.error
 
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        return self.invoke(single_input, config)
+
 
 async def test_map_phase_fatal_error_propagates_when_not_ignored() -> None:
     strat = _strategy(ignore_errors=False, map_batch_size=1)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(
         ClientError(
             {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
@@ -671,7 +674,6 @@ async def test_map_phase_one_overflowing_batch_is_left_unrated() -> None:
     # Regression: Bedrock raises a too-long prompt as a ValidationException,
     # which failed the whole query; the other batches still rate.
     strat = _strategy(ignore_errors=False, map_batch_size=1)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _OverflowingFirstReport(
         [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
     )
@@ -710,7 +712,6 @@ async def test_map_phase_a_vllm_overflow_leaves_the_batch_unrated() -> None:
     # context, which LangChain does not map to ContextOverflowError, so one
     # long batch failed the whole query.
     strat = _strategy(ignore_errors=False, map_batch_size=1)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _VllmOverflowingFirstReport(
         [_map_payload((f"point {i}", 50)) for i in (1, 2, 3)]
     )
@@ -729,7 +730,6 @@ async def test_map_phase_a_400_on_every_batch_fails_the_query() -> None:
     import openai
 
     strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(_bad_request("Unknown parameter: 'top_k'"))
     with pytest.raises(openai.BadRequestError, match="top_k"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
@@ -751,24 +751,42 @@ async def test_map_phase_a_typed_overflow_on_every_batch_answers() -> None:
         body=None,
     )
     strat = _strategy(ignore_errors=False, map_batch_size=5, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(overflow)
     out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
     assert out[0].content == "SYNTHESIZED ANSWER"
     assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
 
 
-async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
+async def test_map_phase_fatal_error_raises_even_when_ignored() -> None:
+    # As DRIFT's: a model the caller cannot access fails the query, where
+    # ignore_errors answered from the unrated reports.
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(
         ClientError(
             {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
             "InvokeModel",
         )
     )
-    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
-    assert out  # degraded to concat-and-reduce over the unrated reports
+    with pytest.raises(ClientError, match="AccessDenied"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+@pytest.mark.parametrize("path", ["points", "concat"])
+async def test_a_fatal_reduce_error_raises_even_when_ignored(path: str) -> None:
+    denied = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": "no access"}},
+        "Converse",
+    )
+    reducer = SimpleNamespace(ainvoke=AsyncMock(side_effect=denied))
+    strat = _strategy(ignore_errors=True, reducer=reducer, reduce_with_llm=True)
+    query = SearchQuery(query="q")
+    with pytest.raises(ClientError, match="AccessDenied"):
+        if path == "points":
+            await strat._reduce_from_points(
+                [_MapPoint("point", 80)], _communities(2), query
+            )
+        else:
+            await strat._concat_reduce(_communities(2), query)
 
 
 async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> None:
@@ -776,7 +794,6 @@ async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> Non
     # retries, timing out) degraded silently to an answer from the unjudged
     # reports; DRIFT raises the first error when a whole step fails.
     strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
     with pytest.raises(TimeoutError, match="read timed out"):
         await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
@@ -784,7 +801,6 @@ async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> Non
 
 async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
     degraded: list[str] = []
     out = await strat._apply_map_reduce(
@@ -795,38 +811,37 @@ async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
 
 
 class _HangingMapChain:
-    """Map chain whose calls outlast BatchProcessor's call timeout."""
+    """Map chain whose calls never answer; records each call it starts."""
 
-    def invoke(self, single_input: dict, config: Any = None) -> str:
-        time.sleep(2.5)
+    def __init__(self) -> None:
+        self.started = 0
+        self.cancelled = 0
+
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        self.started += 1
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
         return _map_payload(("late", 50))
 
 
 @pytest.mark.timeout(30)
-async def test_map_phase_timing_out_on_every_batch_raises_when_not_ignored() -> None:
-    # Regression: a call BatchProcessor abandons at call_timeout_seconds
-    # never raises inside sequential_func, so an all-timeout map phase
-    # recorded no error and answered from the unjudged reports.
-    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1
-    strat.batch_processor.call_timeout_seconds = 1
+async def test_a_deadline_cancels_the_map_calls_and_starts_no_more() -> None:
+    # Regression: the map calls ran in a worker thread (BatchProcessor), so a
+    # query deadline or a closed chain left them running and the queued ones
+    # kept starting, each a billed model call, after the query had failed.
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.max_concurrency = 2
     strat.map_rater = _HangingMapChain()
-    with pytest.raises(LanguageModelTimeoutError, match="gave up after 1s"):
-        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
-
-
-@pytest.mark.timeout(30)
-async def test_map_phase_timeouts_are_recorded_as_timeouts() -> None:
-    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
-    strat.batch_processor.max_attempts = 1
-    strat.batch_processor.call_timeout_seconds = 1
-    strat.map_rater = _HangingMapChain()
-    degraded: list[str] = []
-    out = await strat._apply_map_reduce(
-        _communities(2), SearchQuery(query="q"), degraded=degraded
-    )
-    assert out
-    assert degraded == ["LanguageModelTimeoutError"]
+    batches = _batches(strat, _communities(10))
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await strat._run_map_phase(batches, SearchQuery(query="q"))
+    await asyncio.sleep(0.3)
+    assert strat.map_rater.started == 2  # type: ignore[attr-defined]
+    assert strat.map_rater.cancelled == 2  # type: ignore[attr-defined]
 
 
 class _TimingOutFirstReport(_SyncMapChain):
@@ -840,7 +855,6 @@ async def test_map_phase_unrated_batches_are_recorded_as_degraded() -> None:
     # Regression: a failed or unparseable map batch left no trace in the
     # search metadata (degraded_error) or the strategy span.
     strat = _strategy(ignore_errors=False, map_batch_size=1)
-    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
     strat.map_rater = _TimingOutFirstReport([_map_payload(("point", 50))])
     degraded: list[str] = []
     points, unrated = await strat._run_map_phase(
@@ -871,23 +885,19 @@ class _SlowMapChain:
         self.max_active = 0
         self._target = target
         self._timeout = timeout
-        self._cond = threading.Condition()
+        self._met = asyncio.Event()
 
-    def batch(
-        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
-    ) -> list[str]:
-        with self._cond:
-            self.active += len(inputs)
-            self.max_active = max(self.max_active, self.active)
-            self._cond.notify_all()
-            self._cond.wait_for(
-                lambda: self.max_active >= self._target, timeout=self._timeout
-            )
-            self.active -= len(inputs)
-        return [_map_payload(("p", 50))] * len(inputs)
-
-    def invoke(self, single_input: dict, config: Any = None) -> str:
-        return self.batch([single_input])[0]
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        if self.max_active >= self._target:
+            self._met.set()
+        try:
+            await asyncio.wait_for(self._met.wait(), self._timeout)
+        except TimeoutError:
+            pass
+        self.active -= 1
+        return _map_payload(("p", 50))
 
 
 async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:

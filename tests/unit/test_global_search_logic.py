@@ -14,15 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Collection
 from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
 
-from unified_kg_rag.adapters.llm.langchain import BatchProcessor
+from tests.fixtures.fakes.retrievers import opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     attach_report_hierarchy,
     max_cut_depth,
@@ -110,6 +111,9 @@ class _ReportStore:
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits(max_result_window=self.window)
 
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return opensearch_fields_for(Config(), prefixes)
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         if query.index_prefixes != [REPORTS_PREFIX]:
@@ -151,6 +155,9 @@ class _MapChain:
         self.configs.append(config)
         self.reports.append(single_input["reports"])
         return json.dumps({"points": [{"description": "a point", "score": 50}]})
+
+    async def ainvoke(self, single_input: dict, config: Any = None) -> str:
+        return self.invoke(single_input, config)
 
 
 class _Rater:
@@ -197,7 +204,6 @@ def _strategy(
     strat.hybrid_scorer = HybridScorer(config)
     strat.token_manager = _Tokens()  # type: ignore[assignment]
     strat.map_rater = _MapChain()
-    strat.batch_processor = BatchProcessor(max_concurrency=1, max_attempts=1)
     return strat
 
 
@@ -335,6 +341,36 @@ async def test_a_text_unit_filter_over_the_cap_still_steps_down(key: str) -> Non
     assert result.metadata["global_level_capped"] is False
 
 
+async def test_the_report_keys_are_the_document_retrievers() -> None:
+    # Regression: the step-down read the OpenSearch reports schema whatever
+    # the document retriever was: a backend declaring a report key of its
+    # own mapped a shallower cut its filter does not pass, one without a
+    # schema (every key) likewise.
+    class _Declaring(_ReportStore):
+        def __init__(self, declared: FilterFields | None) -> None:
+            super().__init__(_documents())
+            self.declared = declared
+
+        def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields | None:
+            return self.declared
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            filters = {k: v for k, v in (query.filters or {}).items() if k != "tier"}
+            return await super().aretrieve(
+                query.model_copy(update={"filters": filters})
+            )
+
+    for declared in (FilterFields(frozenset({"tier"})), None):
+        strat = _strategy(_Declaring(declared), max_reports_per_level=3)
+        result = await strat.asearch(
+            SearchQuery(query="themes", filters={"tier": "gold"})
+        )
+        assert result.metadata["global_level_capped"] is True, declared
+    strat = _strategy(_Declaring(FilterFields(frozenset())), max_reports_per_level=3)
+    result = await strat.asearch(SearchQuery(query="themes", filters={"tier": "gold"}))
+    assert result.metadata["global_cut_depth"] == 1
+
+
 async def test_a_live_window_below_the_cap_bounds_it() -> None:
     # Regression: the cap followed max_query_size only. Under a reports
     # index created with max_result_window 4, the probe for 100 got 4 of the
@@ -385,7 +421,6 @@ def test_the_fan_out_uses_the_search_concurrency() -> None:
     config.processing.max_concurrency = 40
     strat = GlobalSearchStrategy(config, {})
     assert strat.max_concurrency == 3
-    assert strat.batch_processor.max_concurrency == 3
 
 
 async def test_the_cap_leaves_the_probe_room_in_the_store_page() -> None:
@@ -638,6 +673,21 @@ async def test_a_failed_rating_keeps_the_report_under_ignore_errors() -> None:
     # Every rating failed, so every report counts as relevant: the leaves.
     assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
     assert result.metadata["degraded_error"] == "TimeoutError"
+
+
+async def test_a_rating_without_a_number_keeps_the_report_and_is_recorded() -> None:
+    class _Unrated(_Rater):
+        async def ainvoke(self, inputs: dict, config: Any = None) -> str:
+            await super().ainvoke(inputs, config)
+            return "nan"
+
+    strat = _strategy(use_dynamic_selection=True)
+    strat.community_relevance_scorer = _Unrated(set())
+    result = await strat.asearch(SearchQuery(query="themes"))
+    # Kept unrated, as a failed rating is: down to the leaves.
+    assert _mapped(strat) == {"A1", "A2", "B", "C1", "C2"}
+    assert result.metadata["degraded_error"] == "LanguageModelError"
+    assert result.metadata["global_unrated_report_count"] == 9
 
 
 async def test_every_rating_of_a_step_failing_raises_without_ignore_errors() -> None:

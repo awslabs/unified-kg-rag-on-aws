@@ -10,6 +10,7 @@ the ranked points, packed into a token budget, are the answer context.
 
 import asyncio
 import math
+import re
 import time
 from typing import Any
 
@@ -18,7 +19,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.adapters.llm.langchain import BatchProcessor
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -30,7 +30,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import register_strateg
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     document_filters,
-    opensearch_filter_fields,
 )
 from unified_kg_rag.adapters.store_errors import is_bad_request
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
@@ -53,7 +52,6 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,
-    LanguageModelTimeoutError,
     get_logger,
     observability,
 )
@@ -86,6 +84,10 @@ class _MapPoint:
         self.score = score
         self.batch = batch
         self.report_ids = report_ids or []
+
+
+# A rating's number: the first one in the answer.
+_FIRST_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
 def _record(degraded: list[str] | None, error: Exception) -> None:
@@ -143,13 +145,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
             custom_prompts=config.custom_prompts,
-        )
-        # One prepared input per map LLM call (each input packs up to
-        # ``map_context_tokens`` of reports), max_concurrency of them in
-        # flight. The map chain already retries transient Bedrock errors as a
-        # query chain, so BatchProcessor calls each input once (max_attempts=1).
-        self.batch_processor = BatchProcessor(
-            max_concurrency=config.search.max_concurrency, max_attempts=1
         )
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
@@ -416,14 +411,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         depth = self.global_search_config.community_depth
         label = "Community report cut"
         # A key only the text units declare (text_unit_slots) leaves the
-        # reports alone.
-        declared = opensearch_filter_fields(
-            *self.config.processing.translation.translated_languages
-        )["community_reports"]
+        # reports alone. Declared by the document retriever; one without a
+        # schema declares every key.
         filters = query.filters or {}
+        report_keys = set(filters) - set(document_filters(filters))
+        declared = (
+            documents.filter_fields_for(
+                [self.config.indexing.opensearch.community_reports_index_prefix]
+            )
+            if report_keys and (documents := self.document_retriever) is not None
+            else None
+        )
         step_down = not any(
-            declared.declares(key)
-            for key in set(filters) - set(document_filters(filters))
+            declared is None or declared.declares(key) for key in report_keys
         )
         with observability.span("kg_rag.global.select", depth=depth) as span:
             first, complete = await self._browse_reports(
@@ -481,6 +481,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         semaphore = asyncio.Semaphore(self.max_concurrency)
         relevant: dict[str, tuple[float, int, RetrievalResult]] = {}
         rated = 0
+        unrated = 0
         depth = 0
         with observability.span(
             "kg_rag.global.select", depth=max_depth, dynamic=True
@@ -514,6 +515,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     if isinstance(outcome, Exception):
                         logger.warning("Community rating failed: %s", outcome)
                         _record(degraded, outcome)
+                        unrated += 1
+                    elif outcome is None:
+                        logger.warning(
+                            "Community rating held no number; report %s kept "
+                            "unrated",
+                            report.source,
+                        )
+                        _record(
+                            degraded,
+                            LanguageModelError("community rating not a number"),
+                        )
+                        unrated += 1
                     elif not isinstance(outcome, BaseException):
                         score = outcome
                     if score < threshold:
@@ -541,6 +554,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 {"kg_rag.rated_reports": rated, "kg_rag.reports": len(relevant)}
             )
         stats["global_rated_report_count"] = rated
+        stats["global_unrated_report_count"] = unrated
         logger.info(
             "Dynamic community selection rated %s reports, kept %s",
             rated,
@@ -557,14 +571,23 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         semaphore: asyncio.Semaphore,
         *,
         config: RunnableConfig | None = None,
-    ) -> float:
-        """The report's relevance to the query on a 0-1 scale (rating / 10)."""
+    ) -> float | None:
+        """The report's relevance to the query on a 0-1 scale (rating / 10),
+        ``None`` when the answer holds no number.
+
+        The prompt asks for a bare 1-10 rating; a model that writes "8/10",
+        "Score: 2" or a reason after the number is read by its first number,
+        clamped to 1-10 (an "85" read as a percentage is still the top
+        rating). A float() of the whole answer read each of those as the
+        default 5 and "nan" as NaN, which no threshold drops."""
         async with semaphore:
             llm_output = await self.community_relevance_scorer.ainvoke(
                 {"community_summary": report.content, "query": query.query}, config
             )
-        parsed = safe_float_parse(llm_output, default_value=5.0)
-        return (parsed / 10.0) if parsed is not None else 0.0
+        found = _FIRST_NUMBER.search(str(llm_output))
+        if found is None:
+            return None
+        return min(max(float(found.group()), 1.0), 10.0) / 10.0
 
     @staticmethod
     def _community_id(report: RetrievalResult) -> str:
@@ -714,7 +737,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     batches, query, config=config, degraded=degraded
                 )
         except Exception as e:
-            if not self.ignore_errors:
+            # A fatal error (no model access) fails the query even under
+            # ignore_errors, as DRIFT's.
+            if not self.ignore_errors or is_fatal_retrieval_error(e):
                 raise
             logger.error("Map phase failed: %s", e)
             _record(degraded, e)
@@ -843,34 +868,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan one map call per batch of reports and parse the scored points.
 
-        BatchProcessor runs the calls concurrently with graceful per-item
-        fallback. Returns the scored points (each tagged with its batch) and
-        the reports of every batch that was NOT rated (the call failed, or its
-        output was not parseable map JSON), so the caller can tell "rated
-        irrelevant" apart from "never rated". An unrated batch is recorded in
+        At most ``search.max_concurrency`` calls run at once, each awaited on
+        the event loop, so a query deadline or a closed chain cancels the
+        calls in flight and starts none of those still queued (as DRIFT's).
+        Returns the scored points (each tagged with its batch) and the reports
+        of every batch that was NOT rated (the call failed, or its output was
+        not parseable map JSON), so the caller can tell "rated irrelevant"
+        apart from "never rated". An unrated batch is recorded in
         ``degraded``; when every map call failed (other than on a prompt
         longer than the model's context) and ``ignore_errors`` is off, the
         first error is raised (as DRIFT does when a step fails entirely), not
         answered from the unjudged reports.
         """
-
-        def prepare_inputs(
-            batches: list[list[RetrievalResult]],
-        ) -> list[dict[str, Any]]:
-            return [
-                {
-                    "query": query.query,
-                    "reports": self._format_reports(batch),
-                    "target_language": self.target_language,
-                }
-                for batch in batches
-            ]
-
-        # BatchProcessor turns an item that failed every attempt into
-        # BATCH_ITEM_FAILED, and every attempt runs through sequential_func,
-        # so fatal errors are recorded there: a model the
-        # caller cannot access must fail the query, not degrade it to
-        # "unrated" and an answer from the raw reports.
+        # A model the caller cannot access must fail the query, not degrade it
+        # to "unrated" and an answer from the raw reports.
         fatal_errors: list[Exception] = []
         # A 400 leaves its batch unrated (a vLLM/llama.cpp overflow), but one
         # every batch got is the model refusing the request (an unsupported
@@ -879,38 +890,38 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         bad_requests: list[Exception] = []
         errors: list[Exception] = []
 
-        def sequential_func(single_input: dict[str, Any]) -> str:
+        async def rate(batch: list[RetrievalResult]) -> str | None:
+            # The map chain already retries transient model errors as a query
+            # chain, so each batch is called once.
             try:
-                return str(self.map_rater.invoke(single_input, config))
+                return str(
+                    await self.map_rater.ainvoke(
+                        {
+                            "query": query.query,
+                            "reports": self._format_reports(batch),
+                            "target_language": self.target_language,
+                        },
+                        config,
+                    )
+                )
             except Exception as e:
                 errors.append(e)
                 if is_bad_request(e):
                     bad_requests.append(e)
                 elif is_fatal_retrieval_error(e):
                     fatal_errors.append(e)
-                raise
+                return None
 
-        raw_outputs = await asyncio.to_thread(
-            self.batch_processor.execute_with_fallback,
-            items_to_process=report_batches,
-            prepare_inputs_func=prepare_inputs,
-            sequential_func=sequential_func,
-            task_name="global_search_map",
-            show_progress=False,
+        raw_outputs = await gather_bounded(
+            self.max_concurrency, (rate(batch) for batch in report_batches)
         )
         if fatal_errors:
             raise fatal_errors[0]
 
         points: list[_MapPoint] = []
         unrated: list[RetrievalResult] = []
-        failed = 0
-        for i, batch in enumerate(report_batches):
-            raw = raw_outputs[i] if i < len(raw_outputs) else None
-            failed += not isinstance(raw, str)
-            # A failed item is BATCH_ITEM_FAILED, not a string.
-            batch_points = (
-                self._parse_map_payload(raw) if isinstance(raw, str) and raw else None
-            )
+        for i, (batch, raw) in enumerate(zip(report_batches, raw_outputs, strict=True)):
+            batch_points = self._parse_map_payload(raw) if raw else None
             if batch_points is None:
                 unrated.extend(batch)
                 continue
@@ -920,20 +931,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         report_count = sum(len(batch) for batch in report_batches)
         if bad_requests and len(unrated) == report_count:
             raise bad_requests[0]
-        # A call BatchProcessor gave up on after call_timeout_seconds never
-        # raised inside sequential_func: it fails without an error of its own.
-        timeout = LanguageModelTimeoutError(
-            "map call gave up after " f"{self.batch_processor.call_timeout_seconds}s"
-        )
         # A prompt too long for the model is that batch's own problem (it is
         # answered from its unrated reports); any other failure of every map
         # call is the model not answering.
         refusals = [e for e in errors if not isinstance(e, ContextOverflowError)]
-        if failed == len(report_batches) and not self.ignore_errors:
-            if refusals:
-                raise refusals[0]
-            if not errors:
-                raise timeout
+        if len(errors) == len(report_batches) and refusals and not self.ignore_errors:
+            raise refusals[0]
         if unrated:
             logger.warning(
                 "Global map phase left %s/%s reports unrated (failed or "
@@ -943,13 +946,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             _record(
                 degraded,
-                (
-                    errors[0]
-                    if errors
-                    else (
-                        timeout if failed else LanguageModelError("map output not JSON")
-                    )
-                ),
+                errors[0] if errors else LanguageModelError("map output not JSON"),
             )
         return points, unrated
 
@@ -1080,7 +1077,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 config,
             )
         except Exception as e:
-            if not self.ignore_errors:
+            # A fatal error (no model access) fails the query even under
+            # ignore_errors, as DRIFT's.
+            if not self.ignore_errors or is_fatal_retrieval_error(e):
                 raise
             logger.error("Map-reduce synthesis failed: %s", e)
             _record(degraded, e)
@@ -1138,7 +1137,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             return [summary_result] + results
         except Exception as e:
-            if not self.ignore_errors:
+            # A fatal error (no model access) fails the query even under
+            # ignore_errors, as DRIFT's.
+            if not self.ignore_errors or is_fatal_retrieval_error(e):
                 raise
 
             logger.error("Map-reduce synthesis failed: %s", e)

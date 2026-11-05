@@ -10,16 +10,17 @@ keyword lists, fusing through the shared scorer.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Collection
 
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from tests.fixtures.fakes.retrievers import FakeRetriever
+from tests.fixtures.fakes.retrievers import FakeRetriever, opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     _pick_by_weighted_polling,
 )
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -168,6 +169,9 @@ class LineageRetriever:
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
         return IndexLimits()
+
+    def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
+        return opensearch_fields_for(Config(), prefixes)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -353,18 +357,16 @@ async def test_per_source_failure_degrades_to_empty_not_crash(config: Config) ->
     assert result.results == []
 
 
-def test_collect_linked_chunk_ids_accepts_unwrapped_single_id() -> None:
-    # NeptuneRetriever._clean_property_map unwraps a single-element value_map list
-    # into a bare scalar, so a KG item whose lineage is exactly ONE chunk arrives
-    # with text_unit_ids as a str. The old isinstance(list) guard skipped those
-    # entirely, discarding the single-document bridge items multi-hop hinges on.
+def test_collect_linked_chunk_ids_follows_a_single_chunk_lineage() -> None:
+    # A KG item whose lineage is exactly ONE chunk (the single-document bridge
+    # items multi-hop hinges on) is followed like any other.
     uuid = "8c1f2a70-1111-2222-3333-444455556666"
     entity = RetrievalResult(
         content="e",
         score=1.0,
         source="e1",
         retriever_type="entity",
-        metadata={"text_unit_ids": uuid},
+        metadata={"text_unit_ids": [uuid]},
     )
     rel = RetrievalResult(
         content="r",

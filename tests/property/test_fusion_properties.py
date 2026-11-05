@@ -50,7 +50,8 @@ _SCORES = st.lists(
 
 @given(_SCORES)
 def test_normalization_is_min_max(scores: list[float]) -> None:
-    """Each score maps to (s - min) / (max - min), or 0.5 when all are equal.
+    """Each score maps to (s - min) / (max - min), or 1.0 when all are equal
+    (``SINGLE_RESULT_SCORE``, as the hybrid search's normalization).
 
     Checked against a reference, so a constant output (which would satisfy the
     bound and order properties alone) fails.
@@ -59,7 +60,7 @@ def test_normalization_is_min_max(scores: list[float]) -> None:
     results = [_result(f"i{i}", s) for i, s in enumerate(scores)]
     out = scorer._normalize_scores(results)
     low, high = min(scores), max(scores)
-    expected = [0.5 if high == low else (s - low) / (high - low) for s in scores]
+    expected = [1.0 if high == low else (s - low) / (high - low) for s in scores]
     assert [r.content for r in out] == [r.content for r in results]
     assert [r.score for r in out] == pytest.approx(expected)
 

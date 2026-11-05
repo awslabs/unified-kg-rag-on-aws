@@ -187,13 +187,11 @@ def test_filter_entities_missing_metadata_treated_as_zero() -> None:
     assert len(kept) == 1
 
 
-def test_filter_entities_counts_unwrapped_single_id_as_one() -> None:
-    # NeptuneRetriever._clean_property_map unwraps a single-element value_map list
-    # into a bare scalar, so an entity appearing in exactly ONE text unit arrives
-    # with text_unit_ids as a str. len() on that counted 36 CHARACTERS and dropped
-    # the entity — precisely the single-document bridge nodes multi-hop needs.
+def test_filter_entities_counts_a_single_unit_as_one() -> None:
+    # An entity in exactly ONE text unit: graph expansion keeps the lineage a
+    # list (`_LIST_PROPERTIES`), so it counts as one, not by its characters.
     uuid = "8c1f2a70-1111-2222-3333-444455556666"
-    nodes = [_result("single", metadata={"text_unit_ids": uuid})]
+    nodes = [_result("single", metadata={"text_unit_ids": [uuid]})]
     kept = LocalSearchStrategy._filter_entities(nodes, frequency_threshold=20)
     assert [n.source for n in kept] == ["single"]
 
@@ -527,10 +525,9 @@ def test_rank_text_unit_ids_breaks_ties_by_best_entity_score() -> None:
     assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["high", "low"]
 
 
-def test_rank_text_unit_ids_handles_unwrapped_single_id() -> None:
-    # Neptune unwraps a single-element value_map list into a bare str.
+def test_rank_text_unit_ids_handles_a_single_id() -> None:
     uuid = "8c1f2a70-1111-2222-3333-444455556666"
-    nodes = [_result("e1", score=0.5, metadata={"text_unit_ids": uuid})]
+    nodes = [_result("e1", score=0.5, metadata={"text_unit_ids": [uuid]})]
     assert LocalSearchStrategy._rank_text_unit_ids(nodes) == [uuid]
 
 

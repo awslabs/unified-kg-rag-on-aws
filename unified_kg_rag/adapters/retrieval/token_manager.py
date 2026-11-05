@@ -637,8 +637,11 @@ class TokenManager:
             items = grouped.get(stype)
             if not items:
                 continue
-            lines = [cls._section_header(stype)]
-            for s in items:
-                lines.append(cls._section_line(s.section_type, s.source_id, s.content))
-            blocks.append("\n".join(lines))
+            # A blank line between items: an entity, relationship or claim
+            # spans several lines and carries no "[id]" prefix, so a single
+            # newline ran one item's last line into the next one's first.
+            lines = [
+                cls._section_line(s.section_type, s.source_id, s.content) for s in items
+            ]
+            blocks.append(cls._section_header(stype) + "\n" + "\n\n".join(lines))
         return "\n\n".join(blocks).strip()

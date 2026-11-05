@@ -113,7 +113,7 @@ def _reports(results: list[RetrievalResult]) -> list[str]:
 _MEMBERS = [
     _entity("a", ["c-big"]),
     _entity("b", ["c-big", "c-tie"]),
-    _entity("c", "c-big"),  # a graph store unwraps one id to a str
+    _entity("c", ["c-big"]),  # one community: still a list (graph expansion)
     _entity("d", ["c-small"]),
     _entity("e", ["c-tie", "c-seed"]),
 ]

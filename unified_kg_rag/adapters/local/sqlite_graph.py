@@ -84,6 +84,7 @@ BATCH_SIZE = 400
 _NODE_KEYS = (
     "id",
     "name",
+    "type",
     "description",
     "rank",
     "text_unit_ids",

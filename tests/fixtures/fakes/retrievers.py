@@ -8,8 +8,15 @@ retriever's tag), so a test can tell which index a strategy searched.
 
 from __future__ import annotations
 
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from collections.abc import Collection
+
+from unified_kg_rag.adapters.storage.filter_schema import (
+    FilterFields,
+    IndexLimits,
+    opensearch_filter_fields,
+    union_filter_fields,
+)
+from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 
 
 class FakeRetriever:
@@ -42,3 +49,23 @@ class FakeRetriever:
                 metadata={"id": f"{prefix}-id", "text_unit_ids": []},
             )
         ]
+
+
+def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFields:
+    """The filter keys the OpenSearch indices of ``prefixes`` declare: what
+    ``OpenSearchRetriever.filter_fields_for`` answers, for a fake standing in
+    for it."""
+    o = config.indexing.opensearch
+    by_kind = opensearch_filter_fields(
+        *config.processing.translation.translated_languages
+    )
+    by_prefix = {
+        o.text_units_index_prefix: by_kind["text_units"],
+        o.entities_index_prefix: by_kind["entities"],
+        o.relationships_index_prefix: by_kind["relationships"],
+        o.claims_index_prefix: by_kind["claims"],
+        o.community_reports_index_prefix: by_kind["community_reports"],
+    }
+    return union_filter_fields(
+        fields for prefix, fields in by_prefix.items() if prefix in prefixes
+    )

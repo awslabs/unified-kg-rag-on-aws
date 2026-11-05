@@ -11,7 +11,11 @@ To create the guardrail with the CDK stack, see
 
 - **What is screened.** The raw user query, once, before memory, rewriting,
   routing and retrieval (`check_input`), and the final answer (`check_output`;
-  a streamed answer then arrives as one chunk). Only these are billed.
+  a streamed answer then arrives as one chunk). With `check_output`, the
+  model-written search results (`metadata.synthesized`: DRIFT's
+  intermediate answers, global search's key points or summary) are screened
+  too, one check each, a refused one dropped from `search_results`. Only
+  these are billed.
 - **What happens.**
   - A blocked query gets the guardrail's message, retrieves nothing, writes
     no memory and sets `RAGOutput.metadata.blocked`. A masked query continues

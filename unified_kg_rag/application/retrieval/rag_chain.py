@@ -770,9 +770,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The language the query is processed into, and whether its
         translation is skipped.
 
-        Translation is skipped when it would be a no-op: no explicit target
-        was requested AND the corpus is same-language (mirrors the ingestion
-        side's TranslationConfig.is_noop skip). This avoids paying an LLM
+        Translation is skipped when no explicit target was requested AND
+        ingestion did not translate: the translation stage is disabled (the
+        corpus is indexed as written) or would be a no-op (a same-language
+        corpus, TranslationConfig.is_noop). This avoids paying an LLM
         call per query for e.g. an English-only or Japanese-only corpus, and
         — more importantly — avoids the failure mode where the translator
         LLM returns a meta-response ("I notice the text you...") for a query
@@ -783,8 +784,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         target_language = language_name(
             requested_language or self.config.processing.translation.target_language
         )
-        skip_translation = (
-            requested_language is None and self.config.processing.translation.is_noop
+        translation = self.config.processing.translation
+        skip_translation = requested_language is None and (
+            not translation.enabled or translation.is_noop
         )
         return target_language, skip_translation
 
@@ -994,7 +996,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         translation? Only flags when the candidate differs from the original
         (an identical passthrough is fine) and opens with a known refusal/notice
         phrase, so genuine translations that merely contain such words mid-text
-        are not caught."""
+        are not caught.
+
+        The phrases are English: a meta-reply written in another language
+        passes as a translation. No language-agnostic test separates the two
+        reliably (a script mismatch misses a reply in the target language,
+        which is the common case, and lengths differ legitimately across
+        scripts), so the miss is accepted; the reply then searches as the
+        query."""
         text = cls._refusal_text(candidate)
         if not text or text == cls._refusal_text(original):
             return False
@@ -2144,6 +2153,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         output.search_results = output.search_results.model_copy(
                             update={"results": [], "total_results": 0}
                         )
+                output.search_results = await self._screen_synthesized(
+                    output.search_results, guard_records
+                )
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput):
@@ -2249,10 +2261,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The verdict on the answer; its text is what the user may see:
         unchanged, masked or refused.
 
-        Only the answer is screened: the sources and search results are the
-        caller's own indexed corpus text, returned as retrieved (a blocked
-        answer drops them). The fixed no-context answer is not model output
-        and is not screened. With the contextual grounding check on,
+        The answer is screened here; the sources and the retrieved search
+        results are the caller's own indexed corpus text, returned as
+        retrieved (a blocked answer drops them), while the model-written
+        search results are screened apart (:meth:`_screen_synthesized`).
+        The fixed no-context answer is not model output and is not screened. With the contextual grounding check on,
         ``grounding`` (the question and context the answer was generated
         from) goes with it.
         """
@@ -2268,6 +2281,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if verdict.intervened:
             records.append(_guard_record(GuardSource.OUTPUT, verdict))
         return verdict
+
+    async def _screen_synthesized(
+        self, search_results: SearchResult, records: list[dict[str, Any]]
+    ) -> SearchResult:
+        """``search_results`` with each model-written result (``synthesized``:
+        DRIFT's intermediate answers, global search's key points or summary)
+        screened as an answer is: masked, or dropped when refused.
+
+        They are returned with the search results (``ainvoke`` and
+        ``asearch``), so with ``check_output`` they must not reach the caller
+        unscreened. Retrieved results are corpus text and pass as they are.
+        """
+        if not self._screen_outputs or not any(
+            self._is_synthesized(r.metadata) for r in search_results.results
+        ):
+            return search_results
+        assert self.guard is not None
+        kept: list[RetrievalResult] = []
+        for result in search_results.results:
+            if not self._is_synthesized(result.metadata) or not result.content:
+                kept.append(result)
+                continue
+            verdict = await self.guard.acheck(result.content, GuardSource.OUTPUT)
+            if not verdict.intervened:
+                kept.append(result)
+                continue
+            records.append(_guard_record(GuardSource.OUTPUT, verdict))
+            if verdict.action is not GuardAction.BLOCKED:
+                kept.append(result.model_copy(update={"content": verdict.text}))
+        return search_results.model_copy(
+            update={"results": kept, "total_results": len(kept)}
+        )
 
     @staticmethod
     def _prepare_invoke(

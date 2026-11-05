@@ -67,6 +67,26 @@ async def test_same_language_skips_translation(config: Config) -> None:
     assert result.entities == ["oda"]
 
 
+@pytest.mark.parametrize("requested", [None, "en"])
+async def test_disabled_translation_skips_the_query_translation(
+    config: Config, requested: str | None
+) -> None:
+    # A ja corpus indexed untranslated (translation disabled) was searched
+    # with the query translated into English, unless a caller asks for a
+    # language.
+    config.processing.translation.enabled = False
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    _install_fakes(chain, translation="About Oda Nobunaga", entities=["nobunaga"])
+    inputs = {"query": "織田信長について"}
+    if requested:
+        inputs["target_language"] = requested
+    result = await chain._process_query_step(inputs)
+    expected = "About Oda Nobunaga" if requested else "織田信長について"
+    assert result.final_query == expected
+
+
 async def test_translation_refusal_falls_back_to_original(config: Config) -> None:
     # Force a non-noop config so translation runs, but the LLM returns a refusal.
     config.processing.translation.source_language = "ja"

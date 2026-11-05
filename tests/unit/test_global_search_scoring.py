@@ -36,7 +36,7 @@ def _strategy(score_text: str) -> GlobalSearchStrategy:
     return strat
 
 
-async def _rate(score_text: str) -> float:
+async def _rate(score_text: str) -> float | None:
     report = RetrievalResult(
         content="community", score=0.5, source="c0", retriever_type="community"
     )
@@ -54,5 +54,23 @@ async def test_rating_is_normalized_into_the_unit_interval(
     assert await _rate(text) == pytest.approx(expected)
 
 
-async def test_unparseable_rating_defaults_to_the_middle() -> None:
-    assert await _rate("no number here") == pytest.approx(0.5)
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # float() of the whole answer read each of these as the default 5.
+        ("8/10", 0.8),
+        ("Score: 2", 0.2),
+        ("1\n\nIrrelevant: the community is about cats", 0.1),
+        # Clamped to the prompt's 1-10 scale.
+        ("85", 1.0),
+        ("0", 0.1),
+    ],
+)
+async def test_a_rating_is_read_by_its_first_number(text: str, expected: float) -> None:
+    assert await _rate(text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("text", ["no number here", "nan", "inf", ""])
+async def test_a_rating_without_a_number_is_unrated(text: str) -> None:
+    # "nan" was read as NaN, which no threshold drops.
+    assert await _rate(text) is None

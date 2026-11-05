@@ -611,7 +611,7 @@ def test_report_lineage_keeps_seed_documents_and_the_seed_filter() -> None:
 # --- local search ------------------------------------------------------------
 
 
-def _node(name: str, units: list[str] | str) -> RetrievalResult:
+def _node(name: str, units: list[str]) -> RetrievalResult:
     return RetrievalResult(
         content=name,
         source=name,
@@ -625,8 +625,8 @@ def test_local_frequency_counts_document_units_only() -> None:
     nodes = [
         _node("seeded", ["u1", "u2", SEED]),
         _node("generic", ["u1", "u2", "u3"]),
-        _node("single", SEED),
+        _node("single", [SEED]),
     ]
     kept = LocalSearchStrategy._filter_entities(nodes, frequency_threshold=2)
     assert [n.source for n in kept] == ["seeded", "single"]
-    assert LocalSearchStrategy._text_unit_count(_node("one", "u1")) == 1
+    assert LocalSearchStrategy._text_unit_count(_node("one", ["u1"])) == 1
