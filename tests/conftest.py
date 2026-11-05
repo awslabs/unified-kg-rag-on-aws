@@ -12,28 +12,31 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from hypothesis import settings
 from langsmith.utils import get_env_var
 
-from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
-from unified_kg_rag.domain.models import (
-    Community,
-    CommunityReport,
-    Config,
-    Entity,
-    Relationship,
-    TextUnit,
-)
+from unified_kg_rag.domain.models import Config
 
 # Hypothesis profiles, selected with HYPOTHESIS_PROFILE (default: "default").
 # "ci" removes the per-example deadline, whose wall-clock limit flakes on
 # shared runners, and derandomizes generation so a failure reproduces on
 # re-run; print_blob makes any failure replayable locally via @reproduce_failure.
 settings.register_profile("ci", deadline=None, derandomize=True, print_blob=True)
+# "explore" (the weekly hypothesis-explore workflow) draws from a fresh random
+# seed each run and raises the example budget of the tests that do not set
+# their own; a test with its own max_examples keeps it, but still meets new
+# examples. A failure prints the blob that replays it.
+settings.register_profile("explore", max_examples=1000, deadline=None, print_blob=True)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+# The suite directory a test lives under names its kind; its marker is applied
+# here, so a new test file cannot miss it (``-m unit`` / ``-m "not property"``).
+_SUITE_MARKERS = ("unit", "integration", "property")
+_TESTS_ROOT = Path(__file__).parent
 
 _PROFILE_PREFIXES = ("global", "us", "eu", "apac")
 
@@ -75,6 +78,19 @@ _FAKE_AWS_ENV = {
     "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
     "AWS_EC2_METADATA_DISABLED": "true",
 }
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark each test with its suite (``tests/<suite>/``) before ``-m``
+    selects: this runs ahead of the built-in deselection hook."""
+    for item in items:
+        try:
+            suite = item.path.relative_to(_TESTS_ROOT).parts[0]
+        except ValueError:
+            continue
+        if suite in _SUITE_MARKERS and item.get_closest_marker(suite) is None:
+            item.add_marker(suite)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -310,80 +326,3 @@ def skip_vertex_id_check(monkeypatch: pytest.MonkeyPatch) -> None:
 def config() -> Config:
     """A default ``Config`` (all nested defaults, no external services)."""
     return Config()
-
-
-@pytest.fixture
-def fake_doc_status() -> FakeDocStatusStore:
-    """An empty in-memory DocStatusPort implementation."""
-    return FakeDocStatusStore()
-
-
-@pytest.fixture
-def sample_entities() -> list[Entity]:
-    return [
-        Entity(id="e1", name="Alice", type="PERSON", description="A researcher"),
-        Entity(id="e2", name="Acme Corp", type="ORG", description="A company"),
-        Entity(id="e3", name="Seattle", type="GPE", description="A city"),
-    ]
-
-
-@pytest.fixture
-def sample_relationships() -> list[Relationship]:
-    return [
-        Relationship(
-            id="r1",
-            source_id="e1",
-            target_id="e2",
-            source_name="Alice",
-            target_name="Acme Corp",
-            description="Alice works at Acme Corp",
-            weight=1.0,
-        ),
-        Relationship(
-            id="r2",
-            source_id="e2",
-            target_id="e3",
-            source_name="Acme Corp",
-            target_name="Seattle",
-            description="Acme Corp is based in Seattle",
-            weight=0.8,
-        ),
-    ]
-
-
-@pytest.fixture
-def sample_text_units() -> list[TextUnit]:
-    return [
-        TextUnit(id="t1", text="Alice works at Acme Corp.", entity_ids=["e1", "e2"]),
-        TextUnit(
-            id="t2", text="Acme Corp is based in Seattle.", entity_ids=["e2", "e3"]
-        ),
-    ]
-
-
-@pytest.fixture
-def sample_communities() -> list[Community]:
-    return [
-        Community(
-            id="c1",
-            name="Acme cluster",
-            level="0",
-            parent="",
-            children=[],
-            entity_ids=["e1", "e2", "e3"],
-            text_unit_ids=["t1", "t2"],
-        ),
-    ]
-
-
-@pytest.fixture
-def sample_community_reports() -> list[CommunityReport]:
-    return [
-        CommunityReport(
-            id="cr1",
-            community_id="c1",
-            name="Acme cluster report",
-            summary="Alice, Acme Corp, and Seattle form a cluster.",
-            full_content="Detailed report about the Acme cluster.",
-        ),
-    ]

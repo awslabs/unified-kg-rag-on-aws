@@ -1208,6 +1208,7 @@ def test_in_memory_engine(tmp_path: Path) -> None:
     assert not any(key[0] == engine._cache_path for key in engine_module._INDEX_CACHE)
 
 
+@pytest.mark.slow
 def test_in_memory_engines_never_share_cached_indices() -> None:
     # A collected engine's id() is reused by the next one: keyed by it, the
     # new engine was served the old one's cached index.

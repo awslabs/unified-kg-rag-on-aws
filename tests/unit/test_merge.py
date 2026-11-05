@@ -93,6 +93,31 @@ class TestMergeEntities:
         merged, _ = merge_entities(old, delta)
         assert merged[0].type == "PERSON"
 
+    @pytest.mark.parametrize(
+        ("old_units", "delta_units"),
+        [
+            pytest.param(["t1"], ["t2"], id="document-over-document"),
+            pytest.param(["sg-a"], ["sg-b"], id="seed-over-seed"),
+            pytest.param(["t1"], ["sg-b"], id="document-over-seed"),
+        ],
+    )
+    def test_surviving_type_kept_unless_documents_replace_a_seed_type(
+        self, old_units: list[str], delta_units: list[str]
+    ) -> None:
+        # The surviving type stays; a delta's type only fills a missing one,
+        # or replaces a seed-only survivor's when documents state the delta
+        # (design.md "Document-first merge").
+        old = [_entity("e1", "Alice", type="ORGANIZATION", text_unit_ids=old_units)]
+        delta = [_entity("e9", "Alice", type="PERSON", text_unit_ids=delta_units)]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].type == "ORGANIZATION"
+
+    def test_document_delta_replaces_a_seed_only_type(self) -> None:
+        old = [_entity("e1", "Alice", type="ORGANIZATION", text_unit_ids=["sg-a"])]
+        delta = [_entity("e9", "Alice", type="PERSON", text_unit_ids=["t2"])]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].type == "PERSON"
+
     def test_idempotent_merge_of_identical_delta(self) -> None:
         old = [_entity("e1", "Alice", text_unit_ids=["t1"])]
         delta = [_entity("e1", "Alice", text_unit_ids=["t1"])]

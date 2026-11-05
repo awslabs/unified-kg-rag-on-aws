@@ -589,6 +589,7 @@ def _assert_bounded(server: _StallServer, started: float, deadline: float) -> No
     assert len(server.connections) == sent
 
 
+@pytest.mark.slow
 async def test_a_stalled_bedrock_answer_fails_at_the_deadline(
     stall_server: _StallServer,
 ) -> None:
@@ -600,6 +601,7 @@ async def test_a_stalled_bedrock_answer_fails_at_the_deadline(
     _assert_bounded(stall_server, started, 5.0)
 
 
+@pytest.mark.slow
 def test_a_stalled_bedrock_answer_fails_at_the_deadline_on_the_sync_path(
     stall_server: _StallServer,
 ) -> None:

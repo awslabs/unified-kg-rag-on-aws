@@ -214,7 +214,6 @@ def _run(
 ) -> PipelineContext:
     """Parse ``root``, run the loading stage's incremental filter, then
     record the processed documents as a successful commit does."""
-    mocker.patch("boto3.Session")
     context = PipelineContext(
         pipeline_id="pid",
         config={},

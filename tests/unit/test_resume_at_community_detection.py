@@ -151,7 +151,6 @@ def _resolved_context() -> PipelineContext:
 def test_rerun_with_the_same_pipeline_id_resumes_at_community_detection(
     tmp_path, mocker
 ) -> None:
-    mocker.patch("boto3.Session")
     config = Config()
 
     # Run 1: graph_analysis completes, community_detection fails.

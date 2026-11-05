@@ -43,23 +43,14 @@ def test_doc_status_table_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
 
 
-@pytest.mark.parametrize(("raw", "expected"), [("false", False), ("true", True)])
-def test_doc_status_create_table_from_env(
-    monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
-) -> None:
-    monkeypatch.setenv("UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING", raw)
-    cfg = ConfigLoader().load_config()
-    assert cfg.aws.dynamodb.create_table_if_missing is expected
-
-
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        *((word, True) for word in ("TRUE", "True", "1", "yes", "On", " on ")),
-        *((word, False) for word in ("FALSE", "False", "0", "no", "Off")),
+        *((word, True) for word in ("true", "TRUE", "True", "1", "yes", "On", " on ")),
+        *((word, False) for word in ("false", "FALSE", "False", "0", "no", "Off")),
     ],
 )
-def test_boolean_words_from_env(
+def test_doc_status_create_table_from_env_boolean_words(
     monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
 ) -> None:
     monkeypatch.setenv("UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING", raw)

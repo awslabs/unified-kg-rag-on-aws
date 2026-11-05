@@ -96,27 +96,46 @@ uv run pytest -m "not aws"                              # unit, property and int
 uv run --extra otel --extra eval --extra viz pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
-Add `-n auto` to run the suite on every CPU through pytest-xdist, as CI does; coverage still combines across the
-workers.
+Add `-n logical` to run the suite on every logical CPU through pytest-xdist, as CI does (`-n auto` counts physical
+cores only); coverage still combines across the workers. CI measures coverage with `COVERAGE_CORE=sysmon` (Python
+3.12's low-overhead tracer; the suite measures lines, not branches), which reports the same lines as the default
+tracer.
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python
 3.11 (and, as a non-blocking early warning, on 3.13 with the `requires-python` cap lifted), checks the optional
 parsers, checks a core install without the `eval` and `viz` extras or the dev group (only the `test` group, the
-test runner; tests that need an extra skip there; mark a new one with `tests/fixtures/extras.py`), runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. `iac/` is a separate uv project; if you change it, also run
-`cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
+test runner; tests that need an extra skip there; mark a new one with `tests/fixtures/extras.py`), runs the local-store smoke test, builds and runs the container image, and synthesizes `iac/` with cdk-nag. The
+`coverage-combined` job adds the local-store job's coverage (the Neptune and OpenSearch adapters against real stores)
+to the quality job's and writes the total to its job summary; it reports only, the floor applies to the quality job's
+own report. A weekly [`hypothesis-explore`](./.github/workflows/hypothesis-explore.yml) run draws the property tests
+from random seeds with a larger budget (`HYPOTHESIS_PROFILE=explore`); pull requests stay derandomized (`ci`).
+`iac/` is a separate uv project; if you change it, also run `cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the
 [`licenses`](./.github/workflows/licenses.yml) workflow also syncs every extra and fails on a copyleft,
 source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
 reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license.
 
+### Pins Dependabot does not move
+
+[Dependabot](./.github/dependabot.yml) updates both uv locks, the SHA-pinned workflow actions and the local store
+images in `docker/compose.local.yaml`. These pins it cannot read; bump them by hand, together where they must match:
+
+- The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
+  the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
+  (`COPY --from`, tag and digest).
+- The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
+  resolve an ARG in `FROM`).
+- The AWS CDK CLI, `npm install -g aws-cdk@…` in the `iac` job of `quality.yml`, and that job's `node-version`.
+
 ### Tests
 
 - Tests run without AWS. Use the port-based in-memory fakes in `tests/fixtures/fakes/` (for example
   `FakeDocStatusStore`) rather than ad-hoc boto3 mocks, and `moto` when an adapter must be exercised against a boto3
   surface.
-- Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI) and `slow`. Each test times out after
-  120 s.
+- Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI) and `slow` (over 5 s; CI still runs
+  them). `tests/conftest.py` applies `unit`, `integration` or `property` by the directory a test lives in. Each test
+  times out after 120 s.
 - `tests/integration/test_local_stores.py` runs against the local containers in `docker/compose.local.yaml` when
   `LOCAL_STORES=1` is set.
 - Tests, fixtures and evaluation data use synthetic content only (generic entities such as "Vendor" and "Buyer",

@@ -86,3 +86,32 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The local store stack (docker/compose.local.yaml): its `image:` pins and
+  # the FROM line of the OpenSearch service's dockerfile_inline, each a tag
+  # plus digest that Dependabot moves together. The container image's own
+  # pins (docker/Dockerfile) are manual: its base image is an ARG default
+  # (`FROM ${BASE_IMAGE}`) and uv comes in through `COPY --from`, neither of
+  # which the docker ecosystem reads (CONTRIBUTING.md, "Pins Dependabot does
+  # not move").
+  - package-ecosystem: "docker-compose"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps-dev)"
+    groups:
+      local-stores:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # The stack stands in for the deployed stores, so it follows their
+      # engines: OpenSearch 2.13 (iac/stacks/storage_stack.py
+      # OPENSEARCH_VERSION) and Neptune's TinkerPop 3.7 line (as gremlinpython
+      # above). Move these with the deployed engines, not on their own.
+      - dependency-name: "opensearchproject/opensearch"
+        versions: [">=2.14.0"]
+      - dependency-name: "tinkerpop/gremlin-server"
+        versions: [">=3.8.0"]

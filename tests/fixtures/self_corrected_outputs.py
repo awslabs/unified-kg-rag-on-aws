@@ -41,11 +41,6 @@ def _relationship(
     )
 
 
-EXTRACTION_TEXT = (
-    "Vendor Corp, based in Harbor City, signed a supply agreement with Buyer "
-    "Ltd in 2020. Depot Inc stores the goods for Buyer Ltd."
-)
-
 _ENTITIES = (
     "<entities>\n"
     + _entity("Vendor Corp", "ORGANIZATION", "The supplier.", "Vendor Corp")

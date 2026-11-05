@@ -16,7 +16,9 @@ import pytest
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.retrievers import FakeRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.unit.test_query_guardrail import _RecordingGuard
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
@@ -26,6 +28,7 @@ from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
+from unified_kg_rag.adapters.guardrail.bedrock import BedrockGuardrail
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
     OpenAICompatibleEmbeddingFactory,
@@ -40,12 +43,14 @@ from unified_kg_rag.adapters.local.rerank import (
 )
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
+from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.domain.ingestion.delta_detector import DocStatusReader
 from unified_kg_rag.ports import (
+    ContentGuardPort,
     DocStatusPort,
     GraphIndexer,
     ModelFactoryPort,
@@ -55,13 +60,23 @@ from unified_kg_rag.ports import (
 
 
 def _port_methods(port: type) -> list[str]:
-    """Public instance methods of ``port`` (class/static helpers excluded)."""
+    """Public instance methods of ``port`` (class/static helpers excluded).
+
+    For the retriever base, only the ones its own source defines: the rest
+    are LangChain's ``BaseRetriever`` (and Pydantic's) surface, which the
+    strategies never call.
+    """
+    own = port in _OWN_METHODS_ONLY
     return sorted(
         name
-        for name in dir(port)
+        for name in (vars(port) if own else dir(port))
         if not name.startswith("_")
-        and inspect.isfunction(inspect.getattr_static(port, name))
+        and inspect.isfunction(method := inspect.getattr_static(port, name))
+        and (not own or method.__module__ == port.__module__)
     )
+
+
+_OWN_METHODS_ONLY = (BaseGraphRAGRetriever,)
 
 
 def _shape(func: object) -> list[tuple[str, inspect._ParameterKind, bool]]:
@@ -97,6 +112,8 @@ PAIRS = [
     (BedrockTokenCounter, TokenCounterPort),
     (OpenSearchClient, SearchEngineClient),
     (SQLiteSearchEngine, SearchEngineClient),
+    (BedrockGuardrail, ContentGuardPort),
+    (FakeRetriever, BaseGraphRAGRetriever),
 ]
 
 
@@ -116,6 +133,18 @@ def test_fake_matches_port_signature(fake: type, port: type, method: str) -> Non
 @pytest.mark.parametrize(("fake", "port"), PAIRS)
 def test_port_surface_is_not_empty(fake: type, port: type) -> None:
     # Guards the discovery above: an empty list would make the parametrized
-    # test vacuously pass. The smallest ports (model factory, token counter)
-    # have two methods.
-    assert len(_port_methods(port)) >= 2
+    # test vacuously pass. The smallest port (the guard) has one method.
+    assert len(_port_methods(port)) >= 1
+
+
+def test_recording_guard_accepts_every_port_call() -> None:
+    # It takes keyword arguments as **kwargs to record them, so its shape
+    # differs from the port's on purpose; it must still accept every call
+    # the port allows.
+    guard = inspect.signature(_RecordingGuard.acheck)
+    port = inspect.signature(ContentGuardPort.acheck).parameters.values()
+    positional = [p.name for p in port if p.kind is p.POSITIONAL_OR_KEYWORD]
+    keyword = {p.name: None for p in port if p.kind is p.KEYWORD_ONLY}
+    assert keyword, "the port's keyword arguments moved"
+    guard.bind(*positional, **keyword)
+    guard.bind(*positional)
