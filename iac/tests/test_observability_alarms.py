@@ -232,9 +232,9 @@ def _emf_metric_names(template: Template) -> set[str]:
 def test_emf_metric_names_are_pipeline_metrics_fields() -> None:
     # A renamed PipelineMetrics field would leave an alarm on a series nobody
     # emits (never fires, TreatMissingData=notBreaching) or an empty widget.
-    pipeline = (_PACKAGE / "application" / "ingestion" / "pipeline.py").read_text(
-        encoding="utf-8"
-    )
+    pipeline = (
+        _PACKAGE / "application" / "ingestion" / "pipeline_metrics.py"
+    ).read_text(encoding="utf-8")
     assert f'namespace="{EMF_NAMESPACE}"' in pipeline
     assert 'f"duration_{stage_name}_seconds"' in pipeline
     for usage_name in (
