@@ -2291,7 +2291,7 @@ Deployment (CDK).
   GHSA-8mgp-746c-j5xp, a stored XSS GHSA-v5mq-3xhg-98m9) and
   `langchain-openai>=1.1.14` (GHSA-r7w7-9xr2-qq2r), pyarrow 26.0.1
   in the `eval` extra (CVE-2026-92287; this package reads no Parquet
-  files, so it was not reachable) (#PR); the lock, not a
+  files, so it was not reachable) (#580); the lock, not a
   floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#307, #426, #430,
   #455).
 - Document attribute filters no longer leak excluded documents: they apply
