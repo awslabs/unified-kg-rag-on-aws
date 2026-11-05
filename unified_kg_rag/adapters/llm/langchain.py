@@ -1254,7 +1254,12 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _try_lxml_recover_parse(xml_bytes: bytes) -> dict[str, Any]:
-        parser = etree.XMLParser(recover=True, encoding="utf-8")
+        # Model output is untrusted: a DOCTYPE in it must not read a file or
+        # URL (XXE) or expand entities. lxml >= 5 already skips external
+        # entities by default; pinned here so no default change re-enables it.
+        parser = etree.XMLParser(
+            recover=True, encoding="utf-8", resolve_entities=False, no_network=True
+        )
         tree = etree.fromstring(xml_bytes, parser=parser)
 
         if tree is None:
