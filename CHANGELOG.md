@@ -1650,7 +1650,7 @@ Queries and retrieval.
   a range operator other than `gt`/`gte`/`lt`/`lte` (`in`, `eq`, `neq`)
   was dropped, so a custom strategy's filter matched every vertex, and a
   null or empty-range value reached the traversal. Each now raises
-  `InvalidFilterError` (#PR).
+  `InvalidFilterError` (#581).
 - A number or boolean document filter value is a keyword on OpenSearch, as
   the filter docs said: a field's first numeric value mapped it as `long`,
   so a document with a string value for the same key failed to index
