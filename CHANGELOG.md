@@ -2289,7 +2289,9 @@ Deployment (CDK).
   at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others),
   `unstructured>=0.24.1` (GHSA-4mvj-m6j5-pmf7,
   GHSA-8mgp-746c-j5xp, a stored XSS GHSA-v5mq-3xhg-98m9) and
-  `langchain-openai>=1.1.14` (GHSA-r7w7-9xr2-qq2r); the lock, not a
+  `langchain-openai>=1.1.14` (GHSA-r7w7-9xr2-qq2r), pyarrow 26.0.1
+  in the `eval` extra (CVE-2026-92287; this package reads no Parquet
+  files, so it was not reachable) (#580); the lock, not a
   floor, takes certifi 2026.10.23 (GHSA-6q48-6c7w-9gw2) (#307, #426, #430,
   #455).
 - Document attribute filters no longer leak excluded documents: they apply

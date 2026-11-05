@@ -130,6 +130,9 @@ eval = [
     # Not imported here: ragas depends on Pillow, and 13.0.0 fixes the
     # critical/high Pillow advisories.
     "pillow>=13.0.0",
+    # Not imported here: datasets (through ragas) depends on pyarrow, and
+    # 26.0.1 fixes CVE-2026-92287 (unvalidated Parquet KMS URLs).
+    "pyarrow>=26.0.1",
     # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
     # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
     # can requires datasets>=4.0.0.

@@ -138,7 +138,9 @@ def _raises(match: str) -> Any:
 
 def test_the_schema_context_is_a_client_provider() -> None:
     context: SourceClientProvider = SchemaSourceContext(
-        SchemaSourceConfig(kind="owl", path="s3://user:token@b/o.ttl?x=1"),
+        SchemaSourceConfig(
+            kind="owl", path="s3://user:token@b/o.ttl?x=1"  # gitleaks:allow
+        ),
         Config.model_validate({"aws": {"region_name": REGION}}),
         session_factory=lambda: boto3.Session(region_name=REGION),
     )

@@ -406,7 +406,12 @@ def test_an_unreachable_s3_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", ["s3://Not_A_Bucket/x.yaml", "s3://user:token@bucket/x.yaml", "s3:///x"]
+    "path",
+    [
+        "s3://Not_A_Bucket/x.yaml",
+        "s3://user:token@bucket/x.yaml",  # gitleaks:allow
+        "s3:///x",
+    ],
 )
 def test_an_s3_url_without_a_valid_bucket_is_refused(path: str) -> None:
     for kind in ("file", "owl"):

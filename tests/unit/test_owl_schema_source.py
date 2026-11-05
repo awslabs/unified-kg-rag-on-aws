@@ -669,7 +669,7 @@ def test_bad_settings_are_refused(source: dict[str, Any], message: str) -> None:
 
 def test_a_url_with_a_credential_is_refused_without_showing_it() -> None:
     config = SchemaSourceConfig(
-        kind="owl", path="https://user:token@example.org/o.ttl?sig=s"
+        kind="owl", path="https://user:token@example.org/o.ttl?sig=s"  # gitleaks:allow
     )
     with pytest.raises(SchemaSourceError) as error:
         get_schema_source("owl")(SchemaSourceContext(config, Config()))

@@ -552,7 +552,7 @@ def test_the_tuner_names_the_source_without_a_credential(
                 "graph_extraction": {
                     "schema_source": {
                         "kind": "synthetic_service",
-                        "path": "https://reader:SECRET@schemas.example/trade"
+                        "path": "https://reader:SECRET@schemas.example/trade"  # gitleaks:allow
                         "?token=SECRET#SECRET",
                     }
                 }
