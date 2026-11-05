@@ -534,6 +534,22 @@ class ModelsConfig(BaseModel):
             "model name, required. Ignored with providers.rerank.kind none."
         ),
     )
+    default_max_output_tokens: int | None = Field(
+        default=16384,
+        ge=1,
+        description=(
+            "max_tokens sent with each LLM request, clamped to the model's "
+            "maximum (providers.llm.max_output_tokens for a non-Bedrock "
+            "model). Bedrock reserves input + max_tokens against the "
+            "tokens-per-minute quota when a request starts, so sending the "
+            "model maximum (128K on Claude 5.x) throttles concurrent calls "
+            "long before real usage does. Thinking tokens count toward it. "
+            "Prompts with long outputs (graph/claim extraction, gleaning, "
+            "community reports, document translation) declare a higher floor "
+            "that wins over this value. Raise it if answers are cut off "
+            "(stopReason max_tokens); null sends the model maximum."
+        ),
+    )
 
     @field_validator("default", "fast", mode="before")
     @classmethod
@@ -581,6 +597,7 @@ MOVED_KEYS: dict[str, str] = {
     "providers.rerank.model_id": "models.rerank",
     "aws.dynamodb.enabled": "providers.doc_status.enabled",
     "search.reranking.rerank_model_id": "models.rerank",
+    "aws.bedrock.default_max_output_tokens": "models.default_max_output_tokens",
     # Retries are configured in one section; each old key counts what its
     # replacement counts, so a tuned value fails the load instead of
     # silently reverting to the default.
@@ -1027,21 +1044,6 @@ class BedrockConfig(BaseModel):
             "Keep it on: Claude 4.7+ and OpenAI GPT models are "
             "invocable only through a profile, which also needs "
             "bedrock:ListInferenceProfiles."
-        ),
-    )
-    default_max_output_tokens: int | None = Field(
-        default=16384,
-        ge=1,
-        description=(
-            "max_tokens sent with each LLM request, clamped to the model's "
-            "maximum. Bedrock reserves input + max_tokens against the "
-            "tokens-per-minute quota when a request starts, so sending the "
-            "model maximum (128K on Claude 5.x) throttles concurrent calls "
-            "long before real usage does. Thinking tokens count toward it. "
-            "Prompts with long outputs (graph/claim extraction, gleaning, "
-            "community reports, document translation) declare a higher floor "
-            "that wins over this value. Raise it if answers are cut off "
-            "(stopReason max_tokens); null sends the model maximum."
         ),
     )
     model_overrides: dict[str, dict[str, Any]] = Field(
@@ -3797,7 +3799,7 @@ class TokenManagerConfig(BaseModel):
             "would never bind, so the per-type budgets would never trim "
             "anything. Always clamped to what models.roles.answer_generation "
             "accepts beside its output reservation "
-            "(aws.bedrock.default_max_output_tokens), with a warning. null "
+            "(models.default_max_output_tokens), with a warning. null "
             "derives it from that window minus the output reservation and "
             "context_window_headroom_ratio."
         ),
@@ -3938,7 +3940,7 @@ class QueryOutputCeilingsConfig(BaseModel):
 
     Bedrock reserves input + max_tokens against the tokens-per-minute quota
     when a request starts, so a router that answers one word but asks for
-    aws.bedrock.default_max_output_tokens reserves as much as the answer.
+    models.default_max_output_tokens reserves as much as the answer.
     A ceiling never leaves less than the call's thinking budget plus 1,024
     answer tokens (thinking counts toward max_tokens): the effort level's
     budget (low 2,048, medium 4,096, high 8,192, xhigh 16,384, max 32,768)
@@ -4849,7 +4851,7 @@ class EvaluationConfig(BaseModel):
             "max_tokens of each answer_span 'extracted' call, which answers "
             "a short span; it never leaves less than the call's thinking "
             "budget (judge_effort's, see search.output_ceilings) plus 1,024 "
-            "tokens. null = aws.bedrock.default_max_output_tokens."
+            "tokens. null = models.default_max_output_tokens."
         ),
     )
     answer_normalization: Literal["default", "official_squad", "hotpotqa"] = Field(

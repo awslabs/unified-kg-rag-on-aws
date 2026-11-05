@@ -315,3 +315,26 @@ def test_a_moved_key_under_a_removed_section_still_fails_as_moved(
     monkeypatch.setenv(env_var(old), "m")
     with pytest.raises(ConfigurationError, match=f"moved: set {env_var(new)}"):
         ConfigLoader().load_config()
+
+
+def test_the_old_output_cap_key_fails_naming_its_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cap applies to every provider's models, so it left aws.bedrock.
+    old, new = (
+        "aws.bedrock.default_max_output_tokens",
+        "models.default_max_output_tokens",
+    )
+    assert MOVED_KEYS[old] == new
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.safe_dump(_nested(old, 4096)))
+    with pytest.raises(ConfigurationError, match=f"{old} -> {new}"):
+        ConfigLoader(config_file).load_config()
+    monkeypatch.setenv(env_var(old), "4096")
+    with pytest.raises(ConfigurationError, match=f"moved: set {env_var(new)}"):
+        ConfigLoader().load_config()
+    monkeypatch.delenv(env_var(old))
+    config_file.write_text(yaml.safe_dump(_nested(new, 4096)))
+    assert (
+        ConfigLoader(config_file).load_config().models.default_max_output_tokens == 4096
+    )

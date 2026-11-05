@@ -438,15 +438,22 @@ class TestFingerprintScope:
         )
 
     @pytest.mark.parametrize(
-        "path, value",
+        "section, path, value",
         [
-            ("default_max_output_tokens", 1024),
-            ("model_overrides", {"vendor.synthetic-model": {"max_output_tokens": 1}}),
+            ("models", "default_max_output_tokens", 1024),
+            (
+                "aws.bedrock",
+                "model_overrides",
+                {"vendor.synthetic-model": {"max_output_tokens": 1}},
+            ),
         ],
     )
-    def test_bedrock_output_shaping_fields_are_inputs(self, path, value) -> None:
+    def test_output_shaping_fields_are_inputs(self, section, path, value) -> None:
         changed = Config()
-        setattr(changed.aws.bedrock, path, value)
+        owner = changed
+        for name in section.split("."):
+            owner = getattr(owner, name)
+        setattr(owner, path, value)
         assert stage_input_fingerprint(
             Config(), PipelineStageType.DOCUMENT_LOADING
         ) != stage_input_fingerprint(changed, PipelineStageType.DOCUMENT_LOADING)

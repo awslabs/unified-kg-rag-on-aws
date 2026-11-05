@@ -164,7 +164,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "providers.llm.base_url": _neutral(_WHERE),
     "providers.llm.api_key": _neutral(_WHERE),
     "providers.llm.timeout_seconds": _neutral(_THROUGHPUT),
-    "aws.bedrock.default_max_output_tokens": _EVERY_CALL,
+    "models.default_max_output_tokens": _EVERY_CALL,
     "aws.bedrock.model_overrides": _EVERY_CALL,
     "aws.bedrock.enable_1m_context": _EVERY_CALL,
     "aws.bedrock.default_effort": _EVERY_CALL,
@@ -432,8 +432,9 @@ def _at_earlier_default(path: str, value: Any) -> bool:
 
 
 def classify(path: str) -> Keyed | Unkeyed | None:
-    """The ``CONFIG_KEYING`` entry of the longest prefix of ``path``, if any."""
-    parts = path.split(".")
+    """The ``CONFIG_KEYING`` entry of the longest prefix of ``path`` (or of
+    the path a recorded one moved to, ``_RECORDED_AS``), if any."""
+    parts = _CURRENT_PATH.get(path, path).split(".")
     for end in range(len(parts), 0, -1):
         entry = CONFIG_KEYING.get(".".join(parts[:end]))
         if entry is not None:
@@ -459,7 +460,7 @@ def answer_settings(config: Config) -> dict[str, Any]:
     (``aws.bedrock.guardrail.enabled``): its id is a location, left out, but
     a guarded run blocks and masks what an unguarded one answers."""
     settings = {
-        path: to_jsonable_python(_resolved(config, path, value))
+        _RECORDED_AS.get(path, path): to_jsonable_python(_resolved(config, path, value))
         for path, value, _ in _leaves(config)
         if shapes_answers(path) and not _at_earlier_default(path, value)
     }
@@ -512,9 +513,17 @@ _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
     },
 }
 _SWITCHES = frozenset({"enabled", "kind"})
-# Bedrock settings every language model reads: the request's output cap,
-# which a local model is asked for too (clamped to providers.llm's ceiling).
-_EVERY_PROVIDER = frozenset({"aws.bedrock.default_max_output_tokens"})
+# Settings every language model reads whatever its provider: the request's
+# output cap (clamped to providers.llm's ceiling on a local model).
+_EVERY_PROVIDER = frozenset({"models.default_max_output_tokens"})
+
+# Settings moved to another path, keyed and recorded under the path they had
+# before: an upgrade then re-keys no stage cache, re-extracts no document and
+# changes no evaluation manifest for the move alone.
+_RECORDED_AS: dict[str, str] = {
+    "models.default_max_output_tokens": "aws.bedrock.default_max_output_tokens",
+}
+_CURRENT_PATH: dict[str, str] = {old: new for new, old in _RECORDED_AS.items()}
 
 # Fields of a switchable block that other components read whatever its
 # ``enabled`` flag says. With translation off, extraction, gleaning, claim
@@ -572,7 +581,9 @@ def _settings(config: Config, selected: Callable[[Keyed], bool]) -> dict[str, An
             if _in_effect(config, path, disabled) and not _at_earlier_default(
                 path, value
             ):
-                settings[path] = to_jsonable_python(_resolved(config, path, value))
+                settings[_RECORDED_AS.get(path, path)] = to_jsonable_python(
+                    _resolved(config, path, value)
+                )
     return settings
 
 
@@ -802,9 +813,10 @@ _MISSING = object()
 
 
 def _field_default(path: str) -> Any:
-    """The default of the field at ``path``, or ``_MISSING``."""
+    """The default of the field at ``path`` (a recorded path: see
+    ``_RECORDED_AS``), or ``_MISSING``."""
     node: Any = _default_config()
-    for name in path.split("."):
+    for name in _CURRENT_PATH.get(path, path).split("."):
         node = getattr(node, name, _MISSING)
         if node is _MISSING:
             return _MISSING
@@ -847,7 +859,8 @@ def changed_settings(old: ExtractionSettings, new: ExtractionSettings) -> list[s
     for path in old.values.keys() - new.values.keys():
         if _default_value(path) is not _MISSING and _is_extraction_setting(path):
             changed.append(path)
-    return sorted(changed)
+    # Named as configured now (a moved setting is recorded by its old path).
+    return sorted(_CURRENT_PATH.get(path, path) for path in changed)
 
 
 def _is_extraction_setting(path: str) -> bool:

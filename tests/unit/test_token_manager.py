@@ -56,7 +56,7 @@ def _make_manager(
     config = Config()
     config.search.token_manager.max_context_tokens = max_context_tokens
     config.aws.bedrock.enable_1m_context = enable_1m_context
-    config.aws.bedrock.default_max_output_tokens = default_max_output_tokens
+    config.models.default_max_output_tokens = default_max_output_tokens
     if answer_model_id is not None:
         config.models.roles.answer_generation = answer_model_id
     providers = Providers(
@@ -133,7 +133,9 @@ class TestContextBudgetDerivation:
         ):
             mgr = _make_manager(mocker, answer_model_id=model_id)
             info = get_language_model_info(model_id)
-            output = effective_max_output_tokens(info, Config().aws.bedrock)
+            output = effective_max_output_tokens(
+                info, Config().models.default_max_output_tokens
+            )
             assert output <= info.max_output_tokens
             assert (
                 mgr._max_context_tokens + output <= info.context_window_size

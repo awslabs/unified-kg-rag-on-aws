@@ -202,7 +202,7 @@ models:
   other providers take any model name.
 - Settings of an unselected provider (`providers.llm.temperature` with
   Bedrock models) are ignored with a WARNING.
-- **Output cap.** `aws.bedrock.default_max_output_tokens` is 16384 because
+- **Output cap.** `models.default_max_output_tokens` is 16384 because
   Bedrock reserves input + `max_tokens` against the tokens-per-minute quota
   when a request starts; asking for the model maximum throttles concurrent
   ingestion. Long-output prompts derive a higher floor that wins (by default

@@ -138,7 +138,7 @@ Under load the usual cause is the Bedrock tokens-per-minute quota: throttled
 calls are retried inside the deadline, so a quota too small for the load
 shows up as timeouts rather than as slower answers. Lower
 `processing.max_concurrency` (for `run-eval`) or `search.max_concurrency`,
-lower `aws.bedrock.default_max_output_tokens`, or ask for a higher quota;
+lower `models.default_max_output_tokens`, or ask for a higher quota;
 the `BedrockThrottling` alarm shows whether this is the cause. Raise the
 deadline only for queries that are slow on their own (`drift`, long answers)
 ([Operator Runbook: Query deadlines and model timeouts](./operations.md#query-deadlines-and-model-timeouts)).

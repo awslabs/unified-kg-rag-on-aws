@@ -1186,7 +1186,7 @@ attempts, bounded by `BatchProcessor`'s 300 s call timeout.
 
 | Symptom | Change |
 |---|---|
-| Answers that need long generation (high `aws.bedrock.default_effort`, long `default_max_output_tokens` answers) fail with a read timeout | Raise `search.model_timeout_seconds` above the longest answer call, and `search.query_timeout_seconds` to at least about twice it |
+| Answers that need long generation (high `aws.bedrock.default_effort`, long `models.default_max_output_tokens` answers) fail with a read timeout | Raise `search.model_timeout_seconds` above the longest answer call, and `search.query_timeout_seconds` to at least about twice it |
 | `drift`, or `global` over many reports, fails with `QueryTimeoutError` | Raise `search.query_timeout_seconds` (DRIFT makes up to 27 LLM calls); if those calls are throttled, lower `search.max_concurrency` instead |
 | `drift` runs with the comprehensive answer (`search.answer_prompt_style: {drift: comprehensive}`) | Raise `search.query_timeout_seconds` to about 300 s first (see [*DRIFT near the deadline*](#drift-near-the-deadline) below) |
 | A serving layer must answer or fail fast | Lower `search.query_timeout_seconds` to its own request timeout, minus the time it needs to respond |
@@ -1224,7 +1224,7 @@ So a quota too small for the query load shows up as `QueryTimeoutError`
 rather than as slower answers: `run-eval` keeps `processing.max_concurrency`
 queries in flight, each with up to `search.max_concurrency` model calls (the
 global map step, DRIFT). Lower `processing.max_concurrency` for the
-evaluation, lower `aws.bedrock.default_max_output_tokens` (it is reserved
+evaluation, lower `models.default_max_output_tokens` (it is reserved
 whether used or not; the short query calls reserve `search.output_ceilings`
 instead), or ask for a higher quota; raising the deadline only
 lets queries queue longer. The `BedrockThrottling` alarm and the dashboard's

@@ -408,7 +408,7 @@ def test_a_ceiling_stays_above_a_manual_thinking_budget() -> None:
 
 
 def test_a_ceiling_never_raises_max_tokens() -> None:
-    config = Config(aws={"bedrock": {"default_max_output_tokens": 2000}})
+    config = Config(models={"default_max_output_tokens": 2000})
     haiku = LanguageModelId.CLAUDE_V5_5_HAIKU
     assert (
         _bedrock_max_tokens(config, haiku, model_tier="fast", output_ceiling=4096)
@@ -428,8 +428,8 @@ def _ollama_config() -> Config:
             "default": "synthetic-llm",
             "fast": "synthetic-fast",
             "embedding": {"model_id": "synthetic-embed", "dimension": 8},
+            "default_max_output_tokens": 16384,
         },
-        aws={"bedrock": {"default_max_output_tokens": 16384}},
         providers={"llm": {"max_output_tokens": 128000}},
     )
     translation = config.processing.translation

@@ -23,7 +23,6 @@ factories build them.
 from __future__ import annotations
 
 from typing import (
-    TYPE_CHECKING,
     Any,
     ClassVar,
     Literal,
@@ -33,9 +32,6 @@ from typing import (
 )
 
 from pydantic import BaseModel, ConfigDict, Field
-
-if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import BedrockConfig
 
 
 class EmbeddingModelInfo(BaseModel):
@@ -249,15 +245,16 @@ class RerankModelInfo(BaseModel):
 
 def effective_max_output_tokens(
     model_info: LanguageModelInfo,
-    bedrock_config: BedrockConfig,
+    default_cap: int | None,
     min_output_tokens: int = 0,
 ) -> int:
     """max_tokens for a request that does not set one explicitly.
 
-    The configured default cap, raised to the prompt's output floor, never
-    above the model maximum; an unset cap means the model maximum.
+    ``default_cap`` (``models.default_max_output_tokens``), raised to the
+    prompt's output floor, never above the model maximum; ``None`` means the
+    model maximum.
     """
-    cap = bedrock_config.default_max_output_tokens
+    cap = default_cap
     if cap is None:
         return model_info.max_output_tokens
     return min(max(cap, min_output_tokens), model_info.max_output_tokens)
