@@ -288,7 +288,7 @@ def _typed_transport_error(
     return AWSServiceError(msg)
 
 
-def _handle_opensearch_errors(func: Callable) -> Callable:
+def _handle_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     def wrapper(client_instance: "OpenSearchClient", *args: Any, **kwargs: Any) -> Any:
         try:
@@ -310,7 +310,7 @@ def _handle_opensearch_errors(func: Callable) -> Callable:
     return wrapper
 
 
-def _handle_async_opensearch_errors(func: Callable) -> Callable:
+def _handle_async_opensearch_errors(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def async_wrapper(
         client_instance: "OpenSearchClient", *args: Any, **kwargs: Any

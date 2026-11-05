@@ -278,6 +278,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+# Every generic names its type arguments, and a name is imported from the
+# module that defines it (or from a package that lists it in __all__).
+disallow_any_generics = true
+no_implicit_reexport = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]

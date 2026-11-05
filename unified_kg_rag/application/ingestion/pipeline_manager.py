@@ -90,7 +90,7 @@ class PipelineStateManager:
         if self._rerun_from is None or position < self._rerun_from:
             self._rerun_from = position
 
-    def create_context_from_metadata(self, metadata: dict) -> PipelineContext:
+    def create_context_from_metadata(self, metadata: dict[str, Any]) -> PipelineContext:
         context_data = {
             k: v for k, v in metadata.items() if k not in self.EXCLUDED_DATA_FIELDS
         }
@@ -462,7 +462,7 @@ class PipelineResumeManager:
 
     @staticmethod
     def _handle_explicit_stage_resume(
-        stage_results: list[dict], explicit_stage: str
+        stage_results: list[dict[str, Any]], explicit_stage: str
     ) -> tuple[str, list[str]]:
         stage_names = [result["stage_name"] for result in stage_results]
 
@@ -494,7 +494,9 @@ class PipelineResumeManager:
         return explicit_stage, completed_stages
 
     @staticmethod
-    def _handle_auto_resume(stage_results: list[dict]) -> tuple[str, list[str]]:
+    def _handle_auto_resume(
+        stage_results: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
         completed_stages = []
         resume_stage = None
 

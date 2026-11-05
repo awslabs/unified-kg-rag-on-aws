@@ -21,7 +21,6 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
@@ -29,7 +28,10 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     document_filters,
 )
-from unified_kg_rag.adapters.store_errors import is_bad_request
+from unified_kg_rag.adapters.store_errors import (
+    is_bad_request,
+    is_fatal_retrieval_error,
+)
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
     Config,
@@ -119,7 +121,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         str_output_parser = StrOutputParser()
         # Built only for dynamic community selection, which rates reports.
         if self.global_search_config.use_dynamic_selection:
-            self.community_relevance_scorer: Runnable = setup_chain(
+            self.community_relevance_scorer: Runnable[Any, Any] = setup_chain(
                 factory=factory,
                 model_id=self.config.model_id(ModelRole.COMMUNITY_RELEVANCE),
                 prompt_class=CommunityRelevancePrompt,
@@ -130,7 +132,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
         # parse below keeps map output handling fault-tolerant.
-        self.map_rater: Runnable = setup_chain(
+        self.map_rater: Runnable[Any, Any] = setup_chain(
             factory=factory,
             model_id=self.config.model_id(ModelRole.GLOBAL_MAP),
             prompt_class=GlobalMapPrompt,

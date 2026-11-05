@@ -28,7 +28,6 @@ from unified_kg_rag.application.bootstrap import (
 )
 from unified_kg_rag.application.ingestion.cache_manager import (
     CacheManager,
-    CacheStrategy,
 )
 from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
@@ -75,6 +74,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
+    CacheStrategy,
     Config,
     ExtractionSettings,
     PipelineConfig,

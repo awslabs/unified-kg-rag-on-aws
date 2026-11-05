@@ -17,7 +17,6 @@ from unified_kg_rag.adapters.ingestion.claim_extractor import (
 )
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
-    CommunityMetrics,
 )
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
@@ -112,6 +111,7 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityChange,
     CommunityCounters,
+    CommunityMetrics,
     CommunityReport,
     Config,
     Constants,

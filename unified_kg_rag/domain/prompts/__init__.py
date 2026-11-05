@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from .base import ResolvedPrompt
+from .base import BasePrompt, ResolvedPrompt
 from .data_processing import (
     DescriptionSummarizationPrompt,
     TextChunkingPrompt,
@@ -13,7 +13,6 @@ from .evaluation import (
     PairwiseComparisonPrompt,
 )
 from .graph_extraction import (
-    BasePrompt,
     ClaimExtractionPrompt,
     CommunityReportPrompt,
     GraphExtractionPrompt,

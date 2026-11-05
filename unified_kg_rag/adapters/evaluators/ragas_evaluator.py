@@ -101,7 +101,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         show_progress: bool = True,
     ) -> None:
         self.embeddings: Embeddings | None = None
-        self.llm: BaseLanguageModel | None = None
+        self.llm: BaseLanguageModel[Any] | None = None
         self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
         # Judge LLM, embeddings and token counter come from the shared

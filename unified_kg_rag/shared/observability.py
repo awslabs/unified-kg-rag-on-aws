@@ -221,7 +221,9 @@ def is_enabled() -> bool:
     return _active_backend() is not None
 
 
-def _merge(attributes: Mapping[str, Any] | None, kwargs: dict[str, Any]) -> dict:
+def _merge(
+    attributes: Mapping[str, Any] | None, kwargs: dict[str, Any]
+) -> dict[str, Any]:
     merged = dict(attributes) if attributes else {}
     for key, value in kwargs.items():
         merged[_NAMESPACE + key] = value

@@ -1168,7 +1168,7 @@ class NeptuneIndexer(GraphIndexer):
         items: list[Any],
         item_type_name: str,
         label_prefix: str,
-        traversal_builder_func: Callable,
+        traversal_builder_func: Callable[..., Any],
         *,
         clear_first: bool,
         suffixes: Collection[str] = (),

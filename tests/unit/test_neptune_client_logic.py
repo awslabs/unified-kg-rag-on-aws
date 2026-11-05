@@ -18,7 +18,7 @@ from gremlin_python.driver.protocol import GremlinServerError
 
 from unified_kg_rag.adapters.aws import neptune as neptune_mod
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
-from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, StoreConnectionError
 from unified_kg_rag.shared.exceptions import StoreAccessDeniedError, StoreTimeoutError

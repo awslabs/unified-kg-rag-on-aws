@@ -101,7 +101,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         providers: Providers | None = None,
         show_progress: bool = True,
     ) -> None:
-        self.llm: BaseLanguageModel | None = None
+        self.llm: BaseLanguageModel[Any] | None = None
         self.evaluators: dict[EvaluationMetricType, Any] = {}
         # The judge LLM comes from the shared provider bundle
         # (EvaluationManager passes the chain's).
@@ -277,7 +277,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
-        tasks: list[Coroutine] = []
+        tasks: list[Coroutine[Any, Any, Any]] = []
         metric_types_to_run: list[EvaluationMetricType] = []
         failed: dict[str, str] = {}
         skipped: dict[str, str] = {}

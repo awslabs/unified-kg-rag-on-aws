@@ -785,7 +785,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         # Shielded: one waiter's cancellation must not cancel the others' call.
         return await asyncio.shield(pending)
 
-    def _settle_embedding(self, query_text: str, done: asyncio.Future) -> None:
+    def _settle_embedding(self, query_text: str, done: asyncio.Future[Any]) -> None:
         self._pending_embeddings.pop(query_text, None)
         # Mark a failure as retrieved: when every waiter was cancelled nobody
         # awaits the shared call, and asyncio would log "Task exception was

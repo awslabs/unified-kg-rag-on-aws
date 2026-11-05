@@ -1063,7 +1063,7 @@ class OpenSearchIndexer(VectorIndexer):
         return self._index_item_type(entities, self._spec("entities"), suffixes)
 
     def _prepare_community_report_doc(
-        self, report: CommunityReport, embeddings: tuple
+        self, report: CommunityReport, embeddings: tuple[Any, ...]
     ) -> dict[str, Any]:
         return {
             **self._prepare_common_doc_properties(report),
@@ -2433,7 +2433,7 @@ class OpenSearchIndexer(VectorIndexer):
         items: list[Any],
         spec: _ItemSpec,
         stored: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> tuple[list[tuple], list[dict[str, str]]]:
+    ) -> tuple[list[tuple[Any, ...]], list[dict[str, str]]]:
         """Each item's vectors (in ``spec.vector_fields`` order; ``None``
         where embedding failed or the text is empty) and digests by field.
 
@@ -2575,8 +2575,10 @@ class OpenSearchIndexer(VectorIndexer):
 
     @staticmethod
     def _prepare_documents(
-        items: list[Any], embeddings: list[tuple], prepare_func: Callable
-    ) -> tuple[list[dict], list[str]]:
+        items: list[Any],
+        embeddings: list[tuple[Any, ...]],
+        prepare_func: Callable[..., Any],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         docs, failed_ids = [], []
         embedding_failed_ids: list[str] = []
 

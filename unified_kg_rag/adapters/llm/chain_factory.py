@@ -463,7 +463,7 @@ def create_robust_xml_output_parser(
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int = 0,
     parser_class: type[RobustXMLOutputParser] = RobustXMLOutputParser,
-) -> BaseOutputParser:
+) -> BaseOutputParser[Any]:
     """Build the XML parser (a ``parser_class``), optionally wrapped in an
     LLM output fixer.
 
@@ -502,12 +502,12 @@ def setup_chain(
     factory: LLMFactoryPort,
     model_id: str,
     prompt_class: type[BasePrompt],
-    parser: BaseOutputParser,
+    parser: BaseOutputParser[Any],
     custom_prompts: CustomPromptConfig | None = None,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int | None = None,
     **kwargs: Any,
-) -> Runnable:
+) -> Runnable[Any, Any]:
     """Build ``prompt | llm | parser`` with the policies of ``model_purpose``.
 
     ``QUERY`` (the default) gets, when the factory classifies transient
@@ -543,7 +543,7 @@ def setup_chain(
         guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
         # Named after the prompt, so a trace shows "AnswerGenerationPrompt"
         # instead of an anonymous "RunnableSequence".
-        chain: Runnable = (prompt | llm | guard | parser).with_config(
+        chain: Runnable[Any, Any] = (prompt | llm | guard | parser).with_config(
             run_name=prompt_class.__name__
         )
         logger.debug("Successfully created LLM chain with model: '%s'", model_id)

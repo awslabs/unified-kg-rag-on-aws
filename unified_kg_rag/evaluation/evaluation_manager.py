@@ -215,7 +215,7 @@ class EvaluationManager:
     def __init__(
         self,
         config: Config,
-        rag_chain: Runnable | None = None,
+        rag_chain: Runnable[Any, Any] | None = None,
         source_resolver: SourceFileResolver | None = None,
         *,
         providers: Providers | None = None,
@@ -248,7 +248,7 @@ class EvaluationManager:
 
     @staticmethod
     def _default_source_resolver(
-        config: Config, rag_chain: Runnable
+        config: Config, rag_chain: Runnable[Any, Any]
     ) -> SourceFileResolver | None:
         """Resolve graph-source lineage through the chain's own document store.
 

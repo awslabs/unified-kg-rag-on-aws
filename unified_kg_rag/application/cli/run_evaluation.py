@@ -20,7 +20,6 @@ from rich.table import Table
 from unified_kg_rag import __version__
 from unified_kg_rag.adapters.aws.s3_transfer import (
     download_s3_object,
-    is_s3_uri,
     parse_s3_uri,
     s3_client_for,
     upload_directory_to_s3,
@@ -111,6 +110,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 logger = get_logger(__name__)
 
@@ -378,7 +378,7 @@ class EvaluationRunner:
     def __init__(
         self,
         args: argparse.Namespace,
-        rag_chain: Runnable | None,
+        rag_chain: Runnable[Any, Any] | None,
         config: Config,
         providers: Providers | None = None,
     ) -> None:

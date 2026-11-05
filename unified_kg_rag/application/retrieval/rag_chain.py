@@ -489,7 +489,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._schema_fields_unreadable = False
         # Prompt chains (prompt | llm | parser) by prompt, model, parser type
         # and model kwargs; not loop-bound, so shared by every loop.
-        self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
+        self._prompt_chains: dict[tuple[Any, ...], Runnable[Any, Any]] = {}
         # Query entity and keyword extractions by question, language, model
         # and prompt (search.query_extraction_cache_size): repeats and the
         # arms of a comparison reuse them.
@@ -521,26 +521,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         self.chain = self._build_chain()
 
-    def _build_chain(self) -> Runnable:
+    def _build_chain(self) -> Runnable[Any, Any]:
         # Memory is loaded first: a follow-up is rewritten as a standalone
         # question from the history, and routing, query processing and
         # retrieval all work on that question.
-        base_chain: Runnable = (
+        base_chain: Runnable[Any, Any] = (
             RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(standalone_query=self._rewrite_query_step)
             | RunnableLambda(self._route_and_process_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
-        context_step: Runnable = RunnablePassthrough.assign(
+        context_step: Runnable[Any, Any] = RunnablePassthrough.assign(
             optimized_context=self._context_optimization_step
         ) | RunnablePassthrough.assign(context=self._context_building_step)
         # Streaming runs everything up to (and including) context building as
         # one non-streamed pass, then streams only the answer LLM. Reusing the
         # same step objects keeps stream and invoke behaviour in lockstep.
-        self._stream_context_chain: Runnable = base_chain | context_step
+        self._stream_context_chain: Runnable[Any, Any] = base_chain | context_step
 
-        answer_step: Runnable = RunnablePassthrough.assign(
+        answer_step: Runnable[Any, Any] = RunnablePassthrough.assign(
             answer=self._answer_generation_step
         )
         if self._ground_outputs:
@@ -551,7 +551,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             context_step | answer_step | RunnableLambda(self._format_output_step)
         )
 
-        self._search_chain: Runnable = base_chain | RunnableLambda(
+        self._search_chain: Runnable[Any, Any] = base_chain | RunnableLambda(
             self._format_search_output_step
         )
         return base_chain | rag_branch
@@ -719,9 +719,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _get_chain_for_prompt(
         self,
         prompt_class: type[BasePrompt],
-        parser: BaseOutputParser,
+        parser: BaseOutputParser[Any],
         **kwargs: Any,
-    ) -> Runnable:
+    ) -> Runnable[Any, Any]:
         model_id_map: dict[type[BasePrompt], str] = {
             EntityExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
             KeywordsExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
@@ -1709,7 +1709,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             optimized = self._optimize_context(state)
         return self.token_manager.build_context_string(optimized)
 
-    def _answer_generation_step(self, state: dict[str, Any]) -> Runnable:
+    def _answer_generation_step(self, state: dict[str, Any]) -> Runnable[Any, Any]:
         # Never ask the LLM to answer from an empty/placeholder context: retrieval
         # produced nothing, so generating anyway invites a confident hallucination
         # with no supporting sources. Short-circuit to an explicit "cannot answer".

@@ -392,8 +392,8 @@ class SchemaReannotation(BaseModel):
 
 
 class IndexingTask(NamedTuple):
-    fn: Callable
-    args: list
+    fn: Callable[..., Any]
+    args: list[Any]
     key: str
     # Run even without items (a full build replacing a type with nothing).
     run_empty: bool = False
@@ -685,7 +685,9 @@ class IndexingManager:
             relationships = self._annotated_relationships(relationships)
         vector, graph = self.opensearch_indexer, self.neptune_indexer
         # (full-build writer, delta writer, items, result key)
-        phase1: list[tuple[Callable, Callable, list[Any] | None, str]] = [
+        phase1: list[
+            tuple[Callable[..., Any], Callable[..., Any], list[Any] | None, str]
+        ] = [
             (
                 vector.index_text_units,
                 vector.upsert_text_units,
@@ -723,7 +725,9 @@ class IndexingManager:
             )
 
         def tasks(
-            specs: list[tuple[Callable, Callable, list[Any] | None, str]],
+            specs: list[
+                tuple[Callable[..., Any], Callable[..., Any], list[Any] | None, str]
+            ],
         ) -> list[IndexingTask]:
             if suffixes is None:
                 return [IndexingTask(fn, [items], key) for _, fn, items, key in specs]

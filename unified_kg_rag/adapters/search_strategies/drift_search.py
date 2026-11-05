@@ -28,13 +28,13 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
+from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
     ModelRole,
@@ -105,21 +105,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         factory = self.providers.llm_factory
         parser = StrOutputParser()
-        self.hyde: Runnable = setup_chain(
+        self.hyde: Runnable[Any, Any] = setup_chain(
             factory=factory,
             model_id=self.config.model_id(ModelRole.DRIFT_PRIMER),
             prompt_class=DriftHydePrompt,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
-        self.primer: Runnable = setup_chain(
+        self.primer: Runnable[Any, Any] = setup_chain(
             factory=factory,
             model_id=self.config.model_id(ModelRole.DRIFT_PRIMER),
             prompt_class=DriftPrimerPrompt,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
-        self.action: Runnable = setup_chain(
+        self.action: Runnable[Any, Any] = setup_chain(
             factory=factory,
             model_id=self.config.model_id(ModelRole.DRIFT_ACTION),
             prompt_class=DriftActionPrompt,

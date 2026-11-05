@@ -471,7 +471,7 @@ class BatchProcessor(BaseModel):
 
     def _create_retry_decorator(
         self, operation_name: str, abandoned: threading.Event | None = None
-    ) -> Callable:
+    ) -> Callable[..., Any]:
         # Exponential backoff WITH jitter (wait_random_exponential) to spread
         # concurrent retries and avoid hammering a throttled Bedrock endpoint in
         # lock-step. Only retryable errors are retried, so a permanent failure
@@ -500,7 +500,7 @@ class BatchProcessor(BaseModel):
         retrying = tenacity.Retrying(**policy, **options)
         aretrying = tenacity.AsyncRetrying(**policy)
 
-        def decorator(func: Callable) -> Callable:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
@@ -518,7 +518,7 @@ class BatchProcessor(BaseModel):
         return decorator
 
     @staticmethod
-    def _create_retry_log_callback(operation_name: str) -> Callable:
+    def _create_retry_log_callback(operation_name: str) -> Callable[..., Any]:
         def log_retry(retry_state: RetryCallState) -> None:
             wait_time = retry_state.next_action.sleep if retry_state.next_action else 0
             logger.warning(
