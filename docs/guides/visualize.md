@@ -35,10 +35,15 @@ Ingestion itself renders nothing. Another renderer plugs in through
 - **What.** Nodes (colored by their level-0 `community_id`), edges and the
   community hierarchy, without vectors. Writing it calls no model;
   `run-visualization` computes a seeded spring layout from the graph
-  topology and the `centrality` metrics when it renders.
+  topology when it renders, and the `centrality` metrics only when `static`
+  is among the renderers (the interactive page does not read them; on a
+  5,000-node graph an `interactive`-only run took 22 s instead of 71 s). A
+  metric that is off or failed to compute is left out of the centrality
+  chart, not drawn as 0.
 - **Size.** The interactive graph keeps the top `interactive.max_nodes` nodes
   by degree (default 2000) and lays out only those.
 - Edge width and opacity are log-scaled to the graph's own weight range.
 - Only files a renderer wrote are reported (an earlier file of the same name
-  is removed first); when nothing is rendered (an empty graph) the command
-  exits `1`.
+  is removed first); when nothing is rendered (an empty graph), or a
+  renderer fails while others write their files, the command exits `1`
+  (the JSON output names it in `failed_renderers`).

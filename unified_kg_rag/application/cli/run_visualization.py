@@ -6,8 +6,8 @@ Renders visualizations from a previously exported visualization-data JSON
 (``visualization_data.json``, the graph and its communities, written into
 ``graph.visualization.outputs_directory`` during ingestion by
 ``graph.visualization.export_data``) WITHOUT re-running ingestion. The file
-gets a spring layout and the configured centrality metrics here unless it
-carries its own. Drives the renderer registry, so any registered renderer
+gets a spring layout here unless it carries its own, and the configured
+centrality metrics when a requested renderer reads them (``static``). Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently. The
 built-in renderers need the ``viz`` extra; without it the run stops before
 rendering (exit 2) naming the extra.
@@ -165,10 +165,12 @@ def _render_context(data: dict[str, Any]) -> RenderContext:
     )
 
 
-def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
+def _fill_missing_analysis(
+    context: RenderContext, config: Any, *, centrality: bool = True
+) -> None:
     """Compute what the export (``graph.visualization.export_data``) leaves
-    out: a seeded spring layout from the graph topology and the configured
-    centrality metrics."""
+    out: a seeded spring layout from the graph topology and, with
+    ``centrality``, the configured centrality metrics."""
     if context.graph.number_of_nodes() == 0:
         return
     if not context.layout:
@@ -181,14 +183,23 @@ def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
                 config.graph.visualization.interactive
             ).max_nodes,
         )
-    if not context.centrality:
+    if centrality and not context.centrality:
         context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()
 
 
 def run_visualization(
-    data_path: Path, output_dir: Path, renderer_names: list[str], config: Any
+    data_path: Path,
+    output_dir: Path,
+    renderer_names: list[str],
+    config: Any,
+    *,
+    failures: dict[str, str] | None = None,
 ) -> list[Path]:
     """Render the requested renderers from exported data; return written paths.
+
+    Centrality is computed only when a requested renderer reads it
+    (``BaseRenderer.needs_centrality``). ``failures``, when given, gets each
+    renderer that failed and its error.
 
     Raises:
         ConfigurationError: A renderer's dependency is not installed (the
@@ -197,9 +208,13 @@ def run_visualization(
     renderers = resolve_renderers(renderer_names)
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
-    _fill_missing_analysis(context, config)
+    _fill_missing_analysis(
+        context,
+        config,
+        centrality=any(renderer.needs_centrality for _, renderer in renderers),
+    )
     written = render_resolved(
-        context, output_dir, renderers, config.graph.visualization
+        context, output_dir, renderers, config.graph.visualization, failures=failures
     )
     if not written:
         logger.error(
@@ -261,8 +276,13 @@ def main() -> int:
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
         setup_logging(config, stream=sys.stderr if as_json else None)
+        failures: dict[str, str] = {}
         written = run_visualization(
-            args.data_path, args.output_directory, args.renderers, config
+            args.data_path,
+            args.output_directory,
+            args.renderers,
+            config,
+            failures=failures,
         )
         logger.info(
             "Visualization complete: %d files in '%s'",
@@ -274,12 +294,19 @@ def main() -> int:
                 {
                     "output_directory": str(args.output_directory),
                     "files": [str(path) for path in written],
+                    "failed_renderers": failures,
                 }
             )
         if not written:
             return failed(
                 EXIT_FAILURE,
                 f"No visualization files were rendered from '{args.data_path}'",
+            )
+        if failures:
+            # The others rendered, but a requested output is missing.
+            return failed(
+                EXIT_FAILURE,
+                f"Renderer(s) failed: {', '.join(sorted(failures))}",
             )
         return 0
     except KeyboardInterrupt:

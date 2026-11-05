@@ -100,6 +100,8 @@ class InteractiveRendererAdapter(BaseRenderer):
 class StaticRendererAdapter(BaseRenderer):
     """Bokeh static plots: degree / centrality / community-size distributions."""
 
+    needs_centrality = True
+
     @classmethod
     def check_dependencies(cls) -> None:
         _static_renderer()

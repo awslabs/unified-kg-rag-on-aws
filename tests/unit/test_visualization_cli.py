@@ -222,6 +222,84 @@ class TestRunVisualization:
         # The hub (degree 5) and two leaves: the nodes the page draws.
         assert len(context.layout) == 3 and "0" in context.layout
 
+    @pytest.mark.usefixtures("restore_renderer_registry")
+    def test_centrality_is_computed_only_for_a_renderer_that_reads_it(
+        self, tmp_path: Path, config: Config, mocker
+    ) -> None:
+        # Betweenness is O(V*E) and only the static charts read centrality;
+        # an interactive-only run computed it all the same.
+        from unified_kg_rag.domain.ingestion.visualization_data import graph_data
+
+        seen: list[dict[str, object]] = []
+
+        @register_renderer("layout_only_for_test")
+        class _LayoutOnly(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                seen.append(context.centrality)
+                return []
+
+        @register_renderer("centrality_for_test")
+        class _Centrality(_LayoutOnly):
+            needs_centrality = True
+
+        path = tmp_path / "data.json"
+        path.write_text(
+            json.dumps(graph_data(nx.path_graph(3), {"hierarchy": []})),
+            encoding="utf-8",
+        )
+        compute = mocker.spy(cli_module.GraphAnalyzer, "calculate_centrality")
+        run_visualization(path, tmp_path / "a", ["layout_only_for_test"], config)
+        assert compute.call_count == 0 and seen == [{}]
+        run_visualization(
+            path,
+            tmp_path / "b",
+            ["layout_only_for_test", "centrality_for_test"],
+            config,
+        )
+        assert compute.call_count == 1 and seen[-1]
+        assert get_renderer_class("static").needs_centrality
+        assert not get_renderer_class("interactive").needs_centrality
+
+    @pytest.mark.usefixtures("restore_renderer_registry")
+    def test_main_exits_1_and_names_a_failed_renderer_beside_written_files(
+        self,
+        export_json: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Before, it exited 0 when another renderer wrote its files.
+        @register_renderer("broken_for_main_test")
+        class _Broken(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                raise RuntimeError("cannot draw")
+
+        @register_renderer("ok_for_main_test")
+        class _Ok(BaseRenderer):
+            def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
+                out = output_dir / "ok.txt"
+                out.write_text("ok", encoding="utf-8")
+                return [out]
+
+        argv = [
+            "run-visualization",
+            "--data-path",
+            str(export_json),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--renderers",
+            "broken_for_main_test",
+            "ok_for_main_test",
+            "--output-format",
+            "json",
+        ]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(cli_module, "load_cli_config", lambda _args: Config())
+        assert cli_module.main() == 1
+        out = json.loads(capsys.readouterr().out)
+        assert out["files"] == [str(tmp_path / "out" / "ok.txt")]
+        assert out["failed_renderers"] == {"broken_for_main_test": "cannot draw"}
+
 
 class TestRendererRegistry:
     def test_builtin_renderers_registered(self) -> None:

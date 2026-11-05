@@ -9,6 +9,7 @@ the renderer constructs Bokeh figures and writes HTML output files to a
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import networkx as nx
@@ -150,6 +151,30 @@ class TestCentralityComparison:
     def test_no_named_nodes_writes_nothing(self, tmp_path: Path) -> None:
         # All nodes lack a node_name -> nothing to plot.
         data = {"n0": CentralityMetrics(node_id="n0", node_name=None, degree=1.0)}
+        out = tmp_path / "centrality.html"
+        StaticRenderer({}).plot_centrality_comparison(data, str(out))
+        assert not out.exists()
+
+    def test_a_missing_metric_is_not_plotted_as_zero(
+        self, tmp_path: Path, mocker
+    ) -> None:
+        # Betweenness failed for every node and pagerank for one: both were
+        # drawn as 0.0 bars, read as measured zeros.
+        data = self._centrality()
+        for metrics in data.values():
+            metrics.betweenness = None
+        data["n1"].pagerank = None
+        save = mocker.spy(StaticRenderer, "_save_plot")
+        out = tmp_path / "centrality.html"
+        StaticRenderer({}).plot_centrality_comparison(data, str(out))
+        source = save.call_args.args[0].renderers[0].data_source
+        assert "betweenness" not in source.data
+        degree, pagerank = source.data["degree"], source.data["pagerank"]
+        assert list(degree) == [1.0, 0.5]
+        assert pagerank[0] == 0.3 and math.isnan(pagerank[1])
+
+    def test_no_metric_values_writes_nothing(self, tmp_path: Path) -> None:
+        data = {"n0": CentralityMetrics(node_id="n0", node_name="N0")}
         out = tmp_path / "centrality.html"
         StaticRenderer({}).plot_centrality_comparison(data, str(out))
         assert not out.exists()

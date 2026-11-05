@@ -1127,6 +1127,10 @@ From 0.2.3 (or a `main` checkout since):
   #310).
 - The `graph_analysis` stage no longer computes centrality, which no later
   stage read (#248).
+- `run-visualization` computes centrality only when a requested renderer
+  reads it (`static`; a renderer declares it with
+  `BaseRenderer.needs_centrality`): an `interactive`-only run of a
+  5,000-node graph took 71 s, now 22 s (#PR).
 - The parser uses its own loaders on langchain-core (same text and
   metadata, so document ids are unchanged; a 4,000-page PDF loads in about
   1 s); `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471).
@@ -1726,6 +1730,11 @@ Evaluation, visualization and tuning.
 - `run-visualization` rejects unknown `--renderers` and invalid data with
   exit 2 (#255, #353) and lays out only the drawn nodes (#246); physics
   stays off when `interactive` omits it (#292).
+- `run-visualization` exits 1 when a renderer fails while another writes
+  its files (it exited 0), and its JSON names each failed renderer and its
+  error (`failed_renderers`). The centrality chart leaves out a metric that
+  is off or failed to compute, and gives a node without a value no bar;
+  both were drawn as 0.0 (#PR).
 - `run-prompt-tuning` profiles with the `graph_extraction` model, writes
   types UPPERCASE in its examples, logs no model output at ERROR, and
   rejects `--max-docs` below 1 (#227, #292, #353).

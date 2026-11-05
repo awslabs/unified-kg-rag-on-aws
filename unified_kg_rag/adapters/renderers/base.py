@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
@@ -43,6 +43,10 @@ class RenderContext:
 
 class BaseRenderer(ABC):
     """A renderer turns a :class:`RenderContext` into one or more output files."""
+
+    # Whether :meth:`render` reads ``RenderContext.centrality``: the caller
+    # computes it (betweenness alone is O(V*E)) only for a renderer that does.
+    needs_centrality: ClassVar[bool] = False
 
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -129,6 +133,8 @@ def render_resolved(
     output_dir: Path,
     renderers: Iterable[tuple[str, type[BaseRenderer]]],
     viz_config: Any,
+    *,
+    failures: dict[str, str] | None = None,
 ) -> list[Path]:
     """Run renderers :func:`resolve_renderers` returned over ``context``;
     return the files written.
@@ -136,7 +142,7 @@ def render_resolved(
     A renderer's config is the ``viz_config`` attribute named after it (an
     empty dict when there is none), so a newly registered renderer needs no
     dispatch edit. A renderer that fails is logged and skipped so the others
-    still render.
+    still render; ``failures``, when given, gets its name and error.
     """
     written: list[Path] = []
     for name, renderer_cls in renderers:
@@ -147,6 +153,8 @@ def render_resolved(
             raise
         except Exception as e:  # noqa: BLE001 - one renderer must not sink the rest
             logger.error("Renderer '%s' failed: %s", name, e)
+            if failures is not None:
+                failures[name] = str(e) or type(e).__name__
             continue
         if paths:
             logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))
