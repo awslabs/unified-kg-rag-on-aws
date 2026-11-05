@@ -45,12 +45,13 @@ logger = get_logger(__name__)
 
 # Sent when an OpenAI-compatible server needs no key: the client refuses to
 # start without one (or OPENAI_API_KEY).
-PLACEHOLDER_API_KEY = "not-needed"
+PLACEHOLDER_API_KEY = "not-needed"  # pragma: allowlist secret
 
 
 def import_optional(module: str, kind: str) -> Any:
     """Import a ``[local]``-extra module, failing with the remedy if absent."""
     try:
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import - literal module names
         return importlib.import_module(module)
     except ImportError as e:
         raise ConfigurationError(

@@ -169,8 +169,9 @@ class SQLiteDocStatusStore:
             for start in range(0, len(ids), _BATCH):
                 batch = ids[start : start + _BATCH]
                 marks = ",".join("?" * len(batch))
+                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - sqlite3 with bound values
                 rows = self.connection.execute(
-                    f"SELECT doc_id, record FROM documents WHERE doc_id IN ({marks})",
+                    f"SELECT doc_id, record FROM documents WHERE doc_id IN ({marks})",  # nosec B608 - ? marks only, values bound
                     batch,
                 ).fetchall()
                 for doc_id, record in rows:
@@ -321,12 +322,13 @@ class SQLiteDocStatusStore:
         namespace = scope_namespace(scope)
         with self._lock, self._registry_errors("read the records"):
             if namespace is None:
+                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query, python.lang.security.audit.formatted-sql-query.formatted-sql-query - literal columns
                 rows = self.connection.execute(
-                    f"SELECT {columns} FROM documents ORDER BY rowid"
+                    f"SELECT {columns} FROM documents ORDER BY rowid"  # nosec B608 - literal columns
                 ).fetchall()
             else:
                 rows = self.connection.execute(
-                    f"SELECT {columns} FROM documents WHERE namespace = ? "
+                    f"SELECT {columns} FROM documents WHERE namespace = ? "  # nosec B608 - literal columns, values bound
                     "ORDER BY rowid",
                     (namespace,),
                 ).fetchall()

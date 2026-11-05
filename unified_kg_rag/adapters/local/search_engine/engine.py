@@ -734,7 +734,7 @@ class SQLiteSearchEngine:
                 ("indices", "name"),
             ):
                 connection.executemany(
-                    f"DELETE FROM {table} WHERE {column} = ?",  # noqa: S608
+                    f"DELETE FROM {table} WHERE {column} = ?",  # nosec B608 - literal names
                     [(name,) for name in doomed],
                 )
         for name in doomed:
@@ -1053,14 +1053,14 @@ class SQLiteSearchEngine:
                     sources = {
                         doc_id: json.loads(source)
                         for doc_id, source in connection.execute(
-                            "SELECT id, source FROM docs WHERE index_name = ? "
+                            "SELECT id, source FROM docs WHERE index_name = ? "  # nosec B608 - ? marks only, values bound
                             f"AND id IN ({marks})",
                             (name, *batch),
                         )
                     }
                     if excludes is not None:
                         for doc_id, field, vec in connection.execute(
-                            "SELECT id, field, vec FROM vectors WHERE index_name = ? "
+                            "SELECT id, field, vec FROM vectors WHERE index_name = ? "  # nosec B608 - ? marks only, values bound
                             f"AND id IN ({marks})",
                             (name, *batch),
                         ):

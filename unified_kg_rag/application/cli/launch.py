@@ -49,6 +49,7 @@ def _run(module: str) -> Any:
     # A SIGINT the parent ignores (`cmd &` in a script, nohup) stays ignored.
     if interrupt is not signal.SIG_IGN:
         signal.signal(signal.SIGINT, _stopped_while_loading)
+    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import - entry-point names
     cli = importlib.import_module(f"unified_kg_rag.application.cli.{module}")
     # Ctrl-C raises KeyboardInterrupt again once main runs.
     signal.signal(signal.SIGINT, interrupt)

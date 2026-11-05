@@ -229,6 +229,7 @@ def __getattr__(name: str) -> Any:
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module 'unified_kg_rag' has no attribute '{name}'")
+    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import - from the _EXPORTS table
     value = getattr(importlib.import_module(module), name)
     globals()[name] = value  # later lookups skip __getattr__
     return value

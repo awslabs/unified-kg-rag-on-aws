@@ -218,7 +218,7 @@ class SQLiteGraphStore:
         found: dict[str, dict[str, list[Any]]] = {}
         for batch in batches(list(dict.fromkeys(ids))):
             rows = connection.execute(
-                f"SELECT id, props FROM vertices WHERE label = ? "
+                f"SELECT id, props FROM vertices WHERE label = ? "  # nosec B608 - ? marks only, values bound
                 f"AND id IN ({placeholders(batch)})",
                 [label, *batch],
             ).fetchall()
@@ -255,7 +255,7 @@ class SQLiteGraphStore:
         for batch in batches(list(dict.fromkeys(ids)), BATCH_SIZE // 2):
             marks = placeholders(batch)
             rows = connection.execute(
-                f"SELECT source_id FROM edges WHERE label = ? AND source_id IN ({marks}) "
+                f"SELECT source_id FROM edges WHERE label = ? AND source_id IN ({marks}) "  # nosec B608 - ? marks only, values bound
                 "UNION ALL "
                 f"SELECT target_id FROM edges WHERE label = ? AND target_id IN ({marks})",
                 [label, *batch, label, *batch],
