@@ -200,7 +200,7 @@ def test_a_stored_edge_written_seed_only_no_longer_ranks_its_endpoints() -> None
     stored = _rel("r-ab", "a", "b", ["u1", SEED])
     _store(graph, [stored, _rel("r-ac", "a", "c", ["u2"])])
 
-    entities, _ = manager._finish(
+    entities, _ = manager._merge._finish(
         "default",
         [Entity(id="a", name="A", text_unit_ids=["u2", SEED])],
         [_rel("r-ab", "a", "b", [SEED])],
@@ -214,7 +214,7 @@ def test_another_document_edge_of_the_pair_keeps_the_link() -> None:
     stored = _rel("r-ab", "a", "b", ["u1", SEED])
     _store(graph, [stored, _rel("r-ba", "b", "a", ["u3"], "PAYS")])
 
-    entities, _ = manager._finish(
+    entities, _ = manager._merge._finish(
         "default",
         [Entity(id="a", name="A", text_unit_ids=["u3", SEED])],
         [_rel("r-ab", "a", "b", [SEED])],
@@ -235,7 +235,7 @@ def test_another_seed_only_edge_of_the_pair_does_not_keep_the_link() -> None:
         ],
     )
 
-    entities, _ = manager._finish(
+    entities, _ = manager._merge._finish(
         "default",
         [Entity(id="a", name="A", text_unit_ids=["u2", SEED])],
         [_rel("r-ab", "a", "b", [SEED])],
@@ -250,7 +250,7 @@ def test_a_stored_edge_under_its_old_id_is_demoted_by_its_rekeyed_write() -> Non
     stored = _rel("r-old", "a", "b", ["u1", SEED])
     _store(graph, [stored])
 
-    links = manager._demoted_links(
+    links = manager._merge._demoted_links(
         "default", [_rel("r-new", "a", "b", [SEED])], [stored], {"r-old": "r-new"}, ()
     )
     assert links == {frozenset(("a", "b"))}
@@ -262,7 +262,7 @@ def test_a_stored_seed_only_edge_written_seed_only_is_not_demoted() -> None:
     stored = _rel("r-ab", "a", "b", [SEED])
     _store(graph, [stored])
 
-    links = manager._demoted_links(
+    links = manager._merge._demoted_links(
         "default", [_rel("r-ab", "a", "b", [SEED, SEED_2])], [stored], {}, ()
     )
     assert links == set()
@@ -274,7 +274,7 @@ def test_a_dropped_document_edge_of_the_pair_does_not_keep_the_link() -> None:
     _store(graph, [stored, _rel("r-ba", "b", "a", ["u3"], "PAYS")])
 
     def demoted(dropped: tuple[str, ...]) -> set[frozenset[str]]:
-        return manager._demoted_links(
+        return manager._merge._demoted_links(
             "default", [_rel("r-ab", "a", "b", [SEED])], [stored], {}, dropped
         )
 
@@ -288,7 +288,7 @@ def test_without_a_seed_only_edge_nothing_more_is_read(mocker) -> None:
     incident = mocker.spy(graph, "find_incident_relationship_ids")
     neighbours = mocker.spy(graph, "read_neighbor_ids")
 
-    manager._finish(
+    manager._merge._finish(
         "default",
         [Entity(id="a", name="A", text_unit_ids=["u1"])],
         [_rel("r-ab", "a", "b", ["u1"])],

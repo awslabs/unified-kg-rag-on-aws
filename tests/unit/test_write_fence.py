@@ -513,7 +513,7 @@ def test_a_lost_lease_stops_the_deletion_of_retired_ids() -> None:
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
     graph.upsert_entities([Entity(id="e-old", name="Old")])
-    manager._retire("default", {"e-old": "e-new"})
+    manager._merge._retire("default", {"e-old": "e-new"})
     token = _fenced(_Fence(allowed=0))
     try:
         with pytest.raises(NamespaceLeaseError):

@@ -105,7 +105,7 @@ def test_the_name_key_lookup_reads_no_full_name_list(mocker) -> None:
     graph.upsert_entities([acme, Entity(id="e-x", name="Other", text_unit_ids=["t1"])])
     every_name = mocker.spy(graph, "read_entity_names")
 
-    matcher, matched = manager._match_stored_names(
+    matcher, matched = manager._merge._match_stored_names(
         "default", [Entity(id="e-acme", name="ACME", text_unit_ids=["t2"])]
     )
 
@@ -121,7 +121,7 @@ def test_fuzzy_matching_still_reads_every_name(mocker) -> None:
     )
     every_name = mocker.spy(graph, "read_entity_names")
 
-    _, matched = manager._match_stored_names(
+    _, matched = manager._merge._match_stored_names(
         "default", [Entity(id="e-new", name="Acme Corporatio", text_unit_ids=["t2"])]
     )
 
@@ -363,10 +363,10 @@ def test_a_claim_left_on_the_other_spelling_marks_a_leftover_split() -> None:
         ]
     )
 
-    left = manager._leftover_spellings(
+    left = manager._merge._leftover_spellings(
         "default", [part], {"e-part": "e-whole"}, edges=[]
     )
-    kept_apart = manager._leftover_spellings(
+    kept_apart = manager._merge._leftover_spellings(
         "default", [part], {"e-part": "e-apart"}, edges=[]
     )
 
@@ -415,7 +415,7 @@ def test_a_third_spellings_statement_on_a_whole_marks_a_leftover_split(
             ]
         )
 
-    left = manager._leftover_spellings(
+    left = manager._merge._leftover_spellings(
         "default", parts, {"e-inc": "e-whole", "e-ltd": "e-other"}, edges=edges
     )
 
@@ -434,7 +434,7 @@ def test_a_strip_note_that_cannot_be_written_stops_the_strip(mocker) -> None:
     mocker.patch.object(vector, "write_extraction_records", return_value=failed)
 
     with pytest.raises(DataProcessingError):
-        manager._note_pending_strip("default", ["e"], [])
+        manager._removal._note_pending_strip("default", ["e"], [])
 
 
 def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
@@ -445,7 +445,7 @@ def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
         vector, "delete_extraction_records", side_effect=RuntimeError("store down")
     )
 
-    manager._clear_pending_strip("default")
+    manager._removal._clear_pending_strip("default")
 
     assert "Deleting the note" in caplog.text
 
@@ -492,7 +492,7 @@ def test_a_graph_store_without_read_back_is_not_taken_for_missing_copies() -> No
     # indexer (asked of its type, the view hid it, and a removal deleted
     # the shared vector entities).
     from unified_kg_rag.application.ingestion.pipeline import _Borrowed
-    from unified_kg_rag.application.storage.indexing_manager import _reads_back
+    from unified_kg_rag.application.storage.stored_items import _reads_back
     from unified_kg_rag.ports.indexer import GraphIndexer
 
     class NoReadBack(GraphIndexer):
@@ -549,7 +549,7 @@ def test_a_stored_edge_of_a_written_edges_key_is_retired_only_if_it_adds_nothing
         text_unit_ids=["t1"],
     )
 
-    manager._finish("default", entities, [written])
+    manager._merge._finish("default", entities, [written])
 
     assert ("r-stored" in manager._dropped.get("default", set())) is retired
 
@@ -668,7 +668,7 @@ def test_a_claim_the_derivation_drops_is_retired(mocker) -> None:
     )
     mocker.patch.object(manager, "derive", return_value=Derived(dropped=["stale"]))
 
-    assert manager._derive_claims("default", [stale]) == []
+    assert manager._merge._derive_claims("default", [stale]) == []
     assert "stale" in manager._dropped["default"]
 
 
@@ -719,7 +719,7 @@ def test_a_strip_that_notes_again_keeps_the_earlier_notes_claims(mocker) -> None
             id_remap={"e-old": "e-new"},
         ),
     )
-    note = mocker.spy(manager, "_note_pending_strip")
+    note = mocker.spy(manager._removal, "_note_pending_strip")
 
     manager.remove_text_units_from_shared(
         "default",
@@ -803,7 +803,7 @@ def test_a_retry_writes_the_missing_vector_copy_of_a_re_pointed_edge(
     if copy:
         vector.upsert_relationships([edge])
 
-    _, relationships = manager._finish(
+    _, relationships = manager._merge._finish(
         "default",
         entities,
         [],
@@ -859,7 +859,7 @@ def test_a_strip_derives_claims_with_the_stored_spellings_of_derived_names() -> 
         text_unit_ids=["t1"],
     )
 
-    manager._derive_claims("default", [claim], removed=["t9"])
+    manager._merge._derive_claims("default", [claim], removed=["t9"])
 
     assert keys == [sorted({compact_name_key("Acme"), compact_name_key("Globex Ltd")})]
     assert reads == [["a"], ["g"]]
@@ -891,7 +891,7 @@ def test_a_summary_offered_before_indexing_is_reused(mocker) -> None:
         )
 
     def finish() -> str | None:
-        (entity,), _ = manager._finish(
+        (entity,), _ = manager._merge._finish(
             "default", [Entity(id="a", name="A", description=derived)], []
         )
         return entity.description
@@ -932,7 +932,7 @@ def test_a_reused_summary_over_the_threshold_is_not_summarized_again(
         id="r", source_id="a", target_id="b", description=summary, attributes=mark
     )
 
-    entities, relationships = manager._finish(
+    entities, relationships = manager._merge._finish(
         "default",
         [
             Entity(id="a", name="A", description=derived),
@@ -961,7 +961,7 @@ def test_a_dropped_edge_still_stored_does_not_rank_its_endpoints(mocker) -> None
     dropped = Relationship(
         id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
     )
-    entities, _ = manager._finish(
+    entities, _ = manager._merge._finish(
         "default",
         [Entity(id="a", name="A", type="ORG", description="A")],
         [],
@@ -981,7 +981,7 @@ def test_a_dropped_edge_still_stored_leaves_only_its_own_link(mocker) -> None:
     dropped = Relationship(
         id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
     )
-    entities, _ = manager._finish(
+    entities, _ = manager._merge._finish(
         "default",
         [
             Entity(id="a", name="A", type="ORG", description="A"),
@@ -1019,7 +1019,7 @@ def test_a_rewritten_stored_edge_is_ranked_without_a_dropped_link(mocker) -> Non
     dropped = Relationship(
         id="r-ab", source_id="a", target_id="b", description="x", text_unit_ids=[]
     )
-    _, relationships = manager._finish(
+    _, relationships = manager._merge._finish(
         "default",
         [Entity(id="a", name="A", type="ORG", description="A")],
         [],

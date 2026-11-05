@@ -518,7 +518,7 @@ def test_unit_records_reads_the_cited_ids_a_bounded_number_of_times() -> None:
     from collections.abc import Iterator
     from types import SimpleNamespace
 
-    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.cross_run_merge import CrossRunMerge
     from unified_kg_rag.domain.models import TextUnit
 
     class _CountedIds(list[str]):
@@ -537,8 +537,8 @@ def test_unit_records_reads_the_cited_ids_a_bounded_number_of_times() -> None:
 
     units = [TextUnit(id=f"t{i}", text="t") for i in range(50)]
     unit_ids = _CountedIds(f"t{i}" for i in range(100))
-    me = SimpleNamespace(vector_indexer=_Store())
-    IndexingManager._unit_records(me, "s", unit_ids, units)  # type: ignore[arg-type]
+    me = SimpleNamespace(_m=SimpleNamespace(vector_indexer=_Store()))
+    CrossRunMerge._unit_records(me, "s", unit_ids, units)  # type: ignore[arg-type]
     assert _CountedIds.passes <= 2
 
 
@@ -547,7 +547,7 @@ def test_incident_edges_are_read_once_per_site_until_its_ids_shrink() -> None:
     # superset of its last ids reads only the ones it adds (all of them, in
     # each of up to 32 rounds, before). Asked other ids, it reads them all
     # again: the edges of ids it no longer asks must not come back.
-    from unified_kg_rag.application.storage.indexing_manager import _IncidentEdges
+    from unified_kg_rag.application.storage.stored_items import _IncidentEdges
 
     edges = {"a": {"r-a"}, "b": {"r-b"}, "c": {"r-c", "r-a"}}
     reads: list[list[str]] = []
@@ -593,8 +593,8 @@ def test_claim_records_of_every_round_are_derived_with(manager) -> None:
             {u: statements[u] for u in unit_ids},
         )
 
-    mgr._unit_records = unit_records
-    mgr._read_held = lambda suffix, ids: (
+    mgr._merge._unit_records = unit_records
+    mgr._merge._read_held = lambda suffix, ids: (
         [],
         [],
         [held] if held.id in ids else [],
@@ -650,7 +650,7 @@ def test_a_strip_reads_the_stored_spellings_of_a_claims_stated_names(
     neptune.find_entity_ids_by_name_key.return_value = []
     _deriving(mgr)
 
-    mgr._derive_claims("default", [_stated_claim()], removed=["u9"])
+    mgr._merge._derive_claims("default", [_stated_claim()], removed=["u9"])
 
     (keys, _), _ = neptune.find_entity_ids_by_name_key.call_args
     assert {compact_name_key("Acme"), compact_name_key("Globex")} <= set(keys)
@@ -674,7 +674,7 @@ def test_a_claim_is_derived_with_the_spellings_of_its_stated_names_this_run_deri
     }
     given = _deriving(mgr)
 
-    mgr._derive_claims("default", [_stated_claim()])
+    mgr._merge._derive_claims("default", [_stated_claim()])
 
     assert len(given) == 1
     assert {e.id for e in given[0]} == {"e-acme", "x-globex"}
@@ -723,8 +723,8 @@ def test_a_claim_stored_under_an_earlier_date_reading_found_in_a_later_round_joi
         reads.append(sorted(ids))
         return [], [], [c for c in (held, legacy) if c.id in ids]
 
-    mgr._unit_records = unit_records
-    mgr._read_held = read_held
+    mgr._merge._unit_records = unit_records
+    mgr._merge._read_held = read_held
 
     derived = mgr.derive("default", [acme, buyer], [], [given])
 

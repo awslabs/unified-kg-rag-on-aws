@@ -108,7 +108,7 @@ def test_a_read_note_is_deleted_with_this_commits(mocker) -> None:
     manager, _, vector = _manager()
     vector.write_extraction_records({NOTE: {"entity_ids": ["e1"]}})
 
-    assert manager._read_commit_note("default") == {"e1"}
+    assert manager._merge._read_commit_note("default") == {"e1"}
     manager.clear_pending_commit()
 
     assert _note(vector) is None
@@ -117,7 +117,7 @@ def test_a_read_note_is_deleted_with_this_commits(mocker) -> None:
 def test_a_discarded_commit_keeps_its_note() -> None:
     manager, _, vector = _manager()
     vector.write_extraction_records({NOTE: {"entity_ids": ["e1"]}})
-    manager._read_commit_note("default")
+    manager._merge._read_commit_note("default")
 
     manager.discard_retired_ids()
     manager.clear_pending_commit()
@@ -308,10 +308,10 @@ def test_the_note_names_each_kind_of_decision(
     graph.upsert_entities([_entity("e-a", "Acme")])
     mocker.patch.object(manager, "derive", return_value=derived)
     mocker.patch.object(
-        manager, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
+        manager._merge, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
     )
 
-    manager._merge_suffix("default", [_entity("e-a", "Acme")], [])
+    manager._merge._merge_suffix("default", [_entity("e-a", "Acme")], [])
 
     assert manager._commit_entities["default"] == expected
 
@@ -342,9 +342,9 @@ def _noted_merge(mocker, delta: list[Entity]):
         ),
     )
     finish = mocker.patch.object(
-        manager, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
+        manager._merge, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
     )
-    manager._merge_suffix("default", delta, [])
+    manager._merge._merge_suffix("default", delta, [])
     return manager, derive, finish
 
 
@@ -384,7 +384,7 @@ def test_the_claims_about_a_noted_entity_are_derived_again(mocker) -> None:
     )
     manager._noted_commit_entities["default"] = {"e-noted"}
     derive_claims = mocker.patch.object(
-        manager, "_derive_claims", side_effect=lambda s, claims, *a, **k: claims
+        manager._merge, "_derive_claims", side_effect=lambda s, claims, *a, **k: claims
     )
 
     claims = manager.merge_with_stored_claims(None)
@@ -412,9 +412,9 @@ def test_a_noted_entity_without_edges_is_derived_again(mocker, delta) -> None:
         ),
     )
     mocker.patch.object(
-        manager, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
+        manager._merge, "_finish", side_effect=lambda s, e, r, **k: (list(e), list(r))
     )
 
-    manager._merge_suffix("default", delta, [])
+    manager._merge._merge_suffix("default", delta, [])
 
     assert "e-noted" in {e.id for e in derive.call_args.args[1]}

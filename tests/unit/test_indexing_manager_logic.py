@@ -812,7 +812,7 @@ def test_a_vector_copy_differing_in_one_field_is_stale(
 ) -> None:
     # Each field the vector store holds besides the description: a copy a
     # strip or commit left behind in any one of them is rewritten.
-    from unified_kg_rag.application.storage.indexing_manager import (
+    from unified_kg_rag.application.storage.stored_items import (
         _vector_content,
         _vector_stale,
     )
