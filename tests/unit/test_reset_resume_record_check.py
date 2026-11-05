@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from unified_kg_rag.application.ingestion import pipeline as pipeline_module
+from unified_kg_rag.application.ingestion import resume as resume_module
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.ingestion.contributions import RECORD_KEYS_ATTRIBUTE
 from unified_kg_rag.domain.models import Config, Constants, TextUnit
@@ -80,7 +80,7 @@ def _rewind(
     """Where a reset resumed at indexing, every stage before it restored,
     starts against ``indexer`` (None: at indexing)."""
     # The units as restored: they already name their records.
-    monkeypatch.setattr(pipeline_module, "_with_record_keys", lambda _c, _x, u: u)
+    monkeypatch.setattr(resume_module, "_with_record_keys", lambda _c, _x, u: u)
     pipeline = object.__new__(DataIngestionPipeline)
     pipeline.stages = [SimpleNamespace(name=name) for name in _ORDER]  # type: ignore[misc]
     pipeline.config = SimpleNamespace(indexing=SimpleNamespace(reset=True))  # type: ignore[assignment]
@@ -124,7 +124,7 @@ def test_a_start_before_the_gone_records_stage_is_not_moved_forward(
     # A resume at graph_resolution runs claim_extraction anyway: its gone
     # records are not a reason to move the start, least of all forward to
     # claim_extraction (the stages checked are those restored before it).
-    monkeypatch.setattr(pipeline_module, "_with_record_keys", lambda _c, _x, u: u)
+    monkeypatch.setattr(resume_module, "_with_record_keys", lambda _c, _x, u: u)
     pipeline = object.__new__(DataIngestionPipeline)
     pipeline.stages = [SimpleNamespace(name=name) for name in _ORDER]  # type: ignore[misc]
     pipeline.config = SimpleNamespace(indexing=SimpleNamespace(reset=True))  # type: ignore[assignment]
