@@ -2026,7 +2026,11 @@ Deployment (CDK).
 - CLI output escapes the data it prints, and `run-rag` strips terminal
   control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its
-  delimiter tags (#179, #182).
+  delimiter tags (#179, #182). The community report's claim block was
+  open: its `<claim_data>` tags are part of the value, which the chain's
+  neutralising does not cover, so a claim's text could close the block
+  and write instructions after it. Each claim line is neutralised for its
+  block now (#PR).
 - Importing the package no longer loads a `.env` file; the CLIs read only
   `./.env` and never override the environment (#224).
 - ragas sends no usage telemetry unless `RAGAS_DO_NOT_TRACK=false` (#361).

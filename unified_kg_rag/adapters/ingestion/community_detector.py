@@ -47,12 +47,16 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
+from unified_kg_rag.domain.prompts.delimiters import neutralise_delimiters
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
+
+# The tag of the report prompt's claim block (``_claims_section``).
+_CLAIM_DATA_TAGS = frozenset({"claim_data"})
 
 
 class ReportRecords(Protocol):
@@ -1703,7 +1707,12 @@ class CommunityDetector:
         of a run without claims is the one before claims were packed."""
         if not claims:
             return ""
-        lines = "\n".join(cls._format_claim_line(claim) for claim in claims)
+        # The chain neutralises the template's delimiters in every value, but
+        # this block's tag is in the value: a claim must not close it either.
+        lines = "\n".join(
+            neutralise_delimiters(cls._format_claim_line(claim), _CLAIM_DATA_TAGS)
+            for claim in claims
+        )
         return (
             "\n## CLAIM DATA:\n<claim_data>\n"
             f"{lines}\n</claim_data>\n"
