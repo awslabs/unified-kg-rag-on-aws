@@ -1736,7 +1736,8 @@ choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
   `graph_aware` are deterministic and free, so they run by default next to the
-  LangChain and RAGAS judges.
+  RAGAS judge. The LangChain judge is opt-in: its correctness metrics repeat
+  RAGAS' `answer_correctness`.
 - **`graph_aware` emits recall only.** Precision and F1 would need every
   entity of a free-text answer enumerated, so they would only re-label recall.
   Because answer-text coverage grows with length, it also reports the

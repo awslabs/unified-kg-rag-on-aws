@@ -103,10 +103,10 @@ unstructured = [
     "llvmlite>=0.48.0",
     "unstructured[md]>=0.24.1",
 ]
-# Optional: the LLM-judge evaluators of `run-eval` (`langchain` and `ragas`,
-# both in the default evaluation.enabled_evaluators). The core package imports
-# none of these; the evaluation manager fails fast naming this extra when an
-# enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
+# Optional: the LLM-judge evaluators of `run-eval` (`ragas`, in the default
+# evaluation.enabled_evaluators, and the opt-in `langchain`). The core package
+# imports none of these; the evaluation manager fails fast naming this extra
+# when an enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
 # retrieval, answer_match) need none of it.
 eval = [
     # Not imported here: ragas and langchain-community depend on it. 1.3.9 is

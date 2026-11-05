@@ -802,7 +802,7 @@ Evaluation configuration
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `outputs_directory` | string \| path | `"outputs/evaluation"` | Directory the evaluation results are written to. |
-| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"`] | see [Long defaults](#long-defaults) | List of evaluator types to enable for this evaluation run. The deterministic ones (answer_match, retrieval, graph_aware) are free and skip a query that lacks their dataset fields, so they are on by default alongside the LLM judges (langchain, ragas). |
+| `enabled_evaluators` | list[`"langchain"` \| `"ragas"` \| `"graph_aware"` \| `"retrieval"` \| `"answer_match"`] | `["ragas", "answer_match", "retrieval", "graph_aware"]` | List of evaluator types to enable for this evaluation run. The deterministic ones (answer_match, retrieval, graph_aware) are free and skip a query that lacks their dataset fields, so they are on by default alongside the ragas LLM judge. The langchain judge is opt-in (add it to this list): its correctness and partial_correctness repeat ragas' answer_correctness. |
 | `langchain_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"correctness"` \| `"faithfulness"` \| `"partial_correctness"` \| `"entity_coverage"` \| `"relationship_coverage"` \| `"retrieved_entity_coverage"` \| `"retrieved_relationship_coverage"` \| `"answer_length"` \| `"hit_at_k"` \| `"recall_at_k"` \| `"mrr"` \| `"attributable_fraction"` \| `"exact_match"` \| `"token_f1"` \| `"answer_contains"`] | `["correctness", "partial_correctness"]` | Specific evaluation metrics to calculate when using LangChain evaluator. |
 | `ragas_metrics` | list[`"answer_correctness"` \| `"answer_relevancy"` \| `"context_precision"` \| `"context_recall"` \| `"correctness"` \| `"faithfulness"` \| `"partial_correctness"` \| `"entity_coverage"` \| `"relationship_coverage"` \| `"retrieved_entity_coverage"` \| `"retrieved_relationship_coverage"` \| `"answer_length"` \| `"hit_at_k"` \| `"recall_at_k"` \| `"mrr"` \| `"attributable_fraction"` \| `"exact_match"` \| `"token_f1"` \| `"answer_contains"`] | see [Long defaults](#long-defaults) | Specific evaluation metrics to calculate when using RAGAS evaluator. |
 | `max_context_tokens` | integer \| null (≥ 1) | `null` | Token cap on the retrieved context passed to the RAGAS judges. null (default) uses the answer model's budget (search.token_manager.max_context_tokens), so faithfulness and context_recall judge the answer against the context it was given; with that budget derived from the model window too, no extra cap applies (the contexts are already the answer model's selection). A value below the answer budget logs a warning: the judge then sees less context than the answer model did. |
@@ -927,17 +927,6 @@ library_levels:
   opensearch: ERROR
   httpx: WARNING
   opentelemetry: ERROR
-```
-
-### `evaluation.enabled_evaluators`
-
-```yaml
-enabled_evaluators:
-- langchain
-- ragas
-- answer_match
-- retrieval
-- graph_aware
 ```
 
 ### `evaluation.ragas_metrics`

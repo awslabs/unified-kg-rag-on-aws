@@ -82,8 +82,9 @@ Python and installation.
   viz` (or `pip install -e '.[eval,viz]'`) where you evaluate or render
   (#467).
   - `eval` holds `ragas`, `datasets`, `pandas`, `langchain-community` and
-    `langchain-openai`. The `langchain` and `ragas` evaluators stay in the
-    default `evaluation.enabled_evaluators`; without the extra,
+    `langchain-openai`. The `ragas` evaluator stays in the default
+    `evaluation.enabled_evaluators` (`langchain` is opt-in, see
+    *Defaults*); without the extra,
     `EvaluationManager` (and `run-eval`, exit 2, before the first query)
     raises `ConfigurationError` naming it, also under
     `processing.ignore_errors`. The LLM-free evaluators need no extra; the
@@ -324,7 +325,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
 | `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#533) |
 | `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#533) |
-| `evaluation.enabled_evaluators` | `langchain`, `ragas` | also `answer_match`, `retrieval`, `graph_aware` (#121) |
+| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#PR) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
 | `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
@@ -722,6 +723,13 @@ From 0.2.3 (or a `main` checkout since):
       summary per newly merged entity over the summarization threshold and
       embeds those descriptions, and for the reports of the communities it
       clusters differently. Without a reset, entities stored apart stay apart.
+17. `run-eval` no longer runs the `langchain` judge unless
+    `evaluation.enabled_evaluators` lists it, so a default run has no
+    `langchain/correctness` or `langchain/partial_correctness` scores and a
+    `--fail-if langchain/...` gate fails for want of the measure. To keep
+    it, list every evaluator you want, e.g. `enabled_evaluators: [langchain,
+    ragas, answer_match, retrieval, graph_aware]`; leaving it out saves its
+    two judge calls per query (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry

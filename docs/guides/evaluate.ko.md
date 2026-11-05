@@ -13,9 +13,13 @@
 
 ## 평가기
 
-`evaluation.enabled_evaluators`로 고르며, 다섯 개 모두 기본으로 켜져 있습니다. 결정적
-평가기는 데이터셋 필드가 없는 질의를 건너뜁니다. 심사 모델 없이 실행하려면
-`enabled_evaluators: [answer_match, retrieval, graph_aware]`로 설정하세요.
+`evaluation.enabled_evaluators`로 고르며, `langchain`을 뺀 네 개가 기본으로 켜져
+있습니다. 결정적 평가기는 데이터셋 필드가 없는 질의를 건너뜁니다. 심사 모델 없이
+실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로 설정하세요.
+`langchain`의 `correctness`·`partial_correctness`는 `ragas`의 `answer_correctness`와
+같은 것을 재면서 질의마다 심사 호출을 두 번 더 하므로 선택 사항입니다. 실행하려면
+나머지와 함께 나열하세요: `enabled_evaluators: [langchain, ragas, answer_match,
+retrieval, graph_aware]`.
 
 | 평가기 | LLM | 데이터셋에 필요한 필드 | 주요 지표 |
 |---|---|---|---|

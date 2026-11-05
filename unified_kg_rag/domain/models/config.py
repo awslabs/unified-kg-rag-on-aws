@@ -4692,7 +4692,6 @@ class EvaluationConfig(BaseModel):
     )
     enabled_evaluators: list[EvaluatorType] = Field(
         default=[
-            EvaluatorType.LANGCHAIN,
             EvaluatorType.RAGAS,
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.RETRIEVAL,
@@ -4702,7 +4701,9 @@ class EvaluationConfig(BaseModel):
             "List of evaluator types to enable for this evaluation run. The "
             "deterministic ones (answer_match, retrieval, graph_aware) are free "
             "and skip a query that lacks their dataset fields, so they are on "
-            "by default alongside the LLM judges (langchain, ragas)."
+            "by default alongside the ragas LLM judge. The langchain judge is "
+            "opt-in (add it to this list): its correctness and "
+            "partial_correctness repeat ragas' answer_correctness."
         ),
     )
     langchain_metrics: list[EvaluationMetricType] = Field(

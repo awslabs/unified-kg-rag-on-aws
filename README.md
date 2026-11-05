@@ -90,7 +90,7 @@ uv run run-rag --query "What are the main themes?" --search-strategy global --co
 uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
-# Evaluate (LangChain + RAGAS + graph-aware coverage, retrieval and answer-match metrics)
+# Evaluate (RAGAS judge + graph-aware coverage, retrieval and answer-match metrics)
 uv run run-eval --data-path eval_data.json --config-path config.yaml
 
 # Optional: render the graph ingestion exported (it logs the file's path), or tune prompts to your domain
