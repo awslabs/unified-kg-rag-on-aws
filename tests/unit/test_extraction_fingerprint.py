@@ -118,7 +118,6 @@ def test_the_query_guardrail_does_not_move_it(
         ("processing.translation", "models.roles.translation", "amazon.nova-pro"),
         ("processing.gleaning", "processing.gleaning.max_rounds", 1),
         ("processing.gleaning", "models.roles.gleaning", "amazon.nova-pro"),
-        ("fixing", "models.roles.fixing", "amazon.nova-pro"),
     ],
 )
 def test_settings_of_a_disabled_block_do_not_move_it(

@@ -187,11 +187,10 @@ strategies, or `--repeats`) saves every run's files and adds
   about. To compare cold-cache cost, set `search.query_extraction_cache_size:
   0`; the quality deltas do not depend on it. Before each strategy's first
   run, `run-eval` answers one synthetic query with it, untimed, unscored and
-  not counted (`evaluation.warm_up_query`, default `true`), so the first
-  strategy's latency does not include opening the store connections and the
-  models' first calls; it costs one extra query (its model calls) per
-  strategy and run, which is in neither the run's usage nor its USD
-  estimate (Bedrock bills it all the same), and `false` turns it off.
+  not counted, so the first strategy's latency does not include opening the
+  store connections and the models' first calls; it costs one extra query
+  (its model calls) per strategy and run, which is in neither the run's
+  usage nor its USD estimate (Bedrock bills it all the same).
 - `baselines` (with `--baseline-results`): each strategy's baseline
   ([below](#rebuilding-and-gating-rules)).
 - `gates` (with `--fail-if`): the `conditions` given and the `breaches`

@@ -28,7 +28,6 @@ from unified_kg_rag.domain.prompts.retrieval import (
     DriftHydePrompt,
     DriftPrimerPrompt,
     GlobalMapPrompt,
-    MapReduceSummaryPrompt,
     QueryRewritePrompt,
 )
 
@@ -49,7 +48,6 @@ _WRAPPED: list[tuple[type[BasePrompt], str, str]] = [
     (AnswerGenerationPrompt, "context", "context"),
     (CommunityRelevancePrompt, "community_summary", "community_summary"),
     (GlobalMapPrompt, "reports", "community_reports"),
-    (MapReduceSummaryPrompt, "summaries", "summaries"),
     (DriftPrimerPrompt, "community_reports", "community_reports"),
     (DriftHydePrompt, "template", "template"),
     (DriftActionPrompt, "context", "context"),

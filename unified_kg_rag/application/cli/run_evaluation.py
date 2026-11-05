@@ -1010,7 +1010,7 @@ class EvaluationRunner:
                     f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
                     style="blue",
                 )
-                if repeat == 1 and self.config.evaluation.warm_up_query and queries:
+                if repeat == 1 and queries:
                     # Untimed: the first strategy must not pay for warming
                     # the connections and models the others then reuse.
                     await self.evaluation_manager.warm_up(run_queries[0])

@@ -58,7 +58,7 @@ def _results(prefix: str, n: int) -> list[RetrievalResult]:
 
 def _scorer(model: Any) -> HybridScorer:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     config.search.fusion.diversity_lambda = 1.0
     scorer = HybridScorer(config)
     scorer.rerank_model = model
@@ -109,7 +109,7 @@ async def test_strategy_fusion_runs_off_the_event_loop() -> None:
     from unified_kg_rag.adapters.search_strategies import SimpleSearchStrategy
 
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     providers = Providers(
         config,
         boto_session=MagicMock(),

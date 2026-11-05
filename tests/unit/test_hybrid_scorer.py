@@ -11,7 +11,7 @@ import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
+from unified_kg_rag.domain.models import Config, RetrievalResult
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 def _scorer(config: Config | None = None) -> HybridScorer:
     config = config or Config()
     # Disable reranking so no Bedrock client is constructed.
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     return HybridScorer(config)
 
 
@@ -27,37 +27,6 @@ def _r(content: str, score: float | None, source: str) -> RetrievalResult:
     return RetrievalResult(
         content=content, score=score, source=source, retriever_type="test"
     )
-
-
-class TestNormalizeScores:
-    def test_empty_list(self) -> None:
-        assert _scorer()._normalize_scores([]) == []
-
-    def test_constant_scores_get_the_top_score(self) -> None:
-        # As the hybrid search's normalization (SINGLE_RESULT_SCORE): a
-        # stream's only hit scored 0.5, below another stream's best.
-        results = [_r("a", 3.0, "s1"), _r("b", 3.0, "s2")]
-        out = _scorer()._normalize_scores(results)
-        assert all(r.score == 1.0 for r in out)
-        assert _scorer()._normalize_scores([_r("only", 0.99, "s3")])[0].score == 1.0
-
-    def test_min_max_normalized_to_unit_range(self) -> None:
-        results = [_r("a", 10.0, "s1"), _r("b", 20.0, "s2"), _r("c", 15.0, "s3")]
-        out = _scorer()._normalize_scores(results)
-        by_content = {r.content: r.score for r in out}
-        assert by_content["a"] == 0.0
-        assert by_content["b"] == 1.0
-        assert by_content["c"] == 0.5
-
-    def test_does_not_mutate_input_scores(self) -> None:
-        # Callers (e.g. drift_search) keep the original result objects in
-        # SearchResult/metrics and reuse them after fusion; normalization must
-        # operate on copies, not clobber the caller's scores in place.
-        results = [_r("a", 10.0, "s1"), _r("b", 20.0, "s2")]
-        out = _scorer()._normalize_scores(results)
-        assert results[0].score == 10.0
-        assert results[1].score == 20.0
-        assert out[0] is not results[0]
 
 
 class TestReciprocalRankFusion:
@@ -116,7 +85,7 @@ class TestReciprocalRankFusion:
     def test_per_bucket_weight_scales_rrf_contribution(self) -> None:
         # A configured per-bucket weight applies under RRF too.
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.fusion_weights = {"boosted": 3.0}  # "plain" defaults 1.0
         scorer = HybridScorer(config)
         k = scorer.fusion_config.rrf_k
@@ -128,28 +97,6 @@ class TestReciprocalRankFusion:
         by_content = {r.content: r.score for r in fused}
         assert by_content["b"] == pytest.approx(3.0 / (k + 1))
         assert by_content["p"] == pytest.approx(1.0 / (k + 1))
-
-
-class TestWeightedFusion:
-    def test_per_source_weights_applied(self) -> None:
-        config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.fusion_weights = {"a": 2.0, "b": 0.5}
-        scorer = HybridScorer(config)
-        result_map = {"a": [_r("x", 1.0, "1")], "b": [_r("y", 1.0, "2")]}
-        fused = scorer._weighted_fusion(result_map)
-        by_content = {r.content: r.score for r in fused}
-        assert by_content["x"] == pytest.approx(2.0)
-        assert by_content["y"] == pytest.approx(0.5)
-
-    def test_unweighted_source_defaults_to_one(self) -> None:
-        config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.fusion_weights = {"known": 2.0}
-        scorer = HybridScorer(config)
-        result_map = {"unknown_bucket": [_r("x", 1.0, "1")]}
-        fused = scorer._weighted_fusion(result_map)
-        assert fused[0].score == pytest.approx(1.0)
 
 
 class TestResultKey:
@@ -301,8 +248,7 @@ class TestOneContributionPerBucket:
 
     def test_drift_repeat_does_not_outrank_best_under_rrf(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.method = FusionMethod.RRF
+        config.providers.rerank.kind = "none"
         scorer = HybridScorer(config)
         k = config.search.fusion.rrf_k
 
@@ -315,24 +261,6 @@ class TestOneContributionPerBucket:
         assert by_source["e-best"] == pytest.approx(1.0 / (k + 1))
         # `repeat`: its best rank in the bucket, once — not 1/(k+2) + 1/(k+3).
         assert by_source["e-repeat"] == pytest.approx(1.0 / (k + 2))
-
-    def test_drift_repeat_does_not_outrank_best_under_weighted(self) -> None:
-        config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.method = FusionMethod.WEIGHTED
-        scorer = HybridScorer(config)
-
-        # Pre-normalised so the sum is visible: two 0.6 occurrences would make
-        # 1.2 and beat the 1.0 item if both were counted.
-        best = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
-        repeat_a = self._graph_hit("e-repeat", "Repeat", 0.6, ["Seed", "Repeat"])
-        repeat_b = self._graph_hit("e-repeat", "Repeat", 0.6, ["Other", "Repeat"])
-        fused = scorer._weighted_fusion({"results": [best, repeat_a, repeat_b]})
-
-        by_source = {r.source: r.score or 0.0 for r in fused}
-        assert by_source["e-best"] == pytest.approx(1.0)
-        assert by_source["e-repeat"] == pytest.approx(0.6)
-        assert by_source["e-best"] > by_source["e-repeat"]
 
     def test_same_artifact_in_two_buckets_still_reinforces(self) -> None:
         # The dedupe is per bucket: the cross-store case that keying on the id
@@ -350,8 +278,7 @@ class TestOneContributionPerBucket:
 class TestFuseAndRerank:
     def test_sorted_desc_and_truncated_to_top_k(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.method = FusionMethod.RRF
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 1.0  # skip diversity filtering
         scorer = HybridScorer(config)
         result_map = {"a": [_r("x", 0.5, "1"), _r("y", 0.4, "2"), _r("z", 0.3, "3")]}
@@ -361,7 +288,7 @@ class TestFuseAndRerank:
 
     def test_single_result_survives_fusion(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 1.0
         scorer = HybridScorer(config)
         out = scorer.fuse_and_rerank_results({"a": [_r("x", 1.0, "1")]}, top_k=5)
@@ -371,13 +298,19 @@ class TestFuseAndRerank:
         # One scorer serves every concurrent query of a strategy, so a query
         # must not write per-query numbers onto it.
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         scorer = HybridScorer(config)
-        before = copy.deepcopy(vars(scorer))
+        factory = scorer.rerank_factory
+        before = copy.deepcopy(
+            {k: v for k, v in vars(scorer).items() if k != "rerank_factory"}
+        )
         scorer.fuse_and_rerank_results(
             {"a": [_r("x", 1.0, "1"), _r("y", 0.5, "2")]}, top_k=1
         )
-        assert vars(scorer) == before
+        assert scorer.rerank_factory is factory
+        assert {k: v for k, v in vars(scorer).items() if k != "rerank_factory"} == (
+            before
+        )
 
 
 class TestTypeQuota:
@@ -436,7 +369,7 @@ class TestTypeQuota:
         # then dropped anyway, so text kept 16 of its 20. Each type must be
         # diversified within its own quota instead.
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5
 
         def stream(rtype: str, n: int, base: float) -> list[RetrievalResult]:
@@ -470,7 +403,7 @@ class TestTypeQuota:
 class TestDiversityFiltering:
     def test_skipped_at_lambda_one(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 1.0
         scorer = HybridScorer(config)
         results = [_r("a b c", 0.9, "1"), _r("a b c", 0.8, "2")]
@@ -479,7 +412,7 @@ class TestDiversityFiltering:
 
     def test_penalizes_redundant_at_low_lambda(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.1  # strong diversity
         scorer = HybridScorer(config)
         # Two near-duplicates + one distinct; MMR should prefer the distinct one
@@ -533,8 +466,7 @@ class TestDiversityRelevanceScale:
 
     def test_rrf_scores_keep_on_topic_results(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.method = FusionMethod.RRF
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5  # the shipped default
         scorer = HybridScorer(config)
 
@@ -544,7 +476,7 @@ class TestDiversityRelevanceScale:
 
     def test_mmr_on_raw_rrf_scale_scores(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5
         scorer = HybridScorer(config)
         results = self._scenario()
@@ -557,7 +489,7 @@ class TestDiversityRelevanceScale:
 
     def test_scale_invariant(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.3
         scorer = HybridScorer(config)
         small = self._scenario()
@@ -573,7 +505,7 @@ class TestDiversityRelevanceScale:
 
     def test_single_item_returned_unchanged(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5
         scorer = HybridScorer(config)
         only = [_r("alpha beta", 0.01, "1")]
@@ -582,7 +514,7 @@ class TestDiversityRelevanceScale:
 
     def test_equal_scores_fall_back_to_diversity(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5
         scorer = HybridScorer(config)
         results = [
@@ -599,7 +531,7 @@ class TestDiversityRelevanceScale:
 
     def test_lambda_one_preserves_relevance_order(self) -> None:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 1.0
         scorer = HybridScorer(config)
 
@@ -668,7 +600,7 @@ class TestDiversityFilteringScaling:
     @staticmethod
     def _scorer_at(lambda_val: float) -> HybridScorer:
         config = Config()
-        config.search.reranking.enabled = False
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = lambda_val
         return HybridScorer(config)
 
@@ -782,8 +714,7 @@ class TestRerankBeforeDiversity:
 
     def _scorer(self, scores: dict[str, float], top_n: int = 100) -> HybridScorer:
         config = Config()
-        config.search.reranking.enabled = False
-        config.search.fusion.method = FusionMethod.WEIGHTED
+        config.providers.rerank.kind = "none"
         config.search.fusion.diversity_lambda = 0.5
         scorer = HybridScorer(config)
         scorer.rerank_model = self._ScoreModel(scores)
@@ -811,7 +742,7 @@ class TestRerankBeforeDiversity:
 
 def _diverse(texts: list[str]) -> list[str]:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     scorer = HybridScorer(config)
     results = [
         RetrievalResult(

@@ -55,7 +55,7 @@ def test_every_role_has_a_tier_and_ships_its_default() -> None:
     assert set(ROLE_TIERS) == set(ModelRole)
     tiers = list(ROLE_TIERS.values())
     assert tiers.count("default") == 8
-    assert tiers.count("fast") == 12
+    assert tiers.count("fast") == 11
     for role, tier in ROLE_TIERS.items():
         expected = DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID
         if role is ModelRole.EVALUATION:

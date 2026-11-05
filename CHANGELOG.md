@@ -186,7 +186,6 @@ Configuration keys.
   | `search.answer_generation_model_id` | `models.roles.answer_generation` |
   | `search.global_search.community_relevance_model_id` | `models.roles.community_relevance` |
   | `search.global_search.map_model_id` | `models.roles.global_map` |
-  | `search.global_search.map_reduce_model_id` | `models.roles.global_reduce` |
   | `search.drift_search.primer_model_id` | `models.roles.drift_primer` |
   | `search.drift_search.action_model_id` | `models.roles.drift_action` |
   | `evaluation.evaluation_model_id` | `models.roles.evaluation` |
@@ -286,6 +285,19 @@ Configuration keys.
 - `indexing.cross_run_merge` is gone: an incremental run always merges its
   delta into the stored graph (`false` overwrote entities other documents
   still cite) (#344).
+- Settings whose other values were duplicates, never shown, or kept only to
+  reproduce 0.2.3 are gone; the behaviour is the former default. The keys
+  load with a WARNING and are ignored (#PR):
+
+  | Removed key | Replacement |
+  |---|---|
+  | `search.global_search.reduce_with_llm`, `search.global_search.map_reduce_model_id`, `models.roles.global_reduce` | none: the ranked key points go to the answer model as one context section, with no reduce call |
+  | `search.fusion.method` | none: results are fused by reciprocal rank fusion (`rrf`); weighted fusion is gone |
+  | `search.reranking.enabled` | `providers.rerank.kind: none` turns reranking off; the key is ignored, so `enabled: false` alone now reranks |
+  | `graph.visualization.centrality.calculate_closeness`, `calculate_eigenvector`, `eigenvector_max_iter`, `eigenvector_tol` | none: the visualization computes the degree, betweenness and PageRank centrality it displays |
+  | `graph.analysis.statistics.calculate_density`, `calculate_clustering`, `calculate_components` | none: always computed (`calculate_diameter` stays) |
+  | `fixing` (`fixing.enabled`) | none: output fixing is always on; `models.roles.fixing` picks its model |
+  | `evaluation.warm_up_query` | none: `run-eval` always answers one untimed warm-up query per strategy and run |
 - These 0.2.3 keys are removed and fail the load as unknown keys:
 
   | Removed key | Replacement |
@@ -336,7 +348,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#576) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
-| `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
+| `run-eval` warm-up query | (none: no warm-up) | one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate (#529); not configurable (#PR) |
 | `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#533) |
 | `logging.log_to_file` | `true` | `false` (#520) |
 | `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori` (every other language `standard`) | one per language: also `de: german`, `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese`, `ru: russian` and `ja`/`zh: cjk` (character bigrams, no plugin), so a word inside a Japanese or Chinese run matches lexically (#574) |
@@ -533,7 +545,10 @@ Library API (Python callers and custom backends).
   `registered_strategies` and `NeptuneRetriever.DEFAULT_MAX_HOPS`);
   `GraphAnalyzer.set_community_data` / `export_graph_data` / `clear_cache`
   and the `chunk_size` / `max_file_size_mb` / `enable_chunking` arguments
-  of `CacheManager` (#471).
+  of `CacheManager` (#471); with the settings above, `MapReduceSummaryPrompt`,
+  `ModelRole.GLOBAL_REDUCE`, `FusionMethod`, `FixingConfig`,
+  `HybridScorer._weighted_fusion` / `_normalize_scores` and
+  `CentralityMetrics.closeness` / `eigenvector` (#PR).
 
 ### Upgrading
 From 0.2.3 (or a `main` checkout since):
@@ -742,6 +757,18 @@ From 0.2.3 (or a `main` checkout since):
     extra, which no longer installs Bokeh: re-render the static charts to
     get the SVG pages (nothing stored changes). A script that imported
     `bokeh` through the extra installs it itself (#576).
+17. A config that sets one of the settings removed in #PR loads with a
+    WARNING naming its replacement; nothing is re-extracted or re-embedded.
+    Review it where the value was not the default: `search.reranking.enabled:
+    false` reranks again (a Bedrock Rerank call per query) until you set
+    `providers.rerank.kind: none`; `search.fusion.method: weighted` fuses by
+    RRF, which orders results differently; `reduce_with_llm: true` saves its
+    reduce call per global query; `fixing.enabled: false` asks the fixing
+    model to repair malformed output instead of failing the item; and
+    `evaluation.warm_up_query: false` answers one more, unscored query per
+    strategy and run. A run resumed from a `main` checkout across the change
+    finds no stage-cache entry (`fixing.enabled` keyed every stage), as
+    after any upgrade; the LLM response cache still serves its model calls.
 
 ### Added
 - Local mode: the `providers` section and provider registry

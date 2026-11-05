@@ -39,7 +39,6 @@ from .provider_config import (
     apply_backend_preset,
 )
 from .retrieval import (
-    FusionMethod,
     SearchStrategy,
     validate_path_segment,
     validate_safe_name,
@@ -356,7 +355,6 @@ class ModelRole(str, Enum):
     ANSWER_GENERATION = "answer_generation"
     COMMUNITY_RELEVANCE = "community_relevance"
     GLOBAL_MAP = "global_map"
-    GLOBAL_REDUCE = "global_reduce"
     DRIFT_PRIMER = "drift_primer"
     DRIFT_ACTION = "drift_action"
     EVALUATION = "evaluation"
@@ -388,7 +386,6 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
         "rates community relevance for global search's dynamic selection",
     ),
     ModelRole.GLOBAL_MAP: ("fast", "answers from each report batch (global map)"),
-    ModelRole.GLOBAL_REDUCE: ("fast", "combines the map answers (global reduce)"),
     ModelRole.DRIFT_PRIMER: ("fast", "writes DRIFT's primer and follow-ups"),
     ModelRole.DRIFT_ACTION: ("fast", "answers each DRIFT follow-up"),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
@@ -456,7 +453,6 @@ class RoleModelsConfig(BaseModel):
     answer_generation: str | None = _role_field(ModelRole.ANSWER_GENERATION)
     community_relevance: str | None = _role_field(ModelRole.COMMUNITY_RELEVANCE)
     global_map: str | None = _role_field(ModelRole.GLOBAL_MAP)
-    global_reduce: str | None = _role_field(ModelRole.GLOBAL_REDUCE)
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
     evaluation: str | None = _EVALUATION_ROLE_FIELD
@@ -574,7 +570,6 @@ MOVED_KEYS: dict[str, str] = {
         "models.roles.community_relevance"
     ),
     "search.global_search.map_model_id": "models.roles.global_map",
-    "search.global_search.map_reduce_model_id": "models.roles.global_reduce",
     "search.drift_search.primer_model_id": "models.roles.drift_primer",
     "search.drift_search.action_model_id": "models.roles.drift_action",
     "evaluation.evaluation_model_id": "models.roles.evaluation",
@@ -663,6 +658,51 @@ REMOVED_KEYS: dict[str, str] = {
     "search.lightrag_search.structured_keyword_output": (
         "keyword extraction parses the model's text answer; the structured "
         "output pilot was removed before any release"
+    ),
+    **dict.fromkeys(
+        (
+            "search.global_search.reduce_with_llm",
+            "search.global_search.map_reduce_model_id",
+            "models.roles.global_reduce",
+        ),
+        "global search runs no reduce call: the ranked key points go to the "
+        "answer model as one context section (the default before)",
+    ),
+    "search.fusion.method": (
+        "results are always fused by reciprocal rank fusion (rrf, the default "
+        "before); weighted fusion is gone"
+    ),
+    **{
+        f"graph.visualization.centrality.{key}": (
+            "the visualization computes degree, betweenness and PageRank "
+            "centrality; closeness and eigenvector centrality were never "
+            "displayed"
+        )
+        for key in (
+            "calculate_closeness",
+            "calculate_eigenvector",
+            "eigenvector_max_iter",
+            "eigenvector_tol",
+        )
+    },
+    "search.reranking.enabled": (
+        "providers.rerank.kind picks the reranker, so reranking stays on; set "
+        "providers.rerank.kind: none to turn it off"
+    ),
+    **{
+        f"graph.analysis.statistics.{key}": (
+            "density, the average clustering coefficient and the connected "
+            "components are always computed"
+        )
+        for key in ("calculate_density", "calculate_clustering", "calculate_components")
+    },
+    "fixing": (
+        "output fixing is always on (the default before); models.roles.fixing "
+        "picks its model"
+    ),
+    "evaluation.warm_up_query": (
+        "run-eval always answers one untimed, unscored warm-up query per "
+        "strategy and run (the default before)"
     ),
 }
 
@@ -1301,17 +1341,6 @@ class AWSConfig(BaseModel):
     def bedrock_region(self) -> str:
         """Region Bedrock calls go to: aws.bedrock.region_name, else aws.region_name."""
         return self.bedrock.region_name or self.region_name
-
-
-class FixingConfig(BaseModel):
-    enabled: bool = Field(
-        default=True,
-        description=(
-            "When a structured stage gets malformed JSON from "
-            "the model, ask a model (models.roles.fixing) to "
-            "repair it instead of failing the item. Leave it on."
-        ),
-    )
 
 
 class DocumentParsingConfig(BaseModel):
@@ -2323,14 +2352,6 @@ class CentralityConfig(BaseModel):
         default=True,
         description="Calculate PageRank centrality to rank node importance",
     )
-    calculate_closeness: bool = Field(
-        default=False,
-        description="Calculate closeness centrality to measure node proximity",
-    )
-    calculate_eigenvector: bool = Field(
-        default=False,
-        description="Calculate eigenvector centrality to measure influence based on connections",
-    )
     pagerank_alpha: float = Field(
         default=0.85, ge=0.0, le=1.0, description="PageRank damping factor"
     )
@@ -2360,34 +2381,18 @@ class CentralityConfig(BaseModel):
         "betweenness_k is set). Fixed for reproducibility — sampled betweenness "
         "picks random pivots, so without a seed centrality is non-deterministic.",
     )
-    eigenvector_max_iter: int = Field(
-        default=1000,
-        ge=1,
-        description="Maximum iterations for eigenvector centrality convergence",
-    )
-    eigenvector_tol: float = Field(
-        default=1.0e-3,
-        gt=0.0,
-        description="Convergence tolerance for eigenvector centrality",
-    )
 
 
 class StatisticsConfig(BaseModel):
-    calculate_density: bool = Field(
-        default=True,
-        description="Calculate graph density to measure network connectivity",
-    )
-    calculate_clustering: bool = Field(
-        default=True,
-        description="Calculate clustering coefficient to measure local connectivity",
-    )
+    """Graph-level statistics: density, the average clustering coefficient and
+    the connected components are always computed."""
+
     calculate_diameter: bool = Field(
         default=False,
-        description="Calculate graph diameter (computationally expensive)",
-    )
-    calculate_components: bool = Field(
-        default=True,
-        description="Analyze connected components to identify isolated subgraphs",
+        description=(
+            "Calculate graph diameter (computationally expensive; only on a "
+            "connected graph)"
+        ),
     )
 
 
@@ -3327,13 +3332,6 @@ class HybridConfig(BaseModel):
 
 
 class FusionConfig(BaseModel):
-    method: FusionMethod = Field(
-        default=FusionMethod.RRF,
-        description=(
-            "How results of different sources are fused: rrf (reciprocal rank "
-            "fusion) or weighted (score-weighted)."
-        ),
-    )
     rrf_k: int = Field(
         default=60,
         ge=1,
@@ -3360,9 +3358,8 @@ class FusionConfig(BaseModel):
     fusion_weights: dict[str, float] = Field(
         default_factory=dict,
         description=(
-            "Per-source-bucket weights, applied by both fusion methods: RRF "
-            "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
-            "scales its scores. Keys are the source buckets the search "
+            "Per-source-bucket weights: reciprocal rank fusion scales each "
+            "bucket's 1/(rrf_k + rank) term. Keys are the source buckets the search "
             "strategies emit: local (graph_entities, text_units, relationships, "
             "bridge_relationships, community_reports, claims), LightRAG "
             "(lightrag_entities, lightrag_relationships, "
@@ -3377,14 +3374,13 @@ class FusionConfig(BaseModel):
 
 
 class RerankingConfig(BaseModel):
-    enabled: bool = Field(
-        default=True,
-        description=(
-            "Rerank the fused results with models.rerank. Bedrock rerank "
-            "models are not offered in every region, and the Rerank API needs "
-            "its own IAM statement (bedrock:Rerank on Resource '*')."
-        ),
-    )
+    """How the fused results are reranked with models.rerank.
+
+    providers.rerank.kind picks the reranker; none turns reranking off.
+    Bedrock rerank models are not offered in every region, and the Rerank API
+    needs its own IAM statement (bedrock:Rerank on Resource '*').
+    """
+
     top_k: int = Field(
         default=100,
         ge=1,
@@ -3393,11 +3389,11 @@ class RerankingConfig(BaseModel):
     required: bool = Field(
         default=False,
         description=(
-            "Fail the query with RerankModelError when reranking is enabled "
-            "but the rerank model cannot be built, the rerank call fails or it "
-            "returns nothing usable. false keeps the fused order and reports "
-            "the outcome in SearchResult.metadata['rerank']. No effect when "
-            "reranking is disabled or providers.rerank.kind is none."
+            "Fail the query with RerankModelError when the rerank model "
+            "cannot be built, the rerank call fails or it returns nothing "
+            "usable. false keeps the fused order and reports the outcome in "
+            "SearchResult.metadata['rerank']. No effect with "
+            "providers.rerank.kind none."
         ),
     )
 
@@ -3503,20 +3499,10 @@ class GlobalSearchConfig(BaseModel):
     max_map_reduce_tokens: int = Field(
         default=8000,
         ge=128,
-        description="Token budget for the ranked key points packed into the "
-        "reduce step; the highest-scored points are taken until this budget is "
-        "reached, so the reduce LLM synthesizes from focused, ranked evidence. "
+        description="Token budget for the ranked key points handed to the "
+        "answer model; the highest-scored points are taken until this budget is "
+        "reached, so the answer is written from focused, ranked evidence. "
         "The reports the points cite follow them in the context.",
-    )
-    reduce_with_llm: bool = Field(
-        default=False,
-        description=(
-            "Run the reduce step as its own LLM call that summarizes the "
-            "packed key points, which the answer model then rewrites. Off by "
-            "default: the packed points go straight to the answer model as one"
-            " ranked context section, saving one LLM call per query and a "
-            "second synthesis that can drop facts."
-        ),
     )
     text_unit_slots: int = Field(
         default=0,
@@ -4853,19 +4839,6 @@ class EvaluationConfig(BaseModel):
             "(run-eval --from-results and --baseline-results read them)."
         ),
     )
-    warm_up_query: bool = Field(
-        default=True,
-        description=(
-            "Before each strategy's first timed run, run-eval answers one "
-            "synthetic query with that strategy, untimed, unscored and not "
-            "counted in the usage, so the first strategy's latency does not "
-            "include opening the store connections and the models' first "
-            "calls. Costs one extra query (its model calls) per strategy "
-            "and run, which is not counted in the run's usage or USD "
-            "estimate (Bedrock bills it all the same). false: no warm-up, "
-            "as in 0.2.3; the first strategy's first answers then read slower."
-        ),
-    )
     prices: dict[str, ModelPrice] = Field(
         default_factory=dict,
         description=(
@@ -4936,9 +4909,6 @@ class Config(BaseModel):
     )
     aws: AWSConfig = Field(
         default_factory=AWSConfig, description="AWS services configuration"
-    )
-    fixing: FixingConfig = Field(
-        default_factory=FixingConfig, description="Output fixing configuration"
     )
     processing: ProcessingConfig = Field(
         default_factory=ProcessingConfig, description="Text processing configuration"

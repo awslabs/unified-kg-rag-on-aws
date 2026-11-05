@@ -192,7 +192,7 @@ class GraphExtractor(BaseProcessor):
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,
-            enable_output_fixing=self.config.fixing.enabled,
+            enable_output_fixing=True,
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             factory=self.factory,
             min_output_tokens=GraphExtractionPrompt.output_floor(self.config),

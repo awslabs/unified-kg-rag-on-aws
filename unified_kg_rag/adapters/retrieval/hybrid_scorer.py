@@ -4,7 +4,6 @@ import copy
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable
 from typing import Any
 
 from langchain_core.documents import Document
@@ -12,12 +11,10 @@ from langchain_core.documents import Document
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
-    FusionMethod,
     RerankStage,
     RerankStatus,
     RetrievalResult,
 )
-from unified_kg_rag.domain.retrieval.hybrid_normalization import SINGLE_RESULT_SCORE
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
 from unified_kg_rag.shared.utils import compute_hash
@@ -115,22 +112,20 @@ class HybridScorer:
         self.config = config
         self.fusion_config = config.search.fusion
         # Injected rerank provider (port). Otherwise it comes from the shared
-        # provider bundle (Bedrock by default), and only when reranking is on.
+        # provider bundle (providers.rerank.kind: Bedrock by default, none
+        # turns reranking off).
         self.rerank_factory: RerankFactoryPort | None = rerank_factory
         self._providers = providers
         self.rerank_model: Any = None
         # Status and reason of every query while there is no rerank model.
         self._inactive: tuple[RerankStatus, str | None] = (
             RerankStatus.DISABLED,
-            "search.reranking.enabled is false",
+            "providers.rerank.kind is none",
         )
         self._initialize_reranking()
 
     def _initialize_reranking(self) -> None:
         rerank_config = self.config.search.reranking
-        if not rerank_config.enabled:
-            logger.debug("Reranking is disabled in configuration")
-            return
         try:
             if self.rerank_factory is None:
                 self.rerank_factory = Providers.resolve(
@@ -205,30 +200,7 @@ class HybridScorer:
         The rerank step's outcome is recorded on ``rerank_trace`` when given.
         """
         start_time = time.time()
-        method = self.fusion_config.method
-
-        fusion_methods: dict[
-            FusionMethod,
-            Callable[[dict[str, list[RetrievalResult]]], list[RetrievalResult]],
-        ] = {
-            FusionMethod.RRF: self._reciprocal_rank_fusion,
-            FusionMethod.WEIGHTED: self._weighted_fusion,
-        }
-
-        fusion_func = fusion_methods[method]
-
-        # RRF uses only rank order and overwrites scores, so per-bucket min-max
-        # normalization is wasted work (and would be discarded) there; only the
-        # weighted fusion consumes the normalized scores.
-        if method == FusionMethod.WEIGHTED:
-            fusion_input = {
-                name: self._normalize_scores(res_list)
-                for name, res_list in results_dict.items()
-            }
-        else:
-            fusion_input = results_dict
-
-        combined_results = fusion_func(fusion_input)
+        combined_results = self._reciprocal_rank_fusion(results_dict)
 
         scope = (
             "all" if rerank_only_types is None else ",".join(sorted(rerank_only_types))
@@ -391,34 +363,6 @@ class HybridScorer:
         selected.sort(key=lambda x: x.score, reverse=True)
         return selected
 
-    @staticmethod
-    def _normalize_scores(results: list[RetrievalResult]) -> list[RetrievalResult]:
-        if not results:
-            return []
-
-        # Operate on COPIES: callers (e.g. drift_search) keep the original
-        # result objects in SearchResult/metrics and may reuse them after
-        # fusion. Mutating `result.score` in place would clobber those originals
-        # with normalized values. RRF/weighted fusion downstream re-copies too,
-        # but the normalization itself must not leak into the caller's list.
-        copies = [r.model_copy() for r in results]
-
-        min_score = min(r.score for r in copies)
-        max_score = max(r.score for r in copies)
-        score_range = max_score - min_score
-
-        # A stream of one hit (or of equal scores) scores its hits at the top,
-        # as the hybrid search's own normalization does (SINGLE_RESULT_SCORE):
-        # 0.5 put a stream's only, best hit below another stream's best.
-        for result in copies:
-            result.score = (
-                SINGLE_RESULT_SCORE
-                if score_range == 0
-                else (result.score - min_score) / score_range
-            )
-
-        return copies
-
     def _reciprocal_rank_fusion(
         self, result_map: dict[str, list[RetrievalResult]]
     ) -> list[RetrievalResult]:
@@ -442,27 +386,6 @@ class HybridScorer:
 
         for key, score in scores.items():
             objects[key].score = score
-
-        return list(objects.values())
-
-    def _weighted_fusion(
-        self, result_map: dict[str, list[RetrievalResult]]
-    ) -> list[RetrievalResult]:
-        scores: dict[str, float] = defaultdict(float)
-        objects: dict[str, RetrievalResult] = {}
-        weights = self.fusion_config.fusion_weights
-
-        for name, results in result_map.items():
-            weight = weights.get(name, 1.0)
-            for result in self._once_per_bucket(results):
-                key = self._get_result_key(result)
-                scores[key] += result.score * weight
-                if key not in objects:
-                    objects[key] = result.model_copy()
-
-        for key, score in scores.items():
-            if key in objects:
-                objects[key].score = score
 
         return list(objects.values())
 

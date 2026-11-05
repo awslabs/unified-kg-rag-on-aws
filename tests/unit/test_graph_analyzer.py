@@ -91,29 +91,24 @@ class TestCentrality:
 
     def test_disabled_metric_stays_none(self) -> None:
         config = Config()
-        # closeness/eigenvector default to off; degree/betweenness/pagerank on.
+        config.graph.visualization.centrality.calculate_pagerank = False
         analyzer = GraphAnalyzer(config, graph=_triangle_graph())
-        metrics = analyzer.calculate_centrality()
-        node = metrics["a"]
-        assert node.closeness is None
-        assert node.eigenvector is None
+        node = analyzer.calculate_centrality()["a"]
+        assert node.pagerank is None
         assert node.degree is not None
-        assert node.pagerank is not None
 
-    def test_enabling_closeness_populates_it(self) -> None:
-        config = Config()
-        config.graph.visualization.centrality.calculate_closeness = True
-        analyzer = GraphAnalyzer(config, graph=_triangle_graph())
-        metrics = analyzer.calculate_centrality()
-        assert metrics["a"].closeness == pytest.approx(1.0)
-
-    def test_only_enabled_methods_are_computed(self) -> None:
+    def test_only_the_displayed_methods_are_computed(self) -> None:
+        # Closeness and eigenvector centrality were computed (when turned on)
+        # and never displayed: the analyzer computes the three it shows.
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
         metrics = analyzer.calculate_centrality()["a"]
-        # degree/betweenness/pagerank are enabled by default.
-        assert metrics.degree is not None
-        assert metrics.pagerank is not None
-        assert metrics.closeness is None
+        assert set(metrics.model_dump(exclude_none=True)) == {
+            "node_id",
+            "node_name",
+            "degree",
+            "betweenness",
+            "pagerank",
+        }
 
 
 class TestStatistics:
@@ -167,6 +162,13 @@ class TestStatistics:
         stats = analyzer.get_graph_statistics()
         assert stats.num_connected_components == 3
         assert stats.largest_component_size == 2
+
+    def test_density_clustering_and_components_are_always_computed(self) -> None:
+        stats = GraphAnalyzer(Config(), graph=_triangle_graph()).get_graph_statistics()
+        assert stats.density == pytest.approx(1.0)
+        assert stats.average_clustering == pytest.approx(1.0)
+        assert stats.num_connected_components == 1
+        assert stats.diameter is None  # opt-in
 
     def test_diameter_only_when_enabled_and_connected(self) -> None:
         config = Config()

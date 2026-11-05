@@ -44,11 +44,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
     language_name,
 )
-from unified_kg_rag.domain.prompts import (
-    CommunityRelevancePrompt,
-    GlobalMapPrompt,
-    MapReduceSummaryPrompt,
-)
+from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,
@@ -135,14 +131,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             factory=factory,
             model_id=self.config.model_id(ModelRole.GLOBAL_MAP),
             prompt_class=GlobalMapPrompt,
-            parser=str_output_parser,
-            custom_prompts=config.custom_prompts,
-        )
-        # REDUCE step: synthesize the final answer from the ranked key points.
-        self.map_reducer: Runnable = setup_chain(
-            factory=factory,
-            model_id=self.config.model_id(ModelRole.GLOBAL_REDUCE),
-            prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
             custom_prompts=config.custom_prompts,
         )
@@ -685,15 +673,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         MAP — rate the key points of each token-sized batch of reports (0-100).
         FILTER+RANK — drop low-scored points, sort by score descending.
         PACK — take ranked points up to ``max_map_reduce_tokens``.
-        REDUCE — synthesize the answer from the ranked, packed points.
+        REDUCE — hand the ranked, packed points to the answer model as one
+        context section.
 
-        The result is the synthesized item followed by the reports the
+        The result is the key-points item followed by the reports the
         packed points cite (``_evidence``), best point first: the evidence the
         points came from, for the answer budget left over and the reported
-        sources (whole reports up to ``evidence_tokens`` when it is set). Below ``map_reduce_min_results`` reports the results pass
-        through unchanged. If the map phase yields no usable scored points
-        (e.g. every map call failed to parse), it degrades to the legacy
-        concat-and-reduce path so global search never hard-fails.
+        sources (whole reports up to ``evidence_tokens`` when it is set). Below
+        ``map_reduce_min_results`` reports the results pass through unchanged.
+        If the map phase yields no usable scored points (e.g. every map call
+        failed to parse), the reports pass through as they are, so global
+        search never hard-fails.
 
         If the map phase DID rate the reports but every key point scored at or
         below ``map_relevance_threshold``, the reports were judged irrelevant to
@@ -702,8 +692,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         answer" instead of synthesizing from reports the map step rejected.
         That verdict needs every batch to have been rated: when some batches
         failed (throttling, timeout) or returned unparseable output, their
-        reports were never judged, so it degrades to concat-and-reduce over
-        just those unrated reports instead.
+        reports were never judged, so it returns just those unrated reports
+        instead.
 
         The type name of each failure ``ignore_errors`` degraded is appended
         to ``degraded``; the map counts go to ``stats``.
@@ -751,13 +741,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 logger.warning(
                     "No relevant map key point among the rated reports, but %s/%s "
                     "reports were never rated (failed or unparseable map calls); "
-                    "degrading to concat-and-reduce over the unrated reports.",
+                    "degrading to the unrated reports as they are.",
                     len(unrated),
                     len(reports),
                 )
-                return await self._concat_reduce(
-                    unrated, query, config=config, degraded=degraded
-                )
+                return unrated
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
                 "no relevant community data for the query, returning no context.",
@@ -774,13 +762,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if self.global_search_config.evidence_tokens is not None:
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
-        return await self._reduce_from_points(
-            packed_points,
-            evidence,
-            query,
-            config=config,
-            degraded=degraded,
-        )
+        return self._reduce_from_points(packed_points, evidence)
 
     def _map_batches(
         self, reports: list[RetrievalResult]
@@ -1034,117 +1016,35 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         return packed
 
-    async def _reduce_from_points(
-        self,
-        points: list[_MapPoint],
-        results: list[RetrievalResult],
-        query: SearchQuery,
-        *,
-        config: RunnableConfig | None = None,
-        degraded: list[str] | None = None,
+    def _reduce_from_points(
+        self, points: list[_MapPoint], results: list[RetrievalResult]
     ) -> list[RetrievalResult]:
+        """The ranked ``points`` as one context section, before ``results``.
+
+        The answer model reads the points directly: it already synthesizes
+        from its context, so a separate reduce call would only add a call and
+        a second rewrite that can drop or contradict facts.
+        """
         synthesis_input = "\n\n".join(
             f"- (relevance {p.score}) {p.description}" for p in points
         )
-        if not self.global_search_config.reduce_with_llm:
-            # Hand the ranked points to the answer model directly: it already
-            # synthesizes from its context, so a separate reduce LLM only adds a
-            # call and a second rewrite that can drop or contradict facts.
-            points_result = RetrievalResult(
-                content=(
-                    "Key points from the community reports, ranked by relevance "
-                    "to the query (0-100):\n\n" + synthesis_input
-                ),
-                score=1.0,
-                source="synthesized_key_points",
-                retriever_type=SectionType.GENERAL.value,
-                metadata={
-                    # Map-LLM output, not retrieved evidence: in the answer
-                    # context, excluded from the reported sources.
-                    "synthesized": True,
-                    "source_results_count": len(results),
-                    "ranked_key_points": len(points),
-                },
-            )
-            return [points_result] + results
-        try:
-            summary = await self.map_reducer.ainvoke(
-                {
-                    "summaries": synthesis_input,
-                    "query": query.query,
-                    "target_language": self.target_language,
-                },
-                config,
-            )
-        except Exception as e:
-            # A fatal error (no model access) fails the query even under
-            # ignore_errors, as DRIFT's.
-            if not self.ignore_errors or is_fatal_retrieval_error(e):
-                raise
-            logger.error("Map-reduce synthesis failed: %s", e)
-            _record(degraded, e)
-            return results
-
-        summary_result = RetrievalResult(
-            content=summary,
+        points_result = RetrievalResult(
+            content=(
+                "Key points from the community reports, ranked by relevance "
+                "to the query (0-100):\n\n" + synthesis_input
+            ),
             score=1.0,
-            source="synthesized_summary",
+            source="synthesized_key_points",
             retriever_type=SectionType.GENERAL.value,
             metadata={
-                # LLM output, not retrieved evidence: kept in the answer context
-                # (design §6.1.1) but excluded from the reported sources.
+                # Map-LLM output, not retrieved evidence: in the answer
+                # context, excluded from the reported sources.
                 "synthesized": True,
                 "source_results_count": len(results),
                 "ranked_key_points": len(points),
             },
         )
-        return [summary_result] + results
-
-    async def _concat_reduce(
-        self,
-        results: list[RetrievalResult],
-        query: SearchQuery,
-        *,
-        config: RunnableConfig | None = None,
-        degraded: list[str] | None = None,
-    ) -> list[RetrievalResult]:
-        """Legacy direct concat-and-reduce path (map-reduce degradation target).
-
-        Without ``reduce_with_llm`` the reports pass through unchanged: the
-        answer model reads them directly instead of a summary of them.
-        """
-        if not self.global_search_config.reduce_with_llm:
-            return results
-        try:
-            context = "\n\n---\n\n".join([r.content for r in results])
-            summary = await self.map_reducer.ainvoke(
-                {
-                    "summaries": context,
-                    "query": query.query,
-                    "target_language": self.target_language,
-                },
-                config,
-            )
-            summary_result = RetrievalResult(
-                content=summary,
-                score=1.0,
-                source="synthesized_summary",
-                retriever_type=SectionType.GENERAL.value,
-                metadata={
-                    "synthesized": True,
-                    "source_results_count": len(results),
-                },
-            )
-            return [summary_result] + results
-        except Exception as e:
-            # A fatal error (no model access) fails the query even under
-            # ignore_errors, as DRIFT's.
-            if not self.ignore_errors or is_fatal_retrieval_error(e):
-                raise
-
-            logger.error("Map-reduce synthesis failed: %s", e)
-            _record(degraded, e)
-            return results
+        return [points_result] + results
 
     def _was_map_reduce_applied(self, final_results: list[RetrievalResult]) -> bool:
         if not self.global_search_config.enable_map_reduce:

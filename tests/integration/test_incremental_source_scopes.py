@@ -80,6 +80,9 @@ class _Model:
                 "<findings><finding><summary>Central</summary>"
                 "<explanation>They trade.</explanation></finding></findings>"
             )
+        if not system:
+            # The output fixer (always on): it cannot repair what it is shown.
+            return "still not the requested structure"
         raise AssertionError(f"unexpected prompt: {system[:80]!r}")
 
     def _extraction(self, text: str) -> str:
@@ -118,7 +121,6 @@ def scope_test_config(base: Config | None = None) -> Config:
     config.processing.gleaning.enabled = False
     config.processing.claim_extraction.enabled = False
     config.retry.max_attempts = 1
-    config.fixing.enabled = False
     return config
 
 

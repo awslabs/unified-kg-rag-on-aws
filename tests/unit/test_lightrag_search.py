@@ -1476,7 +1476,7 @@ async def test_fusion_interleaves_the_two_chunk_streams_and_cuts_after(
     # Through the real scorer, no rerank: 20 entity-side chunks and 2
     # relationship-side ones; the 3-chunk quota keeps a relationship chunk
     # (rank 1 of its stream) beside the entity side's first two.
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     config.search.fusion.diversity_lambda = 1.0
     config.search.lightrag_search.chunk_stream_top_k = 3
     config.search.lightrag_search.related_chunk_number = 20

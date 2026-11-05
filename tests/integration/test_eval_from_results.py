@@ -24,6 +24,7 @@ from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.application.cli import run_evaluation
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import EvaluatorType, PipelineStageStatus
+from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
 
 pytestmark = pytest.mark.integration
 
@@ -77,7 +78,10 @@ def _cli(chain: Any, config: Any, providers: Any, argv: list[str]) -> dict[str, 
 
 @pytest.mark.parametrize("extraction_cache", [True, False], ids=["cached", "cold"])
 def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
-    tmp_path: Path, no_aws: None, extraction_cache: bool
+    tmp_path: Path,
+    no_aws: None,
+    extraction_cache: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # One chain answers every run, so with its query extraction cache on
     # (the default) the later runs reuse the first one's extractions: their
@@ -102,9 +106,13 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
         EvaluatorType.ANSWER_MATCH,
         EvaluatorType.GRAPH_AWARE,
     ]
-    # The warm-up queries' calls are in no run's usage: off, the server's
+    # The warm-up queries' calls are in no run's usage: skipped, the server's
     # call count is the runs' usage exactly.
-    config.evaluation.warm_up_query = False
+
+    async def _no_warm_up(self: Any, query: Any) -> None:
+        return None
+
+    monkeypatch.setattr(EvaluationManager, "warm_up", _no_warm_up)
     dataset = tmp_path / "eval.json"
     dataset.write_text(json.dumps(_DATASET), encoding="utf-8")
     strategies = ["--search-strategy", "local,mix,naive", "--data-path", str(dataset)]

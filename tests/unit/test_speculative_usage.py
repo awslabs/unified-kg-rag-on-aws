@@ -158,7 +158,7 @@ def _chain(model: _ThreadedChat, **search: Any) -> GraphRAGChain:
     config.search.auto_routable_strategies = [SearchStrategy.SIMPLE, SearchStrategy.MIX]
     config.search.query_extraction_cache_size = 0
     # No rerank model: nothing here may build an AWS client.
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     for key, value in search.items():
         setattr(config.search, key, value)
     translation = config.processing.translation

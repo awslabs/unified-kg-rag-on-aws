@@ -30,14 +30,6 @@ class CentralityMetrics(BaseModel):
         default=None,
         description="PageRank centrality: measures the importance of a node based on the structure of incoming links",
     )
-    closeness: float | None = Field(
-        default=None,
-        description="Closeness centrality: measures how close a node is to all other nodes in the graph",
-    )
-    eigenvector: float | None = Field(
-        default=None,
-        description="Eigenvector centrality: measures the influence of a node based on the centrality of its neighbors",
-    )
 
 
 class GraphStatistics(BaseModel):
@@ -131,19 +123,6 @@ class GraphAnalyzer:
                 {
                     "alpha": self.centrality_config.pagerank_alpha,
                     "max_iter": self.centrality_config.pagerank_max_iter,
-                },
-            ),
-            "closeness": (
-                self.centrality_config.calculate_closeness,
-                nx.closeness_centrality,
-                {},
-            ),
-            "eigenvector": (
-                self.centrality_config.calculate_eigenvector,
-                nx.eigenvector_centrality,
-                {
-                    "max_iter": self.centrality_config.eigenvector_max_iter,
-                    "tol": self.centrality_config.eigenvector_tol,
                 },
             ),
         }
@@ -250,37 +229,32 @@ class GraphAnalyzer:
         return stats
 
     def _calculate_optional_statistics(self, stats: GraphStatistics) -> None:
-        if self.analysis_config.statistics.calculate_density:
+        self._compute_metric(
+            "density",
+            nx.density,
+            lambda r: setattr(stats, "density", r),
+        )
+        self._compute_metric(
+            "average_clustering",
+            nx.average_clustering,
+            lambda r: setattr(stats, "average_clustering", r),
+        )
+        self._compute_metric(
+            "connected_components",
+            lambda g: (
+                list(nx.connected_components(g)) if not nx.is_directed(g) else []
+            ),
+            lambda result: self._update_component_stats(result, stats),
+        )
+        if (
+            stats.num_connected_components == 1
+            and self.analysis_config.statistics.calculate_diameter
+        ):
             self._compute_metric(
-                "density",
-                nx.density,
-                lambda r: setattr(stats, "density", r),
+                "diameter",
+                nx.diameter,
+                lambda r: setattr(stats, "diameter", r),
             )
-
-        if self.analysis_config.statistics.calculate_clustering:
-            self._compute_metric(
-                "average_clustering",
-                nx.average_clustering,
-                lambda r: setattr(stats, "average_clustering", r),
-            )
-
-        if self.analysis_config.statistics.calculate_components:
-            self._compute_metric(
-                "connected_components",
-                lambda g: (
-                    list(nx.connected_components(g)) if not nx.is_directed(g) else []
-                ),
-                lambda result: self._update_component_stats(result, stats),
-            )
-            if (
-                stats.num_connected_components == 1
-                and self.analysis_config.statistics.calculate_diameter
-            ):
-                self._compute_metric(
-                    "diameter",
-                    nx.diameter,
-                    lambda r: setattr(stats, "diameter", r),
-                )
 
     def _compute_metric(
         self,

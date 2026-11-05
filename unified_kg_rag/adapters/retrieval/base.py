@@ -845,7 +845,6 @@ class BaseSearchStrategy(ABC):
         self, results_dict: dict[str, list[RetrievalResult]]
     ) -> dict[str, Any]:
         return {
-            "kg_rag.fusion.method": self.config.search.fusion.method,
             "kg_rag.streams": sorted(results_dict),
             "kg_rag.results_in": sum(len(v) for v in results_dict.values()),
             "kg_rag.rerank_enabled": self.hybrid_scorer.rerank_model is not None,

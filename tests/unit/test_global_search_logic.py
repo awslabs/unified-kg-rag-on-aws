@@ -187,7 +187,7 @@ def _strategy(
     store: _ReportStore | None = None, **settings: Any
 ) -> GlobalSearchStrategy:
     config = Config()
-    config.search.reranking.enabled = False
+    config.providers.rerank.kind = "none"
     config.processing.ignore_errors = settings.pop("ignore_errors", False)
     gs = config.search.global_search
     # Map even a cut of one or two reports.
@@ -763,7 +763,10 @@ def test_parse_map_payload_overflow_string_score() -> None:
 def test_was_map_reduce_applied_detects_synthesized_source() -> None:
     strat = _strategy()
     summary = RetrievalResult(
-        content="s", score=1.0, source="synthesized_summary", retriever_type="general"
+        content="s",
+        score=1.0,
+        source="synthesized_key_points",
+        retriever_type="general",
     )
     assert strat._was_map_reduce_applied([summary]) is True
     strat.global_search_config.enable_map_reduce = False
