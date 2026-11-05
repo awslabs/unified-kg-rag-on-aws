@@ -2324,4 +2324,4 @@ Deployment (CDK).
   URL prose, token-count log lines). Dependabot waits 7 days after a release
   before proposing it (security updates still open at once), and the LLM
   XML parser never resolves DOCTYPE entities, whatever lxml's default
-  (#PR).
+  (#578).
