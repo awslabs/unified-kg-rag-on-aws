@@ -89,9 +89,23 @@ read stops it before anything is indexed
 Set `indexing.reset: true` for one run to index the whole corpus again
 without taking the suffix offline. Quarantined documents are skipped and keep
 their records. A failed reset drops nothing, so it is safe to re-run. **Set
-`indexing.reset` back to `false` afterwards**, or every run rebuilds. What
-queries see during a reset, and a reset that stopped halfway:
-[Operator Runbook: Re-ingest](../operations.md#re-ingest).
+`indexing.reset` back to `false` afterwards**, or every run rebuilds.
+
+During a reset, vector queries read the previous indices until each new one
+swaps in, and graph queries see previous and rebuilt items mixed until the
+final drop. A reset whose graph writes partly failed (even within
+`indexing.max_failure_rate`) fails too (`neptune_sweep` in the indexing
+results), and the next run removes what the previous graph still holds. One
+stopped or killed before it swapped an index in leaves that index
+(`<alias>-<timestamp>`, no alias) until the next reset deletes it (an
+incremental run does not): delete it by hand, or re-run the reset. A reset
+pipeline id run again resumes from its cached stages. When another pipeline
+id has since deleted extraction records its text units name (an incremental
+run with other settings deletes the records of the units it re-extracts), it
+resumes from the stage that stores them (WARNING `Extraction records this
+pipeline stored are gone ...`) and extracts those units again: the LLM
+response cache answers them, and with `cache.llm_responses.enabled: false`
+the rerun costs what the reset did.
 
 A reset reuses the stored chunk boundaries, extraction records and vectors of
 unchanged text, and the stored description summaries and community report
@@ -221,7 +235,7 @@ terminal, stops the run (exit 1).
 When the files are really gone, check the corpus first (sync, prefix, mount),
 then confirm once; on a deployed task, re-run with `UKR_CONFIRM_DELETIONS=1`
 as an environment override
-([Operator Runbook: Seed graphs in the image or S3](../operations.md#seed-graphs-in-the-image-or-s3)
+([Operator Runbook: Run a one-off ingestion task](../operations.md#run-a-one-off-ingestion-task)
 shows how). `total_documents_deleted` counts what a run removed. From
 Python, pass `DataIngestionPipeline(..., confirm_deletions=callable)`;
 without it, or on a no, `run` raises `ConfirmationDeclinedError`.

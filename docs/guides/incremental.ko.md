@@ -74,8 +74,20 @@ SQLite 파일입니다(`providers.doc_status.kind: sqlite`. [로컬 모드](./lo
 한 번의 실행에 `indexing.reset: true`를 지정하면 접미사를 서비스에서 내리지 않고 코퍼스
 전체를 다시 인덱싱합니다. 격리된 문서는 건너뛰고 레코드를 그대로 둡니다. 실패한 재구축은
 아무것도 지우지 않으므로 다시 실행해도 안전합니다. **끝나면 `indexing.reset`을 `false`로
-되돌리세요.** 그러지 않으면 매번 재구축합니다. 재구축 중에 질의가 보는 내용과 도중에
-멈춘 재구축은 [운영 런북: 다시 수집하기](../operations.md#re-ingest)(영문)에 있습니다.
+되돌리세요.** 그러지 않으면 매번 재구축합니다.
+
+재구축 중 벡터 질의는 새 인덱스가 하나씩 교체될 때까지 이전 인덱스를 읽고, 그래프 질의는
+마지막 삭제 전까지 이전 항목과 재구축한 항목을 섞어서 봅니다. 그래프 쓰기가 일부라도
+실패한 재구축은 `indexing.max_failure_rate` 이내여도 실패로 끝나고(인덱싱 결과의
+`neptune_sweep`), 다음 실행이 이전 그래프에 남은 것을 제거합니다. 인덱스를 교체하기 전에
+멈추거나 강제 종료된 재구축은 그 인덱스(`<alias>-<timestamp>`, 별칭 없음)를 남기고, 다음
+재구축이 이를 지웁니다(증분 실행은 지우지 않습니다). 직접 지우거나 재구축을 다시
+실행하세요. 재구축한 파이프라인 ID를 다시 실행하면 캐시된 단계부터 재개합니다. 그 사이 다른
+파이프라인 ID가 이 실행의 텍스트 단위가 가리키는 추출 레코드를 지웠다면(다른 설정의 증분
+실행은 다시 추출하는 단위의 레코드를 지웁니다) 그 레코드를 저장하는 단계부터 재개하고
+(WARNING `Extraction records this pipeline stored are gone ...`) 해당 단위를 다시
+추출합니다. 이때 LLM 응답 캐시가 답하며, `cache.llm_responses.enabled: false`이면 처음
+재구축과 같은 비용이 듭니다.
 
 재구축은 바뀌지 않은 텍스트의 청크 경계, 추출 레코드, 벡터를 다시 쓰고, 입력이 바뀌지
 않은 설명 요약과 커뮤니티 리포트 응답도 저장된 것을 다시 씁니다. 그래서 같은 모델과
@@ -184,7 +196,7 @@ deletes N of the M documents ...; continue?`). 일부만 동기화된 S3, 만료
 파일이 정말 사라졌다면 먼저 코퍼스(동기화, 접두사, 마운트)를 확인한 뒤 한 번 확인 응답을
 주세요. 배포된 태스크에서는 `UKR_CONFIRM_DELETIONS=1`을 환경 변수 재정의로 넣어 다시
 실행합니다(방법은
-[운영 런북: 이미지나 S3의 시드 그래프](../operations.md#seed-graphs-in-the-image-or-s3)(영문)에
+[운영 런북: 일회성 수집 태스크 실행](../operations.md#run-a-one-off-ingestion-task)(영문)에
 있음). `total_documents_deleted`는 실행이 제거한 문서 수입니다. Python에서는
 `DataIngestionPipeline(..., confirm_deletions=callable)`을 넘기세요. 넘기지 않거나
 '아니요'로 답하면 `run`이 `ConfirmationDeclinedError`를 발생시킵니다.

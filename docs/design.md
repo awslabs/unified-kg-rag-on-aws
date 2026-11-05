@@ -979,7 +979,22 @@ unless noted.
    none: claims are optional, so a document whose other stages succeeded is
    indexed without those claims and recorded `FAILED` once, for the next run
    to extract them again from the stored records, then `PROCESSED` without
-   them (`incremental.run_failures`). Extraction
+   them (`incremental.run_failures`). A failure that counts for none
+   adds one to the record's `retry_count` instead (new content, a success
+   or an error of its own resets it; a stop or death during extraction
+   leaves it, one during indexing resets it once the `PENDING` records are
+   written), and from the second the run warns (`documents_retrying`).
+   What counts as unparseable or cut-off output: graph extraction output
+   naming no entity with a section left unclosed (cut off without a stop
+   reason) is cut off, not retried; with every section closed it is
+   malformed and retried like unparseable output. Output cut later keeps
+   the entities before the cut (WARNING `XML output ends with <entities>
+   unclosed`). An answer the model corrects is parsed by its last complete
+   answer, each section by its last closed occurrence (INFO `XML output
+   repeats <entities>, ...`), and a JSON answer by its last object that
+   parses. An OpenAI-compatible server's context-length rejection that
+   counts the requested `max_tokens` is a setting. The response behind a
+   failed graph or claim extraction check is logged at DEBUG. Extraction
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted
@@ -1096,7 +1111,13 @@ whose processing kills the task would stop every later run the same way.
   it was committed under other extraction settings for a document the delta
   re-extracts for a settings change), or deletes a document another
   pipeline id (or a record without a writer) has recorded in another scope
-  since, resumes from document_loading instead. A resume past
+  since, resumes from document_loading instead. So does one for whose
+  scope another pipeline id has since added, changed or deleted a document
+  outside the delta, and one whose `document_loading` inputs changed since
+  the delta was computed (a reset, retry or corpus setting; WARNING
+  `Rewinding resume point from ... to 'document_loading'`). A finished
+  pipeline id run again counts as resumed; a run resumed after its own kill
+  or stop keeps its delta. A resume past
   a stage that recorded failed text units starts at that stage, so the units
   are retried rather than recorded `FAILED` again; a reset resumed past the
   stages that store extraction records starts at the first whose records
@@ -2070,11 +2091,59 @@ by default**.
 
 ## 15. Extension Guide
 
-This section is the single reference for extending the framework. Strategies, renderers, parsers, schema sources and seed sources extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code. The ports, `Providers` and the registries are exported from `unified_kg_rag` (§2.5).
+This section is the single reference for extending the framework. Extensions come in two kinds:
 
-- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`.
+- **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code.
+- **In-tree changes**, made in a fork or contributed upstream: a search strategy and an evaluator. `register_strategy` is keyed by the closed `SearchStrategy` enum, which `RAGInput.search_strategy`, `--search-strategy` and `search.auto_routable_strategies` validate against, so a new strategy adds an enum member; an evaluator adds an `EvaluatorType` member and a branch in `EvaluationManager._resolve_evaluator_class`. The registry still keeps the chain's dispatch code unchanged.
+
+- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
+
+  ```python
+  # unified_kg_rag/adapters/search_strategies/keyword_search.py
+  # (after adding SearchStrategy.KEYWORD = "keyword" to domain/models/retrieval.py)
+  import time
+
+  from langchain_core.runnables import RunnableConfig
+
+  from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
+  from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
+  from unified_kg_rag.domain.models import (
+      RetrieverRole,
+      SearchQuery,
+      SearchResult,
+      SearchStrategy,
+  )
+
+
+  @register_strategy(SearchStrategy.KEYWORD, required_roles=(RetrieverRole.DOCUMENT,))
+  class KeywordSearchStrategy(BaseSearchStrategy):
+      async def asearch(
+          self, query: SearchQuery, config: RunnableConfig | None = None
+      ) -> SearchResult:
+          start, rerank = time.time(), self._new_rerank_trace()
+          hits = []
+          if self.document_retriever:  # bound through required_roles
+              hits = await self._safe_aretrieve(
+                  self.document_retriever, query, "Document retrieval"
+              )
+          results = await self._fuse_and_rerank(
+              {"documents": hits},
+              rerank_trace=rerank,
+              top_k=query.top_k,
+              retrieval_multiplier=query.retrieval_multiplier,
+              query=query.query,
+          )
+          return SearchResult(
+              query=query,
+              results=results,
+              total_results=len(results),
+              search_strategy="keyword_search",
+              processing_time=time.time() - start,
+              metadata={"rerank": rerank.summary()},
+          )
+  ```
 - **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
-- **New evaluator**: Subclass `BaseGraphRAGEvaluator` (`from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator`) + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum. Regenerate the configuration reference, whose `evaluation.enabled_evaluators` lists the types: `uv run python scripts/gen_config_reference.py`.
+- **New evaluator** (in-tree): Subclass `BaseGraphRAGEvaluator` (`from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator`) + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum. Regenerate the configuration reference, whose `evaluation.enabled_evaluators` lists the types: `uv run python scripts/gen_config_reference.py`.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `run-visualization` sees those that `adapters/renderers/__init__.py` imports. Override `check_dependencies` to fail fast when an optional package the renderer imports is missing. Regenerate the CLI reference, where the name is a `--renderers` choice: `uv run python scripts/gen_cli_reference.py` (and `uv run python scripts/gen_config_reference.py` when it adds a `graph.visualization` settings section).
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any `langchain_core` `BaseLoader` subclass (the built-in loaders in `adapters/ingestion/file_loaders.py` are examples); no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 - **New schema source** (an ontology format or service): register a loader
@@ -2415,6 +2484,9 @@ shapes:
 
 ```python
 from unified_kg_rag import GraphRAGChain
+
+# Not exported from unified_kg_rag: an internal path that may change in any
+# release (§2.5); pin the package version when you import it.
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 
 class MyLLMFactory:                       # structurally an LLMFactoryPort
