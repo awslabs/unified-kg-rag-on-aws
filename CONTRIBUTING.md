@@ -75,6 +75,10 @@ Without uv: create a virtual environment, activate it, and run `pip install -e '
   `tests/unit/test_public_api.py`; changing that list is a deliberate API change), configuration keys, CLI flags and
   exit codes, index and registry formats, and the CDK stack's inputs and outputs. Moving or renaming an internal module
   is not a breaking change and needs no entry; neither does a change to code only reached through internal imports.
+- Entries compare with the last release. A fix to something not yet released amends that change's entry instead of
+  adding a *Fixed* one, which lists only bugs a release had. Add a user's action as the next number of *Upgrading*
+  (or to its *From a `main` checkout* list when only unreleased formats or keys need it), and link the docs page
+  rather than repeating it.
 
 ### Commit messages
 
