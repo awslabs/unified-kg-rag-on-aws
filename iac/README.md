@@ -426,7 +426,9 @@ docker push "$REGISTRY/graphrag-app:latest"
   several go in one argument (`"--extra otel --extra unstructured"`).
 - The image bakes in the endpoint-free `docker/config.yaml` (it turns on
   `providers.doc_status.enabled`, so ingestion is incremental). The task
-  injects the deployed values: `UKR__AWS__NEPTUNE__ENDPOINT`,
+  injects the deployed values: `UKR__AWS__NEPTUNE__ENDPOINT` (the cluster
+  endpoint for ingestion, the reader endpoint for the query task:
+  [replica lag](../docs/operations.md#query-access-and-tenant-isolation)),
   `UKR__AWS__OPENSEARCH__ENDPOINT`, `UKR__AWS__S3__BUCKET_NAME`, `AWS_REGION`,
   `UKR__AWS__BEDROCK__REGION_NAME`, `UKR__LOGGING__LOG_FORMAT`,
   `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS` (1 on a

@@ -1196,6 +1196,12 @@ From 0.2.3 (or a `main` checkout since):
   later `cdk deploy --all` without the flag removed the guardrail from the
   task definitions, and queries and answers went unscreened with no sign
   (#PR).
+- CDK: the query task reads the graph through the Neptune reader endpoint
+  (ingestion keeps the writer), so with `neptune_instances` above 1 queries
+  go to the replicas instead of competing with an ingestion on the writer.
+  A query right after an ingestion can miss its last writes for the
+  replica lag ([Query access](docs/operations.md#query-access-and-tenant-isolation))
+  (#PR).
 - CDK: the cache bucket is versioned, so an overwritten or deleted corpus
   object can be restored; noncurrent versions expire after 30 days (1 day
   under `pipeline-runs/`, which every stage overwrites). Versioning cannot
