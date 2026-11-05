@@ -82,21 +82,30 @@ Python and installation.
   viz` (or `pip install -e '.[eval,viz]'`) where you evaluate or render
   (#467).
   - `eval` holds `ragas`, `datasets`, `pandas`, `langchain-community` and
-    `langchain-openai`. The `langchain` and `ragas` evaluators stay in the
-    default `evaluation.enabled_evaluators`; without the extra,
+    `langchain-openai`. The `ragas` evaluator stays in the default
+    `evaluation.enabled_evaluators` (`langchain` is opt-in, see
+    *Defaults*); without the extra,
     `EvaluationManager` (and `run-eval`, exit 2, before the first query)
     raises `ConfigurationError` naming it, also under
     `processing.ignore_errors`. The LLM-free evaluators need no extra; the
     container image installs `eval`.
-  - `viz` holds `bokeh` and `pyvis`. Without it `run-visualization` exits 2
-    naming the extra and `render_all` raises `ConfigurationError`;
-    `from unified_kg_rag import BaseRenderer, register_renderer` still works.
-    `umap-learn` and `scikit-learn` are no longer dependencies.
+  - `viz` holds `pyvis`, for the `interactive` renderer. Without it a
+    `run-visualization` that requests `interactive` exits 2 naming the extra
+    and `render_all` raises `ConfigurationError`; the `static` renderer and
+    `from unified_kg_rag import BaseRenderer, register_renderer` work on a
+    core install. `umap-learn` and `scikit-learn` are no longer
+    dependencies, and neither are `bokeh` and what only it pulled in
+    (`contourpy`, `tornado`, `xyzservices`) (#576).
   - The security floors follow the packages that pull the pinned package in:
-    `pillow` in `eval` and `viz`, `llvmlite` in `unstructured`,
-    `langchain-openai` in `eval` and `local`.
+    `pillow` in `eval`, `llvmlite` in `unstructured`, `langchain-openai` in
+    `eval` and `local`.
 - `graspologic` is no longer a dependency: Leiden runs on
   `graspologic-native` directly (#225, #226).
+- The `static` renderer writes its three charts (`degree_distribution.html`,
+  `centrality_comparison.html`, `community_size_distribution.html`, names
+  unchanged) as self-contained HTML pages with an inline SVG instead of
+  Bokeh documents: no script, a tooltip on every bar, no pan or zoom. A
+  tool that read the Bokeh JSON embedded in them finds none (#576).
 
 Configuration loading.
 - Unknown config keys, in the file or as `UKR__` environment variables, are
@@ -324,7 +333,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `search.output_ceilings` (`strategy_selection`, `query_extraction`, `community_relevance`) | (fixed: the model's maximum output) | 4096 each; `null` asks for `aws.bedrock.default_max_output_tokens` (#525) |
 | `search.answer_prompt_style` | (fixed: every strategy concise) | `{global: comprehensive}`, merged under a configured map; `{global: concise}` keeps the concise global answer (#533) |
 | `search.global_search.evidence_tokens` | (none: as many cited reports as the context budget holds) | 4000; `null` turns the cap off (#533) |
-| `evaluation.enabled_evaluators` | `langchain`, `ragas` | also `answer_match`, `retrieval`, `graph_aware` (#121) |
+| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`: the LLM-free evaluators are added (#121) and `langchain` is opt-in, as its `correctness` and `partial_correctness` repeat `ragas`' `answer_correctness` on every query (#576) |
 | `evaluation.max_context_tokens` | 8192 | `null` (the answer budget) (#315) |
 | `evaluation.answer_span` | (fixed: the whole answer, `full`) | `first_line` (#516) |
 | `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
@@ -722,6 +731,17 @@ From 0.2.3 (or a `main` checkout since):
       summary per newly merged entity over the summarization threshold and
       embeds those descriptions, and for the reports of the communities it
       clusters differently. Without a reset, entities stored apart stay apart.
+17. `run-eval` no longer runs the `langchain` judge unless
+    `evaluation.enabled_evaluators` lists it, so a default run has no
+    `langchain/correctness` or `langchain/partial_correctness` scores and a
+    `--fail-if langchain/...` gate fails for want of the measure. To keep
+    it, list every evaluator you want, e.g. `enabled_evaluators: [langchain,
+    ragas, answer_match, retrieval, graph_aware]`; leaving it out saves its
+    two judge calls per query (#576).
+18. `run-visualization --renderers static` no longer needs the `viz`
+    extra, which no longer installs Bokeh: re-render the static charts to
+    get the SVG pages (nothing stored changes). A script that imported
+    `bokeh` through the extra installs it itself (#576).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1975,6 +1995,9 @@ Evaluation, visualization and tuning.
   (#399), and stops when the evaluation is cancelled (#386, #393).
 - `run-eval` reports an invalid or missing dataset with exit 2 (#227,
   #230).
+- The static charts' logarithmic histograms (`static.log_scale_x`) count
+  the largest values: the last bin's edge could round below them, which left
+  the highest-degree node out of the degree distribution (#576).
 - `run-visualization` rejects unknown `--renderers` and invalid data with
   exit 2 (#255, #353) and lays out only the drawn nodes (#246); physics
   stays off when `interactive` omits it (#292).
@@ -2213,8 +2236,7 @@ Deployment (CDK).
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
   denial-of-service advisories through the PDF parser, for example
-  GHSA-5849-834g-hvw5), tornado 6.6 (GHSA-pcg2-g6cj-q92c,
-  GHSA-r4j5-9xpp-3985, GHSA-pw9p-v7r6-gx4p), filelock 4.2.1 (nine advisories,
+  GHSA-5849-834g-hvw5), filelock 4.2.1 (nine advisories,
   GHSA-v4x8-3wr5-3wq8 high; an override lifts `unstructured`'s cap; locked
   at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others),
   `unstructured>=0.24.1` (GHSA-4mvj-m6j5-pmf7,

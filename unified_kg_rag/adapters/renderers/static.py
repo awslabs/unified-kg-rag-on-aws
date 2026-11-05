@@ -1,18 +1,22 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Mapping
+"""Static charts as self-contained HTML pages with an inline SVG.
+
+No plotting package and no script: each chart is one HTML file a browser
+opens offline, with a native tooltip (an SVG ``<title>``) on every bar. Every
+text that reaches the page — node names, the configured font and colour —
+is HTML-escaped, so a name such as ``<script>`` renders as text.
+"""
+
+import math
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from html import escape
+from pathlib import Path
 from typing import Any
 
 import networkx as nx
 import numpy as np
-from bokeh.models import (  # type: ignore[attr-defined, unused-ignore]
-    ColumnDataSource,
-    HoverTool,
-    NumeralTickFormatter,
-    Title,
-)
-from bokeh.plotting import figure, output_file, save
-from bokeh.transform import dodge
 
 from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
 from unified_kg_rag.domain.models import Community
@@ -20,6 +24,132 @@ from unified_kg_rag.domain.models.config import StaticChartSettings
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# How many nodes the centrality chart shows, by degree.
+TOP_CENTRALITY_NODES = 25
+# Width (px) of a centrality chart node label; a longer name is cut with an
+# ellipsis and shown whole in its tooltip.
+_NODE_LABEL_WIDTH = 190
+
+_BAR_COLOR = "#3b82f6"
+_METRIC_COLORS = {
+    "degree": "#1f77b4",
+    "betweenness": "#ff7f0e",
+    "pagerank": "#2ca02c",
+}
+_TEXT_COLOR = "#27272a"
+_AXIS_LABEL_COLOR = "#3f3f46"
+_AXIS_COLOR = "#a1a1aa"
+_GRID_COLOR = "#e5e5e5"
+
+
+def _attr(value: object) -> str:
+    """``value`` escaped for a double-quoted attribute."""
+    return escape(str(value), quote=True)
+
+
+def _text(value: object) -> str:
+    """``value`` escaped for element content."""
+    return escape(str(value), quote=False)
+
+
+def _label(
+    text: str,
+    *,
+    css_class: str,
+    box: tuple[float, float, float, float],
+    align: str = "center",
+    size: int = 12,
+    color: str = _AXIS_LABEL_COLOR,
+    rotate: tuple[float, float, float] | None = None,
+    tooltip: str | None = None,
+) -> str:
+    """One line of text in an HTML box (``x, y, width, height``) inside the
+    SVG, aligned by CSS, so its width need not be known; ``rotate`` is
+    ``(degrees, cx, cy)``. Overflowing text ends in an ellipsis."""
+    x, y, width, height = box
+    transform = ""
+    if rotate is not None:
+        degrees, cx, cy = rotate
+        transform = f' transform="rotate({degrees} {cx:.2f} {cy:.2f})"'
+    title = f' title="{_attr(tooltip)}"' if tooltip is not None else ""
+    return (
+        f'<foreignObject x="{x:.2f}" y="{y:.2f}" width="{width:.2f}" '
+        f'height="{height:.2f}"{transform}>'
+        f'<div xmlns="http://www.w3.org/1999/xhtml" class="{css_class}"{title} '
+        f'style="font-size:{size}px;line-height:{height:.0f}px;color:{color};'
+        f"text-align:{align};white-space:nowrap;overflow:hidden;"
+        f'text-overflow:ellipsis">{_text(text)}</div></foreignObject>'
+    )
+
+
+def _fmt_number(value: float) -> str:
+    if float(value).is_integer():
+        return f"{int(value):,}"
+    return f"{value:,.1f}" if abs(value) >= 1 else f"{value:.2g}"
+
+
+def _nice_step(span: float, target: int, integer: bool) -> float:
+    raw = span / max(1, target)
+    magnitude = 10.0 ** math.floor(math.log10(raw))
+    step = magnitude * next(m for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    return max(1.0, math.ceil(step)) if integer else step
+
+
+def _y_ticks(top: float, integer: bool) -> tuple[float, list[float]]:
+    """The axis maximum (at least ``top``) and its ticks from 0."""
+    if top <= 0:
+        top = 1.0
+    step = _nice_step(top, 5, integer)
+    count = math.ceil(top / step - 1e-9)
+    return step * count, [step * i for i in range(count + 1)]
+
+
+def _x_ticks(low: float, high: float, log: bool) -> list[float]:
+    if log:
+        decades = range(math.floor(math.log10(low)), math.ceil(math.log10(high)) + 1)
+        ticks = [
+            m * 10.0**k
+            for k in decades
+            for m in (1, 2, 5)
+            if low <= m * 10.0**k <= high * (1 + 1e-9)
+        ]
+        return ticks if len(ticks) >= 2 else [low, high]
+    step = _nice_step(high - low, 6, integer=False)
+    first = math.ceil(low / step - 1e-9) * step
+    return [
+        first + step * i
+        for i in range(int((high - first) / step + 1e-9) + 1)
+        if first + step * i <= high + 1e-9
+    ]
+
+
+@dataclass(frozen=True)
+class _Frame:
+    """The plot area of a chart, in SVG pixels."""
+
+    width: int
+    height: int
+    left: int
+    right: int
+    top: int
+    bottom: int
+
+    @property
+    def x0(self) -> int:
+        return self.left
+
+    @property
+    def x1(self) -> int:
+        return self.width - self.right
+
+    @property
+    def y0(self) -> int:
+        return self.height - self.bottom
+
+    @property
+    def y1(self) -> int:
+        return self.top
 
 
 class StaticRenderer:
@@ -42,57 +172,15 @@ class StaticRenderer:
             logger.warning("Graph has no degrees to plot.")
             return
 
-        unique_degrees = set(degrees)
-        num_bins = max(1, min(50, len(unique_degrees)))
-
-        if self.log_scale_x and min(degrees) > 0:
-            log_min = np.log10(min(degrees))
-            log_max = np.log10(max(degrees))
-            bins = np.logspace(log_min, log_max, num_bins + 1)
-            hist, edges = np.histogram(degrees, bins=bins)
-        else:
-            hist, edges = np.histogram(degrees, bins=num_bins)
-
-        bar_width = (edges[1] - edges[0]) if len(edges) > 1 else 1.0
-        spacing = bar_width * 0.1
-        adjusted_width = bar_width - spacing
-
-        centers = (edges[:-1] + edges[1:]) / 2
-        left_positions = centers - adjusted_width / 2
-        right_positions = centers + adjusted_width / 2
-
-        source = ColumnDataSource(
-            data={"top": hist, "left": left_positions, "right": right_positions}
+        self._save_histogram(
+            degrees,
+            outputs_path,
+            chart="degree_distribution",
+            title="Degree Distribution",
+            x_label="Degree",
+            y_label="Number of Nodes",
+            range_label="Degree range",
         )
-
-        figure_kwargs = {}
-        if self.log_scale_x:
-            figure_kwargs["x_axis_type"] = "log"
-
-        p = self._create_figure(
-            "Degree Distribution", "Degree", "Number of Nodes", **figure_kwargs
-        )
-        p.quad(
-            top="top",
-            bottom=0,
-            left="left",
-            right="right",
-            source=source,
-            fill_color="#3b82f6",
-            line_color=None,
-            alpha=0.85,
-        )
-
-        p.add_tools(
-            HoverTool(
-                tooltips=[
-                    ("Degree Range", "@left{0.0} - @right{0.0}"),
-                    ("Count", "@top{0,0}"),
-                ]
-            )
-        )
-
-        self._save_plot(p, outputs_path, "Degree Distribution")
 
     def plot_centrality_comparison(
         self, centrality_data: dict[str, CentralityMetrics], output_path: str
@@ -109,7 +197,7 @@ class StaticRenderer:
             n
             for n in sorted_nodes
             if hasattr(n, "node_name") and n.node_name is not None
-        ][:25]
+        ][:TOP_CENTRALITY_NODES]
 
         if not top_nodes:
             logger.warning("No nodes with names found for centrality plot.")
@@ -118,70 +206,69 @@ class StaticRenderer:
         node_names = self._unique_factors([str(n.node_name) for n in top_nodes])
         # A metric that is off or failed to compute is None: plotted as 0 it
         # read as a measured zero. A metric no node has is left out, a node
-        # without a value gets no bar (NaN).
-        colors_by_metric = {
-            "degree": "#1f77b4",
-            "betweenness": "#ff7f0e",
-            "pagerank": "#2ca02c",
-        }
+        # without a value gets no bar.
         metrics = [
             m
-            for m in colors_by_metric
-            if any(getattr(n, m, None) is not None for n in top_nodes)
+            for m in _METRIC_COLORS
+            if any(self._metric_value(n, m) is not None for n in top_nodes)
         ]
         if not metrics:
             logger.warning("No centrality values to plot.")
             return
-        colors = [colors_by_metric[m] for m in metrics]
 
-        data: dict[str, Any] = {"nodes": node_names}
-        for metric in metrics:
-            data[metric] = [
-                float("nan") if (v := getattr(n, metric, None)) is None else v
-                for n in top_nodes
-            ]
-
-        source = ColumnDataSource(data=data)
-        p = self._create_figure(
-            "Centrality Comparison (Top 25 Nodes by Degree)",
-            "Nodes",
-            "Score",
-            x_range=node_names,
+        title = f"Centrality Comparison (Top {TOP_CENTRALITY_NODES} Nodes by Degree)"
+        # Wider than the histograms: 25 groups of rotated labels.
+        frame = _Frame(
             width=1200,
             height=700,
+            left=170,
+            right=30,
+            top=90,
+            bottom=180,
         )
+        top_value = max(
+            v
+            for n in top_nodes
+            for m in metrics
+            if (v := self._metric_value(n, m)) is not None
+        )
+        y_max, y_ticks = _y_ticks(top_value, integer=False)
+        parts = self._open_chart(frame, title)
+        parts += self._y_axis(frame, y_max, y_ticks, "Score", lambda v: f"{v:.2f}")
 
-        dodge_width = 0.2
-        for i, (metric, color) in enumerate(zip(metrics, colors, strict=True)):
-            p.vbar(
-                # Bars centred on the category: offsets -w, 0, +w for three.
-                x=dodge(
-                    "nodes",
-                    (i - (len(metrics) - 1) / 2) * dodge_width,
-                    range=p.x_range,
-                ),
-                top=metric,
-                width=dodge_width * 0.95,
-                source=source,
-                legend_label=metric.title(),
-                color=color,
-                alpha=0.8,
-                line_color="white",
+        band = (frame.x1 - frame.x0) / len(top_nodes)
+        bar_width = band * 0.8 / len(metrics)
+        for i, (node, name) in enumerate(zip(top_nodes, node_names, strict=True)):
+            group_left = frame.x0 + band * i + band * 0.1
+            for j, metric in enumerate(metrics):
+                value = self._metric_value(node, metric)
+                if value is None:
+                    continue
+                height = (frame.y0 - frame.y1) * value / y_max
+                parts.append(
+                    f'<rect class="bar" data-metric="{metric}" '
+                    f'x="{group_left + bar_width * j:.2f}" '
+                    f'y="{frame.y0 - height:.2f}" width="{bar_width * 0.95:.2f}" '
+                    f'height="{height:.2f}" fill="{_METRIC_COLORS[metric]}" '
+                    f'fill-opacity="0.85"><title>'
+                    f"{_text(name)}&#10;{metric.title()}: {value:.3f}"
+                    "</title></rect>"
+                )
+            # Right-aligned, its end under the group, turned 35 degrees.
+            cx, ly = frame.x0 + band * (i + 0.5), frame.y0 + 10
+            parts.append(
+                _label(
+                    name,
+                    css_class="tick-label",
+                    box=(cx - _NODE_LABEL_WIDTH, ly - 8, _NODE_LABEL_WIDTH, 16),
+                    align="right",
+                    rotate=(-35, cx, ly),
+                    tooltip=name,
+                )
             )
-
-        p.xaxis.major_label_orientation = 0.6
-        p.xaxis.major_label_text_font_size = "9pt"
-        p.legend.location = "top_right"
-        p.legend.click_policy = "hide"
-
-        p.yaxis.formatter = NumeralTickFormatter(format="0.00")
-
-        hover_tooltips = [("Node", "@nodes")] + [
-            (m.title(), f"@{m}{{0.000}}") for m in metrics
-        ]
-        p.add_tools(HoverTool(tooltips=hover_tooltips, mode="vline"))
-
-        self._save_plot(p, output_path, "Centrality Comparison")
+        parts += self._axis_label_x(frame, "Nodes")
+        parts += self._legend(frame, metrics)
+        self._save_chart(parts, frame, output_path, title, "centrality_comparison")
 
     def plot_community_size_distribution(
         self, communities: list[Community], output_path: str
@@ -200,123 +287,186 @@ class StaticRenderer:
             logger.warning("No valid community sizes found for visualization.")
             return
 
-        unique_sizes = set(sizes)
-        bins = max(1, min(50, len(unique_sizes)))
-        if self.log_scale_x and min(sizes) > 0:
-            log_min = np.log10(min(sizes))
-            log_max = np.log10(max(sizes))
-            log_bins = np.logspace(log_min, log_max, bins + 1)
-            hist, edges = np.histogram(sizes, bins=log_bins)
+        self._save_histogram(
+            sizes,
+            output_path,
+            chart="community_size_distribution",
+            title="Community Size Distribution (Level 0)",
+            x_label="Community Size (Number of Nodes)",
+            y_label="Number of Communities",
+            range_label="Size range",
+        )
+
+    @staticmethod
+    def _metric_value(node: CentralityMetrics, metric: str) -> float | None:
+        value = getattr(node, metric, None)
+        if value is None or not math.isfinite(value):
+            return None
+        return float(value)
+
+    def _save_histogram(
+        self,
+        values: Sequence[float],
+        path: str,
+        *,
+        chart: str,
+        title: str,
+        x_label: str,
+        y_label: str,
+        range_label: str,
+    ) -> None:
+        num_bins = max(1, min(50, len(set(values))))
+        # A log axis needs a positive, non-empty range.
+        log = self.log_scale_x and min(values) > 0 and min(values) < max(values)
+        if log:
+            bins: Any = np.logspace(
+                np.log10(min(values)), np.log10(max(values)), num_bins + 1
+            )
+            # 10 ** log10(x) can round below x, which would drop the largest
+            # values from the last bin.
+            bins[0], bins[-1] = min(values), max(values)
         else:
-            hist, edges = np.histogram(sizes, bins=bins)
+            bins = num_bins
+        hist, edges = np.histogram(values, bins=bins)
+        low, high = float(edges[0]), float(edges[-1])
 
-        bar_width = (edges[1] - edges[0]) if len(edges) > 1 else 1.0
-        spacing = bar_width * 0.1
-        adjusted_width = bar_width - spacing
-
-        centers = (edges[:-1] + edges[1:]) / 2
-        left_positions = centers - adjusted_width / 2
-        right_positions = centers + adjusted_width / 2
-
-        source = ColumnDataSource(
-            data={"top": hist, "left": left_positions, "right": right_positions}
+        frame = _Frame(
+            width=self.figure_width,
+            height=self.figure_height,
+            left=80,
+            right=30,
+            top=60,
+            bottom=70,
         )
 
-        figure_kwargs = {}
-        if self.log_scale_x:
-            figure_kwargs["x_axis_type"] = "log"
+        def x_pos(value: float) -> float:
+            if log:
+                share = (math.log10(value) - math.log10(low)) / (
+                    math.log10(high) - math.log10(low)
+                )
+            else:
+                share = (value - low) / (high - low)
+            return frame.x0 + share * (frame.x1 - frame.x0)
 
-        p = self._create_figure(
-            "Community Size Distribution (Level 0)",
-            "Community Size (Number of Nodes)",
-            "Number of Communities",
-            **figure_kwargs,
-        )
-        p.quad(
-            top="top",
-            bottom=0,
-            left="left",
-            right="right",
-            source=source,
-            fill_color="#3b82f6",
-            line_color=None,
-            alpha=0.85,
-        )
+        y_max, y_ticks = _y_ticks(float(hist.max()), integer=True)
+        parts = self._open_chart(frame, title)
+        parts += self._y_axis(frame, y_max, y_ticks, y_label, _fmt_number)
+        for tick in _x_ticks(low, high, log):
+            x = x_pos(tick)
+            parts.append(
+                _label(
+                    _fmt_number(tick),
+                    css_class="tick-label",
+                    box=(x - 40, frame.y0 + 6, 80, 16),
+                )
+            )
+        for count, left, right in zip(hist, edges[:-1], edges[1:], strict=True):
+            if count == 0:
+                continue
+            x_left, x_right = x_pos(float(left)), x_pos(float(right))
+            gap = (x_right - x_left) * 0.05
+            height = (frame.y0 - frame.y1) * float(count) / y_max
+            parts.append(
+                f'<rect class="bar" x="{x_left + gap:.2f}" '
+                f'y="{frame.y0 - height:.2f}" '
+                f'width="{max(0.5, x_right - x_left - 2 * gap):.2f}" '
+                f'height="{height:.2f}" fill="{_BAR_COLOR}" fill-opacity="0.85">'
+                f"<title>{range_label}: {left:.1f} - {right:.1f}&#10;"
+                f"Count: {int(count):,}</title></rect>"
+            )
+        parts += self._axis_label_x(frame, x_label)
+        self._save_chart(parts, frame, path, title, chart)
 
-        p.yaxis.formatter = NumeralTickFormatter(format="0.0")
+    def _open_chart(self, frame: _Frame, title: str) -> list[str]:
+        return [
+            f'<rect width="{frame.width}" height="{frame.height}" '
+            f'fill="{_attr(self.background_color)}"/>',
+            _label(
+                title,
+                css_class="chart-title",
+                box=(0, 10, frame.width, 30),
+                size=20,
+                color=_TEXT_COLOR,
+            ),
+        ]
 
-        p.add_tools(
-            HoverTool(
-                tooltips=[
-                    ("Size Range", "@left{0.0} - @right{0.0}"),
-                    ("Count", "@top{0,0}"),
-                ]
+    @staticmethod
+    def _y_axis(
+        frame: _Frame,
+        y_max: float,
+        ticks: list[float],
+        label: str,
+        fmt: Callable[[float], str],
+    ) -> list[str]:
+        parts = []
+        for tick in ticks:
+            y = frame.y0 - (frame.y0 - frame.y1) * tick / y_max
+            parts.append(
+                f'<line x1="{frame.x0}" x2="{frame.x1}" y1="{y:.2f}" y2="{y:.2f}" '
+                f'stroke="{_GRID_COLOR}" stroke-dasharray="4 4"/>'
+                + _label(
+                    fmt(tick),
+                    css_class="tick-label",
+                    box=(frame.x0 - 70, y - 8, 62, 16),
+                    align="right",
+                )
+            )
+        cx, cy = frame.x0 - 60, (frame.y0 + frame.y1) / 2
+        span = frame.y0 - frame.y1
+        parts.append(
+            f'<line x1="{frame.x0}" x2="{frame.x0}" y1="{frame.y1}" '
+            f'y2="{frame.y0}" stroke="{_AXIS_COLOR}"/>'
+            f'<line x1="{frame.x0}" x2="{frame.x1}" y1="{frame.y0}" '
+            f'y2="{frame.y0}" stroke="{_AXIS_COLOR}"/>'
+            + _label(
+                label,
+                css_class="axis-label",
+                box=(cx - span / 2, cy - 12, span, 24),
+                size=14,
+                rotate=(-90, cx, cy),
             )
         )
+        return parts
 
-        self._save_plot(p, output_path, "Community Size Distribution")
+    @staticmethod
+    def _axis_label_x(frame: _Frame, label: str) -> list[str]:
+        return [
+            _label(
+                label,
+                css_class="axis-label",
+                box=(frame.x0, frame.height - 36, frame.x1 - frame.x0, 24),
+                size=14,
+            )
+        ]
 
-    def _create_figure(
-        self, title: str, x_label: str, y_label: str, **kwargs: Any
-    ) -> figure:
-        defaults: dict[str, Any] = {
-            "width": self.figure_width,
-            "height": self.figure_height,
-            "tools": "pan,wheel_zoom,box_zoom,reset,save",
-            "background_fill_color": self.background_color,
-            "border_fill_color": None,
-        }
-        defaults.update(kwargs)
-
-        p = figure(**defaults)
-
-        p.title = Title(
-            text=title,
-            align="center",
-            text_font=self.font,
-            text_font_size="16pt",
-            text_color="#27272a",
-        )
-
-        p.xaxis.axis_label = x_label
-        p.yaxis.axis_label = y_label
-        p.xaxis.axis_label_text_font = self.font
-        p.yaxis.axis_label_text_font = self.font
-        p.xaxis.axis_label_text_font_size = "12pt"
-        p.yaxis.axis_label_text_font_size = "12pt"
-        p.xaxis.axis_label_text_color = "#3f3f46"
-        p.yaxis.axis_label_text_color = "#3f3f46"
-
-        p.xaxis.major_label_text_font = self.font
-        p.yaxis.major_label_text_font = self.font
-        p.xaxis.major_label_text_font_size = "10pt"
-        p.yaxis.major_label_text_font_size = "10pt"
-        p.yaxis.formatter = NumeralTickFormatter(format="0,0")
-
-        p.grid.grid_line_color = "#e5e5e5"
-        p.grid.grid_line_alpha = 0.5
-        p.grid.minor_grid_line_color = None
-        p.grid.grid_line_dash = [4, 4]
-
-        p.xaxis.axis_line_color = "#a1a1aa"
-        p.yaxis.axis_line_color = "#a1a1aa"
-
-        if hasattr(p.y_range, "start"):
-            p.y_range.start = 0
-        if hasattr(p.x_range, "range_padding"):
-            p.x_range.range_padding = 0
-        p.outline_line_color = None
-
-        return p
+    @staticmethod
+    def _legend(frame: _Frame, metrics: list[str]) -> list[str]:
+        parts = ['<g class="legend">']
+        for i, metric in enumerate(metrics):
+            y = 52 + 20 * i
+            x = frame.x1 - 130
+            parts.append(
+                f'<rect x="{x}" y="{y - 10}" width="12" height="12" '
+                f'fill="{_METRIC_COLORS[metric]}"/>'
+                + _label(
+                    metric.title(),
+                    css_class="legend-label",
+                    box=(x + 18, y - 12, 110, 16),
+                    align="left",
+                    color=_TEXT_COLOR,
+                )
+            )
+        parts.append("</g>")
+        return parts
 
     @staticmethod
     def _unique_factors(names: list[str]) -> list[str]:
-        """Make categorical axis factors unique, keeping their order.
+        """Make the centrality chart's labels unique, keeping their order.
 
-        Bokeh rejects a FactorRange with repeated factors (DUPLICATE_FACTORS),
-        and display names repeat: two claims with the same subject, type and
-        object, or two entities sharing a name. A repeat gets the first free
-        `` (2)``, `` (3)``, ... suffix.
+        Display names repeat (two claims with the same subject, type and
+        object, or two entities sharing a name), and two bars of one label
+        would read as one node. A repeat gets the first free `` (2)``,
+        `` (3)``, ... suffix.
         """
         seen: set[str] = set()
         unique: list[str] = []
@@ -329,8 +479,21 @@ class StaticRenderer:
             unique.append(factor)
         return unique
 
-    @staticmethod
-    def _save_plot(plot: figure, path: str, title: str) -> None:
-        output_file(path, title=title)
-        save(plot, title=title)
+    def _save_chart(
+        self, parts: list[str], frame: _Frame, path: str, title: str, chart: str
+    ) -> None:
+        width, height = frame.width, frame.height
+        body = "\n".join(parts)
+        page = (
+            "<!DOCTYPE html>\n"
+            '<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+            f"<title>{_text(title)}</title>\n</head>\n"
+            '<body style="margin:0">\n'
+            f'<svg xmlns="http://www.w3.org/2000/svg" class="chart" '
+            f'data-chart="{chart}" role="img" aria-label="{_attr(title)}" '
+            f'width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+            f'font-family="{_attr(self.font)}" style="max-width:100%;height:auto">\n'
+            f"{body}\n</svg>\n</body>\n</html>\n"
+        )
+        Path(path).write_text(page, encoding="utf-8")
         logger.info("Static plot '%s' saved to %s", title, path)

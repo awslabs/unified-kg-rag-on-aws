@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# How to install what the built-in renderers import (pyvis, Bokeh).
+# How to install what the interactive renderer imports (pyvis).
 VIZ_EXTRA_HINT = (
     "install the viz extra (`uv sync --extra viz`, or `pip install -e "
     "'.[viz]'` in a source checkout)"

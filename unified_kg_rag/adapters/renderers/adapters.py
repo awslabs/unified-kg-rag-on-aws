@@ -4,9 +4,10 @@
 
 These present the existing ``InteractiveRenderer`` / ``StaticRenderer`` (whose
 methods differ) behind the uniform :class:`BaseRenderer.render` interface so
-``run-visualization`` drives them through the registry. The concrete
-renderers import pyvis and Bokeh (the ``viz`` extra), so each adapter imports
-its renderer on use: registering the adapters needs neither package.
+``run-visualization`` drives them through the registry. The interactive
+renderer imports pyvis (the ``viz`` extra), so each adapter imports its
+renderer on use: registering the adapters needs no extra. The static renderer
+writes HTML and SVG itself and needs none.
 """
 
 from __future__ import annotations
@@ -43,10 +44,8 @@ def _interactive_renderer() -> type[InteractiveRenderer]:
 
 
 def _static_renderer() -> type[StaticRenderer]:
-    try:
-        from .static import StaticRenderer
-    except ImportError as e:
-        raise _missing_extra("static", e) from e
+    from .static import StaticRenderer
+
     return StaticRenderer
 
 
@@ -98,13 +97,10 @@ class InteractiveRendererAdapter(BaseRenderer):
 
 @register_renderer("static")
 class StaticRendererAdapter(BaseRenderer):
-    """Bokeh static plots: degree / centrality / community-size distributions."""
+    """Static HTML/SVG charts: degree / centrality / community-size
+    distributions. Dependency-free, so it renders on a core install."""
 
     needs_centrality = True
-
-    @classmethod
-    def check_dependencies(cls) -> None:
-        _static_renderer()
 
     def render(self, context: RenderContext, output_dir: Path) -> list[Path]:
         renderer = _static_renderer()(self.config)

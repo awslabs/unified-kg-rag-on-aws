@@ -1736,7 +1736,8 @@ choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
   `graph_aware` are deterministic and free, so they run by default next to the
-  LangChain and RAGAS judges.
+  RAGAS judge. The LangChain judge is opt-in: its correctness metrics repeat
+  RAGAS' `answer_correctness`.
 - **`graph_aware` emits recall only.** Precision and F1 would need every
   entity of a free-text answer enumerated, so they would only re-label recall.
   Because answer-text coverage grows with length, it also reports the
@@ -1829,11 +1830,13 @@ and its community hierarchy as JSON (`graph.visualization.export_data`,
 file without ingestion through the renderers of `adapters/renderers/`
 (`BaseRenderer`, `@register_renderer`, `RenderContext`, `render_all`):
 `InteractiveRenderer` (pyvis network and community hierarchy) and
-`StaticRenderer` (Bokeh degree, centrality and community-size charts),
-computing a seeded spring layout and the configured centrality first. The
-renderers are the `viz` extra: the adapters import them on use, so the
-registry and `BaseRenderer` work on a core install, and a missing extra
-fails the run (`BaseRenderer.check_dependencies`) before anything renders.
+`StaticRenderer` (degree, centrality and community-size charts as HTML with
+inline SVG, written without a plotting package and with every name
+HTML-escaped), computing a seeded spring layout and the configured
+centrality first. The interactive renderer is the `viz` extra: the adapters
+import the renderers on use, so the registry, `BaseRenderer` and `static`
+work on a core install, and a missing extra fails the run
+(`BaseRenderer.check_dependencies`) before anything renders.
 Using it: [Visualization](./guides/visualize.md).
 
 ---

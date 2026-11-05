@@ -3,8 +3,9 @@
 """Graph renderers and their registry.
 
 Importing this package registers the built-in renderers without loading pyvis
-or Bokeh (the ``viz`` extra): each adapter imports its concrete renderer when
-it renders, and fails fast naming the extra when it is missing.
+(the ``viz`` extra): each adapter imports its concrete renderer when it
+renders, and the interactive one fails fast naming the extra when it is
+missing. The static renderer needs no extra.
 """
 
 from typing import Any
@@ -41,7 +42,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    # The concrete renderers import pyvis / Bokeh: load them on first access.
+    # The interactive renderer imports pyvis: load the renderers on first access.
     if name == "InteractiveRenderer":
         from .interactive import InteractiveRenderer
 

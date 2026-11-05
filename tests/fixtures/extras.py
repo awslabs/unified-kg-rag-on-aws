@@ -21,8 +21,8 @@ def _installed(*modules: str) -> bool:
 EVAL_INSTALLED = _installed("ragas", "datasets", "pandas", "langchain_openai")
 # The langchain judge's alone (the dev group installs it for the local adapters).
 LANGCHAIN_JUDGE_INSTALLED = _installed("langchain_openai")
-# The built-in renderers' packages (the viz extra).
-VIZ_INSTALLED = _installed("pyvis", "bokeh")
+# The interactive renderer's package (the viz extra).
+VIZ_INSTALLED = _installed("pyvis")
 # The RDF reader of the ontology schema sources (the ontology extra).
 ONTOLOGY_INSTALLED = _installed("rdflib")
 

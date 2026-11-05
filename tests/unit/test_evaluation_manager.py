@@ -294,8 +294,9 @@ class TestInitialization:
         )
 
     def test_deterministic_evaluators_enabled_by_default(self) -> None:
+        # The langchain judge is opt-in: its correctness metrics repeat
+        # ragas' answer_correctness on every query.
         assert Config().evaluation.enabled_evaluators == [
-            EvaluatorType.LANGCHAIN,
             EvaluatorType.RAGAS,
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.RETRIEVAL,

@@ -158,7 +158,6 @@ def test_importing_the_package_loads_none_of_it() -> None:
 # Top-level modules of the optional extras the public API must not need.
 _EXTRA_MODULES = (
     # viz
-    "bokeh",
     "pyvis",
     # eval
     "datasets",
@@ -172,7 +171,7 @@ _EXTRA_MODULES = (
 def test_the_public_api_loads_no_optional_extra() -> None:
     # Every public name (BaseRenderer, register_renderer and
     # EvaluationManager included) works on a core install: the built-in
-    # renderers load pyvis and Bokeh only when they render, the manager the
+    # renderers load pyvis only when they render, the manager the
     # judges' packages only when they are enabled, and the CLIs import too.
     script = (
         "import json, sys\n"

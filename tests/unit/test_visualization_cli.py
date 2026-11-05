@@ -416,20 +416,30 @@ def _without_module(
 
 
 class TestWithoutTheVizExtra:
-    @pytest.mark.parametrize(
-        ("renderer", "package"), [("interactive", "pyvis"), ("static", "bokeh")]
-    )
-    def test_a_builtin_renderer_names_the_extra(
-        self, renderer: str, package: str, monkeypatch: pytest.MonkeyPatch
+    def test_the_interactive_renderer_names_the_extra(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _without_module(
-            monkeypatch, package, f"unified_kg_rag.adapters.renderers.{renderer}"
+            monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.interactive"
         )
-        renderer_cls = get_renderer_class(renderer)
-        with pytest.raises(ConfigurationError, match=rf"'{package}'.*--extra viz"):
+        renderer_cls = get_renderer_class("interactive")
+        with pytest.raises(ConfigurationError, match=r"'pyvis'.*--extra viz"):
             renderer_cls.check_dependencies()
         with pytest.raises(ConfigurationError, match="--extra viz"):
             renderer_cls({}).render(RenderContext(graph=nx.Graph()), Path("."))
+
+    def test_the_static_renderer_needs_no_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # It writes HTML and SVG itself: no plotting package, no viz extra.
+        _without_module(
+            monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.static"
+        )
+        renderer_cls = get_renderer_class("static")
+        renderer_cls.check_dependencies()
+        graph = nx.Graph([("a", "b")])
+        written = render_all(RenderContext(graph=graph), tmp_path, ["static"], None)
+        assert [p.name for p in written] == ["degree_distribution.html"]
 
     def test_render_all_fails_before_rendering_anything(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -454,7 +464,7 @@ class TestWithoutTheVizExtra:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _without_module(
-            monkeypatch, "bokeh", "unified_kg_rag.adapters.renderers.static"
+            monkeypatch, "pyvis", "unified_kg_rag.adapters.renderers.interactive"
         )
         argv = [
             "run-visualization",
@@ -463,7 +473,7 @@ class TestWithoutTheVizExtra:
             "--output-directory",
             str(tmp_path / "out"),
             "--renderers",
-            "static",
+            "interactive",
             "--output-format",
             "json",
         ]
