@@ -1569,7 +1569,7 @@ Ingestion and incremental indexing.
   the two answers, which graph extraction failed as malformed output
   ("none of the 2 entities ... has a name") and retried. Prose naming a
   section ("the <entities> above") writes no end tag and still does not
-  (#PR).
+  (#560).
 - Strict `parse_llm_json` (LightRAG keywords, prompt tuning, the pairwise
   judge) raises when the last object is cut off instead of returning an
   earlier one (the answer being corrected, or an example), and prefers the
