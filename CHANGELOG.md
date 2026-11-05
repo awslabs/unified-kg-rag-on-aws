@@ -1757,6 +1757,11 @@ Evaluation, visualization and tuning.
   `2024年` all scored 0. A letter or digit next to it still ends the match
   (`AI` is not in `airport附近`, `2` not in `12年`), and Korean text is
   matched as before (#PR).
+- A model call whose response reports no token usage (a model or
+  OpenAI-compatible server that returns none) keeps its estimated input
+  tokens and counts in `estimated_calls`; it was settled at 0 tokens and
+  read as a measured, free call in the usage records and the comparison's
+  cost (#PR).
 
 CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage

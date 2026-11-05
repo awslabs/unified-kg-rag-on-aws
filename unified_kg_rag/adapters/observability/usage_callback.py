@@ -10,7 +10,9 @@ the tokens the response reports (parsed as the tracing handler parses them,
 requests botocore resent inside it (``request_retries``). A response the
 LLM response cache served counts as a cache hit instead, a failed call as
 ``failed_calls`` only; a call still running or
-cancelled in flight keeps its estimate (``estimated_calls``). LangChain
+cancelled in flight, or one whose response reports no token usage (a
+model or server that returns none), keeps its estimate
+(``estimated_calls``). LangChain
 reports no end or error for a call whose task was cancelled, so such a call
 is let go when its task ends. Outside a scope a call costs one
 context-variable read.
@@ -128,6 +130,10 @@ class UsageCallbackHandler(BaseCallbackHandler):
                 call.served_from_cache()
             return
         tokens = response_token_usage(response)
+        if tokens is None and call is not None:
+            # No usage reported: settled at 0 tokens the call would read as
+            # free, so it keeps its start estimate and counts as estimated.
+            return
         counts = {
             "input_tokens": tokens.input_tokens if tokens else 0,
             "output_tokens": tokens.output_tokens if tokens else 0,
