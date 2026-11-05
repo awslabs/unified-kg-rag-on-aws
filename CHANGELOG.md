@@ -1731,6 +1731,12 @@ Evaluation, visualization and tuning.
   (#516).
 - `answer_contains` and `graph_aware` match a word through its possessive
   (`Depot` in `Depot's`); exact match and token F1 are unchanged (#516).
+- `answer_contains` and `graph_aware` find a Latin word or a number inside
+  Chinese or Japanese text, which puts no space around it: `AWS` in
+  `答案是AWS公司`, `Acme Corp` in `ベンダーはAcme Corpです`, `2024` in
+  `2024年` all scored 0. A letter or digit next to it still ends the match
+  (`AI` is not in `airport附近`, `2` not in `12年`), and Korean text is
+  matched as before (#PR).
 
 CLIs, configuration and library.
 - A config with a wrong type, invalid YAML or a missing file is a usage

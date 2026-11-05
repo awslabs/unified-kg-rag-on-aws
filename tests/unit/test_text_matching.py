@@ -193,3 +193,39 @@ class TestPossessives:
         assert strip_possessives("Depot's and Mill’s") == "Depot and Mill"
         # Exact match and token F1 keep the official normalization.
         assert tokenize("Depot's") == ["depots"]
+
+
+class TestLatinInsideChineseAndJapanese:
+    """Chinese and Japanese put no space around a Latin word or a number."""
+
+    @pytest.mark.parametrize(
+        ("phrase", "text"),
+        [
+            ("AWS", "AWSは東京にデータセンターがあります。"),
+            ("AWS", "答案是AWS公司。"),
+            ("Acme Corp", "供应商是Acme Corp，位于上海。"),
+            ("Acme Corp", "ベンダーはAcme Corpです。"),
+            ("2024", "契約は2024年に締結されました。"),
+            ("2024", "合同于2024年签订。"),
+            ("C++", "用C++编写"),
+        ],
+    )
+    def test_match(self, phrase: str, text: str) -> None:
+        assert phrase_in_text(phrase, text) is True
+
+    @pytest.mark.parametrize(
+        ("phrase", "text"),
+        [
+            ("AI", "airport附近"),  # a Latin letter continues the word
+            ("2", "合同期限12年"),  # a digit continues the number
+            ("1.5", "增长11.5倍"),
+            ("3", "金额为3億円"),  # a Han numeral after a digit scales it
+            ("Corp", "AcmeCorp的"),
+            # Korean keeps its token rules: a Hangul neighbour is judged there
+            ("AWS", "AWS연구소에서"),
+            ("2024", "2024억"),
+            ("AI", "AI(인공지능)"),
+        ],
+    )
+    def test_no_match(self, phrase: str, text: str) -> None:
+        assert phrase_in_text(phrase, text) is False

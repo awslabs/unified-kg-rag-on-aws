@@ -327,7 +327,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `2024년에`) but not a magnitude numeral (`3` does not match `3억`); spacing
   next to CJK letters is ignored (`3억 원` = `3억원`); a single-word CJK gold
   is matched as a substring, but not inside a longer number or Latin word
-  (`2년` does not match `12년`).
+  (`2년` does not match `12년`). In Chinese and Japanese, which put no space
+  around a Latin word or a number, any gold is also matched as such a
+  substring (`AWS` matches `AWSは`, `2024` matches `2024年`; `AI` does not
+  match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
+  above decide.
 - **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
   `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
   scored by the polarity of the first yes/no word that answers the question,
