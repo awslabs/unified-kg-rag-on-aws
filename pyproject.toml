@@ -24,6 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
 ]
 dependencies = [
     # Imported directly to bound and sign gremlinpython's websocket handshake

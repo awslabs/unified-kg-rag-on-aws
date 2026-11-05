@@ -1146,6 +1146,8 @@ From 0.2.3 (or a `main` checkout since):
   `community_growth_ratio` and `runs_since_clustering` metrics let an alarm
   watch them. Nothing is reset automatically. A record written by an
   earlier version has no counters until the next full build (#540).
+- The package ships a `py.typed` marker (PEP 561), so type checkers read
+  its annotations instead of treating it as untyped (#PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy
