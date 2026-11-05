@@ -551,6 +551,7 @@ def test_folder_markers_are_no_files_even_with_a_format(s3: Any) -> None:
     assert _load("owl", f"s3://{BUCKET}/onto/", format="xml") == PROCURE_GOLDEN
 
 
+@requires_ontology
 def test_the_listing_is_read_in_key_order() -> None:
     context = _context("owl", f"s3://{BUCKET}/onto/")
     stubber = _stubbed(context)
@@ -602,7 +603,7 @@ class _CountingBody(StreamingBody):
         return super().read(amt)
 
 
-@pytest.mark.parametrize("kind", ["file", "owl"])
+@pytest.mark.parametrize("kind", ["file", pytest.param("owl", marks=requires_ontology)])
 def test_get_object_reads_one_byte_past_the_cap_at_most(kind: str) -> None:
     key = "schema.yaml" if kind == "file" else "onto.ttl"
     data = SCHEMA_YAML.encode() if kind == "file" else PROCURE.read_bytes()
@@ -619,6 +620,7 @@ def test_get_object_reads_one_byte_past_the_cap_at_most(kind: str) -> None:
     assert body.asked == [cap + 1]
 
 
+@requires_ontology
 def test_an_owl_object_that_grew_since_it_was_sized_is_refused() -> None:
     context = _context("owl", f"s3://{BUCKET}/onto.ttl", max_bytes=100)
     stubber = _stubbed(context)
