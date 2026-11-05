@@ -2146,6 +2146,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         output.search_results = output.search_results.model_copy(
                             update={"results": [], "total_results": 0}
                         )
+                output.search_results = await self._screen_synthesized(
+                    output.search_results, guard_records
+                )
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput):
@@ -2251,10 +2254,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The verdict on the answer; its text is what the user may see:
         unchanged, masked or refused.
 
-        Only the answer is screened: the sources and search results are the
-        caller's own indexed corpus text, returned as retrieved (a blocked
-        answer drops them). The fixed no-context answer is not model output
-        and is not screened. With the contextual grounding check on,
+        The answer is screened here; the sources and the retrieved search
+        results are the caller's own indexed corpus text, returned as
+        retrieved (a blocked answer drops them), while the model-written
+        search results are screened apart (:meth:`_screen_synthesized`).
+        The fixed no-context answer is not model output and is not screened. With the contextual grounding check on,
         ``grounding`` (the question and context the answer was generated
         from) goes with it.
         """
@@ -2270,6 +2274,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if verdict.intervened:
             records.append(_guard_record(GuardSource.OUTPUT, verdict))
         return verdict
+
+    async def _screen_synthesized(
+        self, search_results: SearchResult, records: list[dict[str, Any]]
+    ) -> SearchResult:
+        """``search_results`` with each model-written result (``synthesized``:
+        DRIFT's intermediate answers, global search's key points or summary)
+        screened as an answer is: masked, or dropped when refused.
+
+        They are returned with the search results (``ainvoke`` and
+        ``asearch``), so with ``check_output`` they must not reach the caller
+        unscreened. Retrieved results are corpus text and pass as they are.
+        """
+        if not self._screen_outputs or not any(
+            self._is_synthesized(r.metadata) for r in search_results.results
+        ):
+            return search_results
+        assert self.guard is not None
+        kept: list[RetrievalResult] = []
+        for result in search_results.results:
+            if not self._is_synthesized(result.metadata) or not result.content:
+                kept.append(result)
+                continue
+            verdict = await self.guard.acheck(result.content, GuardSource.OUTPUT)
+            if not verdict.intervened:
+                kept.append(result)
+                continue
+            records.append(_guard_record(GuardSource.OUTPUT, verdict))
+            if verdict.action is not GuardAction.BLOCKED:
+                kept.append(result.model_copy(update={"content": verdict.text}))
+        return search_results.model_copy(
+            update={"results": kept, "total_results": len(kept)}
+        )
 
     @staticmethod
     def _prepare_invoke(

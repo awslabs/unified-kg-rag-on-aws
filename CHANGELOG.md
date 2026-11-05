@@ -2141,6 +2141,11 @@ Deployment (CDK).
   answer cited no source for it. Each primer fold's reports are its
   answer's evidence now, fused and reported with the actions' local search
   results (#PR).
+- With the output guardrail check on (`check_output`), the model-written
+  search results (DRIFT's intermediate answers, global search's key points
+  or summary, marked `synthesized`) were returned in `search_results` by
+  `ainvoke` and `asearch` unscreened. Each is screened as the answer is (one
+  ApplyGuardrail call each): masked, or dropped when refused (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
