@@ -330,7 +330,7 @@ Defaults (set the old value to keep the 0.2.3 behaviour).
 | `evaluation.warm_up_query` | (none: no warm-up) | `true`: one extra, unscored query per strategy and run, not counted in the run's usage or USD estimate; `false` turns it off (#529) |
 | `models.roles.evaluation` (the `run-eval` LLM judges) | the default tier's model (the answer model) | `anthropic.claude-opus-5-5` on Bedrock (about twice Sonnet 5.5's price per token); `default` keeps the answer model as judge (#533) |
 | `logging.log_to_file` | `true` | `false` (#520) |
-| `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori` (every other language `standard`) | one per language: also `de: german`, `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese`, `ru: russian` and `ja`/`zh: cjk` (character bigrams, no plugin), so a word inside a Japanese or Chinese run matches lexically (#PR) |
+| `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori` (every other language `standard`) | one per language: also `de: german`, `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese`, `ru: russian` and `ja`/`zh: cjk` (character bigrams, no plugin), so a word inside a Japanese or Chinese run matches lexically (#574) |
 
 Behaviour.
 - Entity resolution merges only names equal after normalization, legal-form
@@ -345,7 +345,7 @@ Behaviour.
   "재단법인", "合同会社", "株式會社", "股份有限公司", "有限责任公司"), so
   "Acme GmbH" and "Acme" are one entity of a type (an entity of another type
   stays apart). Not after "&"/"and" ("Smith & Co") nor after an article
-  alone ("The Company") (#PR).
+  alone ("The Company") (#574).
 - A query with conversation history is rewritten as a standalone question
   (`models.roles.query_rewrite`) and every step reads the rewrite (#212).
 - Conversation memory is per chain, keyed by index suffix, `user_id` and
@@ -699,7 +699,7 @@ From 0.2.3 (or a `main` checkout since):
       dry-run it first: `aws opensearch update-domain-config --domain-name
       <domain> --domain-endpoint-options
       TLSSecurityPolicy=Policy-Min-TLS-1-2-PFS-2023-10 --dry-run`.
-17. From a `main` checkout, after #PR (no setting changes):
+17. From a `main` checkout, after #574 (no setting changes):
     - A namespace whose `processing.translation` languages include `de`,
       `es`, `fr`, `it`, `ja`, `pt`, `ru` or `zh`, on OpenSearch: its text
       fields keep `standard` while the default analyzer of those languages
