@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     TextUnit,
+    language_name,
 )
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
@@ -225,7 +226,10 @@ class TextUnitTranslator:
     def _create_chain_inputs(
         texts: list[str], target_language: LanguageCode
     ) -> list[dict[str, Any]]:
-        return [{"text": text, "target_language": target_language} for text in texts]
+        # The prompt names the language ("Korean"): the enum formats as
+        # "LanguageCode.KO" in a template.
+        name = language_name(target_language)
+        return [{"text": text, "target_language": name} for text in texts]
 
     def _apply_translation_result(
         self, text_unit: TextUnit, result: str | None, target_language: LanguageCode

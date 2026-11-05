@@ -636,6 +636,19 @@ From 0.2.3 (or a `main` checkout since):
     summarization call per such item over the threshold; the other stored
     summaries are reused), or leave them until a run edits or removes one
     of their documents.
+15. Ingestion fixes of #PR:
+    - Translation (on when `target_language` differs from
+      `source_language` or `additional_target_languages` is set): its prompt
+      changed, so a run that translates again (a reset, `--force-rebuild`)
+      asks the model for each unit's translation once more, and, as a new
+      translation is new text, extracts that unit again. An incremental run
+      translates only new and changed documents, as before. The description
+      summary prompt changed too: stored summaries are kept, only new ones
+      are asked with it.
+    - A merged entity whose winning name had no type is typed only when
+      graph resolution runs on it again: a reset (it reuses the stored
+      extraction records, no extraction call) or an incremental run that
+      touches it.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1772,6 +1785,12 @@ Ingestion and incremental indexing.
   blank, `unknown`), the merge takes the known type the most units cite
   among the members documents state (a seed's only when no document gives
   one); the incremental derivation runs the same code (#PR).
+- The translation prompt read "Translate the following text to
+  LanguageCode.KO" (the enum formats so in a template), and the description
+  summary prompt "Write the summary in ko". Both name the language now
+  ("Korean"), as the query prompts do (*Upgrading*). The extraction and
+  gleaning prompts keep "the language with code 'ko'", which reads right:
+  rewording it would re-key, and so re-extract, every unit (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
