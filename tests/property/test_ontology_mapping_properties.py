@@ -316,6 +316,7 @@ def _with_inferences(model: OntologyModel) -> OntologyModel:
 
 # More examples than the default: a symmetric property with one end and
 # something inheriting from it is rare among them.
+@pytest.mark.slow
 @settings(max_examples=300)
 @given(model=models(), options=_OPTIONS)
 def test_stating_the_closure_changes_nothing(
@@ -391,6 +392,7 @@ def test_narrowing_never_adds_a_type(
             assert {spec.iri for spec in narrow[1].entity_types} <= wide_iris
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("symmetric", [False, True])
 @settings(max_examples=300)
 @given(data=st.data(), options=_OPTIONS)

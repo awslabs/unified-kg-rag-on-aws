@@ -324,8 +324,8 @@ addopts = '--tb=short --strict-markers -m "not aws"'
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
-# two minutes instead of letting it burn the whole CI job. The slowest test
-# takes a few seconds; override per test with @pytest.mark.timeout(n).
+# two minutes instead of letting it burn the whole CI job. The tests that take
+# over 5 s are marked slow; override per test with @pytest.mark.timeout(n).
 timeout = 120
 markers = [
     "unit: Unit tests",
@@ -362,6 +362,11 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+# Bodies that never run: abstract methods and the `...` of Protocol methods.
+exclude_also = [
+    "@(abc\\.)?abstractmethod",
+    "^\\s*\\.\\.\\.\\s*$",
+]
 
 [dependency-groups]
 # Dev toolchain (PEP 735). `uv sync` installs it by default; `--no-dev` skips
@@ -377,7 +382,7 @@ test = [
     "pytest-asyncio>=1.0.0",
     "pytest-mock>=3.12.0",
     "pytest-timeout>=2.4.0",
-    # Parallel runs (`pytest -n auto`, as CI runs the suite).
+    # Parallel runs (`pytest -n logical`, as CI runs the suite).
     "pytest-xdist>=3.8.0",
 ]
 dev = [

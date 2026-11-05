@@ -69,6 +69,7 @@ def test_a_call_writes_nothing_to_a_shared_step() -> None:
     assert [set(vars(step)) for step in steps] == before
 
 
+@pytest.mark.slow
 def test_concurrent_first_calls_all_succeed() -> None:
     previous = sys.getswitchinterval()
     sys.setswitchinterval(1e-6)

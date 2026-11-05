@@ -68,6 +68,7 @@ keep it that way, or say there why an edge cannot follow the rules.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import subprocess
 import sys
@@ -349,6 +350,19 @@ def _dynamic_target(node: ast.Call, aliases: dict[str, str]) -> str | None:
 
 def package_imports(root: Path = _PACKAGE_ROOT) -> Iterator[Import]:
     """Every import of a package module by a package module, at any depth."""
+    if root == _PACKAGE_ROOT:
+        return iter(_package_scan())
+    return _scan(root)
+
+
+@functools.cache
+def _package_scan() -> tuple[Import, ...]:
+    """The package's own scan, read once per process: several tests walk it,
+    and nothing changes the package during a run."""
+    return tuple(_scan(_PACKAGE_ROOT))
+
+
+def _scan(root: Path) -> Iterator[Import]:
     for py_file in sorted(root.rglob("*.py")):
         module = _module_name(py_file, root)
         is_package = py_file.name == "__init__.py"

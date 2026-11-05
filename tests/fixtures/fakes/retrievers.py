@@ -1,14 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A recording retriever for the search-strategy tests (``RetrieverPort``).
+"""A recording retriever for the search-strategy tests.
 
-Each call returns one hit named after the queried index prefix (or the
-retriever's tag), so a test can tell which index a strategy searched.
+It stands in for a ``BaseGraphRAGRetriever`` (duck-typed: the base builds
+infrastructure in its ``__init__``), with the base's own methods and call
+shapes (``tests/unit/test_fake_port_signatures.py`` pins them). Each call
+returns one hit named after the queried index prefix (or the retriever's
+tag), so a test can tell which index a strategy searched.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import (
     FilterFields,
@@ -35,6 +39,14 @@ class FakeRetriever:
         return None
 
     def filter_fields_for(self, prefixes: object) -> None:
+        return None
+
+    async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
+        """Cannot tell (the ``BaseGraphRAGRetriever`` default)."""
+        return None
+
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """No index metadata (the ``BaseGraphRAGRetriever`` default)."""
         return None
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:

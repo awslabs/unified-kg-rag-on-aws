@@ -78,7 +78,6 @@ def _run(
 ) -> PipelineContext:
     """Parse ``root`` and run the loading stage's incremental filter, then
     record every processed document the way a successful commit does."""
-    mocker.patch("boto3.Session")
     context = PipelineContext(
         pipeline_id="pid",
         config={},
@@ -283,7 +282,6 @@ def _load_json_corpus(
 ) -> PipelineContext:
     """Run the loading stage over pre-parsed JSON (parsing disabled), then
     record every loaded document the way a successful commit does."""
-    mocker.patch("boto3.Session")
     context = PipelineContext(
         pipeline_id="pid",
         config={},

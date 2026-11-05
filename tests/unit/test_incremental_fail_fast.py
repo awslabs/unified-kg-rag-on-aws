@@ -81,8 +81,7 @@ def _parsed_context(root: Path) -> PipelineContext:
     return context
 
 
-def _loading_stage(config: Config, root: Path, store, mocker):
-    mocker.patch("boto3.Session")
+def _loading_stage(config: Config, root: Path, store):
     return ps.DocumentLoadingStage(config, source_directory=root, doc_status=store)
 
 
@@ -96,9 +95,9 @@ def _indexing_stage(config: Config, store, mocker):
     return stage, manager
 
 
-def test_registry_diff_error_fails_the_loading_stage(tmp_path, mocker) -> None:
+def test_registry_diff_error_fails_the_loading_stage(tmp_path) -> None:
     config = _config()
-    stage = _loading_stage(config, tmp_path, _FailingRegistry(), mocker)
+    stage = _loading_stage(config, tmp_path, _FailingRegistry())
     context = _parsed_context(tmp_path)
 
     result = stage.execute(context)
@@ -118,7 +117,7 @@ def test_indexing_does_not_rebuild_when_the_delta_is_missing(tmp_path, mocker) -
     config = _config()
     store = _FailingRegistry()
     context = _parsed_context(tmp_path)
-    _loading_stage(config, tmp_path, store, mocker).execute(context)
+    _loading_stage(config, tmp_path, store).execute(context)
     indexing, manager = _indexing_stage(config, store, mocker)
 
     with pytest.raises(PipelineStageError, match="no document delta"):
@@ -149,12 +148,12 @@ def test_indexing_without_the_registry_still_runs_the_full_path(mocker) -> None:
 
 
 def test_loading_stage_drops_a_delta_restored_from_previous_run_metadata(
-    tmp_path, mocker
+    tmp_path,
 ) -> None:
     # A reused pipeline id restores the previous run's delta and fingerprints
     # from its metadata. Re-running the loading stage with the registry now
     # disabled must not leave them on the context for the indexing stage.
-    stage = _loading_stage(Config(), tmp_path, None, mocker)
+    stage = _loading_stage(Config(), tmp_path, None)
     context = _parsed_context(tmp_path)
     context.incremental_delta = DocumentDelta(changed=["old-doc"])
     context.incremental_fingerprints = {"old-doc": "old-hash"}
@@ -169,9 +168,9 @@ def test_loading_stage_drops_a_delta_restored_from_previous_run_metadata(
 
 
 def test_loading_stage_replaces_a_restored_delta_with_a_fresh_diff(
-    tmp_path, mocker
+    tmp_path,
 ) -> None:
-    stage = _loading_stage(_config(), tmp_path, FakeDocStatusStore(), mocker)
+    stage = _loading_stage(_config(), tmp_path, FakeDocStatusStore())
     context = _parsed_context(tmp_path)
     context.incremental_delta = DocumentDelta(changed=["old-doc"])
     context.incremental_fingerprints = {"old-doc": "old-hash"}
@@ -184,7 +183,7 @@ def test_loading_stage_replaces_a_restored_delta_with_a_fresh_diff(
     assert context.incremental_delta.changed == []
 
 
-def test_missing_dynamodb_table_fails_fast(tmp_path, mocker) -> None:
+def test_missing_dynamodb_table_fails_fast(tmp_path) -> None:
     with mock_aws():
         config = _config()
         config.aws.dynamodb.table_name = "missing-doc-status"
@@ -199,7 +198,7 @@ def test_missing_dynamodb_table_fails_fast(tmp_path, mocker) -> None:
         assert "ResourceNotFoundException" in message
         assert "create_table_if_missing" in message
 
-        stage = _loading_stage(config, tmp_path, store, mocker)
+        stage = _loading_stage(config, tmp_path, store)
         context = _parsed_context(tmp_path)
         result = stage.execute(context)
         assert result.status is PipelineStageStatus.FAILED

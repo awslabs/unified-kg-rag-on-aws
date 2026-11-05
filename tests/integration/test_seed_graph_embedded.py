@@ -895,6 +895,7 @@ def test_a_summary_over_the_threshold_is_not_summarized_again(
     assert summarized == [doc_lines | {"Seed v2 says vendor."}]
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_a_hub_entitys_report_entry_stays_a_summary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
