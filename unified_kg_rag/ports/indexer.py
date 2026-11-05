@@ -666,8 +666,9 @@ class VectorIndexer(BaseIndexer):
     ) -> dict[str, StoredAnnotation] | None:
         """``{id: annotations}`` of every stored vector copy of ``kind`` in
         ``suffix``'s live index (see :meth:`GraphIndexer.read_schema_annotations`):
-        an entity's with its ``type``, a relationship's without (the index
-        does not store it). ``{}`` without a live index. Default ``None``:
+        an entity's with its ``type``, a relationship's without (a copy
+        written before the index stored it has none, so the edge's is
+        used). ``{}`` without a live index. Default ``None``:
         the backend cannot enumerate its documents."""
         return None
 

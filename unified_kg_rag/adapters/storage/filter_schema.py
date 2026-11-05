@@ -374,6 +374,9 @@ TEXT_UNIT_KIND_FIELD = "source_kind"
 # Fields an index maps that are no filter key.
 UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
     "text_units": frozenset({TEXT_UNIT_KIND_FIELD}),
+    # Rendered in the relationship's context line, but no filter key (see
+    # the relationships' fields below).
+    "relationships": frozenset({"type"}),
 }
 
 

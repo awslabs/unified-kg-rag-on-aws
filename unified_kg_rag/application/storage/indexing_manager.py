@@ -862,8 +862,8 @@ class IndexingManager:
         still hold, so no document is extracted again, and afterwards the
         stores hold what a full build would write. Each store is read in
         bounded pages, annotated from its own type (a relationship's vector
-        copy, which stores none, from its edge's; one without an edge is
-        left as it is), and only the annotations that differ are written.
+        copy from its edge's, as an older copy stores none; one without an
+        edge is left as it is), and only the annotations that differ are written.
 
         Nothing is read unless both stores can enumerate and rewrite their
         items (``rewrites_schema_annotations``): the result is then

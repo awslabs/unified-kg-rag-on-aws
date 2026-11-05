@@ -588,6 +588,11 @@ From 0.2.3 (or a `main` checkout since):
       mapped as a date stays one.
     - Seed properties are stored unmapped (#508): an entities index that
       maps `attributes.seed_properties` field by field is refused (exit 2).
+    - Relationships store their type (#PR): a relationship an older build
+      wrote reads `Relationship: A -> B` until a run rewrites it (an
+      incremental run rewrites only the relationships it changes). The
+      reset reuses the stored extraction records and vectors, so it asks
+      the model only for the community reports it clusters differently.
     - Removals are written ahead (#383) and resumed resets converge (#410):
       in an index an older build wrote, a deleted document restored while
       its removal was unfinished, or a reset that dropped documents and was
@@ -1838,6 +1843,17 @@ Deployment (CDK).
   same whatever the tiers; a record stored under the earlier forms (the
   run's summary settings, or their defaults through the run's tiers) is
   found under the key it was stored under (#556).
+- A relationship's vector copy did not store its type, so a relationship
+  without a description (every edge an RDF seed states, a JSONL or CSV
+  seed edge without one, an extracted relationship with an empty
+  description) reached the answer prompt as `Relationship: A -> B` under
+  `local`, `drift`, `simple`, `mix` and `hybrid`, while the graph's edge
+  holds the label: answers called the link undescribed. The relationships
+  index stores the type now (a keyword, the graph's label, `RELATED_TO`
+  when untyped) and the line reads `Relationship: A -[TYPE]-> B`. It is no
+  filter key: a `type` filter still leaves relationships unfiltered. An
+  incremental run maps the field on an existing index; a copy written
+  before reads as before until it is rewritten (*Upgrading*) (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity

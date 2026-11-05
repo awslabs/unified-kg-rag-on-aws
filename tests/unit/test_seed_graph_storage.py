@@ -120,6 +120,7 @@ def test_the_vector_documents_of_an_unseeded_item_are_unchanged() -> None:
         "target_id": "e2",
         "source_name": "Vendor",
         "target_name": "Buyer",
+        "type": "SUPPLIES",
         "description": "Vendor supplies Buyer",
         "description_embedding": [0.1],
         "weight": 1.0,

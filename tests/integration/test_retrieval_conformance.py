@@ -1004,9 +1004,9 @@ def test_hits_carry_their_section_type_and_relationship_endpoints(
         "r-supplies": "relationship",
         "cr1": "community",
     }
-    # The relationship index stores no edge type: a plain arrow.
-    assert "Relationship: Vendor -> Buyer" in by_source["r-supplies"].content
-    assert "Relationship: Vendor -> Depot" in by_source["r-ships"].content
+    # The edge's type, as the graph labels it (RELATED_TO when untyped).
+    assert "Relationship: Vendor -[SUPPLIES]-> Buyer" in by_source["r-supplies"].content
+    assert "Relationship: Vendor -[RELATED_TO]-> Depot" in by_source["r-ships"].content
     assert all(not any(k.endswith("_embedding") for k in r.metadata) for r in hits)
 
 

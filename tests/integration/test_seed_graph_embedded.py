@@ -1031,6 +1031,48 @@ def test_seed_facts_are_retrieved_and_cited_but_never_as_text(
     harness.assert_no_seed_text_prompted()
 
 
+def test_a_seed_edge_without_a_description_reads_as_its_type(
+    tmp_path: Path,
+) -> None:
+    # The seed's edges state no description: the relationship's context
+    # line is all the answer prompt learns of each, so it names the type.
+    harness = _Harness(tmp_path)
+    harness.ok()
+    prefix = harness.config.indexing.opensearch.relationships_index_prefix
+    stored = {
+        (hit["source_name"], hit["target_name"]): hit.get("type")
+        for hit in harness.hits(prefix)
+        if hit.get("source_kinds") == ["seed_graph"]
+    }
+    assert stored == {
+        ("Vendor", "Harbor Port"): "SHIPS_FROM",
+        ("Ridge Mill", "Vendor"): "SUPPLIES",
+        ("Rail Yard", "Harbor Port"): "CONNECTS",
+    }
+    line = "Relationship: Vendor -[SHIPS_FROM]-> Harbor Port"
+    chain = GraphRAGChain(harness.config, providers=harness.providers)
+    try:
+        for strategy in (
+            SearchStrategy.LOCAL,
+            SearchStrategy.DRIFT,
+            SearchStrategy.SIMPLE,
+            SearchStrategy.MIX,
+            SearchStrategy.HYBRID,
+        ):
+            asked = len(harness.server.prompts)
+            out = _ask(chain, strategy)
+            edges = [
+                r.content
+                for r in out.search_results.results
+                if r.retriever_type == "relationship"
+            ]
+            assert line in edges, strategy
+            assert "Relationship: Vendor -> Harbor Port" not in edges, strategy
+            assert any(line in p for p in harness.server.prompts[asked:]), strategy
+    finally:
+        chain.close()
+
+
 def _ask(chain: GraphRAGChain, strategy: SearchStrategy) -> RAGOutput:
     out = chain.invoke(
         RAGInput(query="Where does Vendor ship from?", search_strategy=strategy)

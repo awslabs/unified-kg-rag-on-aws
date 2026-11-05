@@ -30,8 +30,10 @@ Neptune entity vertices it is the entity's own attribute (`attr_role`).
 
 Entity and claim `type` and claim `status` are stored lowercase and `term`
 matches exactly: filter `type:person`, not `type:PERSON`. Relationships
-take no `type` filter (their type is not stored on the relationships
-index). `in_schema`, `type_iri` and `predicate_iri` are the
+take no `type` filter: the relationships index stores their type (as the
+graph labels the edge, `RELATED_TO` when untyped) for the context line
+`Relationship: A -[TYPE]-> B`, but a `type` filter is an entity or claim
+type and leaves relationships unfiltered. `in_schema`, `type_iri` and `predicate_iri` are the
 [extraction schema](../guides/extraction-schema.md#what-is-stored) annotations; `iri` and
 `source_kinds` (`document`, `seed_graph`) come from
 [seed graphs](../guides/seed-graphs.md#retrieval). Prefer keyword or
