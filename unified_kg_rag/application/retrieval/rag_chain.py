@@ -777,16 +777,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         LLM returns a meta-response ("I notice the text you...") for a query
         already in the target language, which would then be used verbatim as
         the search query.
+
+        The language is the requested one, else the one the index was built
+        in: the source language when the stage is disabled (entity names and
+        text stay as written, so query entities and keywords extracted in
+        the target language would match nothing), the target language
+        otherwise (equal to the source for a no-op).
         """
         requested_language = inputs.get("target_language")
-        target_language = language_name(
-            requested_language or self.config.processing.translation.target_language
-        )
         translation = self.config.processing.translation
         skip_translation = requested_language is None and (
             not translation.enabled or translation.is_noop
         )
-        return target_language, skip_translation
+        if requested_language:
+            language = requested_language
+        elif not translation.enabled:
+            language = translation.source_language
+        else:
+            language = translation.target_language
+        return language_name(language), skip_translation
 
     def _start_query_inputs(
         self,

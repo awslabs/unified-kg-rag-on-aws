@@ -20,7 +20,10 @@ processing:
 ```
 
 With `source_language == target_language` and no additional targets, the
-translation stage is skipped at no cost, even with `enabled: true`.
+translation stage is skipped at no cost, even with `enabled: true`. With
+`enabled: false` the corpus is indexed as written, and queries are processed
+in `source_language` (no query translation) unless a query asks for a
+language with `target_language`.
 
 **Failures.** A text unit whose translation fails is extracted in its
 source language; a failed call for a whole target language fails the stage

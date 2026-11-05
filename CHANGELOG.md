@@ -2274,6 +2274,13 @@ Deployment (CDK).
   model call a query, and lexical recall lost). The query is translated only
   when ingestion translates, or when the caller asks for a language
   (`RAGInput.target_language`) (#567).
+- With the translation stage disabled and `target_language` differing
+  from `source_language`, the query's entities and keywords were still
+  extracted in `target_language` (an English corpus queried for Korean
+  entity names), so they matched nothing in an index that keeps the source
+  text and names. They are extracted in `source_language` now, unless the
+  caller asks for a language; an enabled stage still uses
+  `target_language` (#PR).
 - DRIFT's primer answers reached the answer model, but the community
   reports they were written from did not, so an answer resting on a primer
   answer cited no source for it. Each primer fold's reports are its

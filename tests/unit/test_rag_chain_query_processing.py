@@ -10,6 +10,8 @@ isolated building blocks. Also covers the top-level ainvoke error contract.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
@@ -85,6 +87,53 @@ async def test_disabled_translation_skips_the_query_translation(
     result = await chain._process_query_step(inputs)
     expected = "About Oda Nobunaga" if requested else "織田信長について"
     assert result.final_query == expected
+
+
+@pytest.mark.parametrize(
+    ("enabled", "requested", "expected"),
+    [
+        # Disabled: the index keeps the source text and entity names, so the
+        # extractions run in the source language, not the unused target.
+        (False, None, "English"),
+        # A caller-requested language still wins.
+        (False, "ja", "Japanese"),
+        # Enabled: the index is in the target language.
+        (True, None, "Korean"),
+    ],
+)
+async def test_query_extractions_use_the_language_the_index_was_built_in(
+    config: Config, enabled: bool, requested: str | None, expected: str
+) -> None:
+    config.processing.translation.enabled = enabled
+    config.processing.translation.source_language = "en"
+    config.processing.translation.target_language = "ko"
+    chain = _chain(config)
+    seen: dict[str, str] = {}
+
+    async def entities(query, language, config=None):
+        seen["entities"] = language
+        return []
+
+    async def keywords(query, language, config=None):
+        seen["keywords"] = language
+        return None
+
+    async def translate(query, language, config=None):
+        seen["translation"] = language
+        return query
+
+    chain._extract_query_entities = entities  # type: ignore[method-assign]
+    chain._extract_dual_keywords = keywords  # type: ignore[method-assign]
+    chain._translate_query = translate  # type: ignore[method-assign]
+    inputs = {"query": "Where is Vendor based?"}
+    if requested:
+        inputs["target_language"] = requested
+    tasks = chain._start_query_inputs(inputs, entities=True, keywords=True, config=None)
+    await asyncio.gather(*tasks.values())
+
+    assert seen["entities"] == seen["keywords"] == expected
+    # Translation runs only when the stage ran or a language was requested.
+    assert ("translation" in seen) is (enabled or requested is not None)
 
 
 async def test_translation_refusal_falls_back_to_original(config: Config) -> None:

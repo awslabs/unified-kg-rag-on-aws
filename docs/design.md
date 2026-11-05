@@ -1777,7 +1777,9 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   no other target is set (`TranslationConfig.is_noop`). A query is
   translated only when ingestion translated: not when the translation stage
   is disabled or a no-op, unless the caller asks for a language
-  (`RAGInput.target_language`).
+  (`RAGInput.target_language`). Its entities and keywords are extracted in
+  the language the index was built in: `source_language` when the stage is
+  disabled, `target_language` otherwise.
 - **Encoding.** A text, CSV or JSON file is first read with the locale's
   preferred encoding, as `open()` reads (UTF-8 in the container image; it
   can be another on a host whose locale is not UTF-8). Only when that read
