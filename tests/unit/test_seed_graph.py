@@ -805,18 +805,19 @@ def _conversion_seconds(nodes: int, edges: int, runs: int, cap: float) -> float:
     return best
 
 
-# Eight times the seed takes about ten times as long (about 0.3 s, then
-# 3.5 s); with the quadratic edge check (a set difference against every
-# node id per edge) it took about 28 times as long, and 23 under the slower
-# line tracer of coverage. The bound sits between the two, with room for
-# timer noise on a shared runner.
-_SCALING_BOUND = 18.0
+# Four times the seed takes about four times as long (about 0.9 s, then
+# 3.5 s, also under the coverage tracer); the quadratic edge check (a set
+# difference against every node id per edge) takes more than ten times as
+# long. The bound sits between the two. The smaller seed stays large enough
+# (about a second of CPU) that timer noise on a shared runner does not
+# dominate it.
+_SCALING_BOUND = 8.0
 
 
 @pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_a_large_seed_converts_in_linear_time() -> None:
-    small = _conversion_seconds(1_250, 6_250, runs=3, cap=float("inf"))
+    small = _conversion_seconds(2_500, 12_500, runs=3, cap=float("inf"))
     large = _conversion_seconds(10_000, 50_000, runs=3, cap=_SCALING_BOUND * small)
     assert large / small < _SCALING_BOUND, f"{small:.2f} s -> {large:.2f} s"
 
