@@ -22,11 +22,28 @@ from aws_cdk.assertions import Template
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
+from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import OPENSEARCH_VERSION, StorageStack
 
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 _HANDLERS = Path(__file__).resolve().parent.parent / "custom_resources"
 _NORI = "Custom::OpenSearchNoriPackage"
+
+
+def _data_plane(compute: ComputeStack, orchestration: OrchestrationStack) -> Template:
+    """The compute template plus the ingestion task definition (and its
+    execution role), which the orchestration stack owns."""
+    template = Template.from_stack(compute).to_json()
+    ingestion = {
+        logical_id: resource
+        for logical_id, resource in Template.from_stack(orchestration)
+        .to_json()["Resources"]
+        .items()
+        if logical_id.startswith("IngestionTask")
+    }
+    assert not set(ingestion) & set(template["Resources"])
+    template["Resources"].update(ingestion)
+    return Template.from_json(template)
 
 
 def _stacks(context: dict[str, Any]) -> tuple[Template, Template]:
@@ -37,7 +54,16 @@ def _stacks(context: dict[str, Any]) -> tuple[Template, Template]:
     compute = ComputeStack(
         app, "Compute", config=config, networking=networking, storage=storage, env=_ENV
     )
-    return Template.from_stack(storage), Template.from_stack(compute)
+    orchestration = OrchestrationStack(
+        app,
+        "Orch",
+        config=config,
+        networking=networking,
+        compute=compute,
+        cache_bucket_name="example-bucket",
+        env=_ENV,
+    )
+    return Template.from_stack(storage), _data_plane(compute, orchestration)
 
 
 def _korean_analyzer(compute: Template) -> str:

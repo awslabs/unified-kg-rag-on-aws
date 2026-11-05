@@ -1,13 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Compute: ECR image, ECS cluster, and two Fargate task definitions for the
-data plane, each with a least-privilege task role.
+"""Compute: ECR image, ECS cluster, task log group, and the two Fargate task
+definitions of the data plane (one of them deployed by the orchestration
+stack), each with a least-privilege task role.
 
 - The ingestion task definition (``IngestionTask``) runs the Step Functions
   ingestion task; the orchestration stack supplies the ``run-ingestion``
   command and the run's source and pipeline id as container overrides. Its
-  disk is ``ingestion_ephemeral_storage_gib``. Its role writes and deletes in
-  the stores.
+  disk is ``ingestion_ephemeral_storage_gib``. Its role (``TaskRole``, in this
+  stack) writes and deletes in the stores. The definition itself is built by
+  ``build_task_definition`` in the orchestration stack, next to the state
+  machine that pins its revision: see ``OrchestrationStack``.
 - The query task definition (``QueryTask``) runs ``run-rag`` / ``run-eval``
   with a read-only role: Neptune reads, OpenSearch GET/HEAD and ``_search``,
   Bedrock, and the cache bucket's ``eval/`` prefix. No DynamoDB, no store
@@ -31,6 +34,7 @@ CloudWatch OTLP traces endpoint (``https://xray.<region>.amazonaws.com/v1/traces
 from __future__ import annotations
 
 import json
+from typing import NamedTuple
 
 from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
@@ -63,6 +67,12 @@ COLLECTOR_DIGEST = (
 COLLECTOR_OTLP_HTTP = "127.0.0.1:4318"
 
 
+class _TaskImports(NamedTuple):
+    repository: ecr.IRepository
+    log_group: logs.ILogGroup
+    observability_secret: secretsmanager.ISecret | None
+
+
 class ComputeStack(Stack):
     def __init__(
         self,
@@ -77,8 +87,13 @@ class ComputeStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
+        self.storage = storage
         self.kms_key = kms_key
         self.guardrail_identifier = guardrail_identifier
+        # Fixed names: a task definition in another stack refers to the
+        # repository and the log group by name (build_task_definition).
+        self.repository_name = f"{config.prefix}-app"
+        self.log_group_name = f"/{config.prefix}/tasks"
 
         # Immutable tags (a pushed image can't silently replace an existing tag)
         # preserve provenance/rollback and block a supply-chain tag-swap of the
@@ -95,7 +110,7 @@ class ComputeStack(Stack):
         self.repository = ecr.Repository(
             self,
             "Repo",
-            repository_name=f"{config.prefix}-app",
+            repository_name=self.repository_name,
             image_scan_on_push=True,
             # With use_cmk, image layers are encrypted with the shared CMK. ECR
             # adds its own KMS grant on the key, so pulls need no task-side KMS
@@ -149,13 +164,15 @@ class ComputeStack(Stack):
         self.log_group = logs.LogGroup(
             self,
             "TaskLogs",
-            log_group_name=f"/{config.prefix}/tasks",
+            log_group_name=self.log_group_name,
             encryption_key=self.kms_key,
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
 
         self._collector_repository: ecr.IRepository | None = None
+        # Per scope: the imports a task definition in another stack uses.
+        self._imports: dict[str, _TaskImports] = {}
         self.observability_secret: secretsmanager.ISecret | None = (
             secretsmanager.Secret.from_secret_complete_arn(
                 self, "ObservabilitySecret", config.observability_secret_arn
@@ -175,17 +192,13 @@ class ComputeStack(Stack):
                 "edit. Pin a published version with "
                 "-c guardrail_version=<GuardrailVersion output>."
             )
+        # The ingestion task's role; its task definition is the
+        # orchestration stack's (build_task_definition).
         self.task_role = self._build_task_role(storage)
-        self.task_definition = self._build_task_definition(
-            storage,
-            "IngestionTask",
-            self.task_role,
-            ephemeral_storage_gib=config.ingestion_ephemeral_storage_gib,
-        )
         self.query_role = self._build_query_role(storage)
         # Queries keep nothing on disk: the default 20 GiB is plenty.
-        self.query_task_definition = self._build_task_definition(
-            storage, "QueryTask", self.query_role
+        self.query_task_definition = self.build_task_definition(
+            self, "QueryTask", self.query_role
         )
         CfnOutput(
             self,
@@ -446,17 +459,55 @@ class ComputeStack(Stack):
         return f"arn:{self.partition}:bedrock:{region}:{self.account}:guardrail/{identifier}"
 
     # ----------------------------------------------------- task definition
-    def _build_task_definition(
+    def _task_imports(self, scope: Stack) -> _TaskImports:
+        """The repository, log group and secret a task definition in ``scope``
+        uses: this stack's own, or, in another stack, imported by name.
+
+        By name rather than through new exports of this stack: a stack
+        deployed before this one has them (upgrading a deployed stack deploys
+        the orchestration stack alone first, CHANGELOG *Upgrading*), and
+        CloudFormation can neither change nor remove an export another stack
+        imports.
+        """
+        if scope is self:
+            return _TaskImports(
+                self.repository, self.log_group, self.observability_secret
+            )
+        key = scope.node.path
+        if key not in self._imports:
+            secret_arn = self.config.observability_secret_arn
+            self._imports[key] = _TaskImports(
+                ecr.Repository.from_repository_name(
+                    scope, "AppRepo", self.repository_name
+                ),
+                logs.LogGroup.from_log_group_name(
+                    scope, "TaskLogs", self.log_group_name
+                ),
+                (
+                    secretsmanager.Secret.from_secret_complete_arn(
+                        scope, "ObservabilitySecret", secret_arn
+                    )
+                    if secret_arn
+                    else None
+                ),
+            )
+        return self._imports[key]
+
+    def build_task_definition(
         self,
-        storage: StorageStack,
+        scope: Stack,
         construct_id: str,
         role: iam.Role,
         ephemeral_storage_gib: int | None = None,
     ) -> ecs.FargateTaskDefinition:
+        """A data-plane task definition in ``scope`` (this stack or another
+        one of the same app and environment), running ``role``."""
+        storage = self.storage
+        imports = self._task_imports(scope)
         # CPU/memory are config-driven: the in-task ProcessPool extractors scale
         # with vCPU count, so a larger corpus benefits from more CPU.
         task_def = ecs.FargateTaskDefinition(
-            self,
+            scope,
             construct_id,
             cpu=self.config.fargate_cpu,
             memory_limit_mib=self.config.fargate_memory,
@@ -475,8 +526,9 @@ class ComputeStack(Stack):
             ),
         )
         environment = {
-            "AWS_REGION": self.region,
-            "UKR__AWS__BEDROCK__REGION_NAME": self.config.bedrock_region or self.region,
+            "AWS_REGION": scope.region,
+            "UKR__AWS__BEDROCK__REGION_NAME": self.config.bedrock_region
+            or scope.region,
             "UKR__AWS__NEPTUNE__ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
             # Bare hostname — the OpenSearch adapter prepends the scheme itself
             # via use_ssl; passing https:// here yields https://[https://…].
@@ -539,7 +591,7 @@ class ComputeStack(Stack):
                 }
             )
         secrets: dict[str, ecs.Secret] | None = None
-        if self.observability_secret is not None:
+        if imports.observability_secret is not None:
             keys = self.config.observability_secret_keys
             if clash := sorted(set(keys) & set(environment)):
                 raise ValueError(
@@ -550,16 +602,16 @@ class ComputeStack(Stack):
             # when one is missing. The grant (GetSecretValue on this secret)
             # goes to the execution role.
             secrets = {
-                key: ecs.Secret.from_secrets_manager(self.observability_secret, key)
+                key: ecs.Secret.from_secrets_manager(imports.observability_secret, key)
                 for key in keys
             }
         app = task_def.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(
-                self.repository, self.config.image_tag
+                imports.repository, self.config.image_tag
             ),
             logging=ecs.LogDriver.aws_logs(
-                stream_prefix="app", log_group=self.log_group
+                stream_prefix="app", log_group=imports.log_group
             ),
             environment=environment,
             secrets=secrets,
@@ -578,7 +630,7 @@ class ComputeStack(Stack):
             ),
         )
         if self.config.enable_cloudwatch_tracing:
-            collector = self._add_trace_collector(task_def)
+            collector = self._add_trace_collector(scope, task_def, imports.log_group)
             # Started first so the app's first spans find it; START, not
             # HEALTHY, so a collector that never turns healthy cannot hold the
             # app back. On stop, ECS stops the app first, then the collector,
@@ -626,10 +678,17 @@ class ComputeStack(Stack):
         return repository
 
     def _add_trace_collector(
-        self, task_def: ecs.FargateTaskDefinition
+        self,
+        scope: Stack,
+        task_def: ecs.FargateTaskDefinition,
+        log_group: logs.ILogGroup,
     ) -> ecs.ContainerDefinition:
         """The ADOT collector: OTLP/HTTP on localhost in, CloudWatch out."""
         repository = self._collector_image_repository()
+        if scope is not self:
+            repository = ecr.Repository.from_repository_name(
+                scope, "CollectorRepo", repository.repository_name
+            )
         # The first pull through the cache creates the repository and imports
         # the image, on this one repository only.
         task_def.add_to_execution_role_policy(
@@ -640,7 +699,7 @@ class ComputeStack(Stack):
         )
         task_def.node.add_dependency(self.node.find_child("CollectorImageCache"))
 
-        region, suffix = self.region, self.url_suffix
+        region, suffix = scope.region, scope.url_suffix
         collector_config = {
             "extensions": {
                 "health_check": {"endpoint": "127.0.0.1:13133"},
@@ -705,7 +764,7 @@ class ComputeStack(Stack):
             # ADOT reads its YAML (JSON is YAML) from this variable.
             environment={"AOT_CONFIG_CONTENT": json.dumps(collector_config)},
             logging=ecs.LogDriver.aws_logs(
-                stream_prefix="otel-collector", log_group=self.log_group
+                stream_prefix="otel-collector", log_group=log_group
             ),
             health_check=ecs.HealthCheck(
                 command=["CMD", "/healthcheck"],

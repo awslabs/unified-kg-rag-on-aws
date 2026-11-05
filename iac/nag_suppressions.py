@@ -229,17 +229,40 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
         "grant-generated S3/KMS actions on the cache bucket's eval/ prefix, "
         "the read-only corpus bucket and the CMK.",
     )
-    for task_definition in (compute.task_definition, compute.query_task_definition):
+    for task_definition in (
+        orchestration.task_definition,
+        compute.query_task_definition,
+    ):
         execution_role = task_definition.execution_role
         assert execution_role is not None
         _suppress_iam5(
             execution_role,
-            ["Resource::*"],
+            [
+                "Resource::*",
+                # The ingestion task definition (orchestration stack) names
+                # the compute stack's log group by its fixed name: the ARN of
+                # its log streams.
+                {
+                    "regex": r"/^Resource::arn:<AWS::Partition>:logs:.*:log-group:[/].+[/]tasks:\*$/"
+                },
+            ],
             "ecr:GetAuthorizationToken has no resource-level scoping (generated "
-            "by the ECS task definition).",
+            "by the ECS task definition); the log-stream wildcard (`:*`) is "
+            "the streams of the one task log group.",
         )
 
     # --- Orchestration ---
+    NagSuppressions.add_stack_suppressions(
+        orchestration,
+        [
+            {
+                "id": "AwsSolutions-ECS2",
+                "reason": "The ingestion task definition's env vars carry only "
+                "non-secret service endpoints/region/bucket names; no "
+                "credentials or secrets are passed via the environment.",
+            },
+        ],
+    )
     _suppress_iam5(
         orchestration.state_machine.role,
         [

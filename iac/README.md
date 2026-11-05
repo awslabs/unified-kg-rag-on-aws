@@ -79,8 +79,8 @@ several environments coexist in one account and region.
 |---|---|
 | `GraphRagNetwork` | VPC (reused or created), subnets, the data-plane security group; for a created VPC the S3/DynamoDB gateway endpoints and, in `private` mode, interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR, CloudWatch Logs and STS (plus X-Ray with tracing and Secrets Manager with `observability_secret_arn`), each with an endpoint policy that admits only this account's principals |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (in the VPC, encrypted), DynamoDB doc-status table (TTL on `lease_expires_at`, so an abandoned write lease expires), S3 cache bucket; with `opensearch_nori_package`, the custom resource that associates the Nori package (Lambda handlers in `iac/custom_resources/`, roles scoped to the domain and the stack) |
-| `GraphRagCompute` | ECR repository, ECS cluster, the ingestion task definition with a least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
-| `GraphRagOrchestration` | Step Functions state machine: one resumable ingestion task (the task-definition revision deployed with it), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
+| `GraphRagCompute` | ECR repository, ECS cluster, the task log group, the ingestion task's least-privilege role (cache read and put, no delete), and the query task definition (`run-rag` / `run-eval`) whose role only reads the stores and has no DynamoDB access |
+| `GraphRagOrchestration` | The ingestion task definition and the Step Functions state machine that runs it: one resumable ingestion task (the task-definition revision of the same deploy, so a deploy that changes the task definition also updates the state machine), retried only when ECS cannot start it (and, with `ingestion_fargate_spot`, when Spot interrupted it), with a JSON failure notification to the SNS alarm topic (encrypted with its own customer-managed key, since CloudWatch alarms cannot publish to a topic under `alias/aws/sns`) |
 | `GraphRagObservability` | CloudWatch dashboard and alarms on pipeline runs, store health, capacity and query latency, reading this deployment's `Environment` series only ([Alarms](../docs/operations.md#alarms)); synth warns when `alarm_email` is unset |
 | `GraphRagSecurity` | The shared customer-managed KMS key (`use_cmk`) |
 | `GraphRagGuardrail` | A baseline Bedrock Guardrail in `bedrock_region` ([Guardrail](#guardrail)) |
@@ -239,7 +239,7 @@ the name a question retrieves by and puts `{NAME}` in answers.
 cdk bootstrap aws://<account>/us-west-2
 # 1) create the guardrail; note the GuardrailIdentifier and GuardrailVersion outputs
 cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
-# 2) pass both so compute injects them into the task
+# 2) pass both so the task definitions get them (deploy every stack)
 cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
   -c guardrail_identifier=<id> -c guardrail_version=<version> …
 ```
@@ -367,10 +367,11 @@ docker push "$REGISTRY/graphrag-app:latest"
   must match the task's: an x86_64 image on an ARM64 task, or the reverse,
   stops at start with `exec format error`. Switch the architecture by
   pushing the new image under a new tag and deploying both together
-  (`-c image_tag=<tag> -c fargate_cpu_architecture=arm64`).
+  (`cdk deploy --all -c image_tag=<tag> -c fargate_cpu_architecture=arm64`).
 
-- Outside dev, push a unique version tag and deploy with `-c image_tag=<tag>`,
-  so a pushed image cannot be swapped under the running task definition.
+- Outside dev, push a unique version tag and deploy with
+  `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
+  under the running task definition.
 - Extras: the image always installs `eval` (the `run-eval` judges of the
   query task). Add `--build-arg UV_EXTRAS="--extra unstructured"` to parse
   `.md` / `.html` files (the build then also installs the spaCy model

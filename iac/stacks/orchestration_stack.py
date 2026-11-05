@@ -21,6 +21,16 @@ checkpoint like any re-run with the same ``pipeline_id``. The state machine inpu
 container entrypoint syncs locally) and ``pipeline_id``. There is no
 full-vs-incremental switch: a run is incremental when
 ``providers.doc_status.enabled`` is set in the baked-in config.
+
+The ingestion task definition lives in this stack, with the state machine
+that runs its revision, while its role, the cluster, the image repository
+and the log group stay in the compute stack. A task definition in the
+compute stack would reach the state machine as a CloudFormation export of
+its ARN, and a deploy that replaces it (a new image tag, guardrail version,
+size or analyzer) would then fail: an export another stack imports cannot
+change. Here the revision is a reference within one template, so a
+``cdk deploy --all`` that changes the task definition also points the state
+machine at the new revision.
 """
 
 from __future__ import annotations
@@ -176,6 +186,12 @@ class OrchestrationStack(Stack):
             sfn.Fail(self, "PipelineFailed", cause="The ingestion task failed")
         )
 
+        self.task_definition = compute.build_task_definition(
+            self,
+            "IngestionTask",
+            compute.task_role,
+            ephemeral_storage_gib=config.ingestion_ephemeral_storage_gib,
+        )
         definition = self._build_definition()
         self.state_machine = sfn.StateMachine(
             self,
@@ -195,7 +211,7 @@ class OrchestrationStack(Stack):
 
     # ---------------------------------------------------------- ingest task
     def _ingest_task(self) -> tasks.EcsRunTask:
-        task_definition = self.compute.task_definition
+        task_definition = self.task_definition
         container = task_definition.default_container
         assert container is not None
 
@@ -208,7 +224,8 @@ class OrchestrationStack(Stack):
             # The revision deployed with this state machine, not the family's
             # latest ACTIVE one: a revision registered outside this deployment
             # (or by a later deploy mid-execution) is not picked up. The ARN
-            # ends in ":<revision>".
+            # ends in ":<revision>"; it is this stack's own (see the module
+            # docstring), so it is never an export.
             revision_number=Token.as_number(
                 Fn.select(6, Fn.split(":", task_definition.task_definition_arn))
             ),

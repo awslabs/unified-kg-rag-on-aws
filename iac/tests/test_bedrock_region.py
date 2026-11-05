@@ -73,10 +73,13 @@ def test_bedrock_region_sets_task_env_and_guardrail_region(
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     guardrail = manifest["artifacts"]["GraphRagGuardrail"]
     assert guardrail["environment"] == f"aws://{_ACCOUNT}/{bedrock_region}"
-    compute = json.loads((tmp_path / "GraphRagCompute.template.json").read_text())
+    # The ingestion task definition is the orchestration stack's.
+    orchestration = json.loads(
+        (tmp_path / "GraphRagOrchestration.template.json").read_text()
+    )
     (task_def,) = [
         r
-        for logical_id, r in compute["Resources"].items()
+        for logical_id, r in orchestration["Resources"].items()
         if r["Type"] == "AWS::ECS::TaskDefinition"
         and logical_id.startswith("IngestionTask")
     ]

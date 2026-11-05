@@ -80,7 +80,10 @@ allowlist of exceptions is empty; keep it so).
   `@register_strategy` (`adapters/retrieval/strategy_registry.py`). Follow this
   pattern — and `ParserFactory.register_loader` / `@register_renderer` —
   instead of `if/elif` dispatch, and outside a plugin package import only its
-  root or base/registry module. `EvaluationManager._resolve_evaluator_class`
+  root (renderers and evaluators: also their `base` module; schema and seed
+  sources and search strategies: the root only, the strategy registry being
+  `adapters/retrieval/strategy_registry.py`); `_PLUGINS` in
+  `tests/unit/test_layering.py` is the list. `EvaluationManager._resolve_evaluator_class`
   is the one explicit type → class map (a new evaluator adds a branch there).
 
 See `docs/design.md` §2 for the full layer map and dependency rule.
