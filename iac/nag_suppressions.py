@@ -82,6 +82,21 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             "reason": "CDK-generated custom-resource Lambda execution role.",
         },
     ]
+    if config.removal_destroy and not config.cache_bucket_name:
+        # Scoped to the created cache bucket, so any other bucket without
+        # access logs is still flagged.
+        NagSuppressions.add_resource_suppressions(
+            storage.cache_bucket,
+            [
+                {
+                    "id": "AwsSolutions-S1",
+                    "reason": "Server access logs are written only where the "
+                    "buckets are retained (removal_destroy=false): a log "
+                    "delivered late into an auto-deleted log bucket fails the "
+                    "stack deletion.",
+                }
+            ],
+        )
     if config.opensearch_count <= 1:
         # A multi-node domain gets dedicated masters + zone awareness, so these
         # are only accepted for the single-node (cost-controlled) shape.

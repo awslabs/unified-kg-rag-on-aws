@@ -258,3 +258,20 @@ def test_store_maintenance_windows_are_set(prod: Template) -> None:
         "Enabled": True,
         "OffPeakWindow": {"WindowStartTime": {"Hours": 14, "Minutes": 15}},
     }
+
+
+def test_access_logs_only_where_the_buckets_are_retained(prod: Template) -> None:
+    # S3 delivers access logs late: with auto-delete a log of the teardown's
+    # own requests lands in the emptied log bucket and fails the deletion.
+    dev = _storage_template({})
+    assert dev.find_resources("Custom::S3AutoDeleteObjects")
+    for bucket in dev.find_resources("AWS::S3::Bucket").values():
+        assert "LoggingConfiguration" not in bucket["Properties"]
+    logged = [
+        bucket
+        for bucket in prod.find_resources("AWS::S3::Bucket").values()
+        if "LoggingConfiguration" in bucket["Properties"]
+    ]
+    assert len(logged) == 1
+    assert len(prod.find_resources("AWS::S3::Bucket")) == 2
+    assert not prod.find_resources("Custom::S3AutoDeleteObjects")

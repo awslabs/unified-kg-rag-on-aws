@@ -772,6 +772,12 @@ From 0.2.3 (or a `main` checkout since):
     strategy and run. A run resumed from a `main` checkout across the change
     finds no stage-cache entry (`fixing.enabled` keyed every stage), as
     after any upgrade; the LLM response cache still serves its model calls.
+18. A deployed CDK stack with `removal_destroy` (the dev default), on the
+    next `cdk deploy --all`: the cache bucket stops writing S3 server access
+    logs and the `CacheAccessLogs` bucket is deleted with its logs (copy
+    them first if you need them). If a late log blocks the deletion, re-run
+    the deploy or empty and delete the bucket by hand. A retained
+    environment changes nothing (#PR).
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -2166,6 +2172,12 @@ Deployment (CDK).
 - The *Incremental run health* dashboard widget plots
   `community_growth_ratio` and `runs_since_clustering` as well, as the
   runbook said it did (#558).
+- `cdk destroy` of a `removal_destroy` environment could fail on the
+  storage stack's `CacheAccessLogs` bucket: S3 delivers access logs late,
+  so a log of the teardown's own requests landed after the auto-delete
+  emptied the bucket (`The bucket you tried to delete is not empty`). Only
+  a retained environment writes the cache bucket's access logs now; the
+  teardown docs say what to do when an older stack hits it (#PR).
 - Local search with `report_selection: membership` read no report when a
   `community_id` or `level` filter admitted none of the level-0 communities
   of the expanded entities; it reads the similar reports under the filter

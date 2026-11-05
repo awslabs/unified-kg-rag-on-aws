@@ -88,6 +88,16 @@ aws ecs list-task-definitions --status INACTIVE --family-prefix <stack prefix>Or
 aws ecs delete-task-definitions --task-definitions <arn> ...   # up to 10 per call
 ```
 
+S3 delivers server access logs minutes to hours after a request, so a
+log that lands in an emptied access-log bucket fails its deletion
+(`DELETE_FAILED ... The bucket you tried to delete is not empty`). The
+stacks therefore write the cache bucket's access logs only where the
+buckets are retained (`removal_destroy=false`), and an auto-deleted
+environment has no access-log bucket. A stack deployed before that change,
+whose next deploy removes the bucket, can still hit it: re-run
+`cdk destroy` (the auto-delete empties the bucket again), or empty and
+delete the bucket by hand.
+
 A retained environment (`removal_destroy=false`) also keeps the stores,
 keys, guardrail, ECR repository and fixed-name log groups
 ([Configuration](#configuration-cdkjson-context---c-keyvalue), `removal_destroy`).
@@ -207,7 +217,7 @@ did-you-mean hint.
 |---|---|---|
 | `use_cmk` | `false` | Customer-managed KMS key for S3, Neptune, OpenSearch, DynamoDB, ECR and every log group. Choose it before the first deploy: ECR sets a repository's encryption only at creation, so switching it on a deployed environment fails until the compute stack is destroyed and redeployed |
 | `deletion_protection` | `false` (dev) / `true` | Deletion protection on the Neptune cluster and the doc-status table (OpenSearch has none; outside dev the domain is kept on stack deletion by `removal_destroy=false`, which does not stop a direct `DeleteDomain` call) |
-| `removal_destroy` | `true` (dev) / `false` | `DESTROY` or `RETAIN` on stack deletion for the stores, keys, guardrail, ECR repository and fixed-name log groups. Retained fixed-name resources fail the next deploy on the duplicate name, so delete them by hand after a `cdk destroy` |
+| `removal_destroy` | `true` (dev) / `false` | `DESTROY` or `RETAIN` on stack deletion for the stores, keys, guardrail, ECR repository and fixed-name log groups. Retained fixed-name resources fail the next deploy on the duplicate name, so delete them by hand after a `cdk destroy`. Only a retained environment writes S3 server access logs for the cache bucket ([Teardown](#teardown)) |
 | `bedrock_model_arns` | — | Scope Bedrock `InvokeModel` to these ARNs (a list, or a comma-separated string). Foundation-model ARNs keep the `inference-profile/*` grants (models offered only through a profile, Claude 4.5 and later, are called by profile id and still authorized against the listed models); list them with a `*` region, since profiles route across regions. Any inference-profile ARN in the list makes it exact. `Rerank` and `ListInferenceProfiles` stay on `*`, but the Rerank API also checks `bedrock:InvokeModel` on the reranking model, so list its foundation-model ARN too (`amazon.rerank-v1:0` or `cohere.rerank-v3-5:0`), or reranking is denied and queries fall back to fusion without it |
 | `create_guardrail` | `true` | Create and keep a baseline guardrail in `bedrock_region`; `false` brings your own ([Guardrail](#guardrail)) |
 | `guardrail_identifier` | — | Guardrail id the task uses (`UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`); the task role gets `bedrock:ApplyGuardrail` on it only |
@@ -347,7 +357,7 @@ cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
 The stacks apply least-privilege IAM (Bedrock model and inference-profile
 ARNs, `neptune-db:connect`, domain-scoped `es:ESHttp*`), encryption in transit
 and at rest, Graviton instances, a lifecycle on the checkpoint prefixes, S3
-access logs, Step Functions tracing and execution logs, and an SSL-only alarm
+access logs (retained environments, [Teardown](#teardown)), Step Functions tracing and execution logs, and an SSL-only alarm
 topic; production hardening is opt-in through the flags above. Validate with:
 
 ```bash
