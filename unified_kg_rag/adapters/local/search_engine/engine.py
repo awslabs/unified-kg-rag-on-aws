@@ -777,9 +777,11 @@ class SQLiteSearchEngine:
     def put_index_mapping(self, index_name: str, body: dict[str, Any]) -> None:
         """Update the mapping of ``index_name`` as OpenSearch does: new fields
         are added (an object's new sub-fields too) and root parameters
-        (``date_detection``) replaced; changing a mapped field, or an object's
-        own parameters (``enabled``), is rejected. This engine maps no field dynamically (an
-        unmapped string is a keyword), so ``date_detection`` changes nothing."""
+        (``date_detection``, ``dynamic_templates``) replaced; changing a mapped
+        field, or an object's own parameters (``enabled``), is rejected. This
+        engine maps no field dynamically (an unmapped string is a keyword), so
+        ``date_detection`` changes nothing; a field a dynamic template maps as
+        a keyword is read as one from then on (``LoadedIndex.spec``)."""
         properties = body.get("properties") or {}
         with self._transaction("update an index mapping") as connection:
             mappings = self._mappings_of(connection, index_name)

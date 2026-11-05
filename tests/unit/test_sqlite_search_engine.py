@@ -218,10 +218,9 @@ def _keyword_scan(index: LoadedIndex, path: str, values: list[Any]) -> set[str]:
     """A keyword term filter as a scan of every document (the reference)."""
 
     def keyword(value: Any) -> str:
+        # As OpenSearch indexes a JSON value into a keyword: 1.0 is "1.0".
         if isinstance(value, bool):
             return "true" if value else "false"
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
         return str(value)
 
     spec = index.specs.get(path)

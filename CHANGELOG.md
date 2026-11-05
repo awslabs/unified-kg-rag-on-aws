@@ -586,6 +586,14 @@ From 0.2.3 (or a `main` checkout since):
       then match no filter.
     - `attr_*` values are keywords (#446): an `attr_*` field an older index
       mapped as a date stays one.
+    - Numeric and boolean document filter values are keywords (#PR): an
+      `attr_<key>` or `attributes.filters.<key>` field an older OpenSearch
+      index mapped by a first number (`long`, `float`) or boolean keeps that
+      type, so a later string value fails its document's write and a range
+      compares numbers; a warning names each such field. The first run maps
+      the fields it adds from then on as keywords without a reset; the
+      reset costs what the #562 one below does (stored extraction records
+      and vectors reused). The embedded SQLite store needs no reset.
     - Seed properties are stored unmapped (#508): an entities index that
       maps `attributes.seed_properties` field by field is refused (exit 2).
     - Relationships store their type (#562): a relationship an older build
@@ -1468,6 +1476,13 @@ From 0.2.3 (or a `main` checkout since):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A number or boolean document filter value is a keyword on OpenSearch, as
+  the filter docs said: a field's first numeric value mapped it as `long`,
+  so a document with a string value for the same key failed to index
+  (`mapper_parsing_exception`) and a range compared numbers where the
+  embedded engine compared text. Both stores hold such a value as its JSON
+  text (`2023`, `2.0`, `true`): the embedded engine no longer reads `2.0`
+  as `2`, and compares a keyword's numbers as text in a range (#PR).
 - Local search looks each query entity up on its own, concurrently, and
   seeds graph expansion with the entity of its name, else with its top hit
   when that scores at least `search.local_search.seed_score_ratio` (new,

@@ -22,7 +22,10 @@ top ``k``) scored by the field's ``space_type``.
 Field values: a ``keyword`` field or an array matches when any element does;
 a ``text`` field matches a ``term`` against its analyzed tokens; the
 ``name.keyword`` sub-field matches ``name`` exactly; ``attributes.<path>`` is
-resolved as a dotted path; an unmapped string is a keyword.
+resolved as a dotted path; an unmapped string is a keyword, and so is any
+value of a field a ``dynamic_templates`` entry (``path_match``) maps as one.
+A keyword holds a number or boolean as its JSON text, as OpenSearch indexes
+it (``2.0`` is "2.0", which a term ``2`` does not match).
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ import heapq
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from functools import cmp_to_key
 from typing import Any
 
@@ -120,10 +124,10 @@ def resolve_path(source: dict[str, Any], path: str) -> list[Any]:
 
 
 def _keyword(value: Any) -> str:
+    """``value`` as OpenSearch indexes it into a keyword field (and reads a
+    term on one): a number or boolean as its JSON text, ``2.0`` as "2.0"."""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
     return str(value)
 
 
@@ -165,12 +169,32 @@ class LoadedIndex:
     sources: dict[str, dict[str, Any]]
     vectors: dict[str, VectorField]
     specs: dict[str, FieldSpec] = field(init=False)
+    _keyword_patterns: list[str] = field(init=False)
     _text: dict[str, FieldIndex] = field(init=False, default_factory=dict)
     _keywords: dict[str, dict[str, set[str]]] = field(init=False, default_factory=dict)
     _lock: threading.Lock = field(init=False, default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
         self.specs = field_specs(self.mappings)
+        self._keyword_patterns = [
+            template["path_match"]
+            for entry in self.mappings.get("dynamic_templates") or []
+            for template in entry.values()
+            if isinstance(template, dict)
+            and isinstance(template.get("path_match"), str)
+            and (template.get("mapping") or {}).get("type") == "keyword"
+        ]
+
+    def spec(self, path: str) -> FieldSpec | None:
+        """The spec of ``path``: its mapping, else a keyword when a
+        ``dynamic_templates`` entry maps it as one (OpenSearch would map it
+        on its first write)."""
+        spec = self.specs.get(path)
+        if spec is None and any(
+            fnmatchcase(path, pattern) for pattern in self._keyword_patterns
+        ):
+            return FieldSpec(type="keyword")
+        return spec
 
     def text_index(self, path: str) -> FieldIndex:
         """The BM25 index of text field ``path``, built on first use."""
@@ -269,7 +293,7 @@ def _matching(
 def _term_docs(index: LoadedIndex, path: str, values: list[Any]) -> Scores:
     if path == "_id":
         return {doc_id: 1.0 for v in values if (doc_id := _keyword(v)) in index.sources}
-    spec = index.specs.get(path)
+    spec = index.spec(path)
     if spec is not None and spec.type == "text":
         # A term is not analyzed: it matches a token of the field as indexed.
         text = index.text_index(path)
@@ -331,7 +355,7 @@ _RANGE_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
 def _range(index: LoadedIndex, body: Any) -> Scores:
     path, bounds = _single_field("range", body)
     bounds = _require_keys("range", bounds, set(_RANGE_OPERATORS))
-    spec = index.specs.get(path)
+    spec = index.spec(path)
     numeric = spec is not None and spec.type in NUMERIC_TYPES
     if numeric and any(_number(v) is None for v in bounds.values()):
         raise rejected(f"a bound of [{path}] is not a number: {bounds!r}")
@@ -340,8 +364,9 @@ def _range(index: LoadedIndex, body: Any) -> Scores:
 
     def accept(doc_values: list[Any], _spec: FieldSpec | None) -> bool:
         for value in doc_values:
+            # An unmapped number compares as one; a keyword's as text.
             is_number = isinstance(value, int | float) and not isinstance(value, bool)
-            number = _number(value) if numeric or is_number else None
+            number = _number(value) if numeric or (is_number and spec is None) else None
             if number is not None:
                 if all(b is not None for b in numeric_bounds.values()) and all(
                     _RANGE_OPERATORS[op](number, b) for op, b in numeric_bounds.items()
@@ -550,7 +575,7 @@ def sort_hits(hits: list[Hit], sort: Any, size: int) -> list[Hit]:
 
     def value(hit: Hit, path: str, descending: bool) -> Any:
         index, doc_id, _score = hit
-        spec = index.specs.get(path)
+        spec = index.spec(path)
         raw = resolve_path(index.sources[doc_id], path)
         if spec is not None and spec.type in NUMERIC_TYPES:
             values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
