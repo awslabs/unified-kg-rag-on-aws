@@ -588,7 +588,7 @@ From 0.2.3 (or a `main` checkout since):
       mapped as a date stays one.
     - Seed properties are stored unmapped (#508): an entities index that
       maps `attributes.seed_properties` field by field is refused (exit 2).
-    - Relationships store their type (#PR): a relationship an older build
+    - Relationships store their type (#562): a relationship an older build
       wrote reads `Relationship: A -> B` until a run rewrites it (an
       incremental run rewrites only the relationships it changes). The
       reset reuses the stored extraction records and vectors, so it asks
@@ -1853,7 +1853,7 @@ Deployment (CDK).
   when untyped) and the line reads `Relationship: A -[TYPE]-> B`. It is no
   filter key: a `type` filter still leaves relationships unfiltered. An
   incremental run maps the field on an existing index; a copy written
-  before reads as before until it is rewritten (*Upgrading*) (#PR).
+  before reads as before until it is rewritten (*Upgrading*) (#562).
 - The seed-graph guide did not say that `source_kinds` filters entities
   and relationships only: text units declare no such field, so `local`,
   `mix` and `hybrid` still return the documents' text chunks under
@@ -1861,7 +1861,7 @@ Deployment (CDK).
   in `dev`; it lists what it leaves now (the Container Insights
   performance log group, the storage stack's two Lambda log groups and the
   `INACTIVE` task-definition revisions) and the commands that delete them
-  (#PR).
+  (#562).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity
