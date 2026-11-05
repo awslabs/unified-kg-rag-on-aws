@@ -1791,6 +1791,20 @@ Ingestion and incremental indexing.
   ("Korean"), as the query prompts do (*Upgrading*). The extraction and
   gleaning prompts keep "the language with code 'ko'", which reads right:
   rewording it would re-key, and so re-extract, every unit (#PR).
+- Output that parsed but had the wrong shape skipped the output fixer: the
+  extraction, claims and gleaning checks ran after the chain. An extraction
+  whose sections said `None`, or that one `<output>` element wrapped,
+  failed its unit after every retry; a bulleted answer parsed as
+  `{"items": [...]}`, which nothing reads; a claims answer without its
+  section was counted as cut off (never retried); and a gleaning answer
+  without its `<refinement_plan>` root was read as "nothing to add" and its
+  unit marked gleaned for good. The XML parser now unwraps one element
+  around the expected sections and reads a section of only "None" (or
+  "N/A", "null", "-") as empty, keeping the sections beside it; the three
+  parsers raise `OutputParserException` for any other wrong shape (no
+  section, a section holding prose, nameless entities in a complete
+  answer), so the fixer repairs it; a gleaning plan written without its
+  root is read as the plan. The bullet-list fallback is gone (#PR).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no

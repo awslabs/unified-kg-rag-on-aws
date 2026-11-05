@@ -608,6 +608,17 @@ _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+
 # `<` not followed by what can start a tag, end tag, comment or declaration.
 _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
 _TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
+# The tag-free text of a section a model writes for "nothing here"
+# (``<relationships>None</relationships>``), casefolded, a final "." dropped.
+_NO_CONTENT = frozenset({"none", "n/a", "null", "nil", "-"})
+
+
+def _is_no_content(value: Any) -> bool:
+    """Whether a parsed section is the text a model writes for "nothing
+    here" ("None", "N/A", ...): an empty answer, not prose."""
+    return isinstance(value, str) and value.strip().rstrip(".").casefold() in (
+        _NO_CONTENT
+    )
 
 
 def _escape_markup(tag: str) -> str:
@@ -698,11 +709,56 @@ class RobustXMLOutputParser(XMLOutputParser):
         )
 
     def parse(self, text: str) -> dict[str, Any]:
+        """``text`` parsed (see the class docstring), in the expected shape.
+
+        With expected sections (``tags``), one element wrapping them (an
+        ``<output>`` around ``<entities>`` and ``<relationships>``) is
+        unwrapped, and a section holding only "None" (or "N/A", "null",
+        "-") reads as empty. Subclasses check the rest of the shape
+        (``_check_shape``) and raise ``OutputParserException`` for output
+        that parses but is not what the prompt asked for, as for output
+        that does not parse, so the output fixer repairs it.
+        """
         if not text.strip():
             # Nothing to recover (e.g. a thinking-only answer); the output
             # fixer skips it too, since it could only invent the structure.
             raise OutputParserException("The model returned no output", llm_output=text)
         text = self.final_answer(text)
+        result = self._parse_elements(text)
+        if self.tags and isinstance(result, dict):
+            result = self._unwrapped(result)
+            for tag in set(self.tags) & result.keys():
+                if _is_no_content(result[tag]):
+                    result[tag] = {}
+        self._check_shape(result, text)
+        return result
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        """Raise ``OutputParserException`` when ``result`` (parsed from
+        ``text``) is not the shape the prompt asks for. Every shape passes
+        here; parsers of one prompt's answer override it."""
+
+    def _unwrapped(self, result: dict[str, Any]) -> dict[str, Any]:
+        """``result`` without the one element wrapping the expected
+        sections: when no expected section is at the top level and exactly
+        one top-level element holds some, its children."""
+        expected = set(self.tags or ())
+        if not expected or expected & result.keys():
+            return result
+        wrappers = [
+            value
+            for value in result.values()
+            if isinstance(value, dict) and expected & value.keys()
+        ]
+        if len(wrappers) != 1:
+            return result
+        logger.debug("XML output wraps its sections in one element: unwrapped")
+        return wrappers[0]
+
+    def _parse_elements(self, text: str) -> dict[str, Any]:
+        """``text`` parsed by the first recovery method that succeeds: lxml
+        recovery, then the regex fallbacks. Raise ``OutputParserException``
+        when none does."""
         original_sections = self._detect_xml_sections(text)
         if unclosed := sorted(
             tag
@@ -719,8 +775,10 @@ class RobustXMLOutputParser(XMLOutputParser):
             )
 
         try:
-            result = self._parse_top_level_elements(
-                self._clean_xml_for_lxml(text, self.tags or ())
+            result = self._unwrapped(
+                self._parse_top_level_elements(
+                    self._clean_xml_for_lxml(text, self.tags or ())
+                )
             )
             if self._sections_preserved(original_sections, result):
                 return result
@@ -749,18 +807,7 @@ class RobustXMLOutputParser(XMLOutputParser):
                 return fallback_result
         except Exception as e:
             logger.debug(
-                "Tags fallback extraction failed: %s: %s. Trying list fallback...",
-                type(e).__name__,
-                e,
-            )
-
-        try:
-            fallback_result = self._extract_list_fallback(text)
-            if fallback_result:
-                return fallback_result
-        except Exception as e:
-            logger.debug(
-                "List fallback extraction failed: %s: %s. All methods exhausted.",
+                "Tags fallback extraction failed: %s: %s. All methods exhausted.",
                 type(e).__name__,
                 e,
             )
@@ -1277,22 +1324,6 @@ class RobustXMLOutputParser(XMLOutputParser):
         }
 
         return result
-
-    @staticmethod
-    def _extract_list_fallback(text: str) -> dict[str, Any] | None:
-        item_patterns = [
-            r"^\s*[•\-\*]\s*(.+?)(?=\n\s*[•\-\*]|\Z)",
-            r"^\s*\d+\.\s*(.+?)(?=\n\s*\d+\.|\Z)",
-        ]
-
-        for pattern in item_patterns:
-            items = re.findall(pattern, text, re.DOTALL | re.MULTILINE)
-            if items:
-                stripped_items = [item.strip() for item in items if item.strip()]
-                if stripped_items:
-                    return {"items": stripped_items}
-
-        return None
 
 
 class LLMJsonOutputParser(BaseOutputParser[dict[str, Any]]):

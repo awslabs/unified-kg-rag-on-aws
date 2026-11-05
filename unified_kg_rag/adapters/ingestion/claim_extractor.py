@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -420,6 +421,7 @@ class ClaimExtractor(BaseProcessor):
 
 
 _CLAIM_OPENED = re.compile(r"<claim[\s>]")
+_SECTION_OPENED = re.compile(r"<claims[\s/>]")
 _CLAIM_CLOSED = re.compile(r"</claim\s*>")
 _SECTION_CLOSED = re.compile(r"</claims\s*>")
 # Set by ClaimsOutputParser on an output whose </claims> closes the section.
@@ -434,7 +436,25 @@ class ClaimsOutputParser(RobustXMLOutputParser):
     a normal stop) parses as an empty claim, so it is dropped (and an output
     of only that claim is cut-off output, :func:`_checked`) instead of
     stored with the fields before the cut: a description or source text cut
-    short, or none at all."""
+    short, or none at all.
+
+    Output that parses but has no ``<claims>`` section (prose, a list) or
+    one holding text raises ``OutputParserException``, so the output fixer
+    repairs it as it repairs output that does not parse."""
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        section = result.get("claims")
+        if "claims" in result and not isinstance(section, str):
+            return
+        logger.debug("Claim extraction output that failed: '%s'", output_excerpt(text))
+        raise OutputParserException(
+            (
+                "the claim extraction output has no claims section"
+                if "claims" not in result
+                else "the claims section of the claim extraction output holds text"
+            ),
+            llm_output=text,
+        )
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
@@ -466,22 +486,27 @@ def _complete(claim: Any) -> bool:
 
 def _checked(result: Any) -> dict[str, Any]:
     """``result`` if it is a whole claims output, else raise
-    ``LLMOutputTruncatedError``.
+    ``LLMOutputTruncatedError`` (cut off) or ``OutputParserException``.
 
     A response cut off without a stop reason (a server-side output cap
-    reported as a normal stop) lacks the ``claims`` section, or lists claims
-    none of which is complete, and was recorded PROCESSED with no claims, so
-    the unit was never extracted again. It is counted against the document
-    as output cut at the token limit is, and not retried (the same input
-    meets the same cap). An empty ``<claims></claims>``, the answer for a
-    unit that states none, is whole, as is a section its ``</claims>``
-    closes whose claims all lack a field (they are dropped as invalid).
+    reported as a normal stop) lists claims none of which is complete, and
+    was recorded PROCESSED with no claims, so the unit was never extracted
+    again. It is counted against the document as output cut at the token
+    limit is, and not retried (the same input meets the same cap). An empty
+    ``<claims></claims>``, the answer for a unit that states none, is whole,
+    as is a section its ``</claims>`` closes whose claims all lack a field
+    (they are dropped as invalid). Output without the section is malformed
+    (``ClaimsOutputParser`` raises it first), unless it opened the section:
+    then it was cut off.
     """
     if not isinstance(result, dict) or "claims" not in result:
         _log_failed_output(result)
-        raise LLMOutputTruncatedError(
-            "the claim extraction output has no claims section (output cut off?)"
-        )
+        raw = result.get(_RAW_KEY) if isinstance(result, dict) else None
+        if isinstance(raw, str) and _SECTION_OPENED.search(raw):
+            raise LLMOutputTruncatedError(
+                "the claim extraction output has no claims section (output cut off?)"
+            )
+        raise OutputParserException("the claim extraction output has no claims section")
     listed = ensure_list(result.get("claims"), inner_key="claim")
     if (
         listed

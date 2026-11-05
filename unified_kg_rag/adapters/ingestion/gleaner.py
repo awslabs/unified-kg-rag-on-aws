@@ -4,13 +4,19 @@ import time
 from datetime import datetime
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.langchain import (
+    BATCH_ITEM_FAILED,
+    BatchProcessor,
+    RobustXMLOutputParser,
+    output_excerpt,
+)
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
@@ -102,6 +108,36 @@ def prepare_input(
         ),
         "target_language": target_language,
     }
+
+
+class RefinementOutputParser(RobustXMLOutputParser):
+    """The gleaning parser: the answer must be a ``<refinement_plan>``.
+
+    A plan written without its root (its ``<identified_issues>`` at the top
+    level) is read as the plan. Any other answer without the root (prose, a
+    list), or a root holding text, raises ``OutputParserException``, so the
+    output fixer repairs it, as it repairs output that does not parse; it
+    was read as a plan with no issue, and the unit marked gleaned for good.
+    A root holding only "None" is a plan with no issue.
+    """
+
+    def parse(self, text: str) -> dict[str, Any]:
+        result = super().parse(text)
+        if "refinement_plan" not in result:
+            result = {"refinement_plan": result}
+        return result
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        if (
+            isinstance(result, dict)
+            and not isinstance(result.get("refinement_plan"), str)
+            and ("refinement_plan" in result or "identified_issues" in result)
+        ):
+            return
+        logger.debug("Refinement output that failed: '%s'", output_excerpt(text))
+        raise OutputParserException(
+            "the refinement output is not a <refinement_plan>", llm_output=text
+        )
 
 
 def _name_key(value: Any) -> str | None:
@@ -240,6 +276,7 @@ class GraphGleaner(BaseProcessor):
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             min_output_tokens=GraphRefinementPrompt.output_floor(self.config),
             output_tags=["refinement_plan"],
+            parser_class=RefinementOutputParser,
         )
         self.graph_refiner = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

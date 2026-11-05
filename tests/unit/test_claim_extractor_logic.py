@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 
 import unified_kg_rag.adapters.ingestion.claim_extractor as ce_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -168,10 +169,18 @@ class TestParseClaimData:
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
     @pytest.mark.parametrize("result", ["not a dict", {"other": 1}])
-    def test_output_without_a_claims_section_is_cut_off(
+    def test_output_without_a_claims_section_is_malformed(
         self, extractor, text_unit, result
     ) -> None:
-        # Regression: recorded PROCESSED with no claims, never re-extracted.
+        # Regression: recorded PROCESSED with no claims, never re-extracted;
+        # then counted as cut off, so never retried nor repaired.
+        with pytest.raises(OutputParserException, match="no claims section"):
+            extractor._parse_extraction_result(result, text_unit)
+
+    def test_output_that_opened_the_claims_section_is_cut_off(
+        self, extractor, text_unit
+    ) -> None:
+        result = {"other": 1, "#raw_output": "<claims>\n<claim><subject>Ven"}
         with pytest.raises(LLMOutputTruncatedError, match="no claims section"):
             extractor._parse_extraction_result(result, text_unit)
 
