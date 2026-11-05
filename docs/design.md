@@ -143,7 +143,8 @@ unified_kg_rag/
 │  ├─ models/           #   Pydantic domain models
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_builder/resolver/analyzer,
 │  │  │                 #   claim_resolver, contributions, derivation, cache_keys,
-│  │  │                 #   document_identity, seed_graph, visualization_data (+ layout helpers)
+│  │  │                 #   document_identity, seed_graph, visualization_data (+ layout helpers),
+│  │  │                 #   community_clustering (Leiden hierarchy, content-named communities)
 │  │  └─ merge/         #   cross-run merger
 │  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization
 │  └─ prompts/          #   version-controlled prompt templates
@@ -181,7 +182,8 @@ unified_kg_rag/
 │  │                    #   (cache_manager), resume (pipeline_manager; the resume
 │  │                    #   point and rewinds in resume) and run metrics
 │  │                    #   (pipeline_metrics)
-│  ├─ storage/          #   IndexingManager (indexer fan-out)
+│  ├─ storage/          #   IndexingManager (indexer fan-out) and its collaborators:
+│  │                    #   cross_run_merge, removal, reannotation, stored_items
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
 │  │                    #   processing (query_processing) and filter-key checks
 │  │                    #   (filter_validation)
@@ -384,8 +386,8 @@ can re-derive what it touches (§5).
 | 7 | Graph resolution | `graph_resolver.py`, `description_summarizer.py` | merges name variants, re-summarizes long descriptions (calls the LLM) |
 | 8-9 | Claim extraction and resolution | `claim_extractor.py`, `claim_resolver.py` | optional (off by default) |
 | 10 | Graph analysis | `graph_analyzer.py` | graph build and statistics |
-| 11 | Community detection | `community_detector.py` | hierarchical Leiden and structured reports |
-| 12 | Indexing | `application/storage/indexing_manager.py` | graph and vector stores; full build or delta |
+| 11 | Community detection | `community_detector.py`, `domain/ingestion/community_clustering.py` | hierarchical Leiden (the clustering is pure, in the domain) and structured reports |
+| 12 | Indexing | `application/storage/indexing_manager.py` (+ `cross_run_merge.py`, `removal.py`, `reannotation.py`) | graph and vector stores; full build or delta |
 
 The stage order lives in `DataIngestionPipeline.STAGE_CLASSES`; every stage
 gets its models and stores from the run's `Providers` bundle.

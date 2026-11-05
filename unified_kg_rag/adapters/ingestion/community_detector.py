@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
-import math
 import re
 import time
 from collections import defaultdict
@@ -23,10 +22,17 @@ from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
-    edge_weight,
     merge_attributes,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import community_report_fingerprint
+from unified_kg_rag.domain.ingestion.community_clustering import (
+    base_partition,
+    build_hierarchy,
+    entity_subgraph,
+    hierarchical_communities,
+    small_component_nodes,
+    with_usable_weights,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     REPORT_RECORD_ATTRIBUTE,
     record_key,
@@ -79,31 +85,6 @@ class ReportRecords(Protocol):
         ...
 
 
-def community_content_id(level: int, nodes: Any) -> str:
-    """Content-derived community id: the level plus the sorted member entity ids.
-
-    Positional ids (``L0_C0`` ...) named a *different* community on every run, so
-    an incremental run that clusters only the delta subgraph upserted its
-    ``L0_C0`` over the full corpus's ``L0_C0`` (and its report, whose id hashes
-    the community id). A content id only matches when the membership matches,
-    so delta communities are appended next to the existing ones instead of
-    replacing them, and an unchanged community keeps its id across rebuilds.
-    """
-    members = "\x1f".join(sorted(str(node) for node in nodes))
-    return generate_stable_id(f"community:{level}:{members}")
-
-
-def community_label(level: int, community_id: str) -> str:
-    """Display label of a community: its level and the head of its content id.
-
-    A positional label (``L0_C3``, the community's rank in the sorted
-    partition) renamed every unchanged community behind an added one, and the
-    name reaches the report's record key and every parent's roll-up text, so
-    a reset re-asked the report model for communities that had not changed.
-    """
-    return f"L{level}_C{community_id[:8]}"
-
-
 def _stored_time(record: Mapping[str, Any], default: datetime) -> datetime:
     """When a stored report answer was generated (``default`` when its
     record does not say)."""
@@ -111,113 +92,6 @@ def _stored_time(record: Mapping[str, Any], default: datetime) -> datetime:
         return datetime.fromisoformat(str(record["generated_at"]))
     except (KeyError, ValueError):
         return default
-
-
-def _canonical_graph(graph: nx.Graph) -> nx.Graph:
-    """Copy ``graph`` with nodes and edges inserted in sorted order.
-
-    Leiden's result depends on node/edge insertion order even with a fixed seed,
-    and the graph builder inserts in extraction order, which varies with LLM
-    response order. Sorting first makes the same graph partition the same way.
-    """
-    canonical = nx.Graph()
-    canonical.graph.update(graph.graph)
-    canonical.add_nodes_from(sorted(graph.nodes(data=True), key=lambda n: str(n[0])))
-    canonical.add_edges_from(
-        sorted(
-            graph.edges(data=True),
-            key=lambda e: tuple(sorted((str(e[0]), str(e[1])))),
-        )
-    )
-    return canonical
-
-
-def leiden(
-    graph: nx.Graph,
-    *,
-    resolution: float = 1.0,
-    random_seed: int | None = None,
-    trials: int = 1,
-    extra_forced_iterations: int = 0,
-) -> dict[Any, int]:
-    """Leiden partition of ``graph``: node -> community label.
-
-    Same algorithm, arguments and result as ``graspologic.partition.leiden``
-    on an undirected networkx graph (modularity, randomness 0.001, edge
-    ``weight`` defaulting to 1.0); isolated nodes are not in the result. It
-    calls ``graspologic_native`` directly because importing any graspologic
-    module runs ``graspologic/__init__``, which takes ~10 s and imports boto3
-    through gensim and smart_open.
-
-    Raises:
-        ValueError: An argument is out of range, ``graph`` is directed or a
-            multigraph, or two nodes have the same ``str``.
-        GraphError: ``graspologic_native`` panicked.
-    """
-    if graph.is_directed() or graph.is_multigraph():
-        raise ValueError("Leiden supports only undirected non-multi graphs")
-    if resolution <= 0:
-        raise ValueError("resolution must be a positive float")
-    if random_seed is not None and random_seed <= 0:
-        raise ValueError("random_seed must be a positive integer")
-    if trials < 1:
-        raise ValueError("trials must be a positive integer")
-    if extra_forced_iterations < 0:
-        raise ValueError("extra_forced_iterations must be a non-negative integer")
-
-    import graspologic_native
-
-    # The native module takes string node ids; map them back afterwards.
-    originals: dict[str, Any] = {}
-
-    def node_key(node: Any) -> str:
-        key = str(node)
-        if originals.setdefault(key, node) != node:
-            raise ValueError(f"Two distinct nodes share the string id {key!r}")
-        return key
-
-    edges = [
-        (node_key(source), node_key(target), float(weight))
-        for source, target, weight in graph.edges(data="weight", default=1.0)
-    ]
-    try:
-        _quality, partition = graspologic_native.leiden(
-            edges=edges,
-            starting_communities=None,
-            resolution=resolution,
-            randomness=0.001,
-            iterations=extra_forced_iterations + 1,
-            use_modularity=True,
-            seed=random_seed,
-            trials=trials,
-        )
-    except BaseException as e:
-        # A Rust panic surfaces as pyo3's PanicException, a BaseException
-        # (not importable: pyo3 creates its module at runtime), so the
-        # stage's error handling would not see it and every resume would die
-        # the same way. KeyboardInterrupt and SystemExit pass through.
-        if type(e).__module__ != "pyo3_runtime":
-            raise
-        raise GraphError(f"graspologic_native panicked: {e}") from e
-    return {originals[key]: label for key, label in partition.items()}
-
-
-def _community_sort_key(nodes: set[Any]) -> str:
-    """Order communities by their smallest member's string id (members are
-    disjoint, so the key is unique within a partition)."""
-    return min(str(node) for node in nodes)
-
-
-def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
-    """Modularity of ``partition``; ``0.0`` for a graph without edges.
-
-    NetworkX divides by the total edge weight, so an edgeless graph (entities
-    but no relationships, such as an incremental delta of a one-entity
-    document) would raise ``ZeroDivisionError``.
-    """
-    if graph.number_of_edges() == 0 or graph.size(weight="weight") == 0:
-        return 0.0
-    return float(nx.community.modularity(graph, partition))
 
 
 class CommunityDetector:
@@ -301,16 +175,18 @@ class CommunityDetector:
 
         ``whole_graph`` (an incremental run) returns the entities of the
         given small components that reach ``min_community_size`` entities in
-        the whole graph: they are clustered (see ``_small_component_nodes``).
+        the whole graph: they are clustered (see ``small_component_nodes``).
         """
         self._report_claims = (
             self._claims_by_subject(graph)
             if self.config.processing.claim_extraction.enabled
             else {}
         )
-        self.graph = self._with_usable_weights(self._entity_subgraph(graph))
+        self.graph = with_usable_weights(entity_subgraph(graph))
         graph = self.graph
-        self.unclustered = self._small_component_nodes(graph, whole_graph)
+        self.unclustered = small_component_nodes(
+            graph, self.community_detection_config.min_community_size, whole_graph
+        )
         logger.info(
             "Starting community detection on graph with %s nodes and %s edges",
             graph.number_of_nodes(),
@@ -332,104 +208,6 @@ class CommunityDetector:
             subject_claims.sort(key=lambda claim: claim["id"])
         return dict(claims)
 
-    @staticmethod
-    def _entity_subgraph(graph: nx.Graph) -> nx.Graph:
-        """Return the entity-only graph that communities are detected on.
-
-        The knowledge graph also carries claim nodes (``node_type="claim"``,
-        see ``GraphBuilder``). Communities group entities, as in GraphRAG:
-        claim nodes would otherwise join entity communities, and every claim
-        whose subject/object did not resolve became an isolated singleton
-        community costing its own report LLM call. Nodes without a
-        ``node_type`` are treated as entities.
-        """
-        non_entity_nodes = [
-            node
-            for node, data in graph.nodes(data=True)
-            if data.get("node_type", "entity") != "entity"
-        ]
-        if not non_entity_nodes:
-            return graph
-        logger.info(
-            "Excluding %s non-entity (claim) nodes from community detection",
-            len(non_entity_nodes),
-        )
-        entity_graph = graph.copy()
-        entity_graph.remove_nodes_from(non_entity_nodes)
-        return entity_graph
-
-    def _small_component_nodes(
-        self,
-        graph: nx.Graph,
-        whole_graph: Callable[[list[set[Any]]], set[Any]] | None = None,
-    ) -> set[Any]:
-        """The entities of ``graph``'s connected components of fewer than
-        ``min_community_size`` entities, which get no community.
-
-        An isolated entity, or a pair only linked to each other, cannot merge
-        into a neighbouring community, so each became a root community of
-        its own: a report LLM call that restates one entity, and a report in
-        every cut of the hierarchy, which pushed global search's cut past its
-        cap on medium corpora (151 of 153 roots at 10k entities). MS GraphRAG
-        clusters only the largest connected component (``use_lcc``); this
-        leaves out only the components too small to form a community. Leiden
-        still partitions the whole graph, so the other communities are the
-        ones it finds with them (``_process_hierarchical_partitions`` only
-        skips these); the left-out entities stay reachable through local
-        search.
-
-        An incremental run's graph holds only its delta, so a new entity
-        whose one relationship is to a stored entity is a small component
-        here but may not be in the whole graph: a component ``whole_graph``
-        finds large enough there is clustered, as a full build would.
-        """
-        min_size = self.community_detection_config.min_community_size
-        components = [
-            component
-            for component in nx.connected_components(graph)
-            if len(component) < min_size
-        ]
-        if components and whole_graph is not None:
-            large = whole_graph(components)
-            components = [c for c in components if large.isdisjoint(c)]
-        small = {node for component in components for node in component}
-        if small:
-            logger.info(
-                "Leaving %s entities in connected components of fewer than %s "
-                "entities (graph.community_detection.min_community_size) out "
-                "of the communities",
-                len(small),
-                min_size,
-            )
-        return small
-
-    @staticmethod
-    def _with_usable_weights(graph: nx.Graph) -> nx.Graph:
-        """Return ``graph`` with every edge weight usable (see ``edge_weight``).
-
-        New extractions are already clean (``edge_weight`` in the parser), but
-        a graph read back from a store or cache written before that may still
-        carry a NaN, infinite, negative, denormal or huge weight, and Leiden
-        panics or fails on one every time the stage is resumed. Such weights
-        are replaced on a copy, so the caller's graph is left as it is.
-        """
-        bad = {
-            (source, target): edge_weight(weight)
-            for source, target, weight in graph.edges(data="weight", default=1.0)
-            if not (isinstance(weight, int | float) and edge_weight(weight) == weight)
-        }
-        if not bad:
-            return graph
-        logger.warning(
-            "Replacing %s non-finite, negative or out-of-range edge weights "
-            "before community detection",
-            len(bad),
-        )
-        graph = graph.copy()
-        for (source, target), weight in bad.items():
-            graph.edges[source, target]["weight"] = weight
-        return graph
-
     def detect_communities(self, *, empty_expected: bool = False) -> None:
         if not self.graph or self.graph.number_of_nodes() == 0:
             log = logger.debug if empty_expected else logger.warning
@@ -442,210 +220,25 @@ class CommunityDetector:
         )
 
     def analyze_hierarchy(self) -> None:
-        base_partition = self._get_base_partition()
-
-        self.base_modularity = _modularity(self.graph, base_partition)
-
-        logger.info(
-            "Base partition found with %s communities and modularity %.4f",
-            len(base_partition),
-            self.base_modularity,
+        """Build the community hierarchy of ``self.graph`` (``build_hierarchy``)
+        and its communities (:meth:`_process_hierarchical_partitions`)."""
+        partitions, self.base_modularity = build_hierarchy(
+            self.graph, self.community_detection_config
         )
-
-        partitions = [base_partition]
-        max_levels = self.community_detection_config.max_levels
-
-        current_partition = base_partition
-        # The graph to coarsen at the NEXT level. Level 1 coarsens the original
-        # entity graph; level >= 2 must coarsen the PREVIOUS level's cluster
-        # graph (whose nodes are previous-level community indices), because the
-        # partition members at level >= 2 are cluster indices, not entity ids.
-        current_graph = self.graph
-
-        for level in range(1, max_levels):
-            logger.info("Creating level %s communities...", level)
-
-            cluster_graph = self._create_cluster_graph(current_partition, current_graph)
-
-            if cluster_graph.number_of_nodes() < 2:
-                logger.info(
-                    "Cluster graph has only %s nodes, stopping hierarchy at level %s",
-                    cluster_graph.number_of_nodes(),
-                    level - 1,
-                )
-                break
-
-            logger.info(
-                "Created cluster graph with %s nodes and %s edges",
-                cluster_graph.number_of_nodes(),
-                cluster_graph.number_of_edges(),
-            )
-            if cluster_graph.size(weight="weight") == 0:
-                # No edge joins two communities: the normal top of the
-                # hierarchy, not the edgeless input _get_base_partition warns of.
-                logger.info(
-                    "No edges between the communities of level %s, stopping "
-                    "hierarchy construction",
-                    level - 1,
-                )
-                break
-
-            next_partition = self._get_base_partition(cluster_graph)
-
-            if (
-                next_partition
-                and 1 < len(next_partition) < cluster_graph.number_of_nodes()
-            ):
-                logger.info(
-                    "Selected partition with %s communities for level %s",
-                    len(next_partition),
-                    level,
-                )
-            else:
-                logger.info(
-                    "No meaningful partition found at level %s, stopping hierarchy construction",
-                    level,
-                )
-                break
-
-            partitions.append(next_partition)
-            current_partition = next_partition
-            # Coarsen the cluster graph we just built next, so deeper levels
-            # aggregate over the previous level rather than the entity graph.
-            current_graph = cluster_graph
-
-        logger.info("Hierarchy construction completed with %s levels", len(partitions))
         self._process_hierarchical_partitions(partitions)
 
     def _get_base_partition(self, graph: nx.Graph | None = None) -> list[set[Any]]:
-        """Partition ``graph`` (the entity graph by default) into communities.
-
-        The communities come back in canonical order (see
-        ``_partition_dict_to_communities``), because the next level's cluster
-        graph numbers its nodes by position in this list.
-
-        Raises:
-            GraphError: Leiden failed. Silently falling back would truncate the
-                hierarchy or leave no communities to report on.
-        """
-        target_graph = graph if graph is not None else self.graph
-
-        # Leiden needs some edge weight: on a graph whose every edge weighs 0
-        # (strength-0 relationships, clamped by ``edge_weight``; an incremental
-        # delta clusters only the new document's subgraph) graspologic_native
-        # panics with a ``BaseException`` that ends the run and every resume.
-        # Such a graph has no structure to partition, like an edgeless one.
-        if target_graph.size(weight="weight") == 0:
-            logger.warning(
-                "Graph has no weighted edges. Treating each node as a separate "
-                "community."
-            )
-            return [{node} for node in sorted(target_graph.nodes(), key=str)]
-
-        config = self.community_detection_config
-
-        if config.auto_resolution:
-            resolution = self._find_optimal_resolution(target_graph)
-        else:
-            resolution = config.resolution
-
-        communities = self._leiden_communities(target_graph, resolution)
-
-        # Every level is bounded by max_cluster_size: in entities at level 0,
-        # in child communities above (a node of a cluster graph is a whole
-        # community), so a parent's roll-up packs a bounded number of child
-        # report summaries. Only entity communities are held to
-        # min_community_size: merging cluster-graph nodes would fold a level
-        # into the one below it.
-        communities = self._split_large_communities(
-            communities, target_graph, resolution, config.max_cluster_size
-        )
-        if graph is None:
-            if config.min_community_size > 1:
-                communities = self._merge_small_communities(
-                    communities,
-                    target_graph,
-                    config.min_community_size,
-                    config.max_cluster_size,
-                )
-
-        return sorted(communities.values(), key=_community_sort_key)
-
-    def _leiden_communities(
-        self, graph: nx.Graph, resolution: float
-    ) -> dict[int, set[Any]]:
-        """Leiden partition of ``graph`` as canonically numbered communities.
+        """``base_partition`` of ``graph``, a cluster graph, or of the entity
+        graph by default.
 
         Raises:
             GraphError: Leiden failed.
         """
-        config = self.community_detection_config
-        try:
-            partition_dict = leiden(
-                _canonical_graph(graph),
-                resolution=resolution,
-                random_seed=config.random_state,
-                trials=config.trials,
-                extra_forced_iterations=config.extra_forced_iterations,
-            )
-        except Exception as e:
-            raise GraphError(
-                f"Leiden partitioning failed on a graph with "
-                f"{graph.number_of_nodes()} nodes and "
-                f"{graph.number_of_edges()} edges: {e}"
-            ) from e
-        return self._partition_dict_to_communities(partition_dict, graph)
-
-    def _split_large_communities(
-        self,
-        communities: dict[int, set[Any]],
-        graph: nx.Graph,
-        resolution: float,
-        max_size: int,
-    ) -> dict[int, set[Any]]:
-        """Re-partition every community above ``max_size`` members, recursively.
-
-        Modularity has a resolution limit: on a large graph, one Leiden pass
-        merges well-separated groups into communities that grow with the
-        corpus. A level-0 report then sees only the ``max_entities_per_report``
-        best-connected members of such a leaf (MS GraphRAG bounds its leaves
-        with ``max_cluster_size`` the same way), and a parent's roll-up only
-        the child summaries that fit its token budget. Leiden run on the
-        community's own subgraph judges it against that subgraph alone, so it
-        splits. A community Leiden leaves whole (one piece) stays as it is.
-        """
-        done: list[set[Any]] = []
-        pending = list(communities.values())
-        split = 0
-        while pending:
-            nodes = pending.pop()
-            if len(nodes) <= max_size:
-                done.append(nodes)
-                continue
-            subgraph = graph.subgraph(nodes)
-            pieces = (
-                list(self._leiden_communities(subgraph, resolution).values())
-                if subgraph.size(weight="weight") > 0
-                else []
-            )
-            if len(pieces) < 2:
-                logger.info(
-                    "Community of %s members has no finer partition; keeping "
-                    "it above max_cluster_size %s",
-                    len(nodes),
-                    max_size,
-                )
-                done.append(nodes)
-                continue
-            split += 1
-            pending.extend(pieces)
-        if split:
-            logger.info(
-                "Split %s communities above max_cluster_size %s",
-                split,
-                max_size,
-            )
-        return dict(enumerate(sorted(done, key=_community_sort_key)))
+        if graph is None:
+            return base_partition(self.graph, self.community_detection_config)
+        return base_partition(
+            graph, self.community_detection_config, entity_level=False
+        )
 
     def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
         """Union the source text-unit ids of a community's member entities.
@@ -663,297 +256,16 @@ class CommunityDetector:
                 collected.update(str(t) for t in tu if t)
         return sorted(collected)
 
-    @staticmethod
-    def _partition_dict_to_communities(
-        partition_dict: dict[Any, int],
-        graph: nx.Graph | None = None,
-    ) -> dict[int, set[Any]]:
-        """Group a node -> label map into communities, numbered canonically.
-
-        ``graspologic_native`` returns a Rust ``HashMap``, whose iteration
-        order (and so the labels' first-seen order) changes from process to
-        process. The communities are renumbered by their smallest member, so
-        the small-community merge and the next level's cluster-graph node
-        numbers do not depend on that order.
-        """
-        groups: dict[int, set[Any]] = defaultdict(set)
-        for node, label in partition_dict.items():
-            groups[label].add(node)
-        ordered = sorted(groups.values(), key=_community_sort_key)
-        if graph is not None:
-            # Leiden leaves isolated nodes out of its result; each becomes its
-            # own community so the partition covers the graph (modularity
-            # rejects anything less).
-            missing = [node for node in graph.nodes() if node not in partition_dict]
-            ordered.extend({node} for node in sorted(missing, key=str))
-        return dict(enumerate(ordered))
-
-    def _find_optimal_resolution(self, graph: nx.Graph) -> float:
-        best_resolution = self.community_detection_config.resolution
-        best_modularity = -1.0
-
-        # Size short-circuit: the sweep runs a full Leiden partition + modularity
-        # computation for EACH candidate (~10x the base cost) at every hierarchy
-        # level. On a large graph that dominates the analysis phase, so above the
-        # configured node cap we skip the sweep and use the fixed resolution.
-        max_nodes = self.community_detection_config.auto_resolution_max_nodes
-        if graph.number_of_nodes() > max_nodes:
-            logger.info(
-                "Graph has %s nodes (> %s); skipping the auto-resolution sweep "
-                "and using the fixed resolution %s.",
-                graph.number_of_nodes(),
-                max_nodes,
-                best_resolution,
-            )
-            return best_resolution
-
-        resolution_candidates = (
-            self.community_detection_config.auto_resolution_candidates
-        )
-        canonical = _canonical_graph(graph)
-
-        for resolution in resolution_candidates:
-            try:
-                partition_dict = leiden(
-                    canonical,
-                    resolution=resolution,
-                    random_seed=self.community_detection_config.random_state,
-                    trials=1,
-                )
-
-                communities = self._partition_dict_to_communities(partition_dict, graph)
-                partition = list(communities.values())
-
-                if len(partition) < 2:
-                    continue
-
-                modularity = _modularity(graph, partition)
-
-                if modularity > best_modularity:
-                    best_modularity = modularity
-                    best_resolution = resolution
-
-            except Exception as e:  # noqa: BLE001 - a failed resolution is skipped
-                logger.warning("Resolution %s failed: %s", resolution, e)
-                continue
-
-        logger.info(
-            "Auto-selected resolution %s with modularity %.4f",
-            best_resolution,
-            best_modularity,
-        )
-        return best_resolution
-
-    def _merge_small_communities(
-        self,
-        communities: dict[int, set[str]],
-        graph: nx.Graph,
-        min_size: int,
-        max_size: int | None = None,
-    ) -> dict[int, set[str]]:
-        node_to_comm: dict[str, int] = {}
-        for comm_id, nodes in communities.items():
-            for node in nodes:
-                node_to_comm[node] = comm_id
-
-        # Iterate to convergence: a small community can merge into another small
-        # one (or one already processed), so a single pass can leave communities
-        # still below min_size. Repeat until no merge happens (or no small
-        # community has an eligible neighbor — isolated ones can't be merged).
-        while True:
-            small_comms = [
-                cid for cid, nodes in communities.items() if len(nodes) < min_size
-            ]
-            merged_any = False
-
-            for small_comm_id in small_comms:
-                if small_comm_id not in communities:
-                    continue
-
-                nodes = communities[small_comm_id]
-
-                # Total edge weight to each neighboring community: the merge
-                # goes where the community is most strongly tied, not where it
-                # merely has the most edges. Summed with ``fsum``: ``nodes`` is
-                # a set iterated in hash-seed order, and a plain float sum in
-                # that order can split an exact tie by one ulp, overriding the
-                # lowest-label rule below differently from run to run.
-                neighbor_weights: dict[int, list[float]] = defaultdict(list)
-                for node in nodes:
-                    for neighbor, data in graph[node].items():
-                        if neighbor in node_to_comm:
-                            neighbor_comm = node_to_comm[neighbor]
-                            if (
-                                neighbor_comm != small_comm_id
-                                and neighbor_comm in communities
-                                # A merge must not push a community back
-                                # above max_cluster_size.
-                                and (
-                                    max_size is None
-                                    or len(communities[neighbor_comm]) + len(nodes)
-                                    <= max_size
-                                )
-                            ):
-                                neighbor_weights[neighbor_comm].append(
-                                    data.get("weight", 1.0)
-                                )
-
-                if neighbor_weights:
-                    # Ties go to the lowest (canonical) label, not to whichever
-                    # neighbor a set iteration happened to reach first.
-                    totals = {c: math.fsum(w) for c, w in neighbor_weights.items()}
-                    target_comm = max(totals, key=lambda x: (totals[x], -x))
-                    communities[target_comm].update(nodes)
-                    for node in nodes:
-                        node_to_comm[node] = target_comm
-                    del communities[small_comm_id]
-                    merged_any = True
-
-            if not merged_any:
-                break
-
-        return communities
-
-    def _create_cluster_graph(
-        self, partition: list[set[str]], graph: nx.Graph
-    ) -> nx.Graph:
-        # ``graph`` is the graph whose nodes the partition members refer to:
-        # the original entity graph at level 1, or the previous level's
-        # cluster graph at level >= 2.
-        num_communities = len(partition)
-        cluster_graph = nx.Graph()
-
-        for i in range(num_communities):
-            cluster_graph.add_node(i, name=f"cluster_{i}")
-
-        node_to_community = {}
-        for comm_idx, nodes in enumerate(partition):
-            for node in nodes:
-                node_to_community[node] = comm_idx
-
-        edge_weights: dict[tuple[int, int], float] = defaultdict(float)
-
-        for source, target, data in graph.edges(data=True):
-            source_community = node_to_community.get(source)
-            target_community = node_to_community.get(target)
-
-            if source_community is None or target_community is None:
-                continue
-            if source_community == target_community:
-                continue
-
-            edge_weight = data.get("weight", 1.0)
-            comm_pair = (
-                min(source_community, target_community),
-                max(source_community, target_community),
-            )
-            edge_weights[comm_pair] += edge_weight
-
-        for (comm1, comm2), weight in edge_weights.items():
-            if weight > 0:
-                cluster_graph.add_edge(comm1, comm2, weight=weight)
-
-        return cluster_graph
-
     def _process_hierarchical_partitions(
         self, partitions: list[list[set[str]]]
     ) -> None:
+        """Replace the communities with those of ``partitions``
+        (``hierarchical_communities``)."""
+        communities, node_to_l0 = hierarchical_communities(partitions, self.unclustered)
         self.all_communities.clear()
+        self.all_communities.update(communities)
         self.node_to_community_l0.clear()
-
-        logger.info("Processing %s levels of partitions", len(partitions))
-
-        l0_partition = partitions[0]
-        # Keys are partition member identities, which Leiden may emit as ints
-        # or node-label strings depending on the input graph.
-        level_0_communities: dict[Any, str] = {}
-
-        for i, nodes in enumerate(l0_partition):
-            if nodes <= self.unclustered:
-                # A too-small component (or part of one): no community. It
-                # has no edge to another community, so no coarser community
-                # contains it either.
-                continue
-            comm_id = community_content_id(0, nodes)
-
-            for node_id in nodes:
-                self.node_to_community_l0[node_id] = comm_id
-
-            community = HierarchicalCommunity(
-                community_id=comm_id,
-                level=0,
-                nodes=nodes,
-                parent_id=None,
-                label=community_label(0, comm_id),
-            )
-            self.all_communities[comm_id] = community
-            level_0_communities[i] = comm_id
-
-        logger.info("Created %s level 0 communities", len(level_0_communities))
-
-        previous_level_map = level_0_communities
-
-        for level in range(1, len(partitions)):
-            partition = partitions[level]
-            current_level_map: dict[Any, str] = {}
-
-            for i, cluster_nodes in enumerate(partition):
-                parent_nodes: set[str] = set()
-                children: list[HierarchicalCommunity] = []
-
-                for cluster_idx in sorted(cluster_nodes, key=str):
-                    if cluster_idx in previous_level_map:
-                        child_comm = self.all_communities.get(
-                            previous_level_map[cluster_idx]
-                        )
-                        if child_comm:
-                            parent_nodes.update(child_comm.nodes)
-                            children.append(child_comm)
-
-                if len(children) == 1:
-                    # A cluster Leiden left on its own (often an isolated one)
-                    # would be a parent identical to its only child, embedded,
-                    # indexed and retrieved once per level. The child stands
-                    # for it at this level instead.
-                    current_level_map[i] = children[0].community_id
-                elif parent_nodes:
-                    # The id derives from the members, so it is known only once
-                    # every child has been folded in.
-                    parent_comm_id = community_content_id(level, parent_nodes)
-                    for child_comm in children:
-                        child_comm.parent_id = parent_comm_id
-                    parent_community = HierarchicalCommunity(
-                        community_id=parent_comm_id,
-                        level=level,
-                        nodes=parent_nodes,
-                        parent_id=None,
-                        children_ids=[c.community_id for c in children],
-                        label=community_label(level, parent_comm_id),
-                    )
-                    self.all_communities[parent_comm_id] = parent_community
-                    current_level_map[i] = parent_comm_id
-
-            logger.info(
-                "Created %s level %s communities",
-                sum(
-                    self.all_communities[cid].level == level
-                    for cid in current_level_map.values()
-                ),
-                level,
-            )
-            previous_level_map = current_level_map
-
-            if not current_level_map:
-                logger.warning(
-                    "No communities created at level %s, stopping hierarchy", level
-                )
-                break
-
-        logger.info(
-            "Final hierarchy: %s total communities across %s levels",
-            len(self.all_communities),
-            len(partitions),
-        )
+        self.node_to_community_l0.update(node_to_l0)
 
     def export_community_data(self) -> dict[str, Any]:
         if not self.all_communities:

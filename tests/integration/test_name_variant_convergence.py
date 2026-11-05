@@ -43,6 +43,7 @@ from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.sqlite_graph_indexer import SQLiteGraphIndexer
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.application.storage.removal import TextUnitRemoval
 from unified_kg_rag.domain.models import Config, PipelineStageStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
@@ -1083,7 +1084,7 @@ def test_a_removal_resumed_with_a_note_derives_the_claims_it_re_keyed(
         tmp_path / "inc",
         runs,
         die_in=2,
-        die_at=("_remove_text_units_from_claims", 1, True, IndexingManager),
+        die_at=("_remove_text_units_from_claims", 1, True, TextUnitRemoval),
         gleaning=True,
         resume=False,
     )
@@ -1902,7 +1903,7 @@ def test_a_leftover_strip_note_keeps_an_entity_the_strip_writes(
         tmp_path / "inc",
         runs,
         die_in=2,
-        die_at=("_clear_pending_strip", 1, False, IndexingManager),
+        die_at=("_clear_pending_strip", 1, False, TextUnitRemoval),
         resume=False,
         gleaning=True,
     )
@@ -1989,10 +1990,10 @@ def test_a_removal_whose_re_key_cascades_ranks_as_a_full_build(
     # derivation stopped after four and ranked "Acme" and "Buyer" 0, the
     # edges it had not read uncounted. Out of rounds, an entity whose stored
     # edges were not all read keeps its stored links in its rank.
-    import unified_kg_rag.application.storage.indexing_manager as manager
+    import unified_kg_rag.application.storage.cross_run_merge as merge
 
     if rounds is not None:
-        monkeypatch.setattr(manager, "_DERIVE_ROUNDS", rounds)
+        monkeypatch.setattr(merge, "_DERIVE_ROUNDS", rounds)
     kept = {
         "r4.txt": "Buyer and Acme trade cash 2. Acme and Acme and Acme trade goods 1.",
         "d1.txt": "Acme and Acme Inc trade parts 3.",
@@ -2349,9 +2350,16 @@ SPLIT_RETRY_RUNS = [
 
 
 @pytest.mark.parametrize("resume", [True, False], ids=["resume", "fresh"])
-@pytest.mark.parametrize("method", ["delete_retired_ids", "_clear_pending_strip"])
+@pytest.mark.parametrize(
+    ("method", "owner"),
+    [
+        ("delete_retired_ids", IndexingManager),
+        ("_clear_pending_strip", TextUnitRemoval),
+    ],
+    ids=["delete_retired_ids", "_clear_pending_strip"],
+)
 def test_a_retried_split_strip_resolves_the_claim_object_to_the_part(
-    tmp_path: Path, method: str, resume: bool
+    tmp_path: Path, method: str, owner: type, resume: bool
 ) -> None:
     # d0.txt bridged "Acme Ltd" into "Acme"; removing it splits "Acme Ltd"
     # off. Killed once every strip write landed (at its retire, or at the
@@ -2365,7 +2373,7 @@ def test_a_retried_split_strip_resolves_the_claim_object_to_the_part(
         tmp_path / "inc",
         runs,
         die_in=1,
-        die_at=(method, 1, False, IndexingManager),
+        die_at=(method, 1, False, owner),
         gleaning=True,
         resume=resume,
     )

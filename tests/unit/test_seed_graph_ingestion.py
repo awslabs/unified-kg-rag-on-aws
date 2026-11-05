@@ -40,7 +40,7 @@ from unified_kg_rag.application.ingestion import pipeline as pipeline_module
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.extraction_store import with_record_keys
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-from unified_kg_rag.application.storage import indexing_manager
+from unified_kg_rag.application.storage import stored_items
 from unified_kg_rag.application.storage.indexing_manager import (
     stripped_descriptions,
     unit_records,
@@ -1622,7 +1622,7 @@ def test_a_stripped_member_the_derivation_lacks_keeps_its_description(
     vector.upsert_text_units(
         [TextUnit(id="u1", text="", attributes={"extraction_records": {"graph": "u1"}})]
     )
-    mocker.patch.object(indexing_manager, "derive", return_value=Derived())
+    mocker.patch.object(stored_items, "derive", return_value=Derived())
     vendor = Entity(
         id="vendor",
         name="Vendor",
