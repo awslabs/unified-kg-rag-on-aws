@@ -532,7 +532,8 @@ From 0.2.3 (or a `main` checkout since):
 3. CDK: install AWS CDK CLI 2.1146.1 or later, run `cd iac && uv sync`, and
    deploy the stacks together with the new image (the environment names,
    the EMF dimension, the query task and the new registry table need
-   both). Run queries with `QueryTaskDefinitionArn`. Korean on the CDK
+   both; a deployed stack deploys the orchestration stack first, item 14).
+   Run queries with `QueryTaskDefinitionArn`. Korean on the CDK
    domain needs `-c opensearch_nori_package=true` (or keep the stack's
    `cjk`) (#282, #459).
 4. Rebuild every index once: nothing 0.2.3 stored is read (index mappings,
@@ -605,9 +606,10 @@ From 0.2.3 (or a `main` checkout since):
     to compare cost (#526, #529).
 14. A deployed CDK stack (0.2.3 or a `main` checkout): the ingestion task
     definition moved from `GraphRagCompute` to `GraphRagOrchestration`. Run
-    `cdk deploy GraphRagOrchestration --exclusively` once, with the deploy's
-    usual `-c` flags (the new `image_tag` included), then `cdk deploy
-    --all`. The first deploy creates the task definition in the
+    `cdk deploy GraphRagOrchestration --exclusively` once
+    (`GraphRag<Env>Orchestration`, e.g. `GraphRagProdOrchestration`, for an
+    `env_name` other than `dev`), with the deploy's usual `-c` flags (the
+    new `image_tag` included), then `cdk deploy --all`. The first deploy creates the task definition in the
     orchestration stack and points the state machine at it, so the compute
     stack's old one is no longer imported and the second deploy removes it.
     A plain `cdk deploy --all` stops at `GraphRagCompute` (`Cannot delete
