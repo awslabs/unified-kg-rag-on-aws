@@ -448,8 +448,10 @@ Library API (Python callers and custom backends).
   (`out.search_results.results`) (#333).
 - One injection path: `doc_status=`, `vector_indexer=`, `graph_indexer=`,
   `model_factory=` and `retriever_builders=` cannot be combined with
-  `providers=`. Only `Providers`, `build_providers`, `DataIngestionPipeline`
-  and `GraphRAGChain` take `boto_session`; `GraphRAGChain` rejects unknown
+  `providers=`. Only `Providers` and `build_providers` take `boto_session`
+  (pass `providers=Providers(config, boto_session=...)` to
+  `DataIngestionPipeline`, `GraphRAGChain` and `create_rag_chain`, which no
+  longer take it) (#PR); `GraphRAGChain` rejects unknown
   keyword arguments; `OpenSearchIndexer`, `OpenSearchRetriever` require
   `embedding_factory=` (#216, #218, #221).
 - A custom doc-status registry implements the whole `DocStatusPort`: batch
