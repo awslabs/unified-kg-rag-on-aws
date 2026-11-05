@@ -181,14 +181,24 @@ def merge_attributes(
     return _with_seed_properties(merged, present)
 
 
-def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -> str:
-    """Newline-separated entity names for a prompt, at most ``max_entities``.
+def format_entities_with_limit_task(
+    entities: list[Entity], max_entities: int, *, typed: bool = False
+) -> str:
+    """Newline-separated entity names for a prompt, at most ``max_entities``,
+    each followed by its type in parentheses when ``typed`` and it has one
+    (``Acme (ORGANIZATION)``).
 
     Over the limit, entities with a description and then those cited by more
     text units come first, and a line counts the omitted ones.
     """
+
+    def line(entity: Entity) -> str:
+        return (
+            f"{entity.name} ({entity.type})" if typed and entity.type else entity.name
+        )
+
     if len(entities) <= max_entities:
-        return "\n".join(e.name for e in entities)
+        return "\n".join(line(e) for e in entities)
 
     sorted_entities = sorted(
         entities,
@@ -199,9 +209,8 @@ def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -
         reverse=True,
     )
     selected_entities = sorted_entities[:max_entities]
-    entity_list = "\n".join(e.name for e in selected_entities)
-    if len(entities) > max_entities:
-        entity_list += f"\n... and {len(entities) - max_entities} more entities"
+    entity_list = "\n".join(line(e) for e in selected_entities)
+    entity_list += f"\n... and {len(entities) - max_entities} more entities"
     return entity_list
 
 
@@ -212,14 +221,25 @@ def coerce_llm_text(value: Any, *, join: bool = False) -> str:
     (``<type>A</type><type>B</type>``). Identity fields (name, type, source,
     target) take the first non-empty element; description-like fields pass
     ``join=True`` to keep every distinct non-empty element, newline-joined.
+    A field with markup parses to a dict: its own text (``#text``, as in
+    ``<name lang="en">Beta</name>``, whose attribute is dropped), else its
+    child elements' text, as a list's (``<description><p>one</p>
+    </description>`` is "one"); an empty element (``{}``) is ``""``.
     ``None`` and other non-string scalars become ``""`` / ``str(value)``.
     """
     if value is None or value == {}:
         # An empty element (<description></description>) parses to {}.
         return ""
+    if isinstance(value, dict):
+        if "#text" in value:
+            return coerce_llm_text(value["#text"], join=join)
+        # Attributes ("@lang") and comments (non-string keys) are no text.
+        value = [
+            v for k, v in value.items() if isinstance(k, str) and not k.startswith("@")
+        ]
     if not isinstance(value, list):
         return str(value).strip()
-    parts = [p for p in (coerce_llm_text(v) for v in value) if p]
+    parts = [p for p in (coerce_llm_text(v, join=join) for v in value) if p]
     if not parts:
         return ""
     return "\n".join(dict.fromkeys(parts)) if join else parts[0]

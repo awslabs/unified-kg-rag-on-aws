@@ -765,7 +765,13 @@ class GraphExtractionOutputParser(RobustXMLOutputParser):
     """The graph extraction parser: its result also says whether the answer
     parsed was complete (:meth:`sections_closed`) and keeps the response,
     for :func:`_checked` to tell output cut off from malformed output and
-    to log what failed."""
+    to log what failed.
+
+    Output that parses but is not an extraction (no ``<entities>``
+    section, a section holding prose, or, its sections closed, entities
+    none of which has a name) raises ``OutputParserException`` here, so the
+    output fixer repairs it as it repairs output that does not parse.
+    """
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
@@ -773,6 +779,43 @@ class GraphExtractionOutputParser(RobustXMLOutputParser):
             result[_CLOSED_KEY] = self.sections_closed(text)
             result[_RAW_KEY] = text
         return result
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        error = _shape_error(result)
+        if error is None and self.sections_closed(text):
+            if (nameless := _nameless_error(result)) is not None:
+                error = f"{nameless} (its sections are closed: malformed output)"
+        if error is not None:
+            logger.debug("Extraction output that failed: '%s'", output_excerpt(text))
+            raise OutputParserException(error, llm_output=text)
+
+
+def _shape_error(result: dict[str, Any]) -> str | None:
+    """Why ``result`` is not an extraction output's shape, else None: it
+    needs an ``entities`` section, and ``relationships`` (when given, the
+    XML parser drops an empty one) must be a section too, not text."""
+    raw_entities = result.get("entities")
+    raw_relationships = result.get("relationships", {})
+    if isinstance(raw_entities, dict | list) and isinstance(
+        raw_relationships, dict | list
+    ):
+        return None
+    return (
+        "extraction output lacks well-formed entities/relationships "
+        f"sections (keys: {sorted(k for k in result if not k.startswith('#'))})"
+    )
+
+
+def _nameless_error(result: dict[str, Any]) -> str | None:
+    """Why ``result`` lists entities none of which has a name, else None."""
+    listed = ensure_list(result.get("entities"), inner_key="entity")
+    if not listed or any(
+        isinstance(entity, dict)
+        and clean_display_name(coerce_llm_text(entity.get("name")))
+        for entity in listed
+    ):
+        return None
+    return f"none of the {len(listed)} entities of the extraction output has a name"
 
 
 def _checked(result: Any) -> dict[str, Any]:
@@ -797,34 +840,18 @@ def _checked(result: Any) -> dict[str, Any]:
         raise OutputParserException(
             f"extraction output is {type(result).__name__}, not a mapping"
         )
-    raw_entities = result.get("entities")
-    raw_relationships = result.get("relationships", {})
-    if not isinstance(raw_entities, dict | list) or not isinstance(
-        raw_relationships, dict | list
-    ):
+    if (error := _shape_error(result)) is not None:
         _log_failed_output(result)
-        raise OutputParserException(
-            "extraction output lacks well-formed entities/relationships "
-            f"sections (keys: {sorted(k for k in result if not k.startswith('#'))})"
-        )
-    listed = ensure_list(raw_entities, inner_key="entity")
-    if listed and not any(
-        isinstance(entity, dict)
-        and clean_display_name(coerce_llm_text(entity.get("name")))
-        for entity in listed
-    ):
+        raise OutputParserException(error)
+    if (error := _nameless_error(result)) is not None:
         _log_failed_output(result)
         if result.get(_CLOSED_KEY):
             raise OutputParserException(
-                f"none of the {len(listed)} entities of the extraction output "
-                "has a name (its sections are closed: malformed output)"
+                f"{error} (its sections are closed: malformed output)"
             )
         # Cut off, as at the output-token limit: not retried (the same
         # input hits the same cap again).
-        raise LLMOutputTruncatedError(
-            f"none of the {len(listed)} entities of the extraction output has "
-            "a name (output cut off?)"
-        )
+        raise LLMOutputTruncatedError(f"{error} (output cut off?)")
     return result
 
 

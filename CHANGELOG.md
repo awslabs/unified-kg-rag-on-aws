@@ -636,6 +636,32 @@ From 0.2.3 (or a `main` checkout since):
     summarization call per such item over the threshold; the other stored
     summaries are reused), or leave them until a run edits or removes one
     of their documents.
+15. Ingestion fixes of #PR:
+    - Translation (on when `target_language` differs from
+      `source_language` or `additional_target_languages` is set): its prompt
+      changed, so a run that translates again (a reset, `--force-rebuild`)
+      asks the model for each unit's translation once more, and, as a new
+      translation is new text, extracts that unit again. An incremental run
+      translates only new and changed documents, as before. The description
+      summary prompt changed too: stored summaries are kept, only new ones
+      are asked with it.
+    - A merged entity whose winning name had no type is typed only when
+      graph resolution runs on it again: a reset (it reuses the stored
+      extraction records, no extraction call) or an incremental run that
+      touches it.
+    - Gleaning (on by default): its prompt changed, which re-keys every
+      gleaned extraction record (the claims records too while claims are
+      on), as any template edit does. A reset therefore extracts and gleans
+      every text unit once more (and extracts its claims), the cost of a
+      first build's extraction and gleaning; later resets reuse the new
+      records. An incremental run keeps the stored documents' records and
+      uses the new prompt for new and changed documents only.
+    - The `intelligent` chunker: a pre-chunk of one line was cut as the
+      model's answer left it (whole, or by size after an answer naming
+      lines that do not exist); it is kept whole up to `max_chunk_size`
+      and cut by size over it now, with no call. A reset re-chunks a
+      document holding one and extracts its text units again where the
+      pieces differ; pre-chunks of several lines are unchanged.
 
 ### Added
 - Local mode: the `providers` section and provider registry
@@ -1764,6 +1790,61 @@ Ingestion and incremental indexing.
   stored match and never joins two stored entities, so a new name similar
   to two stored ones merges with one of them only until a reset. The
   design notes and the incremental guide say so now (#564).
+- Entity resolution took the merged entity's type from the member whose
+  name won only, so where that member had no type (an endpoint named only
+  in relationships, a stub), the merge had none: "Acme Inc"
+  (`organization`, one unit) and a stub "Acme" cited by two units became
+  an untyped "Acme". When the winning member's type is unknown (none,
+  blank, `unknown`), the merge takes the known type the most units cite
+  among the members documents state (a seed's only when no document gives
+  one); the incremental derivation runs the same code (#565).
+- The translation prompt read "Translate the following text to
+  LanguageCode.KO" (the enum formats so in a template), and the description
+  summary prompt "Write the summary in ko". Both name the language now
+  ("Korean"), as the query prompts do (*Upgrading*). The extraction and
+  gleaning prompts keep "the language with code 'ko'", which reads right:
+  rewording it would re-key, and so re-extract, every unit (#565).
+- Output that parsed but had the wrong shape skipped the output fixer: the
+  extraction, claims and gleaning checks ran after the chain. An extraction
+  whose sections said `None`, or that one `<output>` element wrapped,
+  failed its unit after every retry; a bulleted answer parsed as
+  `{"items": [...]}`, which nothing reads; a claims answer without its
+  section was counted as cut off (never retried); and a gleaning answer
+  without its `<refinement_plan>` root was read as "nothing to add" and its
+  unit marked gleaned for good. The XML parser now unwraps one element
+  around the expected sections and reads a section of only "None" (or
+  "N/A", "null", "-") as empty, keeping the sections beside it; the three
+  parsers raise `OutputParserException` for any other wrong shape (no
+  section, a section holding prose, nameless entities in a complete
+  answer), so the fixer repairs it; a gleaning plan written without its
+  root is read as the plan. The bullet-list fallback is gone (#565).
+- A field holding markup was read three ways: entities and relationships
+  stored its dict as text (`<description><p>one</p></description>` became
+  `{'p': 'one'}`, `<name lang="en">Beta</name>` a name of that dict), the
+  claim reader took a one-child dict's text, and community reports stored a
+  repeated `<summary>` of a finding as the list's repr. One rule
+  (`coerce_llm_text`) reads every field now: the element's own text, else
+  its children's text, attributes and comments dropped, a repeated
+  description-like field joined (#565).
+- The gleaning prompt listed the unit's entities by name only and named no
+  type: gleaned entities and relationships were typed without the declared
+  entity types or the schema's relationship types, and every gleaned
+  entity took confidence 1.0 (the
+  top) and every gleaned relationship weight 1.0 (the bottom of the 1-10
+  strength scale), as the prompt asked for no score. It now lists each
+  entity with its type (`Acme (ORGANIZATION)`), gives the extraction
+  prompt's entity and relationship type blocks, and asks for
+  `<confidence>` and `<strength>` on extraction's scales, which the
+  gleaner already read; a score left out takes extraction's default
+  (*Upgrading*) (#565).
+- The `intelligent` chunker asked the model for the boundaries of a
+  pre-chunk of one line (text without line breaks, common in extracted
+  PDF and CJK text), which has no line to cut at: the call answered no cut
+  or lines that do not exist, and the second case counted as a failed call
+  in `llm_processing_failures` (a 40,000-character line: one call, one
+  "failure", ten size-split chunks). Such a pre-chunk is now split by size
+  without a call, counted in `fallback_chunks_used` only, so
+  `llm_failure_rate` counts failed calls (*Upgrading*) (#565).
 
 Evaluation, visualization and tuning.
 - A re-judge (`--from-results`, `--baseline-results`) with no
@@ -1977,7 +2058,11 @@ Deployment (CDK).
 - CLI output escapes the data it prints, and `run-rag` strips terminal
   control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its
-  delimiter tags (#179, #182).
+  delimiter tags (#179, #182). The community report's claim block was
+  open: its `<claim_data>` tags are part of the value, which the chain's
+  neutralising does not cover, so a claim's text could close the block
+  and write instructions after it. Each claim line is neutralised for its
+  block now (#565).
 - Importing the package no longer loads a `.env` file; the CLIs read only
   `./.env` and never override the environment (#224).
 - ragas sends no usage telemetry unless `RAGAS_DO_NOT_TRACK=false` (#361).

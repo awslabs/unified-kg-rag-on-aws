@@ -377,7 +377,7 @@ def test_quality_validator_counts_in_the_configured_unit() -> None:
 
 def test_intelligent_chunker_measures_in_tokens() -> None:
     chunker = _intelligent(_config(_TOKEN_SIZES))
-    dense = "가" * 600  # 600 tokens: >= 2 * min (250), so worth a model call
+    dense = "가" * 300 + "\n" + "가" * 300  # 600 tokens: >= 2 * min (250)
     latin = "word " * 120  # 600 characters, 120 tokens: below 2 * min
     assert chunker._needs_llm(dense)
     assert not chunker._needs_llm(latin)

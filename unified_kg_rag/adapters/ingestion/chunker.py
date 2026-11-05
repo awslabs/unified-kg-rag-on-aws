@@ -142,10 +142,7 @@ class ChunkingStats(BaseModel):
         }
 
     def add_num_chunk_chars(self, num_chunk_chars: int) -> None:
-        if hasattr(self, "__dict__") and "num_chunk_chars" in self.__dict__:
-            self.__dict__["num_chunk_chars"].append(num_chunk_chars)
-        else:
-            self.num_chunk_chars.append(num_chunk_chars)
+        self.num_chunk_chars.append(num_chunk_chars)
 
 
 class ChunkQualityValidator:
@@ -362,13 +359,11 @@ class ChunkProcessor:
         self,
         min_chunk_size: int,
         max_chunk_size: int,
-        fallback_splitter: RecursiveCharacterTextSplitter | None = None,
         chunk_overlap: int = 0,
         length_function: Callable[[str], int] = len,
     ):
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
-        self.fallback_splitter = fallback_splitter
         self.chunk_overlap = chunk_overlap
         self.length_function = length_function
 
@@ -508,7 +503,6 @@ class BaseChunker(ABC):
         self.chunk_processor = ChunkProcessor(
             self.chunking_config.min_chunk_size,
             self.chunking_config.max_chunk_size,
-            fallback_splitter=self.fallback_splitter,
             chunk_overlap=max_chars(
                 self.chunking_config.chunk_overlap, self.length_unit
             ),
@@ -882,8 +876,13 @@ class IntelligentTextChunker(BaseChunker):
         Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
         least one piece under min_chunk_size, and merge_small_chunks folds it
         back, so the result is the pre-chunk itself (unless it is oversized
-        and must be split anyway).
+        and must be split anyway). A pre-chunk of fewer than two non-blank
+        lines has no line to cut at: the model can only answer no cut, or
+        lines that do not exist (a fallback), so it is split by size without
+        a call (``_process_pre_chunks``), and not counted as a failed call.
         """
+        if sum(1 for line in pre_chunk.split("\n") if line.strip()) < 2:
+            return False
         processor = self.chunk_processor
         size = self.length_function(pre_chunk)
         return size >= 2 * processor.min_chunk_size or size > processor.max_chunk_size
@@ -1025,7 +1024,20 @@ class IntelligentTextChunker(BaseChunker):
         final_chunks: list[tuple[str, str, int]] = []
         for i, pre_chunk in enumerate(pre_chunks):
             if i not in responses:
-                final_chunks.append(("unsplit", pre_chunk, i + 1))
+                # Not asked (_needs_llm). An oversized one has a single line:
+                # it is split by size, as a failed call's is, but no call
+                # failed.
+                if (
+                    self.length_function(pre_chunk)
+                    > self.chunking_config.max_chunk_size
+                ):
+                    pieces = self._create_fallback_chunks(pre_chunk)
+                    self.stats.fallback_chunks_used = (
+                        self.stats.fallback_chunks_used or 0
+                    ) + len(pieces)
+                    final_chunks.extend(("fallback", piece, i + 1) for piece in pieces)
+                else:
+                    final_chunks.append(("unsplit", pre_chunk, i + 1))
                 continue
             chunks = self._get_chunks_from_response(pre_chunk, responses[i])
             if chunks:

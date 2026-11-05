@@ -701,7 +701,7 @@ class TestIntelligentChunkerPipeline:
     ) -> None:
         # LLM returns None -> fallback chunks are used.
         intelligent_chunker.chunker.invoke = mocker.Mock(return_value=None)
-        text = "alpha beta gamma delta epsilon zeta eta theta"
+        text = "alpha beta gamma delta\nepsilon zeta eta theta"
         units = intelligent_chunker._chunk_single_document(_doc(text))
         assert len(units) >= 1
         assert all(u.attributes["chunking_method"] == "fallback" for u in units)
@@ -720,9 +720,37 @@ class TestIntelligentChunkerPipeline:
         intelligent_chunker.batch_processor = fake_bp
         # Long enough (>= 2 * min_chunk_size) to be sent to the LLM.
         out = intelligent_chunker._process_pre_chunks(
-            ["pre one " * 5, "pre two " * 5], "f.txt"
+            ["pre one\n" * 5, "pre two\n" * 5], "f.txt"
         )
         assert all(method == "fallback" for method, _, _ in out)
+
+    def test_a_single_line_pre_chunk_skips_the_llm(
+        self, intelligent_chunker, mocker
+    ) -> None:
+        # It has no line to cut at: the call was spent on "no cut" or on
+        # lines that do not exist, counted as a failed call.
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            side_effect=AssertionError("LLM must not be called")
+        )
+        line = "pre one " * 5
+        out = intelligent_chunker._process_pre_chunks([line, f"{line}\n  \n"], "f.txt")
+        assert out == [("unsplit", line, 1), ("unsplit", f"{line}\n  \n", 2)]
+        assert intelligent_chunker.stats.llm_processing_failures is None
+
+    def test_an_oversized_single_line_is_split_by_size_without_a_failure(
+        self, intelligent_chunker, mocker
+    ) -> None:
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            side_effect=AssertionError("LLM must not be called")
+        )
+        size = intelligent_chunker.chunking_config.max_chunk_size
+        line = "word " * size  # one line, five times the limit
+        out = intelligent_chunker._process_pre_chunks([line], "f.txt")
+        assert len(out) > 1 and {method for method, _, _ in out} == {"fallback"}
+        assert all(len(text) <= size for _, text, _ in out)
+        stats = intelligent_chunker.stats
+        assert stats.fallback_chunks_used == len(out)
+        assert stats.llm_processing_failures is None and stats.llm_failure_rate == 0
 
     def test_short_pre_chunk_skips_the_llm(self, intelligent_chunker, mocker) -> None:
         # Under 2 * min_chunk_size any split would be merged back into one

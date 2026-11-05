@@ -32,7 +32,7 @@ class _FakeChain:
     def __init__(self, transform=None) -> None:
         # transform maps an input dict -> output string.
         self.transform = transform or (
-            lambda inp: f"[{inp['target_language'].value}] {inp['text']}"
+            lambda inp: f"[{inp['target_language']}] {inp['text']}"
         )
         self.calls: list[dict] = []
 
@@ -77,9 +77,23 @@ class TestCreateChainInputs:
     def test_pairs_text_with_target_language(self) -> None:
         inputs = TextUnitTranslator._create_chain_inputs(["a", "b"], LanguageCode.KO)
         assert inputs == [
-            {"text": "a", "target_language": LanguageCode.KO},
-            {"text": "b", "target_language": LanguageCode.KO},
+            {"text": "a", "target_language": "Korean"},
+            {"text": "b", "target_language": "Korean"},
         ]
+
+    def test_the_prompt_names_the_language(self) -> None:
+        # A LanguageCode formats as "LanguageCode.KO" in the template.
+        from langchain_core.prompts import ChatPromptTemplate
+
+        from unified_kg_rag.domain.prompts import TextTranslationPrompt
+
+        (inputs,) = TextUnitTranslator._create_chain_inputs(["a"], LanguageCode.KO)
+        template = ChatPromptTemplate.from_messages(
+            [("human", TextTranslationPrompt.human_prompt_template)]
+        )
+        (message,) = template.format_messages(**inputs)
+        assert "Translate the following text to Korean" in message.content
+        assert "LanguageCode" not in message.content
 
     def test_empty_texts_yields_empty(self) -> None:
         assert TextUnitTranslator._create_chain_inputs([], LanguageCode.EN) == []
@@ -145,8 +159,8 @@ class TestTranslateTextUnits:
         units = _units()
         out = tr.translate_text_units(units)
         assert out is units
-        assert units[0].translated_texts == {"ko": "[ko] Hello world"}
-        assert units[1].translated_texts == {"ko": "[ko] Goodbye world"}
+        assert units[0].translated_texts == {"ko": "[Korean] Hello world"}
+        assert units[1].translated_texts == {"ko": "[Korean] Goodbye world"}
         # One language -> one call per text.
         assert sorted(i["text"] for i in fake.calls) == ["Goodbye world", "Hello world"]
 
@@ -160,7 +174,7 @@ class TestTranslateTextUnits:
         tr.translate_text_units(units)
         # All three languages applied to each unit.
         assert set(units[0].translated_texts) == {"en", "ko", "ja"}
-        assert units[0].translated_texts["ja"] == "[ja] Hello world"
+        assert units[0].translated_texts["ja"] == "[Japanese] Hello world"
         # The source language (en) keeps the text without a model call; one
         # call per unit and other language.
         assert units[0].translated_texts["en"] == "Hello world"
@@ -241,13 +255,13 @@ class TestTranslateTextUnits:
 
     def test_own_failures_of_every_language_are_kept(self, mocker) -> None:
         # Each language's own failures add to the earlier languages'.
-        failing = {("Hello world", "ko"), ("Goodbye world", "ja")}
+        failing = {("Hello world", "Korean"), ("Goodbye world", "Japanese")}
         tr, _ = _make_translator(
             mocker,
             target=LanguageCode.KO,
             additional=[LanguageCode.JA],
             transform=lambda inp: (
-                "" if (inp["text"], inp["target_language"].value) in failing else "ok"
+                "" if (inp["text"], inp["target_language"]) in failing else "ok"
             ),
         )
         tr.translate_text_units(_units())

@@ -380,6 +380,28 @@ class EntityResolver(BaseResolver):
 
         return min(support, key=key)
 
+    @staticmethod
+    def _merged_type(entities: list[Entity], primary: Entity) -> str | None:
+        """The type of the entity merged from ``entities``: the canonical-name
+        member's, unless it is unknown (none, blank, "unknown").
+
+        Then the known type cited by the most text units among the members
+        documents state (seed members' only when no document gives one; ties:
+        the smallest type). An endpoint named only in a relationship (a stub
+        without a type) would otherwise give the merge no type whenever its
+        spelling wins the name.
+        """
+        if normalize_entity_type(primary.type):
+            return primary.type
+        for members in (document_first(entities), entities):
+            support: dict[str, set[str]] = defaultdict(set)
+            for entity in members:
+                if entity.type and normalize_entity_type(entity.type):
+                    support[entity.type].update(entity.text_unit_ids or ())
+            if support:
+                return min(support, key=lambda t: (-len(support[t]), t))
+        return primary.type
+
     def _merge_entities(self, entities: list[Entity]) -> Entity:
         if len(entities) == 1:
             return entities[0]
@@ -405,7 +427,7 @@ class EntityResolver(BaseResolver):
             short_id=primary_entity.short_id,
             name=canonical_name,
             name_embedding=primary_entity.name_embedding,
-            type=primary_entity.type,
+            type=self._merged_type(entities, primary_entity),
             description=self._merge_descriptions(
                 [e.description for e in entities if e.description]
             ),

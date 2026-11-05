@@ -749,16 +749,42 @@ class TestRobustXMLOutputParser:
     def test_extract_tags_fallback_none_when_empty(self) -> None:
         assert RobustXMLOutputParser._extract_tags_fallback("no tags") is None
 
-    def test_extract_list_fallback_bullets(self) -> None:
-        out = RobustXMLOutputParser._extract_list_fallback("- one\n- two\n- three")
-        assert out == {"items": ["one", "two", "three"]}
+    def test_a_bulleted_answer_does_not_parse(self) -> None:
+        # It parsed as {"items": [...]}, which no caller reads, so the fixer
+        # never ran and the unit failed after its retries.
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        with pytest.raises(OutputParserException, match="Failed to parse XML"):
+            parser.parse("Nothing to extract:\n- a list of numbers\n- no entities")
 
-    def test_extract_list_fallback_numbered(self) -> None:
-        out = RobustXMLOutputParser._extract_list_fallback("1. alpha\n2. beta")
-        assert out == {"items": ["alpha", "beta"]}
+    def test_one_element_wrapping_the_sections_is_unwrapped(self) -> None:
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        out = parser.parse(
+            "<output>\n<entities><entity><name>Acme</name></entity></entities>\n"
+            "<relationships></relationships>\n</output>"
+        )
+        assert out == {"entities": {"entity": {"name": "Acme"}}, "relationships": {}}
 
-    def test_extract_list_fallback_none(self) -> None:
-        assert RobustXMLOutputParser._extract_list_fallback("nothing here") is None
+    def test_two_elements_wrapping_sections_are_not_unwrapped(self) -> None:
+        parser = RobustXMLOutputParser(tags=["claims"])
+        out = parser.parse("<a><claims>x</claims></a>\n<b><claims>y</claims></b>")
+        assert set(out) == {"a", "b"}
+
+    @pytest.mark.parametrize("none", ["None", "none.", " N/A ", "null", "-"])
+    def test_a_section_saying_none_is_empty(self, none: str) -> None:
+        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+        out = parser.parse(
+            "<entities><entity><name>Acme</name></entity></entities>\n"
+            f"<relationships>{none}</relationships>"
+        )
+        # The entities beside it are kept.
+        assert out == {"entities": {"entity": {"name": "Acme"}}, "relationships": {}}
+
+    def test_a_section_holding_other_text_is_kept(self) -> None:
+        # A text section is an answer for some prompts (a report's <summary>).
+        parser = RobustXMLOutputParser(tags=["summary"])
+        assert parser.parse("<summary>None of them</summary>") == {
+            "summary": "None of them"
+        }
 
     def test_clean_xml_strips_control_chars(self) -> None:
         out = RobustXMLOutputParser._clean_xml_for_lxml("a\x00b\x07c")
@@ -776,9 +802,9 @@ class TestRobustXMLOutputParser:
         assert out["root"]["@id"] == "7"
 
     def test_all_methods_exhausted_raises(self) -> None:
-        # Plain prose with no recoverable tag/bullet/number structure: every
-        # recovery method (lxml recover, xml/tags/list fallbacks) fails or
-        # returns None, so the ladder exhausts and raises.
+        # Plain prose with no recoverable tag structure: every recovery
+        # method (lxml recover, xml/tags fallbacks) fails or returns None, so
+        # the ladder exhausts and raises.
         parser = RobustXMLOutputParser()
         with pytest.raises(OutputParserException, match="Failed to parse XML"):
             parser.parse("this is just prose with no structure at all")

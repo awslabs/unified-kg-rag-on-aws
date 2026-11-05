@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
+    coerce_llm_text,
     edge_weight,
     merge_attributes,
 )
@@ -46,12 +47,16 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
+from unified_kg_rag.domain.prompts.delimiters import neutralise_delimiters
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
+
+# The tag of the report prompt's claim block (``_claims_section``).
+_CLAIM_DATA_TAGS = frozenset({"claim_data"})
 
 
 class ReportRecords(Protocol):
@@ -1702,7 +1707,12 @@ class CommunityDetector:
         of a run without claims is the one before claims were packed."""
         if not claims:
             return ""
-        lines = "\n".join(cls._format_claim_line(claim) for claim in claims)
+        # The chain neutralises the template's delimiters in every value, but
+        # this block's tag is in the value: a claim must not close it either.
+        lines = "\n".join(
+            neutralise_delimiters(cls._format_claim_line(claim), _CLAIM_DATA_TAGS)
+            for claim in claims
+        )
         return (
             "\n## CLAIM DATA:\n<claim_data>\n"
             f"{lines}\n</claim_data>\n"
@@ -1743,16 +1753,17 @@ class CommunityDetector:
         ``generated_at`` (now by default; a reused answer's own time)."""
         report_config = self.community_detection_config.report_generation
 
-        name = self._extract_text_from_result(result.get("community_name", ""))
-        summary = self._extract_text_from_result(
+        name = coerce_llm_text(result.get("community_name"))
+        summary = coerce_llm_text(
             result.get(
                 "summary", f"No summary generated for community {community.name}."
-            )
+            ),
+            join=True,
         )
         findings = self._extract_findings(result)
         rating = self._extract_rating(result)
-        rating_explanation = self._extract_text_from_result(
-            result.get("rating_explanation", "")
+        rating_explanation = coerce_llm_text(
+            result.get("rating_explanation"), join=True
         )
 
         report_id = generate_stable_id(f"report:{community.id}")
@@ -1800,22 +1811,10 @@ class CommunityDetector:
         )
         return report
 
-    @staticmethod
-    def _extract_text_from_result(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, dict):
-            if not value:  # an empty element (<summary></summary>)
-                return ""
-            if "#text" in value:
-                return str(value["#text"])
-            return str(value)
-        return str(value)
-
     @classmethod
     def _extract_rating(cls, result: dict[str, Any]) -> float:
         """Parse the 0-10 importance rating, tolerating noisy LLM output."""
-        raw = cls._extract_text_from_result(result.get("rating", "")).strip()
+        raw = coerce_llm_text(result.get("rating"))
         if not raw:
             return 0.0
         match = re.search(r"-?\d+(?:\.\d+)?", raw)
@@ -1847,12 +1846,10 @@ class CommunityDetector:
         findings: list[CommunityFinding] = []
         for item in raw_findings:
             if isinstance(item, dict):
-                summary = cls._extract_text_from_result(item.get("summary", "")).strip()
-                explanation = cls._extract_text_from_result(
-                    item.get("explanation", "")
-                ).strip()
+                summary = coerce_llm_text(item.get("summary"), join=True)
+                explanation = coerce_llm_text(item.get("explanation"), join=True)
             else:
-                summary = cls._extract_text_from_result(item).strip()
+                summary = coerce_llm_text(item, join=True)
                 explanation = ""
             if summary or explanation:
                 findings.append(

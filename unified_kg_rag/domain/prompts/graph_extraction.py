@@ -500,6 +500,8 @@ class GraphRefinementPrompt(BasePrompt):
         "text",
         "entities",
         "relationships",
+        "entity_types",
+        "relationship_types",
         "target_language",
     ]
 
@@ -508,6 +510,11 @@ class GraphRefinementPrompt(BasePrompt):
         # The issues fill in one chunk's graph, which the extraction caps bound:
         # same arithmetic as GraphExtractionPrompt (23192 by default).
         return graph_output_floor(config)
+
+    @classmethod
+    def config_variables(cls, config: "Config") -> dict[str, str]:
+        """The type blocks, rendered from ``config`` as for extraction."""
+        return GraphExtractionPrompt.config_variables(config)
 
     system_prompt_template = """You are an expert knowledge graph refinement specialist. Analyze existing extractions
 against source text and identify specific, high-impact improvements.
@@ -553,6 +560,23 @@ specified.
 - Existing relationships with incorrect types or directions
 - Only for clear factual errors
 
+# TYPES
+
+Type every new or corrected entity and relationship as the extraction does.
+
+## Entity Types:
+{entity_types}
+
+{relationship_types}
+
+# SCORES
+
+Score a new entity's <confidence> and a new relationship's <strength> on the extraction's 1-10 scales:
+- **Confidence**: 9-10 explicitly named and clearly defined in the text; 5-6 requires inference from context; 1-2 weakly
+  implied
+- **Strength**: 9-10 direct dependencies, ownership, core operations; 5-6 clear functional relationships; 1-2 weak
+  associations
+
 # OUTPUT FORMAT (MANDATORY - use exact structure for EACH issue type)
 
 <refinement_plan>
@@ -567,6 +591,7 @@ specified.
                 <name>[Entity name]</name>
                 <type>[Entity type]</type>
                 <description>[Entity description]</description>
+                <confidence>[1-10]</confidence>
             </details>
             <text_evidence>[Exact quote from source text]</text_evidence>
         </issue>
@@ -578,6 +603,7 @@ specified.
                 <target>[Target entity name]</target>
                 <type>[Relationship type]</type>
                 <description>[Relationship description]</description>
+                <strength>[1-10]</strength>
             </details>
             <text_evidence>[Exact quote from source text]</text_evidence>
         </issue>
@@ -585,7 +611,7 @@ specified.
         <issue>
             <issue_type>ENTITY_CORRECTION</issue_type>
             <details>
-                <name>[Existing entity name, exactly as it appears in CURRENT ENTITIES]</name>
+                <name>[Existing entity name, exactly as it appears in CURRENT ENTITIES, without its type]</name>
                 <corrected_name>[Corrected name, or repeat <name> when only the type is wrong]</corrected_name>
                 <corrected_type>[Corrected entity type]</corrected_type>
                 <description>[Corrected description; omit to keep the existing one]</description>

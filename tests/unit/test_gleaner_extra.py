@@ -41,6 +41,8 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.prompts import GraphRefinementPrompt
+from unified_kg_rag.domain.prompts.graph_extraction import DEFAULT_RELATIONSHIP_TYPES
 
 pytestmark = pytest.mark.unit
 
@@ -142,6 +144,7 @@ class TestPrepareInputTask:
         return {
             "max_entities_per_prompt": 10,
             "max_relationships_per_prompt": 10,
+            **GraphRefinementPrompt.config_variables(Config()),
             "target_language": "en",
         }
 
@@ -150,7 +153,7 @@ class TestPrepareInputTask:
         # stub), and its relationships; nothing only another unit states.
         unit = TextUnit(id="t1", text="hello")
         ents = [
-            _ent("e1", "Alice", text_unit_ids=["t1"]),
+            _ent("e1", "Alice", type="PERSON", text_unit_ids=["t1"]),
             _ent("e3", "Carol", text_unit_ids=["other"]),
         ]
         rels = [
@@ -173,26 +176,82 @@ class TestPrepareInputTask:
         ]
         record = _record(unit.id, ents, rels)
         out = prepare_input(
-            unit, unit_entities(record), record.relationships, self._config()
+            unit.text, unit_entities(record), record.relationships, self._config()
         )
         assert out["text"] == "hello"
-        assert out["entities"].splitlines() == ["Alice", "Bob"]
+        # With its type, as the relationships are listed (Bob has none).
+        assert out["entities"].splitlines() == ["Alice (PERSON)", "Bob"]
         assert out["relationships"] == "'Alice' -> 'Bob' (type: 'REL')"
 
-    def test_uses_translated_text_when_available(self) -> None:
-        unit = TextUnit(id="t1", text="orig", translated_texts={"en": "translated"})
-        out = prepare_input(unit, [], [], self._config())
-        assert out["text"] == "translated"
-
-    def test_translated_text_missing_target_falls_back_to_text(self) -> None:
-        unit = TextUnit(id="t1", text="orig", translated_texts={"fr": "bonjour"})
-        out = prepare_input(unit, [], [], self._config())
-        assert out["text"] == "orig"
+    def test_the_prompt_lists_the_types_extraction_uses(self) -> None:
+        config = Config()
+        config.processing.graph_extraction.entity_types = ["VENDOR: a supplier"]
+        variables = GraphRefinementPrompt.config_variables(config)
+        out = prepare_input("t", [], [], {**self._config(), **variables})
+        assert out["entity_types"] == "- **VENDOR**: a supplier"
+        assert out["relationship_types"] == DEFAULT_RELATIONSHIP_TYPES
+        system = GraphRefinementPrompt.resolve().system_prompt_template.format(**out)
+        assert "- **VENDOR**: a supplier" in system
+        assert DEFAULT_RELATIONSHIP_TYPES in system
+        # Scored on the extraction's scales, not left at the defaults.
+        assert "<confidence>[1-10]</confidence>" in system
+        assert "<strength>[1-10]</strength>" in system
 
     def test_passes_target_language_for_descriptions(self) -> None:
-        unit = TextUnit(id="t1", text="orig")
         config = {**self._config(), "target_language": "ko"}
-        assert prepare_input(unit, [], [], config)["target_language"] == "ko"
+        assert prepare_input("t", [], [], config)["target_language"] == "ko"
+
+
+def test_a_round_asks_with_the_extraction_text_types_and_scores() -> None:
+    from unittest.mock import MagicMock
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+
+    answer = (
+        "<refinement_plan><identified_issues>"
+        "<issue><issue_type>MISSING_ENTITY</issue_type><details><name>Depot</name>"
+        "<type>LOCATION</type><description>a depot</description>"
+        "<confidence>6</confidence></details>"
+        "<text_evidence>Depot stores widgets</text_evidence></issue>"
+        "<issue><issue_type>MISSING_RELATIONSHIP</issue_type><details>"
+        "<source>Vendor</source><target>Depot</target><type>USES</type>"
+        "<description>d</description><strength>8</strength></details>"
+        "<text_evidence>Depot stores widgets for Vendor</text_evidence></issue>"
+        "</identified_issues></refinement_plan>"
+    )
+    prompts: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        prompts.append(human)
+        return answer
+
+    config = Config()
+    config.processing.gleaning.max_rounds = 1
+    gleaner = GraphGleaner(
+        config,
+        show_progress=False,
+        providers=Providers(
+            config, boto_session=MagicMock(), llm_factory=ScriptedLLMFactory(respond)
+        ),
+    )
+    unit = TextUnit(
+        id="t1",
+        text="original",
+        translated_texts={
+            "en": "Vendor supplies widgets. Depot stores widgets for Vendor."
+        },
+    )
+    vendor = Entity(id="v", name="Vendor", type="ORGANIZATION", text_unit_ids=["t1"])
+    (record,), _ = gleaner.glean([unit], [_record("t1", [vendor], [])])
+
+    (human,) = prompts
+    assert "Depot stores widgets for Vendor" in human and "original" not in human
+    assert "Vendor (ORGANIZATION)" in human
+    depot = next(e for e in record.entities if e.name == "Depot")
+    (edge,) = record.relationships
+    # Gleaned items took 1.0 whatever the evidence; extraction's scales now.
+    assert (depot.confidence, edge.weight) == (0.6, 8.0)
 
 
 # --------------------------------------------------------------------------- #

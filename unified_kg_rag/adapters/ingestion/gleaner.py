@@ -4,13 +4,19 @@ import time
 from datetime import datetime
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.adapters.llm.langchain import (
+    BATCH_ITEM_FAILED,
+    BatchProcessor,
+    RobustXMLOutputParser,
+    output_excerpt,
+)
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
     item_failed_indices,
@@ -72,36 +78,63 @@ def format_relationships_with_limit_task(
         f"'{r.source_name}' -> '{r.target_name}' (type: '{r.type}')"
         for r in selected_relationships
     )
-    if len(relationships) > max_relationships:
-        rel_list += (
-            f"\n... and {len(relationships) - max_relationships} more relationships"
-        )
+    rel_list += f"\n... and {len(relationships) - max_relationships} more relationships"
     return rel_list
 
 
 def prepare_input(
-    unit: TextUnit,
+    text: str,
     unit_entities: list[Entity],
     unit_relationships: list[Relationship],
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    """The refinement prompt's input for ``unit`` and the graph it cites."""
-    target_language = config.get("target_language", "en")
-    if unit.translated_texts:
-        unit_text = unit.translated_texts.get(target_language, unit.text or "")
-    else:
-        unit_text = unit.text or ""
+    """The refinement prompt's input for a unit's ``text`` (the one
+    extraction read, ``get_text_for_processing``) and the graph it cites.
 
+    ``config`` holds the prompt limits and the variables the same for every
+    unit (the type blocks and the target language)."""
     return {
-        "text": unit_text,
+        "text": text,
         "entities": format_entities_with_limit_task(
-            unit_entities, config["max_entities_per_prompt"]
+            unit_entities, config["max_entities_per_prompt"], typed=True
         ),
         "relationships": format_relationships_with_limit_task(
             unit_relationships, config["max_relationships_per_prompt"]
         ),
-        "target_language": target_language,
+        "entity_types": config["entity_types"],
+        "relationship_types": config["relationship_types"],
+        "target_language": config["target_language"],
     }
+
+
+class RefinementOutputParser(RobustXMLOutputParser):
+    """The gleaning parser: the answer must be a ``<refinement_plan>``.
+
+    A plan written without its root (its ``<identified_issues>`` at the top
+    level) is read as the plan. Any other answer without the root (prose, a
+    list), or a root holding text, raises ``OutputParserException``, so the
+    output fixer repairs it, as it repairs output that does not parse; it
+    was read as a plan with no issue, and the unit marked gleaned for good.
+    A root holding only "None" is a plan with no issue.
+    """
+
+    def parse(self, text: str) -> dict[str, Any]:
+        result = super().parse(text)
+        if "refinement_plan" not in result:
+            result = {"refinement_plan": result}
+        return result
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        if (
+            isinstance(result, dict)
+            and not isinstance(result.get("refinement_plan"), str)
+            and ("refinement_plan" in result or "identified_issues" in result)
+        ):
+            return
+        logger.debug("Refinement output that failed: '%s'", output_excerpt(text))
+        raise OutputParserException(
+            "the refinement output is not a <refinement_plan>", llm_output=text
+        )
 
 
 def _name_key(value: Any) -> str | None:
@@ -240,6 +273,7 @@ class GraphGleaner(BaseProcessor):
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             min_output_tokens=GraphRefinementPrompt.output_floor(self.config),
             output_tags=["refinement_plan"],
+            parser_class=RefinementOutputParser,
         )
         self.graph_refiner = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -370,6 +404,8 @@ class GraphGleaner(BaseProcessor):
         config_for_task = {
             "max_entities_per_prompt": self.max_entities_per_prompt,
             "max_relationships_per_prompt": self.max_relationships_per_prompt,
+            # The entity and relationship type blocks, as extraction's.
+            **GraphRefinementPrompt.config_variables(self.config),
             "target_language": self.config.processing.translation.target_language.value,
         }
         unit_to_input: dict[str, Any] = {}
@@ -377,7 +413,7 @@ class GraphGleaner(BaseProcessor):
             record = by_unit[unit.id]
             try:
                 unit_to_input[unit.id] = prepare_input(
-                    unit,
+                    self.get_text_for_processing(unit),
                     unit_entities(record),
                     record.relationships,
                     config_for_task,
@@ -422,7 +458,10 @@ class GraphGleaner(BaseProcessor):
                 "Graph refinement",
                 self.batch_processor,
                 lambda units: [
-                    prepare_input(unit, [], [], config_for_task) for unit in units
+                    prepare_input(
+                        self.get_text_for_processing(unit), [], [], config_for_task
+                    )
+                    for unit in units
                 ],
                 self.graph_refiner.invoke,
             )
@@ -982,7 +1021,8 @@ class GraphGleaner(BaseProcessor):
         by its new name); the type and
         description of an entity the unit names only inside a relationship
         are not the unit's to correct (it states none). The prompt lists
-        entity names only, so the model never sees the current description:
+        entity names and types only, so the model never sees the current
+        description:
         a proposed one is merged into it rather than replacing it.
 
         Returns:

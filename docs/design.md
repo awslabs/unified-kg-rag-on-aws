@@ -394,7 +394,10 @@ gets its models and stores from the run's `Providers` bundle.
   entity keys rejected for it. Gleaning edits one record at a time: its
   prompt lists the unit's own items, and a correction never reaches what
   another unit says (MS GraphRAG and LightRAG likewise glean each chunk's own
-  extraction).
+  extraction). It lists the entities with their types and gives the
+  extraction prompt's entity and relationship type blocks and its 1-10
+  confidence and strength scales, so a gleaned item is typed and scored as
+  an extracted one (a missing score takes extraction's default too).
 - **Resolution starts from the merge of all records**
   (`domain/ingestion/contributions.merge_contributions`: items merged by id,
   weights kept per unit), so the merged graph does not depend on which units
@@ -656,7 +659,13 @@ gets its models and stores from the run's `Providers` bundle.
   its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
   is not its item's, which was retried or failed meanwhile.
 - **Output fixing.** Structured outputs are parsed with a
-  `FixingConfig`-based output-fixing parser.
+  `FixingConfig`-based output-fixing parser. The XML parser unwraps one
+  element wrapping the expected sections and reads a section holding only
+  "None" (or "N/A", "null", "-") as empty; the extraction, claims and
+  gleaning parsers raise `OutputParserException` for any other answer that
+  parses but is not the prompt's shape (no section, a section holding
+  prose, nameless entities in a complete answer), so the fixer repairs it
+  as it repairs output that does not parse.
 - **Resources.** The pipeline releases indexer and client resources in
   `close()`, which `run-ingestion` calls in `finally` (§8.2).
 
@@ -719,7 +728,8 @@ of the documents plus the configured seeds. No model reads a seed.
   on `is_seed_unit` (`document_first`): the type vote counts document
   statements and falls back to seed votes only when none gives a type;
   a resolved group's name is keyed `(-document units, -seed units,
-  name)`; confidence is the maximum over document statements when any
+  name)`, and its type is the named member's unless that is unknown
+  (none, blank, `unknown`), then the known type the most units cite; confidence is the maximum over document statements when any
   exist. Descriptions stay a union, document lines first because records
   merge in unit-id order. `Entity.iri` is a stated field, kept in
   records, merged as the smallest non-null value (groups with several

@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     Relationship,
+    language_name,
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
@@ -221,7 +222,10 @@ class DescriptionSummarizer:
         self.summarization_config: DescriptionSummarizationConfig = (
             self.config.processing.graph_extraction.description_summarization
         )
-        self.target_language = self.config.processing.translation.target_language.value
+        # Named in the prompt ("Write the summary in Korean"), not by code.
+        self.target_language = language_name(
+            self.config.processing.translation.target_language
+        )
         # Recorded on each summary it makes (SUMMARIZED_WITH_ATTRIBUTE).
         self.settings = description_summary_fingerprint(self.config)
         self.providers = Providers.resolve(config, providers)

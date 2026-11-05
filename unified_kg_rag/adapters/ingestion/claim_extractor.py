@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -302,44 +303,19 @@ class ClaimExtractor(BaseProcessor):
                 claims.append(claim)
         return claims
 
-    @staticmethod
-    def _get_string_value(data: Any, *, join: bool = False) -> str:
-        """Coerce an XML-parsed claim field to one stripped string.
-
-        A repeated tag arrives as a list; like ``coerce_llm_text`` (#124),
-        identity fields take the first non-empty element and ``join=True``
-        (description-like fields) keeps every distinct element, newline-joined,
-        instead of stringifying the list (``"['A', 'B']"``).
-        """
-        if isinstance(data, dict):
-            if not data:  # an empty element (<object></object>)
-                return ""
-            if "#text" in data:
-                return str(data["#text"]).strip()
-            if len(data.values()) == 1:
-                return ClaimExtractor._get_string_value(
-                    list(data.values())[0], join=join
-                )
-            return str(data)
-        if isinstance(data, list):
-            return coerce_llm_text(
-                [ClaimExtractor._get_string_value(item) for item in data], join=join
-            )
-        return coerce_llm_text(data)
-
     def _parse_claim_data(
         self, claim_data: dict[str, Any], text_unit: TextUnit
     ) -> Claim | None:
         try:
-            subject_name = self._get_string_value(claim_data.get("subject"))
-            object_name = self._get_string_value(claim_data.get("object"))
-            claim_type = self._get_string_value(claim_data.get("claim_type"))
+            subject_name = coerce_llm_text(claim_data.get("subject"))
+            object_name = coerce_llm_text(claim_data.get("object"))
+            claim_type = coerce_llm_text(claim_data.get("claim_type"))
 
             if not all([subject_name, object_name, claim_type]):
                 return None
 
-            start_date = self._get_string_value(claim_data.get("start_date"))
-            end_date = self._get_string_value(claim_data.get("end_date"))
+            start_date = coerce_llm_text(claim_data.get("start_date"))
+            end_date = coerce_llm_text(claim_data.get("end_date"))
             claim_id = self._generate_claim_id(
                 subject_name, object_name, claim_type, start_date, end_date
             )
@@ -353,17 +329,13 @@ class ClaimExtractor(BaseProcessor):
                 object_id="",
                 object_name=object_name,
                 type=claim_type,
-                status=self._get_string_value(claim_data.get("claim_status")),
+                status=coerce_llm_text(claim_data.get("claim_status")),
                 start_date=start_date,
                 end_date=end_date,
-                description=self._get_string_value(
-                    claim_data.get("description"), join=True
-                ),
+                description=coerce_llm_text(claim_data.get("description"), join=True),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
-                source_text=self._get_string_value(
-                    claim_data.get("source_text"), join=True
-                ),
+                source_text=coerce_llm_text(claim_data.get("source_text"), join=True),
                 attributes=attributes,
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
@@ -420,6 +392,7 @@ class ClaimExtractor(BaseProcessor):
 
 
 _CLAIM_OPENED = re.compile(r"<claim[\s>]")
+_SECTION_OPENED = re.compile(r"<claims[\s/>]")
 _CLAIM_CLOSED = re.compile(r"</claim\s*>")
 _SECTION_CLOSED = re.compile(r"</claims\s*>")
 # Set by ClaimsOutputParser on an output whose </claims> closes the section.
@@ -434,7 +407,25 @@ class ClaimsOutputParser(RobustXMLOutputParser):
     a normal stop) parses as an empty claim, so it is dropped (and an output
     of only that claim is cut-off output, :func:`_checked`) instead of
     stored with the fields before the cut: a description or source text cut
-    short, or none at all."""
+    short, or none at all.
+
+    Output that parses but has no ``<claims>`` section (prose, a list) or
+    one holding text raises ``OutputParserException``, so the output fixer
+    repairs it as it repairs output that does not parse."""
+
+    def _check_shape(self, result: dict[str, Any], text: str) -> None:
+        section = result.get("claims")
+        if "claims" in result and not isinstance(section, str):
+            return
+        logger.debug("Claim extraction output that failed: '%s'", output_excerpt(text))
+        raise OutputParserException(
+            (
+                "the claim extraction output has no claims section"
+                if "claims" not in result
+                else "the claims section of the claim extraction output holds text"
+            ),
+            llm_output=text,
+        )
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)
@@ -459,29 +450,34 @@ class ClaimsOutputParser(RobustXMLOutputParser):
 def _complete(claim: Any) -> bool:
     """Whether ``claim`` has the fields a claim needs (as ``_parse_claim_data``)."""
     return isinstance(claim, dict) and all(
-        ClaimExtractor._get_string_value(claim.get(field))
+        coerce_llm_text(claim.get(field))
         for field in ("subject", "object", "claim_type")
     )
 
 
 def _checked(result: Any) -> dict[str, Any]:
     """``result`` if it is a whole claims output, else raise
-    ``LLMOutputTruncatedError``.
+    ``LLMOutputTruncatedError`` (cut off) or ``OutputParserException``.
 
     A response cut off without a stop reason (a server-side output cap
-    reported as a normal stop) lacks the ``claims`` section, or lists claims
-    none of which is complete, and was recorded PROCESSED with no claims, so
-    the unit was never extracted again. It is counted against the document
-    as output cut at the token limit is, and not retried (the same input
-    meets the same cap). An empty ``<claims></claims>``, the answer for a
-    unit that states none, is whole, as is a section its ``</claims>``
-    closes whose claims all lack a field (they are dropped as invalid).
+    reported as a normal stop) lists claims none of which is complete, and
+    was recorded PROCESSED with no claims, so the unit was never extracted
+    again. It is counted against the document as output cut at the token
+    limit is, and not retried (the same input meets the same cap). An empty
+    ``<claims></claims>``, the answer for a unit that states none, is whole,
+    as is a section its ``</claims>`` closes whose claims all lack a field
+    (they are dropped as invalid). Output without the section is malformed
+    (``ClaimsOutputParser`` raises it first), unless it opened the section:
+    then it was cut off.
     """
     if not isinstance(result, dict) or "claims" not in result:
         _log_failed_output(result)
-        raise LLMOutputTruncatedError(
-            "the claim extraction output has no claims section (output cut off?)"
-        )
+        raw = result.get(_RAW_KEY) if isinstance(result, dict) else None
+        if isinstance(raw, str) and _SECTION_OPENED.search(raw):
+            raise LLMOutputTruncatedError(
+                "the claim extraction output has no claims section (output cut off?)"
+            )
+        raise OutputParserException("the claim extraction output has no claims section")
     listed = ensure_list(result.get("claims"), inner_key="claim")
     if (
         listed

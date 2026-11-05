@@ -87,6 +87,90 @@ def test_merge_canonical_name_tie_takes_the_smallest_name(
         assert resolver.entity_resolver._merge_entities(ordering).id == "e2"
 
 
+@pytest.mark.parametrize("unknown", [None, "", "unknown", " Unknown "])
+def test_merge_type_is_a_members_known_type_when_the_canonical_is_unknown(
+    resolver: GraphResolver, unknown: str | None
+) -> None:
+    # "Acme" is named only inside two units' relationships (a stub without a
+    # type), so its spelling wins the name; the type must not be lost.
+    entities = [
+        _ent("e1", "Acme Inc", type="organization", text_unit_ids=["t1"]),
+        _ent("e2", "Acme", type=unknown, text_unit_ids=["t2", "t3"]),
+    ]
+    merged = resolver.entity_resolver._merge_entities(entities)
+    assert (merged.name, merged.type) == ("Acme", "organization")
+
+
+def test_merge_type_votes_by_support_then_documents_then_name(
+    resolver: GraphResolver,
+) -> None:
+    def merged_type(*members: Entity) -> str | None:
+        return resolver.entity_resolver._merge_entities(list(members)).type
+
+    stub = _ent("e0", "Acme", type=None, text_unit_ids=["t1", "t2", "t3", "t4"])
+    # The type more units cite wins, whatever the order.
+    org = _ent("e1", "Acme Inc", type="organization", text_unit_ids=["t1", "t2"])
+    place = _ent("e2", "Acme Co", type="location", text_unit_ids=["t3"])
+    assert merged_type(stub, place, org) == merged_type(stub, org, place)
+    assert merged_type(stub, place, org) == "organization"
+    # A tie takes the smallest type.
+    org1 = _ent("e1", "Acme Inc", type="organization", text_unit_ids=["t1"])
+    assert merged_type(stub, org1, place) == "location"
+    # A seed statement's type fills the gap only when no document gives one.
+    seed = _ent("e3", "Acme Ltd", type="company", text_unit_ids=["sg-1", "sg-2"])
+    assert merged_type(stub, seed, org1) == "organization"
+    assert merged_type(stub, seed) == "company"
+    # No member knows it: the canonical member's own value is kept.
+    assert merged_type(stub, _ent("e4", "Acme Corp", type="unknown")) is None
+
+
+def test_resolve_graph_types_an_endpoint_stub_merged_into_a_typed_entity(
+    resolver: GraphResolver,
+) -> None:
+    from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+    from unified_kg_rag.domain.ingestion.contributions import merge_contributions
+    from unified_kg_rag.domain.models import TextUnitExtraction
+
+    def ent(name: str, unit: str) -> Entity:
+        return Entity(
+            id=BaseProcessor._generate_entity_id(name),
+            name=name,
+            type="organization",
+            text_unit_ids=[unit],
+        )
+
+    def rel(unit: str) -> Relationship:
+        return Relationship(
+            id=f"r-{unit}",
+            source_id=BaseProcessor._generate_entity_id("Acme"),
+            source_name="Acme",
+            target_id=BaseProcessor._generate_entity_id("Buyer"),
+            target_name="Buyer",
+            type="SUPPLIES",
+            text_unit_ids=[unit],
+            weight=1.0,
+        )
+
+    # t1 lists "Acme Inc"; t2 and t3 list only "Buyer" and name Acme as
+    # "Acme" in a relationship, which makes "Acme" a stub cited by two units.
+    records = [
+        TextUnitExtraction(text_unit_id="t1", entities=[ent("Acme Inc", "t1")]),
+        *(
+            TextUnitExtraction(
+                text_unit_id=unit,
+                entities=[ent("Buyer", unit)],
+                relationships=[rel(unit)],
+            )
+            for unit in ("t2", "t3")
+        ),
+    ]
+    entities, relationships = merge_contributions(records)
+    resolved, _ = resolver.resolve_graph(entities, relationships)
+
+    acme = next(e for e in resolved["entities"] if e.name == "Acme")
+    assert (acme.type, acme.text_unit_ids) == ("organization", ["t1", "t2", "t3"])
+
+
 def test_merge_single_entity_returns_input_unchanged(resolver: GraphResolver) -> None:
     e = _ent("e1", "Solo", text_unit_ids=["t1"])
     assert resolver.entity_resolver._merge_entities([e]) is e

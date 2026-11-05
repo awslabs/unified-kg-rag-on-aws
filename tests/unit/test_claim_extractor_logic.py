@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for ClaimExtractor pure logic (AWS-free).
 
-Covers _get_string_value coercion, _parse_claim_data (missing-field rejection,
+Covers _parse_claim_data (missing-field rejection,
 stable id, attributes), _parse_extraction_result (malformed/empty handling),
 and _prepare_extraction_inputs returning a dict keyed by unit id
 (the as_completed ordering fix). Bedrock/boto wiring is patched out so __init__
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 
 import unified_kg_rag.adapters.ingestion.claim_extractor as ce_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -41,26 +42,6 @@ def extractor(config: Config, mocker) -> ClaimExtractor:
 @pytest.fixture
 def text_unit() -> TextUnit:
     return TextUnit(id="t1", text="Acme acquired Beta in 2020.")
-
-
-# --------------------------------------------------------------------------- #
-# _get_string_value
-# --------------------------------------------------------------------------- #
-class TestGetStringValue:
-    def test_plain_string_stripped(self) -> None:
-        assert ClaimExtractor._get_string_value("  hello  ") == "hello"
-
-    def test_none_is_empty(self) -> None:
-        assert ClaimExtractor._get_string_value(None) == ""
-
-    def test_text_key_dict(self) -> None:
-        assert ClaimExtractor._get_string_value({"#text": " v "}) == "v"
-
-    def test_single_value_dict_recurses(self) -> None:
-        assert ClaimExtractor._get_string_value({"x": "  y "}) == "y"
-
-    def test_int_coerced(self) -> None:
-        assert ClaimExtractor._get_string_value(2020) == "2020"
 
 
 # --------------------------------------------------------------------------- #
@@ -168,10 +149,18 @@ class TestParseClaimData:
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
     @pytest.mark.parametrize("result", ["not a dict", {"other": 1}])
-    def test_output_without_a_claims_section_is_cut_off(
+    def test_output_without_a_claims_section_is_malformed(
         self, extractor, text_unit, result
     ) -> None:
-        # Regression: recorded PROCESSED with no claims, never re-extracted.
+        # Regression: recorded PROCESSED with no claims, never re-extracted;
+        # then counted as cut off, so never retried nor repaired.
+        with pytest.raises(OutputParserException, match="no claims section"):
+            extractor._parse_extraction_result(result, text_unit)
+
+    def test_output_that_opened_the_claims_section_is_cut_off(
+        self, extractor, text_unit
+    ) -> None:
+        result = {"other": 1, "#raw_output": "<claims>\n<claim><subject>Ven"}
         with pytest.raises(LLMOutputTruncatedError, match="no claims section"):
             extractor._parse_extraction_result(result, text_unit)
 

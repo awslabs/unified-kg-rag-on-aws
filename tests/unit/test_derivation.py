@@ -91,6 +91,25 @@ def test_a_removed_units_description_and_type_vote_are_gone() -> None:
     assert (derived.id, derived.text_unit_ids) == (stored.id, ["u2", "u3"])
 
 
+def test_an_endpoint_stub_that_wins_the_name_keeps_the_known_type() -> None:
+    # u1 lists "Acme Inc"; u2 and u3 name it "Acme" only in an edge, so the
+    # merged entity is named "Acme" after the stub, which has no type.
+    records = {
+        "u1": _record("u1", _entity("Acme Inc", "u1")),
+        **{
+            unit: _record(
+                unit, _entity("Buyer", unit), edges=[_edge("Acme", "Buyer", unit)]
+            )
+            for unit in ("u2", "u3")
+        },
+    }
+    stored = _stored("Acme", ["u1", "u2", "u3"], type=None)
+
+    derived = {e.name: e for e in derive(Config(), [stored], [], [], records).entities}
+
+    assert derived["Acme"].type == "org"
+
+
 def test_the_name_and_the_id_follow_the_support() -> None:
     # "Acme" was indexed first; two units now say "Acme Inc".
     records = {
