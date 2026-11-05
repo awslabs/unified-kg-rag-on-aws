@@ -1087,9 +1087,9 @@ From 0.2.3 (or a `main` checkout since):
   option until `options.prefixes` settles it, where it took the
   well-known namespace and names fell back to the local name; the
   default `name_properties` and `description_properties` are full IRIs
-  (#PR). Schema and seed sources share
+  (#579). Schema and seed sources share
   `adapters/source_files`, the RDF vocabulary, naming helpers, CURIE
-  resolution and option types in `rdf_terms` included (#497, #510, #PR).
+  resolution and option types in `rdf_terms` included (#497, #510, #579).
 - `Entity.iri` (a stated IRI, the smallest when several merge) and
   `source_kinds` on entities and relationships (`["document",
   "seed_graph"]` or `["seed_graph"]`, written only on items a seed
@@ -1632,7 +1632,7 @@ From 0.2.3 (or a `main` checkout since):
   `--output-directory`, schema and seed sources), with the scheme in any
   case: `run-eval` read `S3://bucket/key` as a local path. An OpenSearch
   query request retries through the shared transient-retry helper, so no
-  retry starts past the query's deadline (#PR).
+  retry starts past the query's deadline (#579).
 
 ### Deprecated
 - `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and
