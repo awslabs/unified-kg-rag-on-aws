@@ -998,9 +998,10 @@ class OpenSearchClient:
         """``request()`` in up to ``retry.query_store_max_attempts`` attempts.
 
         A timeout, a connection failure and a 429/502/503/504 are retried
-        after an exponential backoff (``acall_with_transient_retry``, which
-        also stops at the query's deadline); the last attempt's error, or any
-        other, propagates.
+        after an exponential backoff (``acall_with_transient_retry``); the
+        last attempt's error, or any other, propagates. No time budget of its
+        own: no retry starts past the deadline of the query the call is made
+        for (``retry_deadline``, which ``GraphRAGChain`` sets).
         """
         return await acall_with_transient_retry(
             request,

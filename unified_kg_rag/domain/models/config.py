@@ -2589,8 +2589,9 @@ class StaticChartSettings(BaseModel):
 class VisualizationConfig(BaseModel):
     centrality: CentralityConfig = Field(
         default_factory=CentralityConfig,
-        description="Node centrality metrics the visualization sizes nodes and "
-        "plots by (computed at render time; no ingestion stage reads them)",
+        description="Node centrality metrics the static renderer's centrality "
+        "chart plots (computed at render time; no ingestion stage reads them). "
+        "The interactive graph sizes nodes by degree, not by these.",
     )
     export_data: bool = Field(
         default=True,
