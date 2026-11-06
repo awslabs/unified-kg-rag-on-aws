@@ -1958,12 +1958,11 @@ class GleaningConfig(BaseModel):
             "Maximum gleaning rounds per text unit. Each round after the first"
             " re-sends only the text units whose previous answer added a new "
             "entity or relationship, so a unit stops once an answer adds "
-            "nothing new. Measured on a 109-document MuSiQue slice, 3 rounds "
-            "against 1 found 9.8 points more of the questions' intermediate "
-            "answers as graph entities (81.7% against 72.0%, [+3.7, +17.1]) "
-            "for 38% more ingestion cost. 1 is MS GraphRAG's default and the "
-            "cost lever, for when ingestion cost matters more than graph "
-            "recall."
+            "nothing new. Within one MuSiQue ingestion, round 1 added most of "
+            "gleaning's relationships to bridge entities and rounds 2-3 little "
+            "more, and gleaning was 47% of the ingestion cost (see "
+            "docs/concepts/defaults-and-evidence.md#gleaning-rounds). 1 is MS "
+            "GraphRAG's default and the cost lever."
         ),
     )
     max_entities_per_prompt: int = Field(

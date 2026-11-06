@@ -134,6 +134,7 @@ temperature, 추론 설정입니다.
 생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
 글리닝 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
 
-이 중 가장 큰 것은 글리닝입니다. `processing.gleaning.max_rounds`는 측정한 그래프
-재현율 때문에 3을 유지합니다([근거](../concepts/defaults-and-evidence.md#gleaning-rounds), 영문).
-그래프 재현율보다 수집 비용이 중요하면 `max_rounds: 1`(MS GraphRAG 기본값)로 두세요.
+이 중 가장 큰 것은 글리닝입니다(측정한 수집 비용의 47%). `processing.gleaning.max_rounds`는
+3이며, 글리닝이 더하는 관계는 대부분 1회차에서 나오고 2~3회차는 조금만 더합니다
+([근거](../concepts/defaults-and-evidence.md#gleaning-rounds), 영문). `max_rounds: 1`(MS GraphRAG
+기본값)로 두면 그 효과의 대부분을 글리닝 비용의 약 3분의 1로 얻습니다.
