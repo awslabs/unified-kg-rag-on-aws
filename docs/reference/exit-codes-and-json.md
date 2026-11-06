@@ -79,7 +79,14 @@ holds:
   (nothing rendered) or a failed renderer exits `1`.
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.
-- **`prepare-benchmark`**: the `output_directory` and the counts written.
+- **`prepare-benchmark`**: the `output_directory`, the `benchmark` label
+  and the counts written (`questions`, `paragraphs`); with `--hops`, the
+  answerable questions per hop count (`hops`); with `--unanswerable`, the
+  `answerable` and `unanswerable` counts and `unanswerable_filter`
+  (`requested`, `kept`, `examined`, `excluded_twin`, `excluded_contaminated`,
+  `excluded_no_twin`). Too few unanswerable questions passing the filters,
+  `--unanswerable` with an answerable-only file, `--hops` quotas with
+  `--limit` or above the questions of a hop count exit `2`.
 
 ### Failures and interruptions
 

@@ -109,7 +109,21 @@ from unified_kg_rag.domain.prompts import (
     StrategySelectionPrompt,
     TranslationPrompt,
 )
-from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
+from unified_kg_rag.domain.prompts.retrieval import (
+    ABSTENTION_INSTRUCTIONS,
+    DECLINE_INSTRUCTIONS,
+    HEDGE_INSTRUCTIONS,
+    describe_routable_strategies,
+)
+from unified_kg_rag.domain.retrieval.abstention import (
+    ABSTENTION_REASON_KEY,
+    CONTEXT_SUFFICIENT_KEY,
+    REASON_INSUFFICIENT_CONTEXT,
+    REASON_MARKER,
+    REASON_NO_CONTEXT,
+    MarkerStreamFilter,
+    split_marker,
+)
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GroundingContext,
@@ -188,7 +202,9 @@ def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # Fixed reply when retrieval produced no context; the output metadata then
-# carries ``abstained=True`` so evaluation can tell it from a real answer.
+# carries ``abstained=True`` (``abstention_reason: no_context``) so evaluation
+# can tell it from a real answer. Also the answer of a declined answer that
+# was only the [NO_ANSWER] token (search.abstention.strip_marker).
 NO_CONTEXT_ANSWER = (
     "I could not find relevant information in the available data to answer "
     "this question."
@@ -328,6 +344,13 @@ class RAGOutput(BaseModel):
     was retrieved). A blocked answer is replaced by the blocked message and
     returns no ``sources`` or ``search_results.results``; a masked answer
     keeps its sources as retrieved (masking covers the answer only).
+    ``metadata["abstained"]`` is ``True`` on a declined answer, with
+    ``metadata["abstention_reason"]``: ``no_context`` (the fixed reply to an
+    empty context), ``marker`` (the answer started with ``[NO_ANSWER]``,
+    ``search.abstention.mode: mark``) or ``insufficient_context`` (the
+    strategy flagged its context insufficient under
+    ``search.abstention.on_insufficient: abstain``); a declined answer keeps
+    the sources the model was given.
     """
 
     answer: str = Field(description="The generated answer to the user's query")
@@ -540,6 +563,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         answer_step: Runnable[Any, Any] = RunnablePassthrough.assign(
             answer=self._answer_generation_step
         )
+        # Detects a declined answer (search.abstention) before the output
+        # guardrail and the reported output see it.
+        answer_step = answer_step | RunnableLambda(self._abstention_step)
         if self._ground_outputs:
             # Keeps the context the answer was generated from for the
             # answer's grounding check; wired only when that check is on.
@@ -1244,10 +1270,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
 
         enable_thinking = state.get("enable_thinking", False)
+        # Only passed when set, so the default answer chain (and its cache
+        # key) is that of earlier releases.
+        instructions = self._answer_instructions(state)
         answer_chain = self._get_chain_for_prompt(
             self._answer_prompt(state.get("resolved_strategy")),
             StrOutputParser(),
             enable_thinking=enable_thinking,
+            **({"system_suffix": instructions} if instructions else {}),
         )
         # The answer reads the standalone question: the conversation history
         # reaches it only through that rewrite.
@@ -1257,6 +1287,65 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
             | answer_chain
         )
+
+    @staticmethod
+    def _context_insufficient(state: dict[str, Any]) -> bool:
+        """Whether the strategy flagged its context insufficient
+        (``SearchResult.metadata["context_sufficient"] is False``)."""
+        results = state.get("search_results")
+        metadata = getattr(results, "metadata", None) or {}
+        return metadata.get(CONTEXT_SUFFICIENT_KEY) is False
+
+    def _declines_insufficient(self, state: dict[str, Any]) -> bool:
+        """Whether the answer must decline: the context is flagged
+        insufficient under ``search.abstention.on_insufficient: abstain``."""
+        return (
+            self.config.search.abstention.on_insufficient == "abstain"
+            and self._context_insufficient(state)
+        )
+
+    def _answer_instructions(self, state: dict[str, Any]) -> str:
+        """The ``search.abstention`` text appended to the answer's system
+        prompt ("" by default)."""
+        if self._declines_insufficient(state):
+            return DECLINE_INSTRUCTIONS
+        parts = []
+        if self.config.search.abstention.mode == "mark":
+            parts.append(ABSTENTION_INSTRUCTIONS)
+        if self._context_insufficient(state):
+            parts.append(HEDGE_INSTRUCTIONS)
+        return "".join(parts)
+
+    def _reads_marker(self, state: dict[str, Any]) -> bool:
+        """Whether this answer is checked for the [NO_ANSWER] token: the
+        model was given a context and asked to use it."""
+        return not self._context_is_empty(state) and (
+            self.config.search.abstention.mode == "mark"
+            or self._declines_insufficient(state)
+        )
+
+    @staticmethod
+    def _context_is_empty(state: dict[str, Any]) -> bool:
+        context = str(state.get("context") or "").strip()
+        return not context or context == EMPTY_CONTEXT_PLACEHOLDER
+
+    def _abstention_step(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Set ``state["abstention_reason"]`` (``None`` for an answer) and
+        strip the [NO_ANSWER] token per ``search.abstention.strip_marker``."""
+        if self._context_is_empty(state):
+            state["abstention_reason"] = REASON_NO_CONTEXT
+            return state
+        marked = False
+        if self._reads_marker(state):
+            marked, rest = split_marker(str(state.get("answer") or ""))
+            if marked and self.config.search.abstention.strip_marker:
+                state["answer"] = rest or NO_CONTEXT_ANSWER
+        if self._declines_insufficient(state):
+            # Declined by policy, whatever the model wrote.
+            state["abstention_reason"] = REASON_INSUFFICIENT_CONTEXT
+        else:
+            state["abstention_reason"] = REASON_MARKER if marked else None
+        return state
 
     def _answer_prompt(self, strategy: SearchStrategy | None) -> type[BasePrompt]:
         """The answer prompt of ``strategy`` (``search.answer_prompt_style``):
@@ -1334,9 +1423,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "total_results": len(sr.results),
             **sr.metadata,
         }
-        if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+        reason = state.get("abstention_reason")
+        if reason is None and (not context or context == EMPTY_CONTEXT_PLACEHOLDER):
             # The answer step returned the fixed NO_CONTEXT_ANSWER.
+            reason = REASON_NO_CONTEXT
+        if reason is not None:
+            # A declined answer keeps its sources: the model saw them.
             metadata["abstained"] = True
+            metadata[ABSTENTION_REASON_KEY] = reason
         if optimized is not None:
             metadata["context_sections_included"] = optimized.sections_included
             metadata["context_sections_excluded"] = optimized.sections_excluded
@@ -2003,6 +2097,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # in another task after each yield.
             started: float | None = time.monotonic()
             stream = aiter(answer_runnable.astream(state, answer_config))
+            # Holds back the start of the answer until the [NO_ANSWER] token
+            # is ruled in or out (search.abstention); chunks stay raw.
+            marker = (
+                MarkerStreamFilter(strip=self.config.search.abstention.strip_marker)
+                if self._reads_marker(state)
+                else None
+            )
             while True:
                 async with deadline.scope(started):
                     try:
@@ -2015,13 +2116,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     continue
                 chunks.append(text)
                 if not self._screen_outputs:
-                    delivered = True
-                    yield text
+                    shown = marker.feed(text) if marker is not None else text
+                    if shown:
+                        delivered = True
+                        yield shown
+            state["answer"] = "".join(chunks)
+            self._abstention_step(state)
             if self._screen_outputs:
                 # Nothing was delivered yet: the user sees only screened text.
                 async with deadline.scope():
                     verdict = await self._screen_output(
-                        "".join(chunks),
+                        state["answer"],
                         guard_records,
                         grounding=(
                             self._grounding_context(state)
@@ -2029,10 +2134,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                             else None
                         ),
                     )
-                chunks = [verdict.text]
-                if chunks[0]:
+                state["answer"] = verdict.text
+                if verdict.text:
                     delivered = True
-                    yield chunks[0]
+                    yield verdict.text
+            elif marker is not None:
+                rest = marker.finish()
+                if not delivered and not rest and state["answer"]:
+                    # Only the token: the stripped answer's fixed reply.
+                    rest = state["answer"]
+                if rest:
+                    delivered = True
+                    yield rest
         except Exception as e:
             if not self.ignore_errors:
                 logger.error(
@@ -2052,7 +2165,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE
             return
 
-        state["answer"] = "".join(chunks)
         async with deadline.scope():
             await self._save_memory(self._format_output_step(state), rag_input)
 

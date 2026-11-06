@@ -503,6 +503,18 @@ From a `main` checkout (formats and keys no release had):
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
   [benchmarks](docs/guides/benchmarks.md).
+- Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N` adds
+  MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
+  revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's
+  exact text is in the pooled corpus (34-50% of candidates on the dev split), and reports the counts; `--hops 3,4` or
+  `--hops 2=50,3=50,4=100` filters or sets per-hop quotas. `search.abstention.mode: mark` asks the answer model to
+  start a declined answer with the fixed token `[NO_ANSWER]` (detected in any answer language, stripped by default)
+  and reports it in `metadata.abstained` / `abstention_reason`, with its sources kept;
+  `search.abstention.on_insufficient` (`hedge`, `abstain`) applies when a strategy sets its metadata
+  `context_sufficient` to false (none does yet). `answer_match` scores a decline on an answerable question (the
+  no-context reply included) 0 without a span call, and `abstention_statistics` adds decline precision, recall and F1
+  and per `answer_match` metric coverage, accuracy, selective and overall accuracy (#593). See
+  [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
   Markdown; a failed answer counts with what it spent (#526, #529, #533).

@@ -104,6 +104,41 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 정했습니다([근거](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문).
 조정 방법은 [운영 런북](../operations.md#query-deadlines-and-model-timeouts)(영문)에 있습니다.
 
+## 답변 거절
+
+검색 결과가 없으면 체인은 모델을 호출하지 않고 "I could not find relevant
+information..."으로 답하며 `metadata.abstained`와 `metadata.abstention_reason: no_context`를
+남깁니다. 그 밖에 모델이 자기 말로 답변을 거절하면 일반 답변과 구별되지 않습니다.
+`search.abstention`(선택 기능, 기본값은 꺼짐)을 켜면 거절을 명시적으로 표시합니다.
+
+```yaml
+search:
+  abstention:
+    mode: mark            # off (default) | mark
+    strip_marker: true    # remove the token from the returned answer
+    on_insufficient: hedge   # hedge (default) | abstain
+```
+
+- **`mode: mark`**는 답변 프롬프트(간결형, 상세형, `custom_prompts` 재정의 모두)에 지시를
+  덧붙입니다. 컨텍스트가 답을 뒷받침하지 않으면 고정 토큰 `[NO_ANSWER]`로 시작하고, 무엇이
+  빠졌는지 질의 언어로 말하라는 지시입니다. 이 토큰으로 시작하는 답변은 답변 언어와 관계없이
+  `metadata.abstained: true`, `abstention_reason: marker`가 됩니다(전각 `［NO_ANSWER］`와
+  앞쪽 Markdown 강조도 인식). `strip_marker: false`가 아니면 토큰을 지우고, 토큰만 있는
+  답변은 고정 무응답 문구로 바꿉니다. `stream`은 판단이 설 때까지 처음 최대 32자를
+  보류합니다.
+- 거절한 답변도 `sources`를 유지합니다. 모델이 본 컨텍스트이고, 평가기가 확인할 수 있어야
+  하기 때문입니다. 가드레일이 차단했거나 컨텍스트가 비었을 때만 출처가 없습니다. 출력
+  가드레일은 토큰을 뺀 답변을 검사합니다.
+- **`on_insufficient`**는 전략이 자기 컨텍스트를 불충분하다고 표시했을 때만
+  적용됩니다(`search_results.metadata.context_sufficient: false`, 선택적으로
+  `insufficiency_reason`). 아직 이 표시를 남기는 기본 제공 전략은 없습니다. `hedge`는
+  컨텍스트가 뒷받침하는 부분만 답하고 다루지 못한 부분을 밝히게 하고, `abstain`은 답하지
+  말고 질의 언어로 거절 문장을 쓰게 한 뒤 출력을 거절로 표시합니다
+  (`abstention_reason: insufficient_context`). 어느 쪽도 모델 호출을 늘리지 않습니다.
+- `mark`는 답변 프롬프트를 바꾸므로 답변과 EM / F1이 달라질 수 있습니다. 측정으로 결정할
+  때까지 선택 기능이며, `mark` 실행은 별도 비교군으로 다루세요. 거절을 채점하는 방법:
+  [평가: 답할 수 없는 질문과 거절](./evaluate.ko.md#답할-수-없는-질문과-거절).
+
 ## 대화형 모드와 대화 메모리
 
 ```bash

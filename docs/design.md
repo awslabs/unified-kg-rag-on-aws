@@ -1899,6 +1899,99 @@ choices:
 The defaults set or kept from real-model measurements, with the method, the
 numbers and dated prices, are in [Defaults and evidence](./concepts/defaults-and-evidence.md).
 
+### 9.2 Unanswerable questions and abstention (opt-in)
+
+Whether the chain declines a question its corpus cannot answer is measured
+with a benchmark split built for it and an explicit decline marker. Both are
+opt-in: with no new flag and `search.abstention.mode: off` the corpus, the
+dataset, the answer prompts and the scores are those of earlier releases.
+
+**Benchmark** (`evaluation/benchmarks/musique.py`, driven by
+`prepare-benchmark musique --unanswerable N [--hops ...]`). MuSiQue-Full
+pairs every answerable question with an unanswerable twin of the same id:
+the same question with one or more supporting paragraphs replaced by
+distractors. Two leaks make a naive pool answerable:
+
+1. *The twin.* An unanswerable item pooled with its own answerable twin
+   gets the removed paragraph back from the twin's paragraphs. Any
+   unanswerable item whose twin is in the answerable sample is excluded.
+2. *Other questions.* MuSiQue reuses Wikipedia paragraphs across questions:
+   in a sample of 200 unanswerable plus 200 non-twin answerable items,
+   28-42% of the unanswerable ones still find every removed paragraph in
+   the pool (measured offline on the dev split). Selection is greedy over a
+   seeded shuffle of the candidates: an item is kept only when no removed
+   paragraph's exact text (whitespace-normalized) is in the pool so far, and
+   none of its own paragraphs is a removed paragraph of an item already kept;
+   a kept item's paragraphs join the pool. Either rule excludes it as
+   `contaminated`. The pool starts from the answerable sample, so the
+   answerable set is the one the same seed draws without `--unanswerable`.
+
+Unanswerable rows carry `metadata.answerable: false`, no answer or
+reference sources, `metadata.benchmark: musique-full-unanswerable` and the
+twin's answer (`metadata.twin_answer`, for auditing an answer that names it).
+The counts (`unanswerable_filter`: candidates, kept, excluded twins,
+contaminated, no twin) are printed and in the JSON output. `--hops` filters
+both pools by hop count (`3,4`) or draws an exact answerable quota per hop
+(`2=50,3=50,4=100`); sampling stays deterministic per seed. The exact-text
+filter does not catch near-duplicate paragraphs or facts a model knows
+without the corpus; `twin_answer` exposes the latter. Cost is ingestion's:
+about 19 paragraphs a question.
+
+**Decline marker** (`search.abstention`, applied by `GraphRAGChain`). The
+chain already answered an empty context with a fixed reply
+(`metadata.abstained`), but a model that declines in its own words was
+invisible to evaluation. With `mode: mark` the answer step appends
+`ABSTENTION_INSTRUCTIONS` (`domain/prompts/retrieval.py`) to the system
+prompt of whichever answer prompt runs (concise, comprehensive or a
+`custom_prompts` override): when the context does not support the answer,
+start with the fixed token `[NO_ANSWER]`, then one sentence in the query's
+language naming what is missing. Detection
+(`domain/retrieval/abstention.py`) is a pure function over the first
+characters after NFKC normalization, so full-width brackets and leading
+Markdown emphasis are accepted and the answer's language does not matter
+(the token stays ASCII). It sets `metadata.abstained` and
+`metadata.abstention_reason` (`no_context`, `marker`, `insufficient_context`)
+and strips the token unless `strip_marker: false`; a streamed answer holds
+back at most the first 32 characters until the token is ruled in or out.
+An abstained answer keeps its sources: the model saw them, and evaluators
+audit them (only a guardrail block or an empty context leaves none). The
+marker reaches the output guardrail stripped, like any answer.
+
+**Insufficiency hook** (`search.abstention.on_insufficient`). A strategy
+that judges its own context (an iterative or sufficiency-checking strategy)
+sets `SearchResult.metadata["context_sufficient"] = False` (constant
+`CONTEXT_SUFFICIENT_KEY`) and optionally `insufficiency_reason`. Only then
+does the answer step apply the policy: `hedge` (default) appends
+`HEDGE_INSTRUCTIONS` (answer what the context supports and say what it
+does not), `abstain` appends `DECLINE_INSTRUCTIONS` (do not answer; give the
+token and the missing part in the query's language) and marks the output
+abstained with reason `insufficient_context` whatever the model writes.
+Both are LLM-written so the wording follows the query language; neither
+costs an extra call. Strategies that never set the flag are unaffected; no
+shipped strategy sets it yet.
+
+**Scoring** (`EvaluationManager._calculate_abstention_statistics`). An
+abstention on an answerable item is a wrong answer: `answer_match` scores it
+0 on every metric (no span extraction call) and records `abstained` in the
+report. Unanswerable items are scored only by abstention:
+`abstention_statistics` adds `answerable` (same shape as `unanswerable`),
+`precision` (abstentions that were on unanswerable items), `recall`
+(unanswerable items abstained on) and `f1`, and per `answer_match` metric
+`coverage` (answerable items answered), `accuracy` (over all answerable
+items, abstentions as 0), `selective_accuracy` (over the answered ones) and,
+with unanswerable items, `overall_accuracy` (a correct answer or a correct
+decline, over both). Coverage and accuracy are reported together so a
+strategy cannot look precise by declining more.
+
+Failure modes: a model that ignores the marker instruction looks like
+`mode: off` (recall falls, nothing breaks); one that writes the token
+before a real answer is scored as a decline (precision on answerable items
+shows it). The marker instruction changes the answer prompt, so `mark`
+runs are a separate arm, not comparable EM-for-EM with `off` runs; the
+manifest's config hash differs. Whether `mark` should become the default
+waits on a measured run (`unanswerable` 100-200 + matched answerable,
+`local` and `mix`, `off` vs `mark`).
+
 ---
 
 ## 10. Visualization & Analytics

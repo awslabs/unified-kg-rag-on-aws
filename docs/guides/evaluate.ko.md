@@ -76,13 +76,37 @@ retrieval, graph_aware]`.
   `id`는 `query_id`로 써도 됩니다.
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤
   평가기로도 채점하지 않고 `abstention_statistics`
-  ([Run summary](../reference/evaluation-output.md#run-summary), 영문)에만 셉니다.
+  ([Run summary](../reference/evaluation-output.md#run-summary), 영문,
+  [답할 수 없는 질문과 거절](#답할-수-없는-질문과-거절))에만 셉니다.
 - 파일은 질의를 실행하기 전에 검증합니다. 읽을 수 없는 파일, 비어 있거나 배열이 아닌
   데이터셋, `question` 누락, 중복 ID, 타입이 틀린 필드(목록이 아닌 `expected_entities`,
   문자열이나 문자열 목록이 아닌 `answer_aliases`), RAG 체인이 거부하는 `metadata`(알 수
   없는 `search_strategy`, 또는 체인이 거부하는 `filters`: 빈 목록 같은 잘못된 값이나
   항목의 전략이 거부하는 키. 비교 실행이면 비교하는 모든 전략으로 확인)가 있으면
   `Error: invalid evaluation dataset:`과 항목 번호, ID를 출력하고 종료 코드 2로 멈춥니다.
+
+## 답할 수 없는 질문과 거절
+
+모든 질문에 답하는 RAG 시스템은 코퍼스로 답할 수 없는 질문에도 답합니다. 거절하는 능력을
+측정하려면 `"answerable": false`로 표시한 질문을 데이터셋에 섞고(`prepare-benchmark
+musique --unanswerable N`이 코퍼스로 답할 수 없도록 걸러 낸 질문 집합을 만듭니다:
+[Benchmarks](./benchmarks.md#unanswerable-questions), 영문) `search.abstention.mode: mark`로
+실행해 모델의 거절을 인식하게 하세요([질의: 답변 거절](./query.ko.md#답변-거절)). 그러면
+다음과 같이 채점합니다.
+
+- 답할 수 있는 질문에서 거절하면 오답입니다. `answer_match`는 0점을 주고(답변 구간 추출
+  호출 없음) 보고서에 `abstained`를 남깁니다.
+- 답할 수 없는 질문은 거절했는지로만 채점합니다.
+- `abstention_statistics`에 거절 `precision`(거절 중 답할 수 없는 질문의 비율), `recall`(답할
+  수 없는 질문 중 거절한 비율), `f1`, `answerable`·`unanswerable` 비율, 그리고 `answer_match`
+  지표마다 `coverage`(답한 비율), `accuracy`(답할 수 있는 질문 전체, 거절은 0),
+  `selective_accuracy`(답한 질문만), `overall_accuracy`(맞힌 답이나 맞는 거절, 두 종류
+  전체)를 보고합니다. coverage와 accuracy를 함께 읽으세요. 거절을 늘리면 selective
+  accuracy는 오르고 coverage는 떨어집니다.
+- `mode: off`이면 빈 컨텍스트에 대한 고정 문구만 거절로 세므로 recall은 하한값입니다.
+  `mark`는 답변 프롬프트를 바꾸므로 `mark` 실행과 `off` 실행은 두 비교군으로
+  비교하세요(`off`로 실행한 뒤, 그 결과 파일을 `--baseline-results`로 지정해 `mark`로
+  실행).
 
 ## 예시
 

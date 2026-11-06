@@ -115,6 +115,46 @@ measured query times on real AWS
 Tuning is in the
 [Operator Runbook](../operations.md#query-deadlines-and-model-timeouts).
 
+## Declined answers
+
+When retrieval returns nothing, the chain answers "I could not find relevant
+information..." without calling the model and sets `metadata.abstained` and
+`metadata.abstention_reason: no_context`. A model that declines in its own
+words is otherwise an ordinary answer. `search.abstention` (opt-in, off by
+default) makes declines explicit:
+
+```yaml
+search:
+  abstention:
+    mode: mark            # off (default) | mark
+    strip_marker: true    # remove the token from the returned answer
+    on_insufficient: hedge   # hedge (default) | abstain
+```
+
+- **`mode: mark`** appends an instruction to the answer prompt (concise,
+  comprehensive or your `custom_prompts` override): when the context does not
+  support the answer, start with the fixed token `[NO_ANSWER]` and say, in the
+  query's language, what is missing. An answer that starts with it gets
+  `metadata.abstained: true` and `abstention_reason: marker`, in any answer
+  language (full-width `［NO_ANSWER］` and leading Markdown emphasis are
+  accepted). The token is removed unless `strip_marker: false`; an answer that
+  is only the token becomes the fixed no-context reply. `stream` holds back at
+  most the first 32 characters until it knows.
+- A declined answer keeps its `sources`: the model saw that context, and an
+  evaluator can audit it. Only a guardrail block (or an empty context) leaves
+  none. The output guardrail screens the answer without the token.
+- **`on_insufficient`** applies only when the strategy flagged its own context
+  insufficient (`search_results.metadata.context_sufficient: false`, with an
+  optional `insufficiency_reason`); no shipped strategy sets the flag yet.
+  `hedge` asks the model to answer what the context supports and say what it
+  does not; `abstain` tells it not to answer and to write the decline in the
+  query's language, and reports the output abstained
+  (`abstention_reason: insufficient_context`). Neither adds a model call.
+- `mark` changes the answer prompt, so answers and EM / F1 can change. It is
+  opt-in until a measured run decides; compare `mark` runs as their own arm.
+  How declines are scored:
+  [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
+
 ## Interactive mode & conversation memory
 
 ```bash

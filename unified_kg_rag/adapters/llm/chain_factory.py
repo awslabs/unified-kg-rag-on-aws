@@ -11,6 +11,7 @@ so they live in the adapters layer rather than the shared kernel — keeping
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any, Literal
@@ -506,6 +507,7 @@ def setup_chain(
     custom_prompts: CustomPromptConfig | None = None,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int | None = None,
+    system_suffix: str = "",
     **kwargs: Any,
 ) -> Runnable[Any, Any]:
     """Build ``prompt | llm | parser`` with the policies of ``model_purpose``.
@@ -519,6 +521,9 @@ def setup_chain(
     ``transient_retry`` policy (the OpenAI-compatible one) leaves query
     retries to its client. ``min_output_tokens`` overrides the prompt's static
     floor with one derived from the config (``BasePrompt.output_floor``).
+    ``system_suffix`` is appended to the resolved system template (built-in
+    or custom), e.g. the answer prompts' ``search.abstention`` instructions;
+    it is template text, so literal braces must be doubled.
     """
     try:
         llm = factory.get_model(
@@ -533,6 +538,11 @@ def setup_chain(
         )
         model_info = factory.get_model_info(model_id)
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
+        if system_suffix:
+            resolved = dataclasses.replace(
+                resolved,
+                system_prompt_template=resolved.system_prompt_template + system_suffix,
+            )
         cache_marker = _prompt_cache_marker(llm, model_info, resolved)
         prompt = _build_chat_prompt(
             resolved,

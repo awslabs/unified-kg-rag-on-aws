@@ -395,6 +395,31 @@ async def _ascore(evaluator, answer: str, gold: str, question: str = "Who?"):
 
 
 class TestExtractedSpan:
+    @pytest.mark.parametrize("span", ["first_line", "extracted"])
+    async def test_a_decline_scores_zero_without_a_span_call(
+        self, mocker, config, span
+    ) -> None:
+        # The decline names the gold answer; before, answer_contains gave it 1.
+        evaluator, chain = _extracting(mocker, config, "Depot")
+        evaluator.answer_span = span
+        result = EvaluationResult(
+            query_id="q",
+            question="Who?",
+            generated_answer="The context names Depot but not who runs it.",
+            ground_truth="Depot",
+            abstained=True,
+        )
+        report = await evaluator.aevaluate_single(
+            EvaluationQuery(query_id="q", question="Who?"), result, "Depot"
+        )
+        assert _values(report) == {
+            "answer_contains": 0.0,
+            "exact_match": 0.0,
+            "token_f1": 0.0,
+        }
+        assert report.metadata["abstained"] is True
+        assert chain.calls == []
+
     async def test_a_short_span_scores_like_the_papers(self, mocker, config) -> None:
         evaluator, chain = _extracting(mocker, config, '"Depot"\n')
         report = await _ascore(evaluator, _DEPOT_ANSWER, "Depot")

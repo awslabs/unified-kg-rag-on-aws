@@ -44,7 +44,10 @@ records the span mode (``answer_span``) and the text scored
 
 References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
 (a string or list of strings); each metric takes the max over references.
-A query with no reference is skipped. Tokens are whitespace-delimited, so for
+A query with no reference is skipped. An abstained answer
+(``EvaluationResult.abstained``: the no-context reply, or a declined answer
+under ``search.abstention``) is a wrong answer: every metric scores 0, with
+``abstained`` in the report and no span extraction call. Tokens are whitespace-delimited, so for
 scripts written without spaces (Chinese, Japanese) token F1 degrades to exact
 match. Korean is space-delimited but attaches particles to words ("서울은"), so
 a correct answer rarely matches a bare gold token exactly; both metrics
@@ -91,10 +94,12 @@ from .text_matching import normalize_answer, normalize_answer_squad, phrase_in_t
 logger = get_logger(__name__)
 
 # Report-metadata keys: the span mode, the text exact match and token F1
-# scored, and why an extracted span fell back to the first line.
+# scored, why an extracted span fell back to the first line, and that the
+# answer was a decline (scored 0).
 ANSWER_SPAN_KEY = "answer_span"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
+ABSTAINED_KEY = "abstained"
 
 __all__ = [
     "AnswerMatchEvaluator",
@@ -313,8 +318,8 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
     ) -> EvaluationReport:
         if self.answer_span != "extracted":
             return self.evaluate_single(query, result, ground_truth, **kwargs)
-        if not self._references(ground_truth, result.metadata):
-            # Nothing to score: no model call.
+        if result.abstained or not self._references(ground_truth, result.metadata):
+            # Nothing to extract (a decline scores 0): no model call.
             return self._score(query, result, ground_truth, "", {})
         answer = result.generated_answer or ""
         try:
@@ -382,6 +387,24 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                         m.value: SKIP_REASON_EMPTY_REFERENCE
                         for m in self.metric_types()
                     }
+                },
+            )
+        if result.abstained:
+            # A decline is not an answer, even one that names the gold
+            # entity while saying what is missing.
+            return EvaluationReport(
+                query_id=query.query_id,
+                evaluator_type=self.evaluator_type,
+                metrics=[
+                    EvaluationMetric(metric_type=metric, value=0.0)
+                    for metric in self.metric_types()
+                ],
+                evaluation_time=datetime.now(),
+                metadata={
+                    **self._extract_search_metadata(result),
+                    "num_references": len(references),
+                    ANSWER_SPAN_KEY: self.answer_span,
+                    ABSTAINED_KEY: True,
                 },
             )
         answer = result.generated_answer or ""

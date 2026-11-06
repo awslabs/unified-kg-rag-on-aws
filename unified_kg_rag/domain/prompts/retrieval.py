@@ -114,6 +114,44 @@ Instructions:
 Response:"""
 
 
+# The fixed token a declined answer starts with (search.abstention.mode:
+# mark). ASCII in every answer language, so detection
+# (domain.retrieval.abstention) never depends on the language; it is not a
+# template placeholder, so it needs no brace escaping.
+ABSTENTION_MARKER = "[NO_ANSWER]"
+
+# Appended to the system prompt of whichever answer prompt runs (built-in or
+# a custom_prompts override) under search.abstention.mode: mark.
+ABSTENTION_INSTRUCTIONS = f"""
+
+DECLINING (overrides the response format above):
+If the context does not support the answer the question asks for (the entity, value, date, or yes/no it wants),
+even after chaining facts across sources, do not guess. Start the response with the exact token {ABSTENTION_MARKER},
+written as is in every language, then in one or two sentences in the same language as the user's query say which
+fact the context is missing (you may state what it does establish). Never put the token in front of an answer: when
+the context supports the answer, even with a caveat, answer it without the token."""
+
+# Appended when the strategy flagged its context insufficient
+# (SearchResult.metadata["context_sufficient"] is False) under
+# search.abstention.on_insufficient: hedge.
+HEDGE_INSTRUCTIONS = """
+
+RETRIEVAL NOTE:
+The retrieval step judged this context possibly insufficient for the question. Answer only what the context
+supports, say plainly (in the same language as the user's query) which part of the question it does not cover, and
+never fill the gap from general knowledge."""
+
+# Appended under search.abstention.on_insufficient: abstain, for a context
+# flagged insufficient: the model writes the decline, so it follows the
+# query's language, and the chain reports the answer as abstained.
+DECLINE_INSTRUCTIONS = f"""
+
+DECLINE (overrides every instruction about the response above):
+The retrieval step judged this context insufficient to answer the question, so do not answer it. Start the response
+with the exact token {ABSTENTION_MARKER}, written as is in every language, then in one or two sentences in the same
+language as the user's query say which fact the context is missing."""
+
+
 class CommunityRelevancePrompt(BasePrompt):
     input_variables = ["query", "community_summary"]
 

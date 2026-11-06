@@ -5,7 +5,9 @@
 Writes ``<output-directory>/corpus/`` (ingest it with ``run-ingestion``) and
 ``<output-directory>/eval_data.json`` (score it with ``run-eval``). The
 benchmark data is read from a local copy (``--data-path``) or downloaded at
-run time; it is not part of this package.
+run time; it is not part of this package. ``--unanswerable N`` adds N
+unanswerable questions (``metadata.answerable: false``) from the full split,
+filtered so the pooled corpus does not answer them.
 """
 
 from __future__ import annotations
@@ -31,12 +33,19 @@ from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared import EvaluationException
 
 
+def _hops(value: str) -> dict[int, int | None]:
+    try:
+        return musique.parse_hops(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = ArgumentParser(
         allow_abbrev=False,
         description=(
-            "Prepare a public benchmark (MuSiQue answerable) as a corpus "
-            "directory and a run-eval dataset"
+            "Prepare a public benchmark (MuSiQue) as a corpus directory and a "
+            "run-eval dataset"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
@@ -56,13 +65,38 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the "
-            "official download); default: download the answerable dev split"
+            "official download; a musique_full_v1.0_*.jsonl for "
+            "--unanswerable); default: download the answerable dev split, or "
+            "the full one with --unanswerable"
         ),
     )
     parser.add_argument(
         "--limit",
         type=positive_int,
-        help="Number of questions to sample (default: all 2,417 of dev)",
+        help="Number of answerable questions to sample (default: all 2,417 of dev)",
+    )
+    parser.add_argument(
+        "--unanswerable",
+        type=positive_int,
+        metavar="N",
+        help=(
+            "Also write N unanswerable questions of the full split "
+            "(metadata.answerable: false), leaving out any whose answerable "
+            "twin is sampled or whose removed supporting paragraph's exact "
+            "text is in the pooled corpus; the counts are reported "
+            "(default: none)"
+        ),
+    )
+    parser.add_argument(
+        "--hops",
+        type=_hops,
+        metavar="HOPS",
+        help=(
+            "Hop counts to sample from: a list (3,4) filters both answerable "
+            "and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly "
+            "that many answerable questions per hop count, instead of "
+            "--limit (default: every hop count, sampled as one pool)"
+        ),
     )
     parser.add_argument("--seed", type=int, default=0, help="Sampling seed (default 0)")
     add_output_format_argument(parser)
@@ -75,17 +109,28 @@ def main(argv: list[str] | None = None) -> None:
     as_json = json_output(args)
     if args.data_path is not None and not args.data_path.is_file():
         usage_error(f"benchmark data not found: '{args.data_path}'")
+    if args.hops and None not in args.hops.values() and args.limit is not None:
+        usage_error("--hops quotas set the sample size; drop --limit")
     try:
         # Before the download: a used directory is a usage error.
         musique.check_output_directory(args.output_directory)
     except EvaluationException as e:
         usage_error(str(e))
     try:
+        full = args.unanswerable is not None
         source = args.data_path or musique.download_dev(
-            args.output_directory / "source" / "musique_ans_v1.0_dev.jsonl"
+            args.output_directory
+            / "source"
+            / (musique.FULL_DEV_FILE if full else "musique_ans_v1.0_dev.jsonl"),
+            full=full,
         )
         counts = musique.prepare(
-            source, args.output_directory, limit=args.limit, seed=args.seed
+            source,
+            args.output_directory,
+            limit=args.limit,
+            seed=args.seed,
+            unanswerable=args.unanswerable,
+            hops=args.hops,
         )
     except KeyboardInterrupt:
         console.print("\n[yellow]Benchmark preparation interrupted by user.[/yellow]")
@@ -102,6 +147,15 @@ def main(argv: list[str] | None = None) -> None:
         f"'{markup_safe(args.output_directory)}'.[/green]\n"
         f"Cite: {musique.CITATION}"
     )
+    if (selection := counts.get("unanswerable_filter")) is not None:
+        console.print(
+            f"Unanswerable: {selection['kept']} kept of {selection['examined']} "
+            f"examined ({selection['excluded_twin']} with their answerable twin "
+            f"sampled, {selection['excluded_contaminated']} answerable from "
+            f"the pooled corpus by exact text, {selection['excluded_no_twin']} "
+            "without a twin); written as 'musique-full-unanswerable' with "
+            "metadata.answerable false."
+        )
     if as_json:
         print_json({"output_directory": str(args.output_directory), **counts})
 

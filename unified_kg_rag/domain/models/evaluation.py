@@ -194,9 +194,12 @@ class EvaluationResult(BaseModel):
     abstained: bool = Field(
         default=False,
         description=(
-            "True when the RAG chain returned its fixed no-context reply instead "
-            "of an answer (retrieval produced no usable context). Scored like any "
-            "answer on answerable items; correct on metadata.answerable=false ones."
+            "True when the RAG chain declined to answer (metadata.abstained): "
+            "its fixed no-context reply, or under search.abstention an answer "
+            "starting with the [NO_ANSWER] token or declined by the "
+            "insufficient-context policy (metadata.abstention_reason). A wrong "
+            "answer on answerable items (answer_match scores it 0); correct on "
+            "metadata.answerable=false ones."
         ),
     )
     rerank_status: RerankStatus | None = Field(
@@ -319,12 +322,18 @@ class EvaluationSummary(BaseModel):
     abstention_statistics: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Abstentions (the chain's fixed no-context reply) among answered "
-            "queries: 'abstained', 'answered', 'abstention_rate', the same per "
-            "actual search strategy ('per_strategy'), and for items marked "
-            "metadata.answerable=false an 'unanswerable' block of the same "
-            "shape. Only the no-context reply (empty retrieval) counts, so on "
-            "unanswerable items the rate is a lower bound on correct declines."
+            "Abstentions (EvaluationResult.abstained) among answered queries: "
+            "'abstained', 'answered', 'abstention_rate', the same per actual "
+            "search strategy ('per_strategy'). With items marked "
+            "metadata.answerable=false: 'unanswerable' and 'answerable' blocks "
+            "of the same shape, and 'precision' (abstentions on unanswerable "
+            "items / all abstentions; null without any), 'recall' "
+            "(unanswerable items abstained on) and 'f1'. With answer_match: "
+            "'answer_match' {metric: {'coverage', 'accuracy', "
+            "'selective_accuracy', 'overall_accuracy'}} over the answerable "
+            "items (a decline scores 0; overall counts a decline on an "
+            "unanswerable item as correct). Without search.abstention.mode: "
+            "mark only the no-context reply counts, so recall is a lower bound."
         ),
     )
     answer_span_statistics: dict[str, Any] = Field(

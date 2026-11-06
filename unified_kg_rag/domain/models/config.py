@@ -3988,6 +3988,53 @@ class QueryOutputCeilingsConfig(BaseModel):
     )
 
 
+class AbstentionConfig(BaseModel):
+    """How an answer declines a question its context does not answer.
+
+    Opt-in: with the defaults the answer prompts and outputs are those of
+    earlier releases (only an empty context is answered with the fixed
+    no-context reply). Guide: docs/guides/query.md#declined-answers
+    """
+
+    mode: Literal["off", "mark"] = Field(
+        default="off",
+        description=(
+            "off: the answer prompts are unchanged, and only an empty context "
+            "is reported abstained (metadata.abstained, the fixed no-context "
+            "reply). mark: the answer prompt (concise, comprehensive or a "
+            "custom_prompts override) also asks the model to start a declined "
+            "answer with the fixed token [NO_ANSWER] and say in the query's "
+            "language what the context lacks; an answer starting with it is "
+            "reported abstained (metadata.abstention_reason: marker) whatever "
+            "its language. The instruction changes the answer prompt, so "
+            "answers and EM/F1 differ from off: compare mark runs as their own "
+            "arm. Opt-in until a measured run decides."
+        ),
+    )
+    strip_marker: bool = Field(
+        default=True,
+        description=(
+            "Remove the [NO_ANSWER] token from a declined answer (invoke and "
+            "stream), leaving the model's explanation; an answer that is only "
+            "the token becomes the fixed no-context reply. false returns it "
+            "as written."
+        ),
+    )
+    on_insufficient: Literal["hedge", "abstain"] = Field(
+        default="hedge",
+        description=(
+            "What the answer step does when the strategy flagged its context "
+            "insufficient (SearchResult.metadata.context_sufficient false; no "
+            "shipped strategy sets it yet, so this has no effect on them). "
+            "hedge: the model answers what the context supports and says, in "
+            "the query's language, what it does not cover. abstain: the model "
+            "is told not to answer and writes the decline in the query's "
+            "language; the output is reported abstained "
+            "(abstention_reason: insufficient_context). Neither adds a call."
+        ),
+    )
+
+
 class SearchConfig(BaseModel):
     auto_routable_strategies: Annotated[
         list[SearchStrategy], AfterValidator(_reject_auto_strategy)
@@ -4173,6 +4220,10 @@ class SearchConfig(BaseModel):
     output_ceilings: QueryOutputCeilingsConfig = Field(
         default_factory=QueryOutputCeilingsConfig,
         description="max_tokens of the short-answer query calls",
+    )
+    abstention: AbstentionConfig = Field(
+        default_factory=AbstentionConfig,
+        description="How an answer declines a question its context does not answer",
     )
 
     def query_model_timeout(self, configured: float) -> float:
