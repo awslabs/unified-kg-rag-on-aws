@@ -19,6 +19,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, ProcessedQuery
 from unified_kg_rag.domain.models import (
@@ -38,14 +39,6 @@ class _LLMFactory:
 
     def get_model_info(self, model_id: Any) -> Any:
         return fake_model_info(model_id)
-
-
-class _TokenCounter:
-    def count_tokens(self, text: str) -> int:
-        return len(text.split())
-
-    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        return text, len(text.split())
 
 
 class _EchoRetriever:
@@ -89,7 +82,7 @@ def _chain(config: Config | None = None) -> GraphRAGChain:
         llm_factory=_LLMFactory(),
         embedding_factory=MagicMock(),
         rerank_factory=MagicMock(),
-        token_counter_factory=lambda *_, **__: _TokenCounter(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
         retriever_builders={
             RetrieverRole.DOCUMENT: _EchoRetriever,  # type: ignore[dict-item]
             RetrieverRole.GRAPH: _EchoRetriever,  # type: ignore[dict-item]

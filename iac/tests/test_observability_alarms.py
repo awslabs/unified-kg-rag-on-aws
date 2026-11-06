@@ -210,6 +210,27 @@ def _pipeline_metric_fields() -> set[str]:
     }
 
 
+def _metric_stages() -> dict[str, set[str]]:
+    # pipeline_metrics.METRIC_STAGES (metric -> the stages that emit it),
+    # read from the source: this venv does not install the package.
+    source = _PACKAGE / "application" / "ingestion" / "pipeline_metrics.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    (table,) = (
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "METRIC_STAGES"
+    )
+    assert isinstance(table, ast.Dict)
+    stages: dict[str, set[str]] = {}
+    for key, value in zip(table.keys, table.values, strict=True):
+        assert isinstance(key, ast.Constant) and isinstance(value, ast.Call)
+        assert isinstance(value.func, ast.Name) and value.func.id == "frozenset"
+        stages[key.value] = set(ast.literal_eval(value.args[0]))
+    return stages
+
+
 def _emf_metric_names(template: Template) -> set[str]:
     names: set[str] = set()
     for alarm in template.find_resources("AWS::CloudWatch::Alarm").values():
@@ -533,9 +554,7 @@ def test_the_dashboard_plots_a_partial_summary_tree() -> None:
     }
     assert plotted == set(SUMMARY_TREE_METRICS)
     assert plotted <= _pipeline_metric_fields()
-    metrics_source = (
-        _PACKAGE / "application" / "ingestion" / "pipeline_metrics.py"
-    ).read_text(encoding="utf-8")
+    stages = _metric_stages()
     for name in SUMMARY_TREE_METRICS:
         # Emitted as the summary_tree stage finishes.
-        assert f'"{name}": frozenset({{"summary_tree"}})' in metrics_source
+        assert stages[name] == {"summary_tree"}

@@ -352,6 +352,7 @@ def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
 
     from tests.fixtures.collapsed_tree import collapsed_tree_reference
     from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from tests.fixtures.fakes.tokens import WordTokenCounter
     from unified_kg_rag.adapters.providers import Providers
     from unified_kg_rag.adapters.search_strategies.tree_search import (
         TreeSearchStrategy,
@@ -388,16 +389,12 @@ def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
     config.search.tree_search.graph_signal = "off"
     question = "Which depot stores steel for the vendors?"
 
-    class _Words:
-        def count_tokens(self, text: str) -> int:
-            return len(text.split())
-
     providers = Providers(
         config,
         boto_session=MagicMock(),
         llm_factory=ScriptedLLMFactory(lambda system, human: ""),
         embedding_factory=harness.embedding_factory,
-        token_counter_factory=lambda *_, **__: _Words(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
 
     async def search() -> list[str]:
@@ -469,6 +466,7 @@ def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> No
     from unittest.mock import MagicMock
 
     from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from tests.fixtures.fakes.tokens import WordTokenCounter
     from unified_kg_rag.adapters.providers import Providers
     from unified_kg_rag.adapters.search_strategies.tree_search import (
         TreeSearchStrategy,
@@ -498,16 +496,12 @@ def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> No
     config.search.tree_search.text_top_k = 1
     config.search.tree_search.expand_children = 3
 
-    class _Words:
-        def count_tokens(self, text: str) -> int:
-            return len(text.split())
-
     providers = Providers(
         config,
         boto_session=MagicMock(),
         llm_factory=ScriptedLLMFactory(lambda system, human: ""),
         embedding_factory=harness.embedding_factory,
-        token_counter_factory=lambda *_, **__: _Words(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
 
     async def search() -> Any:
